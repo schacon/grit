@@ -3176,7 +3176,7 @@ test_expect_success 'option aliases are not shown by default' '
 	test_completion "git clone --recurs" "--recurse-submodules "
 '
 
-test_expect_failure 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
+test_expect_success 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		GIT_COMPLETION_SHOW_ALL=1 && export GIT_COMPLETION_SHOW_ALL &&

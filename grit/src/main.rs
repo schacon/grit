@@ -355,8 +355,8 @@ fn run() -> Result<()> {
 ///
 /// This mimics git's `--git-completion-helper` by listing all long options
 /// (and their `--no-` negations) for the given subcommand.
-fn print_completion_helper(subcmd: &str, _show_all: bool) -> Result<()> {
-    fn extract_options<T: Args>() -> Vec<String> {
+fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
+    fn extract_options<T: Args>(show_all: bool) -> Vec<String> {
         let cmd = Command::new("grit")
             .flatten_help(false);
         let cmd = T::augment_args(cmd);
@@ -371,6 +371,14 @@ fn print_completion_helper(subcmd: &str, _show_all: bool) -> Result<()> {
             }
             if let Some(long) = arg.get_long() {
                 opts.push(format!("--{long}"));
+                // Add aliases (only with --git-completion-helper-all)
+                if show_all {
+                    if let Some(aliases) = arg.get_aliases() {
+                        for alias in aliases {
+                            opts.push(format!("--{alias}"));
+                        }
+                    }
+                }
                 // Add --no- variant unless it already starts with no-
                 if !long.starts_with("no-") {
                     opts.push(format!("--no-{long}"));
@@ -382,60 +390,60 @@ fn print_completion_helper(subcmd: &str, _show_all: bool) -> Result<()> {
     }
 
     let options = match subcmd {
-        "add" => extract_options::<commands::add::Args>(),
-        "am" => extract_options::<commands::am::Args>(),
-        "apply" => extract_options::<commands::apply::Args>(),
-        "bisect" => extract_options::<commands::bisect::Args>(),
-        "blame" => extract_options::<commands::blame::Args>(),
-        "branch" => extract_options::<commands::branch::Args>(),
-        "cat-file" => extract_options::<commands::cat_file::Args>(),
-        "check-ignore" => extract_options::<commands::check_ignore::Args>(),
-        "checkout" => extract_options::<commands::checkout::Args>(),
-        "cherry-pick" => extract_options::<commands::cherry_pick::Args>(),
-        "clean" => extract_options::<commands::clean::Args>(),
-        "clone" => extract_options::<commands::clone::Args>(),
-        "commit" => extract_options::<commands::commit::Args>(),
-        "config" => extract_options::<commands::config::Args>(),
-        "describe" => extract_options::<commands::describe::Args>(),
-        "diff" => extract_options::<commands::diff::Args>(),
-        "fetch" => extract_options::<commands::fetch::Args>(),
-        "for-each-ref" => extract_options::<commands::for_each_ref::Args>(),
-        "format-patch" => extract_options::<commands::format_patch::Args>(),
-        "fsck" => extract_options::<commands::fsck::Args>(),
-        "gc" => extract_options::<commands::gc::Args>(),
-        "grep" => extract_options::<commands::grep::Args>(),
-        "init" => extract_options::<commands::init::Args>(),
-        "log" => extract_options::<commands::log::Args>(),
-        "ls-files" => extract_options::<commands::ls_files::Args>(),
-        "ls-remote" => extract_options::<commands::ls_remote::Args>(),
-        "ls-tree" => extract_options::<commands::ls_tree::Args>(),
-        "merge" => extract_options::<commands::merge::Args>(),
-        "merge-base" => extract_options::<commands::merge_base::Args>(),
-        "mv" => extract_options::<commands::mv::Args>(),
-        "notes" => extract_options::<commands::notes::Args>(),
-        "pull" => extract_options::<commands::pull::Args>(),
-        "push" => extract_options::<commands::push::Args>(),
-        "rebase" => extract_options::<commands::rebase::Args>(),
-        "reflog" => extract_options::<commands::reflog::Args>(),
-        "remote" => extract_options::<commands::remote::Args>(),
-        "reset" => extract_options::<commands::reset::Args>(),
-        "restore" => extract_options::<commands::restore::Args>(),
-        "rev-list" => extract_options::<commands::rev_list::Args>(),
-        "rev-parse" => extract_options::<commands::rev_parse::Args>(),
-        "revert" => extract_options::<commands::revert::Args>(),
-        "rm" => extract_options::<commands::rm::Args>(),
-        "show" => extract_options::<commands::show::Args>(),
-        "show-ref" => extract_options::<commands::show_ref::Args>(),
-        "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(),
-        "stash" => extract_options::<commands::stash::Args>(),
-        "status" => extract_options::<commands::status::Args>(),
-        "submodule" => extract_options::<commands::submodule::Args>(),
-        "switch" => extract_options::<commands::switch::Args>(),
-        "symbolic-ref" => extract_options::<commands::symbolic_ref::Args>(),
-        "tag" => extract_options::<commands::tag::Args>(),
-        "update-index" => extract_options::<commands::update_index::Args>(),
-        "update-ref" => extract_options::<commands::update_ref::Args>(),
-        "worktree" => extract_options::<commands::worktree::Args>(),
+        "add" => extract_options::<commands::add::Args>(show_all),
+        "am" => extract_options::<commands::am::Args>(show_all),
+        "apply" => extract_options::<commands::apply::Args>(show_all),
+        "bisect" => extract_options::<commands::bisect::Args>(show_all),
+        "blame" => extract_options::<commands::blame::Args>(show_all),
+        "branch" => extract_options::<commands::branch::Args>(show_all),
+        "cat-file" => extract_options::<commands::cat_file::Args>(show_all),
+        "check-ignore" => extract_options::<commands::check_ignore::Args>(show_all),
+        "checkout" => extract_options::<commands::checkout::Args>(show_all),
+        "cherry-pick" => extract_options::<commands::cherry_pick::Args>(show_all),
+        "clean" => extract_options::<commands::clean::Args>(show_all),
+        "clone" => extract_options::<commands::clone::Args>(show_all),
+        "commit" => extract_options::<commands::commit::Args>(show_all),
+        "config" => extract_options::<commands::config::Args>(show_all),
+        "describe" => extract_options::<commands::describe::Args>(show_all),
+        "diff" => extract_options::<commands::diff::Args>(show_all),
+        "fetch" => extract_options::<commands::fetch::Args>(show_all),
+        "for-each-ref" => extract_options::<commands::for_each_ref::Args>(show_all),
+        "format-patch" => extract_options::<commands::format_patch::Args>(show_all),
+        "fsck" => extract_options::<commands::fsck::Args>(show_all),
+        "gc" => extract_options::<commands::gc::Args>(show_all),
+        "grep" => extract_options::<commands::grep::Args>(show_all),
+        "init" => extract_options::<commands::init::Args>(show_all),
+        "log" => extract_options::<commands::log::Args>(show_all),
+        "ls-files" => extract_options::<commands::ls_files::Args>(show_all),
+        "ls-remote" => extract_options::<commands::ls_remote::Args>(show_all),
+        "ls-tree" => extract_options::<commands::ls_tree::Args>(show_all),
+        "merge" => extract_options::<commands::merge::Args>(show_all),
+        "merge-base" => extract_options::<commands::merge_base::Args>(show_all),
+        "mv" => extract_options::<commands::mv::Args>(show_all),
+        "notes" => extract_options::<commands::notes::Args>(show_all),
+        "pull" => extract_options::<commands::pull::Args>(show_all),
+        "push" => extract_options::<commands::push::Args>(show_all),
+        "rebase" => extract_options::<commands::rebase::Args>(show_all),
+        "reflog" => extract_options::<commands::reflog::Args>(show_all),
+        "remote" => extract_options::<commands::remote::Args>(show_all),
+        "reset" => extract_options::<commands::reset::Args>(show_all),
+        "restore" => extract_options::<commands::restore::Args>(show_all),
+        "rev-list" => extract_options::<commands::rev_list::Args>(show_all),
+        "rev-parse" => extract_options::<commands::rev_parse::Args>(show_all),
+        "revert" => extract_options::<commands::revert::Args>(show_all),
+        "rm" => extract_options::<commands::rm::Args>(show_all),
+        "show" => extract_options::<commands::show::Args>(show_all),
+        "show-ref" => extract_options::<commands::show_ref::Args>(show_all),
+        "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(show_all),
+        "stash" => extract_options::<commands::stash::Args>(show_all),
+        "status" => extract_options::<commands::status::Args>(show_all),
+        "submodule" => extract_options::<commands::submodule::Args>(show_all),
+        "switch" => extract_options::<commands::switch::Args>(show_all),
+        "symbolic-ref" => extract_options::<commands::symbolic_ref::Args>(show_all),
+        "tag" => extract_options::<commands::tag::Args>(show_all),
+        "update-index" => extract_options::<commands::update_index::Args>(show_all),
+        "update-ref" => extract_options::<commands::update_ref::Args>(show_all),
+        "worktree" => extract_options::<commands::worktree::Args>(show_all),
         _ => Vec::new(),
     };
 
