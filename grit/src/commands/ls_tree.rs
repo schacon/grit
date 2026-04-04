@@ -282,6 +282,11 @@ fn quote_path_name(name: &str) -> String {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    // First try the full revision syntax (handles ^, ~, :path, etc.)
+    if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
+        return Ok(oid);
+    }
+    // Fallback: try as raw OID
     if let Ok(oid) = s.parse::<ObjectId>() {
         return Ok(oid);
     }
