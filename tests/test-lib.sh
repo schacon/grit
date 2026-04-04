@@ -485,6 +485,12 @@ test_skip_or_die () {
 	test_done
 }
 
+# error MSG — print an error and exit
+error () {
+	echo "error: $*" >&2
+	exit 1
+}
+
 # test_env — run command with additional env vars
 # Usage: test_env VAR=VALUE ... command args
 # Works with both binaries and shell functions
@@ -677,8 +683,17 @@ test_expect_success () {
 	# propagate exit-on-error the way a subshell does.
 	local _old_cwd="$PWD"
 	cd "$TRASH_DIRECTORY" || return 1
-	eval "$commands" 2>&1
-	local result=$?
+	# Run with errexit but capture result.
+	# Wrap in a function to localize set -e.
+	_test_eval_result=0
+	_test_eval_inner () {
+		set -e
+		eval "$1"
+	}
+	_test_eval_inner "$commands" 2>&1 || _test_eval_result=$?
+	local result=$_test_eval_result
+	# Ensure errexit is off at top level
+	set +e
 	cd "$_old_cwd" 2>/dev/null || true
 
 	if test $result -eq 0
