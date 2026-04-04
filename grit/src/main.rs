@@ -247,8 +247,8 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
-        // --version / -v / --help / -h  → treat as pseudo-subcommands
-        if arg == "--version" || arg == "-v" {
+        // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
+        if arg == "--version" || arg == "-v" || arg == "-V" {
             subcmd = Some("version".to_owned());
             rest = items[i + 1..].to_vec();
             break;
@@ -374,6 +374,54 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     }
     result
 }
+
+/// Levenshtein edit distance between two strings.
+fn strsim_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 0..=m {
+        dp[i][0] = i;
+    }
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[m][n]
+}
+
+const KNOWN_COMMANDS: &[&str] = &[
+    "add", "am", "annotate", "apply", "archive", "backfill", "bisect", "blame",
+    "branch", "bugreport", "bundle", "cat-file", "check-attr", "check-ignore",
+    "check-mailmap", "check-ref-format", "checkout", "checkout-index", "cherry",
+    "cherry-pick", "clean", "clone", "column", "commit", "commit-graph", "commit-tree",
+    "config", "count-objects", "credential", "credential-cache", "credential-store",
+    "daemon", "describe", "diagnose", "diff", "diff-files", "diff-index", "diff-pairs",
+    "diff-tree", "difftool", "fast-export", "fast-import", "fetch", "fetch-pack",
+    "filter-branch", "fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch",
+    "fsck", "gc", "get-tar-commit-id", "grep", "hash-object", "help", "history", "hook",
+    "http-backend", "http-fetch", "http-push", "index-pack", "init", "interpret-trailers",
+    "last-modified", "log", "ls-files", "ls-remote", "ls-tree", "mailinfo", "mailsplit",
+    "maintenance", "merge", "merge-base", "merge-file", "merge-index", "merge-one-file",
+    "merge-tree", "mergetool", "mktag", "mktree", "multi-pack-index", "mv", "name-rev",
+    "notes", "pack-objects", "pack-redundant", "pack-refs", "patch-id", "prune",
+    "prune-packed", "pull", "push", "range-diff", "read-tree", "rebase", "receive-pack",
+    "reflog", "refs", "remote", "repack", "replace", "replay", "repo", "rerere", "reset",
+    "restore", "rev-list", "rev-parse", "revert", "rm", "send-pack", "sh-i18n", "sh-setup",
+    "shell", "shortlog", "show", "show-branch", "show-index", "show-ref", "sparse-checkout",
+    "stage", "stash", "status", "stripspace", "submodule", "switch", "symbolic-ref", "tag",
+    "unpack-file", "unpack-objects", "update-index", "update-ref", "update-server-info",
+    "upload-archive", "upload-pack", "var", "verify-commit", "verify-pack", "verify-tag",
+    "version", "whatchanged", "worktree", "write-tree",
+];
 
 /// Dispatch to the appropriate command handler.
 ///
@@ -529,6 +577,23 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
-        _ => bail!("grit: '{subcmd}' is not a grit command. See 'grit help'."),
+        _ => {
+            let commands = KNOWN_COMMANDS;
+            // Find similar commands using edit distance
+            let mut suggestions: Vec<&str> = commands
+                .iter()
+                .filter(|cmd| strsim_distance(subcmd, cmd) <= 2)
+                .copied()
+                .collect();
+            suggestions.sort();
+            if suggestions.is_empty() {
+                bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+            } else {
+                let similar = suggestions.join("\n\t");
+                bail!(
+                    "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
+                );
+            }
+        }
     }
 }

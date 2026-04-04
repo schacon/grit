@@ -160,6 +160,7 @@ pub fn run(args: Args) -> Result<()> {
     // Case 3: checkout -- (with no paths and no target) is a no-op
     // Case 4: checkout <branch-or-commit>
     let target = match target {
+        Some(t) if t.is_empty() => bail!("fatal: empty string is not a valid pathspec or branch name"),
         Some(t) => t,
         None => {
             if args.detach {
@@ -282,6 +283,11 @@ fn split_target_and_paths(rest: &[String], has_separator: bool) -> (Option<Strin
 /// Switch HEAD to an existing branch, updating the working tree and index.
 fn switch_branch(repo: &Repository, branch_name: &str, branch_ref: &str, force: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
+
+    // Fail gracefully when HEAD is corrupt (empty or garbage)
+    if matches!(head, HeadState::Invalid) {
+        bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
+    }
 
     // Check if already on this branch
     if let HeadState::Branch { ref refname, .. } = head {
@@ -826,7 +832,43 @@ fn check_dirty_worktree(
             let rel_path = String::from_utf8_lossy(&new_entry.path);
             let abs_path = work_tree.join(rel_path.as_ref());
             if abs_path.exists() || abs_path.is_symlink() {
-                untracked_conflicts.push(rel_path.into_owned());
+                // Before flagging as untracked, check if the path only exists
+                // because of a tracked symlink or tracked directory in the old
+                // index. E.g. switching from a branch with symlink `frotz` to
+                // one with directory `frotz/` — `frotz/filfre` resolves through
+                // the tracked symlink and is not truly untracked.
+                let rel_str = rel_path.as_ref();
+
+                // Case 1: A parent component of the new path is a tracked
+                // entry (symlink) in the old index.
+                let has_tracked_prefix = rel_str.find('/').map_or(false, |_| {
+                    let mut prefix = String::new();
+                    for component in rel_str.split('/') {
+                        if !prefix.is_empty() {
+                            prefix.push('/');
+                        }
+                        prefix.push_str(component);
+                        if prefix.len() < rel_str.len()
+                            && old_paths.contains(prefix.as_bytes())
+                        {
+                            return true;
+                        }
+                    }
+                    false
+                });
+
+                // Case 2: The new entry replaces a directory that contains
+                // tracked files (dir→symlink transition). Check if any old
+                // tracked path starts with this entry's path as a directory
+                // prefix.
+                let replaces_tracked_dir = old_paths.iter().any(|op| {
+                    let op_str = String::from_utf8_lossy(op);
+                    op_str.starts_with(rel_str) && op_str.as_bytes().get(rel_str.len()) == Some(&b'/')
+                });
+
+                if !has_tracked_prefix && !replaces_tracked_dir {
+                    untracked_conflicts.push(rel_path.into_owned());
+                }
             }
         }
     }
