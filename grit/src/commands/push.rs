@@ -93,6 +93,77 @@ pub struct Args {
     pub recurse_submodules: Option<String>,
 }
 
+/// Parse `--force-with-lease` value to determine expected OID for a given remote ref.
+///
+/// Formats:
+/// - `""` (bare flag) → use tracking ref
+/// - `"<refname>"` → use tracking ref, but only for matching ref
+/// - `"<refname>:<expect>"` → resolve `<expect>` as a ref or OID
+fn force_with_lease_expected(
+    lease_val: &Option<String>,
+    remote_ref: &str,
+    remote_name: &str,
+    git_dir: &std::path::Path,
+) -> Option<ObjectId> {
+    let val = match lease_val {
+        Some(v) => v,
+        None => return None,
+    };
+
+    if val.is_empty() {
+        // Bare --force-with-lease: use tracking ref for this remote ref
+        let branch = remote_ref.strip_prefix("refs/heads/").unwrap_or(remote_ref);
+        let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+        return refs::resolve_ref(git_dir, &tracking_ref).ok();
+    }
+
+    if let Some((lease_ref, expect_str)) = val.split_once(':') {
+        // --force-with-lease=<refname>:<expect>
+        let lease_full = if lease_ref.starts_with("refs/") {
+            lease_ref.to_string()
+        } else {
+            format!("refs/heads/{lease_ref}")
+        };
+        let remote_full = if remote_ref.starts_with("refs/") {
+            remote_ref.to_string()
+        } else {
+            format!("refs/heads/{remote_ref}")
+        };
+        if lease_full != remote_full {
+            return None; // lease doesn't apply to this ref
+        }
+        // Try to resolve expect_str as a ref, then as a hex OID
+        if let Ok(oid) = refs::resolve_ref(git_dir, expect_str) {
+            return Some(oid);
+        }
+        if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/heads/{expect_str}")) {
+            return Some(oid);
+        }
+        if let Ok(oid) = expect_str.parse::<ObjectId>() {
+            return Some(oid);
+        }
+        return None;
+    }
+
+    // --force-with-lease=<refname>: use tracking ref, but only for this ref
+    let lease_full = if val.starts_with("refs/") {
+        val.to_string()
+    } else {
+        format!("refs/heads/{val}")
+    };
+    let remote_full = if remote_ref.starts_with("refs/") {
+        remote_ref.to_string()
+    } else {
+        format!("refs/heads/{remote_ref}")
+    };
+    if lease_full != remote_full {
+        return None;
+    }
+    let branch = remote_ref.strip_prefix("refs/heads/").unwrap_or(remote_ref);
+    let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+    refs::resolve_ref(git_dir, &tracking_ref).ok()
+}
+
 /// A single ref update to perform on the remote.
 struct RefUpdate {
     /// Local ref (None for delete).
@@ -248,12 +319,18 @@ pub fn run(args: Args) -> Result<()> {
             if old_oid.is_none() {
                 bail!("remote ref '{}' not found", spec);
             }
+            let expected_oid = force_with_lease_expected(
+                &args.force_with_lease,
+                &remote_ref,
+                remote_name,
+                &repo.git_dir,
+            );
             updates.push(RefUpdate {
                 local_ref: None,
                 remote_ref,
                 old_oid,
                 new_oid: None,
-                expected_oid: None,
+                expected_oid,
             });
         }
     } else if !args.refspecs.is_empty() {
@@ -298,20 +375,13 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-            // For --force-with-lease, the expected oid comes from the local
-            // remote-tracking ref (what `fetch` last stored), NOT re-reading
-            // the remote. This detects when someone else pushed since our
-            // last fetch.
-            let expected_oid = if args.force_with_lease.is_some() {
-                let tracking_ref = format!(
-                    "refs/remotes/{}/{}",
-                    remote_name,
-                    dst.strip_prefix("refs/heads/").unwrap_or(&dst)
-                );
-                refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
-            } else {
-                None
-            };
+            // For --force-with-lease, compute expected OID from the lease value.
+            let expected_oid = force_with_lease_expected(
+                &args.force_with_lease,
+                &remote_ref,
+                remote_name,
+                &repo.git_dir,
+            );
 
             updates.push(RefUpdate {
                 local_ref: Some(local_ref),
@@ -334,14 +404,13 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("branch '{}' has no commits", branch))?;
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-        // For --force-with-lease, the expected oid comes from the local
-        // remote-tracking ref.
-        let expected_oid = if args.force_with_lease.is_some() {
-            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
-            refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
-        } else {
-            None
-        };
+        // For --force-with-lease, compute expected OID from the lease value.
+        let expected_oid = force_with_lease_expected(
+            &args.force_with_lease,
+            &remote_ref,
+            remote_name,
+            &repo.git_dir,
+        );
 
         updates.push(RefUpdate {
             local_ref: Some(local_ref),

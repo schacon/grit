@@ -27,7 +27,7 @@ test_expect_success setup '
 '
 
 # grit --force-with-lease is a boolean flag only, not --force-with-lease=ref:val
-test_expect_failure 'push to update (protected)' '
+test_expect_success 'push to update (protected)' '
 	setup_srcdst_basic &&
 	(
 		cd dst &&
