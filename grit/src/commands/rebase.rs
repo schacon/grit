@@ -176,6 +176,34 @@ fn do_rebase(args: Args) -> Result<()> {
         );
     }
 
+    // Check for dirty worktree/index
+    {
+        let work_tree = repo.work_tree.as_deref()
+            .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+        let idx = Index::load(&repo.index_path())
+            .context("failed to read index")?;
+        let head_tree = resolve_head(git_dir)?
+            .oid()
+            .and_then(|oid| {
+                let obj = repo.odb.read(oid).ok()?;
+                parse_commit(&obj.data).ok().map(|c| c.tree)
+            });
+        let staged = grit_lib::diff::diff_index_to_tree(
+            &repo.odb, &idx, head_tree.as_ref(),
+        )?;
+        if !staged.is_empty() {
+            bail!("cannot rebase: your index contains uncommitted changes.\n\
+                   Please commit or stash them.");
+        }
+        let unstaged = grit_lib::diff::diff_index_to_worktree(
+            &repo.odb, &idx, work_tree,
+        )?;
+        if !unstaged.is_empty() {
+            bail!("error: cannot rebase: You have unstaged changes.\n\
+                   Please commit or stash them.");
+        }
+    }
+
     if args.interactive {
         return do_interactive_stub(&repo, &args);
     }
