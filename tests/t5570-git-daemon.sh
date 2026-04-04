@@ -12,18 +12,30 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- git-daemon not available in grit ---
+# --- git-daemon transport not available in grit, but flag validation works ---
 
-test_expect_failure 'daemon rejects invalid --init-timeout values' '
-	false
+test_expect_success 'daemon rejects invalid --init-timeout values' '
+	for arg in "3a" "-3"
+	do
+		test_must_fail git daemon --init-timeout="$arg" 2>err &&
+		test_grep "invalid init-timeout ${SQ}$arg${SQ}, expecting a non-negative integer" err ||
+		return 1
+	done
 '
 
-test_expect_failure 'daemon rejects invalid --timeout values' '
-	false
+test_expect_success 'daemon rejects invalid --timeout values' '
+	for arg in "3a" "-3"
+	do
+		test_must_fail git daemon --timeout="$arg" 2>err &&
+		test_grep "invalid timeout ${SQ}$arg${SQ}, expecting a non-negative integer" err ||
+		return 1
+	done
 '
 
-test_expect_failure 'daemon rejects invalid --max-connections values' '
-	false
+test_expect_success 'daemon rejects invalid --max-connections values' '
+	arg=3a &&
+	test_must_fail git daemon --max-connections=3a 2>err &&
+	test_grep "invalid max-connections ${SQ}$arg${SQ}, expecting an integer" err
 '
 
 test_expect_failure 'setup repository' '
