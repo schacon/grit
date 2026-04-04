@@ -149,9 +149,38 @@ fn parse_identity_date(input: &str, default_tz: &str) -> Result<String> {
         return Ok(format!("{secs} {tz}"));
     }
 
+    // Try "YYYY-MM-DD HH:MM:SS +ZZZZ" format (with timezone)
+    {
+        let parts: Vec<&str> = input.rsplitn(2, ' ').collect();
+        if parts.len() == 2 && is_git_tz(parts[0]) {
+            let tz_str_inner = parts[0];
+            let datetime_part = parts[1];
+            if let Ok(tz) = parse_git_tz(tz_str_inner) {
+                let ymd_hms = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok();
+                if let Some(ref fmt) = ymd_hms {
+                    if let Ok(naive) = PrimitiveDateTime::parse(datetime_part, fmt) {
+                        let dt = naive.assume_offset(tz);
+                        let secs = dt.unix_timestamp();
+                        let tz_out = format_offset(tz);
+                        return Ok(format!("{secs} {tz_out}"));
+                    }
+                }
+            }
+        }
+    }
+
     let fallback_tz = parse_git_tz(default_tz)?;
     let ymd_hm = format_description::parse("[year]-[month]-[day] [hour]:[minute]")?;
     if let Ok(naive) = PrimitiveDateTime::parse(input, &ymd_hm) {
+        let dt = naive.assume_offset(fallback_tz);
+        let secs = dt.unix_timestamp();
+        let tz = format_offset(fallback_tz);
+        return Ok(format!("{secs} {tz}"));
+    }
+
+    // Also try "YYYY-MM-DD HH:MM:SS" without timezone
+    let ymd_hms = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")?;
+    if let Ok(naive) = PrimitiveDateTime::parse(input, &ymd_hms) {
         let dt = naive.assume_offset(fallback_tz);
         let secs = dt.unix_timestamp();
         let tz = format_offset(fallback_tz);

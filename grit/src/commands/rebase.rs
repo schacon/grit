@@ -833,7 +833,9 @@ fn format_ident(ident: &(String, String), now: time::OffsetDateTime) -> String {
     let minutes = offset.minutes_past_hour().unsigned_abs();
 
     let date_str = std::env::var("GIT_COMMITTER_DATE").ok();
-    let timestamp = date_str.unwrap_or_else(|| format!("{epoch} {hours:+03}{minutes:02}"));
+    let timestamp = date_str
+        .map(|d| super::commit::parse_date_to_git_timestamp(&d).unwrap_or(d))
+        .unwrap_or_else(|| format!("{epoch} {hours:+03}{minutes:02}"));
     format!("{name} <{email}> {timestamp}")
 }
 

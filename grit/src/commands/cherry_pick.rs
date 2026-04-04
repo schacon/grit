@@ -750,6 +750,7 @@ fn resolve_committer_ident(config: &ConfigSet, now: time::OffsetDateTime) -> Res
     let minutes = offset.minutes_past_hour().unsigned_abs();
 
     let timestamp = std::env::var("GIT_COMMITTER_DATE")
+        .map(|d| super::commit::parse_date_to_git_timestamp(&d).unwrap_or(d))
         .unwrap_or_else(|_| format!("{epoch} {hours:+03}{minutes:02}"));
 
     Ok(format!("{name} <{email}> {timestamp}"))

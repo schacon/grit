@@ -949,7 +949,7 @@ fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> 
 
 /// Parse a date string (like "2006-06-26 00:04:00 +0000") into git's
 /// `<epoch> <offset>` format. Returns None if already in epoch format.
-fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
+pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
     let trimmed = date_str.trim();
 
     // Already in `<epoch> <offset>` format? (epoch is all digits)
