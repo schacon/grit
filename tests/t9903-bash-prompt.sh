@@ -62,7 +62,7 @@ test_expect_failure 'prompt - branch name' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - branch name - symlink symref' '
+test_expect_success 'prompt - branch name - symlink symref' '
 	printf " (main)" >expected &&
 	test_when_finished "git checkout main" &&
 	test_config core.preferSymlinkRefs true &&
@@ -71,7 +71,7 @@ test_expect_failure 'prompt - branch name - symlink symref' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - unborn branch' '
+test_expect_success 'prompt - unborn branch' '
 	printf " (unborn)" >expected &&
 	git checkout --orphan unborn &&
 	test_when_finished "git checkout main" &&
@@ -79,7 +79,7 @@ test_expect_failure 'prompt - unborn branch' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - with newline in path' '
+test_expect_success 'prompt - with newline in path' '
 	repo_with_newline="repo
 with
 newline" &&
@@ -145,7 +145,7 @@ test_expect_failure 'prompt - describe detached head - default' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - inside .git directory' '
+test_expect_success 'prompt - inside .git directory' '
 	printf " (GIT_DIR!)" >expected &&
 	(
 		cd .git &&
@@ -154,7 +154,7 @@ test_expect_failure 'prompt - inside .git directory' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - deep inside .git directory' '
+test_expect_success 'prompt - deep inside .git directory' '
 	printf " (GIT_DIR!)" >expected &&
 	(
 		cd .git/objects &&
@@ -163,7 +163,7 @@ test_expect_failure 'prompt - deep inside .git directory' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - inside bare repository' '
+test_expect_success 'prompt - inside bare repository' '
 	printf " (BARE:main)" >expected &&
 	git init --bare bare.git &&
 	test_when_finished "rm -rf bare.git" &&
@@ -245,7 +245,7 @@ test_expect_failure 'prompt - revert' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bisect' '
+test_expect_success 'prompt - bisect' '
 	printf " (main|BISECTING)" >expected &&
 	git bisect start &&
 	test_when_finished "git bisect reset" &&
@@ -428,7 +428,7 @@ test_expect_failure 'prompt - stash status indicator - not shown inside .git dir
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - no untracked files' '
+test_expect_success 'prompt - untracked files status indicator - no untracked files' '
 	printf " (main)" >expected &&
 	(
 		GIT_PS1_SHOWUNTRACKEDFILES=y &&
@@ -447,7 +447,7 @@ test_expect_failure 'prompt - untracked files status indicator - untracked files
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - empty untracked dir' '
+test_expect_success 'prompt - untracked files status indicator - empty untracked dir' '
 	printf " (main)" >expected &&
 	mkdir otherrepo/untracked-dir &&
 	test_when_finished "rm -rf otherrepo/untracked-dir" &&
@@ -523,7 +523,7 @@ test_expect_failure 'prompt - untracked files status indicator - shell variable 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - not shown inside .git directory' '
+test_expect_success 'prompt - untracked files status indicator - not shown inside .git directory' '
 	printf " (GIT_DIR!)" >expected &&
 	(
 		GIT_PS1_SHOWUNTRACKEDFILES=y &&
@@ -685,7 +685,7 @@ test_expect_failure 'prompt - hide if pwd ignored - env var unset, config disabl
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var unset, config disabled, pc mode' '
+test_expect_success 'prompt - hide if pwd ignored - env var unset, config disabled, pc mode' '
 	printf "BEFORE: (\${__git_ps1_branch_name}):AFTER" >expected &&
 	test_config bash.hideIfPwdIgnored false &&
 	(
@@ -705,7 +705,7 @@ test_expect_failure 'prompt - hide if pwd ignored - env var unset, config unset'
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var unset, config unset, pc mode' '
+test_expect_success 'prompt - hide if pwd ignored - env var unset, config unset, pc mode' '
 	printf "BEFORE: (\${__git_ps1_branch_name}):AFTER" >expected &&
 	(
 		cd ignored_dir &&
@@ -726,7 +726,7 @@ test_expect_failure 'prompt - hide if pwd ignored - env var set, config disabled
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var set, config disabled, pc mode' '
+test_expect_success 'prompt - hide if pwd ignored - env var set, config disabled, pc mode' '
 	printf "BEFORE: (\${__git_ps1_branch_name}):AFTER" >expected &&
 	test_config bash.hideIfPwdIgnored false &&
 	(
@@ -758,7 +758,7 @@ test_expect_success 'prompt - hide if pwd ignored - env var set, config unset, p
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - inside gitdir' '
+test_expect_success 'prompt - hide if pwd ignored - inside gitdir' '
 	printf " (GIT_DIR!)" >expected &&
 	(
 		GIT_PS1_HIDE_IF_PWD_IGNORED=y &&
