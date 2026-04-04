@@ -57,7 +57,7 @@ test_expect_success 'no warning when updating entry' '
 	git rm --cached -f embed
 '
 
-test_expect_failure 'submodule add does not warn' '
+test_expect_success 'submodule add does not warn' '
 	cd main-repo &&
 	git -c protocol.file.allow=always \
 		submodule add ./embed submodule 2>stderr &&

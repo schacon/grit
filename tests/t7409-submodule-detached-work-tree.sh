@@ -30,7 +30,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule on detached working tree' '
+test_expect_success 'submodule on detached working tree' '
 	mkdir home &&
 	(
 		cd home &&

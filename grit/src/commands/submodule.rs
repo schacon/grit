@@ -6,6 +6,8 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::index::Index;
+use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use std::collections::BTreeMap;
 use std::fs;
@@ -192,13 +194,32 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Parse `.gitmodules` into a list of submodule entries.
 fn parse_gitmodules(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
-    let gitmodules_path = work_tree.join(".gitmodules");
-    if !gitmodules_path.exists() {
-        return Ok(Vec::new());
-    }
+    parse_gitmodules_with_repo(work_tree, None)
+}
 
-    let content = fs::read_to_string(&gitmodules_path)
-        .context("failed to read .gitmodules")?;
+fn parse_gitmodules_with_repo(work_tree: &Path, repo: Option<&Repository>) -> Result<Vec<SubmoduleInfo>> {
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = if gitmodules_path.exists() {
+        fs::read_to_string(&gitmodules_path)
+            .context("failed to read .gitmodules")?
+    } else if let Some(repo) = repo {
+        // Fallback: read .gitmodules from the index (e.g. sparse checkout)
+        let index = Index::load(&repo.index_path())
+            .context("failed to load index")?;
+        if let Some(ie) = index.get(b".gitmodules", 0) {
+            let obj = repo.odb.read(&ie.oid)
+                .context("failed to read .gitmodules blob from ODB")?;
+            if obj.kind != ObjectKind::Blob {
+                return Ok(Vec::new());
+            }
+            String::from_utf8(obj.data)
+                .context("failed to decode .gitmodules blob")?
+        } else {
+            return Ok(Vec::new());
+        }
+    } else {
+        return Ok(Vec::new());
+    };
 
     let config = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)
         .context("failed to parse .gitmodules")?;
@@ -387,7 +408,7 @@ fn read_head_from_file(head_file: &Path) -> Option<String> {
 fn run_init(args: &InitArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
-    let modules = parse_gitmodules(work_tree)?;
+    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
     let selected = filter_submodules(&modules, &args.paths);
 
     let config_path = repo.git_dir.join("config");
@@ -430,7 +451,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         })?;
     }
 
-    let modules = parse_gitmodules(work_tree)?;
+    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
     let selected = filter_submodules(&modules, &args.paths);
 
     let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
@@ -578,7 +599,11 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     // Clone the submodule.
     let modules_dir = repo.git_dir.join("modules").join(&path);
-    fs::create_dir_all(&modules_dir)?;
+    // Only create the parent directory; git clone --separate-git-dir
+    // will create the modules_dir itself.
+    if let Some(parent) = modules_dir.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     let status = Command::new(&git_bin)
         .arg("clone")
@@ -586,6 +611,8 @@ fn run_add(args: &AddArgs) -> Result<()> {
         .arg(&modules_dir)
         .arg(&args.url)
         .arg(&sub_path)
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_DIR")
         .status()
         .context("failed to clone submodule")?;
 
@@ -610,8 +637,11 @@ fn run_add(args: &AddArgs) -> Result<()> {
     config.write()?;
 
     // Add the submodule path to the index.
+    // Use --no-warn-embedded-repo so the add doesn't warn about the
+    // embedded git repository we just cloned on purpose.
     let status = Command::new(&git_bin)
         .arg("add")
+        .arg("--no-warn-embedded-repo")
         .arg(".gitmodules")
         .arg(&path)
         .current_dir(work_tree)

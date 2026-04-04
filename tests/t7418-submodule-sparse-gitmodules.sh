@@ -47,7 +47,7 @@ test_expect_success 'sparse checkout setup which hides .gitmodules' '
 	)
 '
 
-test_expect_failure 'initialising submodule when the gitmodules config is not checked out' '
+test_expect_success 'initialising submodule when the gitmodules config is not checked out' '
 	test_must_fail git -C super config submodule.submodule.url &&
 	git -C super submodule init &&
 	git -C super config submodule.submodule.url >actual &&
@@ -55,7 +55,7 @@ test_expect_failure 'initialising submodule when the gitmodules config is not ch
 	test_cmp expect actual
 '
 
-test_expect_failure 'updating submodule when the gitmodules config is not checked out' '
+test_expect_success 'updating submodule when the gitmodules config is not checked out' '
 	test_path_is_missing super/submodule/file &&
 	git -C super submodule update &&
 	test_cmp submodule/file super/submodule/file
