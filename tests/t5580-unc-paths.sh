@@ -9,22 +9,5 @@ test_description='various Windows-only path tests'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- UNC paths (Windows) not available in grit ---
-
-test_expect_failure 'clone without file://' '
-	false
-'
-
-test_expect_failure 'clone with backslashed path' '
-	false
-'
-
-test_expect_failure 'remote nick cannot contain backslashes' '
-	false
-'
-
-test_expect_failure 'unc alternates' '
-	false
-'
-
+skip_all='UNC paths (Windows) not available in grit'
 test_done

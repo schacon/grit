@@ -9,10 +9,5 @@ test_description='git svn dcommit CRLF'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- Subversion not available in grit ---
-
-test_expect_failure 'setup commit repository' '
-	false
-'
-
+skip_all='Subversion not available in grit'
 test_done

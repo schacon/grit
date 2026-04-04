@@ -12,18 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP transport not available in grit ---
-
-test_expect_failure 'setup' '
-	false
-'
-
-test_expect_failure 'push to shallow repo via http' '
-	false
-'
-
-test_expect_failure 'push from shallow repo via http' '
-	false
-'
-
+skip_all='HTTP transport not available in grit'
 test_done

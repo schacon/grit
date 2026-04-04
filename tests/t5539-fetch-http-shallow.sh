@@ -12,38 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP transport not available in grit ---
-
-test_expect_failure 'setup shallow clone' '
-	false
-'
-
-test_expect_failure 'clone http repository' '
-	false
-'
-
-test_expect_failure 'no shallow lines after receiving ACK ready' '
-	false
-'
-
-test_expect_failure 'clone shallow since ...' '
-	false
-'
-
-test_expect_failure 'fetch shallow since ...' '
-	false
-'
-
-test_expect_failure 'shallow clone exclude tag two' '
-	false
-'
-
-test_expect_failure 'fetch exclude tag one' '
-	false
-'
-
-test_expect_failure 'fetching deepen' '
-	false
-'
-
+skip_all='HTTP transport not available in grit'
 test_done

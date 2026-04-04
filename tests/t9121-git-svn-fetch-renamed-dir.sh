@@ -9,14 +9,5 @@ test_description='git svn can fetch renamed directories'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- Subversion not available in grit ---
-
-test_expect_failure 'load repository with renamed directory' '
-	false
-'
-
-test_expect_failure 'init and fetch repository' '
-	false
-'
-
+skip_all='Subversion not available in grit'
 test_done

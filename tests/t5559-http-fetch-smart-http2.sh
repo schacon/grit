@@ -12,10 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP/2 transport not available in grit ---
-
-test_expect_failure 'HTTP/2 smart fetch (variant of t5551)' '
-	false
-'
-
+skip_all='HTTP/2 transport not available in grit'
 test_done

@@ -9,14 +9,5 @@ test_description='git cvsimport timestamps'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- CVS not available in grit ---
-
-test_expect_failure 'check timestamps are UTC' '
-	false
-'
-
-test_expect_failure 'check timestamps with author-specific timezones' '
-	false
-'
-
+skip_all='CVS not available in grit'
 test_done

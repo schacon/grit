@@ -12,14 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP transport not available in grit ---
-
-test_expect_failure 'get by URL: 404' '
-	false
-'
-
-test_expect_failure 'get by URL: 200' '
-	false
-'
-
+skip_all='HTTP transport not available in grit'
 test_done

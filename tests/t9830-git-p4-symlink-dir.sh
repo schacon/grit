@@ -9,14 +9,5 @@ test_description='git p4 symlinked directories'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- Perforce not available in grit ---
-
-test_expect_failure 'start p4d' '
-	false
-'
-
-test_expect_failure 'symlinked directory' '
-	false
-'
-
+skip_all='Perforce not available in grit'
 test_done

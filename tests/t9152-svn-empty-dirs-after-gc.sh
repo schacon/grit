@@ -9,22 +9,5 @@ test_description='git svn creates empty directories, calls git gc, makes sure th
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- Subversion not available in grit ---
-
-test_expect_failure 'initialize repo' '
-	false
-'
-
-test_expect_failure 'clone' '
-	false
-'
-
-test_expect_failure 'git svn gc runs' '
-	false
-'
-
-test_expect_failure 'git svn mkdirs recreates empty directories after git svn gc' '
-	false
-'
-
+skip_all='Subversion not available in grit'
 test_done

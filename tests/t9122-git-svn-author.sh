@@ -9,14 +9,5 @@ test_description='git svn authorship'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- Subversion not available in grit ---
-
-test_expect_failure 'setup svn repository' '
-	false
-'
-
-test_expect_failure 'interact with it via git svn' '
-	false
-'
-
+skip_all='Subversion not available in grit'
 test_done

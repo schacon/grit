@@ -12,10 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP transport/bundle-uri not available in grit ---
-
-test_expect_failure 'HTTP transport/bundle-uri — t5732-protocol-v2-bundle-uri-http not yet ported' '
-	false
-'
-
+skip_all='HTTP transport/bundle-uri not available in grit'
 test_done

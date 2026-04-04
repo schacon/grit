@@ -12,34 +12,5 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- HTTP transport not available in grit ---
-
-test_expect_failure 'setup repository' '
-	false
-'
-
-test_expect_failure 'proxy requires password' '
-	false
-'
-
-test_expect_failure 'clone through proxy with auth' '
-	false
-'
-
-test_expect_failure 'clone can prompt for proxy password' '
-	false
-'
-
-test_expect_failure 'clone via Unix socket' '
-	false
-'
-
-test_expect_failure 'Unix socket requires socks*:' '
-	false
-'
-
-test_expect_failure 'Unix socket requires localhost' '
-	false
-'
-
+skip_all='HTTP transport not available in grit'
 test_done
