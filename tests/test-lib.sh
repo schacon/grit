@@ -219,7 +219,8 @@ test_write_lines () {
 
 test_config () {
 	local key="$1" val="$2"
-	git config "$key" "$val"
+	git config "$key" "$val" &&
+	test_when_finished "git config --unset '$key'"
 }
 
 test_file_not_empty () {
@@ -595,13 +596,18 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in a subshell so each test starts clean
+	# Run in a subshell so each test starts clean.
+	# Source any previously-exported variables so they persist across tests.
+	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
 	local result=$?
+	# Re-source exports in the parent so later tests inherit them.
+	test -f "$_exports_file" && . "$_exports_file"
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -680,12 +686,15 @@ test_expect_failure () {
 		fi
 	fi
 
+	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
 	local result=$?
+	test -f "$_exports_file" && . "$_exports_file"
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -712,11 +721,31 @@ test_expect_failure () {
 	fi
 }
 
+# Persist shell variables across test subshells.  Writes name=value pairs
+# to a file that later subshells source on startup.  Usage:
+#   test_export newf oldf f5id
+test_export () {
+	local _ef="$TRASH_DIRECTORY/.test-exports"
+	for _var in "$@"; do
+		local _val
+		eval "_val=\"\$$_var\""
+		# Remove any previous definition of this variable.
+		if test -f "$_ef"; then
+			sed -i "/^${_var}=/d" "$_ef"
+		fi
+		# Quote the value with single quotes (escape existing ones).
+		local _escaped
+		_escaped=$(printf '%s' "$_val" | sed "s/'/'\\\\''/g")
+		printf "%s='%s'\n" "$_var" "$_escaped" >>"$_ef"
+	done
+}
+
 test_when_finished () {
 	# Register a command to run when the current test's subshell exits.
 	# Since each test_expect_success body runs in its own subshell, an EXIT
-	# trap is the right hook.  Multiple calls accumulate.
-	_twf_cmd="${_twf_cmd:+${_twf_cmd}; }$*"
+	# trap is the right hook.  Multiple calls accumulate in LIFO order
+	# (matching git's real test-lib), so later registrations run first.
+	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
 	trap 'eval "$_twf_cmd"' EXIT
 }
 

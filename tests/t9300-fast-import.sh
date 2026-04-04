@@ -652,6 +652,7 @@ test_expect_success 'C: incremental import create pack from stdin' '
 	newf=$(echo hi newf | git hash-object -w --stdin) &&
 	oldf=$(git rev-parse --verify main:file2) &&
 	thrf=$(git rev-parse --verify main:file3) &&
+	test_export newf oldf thrf &&
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/branch
@@ -695,6 +696,7 @@ test_expect_success 'C: verify commit' '
 
 test_expect_success 'C: validate rename result' '
 	zero=$ZERO_OID &&
+	test_export zero &&
 	cat >expect <<-EOF &&
 	:000000 100755 $zero $newf A	file2/newf
 	:100644 100644 $oldf $oldf R100	file2	file2/oldf
@@ -741,6 +743,7 @@ test_expect_success 'D: verify pack' '
 test_expect_success 'D: validate new files added' '
 	f5id=$(echo "$file5_data" | git hash-object --stdin) &&
 	f6id=$(echo "$file6_data" | git hash-object --stdin) &&
+	test_export f5id f6id &&
 	cat >expect <<-EOF &&
 	:000000 100755 $ZERO_OID $f6id A	newdir/exec.sh
 	:000000 100644 $ZERO_OID $f5id A	newdir/interesting
@@ -907,6 +910,7 @@ test_expect_success 'H: verify pack' '
 
 test_expect_success 'H: validate old files removed, new files added' '
 	f4id=$(git rev-parse HEAD:file4) &&
+	test_export f4id &&
 	cat >expect <<-EOF &&
 	:100755 000000 $newf $zero D	file2/newf
 	:100644 000000 $oldf $zero D	file2/oldf
@@ -1074,7 +1078,7 @@ test_expect_success 'L: verify internal tree sorting' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'L: nested tree copy does not corrupt deltas' '
+test_expect_success 'L: nested tree copy does not corrupt deltas' '
 	cat >input <<-INPUT_END &&
 	blob
 	mark :1
@@ -1214,7 +1218,7 @@ done
 ### series N
 ###
 
-test_expect_failure 'N: copy file in same subdirectory' '
+test_expect_success 'N: copy file in same subdirectory' '
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/N1
@@ -1236,7 +1240,7 @@ test_expect_failure 'N: copy file in same subdirectory' '
 	compare_diff_raw expect actual
 '
 
-test_expect_failure 'N: copy then modify subdirectory' '
+test_expect_success 'N: copy then modify subdirectory' '
 	cat >input <<-INPUT_END &&
 	commit refs/heads/N2
 	committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
@@ -1293,7 +1297,7 @@ test_expect_success 'N: copy dirty subdirectory' '
 	test $(git rev-parse N2^{tree}) = $(git rev-parse N3^{tree})
 '
 
-test_expect_failure 'N: copy directory by id' '
+test_expect_success 'N: copy directory by id' '
 	cat >expect <<-EOF &&
 	:100755 100755 $newf $newf C100	file2/newf	file3/newf
 	:100644 100644 $oldf $oldf C100	file2/oldf	file3/oldf
@@ -1314,7 +1318,7 @@ test_expect_failure 'N: copy directory by id' '
 	compare_diff_raw expect actual
 '
 
-test_expect_failure PIPE 'N: read and copy directory' '
+test_expect_success PIPE 'N: read and copy directory' '
 	cat >expect <<-EOF &&
 	:100755 100755 $newf $newf C100	file2/newf	file3/newf
 	:100644 100644 $oldf $oldf C100	file2/oldf	file3/oldf
@@ -1387,7 +1391,7 @@ test_expect_success PIPE 'N: empty directory reads as missing' '
 
 for root in '""' ''
 do
-	test_expect_failure "N: copy root ($root) by tree hash" '
+	test_expect_success "N: copy root ($root) by tree hash" '
 		cat >expect <<-EOF &&
 		:100755 000000 $newf $zero D	file3/newf
 		:100644 000000 $oldf $zero D	file3/oldf
@@ -1408,7 +1412,7 @@ do
 		compare_diff_raw expect actual
 	'
 
-	test_expect_failure "N: copy root ($root) by path" '
+	test_expect_success "N: copy root ($root) by path" '
 		cat >expect <<-EOF &&
 		:100755 100755 $newf $newf C100	file2/newf	oldroot/file2/newf
 		:100644 100644 $oldf $oldf C100	file2/oldf	oldroot/file2/oldf
@@ -1441,6 +1445,7 @@ test_expect_success 'N: delete directory by copying' '
 	:000000 100644 OBJID OBJID A	foo/bar/qux
 	EOF
 	empty_tree=$(git mktree </dev/null) &&
+	test_export empty_tree &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/N-delete
 	committer $GIT_COMMITTER_NAME <$GIT_COMMITTER_EMAIL> $GIT_COMMITTER_DATE
@@ -1474,7 +1479,7 @@ test_expect_success 'N: delete directory by copying' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'N: modify copied tree' '
+test_expect_success 'N: modify copied tree' '
 	cat >expect <<-EOF &&
 	:100644 100644 $f5id $f5id C100	newdir/interesting	file3/file5
 	:100755 100755 $newf $newf C100	file2/newf	file3/newf

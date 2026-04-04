@@ -2784,7 +2784,7 @@ test_expect_failure 'symbolic-ref completes full ref names' '
 	EOF
 '
 
-test_expect_failure PERL 'send-email' '
+test_expect_success PERL 'send-email' '
 	test_completion "git send-email --cov" <<-\EOF &&
 	--cover-from-description=Z
 	--cover-letter Z
