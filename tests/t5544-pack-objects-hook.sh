@@ -18,7 +18,7 @@ test_expect_success 'setup' '
 '
 
 # grit does not support uploadpack.packObjectsHook
-test_expect_failure 'hook runs via global config' '
+test_expect_success 'hook runs via global config' '
 	write_script .git/hook <<-\EOF &&
 		echo >&2 "hook running"
 		echo "$*" >hook.args
