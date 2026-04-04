@@ -316,10 +316,9 @@ pub fn run(args: Args) -> Result<()> {
                 };
                 if cwd == current.git_dir.as_path() {
                     println!(".");
-                } else if current.git_dir.parent() == Some(cwd.as_ref()) {
-                    println!("{}", to_relative_path(&current.git_dir, &cwd));
                 } else {
-                    println!("{}", current.git_dir.display());
+                    // Git always prints a relative path when possible
+                    println!("{}", to_relative_path(&current.git_dir, &cwd));
                 }
             }
             Action::ShowAbsoluteGitDir => {
@@ -521,6 +520,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
             Action::PathSeparator => {
+                println!("--");
                 saw_path_sep_output = true;
             }
             Action::ForcedPath(path) => {
