@@ -9,6 +9,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use std::fs;
 use std::path::Path;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit refs`.
@@ -51,6 +52,12 @@ fn verify_refs(repo: &Repository) -> Result<()> {
     let refs_dir = repo.git_dir.join("refs");
     let mut errors = 0;
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let bad_ref_name_level = config
+        .get("fsck.badRefName")
+        .unwrap_or_default()
+        .to_lowercase();
+
     // Check HEAD
     let head_path = repo.git_dir.join("HEAD");
     if head_path.exists() {
@@ -74,7 +81,7 @@ fn verify_refs(repo: &Repository) -> Result<()> {
 
     // Walk refs directory
     if refs_dir.is_dir() {
-        errors += verify_refs_dir(repo, &refs_dir)?;
+        errors += verify_refs_dir(repo, &refs_dir, &bad_ref_name_level)?;
     }
 
     // Check packed-refs
@@ -97,21 +104,47 @@ fn verify_refs(repo: &Repository) -> Result<()> {
     }
 
     if errors > 0 {
-        eprintln!("{errors} ref(s) point to missing objects");
+        eprintln!("{errors} ref(s) with issues");
         std::process::exit(1);
     }
 
     Ok(())
 }
 
-fn verify_refs_dir(repo: &Repository, dir: &Path) -> Result<usize> {
+fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> Result<usize> {
     let mut errors = 0;
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            errors += verify_refs_dir(repo, &path)?;
+            errors += verify_refs_dir(repo, &path, bad_ref_name_level)?;
         } else if path.is_file() {
+            // Check ref name validity
+            let ref_name = path
+                .strip_prefix(&repo.git_dir)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            if grit_lib::check_ref_format::check_refname_format(
+                &ref_name,
+                &grit_lib::check_ref_format::RefNameOptions {
+                    allow_onelevel: false,
+                    refspec_pattern: false,
+                    normalize: false,
+                },
+            )
+            .is_err()
+            {
+                if bad_ref_name_level == "warn" {
+                    eprintln!("warning: {ref_name}: badRefName: invalid refname format");
+                } else if bad_ref_name_level == "ignore" {
+                    // skip
+                } else {
+                    eprintln!("error: {ref_name}: badRefName: invalid refname format");
+                    errors += 1;
+                }
+            }
+
             let content = fs::read_to_string(&path)
                 .with_context(|| format!("reading ref {}", path.display()))?;
             let trimmed = content.trim();
