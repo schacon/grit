@@ -259,8 +259,16 @@ pub struct Args {
 }
 
 /// Run the `log` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Resolve pretty format aliases from config
+    if let Some(ref fmt) = args.format {
+        let resolved = resolve_pretty_alias_with_config(fmt, &repo);
+        if resolved != *fmt {
+            args.format = Some(resolved);
+        }
+    }
 
     // Handle -g / --walk-reflogs mode
     if args.walk_reflogs {
@@ -2064,4 +2072,50 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
         }
     }
     set
+}
+
+/// Resolve a pretty format alias by looking up `pretty.<name>` in git config.
+/// Returns the resolved format string, or the input unchanged.
+fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
+    // Known built-in formats — no resolution needed
+    match fmt {
+        "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+            return fmt.to_string();
+        }
+        _ => {}
+    }
+
+    // Already a format: or tformat: string
+    if fmt.starts_with("format:") || fmt.starts_with("tformat:") {
+        return fmt.to_string();
+    }
+
+    // Try to resolve from config, with loop detection
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let mut visited = std::collections::HashSet::new();
+    let mut current = fmt.to_string();
+
+    loop {
+        if visited.contains(&current) {
+            return current;
+        }
+        visited.insert(current.clone());
+
+        let key = format!("pretty.{}", current);
+        if let Some(value) = config.get(&key) {
+            match value.as_str() {
+                "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+                    return value;
+                }
+                v if v.starts_with("format:") || v.starts_with("tformat:") => {
+                    return value;
+                }
+                _ => {
+                    current = value;
+                }
+            }
+        } else {
+            return current;
+        }
+    }
 }
