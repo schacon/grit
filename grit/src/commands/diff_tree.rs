@@ -94,6 +94,10 @@ struct Options {
     stat_too: bool,
     /// Limit recursion depth for --name-only etc.
     max_depth: Option<i32>,
+    /// Exit with 1 if there are differences.
+    exit_code: bool,
+    /// Suppress all output, implies exit_code.
+    quiet: bool,
 }
 
 impl Default for Options {
@@ -123,6 +127,8 @@ impl Default for Options {
             pretty: false,
             stat_too: false,
             max_depth: None,
+            exit_code: false,
+            quiet: false,
         }
     }
 }
@@ -158,6 +164,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-only" => opts.format = OutputFormat::NameOnly,
                 "--name-status" => opts.format = OutputFormat::NameStatus,
                 "--summary" => opts.summary = true,
+                "--exit-code" => opts.exit_code = true,
+                "-q" | "--quiet" => { opts.quiet = true; opts.exit_code = true; }
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -235,7 +243,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--pretty")
-                    || arg.starts_with("--format=") =>
+                    || arg.starts_with("--format=")
+                    || arg.starts_with("-S")
+                    || arg.starts_with("-G")
+                    || arg.starts_with("--pickaxe-all")
+                    || arg.starts_with("--pickaxe-regex")
+                    || arg.starts_with("-O")
+                    || arg.starts_with("-R")
+                    || arg.starts_with("--relative") =>
                 {
                     // ignored
                 }
@@ -278,38 +293,49 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if opts.stdin_mode {
-        run_stdin_mode(&repo, &opts, &mut out)
+    let has_diff = if opts.stdin_mode {
+        run_stdin_mode(&repo, &opts, &mut out)?;
+        false // stdin mode doesn't use exit code
     } else if opts.objects.len() == 2 {
-        run_two_trees(&repo, &opts, &mut out)
+        run_two_trees(&repo, &opts, &mut out)?
     } else if opts.objects.len() == 1 {
-        run_one_commit(&repo, &opts, &mut out)
+        run_one_commit(&repo, &opts, &mut out)?
     } else {
         bail!(
             "usage: grit diff-tree [--stdin] [-r] [--root] [-p|--stat|--name-only|--name-status] \
              <tree-ish> [<tree-ish>] [<path>...]"
         )
+    };
+
+    if opts.exit_code && has_diff {
+        std::process::exit(1);
     }
+    Ok(())
 }
 
 // ── Two-tree mode ────────────────────────────────────────────────────
 
-fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
     let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
     let filtered = filter_entries(entries, opts);
-    print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))
+    let has_diff = !filtered.is_empty();
+    if !opts.quiet {
+        print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
+    }
+    Ok(has_diff)
 }
 
 // ── Single-commit mode ───────────────────────────────────────────────
 
-fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let spec = &opts.objects[0];
     let oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     let obj = repo.odb.read(&oid).context("reading object")?;
 
+    let mut has_diff = false;
     match obj.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&obj.data).context("parsing commit")?;
@@ -318,12 +344,14 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     let entries =
                         diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_entries(entries, opts);
-                    if !filtered.is_empty() && !opts.no_commit_id {
-                        writeln!(out, "{oid}")?;
+                    has_diff = !filtered.is_empty();
+                    if !opts.quiet {
+                        if has_diff && !opts.no_commit_id {
+                            writeln!(out, "{oid}")?;
+                        }
+                        print_diff(out, &repo.odb, &filtered, opts, None)?;
                     }
-                    print_diff(out, &repo.odb, &filtered, opts, None)?;
                 }
-                // Without --root, root commits produce no output.
             } else {
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries = diff_with_opts(
@@ -333,16 +361,19 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     opts,
                 )?;
                 let filtered = filter_entries(entries, opts);
-                if !filtered.is_empty() && !opts.no_commit_id {
-                    writeln!(out, "{oid}")?;
+                has_diff = !filtered.is_empty();
+                if !opts.quiet {
+                    if has_diff && !opts.no_commit_id {
+                        writeln!(out, "{oid}")?;
+                    }
+                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
                 }
-                print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
             }
         }
         _ => bail!("'{spec}' does not name a commit"),
     }
 
-    Ok(())
+    Ok(has_diff)
 }
 
 // ── --stdin mode ─────────────────────────────────────────────────────
