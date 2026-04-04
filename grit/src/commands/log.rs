@@ -144,6 +144,10 @@ pub struct Args {
     #[arg(long = "find-object")]
     pub find_object: Option<String>,
 
+    /// Abbreviation length for object IDs.
+    #[arg(long = "abbrev")]
+    pub abbrev: Option<usize>,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
@@ -810,7 +814,8 @@ fn format_commit(
             } else {
                 &fmt[8..]
             };
-            let formatted = apply_format_string(template, oid, info, decorations, date_format);
+            let abbrev_len = args.abbrev.unwrap_or(7);
+            let formatted = apply_format_string(template, oid, info, decorations, date_format, abbrev_len);
             if is_tformat {
                 writeln!(out, "{formatted}")?;
             } else {
@@ -865,7 +870,8 @@ fn format_commit(
         }
         Some(other) => {
             // Try as a format string directly
-            let formatted = apply_format_string(other, oid, info, decorations, date_format);
+            let abbrev_len = args.abbrev.unwrap_or(7);
+            let formatted = apply_format_string(other, oid, info, decorations, date_format, abbrev_len);
             writeln!(out, "{formatted}")?;
         }
     }
@@ -880,6 +886,7 @@ fn apply_format_string(
     info: &CommitInfo,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     date_format: Option<&str>,
+    abbrev_len: usize,
 ) -> String {
     let hex = oid.to_hex();
     let mut result = String::with_capacity(template.len());
@@ -894,7 +901,7 @@ fn apply_format_string(
                 }
                 Some('h') => {
                     chars.next();
-                    result.push_str(&hex[..7.min(hex.len())]);
+                    result.push_str(&hex[..abbrev_len.min(hex.len())]);
                 }
                 Some('T') => {
                     chars.next();
@@ -902,7 +909,7 @@ fn apply_format_string(
                 }
                 Some('t') => {
                     chars.next();
-                    result.push_str(&info.tree.to_hex()[..7]);
+                    result.push_str(&info.tree.to_hex()[..abbrev_len.min(40)]);
                 }
                 Some('P') => {
                     chars.next();
@@ -914,7 +921,7 @@ fn apply_format_string(
                     let parents: Vec<String> = info
                         .parents
                         .iter()
-                        .map(|p| p.to_hex()[..7].to_owned())
+                        .map(|p| p.to_hex()[..abbrev_len.min(40)].to_owned())
                         .collect();
                     result.push_str(&parents.join(" "));
                 }
