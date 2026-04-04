@@ -5,11 +5,5 @@ test_description='reftable HTTPD tests'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit does not have httpd test infrastructure.
-# All httpd-dependent tests are skipped.
-
-test_expect_failure 'serving ls-remote via HTTP with reftable' '
-	false
-'
-
+skip_all='skipping HTTPD tests; httpd infrastructure not available in grit'
 test_done
