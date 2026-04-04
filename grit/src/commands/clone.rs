@@ -128,9 +128,23 @@ pub fn run(args: Args) -> Result<()> {
     };
     let source_path = PathBuf::from(&repo_path_str);
 
-    // Open the source repository
-    let source = open_source_repo(&source_path)
-        .with_context(|| format!("'{}' does not appear to be a git repository", args.repository))?;
+    // Open the source repository, trying .git suffix if direct path fails
+    let (source, source_path) = match open_source_repo(&source_path) {
+        Ok(s) => (s, source_path),
+        Err(_) => {
+            // Try appending .git suffix
+            let with_git = PathBuf::from(format!("{}.git", source_path.display()));
+            match open_source_repo(&with_git) {
+                Ok(s) => (s, with_git),
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "'{}' does not appear to be a git repository",
+                        args.repository
+                    ));
+                }
+            }
+        }
+    };
 
     // Determine target directory
     let target_name = args.directory.unwrap_or_else(|| {

@@ -42,14 +42,14 @@ test_expect_success 'find .git dir in worktree' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'automagically add .git suffix' '
+test_expect_success 'automagically add .git suffix' '
 	reset_repos &&
 	make_bare foo.git &&
 	git clone foo clone &&
 	test -d clone/.git
 '
 
-test_expect_failure 'automagically add .git suffix to worktree' '
+test_expect_success 'automagically add .git suffix to worktree' '
 	reset_repos &&
 	make_tree foo.git &&
 	git clone foo clone &&
@@ -66,7 +66,7 @@ test_expect_success 'prefer worktree foo over bare foo.git' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'we are not fooled by non-git foo directory' '
+test_expect_success 'we are not fooled by non-git foo directory' '
 	reset_repos &&
 	make_bare foo.git &&
 	mkdir foo &&
