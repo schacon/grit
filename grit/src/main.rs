@@ -569,6 +569,24 @@ fn print_list_cmds(categories: &str) {
                 // nohelpers = filter out helper programs
                 // For now, these are no-ops
             }
+            "parseopt" => {
+                // Commands that support --git-completion-helper
+                let parseopt_cmds = [
+                    "add", "am", "apply", "bisect", "blame", "branch",
+                    "cat-file", "check-ignore", "checkout", "cherry-pick",
+                    "clean", "clone", "commit", "config", "describe",
+                    "diff", "fetch", "for-each-ref", "format-patch",
+                    "fsck", "gc", "grep", "init", "log", "ls-files",
+                    "ls-remote", "ls-tree", "merge", "merge-base", "mv",
+                    "notes", "pull", "push", "rebase", "reflog", "remote",
+                    "reset", "restore", "rev-list", "rev-parse", "revert",
+                    "rm", "send-email", "show", "show-ref",
+                    "sparse-checkout", "stash", "status", "submodule",
+                    "switch", "symbolic-ref", "tag", "update-index",
+                    "update-ref", "version", "worktree",
+                ];
+                result.extend_from_slice(&parseopt_cmds);
+            }
             "list-guide" => {
                 let guides = [
                     "core-tutorial", "credentials", "cvs-migration",

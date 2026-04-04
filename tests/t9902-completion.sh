@@ -805,7 +805,7 @@ test_expect_success '__git_refs - configured remote - with slash' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - configured remote - full refs' '
+test_expect_success '__git_refs - configured remote - full refs' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -835,7 +835,7 @@ test_expect_success '__git_refs - configured remote - repo given on the command 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - configured remote - full refs - repo given on the command line' '
+test_expect_success '__git_refs - configured remote - full refs - repo given on the command line' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -867,7 +867,7 @@ test_expect_success '__git_refs - configured remote - remote name matches a dire
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - URL remote' '
+test_expect_success '__git_refs - URL remote' '
 	cat >expected <<-EOF &&
 	HEAD
 	branch-in-other
@@ -881,7 +881,7 @@ test_expect_failure '__git_refs - URL remote' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - URL remote - full refs' '
+test_expect_success '__git_refs - URL remote - full refs' '
 	cat >expected <<-EOF &&
 	HEAD
 	refs/heads/branch-in-other
@@ -1125,7 +1125,7 @@ test_expect_success '__git_refs - only matching refs - configured remote' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_refs - only matching refs - remote - full refs' '
+test_expect_success '__git_refs - only matching refs - remote - full refs' '
 	cat >expected <<-EOF &&
 	refs/heads/main-in-other
 	refs/heads/matching/branch-in-other
@@ -1364,7 +1364,7 @@ test_expect_success '__git_complete_fetch_refspecs - prefix' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_fetch_refspecs - fully qualified' '
+test_expect_success '__git_complete_fetch_refspecs - fully qualified' '
 	sed -e "s/Z$//" >expected <<-EOF &&
 	refs/heads/branch-in-other:refs/heads/branch-in-other Z
 	refs/heads/main-in-other:refs/heads/main-in-other Z
@@ -1378,7 +1378,7 @@ test_expect_failure '__git_complete_fetch_refspecs - fully qualified' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_fetch_refspecs - fully qualified & prefix' '
+test_expect_success '__git_complete_fetch_refspecs - fully qualified & prefix' '
 	sed -e "s/Z$//" >expected <<-EOF &&
 	+refs/heads/branch-in-other:refs/heads/branch-in-other Z
 	+refs/heads/main-in-other:refs/heads/main-in-other Z
