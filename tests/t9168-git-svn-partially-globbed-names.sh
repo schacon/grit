@@ -1,15 +1,61 @@
 #!/bin/sh
-# Ported from git/t/t9168-git-svn-partially-globbed-names.sh
-# git svn globbing refspecs with prefixed globs
+#
+# Upstream: t9168-git-svn-partially-globbed-names.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn globbing refspecs with prefixed globs'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'prepare test refspec prefixed globbing' '
+	false
+'
+
+test_expect_failure 'test refspec prefixed globbing' '
+	false
+'
+
+test_expect_failure 'prepare test left-hand-side only prefixed globbing' '
+	false
+'
+
+test_expect_failure 'test left-hand-side only prefixed globbing' '
+	false
+'
+
+test_expect_failure 'prepare test prefixed globs match just prefix' '
+	false
+'
+
+test_expect_failure 'test prefixed globs match just prefix' '
+	false
+'
+
+test_expect_failure 'prepare test disallow prefixed multi-globs' '
+	false
+'
+
+test_expect_failure 'test disallow prefixed multi-globs' '
+	false
+'
+
+test_expect_failure 'prepare test globbing in the middle of the word' '
+	false
+'
+
+test_expect_failure 'test globbing in the middle of the word' '
+	false
+'
+
+test_expect_failure 'prepare test disallow multiple asterisks in one word' '
+	false
+'
+
+test_expect_failure 'test disallow multiple asterisks in one word' '
 	false
 '
 

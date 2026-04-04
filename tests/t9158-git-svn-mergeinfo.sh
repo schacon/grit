@@ -1,15 +1,37 @@
 #!/bin/sh
-# Ported from git/t/t9158-git-svn-mergeinfo.sh
-# git svn mergeinfo propagation
+#
+# Upstream: t9158-git-svn-mergeinfo.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn mergeinfo propagation'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'initialize source svn repo' '
+	false
+'
+
+test_expect_failure 'clone svn repo' '
+	false
+'
+
+test_expect_failure 'change svn:mergeinfo' '
+	false
+'
+
+test_expect_failure 'verify svn:mergeinfo' '
+	false
+'
+
+test_expect_failure 'change svn:mergeinfo multiline' '
+	false
+'
+
+test_expect_failure 'verify svn:mergeinfo multiline' '
 	false
 '
 
