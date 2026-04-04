@@ -302,6 +302,14 @@ pub struct Args {
     #[arg(long = "no-index")]
     pub no_index: bool,
 
+    /// Disable external diff drivers (accepted for compatibility, no-op).
+    #[arg(long = "no-ext-diff")]
+    pub no_ext_diff: bool,
+
+    /// Disable textconv filters (accepted for compatibility, no-op).
+    #[arg(long = "no-textconv")]
+    pub no_textconv: bool,
+
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -392,6 +400,8 @@ pub fn run(mut args: Args) -> Result<()> {
                         args.inter_hunk_context = val.parse().ok();
                     }
                 }
+                "--no-ext-diff" => { args.no_ext_diff = true; }
+                "--no-textconv" => { args.no_textconv = true; }
                 s if s.starts_with("--ignore-submodules") => {
                     args.ignore_submodules = Some("all".to_owned());
                 }

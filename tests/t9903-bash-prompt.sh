@@ -310,7 +310,7 @@ test_expect_failure 'prompt - dirty status indicator - orphan branch - clean' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - orphan branch - dirty index' '
+test_expect_success 'prompt - dirty status indicator - orphan branch - dirty index' '
 	printf " (orphan +)" >expected &&
 	test_when_finished "git checkout main" &&
 	git checkout --orphan orphan &&
@@ -369,7 +369,7 @@ test_expect_success 'prompt - dirty status indicator - shell variable set with c
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - shell variable set with config enabled' '
+test_expect_success 'prompt - dirty status indicator - shell variable set with config enabled' '
 	printf " (main *)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -584,7 +584,7 @@ test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirt
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirty index' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirty index' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_green}+${c_clear}):AFTER\\nmain" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -613,7 +613,7 @@ test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirt
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - before root commit' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - before root commit' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_green}#${c_clear}):AFTER\\nmain" >expected &&
 	(
 		GIT_PS1_SHOWDIRTYSTATE=y &&
