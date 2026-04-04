@@ -905,6 +905,13 @@ build_option () {
 	esac
 }
 
+# Extract remote HTTPS URLs from GIT_TRACE2_EVENT output
+test_remote_https_urls() {
+	grep -e '"event":"child_start".*"argv":\["git-remote-https",".*"\]' |
+		sed -e 's/{"event":"child_start".*"argv":\["git-remote-https","//g' \
+		    -e 's/"\]}//g'
+}
+
 test_done () {
 	printf '\n'
 	echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"

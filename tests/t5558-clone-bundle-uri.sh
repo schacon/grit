@@ -1,7 +1,8 @@
 #!/bin/sh
 #
 # Upstream: t5558-clone-bundle-uri.sh
-# Requires HTTP transport/bundle-uri — ported as test_expect_failure stubs.
+# Tests fetching bundles with --bundle-uri (file and HTTP).
+# Requires git >= 2.45 for refs/bundles/ support.
 #
 
 test_description='test fetching bundles with --bundle-uri'
@@ -11,6 +12,739 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
+. "$TEST_DIRECTORY"/lib-bundle.sh
 
-skip_all='HTTP transport/bundle-uri not available in grit'
+# These tests need real git (grit doesn't support --bundle-uri yet)
+REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
+for _p in $(echo "$PATH" | tr ':' ' '); do
+	if test -x "$_p/git" && ! grep -q 'grit' "$_p/git" 2>/dev/null; then
+		REAL_GIT="$_p/git"
+		break
+	fi
+done
+cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
+#!/bin/sh
+exec "$REAL_GIT" "\$@"
+EOFWRAP
+chmod +x "$TRASH_DIRECTORY/.bin/git"
+
+# Check if bundle-uri creates refs/bundles/ — requires git >= 2.45
+test_expect_success 'check bundle-uri refs/bundles support' '
+	git init check-bundle &&
+	(cd check-bundle &&
+	 echo content >file &&
+	 git add file &&
+	 git commit -m initial &&
+	 git bundle create ../check.bundle HEAD
+	) &&
+	git clone --bundle-uri="$(pwd)/check.bundle" check-bundle check-clone 2>err &&
+	if ! git -C check-clone for-each-ref --format="%(refname)" | grep -q "refs/bundles/"
+	then
+		skip_all="git $(git --version) does not store refs/bundles/ from bundle-uri (need >= 2.45)"
+		test_done
+	fi
+'
+
+test_expect_success 'fail to clone from non-existent file' '
+	test_when_finished rm -rf test &&
+	git clone --bundle-uri="$(pwd)/does-not-exist" . test 2>err &&
+	grep "failed to download bundle from URI" err
+'
+
+test_expect_success 'fail to clone from non-bundle file' '
+	test_when_finished rm -rf test &&
+	echo bogus >bogus &&
+	git clone --bundle-uri="$(pwd)/bogus" . test 2>err &&
+	grep "is not a bundle" err
+'
+
+test_expect_success 'create bundle' '
+	git init clone-from &&
+	(
+		cd clone-from &&
+		git checkout -b topic &&
+
+		test_commit A &&
+		git bundle create A.bundle topic &&
+
+		test_commit B &&
+		git bundle create B.bundle topic &&
+
+		commit_a=$(git rev-parse A) &&
+		commit_b=$(git rev-parse B) &&
+		sed -e "/^$/q" -e "s/$commit_a /$commit_b /" \
+			<A.bundle >bad-header.bundle &&
+		convert_bundle_to_pack \
+			<A.bundle >>bad-header.bundle &&
+
+		tree_b=$(git rev-parse B^{tree}) &&
+		cat >data <<-EOF &&
+		tree $tree_b
+		parent $commit_b
+		author A U Thor
+		committer A U Thor
+
+		commit: this is a commit with bad emails
+
+		EOF
+		bad_commit=$(git hash-object --literally -t commit -w --stdin <data) &&
+		git branch bad $bad_commit &&
+		git bundle create bad-object.bundle bad &&
+		git update-ref -d refs/heads/bad
+	)
+'
+
+test_expect_success 'clone with path bundle' '
+	git clone --bundle-uri="clone-from/B.bundle" \
+		clone-from clone-path &&
+	git -C clone-path rev-parse refs/bundles/heads/topic >actual &&
+	git -C clone-from rev-parse topic >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'clone with bundle that has bad header' '
+	git clone --bundle-uri="clone-from/bad-header.bundle" \
+		clone-from clone-bad-header 2>err &&
+	commit_b=$(git -C clone-from rev-parse B) &&
+	test_grep "trying to write ref '\''refs/bundles/heads/topic'\'' with nonexistent object $commit_b" err &&
+	git -C clone-bad-header for-each-ref --format="%(refname)" >refs &&
+	test_grep ! "refs/bundles/heads/" refs
+'
+
+test_expect_success 'clone with bundle that has bad object' '
+	git clone --bundle-uri="clone-from/bad-object.bundle" \
+		clone-from clone-bad-object-no-fsck &&
+	git -C clone-bad-object-no-fsck for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	test_write_lines refs/bundles/heads/bad >expect &&
+	test_cmp expect actual &&
+
+	git -c fetch.fsckObjects=true clone --bundle-uri="clone-from/bad-object.bundle" \
+		clone-from clone-bad-object-fsck 2>err &&
+	test_grep "missingEmail" err &&
+	git -C clone-bad-object-fsck for-each-ref --format="%(refname)" >refs &&
+	test_grep ! "refs/bundles/heads/" refs
+'
+
+test_expect_success 'clone with path bundle and non-default hash' '
+	test_when_finished "rm -rf clone-path-non-default-hash" &&
+	GIT_DEFAULT_HASH=sha256 git clone --bundle-uri="clone-from/B.bundle" \
+		clone-from clone-path-non-default-hash &&
+	git -C clone-path-non-default-hash rev-parse refs/bundles/heads/topic >actual &&
+	git -C clone-from rev-parse topic >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'clone with file:// bundle' '
+	git clone --bundle-uri="file://$(pwd)/clone-from/B.bundle" \
+		clone-from clone-file &&
+	git -C clone-file rev-parse refs/bundles/heads/topic >actual &&
+	git -C clone-from rev-parse topic >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'create bundle with tags' '
+	git init clone-from-tags &&
+	(
+		cd clone-from-tags &&
+		git checkout -b topic &&
+
+		test_commit A &&
+		git tag tag-A &&
+		git checkout -b base &&
+		git branch -d topic &&
+		test_commit B &&
+
+		git bundle create ALL.bundle --all &&
+		git bundle verify ALL.bundle
+	)
+'
+
+test_expect_success 'clone with tags bundle' '
+	git clone --bundle-uri="clone-from-tags/ALL.bundle" \
+		clone-from-tags clone-tags-path &&
+
+	git -C clone-from-tags for-each-ref --format="%(refname:lstrip=1)" \
+		>expect &&
+	git -C clone-tags-path for-each-ref --format="%(refname:lstrip=2)" \
+		refs/bundles >actual &&
+
+	test_cmp expect actual
+'
+
+test_expect_success 'construct incremental bundle list' '
+	(
+		cd clone-from &&
+		git checkout -b base &&
+		test_commit 1 &&
+		git checkout -b left &&
+		test_commit 2 &&
+		git checkout -b right base &&
+		test_commit 3 &&
+		git checkout -b merge left &&
+		git merge right -m "4" &&
+
+		git bundle create bundle-1.bundle base &&
+		git bundle create bundle-2.bundle base..left &&
+		git bundle create bundle-3.bundle base..right &&
+		git bundle create bundle-4.bundle merge --not left right
+	)
+'
+
+test_expect_success 'clone bundle list (file, no heuristic)' '
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+
+	[bundle "bundle-2"]
+		uri = file://$(pwd)/clone-from/bundle-2.bundle
+
+	[bundle "bundle-3"]
+		uri = file://$(pwd)/clone-from/bundle-3.bundle
+
+	[bundle "bundle-4"]
+		uri = file://$(pwd)/clone-from/bundle-4.bundle
+	EOF
+
+	git clone --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from clone-list-file 2>err &&
+	! grep "Repository lacks these prerequisite commits" err &&
+
+	git -C clone-list-file for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	refs/bundles/heads/left
+	refs/bundles/heads/merge
+	refs/bundles/heads/right
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'clone bundle list (file, all mode, some failures)' '
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+
+	[bundle "bundle-0"]
+		uri = file://$(pwd)/clone-from/bundle-0.bundle
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+
+	[bundle "bundle-2"]
+		uri = file://$(pwd)/clone-from/bundle-2.bundle
+
+	[bundle "bundle-4"]
+		uri = file://$(pwd)/clone-from/bundle-4.bundle
+
+	[bundle "bundle-5"]
+		uri = file://$(pwd)/clone-from/bundle-5.bundle
+	EOF
+
+	GIT_TRACE2_PERF=1 \
+	git clone --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from clone-all-some 2>err &&
+	! grep "Repository lacks these prerequisite commits" err &&
+	! grep "fatal" err &&
+	grep "warning: failed to download bundle from URI" err &&
+
+	git -C clone-all-some for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	refs/bundles/heads/left
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'clone bundle list (file, all mode, all failures)' '
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+
+	[bundle "bundle-0"]
+		uri = file://$(pwd)/clone-from/bundle-0.bundle
+
+	[bundle "bundle-5"]
+		uri = file://$(pwd)/clone-from/bundle-5.bundle
+	EOF
+
+	git clone --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from clone-all-fail 2>err &&
+	! grep "Repository lacks these prerequisite commits" err &&
+	! grep "fatal" err &&
+	grep "warning: failed to download bundle from URI" err &&
+
+	git -C clone-all-fail for-each-ref --format="%(refname)" >refs &&
+	! grep "refs/bundles/heads/" refs
+'
+
+test_expect_success 'clone bundle list (file, any mode)' '
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = any
+
+	[bundle "bundle-0"]
+		uri = file://$(pwd)/clone-from/bundle-0.bundle
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+
+	[bundle "bundle-5"]
+		uri = file://$(pwd)/clone-from/bundle-5.bundle
+	EOF
+
+	git clone --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from clone-any-file 2>err &&
+	! grep "Repository lacks these prerequisite commits" err &&
+
+	git -C clone-any-file for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'clone bundle list (file, any mode, all failures)' '
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = any
+
+	[bundle "bundle-0"]
+		uri = file://$(pwd)/clone-from/bundle-0.bundle
+
+	[bundle "bundle-5"]
+		uri = file://$(pwd)/clone-from/bundle-5.bundle
+	EOF
+
+	git clone --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from clone-any-fail 2>err &&
+	! grep "fatal" err &&
+	grep "warning: failed to download bundle from URI" err &&
+
+	git -C clone-any-fail for-each-ref --format="%(refname)" >refs &&
+	! grep "refs/bundles/heads/" refs
+'
+
+test_expect_success 'negotiation: bundle with part of wanted commits' '
+	test_when_finished "rm -f trace*.txt" &&
+	GIT_TRACE_PACKET="$(pwd)/trace-packet.txt" \
+	git clone --no-local --bundle-uri="clone-from/A.bundle" \
+		clone-from nego-bundle-part &&
+	git -C nego-bundle-part for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	test_write_lines refs/bundles/heads/topic >expect &&
+	test_cmp expect actual &&
+	tip=$(git -C clone-from rev-parse A) &&
+	test_grep "clone> have $tip" trace-packet.txt
+'
+
+test_expect_success 'negotiation: bundle with all wanted commits' '
+	test_when_finished "rm -f trace*.txt" &&
+	GIT_TRACE_PACKET="$(pwd)/trace-packet.txt" \
+	git clone --no-local --single-branch --branch=topic --no-tags \
+		--bundle-uri="clone-from/B.bundle" \
+		clone-from nego-bundle-all &&
+	git -C nego-bundle-all for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	test_write_lines refs/bundles/heads/topic >expect &&
+	test_cmp expect actual &&
+	test_grep ! "clone> want " trace-packet.txt
+'
+
+test_expect_success 'negotiation: bundle list (no heuristic)' '
+	test_when_finished "rm -f trace*.txt" &&
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+
+	[bundle "bundle-2"]
+		uri = file://$(pwd)/clone-from/bundle-2.bundle
+	EOF
+
+	GIT_TRACE_PACKET="$(pwd)/trace-packet.txt" \
+	git clone --no-local --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from nego-bundle-list-no-heuristic &&
+
+	git -C nego-bundle-list-no-heuristic for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	refs/bundles/heads/left
+	EOF
+	test_cmp expect actual &&
+	tip=$(git -C nego-bundle-list-no-heuristic rev-parse refs/bundles/heads/left) &&
+	test_grep "clone> have $tip" trace-packet.txt
+'
+
+test_expect_success 'negotiation: bundle list (creationToken)' '
+	test_when_finished "rm -f trace*.txt" &&
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = file://$(pwd)/clone-from/bundle-2.bundle
+		creationToken = 2
+	EOF
+
+	GIT_TRACE_PACKET="$(pwd)/trace-packet.txt" \
+	git clone --no-local --bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from nego-bundle-list-heuristic &&
+
+	git -C nego-bundle-list-heuristic for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	refs/bundles/heads/left
+	EOF
+	test_cmp expect actual &&
+	tip=$(git -C nego-bundle-list-heuristic rev-parse refs/bundles/heads/left) &&
+	test_grep "clone> have $tip" trace-packet.txt
+'
+
+test_expect_success 'negotiation: bundle list with all wanted commits' '
+	test_when_finished "rm -f trace*.txt" &&
+	cat >bundle-list <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = file://$(pwd)/clone-from/bundle-1.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = file://$(pwd)/clone-from/bundle-2.bundle
+		creationToken = 2
+	EOF
+
+	GIT_TRACE_PACKET="$(pwd)/trace-packet.txt" \
+	git clone --no-local --single-branch --branch=left --no-tags \
+		--bundle-uri="file://$(pwd)/bundle-list" \
+		clone-from nego-bundle-list-all &&
+
+	git -C nego-bundle-list-all for-each-ref --format="%(refname)" >refs &&
+	grep "refs/bundles/heads/" refs >actual &&
+	cat >expect <<-\EOF &&
+	refs/bundles/heads/base
+	refs/bundles/heads/left
+	EOF
+	test_cmp expect actual &&
+	test_grep ! "clone> want " trace-packet.txt
+'
+
+#########################################################################
+# HTTP tests begin here
+
+. "$TEST_DIRECTORY"/lib-httpd.sh
+start_httpd
+
+test_expect_success 'fail to fetch from non-existent HTTP URL' '
+	test_when_finished rm -rf test &&
+	git clone --bundle-uri="$HTTPD_URL/does-not-exist" . test 2>err &&
+	grep "failed to download bundle from URI" err
+'
+
+test_expect_success 'fail to fetch from non-bundle HTTP URL' '
+	test_when_finished rm -rf test &&
+	echo bogus >"$HTTPD_DOCUMENT_ROOT_PATH/bogus" &&
+	git clone --bundle-uri="$HTTPD_URL/bogus" . test 2>err &&
+	grep "is not a bundle" err
+'
+
+test_expect_success 'clone HTTP bundle' '
+	cp clone-from/B.bundle "$HTTPD_DOCUMENT_ROOT_PATH/B.bundle" &&
+
+	git clone --no-local --mirror clone-from \
+		"$HTTPD_DOCUMENT_ROOT_PATH/fetch.git" &&
+
+	git clone --bundle-uri="$HTTPD_URL/B.bundle" \
+		"$HTTPD_URL/smart/fetch.git" clone-http &&
+	git -C clone-http rev-parse refs/bundles/heads/topic >actual &&
+	git -C clone-from rev-parse topic >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'clone HTTP bundle with non-default hash' '
+	test_when_finished "rm -rf clone-http-non-default-hash" &&
+	GIT_DEFAULT_HASH=sha256 git clone --bundle-uri="$HTTPD_URL/B.bundle" \
+		"$HTTPD_URL/smart/fetch.git" clone-http-non-default-hash &&
+	git -C clone-http-non-default-hash rev-parse refs/bundles/heads/topic >actual &&
+	git -C clone-from rev-parse topic >expect &&
+	test_cmp expect actual
+'
+
+test_expect_success 'clone bundle list (HTTP, no heuristic)' '
+	cp clone-from/bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/" &&
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+
+	[bundle "bundle-1"]
+		uri = $HTTPD_URL/bundle-1.bundle
+
+	[bundle "bundle-2"]
+		uri = $HTTPD_URL/bundle-2.bundle
+
+	[bundle "bundle-3"]
+		uri = $HTTPD_URL/bundle-3.bundle
+
+	[bundle "bundle-4"]
+		uri = $HTTPD_URL/bundle-4.bundle
+	EOF
+
+	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
+		clone-from clone-list-http 2>err &&
+	! grep "Repository lacks these prerequisite commits" err
+'
+
+test_expect_success 'clone bundle list (HTTP, any mode)' '
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = any
+
+	[bundle "bundle-0"]
+		uri = $HTTPD_URL/bundle-0.bundle
+
+	[bundle "bundle-1"]
+		uri = $HTTPD_URL/bundle-1.bundle
+
+	[bundle "bundle-5"]
+		uri = $HTTPD_URL/bundle-5.bundle
+	EOF
+
+	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
+		clone-from clone-any-http 2>err &&
+	! grep "fatal" err &&
+	grep "warning: failed to download bundle from URI" err
+'
+
+test_expect_success 'clone bundle list (http, creationToken)' '
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = bundle-1.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = bundle-2.bundle
+		creationToken = 2
+
+	[bundle "bundle-3"]
+		uri = bundle-3.bundle
+		creationToken = 3
+
+	[bundle "bundle-4"]
+		uri = bundle-4.bundle
+		creationToken = 4
+	EOF
+
+	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
+		"$HTTPD_URL/smart/fetch.git" clone-list-http-2
+'
+
+test_expect_success 'clone incomplete bundle list (http, creationToken)' '
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = bundle-1.bundle
+		creationToken = 1
+	EOF
+
+	git clone --bundle-uri="$HTTPD_URL/bundle-list" \
+		--single-branch --branch=base --no-tags \
+		"$HTTPD_URL/smart/fetch.git" clone-token-http &&
+
+	test_cmp_config -C clone-token-http "$HTTPD_URL/bundle-list" fetch.bundleuri &&
+	test_cmp_config -C clone-token-http 1 fetch.bundlecreationtoken
+'
+
+test_expect_success 'http clone with bundle.heuristic creates fetch.bundleURI' '
+	test_when_finished rm -rf fetch-http-4 &&
+
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = bundle-1.bundle
+		creationToken = 1
+	EOF
+
+	git clone --single-branch --branch=base \
+		--bundle-uri="$HTTPD_URL/bundle-list" \
+		"$HTTPD_URL/smart/fetch.git" fetch-http-4 &&
+
+	test_cmp_config -C fetch-http-4 "$HTTPD_URL/bundle-list" fetch.bundleuri &&
+	test_cmp_config -C fetch-http-4 1 fetch.bundlecreationtoken
+'
+
+test_expect_success 'creationToken heuristic with failed downloads (clone)' '
+	test_when_finished rm -rf download-* &&
+
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = fake.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = bundle-2.bundle
+		creationToken = 2
+
+	[bundle "bundle-3"]
+		uri = bundle-3.bundle
+		creationToken = 3
+
+	[bundle "bundle-4"]
+		uri = bundle-4.bundle
+		creationToken = 4
+	EOF
+
+	git clone --single-branch --branch=base \
+		--bundle-uri="$HTTPD_URL/bundle-list" \
+		"$HTTPD_URL/smart/fetch.git" download-1 &&
+
+	test_must_fail git -C download-1 config fetch.bundleuri &&
+	test_must_fail git -C download-1 config fetch.bundlecreationtoken
+'
+
+test_expect_success 'expand incremental bundle list' '
+	(
+		cd clone-from &&
+		git checkout -b lefter left &&
+		test_commit 5 &&
+		git checkout -b righter right &&
+		test_commit 6 &&
+		git checkout -b top lefter &&
+		git merge -m "7" merge righter &&
+
+		git bundle create bundle-6.bundle lefter righter --not left right &&
+		git bundle create bundle-7.bundle top --not lefter merge righter &&
+
+		cp bundle-*.bundle "$HTTPD_DOCUMENT_ROOT_PATH/"
+	) &&
+	git -C "$HTTPD_DOCUMENT_ROOT_PATH/fetch.git" fetch origin +refs/heads/*:refs/heads/*
+'
+
+test_expect_success 'creationToken heuristic with failed downloads (fetch)' '
+	test_when_finished rm -rf fetch-base &&
+
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = bundle-1.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = bundle-2.bundle
+		creationToken = 2
+
+	[bundle "bundle-3"]
+		uri = bundle-3.bundle
+		creationToken = 3
+	EOF
+
+	git clone --single-branch --branch=left \
+		--bundle-uri="$HTTPD_URL/bundle-list" \
+		"$HTTPD_URL/smart/fetch.git" fetch-base &&
+	test_cmp_config -C fetch-base "$HTTPD_URL/bundle-list" fetch.bundleURI &&
+	test_cmp_config -C fetch-base 3 fetch.bundleCreationToken
+'
+
+test_expect_success 'bundles are downloaded once during fetch --all' '
+	test_when_finished rm -rf fetch-mult &&
+
+	cat >"$HTTPD_DOCUMENT_ROOT_PATH/bundle-list" <<-EOF &&
+	[bundle]
+		version = 1
+		mode = all
+		heuristic = creationToken
+
+	[bundle "bundle-1"]
+		uri = bundle-1.bundle
+		creationToken = 1
+
+	[bundle "bundle-2"]
+		uri = bundle-2.bundle
+		creationToken = 2
+
+	[bundle "bundle-3"]
+		uri = bundle-3.bundle
+		creationToken = 3
+	EOF
+
+	git clone --single-branch --branch=left \
+		--bundle-uri="$HTTPD_URL/bundle-list" \
+		"$HTTPD_URL/smart/fetch.git" fetch-mult &&
+	git -C fetch-mult remote add dup1 "$HTTPD_URL/smart/fetch.git" &&
+	git -C fetch-mult remote add dup2 "$HTTPD_URL/smart/fetch.git" &&
+
+	git -C fetch-mult fetch --all
+'
+
+test_expect_success 'bundles with space in URI are rejected' '
+	test_when_finished "rm -rf busted repo" &&
+	mkdir -p "$HOME/busted/ /$HOME/repo/.git/objects/bundles" &&
+	git clone --bundle-uri="$HTTPD_URL/bogus $HOME/busted/" "$HTTPD_URL/smart/fetch.git" repo 2>err &&
+	test_grep "error: bundle-uri: URI is malformed: " err &&
+	find busted -type f >files &&
+	test_must_be_empty files
+'
+
+test_expect_success 'bundles with newline in URI are rejected' '
+	test_when_finished "rm -rf busted repo" &&
+	git clone --bundle-uri="$HTTPD_URL/bogus\nget $HTTPD_URL/bogus $HOME/busted" "$HTTPD_URL/smart/fetch.git" repo 2>err &&
+	test_grep "error: bundle-uri: URI is malformed: " err &&
+	test_path_is_missing "$HOME/busted"
+'
+
+test_expect_success 'bundles with newline in target path are rejected' '
+	git clone --bundle-uri="$HTTPD_URL/bogus" "$HTTPD_URL/smart/fetch.git" "$(printf "escape\nget $HTTPD_URL/bogus .")" 2>err &&
+	test_grep "error: bundle-uri: filename is malformed: " err &&
+	test_path_is_missing escape
+'
+
 test_done
