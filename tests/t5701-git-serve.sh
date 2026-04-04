@@ -30,7 +30,7 @@ test_expect_success 'setup to generate files with expected content' '
 	EOF
 '
 
-test_expect_failure 'test capability advertisement' '
+test_expect_success 'test capability advertisement' '
 	cat expect.base expect.trailer >expect &&
 	GIT_TEST_SIDEBAND_ALL=0 test-tool serve-v2 \
 		--advertise-capabilities >out &&
@@ -38,7 +38,7 @@ test_expect_failure 'test capability advertisement' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'stateless-rpc flag does not list capabilities' '
+test_expect_success 'stateless-rpc flag does not list capabilities' '
 	test-tool pkt-line pack >in <<-EOF &&
 	0000
 	EOF
@@ -48,7 +48,7 @@ test_expect_failure 'stateless-rpc flag does not list capabilities' '
 	test_must_be_empty out
 '
 
-test_expect_failure 'request invalid capability' '
+test_expect_success 'request invalid capability' '
 	test-tool pkt-line pack >in <<-EOF &&
 	foobar
 	0000
@@ -57,7 +57,7 @@ test_expect_failure 'request invalid capability' '
 	test_grep "unknown capability" err
 '
 
-test_expect_failure 'request with no command' '
+test_expect_success 'request with no command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	agent=git/test
 	object-format=sha1
@@ -67,7 +67,7 @@ test_expect_failure 'request with no command' '
 	test_grep "no command requested" err
 '
 
-test_expect_failure 'request invalid command' '
+test_expect_success 'request invalid command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=foo
 	object-format=sha1
@@ -78,7 +78,7 @@ test_expect_failure 'request invalid command' '
 	test_grep "invalid command" err
 '
 
-test_expect_failure 'request capability as command' '
+test_expect_success 'request capability as command' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=agent
 	object-format=sha1
@@ -88,7 +88,7 @@ test_expect_failure 'request capability as command' '
 	grep invalid.command.*agent err
 '
 
-test_expect_failure 'request command as capability' '
+test_expect_success 'request command as capability' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -99,7 +99,7 @@ test_expect_failure 'request command as capability' '
 	grep unknown.capability err
 '
 
-test_expect_failure 'requested command is command=value' '
+test_expect_success 'requested command is command=value' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs=whatever
 	object-format=sha1
@@ -109,7 +109,7 @@ test_expect_failure 'requested command is command=value' '
 	grep invalid.command.*ls-refs=whatever err
 '
 
-test_expect_failure 'wrong object-format' '
+test_expect_success 'wrong object-format' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=fetch
 	agent=git/test
@@ -128,7 +128,7 @@ test_expect_success 'setup some refs and tags' '
 	git tag -a -m "annotated tag" annotated-tag
 '
 
-test_expect_failure 'basics of ls-refs' '
+test_expect_success 'basics of ls-refs' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -151,7 +151,7 @@ test_expect_failure 'basics of ls-refs' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'ls-refs complains about unknown options' '
+test_expect_success 'ls-refs complains about unknown options' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -164,7 +164,7 @@ test_expect_failure 'ls-refs complains about unknown options' '
 	grep unexpected.line.*no-such-arg err
 '
 
-test_expect_failure 'basic ref-prefixes' '
+test_expect_success 'basic ref-prefixes' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -185,7 +185,7 @@ test_expect_failure 'basic ref-prefixes' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'refs/heads prefix' '
+test_expect_success 'refs/heads prefix' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -206,7 +206,7 @@ test_expect_failure 'refs/heads prefix' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'ignore very large set of prefixes' '
+test_expect_success 'ignore very large set of prefixes' '
 	{
 		echo command=ls-refs &&
 		echo object-format=sha1 &&
@@ -232,7 +232,7 @@ test_expect_failure 'ignore very large set of prefixes' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'peel parameter' '
+test_expect_success 'peel parameter' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -254,7 +254,7 @@ test_expect_failure 'peel parameter' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'symrefs parameter' '
+test_expect_success 'symrefs parameter' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -276,7 +276,7 @@ test_expect_failure 'symrefs parameter' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'sending server-options' '
+test_expect_success 'sending server-options' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=ls-refs
 	object-format=sha1
@@ -297,7 +297,7 @@ test_expect_failure 'sending server-options' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'unexpected lines are not allowed in fetch request' '
+test_expect_success 'unexpected lines are not allowed in fetch request' '
 	git init server &&
 
 	test-tool pkt-line pack >in <<-EOF &&
@@ -315,7 +315,7 @@ test_expect_failure 'unexpected lines are not allowed in fetch request' '
 	grep "unexpected line: .this-is-not-a-command." err
 '
 
-test_expect_failure 'basics of object-info' '
+test_expect_success 'basics of object-info' '
 	test_config transfer.advertiseObjectInfo true &&
 
 	test-tool pkt-line pack >in <<-EOF &&
@@ -340,7 +340,7 @@ test_expect_failure 'basics of object-info' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'test capability advertisement with uploadpack.advertiseBundleURIs' '
+test_expect_success 'test capability advertisement with uploadpack.advertiseBundleURIs' '
 	test_config uploadpack.advertiseBundleURIs true &&
 
 	cat >expect.extra <<-EOF &&
@@ -356,7 +356,7 @@ test_expect_failure 'test capability advertisement with uploadpack.advertiseBund
 	test_cmp expect actual
 '
 
-test_expect_failure 'basics of bundle-uri: dies if not enabled' '
+test_expect_success 'basics of bundle-uri: dies if not enabled' '
 	test-tool pkt-line pack >in <<-EOF &&
 	command=bundle-uri
 	0000
@@ -366,7 +366,7 @@ test_expect_failure 'basics of bundle-uri: dies if not enabled' '
 	test_must_be_empty out
 '
 
-test_expect_failure 'object-info missing from capabilities when disabled' '
+test_expect_success 'object-info missing from capabilities when disabled' '
 	test_config transfer.advertiseObjectInfo false &&
 
 	GIT_TEST_SIDEBAND_ALL=0 test-tool serve-v2 \
@@ -376,7 +376,7 @@ test_expect_failure 'object-info missing from capabilities when disabled' '
 	! grep object.info actual
 '
 
-test_expect_failure 'object-info commands rejected when disabled' '
+test_expect_success 'object-info commands rejected when disabled' '
 	test_config transfer.advertiseObjectInfo false &&
 
 	test-tool pkt-line pack >in <<-EOF &&
