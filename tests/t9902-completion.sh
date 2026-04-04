@@ -2598,7 +2598,7 @@ test_expect_success 'double dash "git" itself' '
 	EOF
 '
 
-test_expect_failure 'double dash "git checkout"' '
+test_expect_success 'double dash "git checkout"' '
 	test_completion "git checkout --" <<-\EOF
 	--quiet Z
 	--detach Z
@@ -2663,7 +2663,7 @@ test_expect_success 'general options plus command' '
 	test_completion "git --namespace name/space check" "checkout "
 '
 
-test_expect_failure 'git --help completion' '
+test_expect_success 'git --help completion' '
 	test_completion "git --help ad" "add " &&
 	test_completion "git --help core" "core-tutorial "
 '
@@ -2735,7 +2735,7 @@ test_expect_success 'show completes all refs' '
 	EOF
 '
 
-test_expect_failure '<ref>: completes paths' '
+test_expect_success '<ref>: completes paths' '
 	test_completion "git show mytag:f" <<-\EOF
 	file1Z
 	file2Z
@@ -3041,7 +3041,7 @@ test_expect_failure 'git config set - variable name include' '
 	EOF
 '
 
-test_expect_failure 'setup for git config submodule tests' '
+test_expect_success 'setup for git config submodule tests' '
 	test_create_repo sub &&
 	test_commit -C sub initial &&
 	git submodule add ./sub

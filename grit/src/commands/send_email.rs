@@ -130,6 +130,10 @@ pub struct Args {
     #[arg(long = "cover-letter")]
     pub cover_letter: bool,
 
+    /// How to fill the cover letter body (message, subject, auto, none).
+    #[arg(long = "cover-from-description")]
+    pub cover_from_description: Option<String>,
+
     /// Annotate patches.
     #[arg(long)]
     pub annotate: bool,

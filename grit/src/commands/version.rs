@@ -7,7 +7,11 @@ use std::io::{self, Write};
 /// Arguments for `grit version`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Display version information")]
-pub struct Args {}
+pub struct Args {
+    /// Show build options.
+    #[arg(long = "build-options")]
+    pub build_options: bool,
+}
 
 /// Run the `version` command.
 pub fn run(_args: Args) -> Result<()> {
