@@ -531,8 +531,8 @@ t0023-crlf-am::setup	t0023-crlf-am	setup	add	pass
 t0023-crlf-am::am	t0023-crlf-am	am	am	pass
 t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	pass
 t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	pass
-t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	pass
-t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	pass
+t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	partial
+t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	partial
 t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
 t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	pass
 t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	pass
@@ -1223,29 +1223,29 @@ t0600-reffiles-backend::rebase-when-git-logs-is-a-symlink	t0600-reffiles-backend
 t0600-reffiles-backend::git-reflog-expire-honors-core-sharedrepository	t0600-reffiles-backend	git reflog expire honors core.sharedRepository	config	pass
 t0600-reffiles-backend::symref-transaction-supports-symlinks	t0600-reffiles-backend	symref transaction supports symlinks	config	pass
 t0600-reffiles-backend::symref-transaction-supports-false-symlink-config	t0600-reffiles-backend	symref transaction supports false symlink config	symbolic-ref	pass
-t0602-reffiles-fsck::ref-name-should-be-checked	t0602-reffiles-fsck	ref name should be checked	checkout	partial
-t0602-reffiles-fsck::ref-name-check-should-be-adapted-into-fsck-messages	t0602-reffiles-fsck	ref name check should be adapted into fsck messages	checkout	partial
-t0602-reffiles-fsck::no-refs-directory-of-worktree-should-not-cause-problems	t0602-reffiles-fsck	no refs directory of worktree should not cause problems	init	partial
-t0602-reffiles-fsck::ref-name-check-should-work-for-multiple-worktrees	t0602-reffiles-fsck	ref name check should work for multiple worktrees	checkout	partial
-t0602-reffiles-fsck::regular-ref-content-should-be-checked-individual	t0602-reffiles-fsck	regular ref content should be checked (individual)	init	partial
-t0602-reffiles-fsck::regular-ref-content-should-be-checked-aggregate	t0602-reffiles-fsck	regular ref content should be checked (aggregate)	init	partial
-t0602-reffiles-fsck::textual-symref-content-should-be-checked-individual	t0602-reffiles-fsck	textual symref content should be checked (individual)	init	partial
-t0602-reffiles-fsck::textual-symref-content-should-be-checked-aggregate	t0602-reffiles-fsck	textual symref content should be checked (aggregate)	init	partial
-t0602-reffiles-fsck::the-target-of-the-textual-symref-should-be-checked	t0602-reffiles-fsck	the target of the textual symref should be checked	init	partial
-t0602-reffiles-fsck::symlink-symref-content-should-be-checked	t0602-reffiles-fsck	symlink symref content should be checked	init	partial
-t0602-reffiles-fsck::symlink-symref-content-should-be-checked-worktree	t0602-reffiles-fsck	symlink symref content should be checked (worktree)	branch	partial
-t0602-reffiles-fsck::ref-content-checks-should-work-with-worktrees	t0602-reffiles-fsck	ref content checks should work with worktrees	branch	partial
-t0602-reffiles-fsck::the-filetype-of-packed-refs-should-be-checked	t0602-reffiles-fsck	the filetype of packed-refs should be checked	branch	partial
-t0602-reffiles-fsck::empty-packed-refs-should-be-reported	t0602-reffiles-fsck	empty packed-refs should be reported	init	partial
-t0602-reffiles-fsck::packed-refs-header-should-be-checked	t0602-reffiles-fsck	packed-refs header should be checked	init	partial
-t0602-reffiles-fsck::packed-refs-missing-header-should-not-be-reported	t0602-reffiles-fsck	packed-refs missing header should not be reported	init	partial
-t0602-reffiles-fsck::packed-refs-unknown-traits-should-not-be-reported	t0602-reffiles-fsck	packed-refs unknown traits should not be reported	init	partial
-t0602-reffiles-fsck::packed-refs-content-should-be-checked	t0602-reffiles-fsck	packed-refs content should be checked	branch	partial
-t0602-reffiles-fsck::packed-ref-with-sorted-trait-should-be-checked	t0602-reffiles-fsck	packed-ref with sorted trait should be checked	branch	partial
-t0602-reffiles-fsck::packed-ref-without-sorted-trait-should-not-be-checked	t0602-reffiles-fsck	packed-ref without sorted trait should not be checked	branch	partial
-t0602-reffiles-fsck::no-references-option-should-apply-to-fsck	t0602-reffiles-fsck	--[no-]references option should apply to fsck	fsck	partial
-t0602-reffiles-fsck::complains-about-broken-root-ref	t0602-reffiles-fsck	complains about broken root ref	init	partial
-t0602-reffiles-fsck::complains-about-broken-root-ref-in-worktree	t0602-reffiles-fsck	complains about broken root ref in worktree	init	partial
+t0602-reffiles-fsck::ref-name-should-be-checked	t0602-reffiles-fsck	ref name should be checked	checkout	pass
+t0602-reffiles-fsck::ref-name-check-should-be-adapted-into-fsck-messages	t0602-reffiles-fsck	ref name check should be adapted into fsck messages	checkout	pass
+t0602-reffiles-fsck::no-refs-directory-of-worktree-should-not-cause-problems	t0602-reffiles-fsck	no refs directory of worktree should not cause problems	init	pass
+t0602-reffiles-fsck::ref-name-check-should-work-for-multiple-worktrees	t0602-reffiles-fsck	ref name check should work for multiple worktrees	checkout	pass
+t0602-reffiles-fsck::regular-ref-content-should-be-checked-individual	t0602-reffiles-fsck	regular ref content should be checked (individual)	init	pass
+t0602-reffiles-fsck::regular-ref-content-should-be-checked-aggregate	t0602-reffiles-fsck	regular ref content should be checked (aggregate)	init	pass
+t0602-reffiles-fsck::textual-symref-content-should-be-checked-individual	t0602-reffiles-fsck	textual symref content should be checked (individual)	init	pass
+t0602-reffiles-fsck::textual-symref-content-should-be-checked-aggregate	t0602-reffiles-fsck	textual symref content should be checked (aggregate)	init	pass
+t0602-reffiles-fsck::the-target-of-the-textual-symref-should-be-checked	t0602-reffiles-fsck	the target of the textual symref should be checked	init	pass
+t0602-reffiles-fsck::symlink-symref-content-should-be-checked	t0602-reffiles-fsck	symlink symref content should be checked	init	pass
+t0602-reffiles-fsck::symlink-symref-content-should-be-checked-worktree	t0602-reffiles-fsck	symlink symref content should be checked (worktree)	branch	pass
+t0602-reffiles-fsck::ref-content-checks-should-work-with-worktrees	t0602-reffiles-fsck	ref content checks should work with worktrees	branch	pass
+t0602-reffiles-fsck::the-filetype-of-packed-refs-should-be-checked	t0602-reffiles-fsck	the filetype of packed-refs should be checked	branch	pass
+t0602-reffiles-fsck::empty-packed-refs-should-be-reported	t0602-reffiles-fsck	empty packed-refs should be reported	init	pass
+t0602-reffiles-fsck::packed-refs-header-should-be-checked	t0602-reffiles-fsck	packed-refs header should be checked	init	pass
+t0602-reffiles-fsck::packed-refs-missing-header-should-not-be-reported	t0602-reffiles-fsck	packed-refs missing header should not be reported	init	pass
+t0602-reffiles-fsck::packed-refs-unknown-traits-should-not-be-reported	t0602-reffiles-fsck	packed-refs unknown traits should not be reported	init	pass
+t0602-reffiles-fsck::packed-refs-content-should-be-checked	t0602-reffiles-fsck	packed-refs content should be checked	branch	pass
+t0602-reffiles-fsck::packed-ref-with-sorted-trait-should-be-checked	t0602-reffiles-fsck	packed-ref with sorted trait should be checked	branch	pass
+t0602-reffiles-fsck::packed-ref-without-sorted-trait-should-not-be-checked	t0602-reffiles-fsck	packed-ref without sorted trait should not be checked	branch	pass
+t0602-reffiles-fsck::no-references-option-should-apply-to-fsck	t0602-reffiles-fsck	--[no-]references option should apply to fsck	fsck	pass
+t0602-reffiles-fsck::complains-about-broken-root-ref	t0602-reffiles-fsck	complains about broken root ref	init	pass
+t0602-reffiles-fsck::complains-about-broken-root-ref-in-worktree	t0602-reffiles-fsck	complains about broken root ref in worktree	init	pass
 t0610-reftable-basics::pack-refs-does-not-crash-with-h	t0610-reftable-basics	pack-refs does not crash with -h	pack-refs	pass
 t0610-reftable-basics::init-creates-basic-reftable-structures	t0610-reftable-basics	init: creates basic reftable structures	init	pass
 t0610-reftable-basics::init-sha256-object-format-via-environment-variable	t0610-reftable-basics	init: sha256 object format via environment variable	init	pass
@@ -1612,29 +1612,29 @@ t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-2	t1010-mktree	ls-tr
 t1010-mktree::allow-missing-object-with-missing	t1010-mktree	allow missing object with --missing	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-1	t1010-mktree	mktree refuses to read ls-tree -r output (1)	mktree	pass
 t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-2	t1010-mktree	mktree refuses to read ls-tree -r output (2)	mktree	pass
-t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	partial
-t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	partial
-t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	partial
-t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	partial
-t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	partial
-t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	partial
+t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-no-sparse-checkout-with-empty-git-info-sparse-checkout-and-enabled	t1011-read-tree-sparse-checkout	read-tree --no-sparse-checkout with empty .git/info/sparse-checkout and enabled	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-with-empty-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree with empty .git/info/sparse-checkout	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-trailing-slash	t1011-read-tree-sparse-checkout	match directories with trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-without-trailing-slash	t1011-read-tree-sparse-checkout	match directories without trailing slash	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns	t1011-read-tree-sparse-checkout	match directories with negated patterns	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directories-with-negated-patterns-2	t1011-read-tree-sparse-checkout	match directories with negated patterns (2)	read-tree	pass
+t1011-read-tree-sparse-checkout::match-directory-pattern	t1011-read-tree-sparse-checkout	match directory pattern	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-area-changes	t1011-read-tree-sparse-checkout	checkout area changes	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-non-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, non-sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-will-not-throw-away-dirty-changes-sparse	t1011-read-tree-sparse-checkout	read-tree will not throw away dirty changes, sparse	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-updates-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree updates worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-removes-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree removes worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-absent-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, absent case	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-adds-to-worktree-dirty-case	t1011-read-tree-sparse-checkout	read-tree adds to worktree, dirty case	read-tree	pass
+t1011-read-tree-sparse-checkout::index-removal-and-worktree-narrowing-at-the-same-time	t1011-read-tree-sparse-checkout	index removal and worktree narrowing at the same time	read-tree	pass
+t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-read-tree-sparse-checkout	read-tree --reset removes outside worktree	read-tree	pass
+t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	pass
+t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	pass
 t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
 t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
 t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
@@ -2637,22 +2637,22 @@ t1404-update-ref-errors::missing-old-value-blocks-indirect-no-deref-update	t1404
 t1404-update-ref-errors::incorrect-old-value-blocks-indirect-no-deref-update	t1404-update-ref-errors	incorrect old value blocks indirect no-deref update	update-ref	pass
 t1404-update-ref-errors::existing-old-value-blocks-indirect-no-deref-create	t1404-update-ref-errors	existing old value blocks indirect no-deref create	update-ref	pass
 t1404-update-ref-errors::incorrect-old-value-blocks-indirect-no-deref-delete	t1404-update-ref-errors	incorrect old value blocks indirect no-deref delete	update-ref	pass
-t1405-main-ref-store::setup	t1405-main-ref-store	setup		partial
-t1405-main-ref-store::create-symref-foo-refs-heads-main	t1405-main-ref-store	create_symref(FOO, refs/heads/main)	symbolic-ref	partial
-t1405-main-ref-store::delete-refs-foo-refs-tags-new-tag	t1405-main-ref-store	delete_refs(FOO, refs/tags/new-tag)	rev-parse	partial
-t1405-main-ref-store::rename-refs-main-new-main	t1405-main-ref-store	rename_refs(main, new-main)	rev-parse	partial
-t1405-main-ref-store::for-each-ref-refs-heads	t1405-main-ref-store	for_each_ref(refs/heads/)		partial
-t1405-main-ref-store::for-each-ref-is-sorted	t1405-main-ref-store	for_each_ref() is sorted		partial
-t1405-main-ref-store::resolve-ref-new-main	t1405-main-ref-store	resolve_ref(new-main)	rev-parse	partial
-t1405-main-ref-store::verify-ref-new-main	t1405-main-ref-store	verify_ref(new-main)		partial
-t1405-main-ref-store::for-each-reflog	t1405-main-ref-store	for_each_reflog()		partial
-t1405-main-ref-store::for-each-reflog-ent	t1405-main-ref-store	for_each_reflog_ent()		partial
-t1405-main-ref-store::for-each-reflog-ent-reverse	t1405-main-ref-store	for_each_reflog_ent_reverse()		partial
-t1405-main-ref-store::reflog-exists-head	t1405-main-ref-store	reflog_exists(HEAD)		partial
-t1405-main-ref-store::delete-reflog-head	t1405-main-ref-store	delete_reflog(HEAD)	reflog	partial
-t1405-main-ref-store::create-reflog-head	t1405-main-ref-store	create-reflog(HEAD)	reflog	partial
-t1405-main-ref-store::delete-ref-refs-heads-foo	t1405-main-ref-store	delete_ref(refs/heads/foo)	checkout	partial
-t1405-main-ref-store::delete-ref-refs-heads-foo-2	t1405-main-ref-store	delete_ref(refs/heads/foo)	checkout	partial
+t1405-main-ref-store::setup	t1405-main-ref-store	setup		pass
+t1405-main-ref-store::create-symref-foo-refs-heads-main	t1405-main-ref-store	create_symref(FOO, refs/heads/main)	symbolic-ref	pass
+t1405-main-ref-store::delete-refs-foo-refs-tags-new-tag	t1405-main-ref-store	delete_refs(FOO, refs/tags/new-tag)	rev-parse	pass
+t1405-main-ref-store::rename-refs-main-new-main	t1405-main-ref-store	rename_refs(main, new-main)	rev-parse	pass
+t1405-main-ref-store::for-each-ref-refs-heads	t1405-main-ref-store	for_each_ref(refs/heads/)		pass
+t1405-main-ref-store::for-each-ref-is-sorted	t1405-main-ref-store	for_each_ref() is sorted		pass
+t1405-main-ref-store::resolve-ref-new-main	t1405-main-ref-store	resolve_ref(new-main)	rev-parse	pass
+t1405-main-ref-store::verify-ref-new-main	t1405-main-ref-store	verify_ref(new-main)		pass
+t1405-main-ref-store::for-each-reflog	t1405-main-ref-store	for_each_reflog()		pass
+t1405-main-ref-store::for-each-reflog-ent	t1405-main-ref-store	for_each_reflog_ent()		pass
+t1405-main-ref-store::for-each-reflog-ent-reverse	t1405-main-ref-store	for_each_reflog_ent_reverse()		pass
+t1405-main-ref-store::reflog-exists-head	t1405-main-ref-store	reflog_exists(HEAD)		pass
+t1405-main-ref-store::delete-reflog-head	t1405-main-ref-store	delete_reflog(HEAD)	reflog	pass
+t1405-main-ref-store::create-reflog-head	t1405-main-ref-store	create-reflog(HEAD)	reflog	pass
+t1405-main-ref-store::delete-ref-refs-heads-foo	t1405-main-ref-store	delete_ref(refs/heads/foo)	checkout	pass
+t1405-main-ref-store::delete-ref-refs-heads-foo-2	t1405-main-ref-store	delete_ref(refs/heads/foo)	checkout	pass
 t1406-submodule-ref-store::setup	t1406-submodule-ref-store	setup	submodule	pass
 t1406-submodule-ref-store::pack-refs-not-allowed	t1406-submodule-ref-store	pack_refs() not allowed	submodule	pass
 t1406-submodule-ref-store::create-symref-not-allowed	t1406-submodule-ref-store	create_symref() not allowed	submodule	pass
@@ -2674,17 +2674,17 @@ t1407-worktree-ref-store::resolve-ref-per-worktree-ref	t1407-worktree-ref-store	
 t1407-worktree-ref-store::create-symref-foo-refs-heads-main	t1407-worktree-ref-store	create_symref(FOO, refs/heads/main)	worktree	pass
 t1408-packed-refs::no-error-from-stale-entry-in-packed-refs	t1408-packed-refs	no error from stale entry in packed-refs	describe	pass
 t1408-packed-refs::list-packed-refs-with-unicode-characters	t1408-packed-refs	list packed refs with unicode characters	for-each-ref	pass
-t1409-avoid-packing-refs::setup	t1409-avoid-packing-refs	setup	commit	partial
-t1409-avoid-packing-refs::do-not-create-packed-refs-file-gratuitously	t1409-avoid-packing-refs	do not create packed-refs file gratuitously	update-ref	partial
-t1409-avoid-packing-refs::check-that-marking-the-packed-refs-file-works	t1409-avoid-packing-refs	check that marking the packed-refs file works	for-each-ref	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-update-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on update of packed	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-checked-update-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on checked update of packed	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-verify-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on verify of packed	pack-refs	partial
-t1409-avoid-packing-refs::touch-packed-refs-on-delete-of-packed	t1409-avoid-packing-refs	touch packed-refs on delete of packed	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-update-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on update of loose	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-checked-update-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on checked update of loose	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-verify-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on verify of loose	pack-refs	partial
-t1409-avoid-packing-refs::leave-packed-refs-untouched-on-delete-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on delete of loose	pack-refs	partial
+t1409-avoid-packing-refs::setup	t1409-avoid-packing-refs	setup	commit	pass
+t1409-avoid-packing-refs::do-not-create-packed-refs-file-gratuitously	t1409-avoid-packing-refs	do not create packed-refs file gratuitously	update-ref	pass
+t1409-avoid-packing-refs::check-that-marking-the-packed-refs-file-works	t1409-avoid-packing-refs	check that marking the packed-refs file works	for-each-ref	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-update-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on update of packed	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-checked-update-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on checked update of packed	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-verify-of-packed	t1409-avoid-packing-refs	leave packed-refs untouched on verify of packed	pack-refs	pass
+t1409-avoid-packing-refs::touch-packed-refs-on-delete-of-packed	t1409-avoid-packing-refs	touch packed-refs on delete of packed	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-update-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on update of loose	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-checked-update-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on checked update of loose	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-verify-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on verify of loose	pack-refs	pass
+t1409-avoid-packing-refs::leave-packed-refs-untouched-on-delete-of-loose	t1409-avoid-packing-refs	leave packed-refs untouched on delete of loose	pack-refs	pass
 t1410-reflog::correct-usage-on-sub-command-h	t1410-reflog	correct usage on sub-command -h	reflog	pass
 t1410-reflog::correct-usage-on-git-reflog-show-h	t1410-reflog	correct usage on "git reflog show -h"	reflog	pass
 t1410-reflog::pass-through-to-sub-command	t1410-reflog	pass through -- to sub-command	reflog	pass
@@ -3521,9 +3521,9 @@ t2013-checkout-submodule::checkout-submodule-updates-the-index-only	t2013-checko
 t2013-checkout-submodule::checkout-submodule-honors-diff-ignoresubmodules	t2013-checkout-submodule	"checkout <submodule>" honors diff.ignoreSubmodules	checkout	pass
 t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-gitmodules	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .gitmodules	checkout	pass
 t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-git-config	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .git/config	checkout	pass
-t2014-checkout-switch::check-all-changes-are-staged	t2014-checkout-switch	check all changes are staged	checkout	pass
-t2014-checkout-switch::second-commit	t2014-checkout-switch	second commit	checkout	pass
-t2014-checkout-switch::check	t2014-checkout-switch	check	checkout	pass
+t2014-checkout-switch::check-all-changes-are-staged	t2014-checkout-switch	check all changes are staged	checkout	partial
+t2014-checkout-switch::second-commit	t2014-checkout-switch	second commit	checkout	partial
+t2014-checkout-switch::check	t2014-checkout-switch	check	checkout	partial
 t2015-checkout-unborn::setup	t2015-checkout-unborn	setup	checkout	pass
 t2015-checkout-unborn::checkout-from-unborn-preserves-untracked-files	t2015-checkout-unborn	checkout from unborn preserves untracked files	checkout	pass
 t2015-checkout-unborn::checkout-from-unborn-preserves-index-contents	t2015-checkout-unborn	checkout from unborn preserves index contents	checkout	pass
@@ -3850,36 +3850,36 @@ t2203-add-intent::double-rename-detection-in-status	t2203-add-intent	double rena
 t2203-add-intent::i-t-a-files-shown-as-new-for-diff-diff-files-not-new-for-diff-cached	t2203-add-intent	i-t-a files shown as new for "diff", "diff-files"; not-new for "diff --cached"	add	pass
 t2203-add-intent::diff-head-includes-ita-as-new-files	t2203-add-intent	"diff HEAD" includes ita as new files	add	pass
 t2203-add-intent::apply-intent-to-add	t2203-add-intent	apply --intent-to-add	add	pass
-t2204-add-ignored::no-complaints-for-unignored-i	t2204-add-ignored	no complaints for unignored $i	add	partial
-t2204-add-ignored::complaints-for-ignored-i	t2204-add-ignored	complaints for ignored $i	add	partial
-t2204-add-ignored::complaints-for-ignored-i-output	t2204-add-ignored	complaints for ignored $i output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-with-unignored-file	t2204-add-ignored	complaints for ignored $i with unignored file	add	partial
-t2204-add-ignored::complaints-for-ignored-i-with-unignored-file-output	t2204-add-ignored	complaints for ignored $i with unignored file output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-dir	t2204-add-ignored	complaints for ignored $i in dir	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-dir-output	t2204-add-ignored	complaints for ignored $i in dir output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-sub	t2204-add-ignored	complaints for ignored $i in sub	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-sub-output	t2204-add-ignored	complaints for ignored $i in sub output	add	partial
-t2205-add-worktree-config::1a-setup-config-worktree	t2205-add-worktree-config	1a: setup--config worktree	add	partial
-t2205-add-worktree-config::1b-pre-add-all	t2205-add-worktree-config	1b: pre-add all	add	partial
-t2205-add-worktree-config::1c-pre-add-dir-all	t2205-add-worktree-config	1c: pre-add dir all	add	partial
-t2205-add-worktree-config::1d-post-add-tracked	t2205-add-worktree-config	1d: post-add tracked	add	partial
-t2205-add-worktree-config::1e-post-add-untracked	t2205-add-worktree-config	1e: post-add untracked	add	partial
-t2205-add-worktree-config::2a-setup-set-git-dir	t2205-add-worktree-config	2a: setup--set git-dir	add	partial
-t2205-add-worktree-config::2b-pre-add-all	t2205-add-worktree-config	2b: pre-add all	add	partial
-t2205-add-worktree-config::2c-pre-add-dir-all	t2205-add-worktree-config	2c: pre-add dir all	add	partial
-t2205-add-worktree-config::2d-post-add-tracked	t2205-add-worktree-config	2d: post-add tracked	add	partial
-t2205-add-worktree-config::2e-post-add-untracked	t2205-add-worktree-config	2e: post-add untracked	add	partial
-t2205-add-worktree-config::3a-setup-add-repo-dir	t2205-add-worktree-config	3a: setup--add repo dir	add	partial
-t2205-add-worktree-config::3b-ignored	t2205-add-worktree-config	3b: ignored	add	partial
-t2205-add-worktree-config::3c-add-repo	t2205-add-worktree-config	3c: add repo	add	partial
-t2206-add-submodule-ignored::setup-create-origin-repos	t2206-add-submodule-ignored	setup: create origin repos	add	partial
-t2206-add-submodule-ignored::main-add-submodule-with-default-config	t2206-add-submodule-ignored	main: add submodule with default config	add	partial
-t2206-add-submodule-ignored::main-submodule-config-ignore-all	t2206-add-submodule-ignored	main: submodule config ignore=all	add	partial
-t2206-add-submodule-ignored::sub-change-to-different-sha1-and-check-status-in-main	t2206-add-submodule-ignored	sub: change to different sha1 and check status in main	add	partial
-t2206-add-submodule-ignored::main-check-normal-add-and-status	t2206-add-submodule-ignored	main: check normal add and status	add	partial
-t2206-add-submodule-ignored::main-check-force-add-and-status	t2206-add-submodule-ignored	main: check --force add . and status	add	partial
-t2206-add-submodule-ignored::main-check-add-sub-and-status	t2206-add-submodule-ignored	main: check _add sub_ and status	add	partial
-t2206-add-submodule-ignored::main-check-force-add-sub-and-sub-and-status	t2206-add-submodule-ignored	main: check force add sub and ./sub/ and status	add	partial
+t2204-add-ignored::no-complaints-for-unignored-i	t2204-add-ignored	no complaints for unignored $i	add	pass
+t2204-add-ignored::complaints-for-ignored-i	t2204-add-ignored	complaints for ignored $i	add	pass
+t2204-add-ignored::complaints-for-ignored-i-output	t2204-add-ignored	complaints for ignored $i output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-with-unignored-file	t2204-add-ignored	complaints for ignored $i with unignored file	add	pass
+t2204-add-ignored::complaints-for-ignored-i-with-unignored-file-output	t2204-add-ignored	complaints for ignored $i with unignored file output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-dir	t2204-add-ignored	complaints for ignored $i in dir	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-dir-output	t2204-add-ignored	complaints for ignored $i in dir output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-sub	t2204-add-ignored	complaints for ignored $i in sub	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-sub-output	t2204-add-ignored	complaints for ignored $i in sub output	add	pass
+t2205-add-worktree-config::1a-setup-config-worktree	t2205-add-worktree-config	1a: setup--config worktree	add	pass
+t2205-add-worktree-config::1b-pre-add-all	t2205-add-worktree-config	1b: pre-add all	add	pass
+t2205-add-worktree-config::1c-pre-add-dir-all	t2205-add-worktree-config	1c: pre-add dir all	add	pass
+t2205-add-worktree-config::1d-post-add-tracked	t2205-add-worktree-config	1d: post-add tracked	add	pass
+t2205-add-worktree-config::1e-post-add-untracked	t2205-add-worktree-config	1e: post-add untracked	add	pass
+t2205-add-worktree-config::2a-setup-set-git-dir	t2205-add-worktree-config	2a: setup--set git-dir	add	pass
+t2205-add-worktree-config::2b-pre-add-all	t2205-add-worktree-config	2b: pre-add all	add	pass
+t2205-add-worktree-config::2c-pre-add-dir-all	t2205-add-worktree-config	2c: pre-add dir all	add	pass
+t2205-add-worktree-config::2d-post-add-tracked	t2205-add-worktree-config	2d: post-add tracked	add	pass
+t2205-add-worktree-config::2e-post-add-untracked	t2205-add-worktree-config	2e: post-add untracked	add	pass
+t2205-add-worktree-config::3a-setup-add-repo-dir	t2205-add-worktree-config	3a: setup--add repo dir	add	pass
+t2205-add-worktree-config::3b-ignored	t2205-add-worktree-config	3b: ignored	add	pass
+t2205-add-worktree-config::3c-add-repo	t2205-add-worktree-config	3c: add repo	add	pass
+t2206-add-submodule-ignored::setup-create-origin-repos	t2206-add-submodule-ignored	setup: create origin repos	add	pass
+t2206-add-submodule-ignored::main-add-submodule-with-default-config	t2206-add-submodule-ignored	main: add submodule with default config	add	pass
+t2206-add-submodule-ignored::main-submodule-config-ignore-all	t2206-add-submodule-ignored	main: submodule config ignore=all	add	pass
+t2206-add-submodule-ignored::sub-change-to-different-sha1-and-check-status-in-main	t2206-add-submodule-ignored	sub: change to different sha1 and check status in main	add	pass
+t2206-add-submodule-ignored::main-check-normal-add-and-status	t2206-add-submodule-ignored	main: check normal add and status	add	pass
+t2206-add-submodule-ignored::main-check-force-add-and-status	t2206-add-submodule-ignored	main: check --force add . and status	add	pass
+t2206-add-submodule-ignored::main-check-add-sub-and-status	t2206-add-submodule-ignored	main: check _add sub_ and status	add	pass
+t2206-add-submodule-ignored::main-check-force-add-sub-and-sub-and-status	t2206-add-submodule-ignored	main: check force add sub and ./sub/ and status	add	pass
 t2400-worktree-add::setup	t2400-worktree-add	setup	worktree	pass
 t2400-worktree-add::add-an-existing-worktree	t2400-worktree-add	"add" an existing worktree	worktree	pass
 t2400-worktree-add::add-an-existing-empty-worktree	t2400-worktree-add	"add" an existing empty worktree	worktree	pass
@@ -5935,61 +5935,61 @@ t3650-replay-basics::replay-refaction-print-config-option	t3650-replay-basics	re
 t3650-replay-basics::replay-refaction-update-config-option	t3650-replay-basics	replay.refAction=update config option	replay	pass
 t3650-replay-basics::command-line-ref-action-overrides-config	t3650-replay-basics	command-line --ref-action overrides config	replay	pass
 t3650-replay-basics::invalid-replay-refaction-value	t3650-replay-basics	invalid replay.refAction value	replay	pass
-t3700-add::test-of-git-add	t3700-add	Test of git add	add	pass
-t3700-add::test-with-no-pathspecs	t3700-add	Test with no pathspecs	add	pass
-t3700-add::post-check-that-foo-is-in-the-index	t3700-add	Post-check that foo is in the index	add	pass
-t3700-add::test-that-git-add-q-works	t3700-add	Test that "git add -- -q" works	add	pass
-t3700-add::git-add-core-fsyncmethod-batch	t3700-add	git add: core.fsyncmethod=batch	add	pass
-t3700-add::git-update-index-core-fsyncmethod-batch	t3700-add	git update-index: core.fsyncmethod=batch	add	pass
-t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink	t3700-add	git add: filemode=0 should not get confused by symlink	add	pass
-t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink-2	t3700-add	git add: filemode=0 should not get confused by symlink	add	pass
-t3700-add::gitignore-test-setup	t3700-add	.gitignore test setup	add	pass
-t3700-add::gitignore-is-honored	t3700-add	.gitignore is honored	add	pass
-t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f	t3700-add	error out when attempting to add ignored ones without -f	add	pass
-t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f-2	t3700-add	error out when attempting to add ignored ones without -f	add	pass
-t3700-add::error-out-when-attempting-to-add-ignored-ones-but-add-others	t3700-add	error out when attempting to add ignored ones but add others	add	pass
-t3700-add::add-ignored-ones-with-f	t3700-add	add ignored ones with -f	add	pass
-t3700-add::add-ignored-ones-with-f-2	t3700-add	add ignored ones with -f	add	pass
-t3700-add::add-ignored-ones-with-f-3	t3700-add	add ignored ones with -f	add	pass
-t3700-add::gitignore-with-subdirectory	t3700-add	.gitignore with subdirectory	add	pass
-t3700-add::check-correct-prefix-detection	t3700-add	check correct prefix detection	add	pass
-t3700-add::git-add-with-filemode-0-symlinks-0-and-unmerged-entries	t3700-add	git add with filemode=0, symlinks=0, and unmerged entries	add	pass
-t3700-add::git-add-with-filemode-0-symlinks-0-prefers-stage-2-over-stage-1	t3700-add	git add with filemode=0, symlinks=0 prefers stage 2 over stage 1	add	pass
-t3700-add::git-add-refresh	t3700-add	git add --refresh	add	pass
-t3700-add::git-add-refresh-with-pathspec	t3700-add	git add --refresh with pathspec	add	pass
-t3700-add::git-add-refresh-correctly-reports-no-match-error	t3700-add	git add --refresh correctly reports no match error	add	pass
-t3700-add::git-add-should-fail-atomically-upon-an-unreadable-file	t3700-add	git add should fail atomically upon an unreadable file	add	pass
-t3700-add::git-add-ignore-errors	t3700-add	git add --ignore-errors	add	pass
-t3700-add::git-add-add-ignore-errors	t3700-add	git add (add.ignore-errors)	add	pass
-t3700-add::git-add-add-ignore-errors-false	t3700-add	git add (add.ignore-errors = false)	add	pass
-t3700-add::no-ignore-errors-overrides-config	t3700-add	--no-ignore-errors overrides config	add	pass
-t3700-add::git-add-to-resolve-conflicts-on-otherwise-ignored-path	t3700-add	git add to resolve conflicts on otherwise ignored path	add	pass
-t3700-add::add-non-existent-should-fail	t3700-add	"add non-existent" should fail	add	pass
-t3700-add::git-add-a-on-empty-repo-does-not-error-out	t3700-add	git add -A on empty repo does not error out	add	pass
-t3700-add::git-add-in-empty-repo	t3700-add	"git add ." in empty repo	add	pass
-t3700-add::git-add-a-embedded-repository	t3700-add	"git add" a embedded repository	add	pass
-t3700-add::error-on-a-repository-with-no-commits	t3700-add	error on a repository with no commits	add	pass
-t3700-add::git-add-dry-run-of-existing-changed-file	t3700-add	git add --dry-run of existing changed file	add	pass
-t3700-add::git-add-dry-run-of-non-existing-file	t3700-add	git add --dry-run of non-existing file	add	pass
-t3700-add::git-add-dry-run-of-an-existing-file-output	t3700-add	git add --dry-run of an existing file output	add	pass
-t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file	t3700-add	git add --dry-run --ignore-missing of non-existing file	add	pass
-t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file-output	t3700-add	git add --dry-run --ignore-missing of non-existing file output	add	pass
-t3700-add::git-add-dry-run-interactive-should-fail	t3700-add	git add --dry-run --interactive should fail	add	pass
-t3700-add::git-add-empty-string-should-fail	t3700-add	git add empty string should fail	add	pass
-t3700-add::git-add-chmod-x-stages-correctly	t3700-add	git add --chmod=[+-]x stages correctly	add	pass
-t3700-add::git-add-chmod-x-with-symlinks	t3700-add	git add --chmod=+x with symlinks	add	pass
-t3700-add::git-add-chmod-x-changes-index-with-already-added-file	t3700-add	git add --chmod=[+-]x changes index with already added file	add	pass
-t3700-add::git-add-chmod-x-does-not-change-the-working-tree	t3700-add	git add --chmod=[+-]x does not change the working tree	add	pass
-t3700-add::git-add-chmod-fails-with-non-regular-files-but-updates-the-other-paths	t3700-add	git add --chmod fails with non regular files (but updates the other paths)	add	pass
-t3700-add::git-add-chmod-honors-dry-run	t3700-add	git add --chmod honors --dry-run	add	pass
-t3700-add::git-add-chmod-dry-run-reports-error-for-non-regular-files	t3700-add	git add --chmod --dry-run reports error for non regular files	add	pass
-t3700-add::git-add-chmod-dry-run-reports-error-for-unmatched-pathspec	t3700-add	git add --chmod --dry-run reports error for unmatched pathspec	add	pass
-t3700-add::no-file-status-change-if-no-pathspec-is-given	t3700-add	no file status change if no pathspec is given	add	pass
-t3700-add::no-file-status-change-if-no-pathspec-is-given-in-subdir	t3700-add	no file status change if no pathspec is given in subdir	add	pass
-t3700-add::all-statuses-changed-in-folder-if-is-given	t3700-add	all statuses changed in folder if . is given	add	pass
-t3700-add::cannot-add-a-submodule-of-a-different-algorithm	t3700-add	cannot add a submodule of a different algorithm	add	pass
-t3700-add::path-is-case-insensitive	t3700-add	path is case-insensitive	add	pass
-t3700-add::git-add-fo-ou-bar-ignores-foobar	t3700-add	git add 'fo\\[ou\\]bar' ignores foobar	add	pass
+t3700-add::test-of-git-add	t3700-add	Test of git add	add	partial
+t3700-add::test-with-no-pathspecs	t3700-add	Test with no pathspecs	add	partial
+t3700-add::post-check-that-foo-is-in-the-index	t3700-add	Post-check that foo is in the index	add	partial
+t3700-add::test-that-git-add-q-works	t3700-add	Test that "git add -- -q" works	add	partial
+t3700-add::git-add-core-fsyncmethod-batch	t3700-add	git add: core.fsyncmethod=batch	add	partial
+t3700-add::git-update-index-core-fsyncmethod-batch	t3700-add	git update-index: core.fsyncmethod=batch	add	partial
+t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink	t3700-add	git add: filemode=0 should not get confused by symlink	add	partial
+t3700-add::git-add-filemode-0-should-not-get-confused-by-symlink-2	t3700-add	git add: filemode=0 should not get confused by symlink	add	partial
+t3700-add::gitignore-test-setup	t3700-add	.gitignore test setup	add	partial
+t3700-add::gitignore-is-honored	t3700-add	.gitignore is honored	add	partial
+t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f	t3700-add	error out when attempting to add ignored ones without -f	add	partial
+t3700-add::error-out-when-attempting-to-add-ignored-ones-without-f-2	t3700-add	error out when attempting to add ignored ones without -f	add	partial
+t3700-add::error-out-when-attempting-to-add-ignored-ones-but-add-others	t3700-add	error out when attempting to add ignored ones but add others	add	partial
+t3700-add::add-ignored-ones-with-f	t3700-add	add ignored ones with -f	add	partial
+t3700-add::add-ignored-ones-with-f-2	t3700-add	add ignored ones with -f	add	partial
+t3700-add::add-ignored-ones-with-f-3	t3700-add	add ignored ones with -f	add	partial
+t3700-add::gitignore-with-subdirectory	t3700-add	.gitignore with subdirectory	add	partial
+t3700-add::check-correct-prefix-detection	t3700-add	check correct prefix detection	add	partial
+t3700-add::git-add-with-filemode-0-symlinks-0-and-unmerged-entries	t3700-add	git add with filemode=0, symlinks=0, and unmerged entries	add	partial
+t3700-add::git-add-with-filemode-0-symlinks-0-prefers-stage-2-over-stage-1	t3700-add	git add with filemode=0, symlinks=0 prefers stage 2 over stage 1	add	partial
+t3700-add::git-add-refresh	t3700-add	git add --refresh	add	partial
+t3700-add::git-add-refresh-with-pathspec	t3700-add	git add --refresh with pathspec	add	partial
+t3700-add::git-add-refresh-correctly-reports-no-match-error	t3700-add	git add --refresh correctly reports no match error	add	partial
+t3700-add::git-add-should-fail-atomically-upon-an-unreadable-file	t3700-add	git add should fail atomically upon an unreadable file	add	partial
+t3700-add::git-add-ignore-errors	t3700-add	git add --ignore-errors	add	partial
+t3700-add::git-add-add-ignore-errors	t3700-add	git add (add.ignore-errors)	add	partial
+t3700-add::git-add-add-ignore-errors-false	t3700-add	git add (add.ignore-errors = false)	add	partial
+t3700-add::no-ignore-errors-overrides-config	t3700-add	--no-ignore-errors overrides config	add	partial
+t3700-add::git-add-to-resolve-conflicts-on-otherwise-ignored-path	t3700-add	git add to resolve conflicts on otherwise ignored path	add	partial
+t3700-add::add-non-existent-should-fail	t3700-add	"add non-existent" should fail	add	partial
+t3700-add::git-add-a-on-empty-repo-does-not-error-out	t3700-add	git add -A on empty repo does not error out	add	partial
+t3700-add::git-add-in-empty-repo	t3700-add	"git add ." in empty repo	add	partial
+t3700-add::git-add-a-embedded-repository	t3700-add	"git add" a embedded repository	add	partial
+t3700-add::error-on-a-repository-with-no-commits	t3700-add	error on a repository with no commits	add	partial
+t3700-add::git-add-dry-run-of-existing-changed-file	t3700-add	git add --dry-run of existing changed file	add	partial
+t3700-add::git-add-dry-run-of-non-existing-file	t3700-add	git add --dry-run of non-existing file	add	partial
+t3700-add::git-add-dry-run-of-an-existing-file-output	t3700-add	git add --dry-run of an existing file output	add	partial
+t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file	t3700-add	git add --dry-run --ignore-missing of non-existing file	add	partial
+t3700-add::git-add-dry-run-ignore-missing-of-non-existing-file-output	t3700-add	git add --dry-run --ignore-missing of non-existing file output	add	partial
+t3700-add::git-add-dry-run-interactive-should-fail	t3700-add	git add --dry-run --interactive should fail	add	partial
+t3700-add::git-add-empty-string-should-fail	t3700-add	git add empty string should fail	add	partial
+t3700-add::git-add-chmod-x-stages-correctly	t3700-add	git add --chmod=[+-]x stages correctly	add	partial
+t3700-add::git-add-chmod-x-with-symlinks	t3700-add	git add --chmod=+x with symlinks	add	partial
+t3700-add::git-add-chmod-x-changes-index-with-already-added-file	t3700-add	git add --chmod=[+-]x changes index with already added file	add	partial
+t3700-add::git-add-chmod-x-does-not-change-the-working-tree	t3700-add	git add --chmod=[+-]x does not change the working tree	add	partial
+t3700-add::git-add-chmod-fails-with-non-regular-files-but-updates-the-other-paths	t3700-add	git add --chmod fails with non regular files (but updates the other paths)	add	partial
+t3700-add::git-add-chmod-honors-dry-run	t3700-add	git add --chmod honors --dry-run	add	partial
+t3700-add::git-add-chmod-dry-run-reports-error-for-non-regular-files	t3700-add	git add --chmod --dry-run reports error for non regular files	add	partial
+t3700-add::git-add-chmod-dry-run-reports-error-for-unmatched-pathspec	t3700-add	git add --chmod --dry-run reports error for unmatched pathspec	add	partial
+t3700-add::no-file-status-change-if-no-pathspec-is-given	t3700-add	no file status change if no pathspec is given	add	partial
+t3700-add::no-file-status-change-if-no-pathspec-is-given-in-subdir	t3700-add	no file status change if no pathspec is given in subdir	add	partial
+t3700-add::all-statuses-changed-in-folder-if-is-given	t3700-add	all statuses changed in folder if . is given	add	partial
+t3700-add::cannot-add-a-submodule-of-a-different-algorithm	t3700-add	cannot add a submodule of a different algorithm	add	partial
+t3700-add::path-is-case-insensitive	t3700-add	path is case-insensitive	add	partial
+t3700-add::git-add-fo-ou-bar-ignores-foobar	t3700-add	git add 'fo\\[ou\\]bar' ignores foobar	add	partial
 t3701-add-interactive::unknown-command	t3701-add-interactive	unknown command	add	pass
 t3701-add-interactive::setup-initial	t3701-add-interactive	setup (initial)	add	pass
 t3701-add-interactive::status-works-initial	t3701-add-interactive	status works (initial)	add	pass
@@ -6101,25 +6101,25 @@ t3701-add-interactive::cmd-accepts-u-and-inter-hunk-context	t3701-add-interactiv
 t3701-add-interactive::cmd-rejects-invalid-context-options	t3701-add-interactive	$cmd rejects invalid context options	add	pass
 t3701-add-interactive::cmd-falls-back-to-color-ui	t3701-add-interactive	$cmd falls back to color.ui	add	pass
 t3701-add-interactive::cmd-rejects-invalid-no-auto-advance-options	t3701-add-interactive	$cmd rejects invalid --no-auto-advance options	add	pass
-t3702-add-edit::setup	t3702-add-edit	setup	add	partial
-t3702-add-edit::add-e	t3702-add-edit	add -e	add	partial
-t3702-add-edit::add-e-notices-editor-failure	t3702-add-edit	add -e notices editor failure	add	partial
+t3702-add-edit::setup	t3702-add-edit	setup	add	pass
+t3702-add-edit::add-e	t3702-add-edit	add -e	add	pass
+t3702-add-edit::add-e-notices-editor-failure	t3702-add-edit	add -e notices editor failure	add	pass
 t3703-add-magic-pathspec::setup	t3703-add-magic-pathspec	setup	add	pass
 t3703-add-magic-pathspec::add	t3703-add-magic-pathspec	add :/	add	pass
 t3703-add-magic-pathspec::add-anothersub	t3703-add-magic-pathspec	add :/anothersub	add	pass
 t3703-add-magic-pathspec::add-non-existent	t3703-add-magic-pathspec	add :/non-existent	add	pass
 t3703-add-magic-pathspec::a-file-with-the-same-long-magic-name-exists	t3703-add-magic-pathspec	a file with the same (long) magic name exists	add	pass
 t3703-add-magic-pathspec::a-file-with-the-same-short-magic-name-exists	t3703-add-magic-pathspec	a file with the same (short) magic name exists	add	pass
-t3704-add-pathspec-file::pathspec-from-file-from-stdin	t3704-add-pathspec-file	--pathspec-from-file from stdin	add	partial
-t3704-add-pathspec-file::pathspec-from-file-from-file	t3704-add-pathspec-file	--pathspec-from-file from file	add	partial
-t3704-add-pathspec-file::nul-delimiters	t3704-add-pathspec-file	NUL delimiters	add	partial
-t3704-add-pathspec-file::lf-delimiters	t3704-add-pathspec-file	LF delimiters	add	partial
-t3704-add-pathspec-file::no-trailing-delimiter	t3704-add-pathspec-file	no trailing delimiter	add	partial
-t3704-add-pathspec-file::crlf-delimiters	t3704-add-pathspec-file	CRLF delimiters	add	partial
-t3704-add-pathspec-file::quotes	t3704-add-pathspec-file	quotes	add	partial
-t3704-add-pathspec-file::quotes-not-compatible-with-pathspec-file-nul	t3704-add-pathspec-file	quotes not compatible with --pathspec-file-nul	add	partial
-t3704-add-pathspec-file::only-touches-what-was-listed	t3704-add-pathspec-file	only touches what was listed	add	partial
-t3704-add-pathspec-file::error-conditions	t3704-add-pathspec-file	error conditions	add	partial
+t3704-add-pathspec-file::pathspec-from-file-from-stdin	t3704-add-pathspec-file	--pathspec-from-file from stdin	add	pass
+t3704-add-pathspec-file::pathspec-from-file-from-file	t3704-add-pathspec-file	--pathspec-from-file from file	add	pass
+t3704-add-pathspec-file::nul-delimiters	t3704-add-pathspec-file	NUL delimiters	add	pass
+t3704-add-pathspec-file::lf-delimiters	t3704-add-pathspec-file	LF delimiters	add	pass
+t3704-add-pathspec-file::no-trailing-delimiter	t3704-add-pathspec-file	no trailing delimiter	add	pass
+t3704-add-pathspec-file::crlf-delimiters	t3704-add-pathspec-file	CRLF delimiters	add	pass
+t3704-add-pathspec-file::quotes	t3704-add-pathspec-file	quotes	add	pass
+t3704-add-pathspec-file::quotes-not-compatible-with-pathspec-file-nul	t3704-add-pathspec-file	quotes not compatible with --pathspec-file-nul	add	pass
+t3704-add-pathspec-file::only-touches-what-was-listed	t3704-add-pathspec-file	only touches what was listed	add	pass
+t3704-add-pathspec-file::error-conditions	t3704-add-pathspec-file	error conditions	add	pass
 t3705-add-sparse-checkout::setup	t3705-add-sparse-checkout	setup	add	pass
 t3705-add-sparse-checkout::git-add-does-not-remove-sparse-entries	t3705-add-sparse-checkout	git add does not remove sparse entries	add	pass
 t3705-add-sparse-checkout::git-add-a-does-not-remove-sparse-entries	t3705-add-sparse-checkout	git add -A does not remove sparse entries	add	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	not_ported
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	not_ported
@@ -10303,8 +10303,8 @@ t5517-push-mirror::push-mirror-adds-updates-and-removes-tags-together	t5517-push
 t5517-push-mirror::remote-foo-mirror-adds-and-removes-branches	t5517-push-mirror	remote.foo.mirror adds and removes branches	push	pass
 t5517-push-mirror::remote-foo-mirror-no-has-no-effect	t5517-push-mirror	remote.foo.mirror=no has no effect	push	pass
 t5517-push-mirror::push-to-mirrored-repository-with-refspec-fails	t5517-push-mirror	push to mirrored repository with refspec fails	push	pass
-t5518-fetch-exit-status::non-fast-forward-fetch	t5518-fetch-exit-status	non-fast-forward fetch	fetch	partial
-t5518-fetch-exit-status::forced-update	t5518-fetch-exit-status	forced update	fetch	partial
+t5518-fetch-exit-status::non-fast-forward-fetch	t5518-fetch-exit-status	non-fast-forward fetch	fetch	pass
+t5518-fetch-exit-status::forced-update	t5518-fetch-exit-status	forced update	fetch	pass
 t5519-push-alternates::alice-works-and-pushes	t5519-push-alternates	alice works and pushes	push	pass
 t5519-push-alternates::bob-fetches-from-alice-works-and-pushes	t5519-push-alternates	bob fetches from alice, works and pushes	push	pass
 t5519-push-alternates::clean-up-in-case-the-previous-failed	t5519-push-alternates	clean-up in case the previous failed	push	pass
