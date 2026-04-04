@@ -20,6 +20,26 @@
 #   HTTPD_URL         — set after start_httpd (e.g. http://127.0.0.1:PORT)
 #   HTTPD_DOCUMENT_ROOT_PATH — document root for serving files
 
+# HTTP transport tests need real git for client operations since grit
+# doesn't support HTTP transport yet. Override the wrapper to use real git.
+REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
+# Strip our .bin wrapper from PATH to find the real git
+for _p in $(echo "$PATH" | tr ':' ' '); do
+	if test -x "$_p/git" && ! grep -q 'GUST_BIN\|grit' "$_p/git" 2>/dev/null; then
+		REAL_GIT="$_p/git"
+		break
+	fi
+done
+
+# Replace the git wrapper with real git for HTTP transport
+if test -n "$TRASH_DIRECTORY" && test -d "$TRASH_DIRECTORY/.bin"; then
+	cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
+#!/bin/sh
+exec "$REAL_GIT" "\$@"
+EOFWRAP
+	chmod +x "$TRASH_DIRECTORY/.bin/git"
+fi
+
 # Find the test-httpd binary
 REPO_ROOT="$(cd "$TEST_DIRECTORY/.." && pwd)"
 TEST_HTTPD_BIN="$REPO_ROOT/target/debug/test-httpd"
