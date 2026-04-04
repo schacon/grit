@@ -57,8 +57,11 @@ test_expect_success '--single-branch clones HEAD only' '
 	test -d single-br/src/.git
 '
 
-test_expect_failure '--no-single-branch clones all branches' '
-	false
+test_expect_success '--no-single-branch clones all branches' '
+	scalar clone --no-single-branch "$(pwd)/to-clone" all-branches &&
+	test -d all-branches/src/.git &&
+	git -C all-branches/src branch -r >actual &&
+	grep "origin/topic" actual
 '
 
 test_expect_failure 'progress with tty' '
