@@ -385,17 +385,34 @@ test_ln_s_add () {
 	git add "$2"
 }
 
-# test_cmp_rev REV1 REV2
+# test_cmp_rev [!] REV1 REV2
 test_cmp_rev () {
+	local _negate=""
+	if test "$1" = "!"
+	then
+		_negate=1
+		shift
+	fi
 	local r1 r2
 	r1=$(git rev-parse --verify "$1") &&
 	r2=$(git rev-parse --verify "$2") &&
-	if test "$r1" = "$r2"
+	if test -n "$_negate"
 	then
-		return 0
+		if test "$r1" != "$r2"
+		then
+			return 0
+		else
+			echo >&2 "test_cmp_rev: $1 ($r1) == $2 ($r2) (expected different)"
+			return 1
+		fi
 	else
-		echo >&2 "test_cmp_rev: $1 ($r1) != $2 ($r2)"
-		return 1
+		if test "$r1" = "$r2"
+		then
+			return 0
+		else
+			echo >&2 "test_cmp_rev: $1 ($r1) != $2 ($r2)"
+			return 1
+		fi
 	fi
 }
 
