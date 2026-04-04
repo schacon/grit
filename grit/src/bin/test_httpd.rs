@@ -82,6 +82,7 @@ struct Config {
     pid_file: Option<PathBuf>,
     /// Path to git-http-backend (auto-detected if not specified)
     git_http_backend: PathBuf,
+    access_log: PathBuf,
 }
 
 fn find_git_http_backend() -> PathBuf {
@@ -143,6 +144,7 @@ fn parse_args(args: &[String]) -> Config {
         i += 1;
     }
 
+    let access_log = root.parent().unwrap_or(Path::new(".")).join("access.log");
     Config {
         root,
         port,
@@ -150,6 +152,7 @@ fn parse_args(args: &[String]) -> Config {
         auth_pass,
         pid_file,
         git_http_backend,
+        access_log,
     }
 }
 
@@ -209,6 +212,20 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         let mut body = vec![0u8; len];
         reader.read_exact(&mut body).map_err(|e| e.to_string())?;
         body
+    } else if headers.get("transfer-encoding").map_or(false, |v| v.contains("chunked")) {
+        let mut body = Vec::new();
+        loop {
+            let mut size_line = String::new();
+            reader.read_line(&mut size_line).map_err(|e| e.to_string())?;
+            let chunk_size = usize::from_str_radix(size_line.trim(), 16)
+                .map_err(|e| format!("Invalid chunk size: {}", e))?;
+            if chunk_size == 0 { let mut t = String::new(); let _ = reader.read_line(&mut t); break; }
+            let mut chunk = vec![0u8; chunk_size];
+            reader.read_exact(&mut chunk).map_err(|e| e.to_string())?;
+            body.extend_from_slice(&chunk);
+            let mut crlf = [0u8; 2]; let _ = reader.read_exact(&mut crlf);
+        }
+        body
     } else {
         Vec::new()
     };
@@ -222,9 +239,17 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
     })
 }
 
+fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
+    use std::fs::OpenOptions;
+    let line = if query.is_empty() { format!("{} {} HTTP/1.1 {}", method, path, status) }
+              else { format!("{} {}?{} HTTP/1.1 {}", method, path, query, status) };
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&config.access_log) {
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
 fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), String> {
-    // Set a read timeout so we don't hang forever
-    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
 
     let req = read_request(&mut stream)?;
 
@@ -240,10 +265,15 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     );
 
-    // Check if this is a path that requires auth (under /auth/)
-    if req.path.starts_with("/auth/") {
+    let needs_auth = if req.path.starts_with("/auth-push/") {
+        req.path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
+    } else if req.path.starts_with("/auth-fetch/") {
+        req.path.contains("git-upload-pack") && req.method == "POST"
+    } else { req.path.starts_with("/auth/") };
+    if needs_auth {
         if let (Some(ref user), Some(ref pass)) = (&config.auth_user, &config.auth_pass) {
             if !check_auth(&req, user, pass) {
+                log_access(config, &req.method, &req.path, &req.query, 401);
                 return send_response(
                     &mut stream,
                     401,
@@ -255,9 +285,19 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     }
 
+    // Route: /auth/smart/, /auth-push/smart/, /auth-fetch/smart/
+    for pfx in &["/auth/smart", "/auth-push/smart", "/auth-fetch/smart"] {
+        if req.path.starts_with(&format!("{}/", pfx)) {
+            let r = handle_smart_http_with_path(&mut stream, &req, config, pfx);
+            log_access(config, &req.method, &req.path, &req.query, if r.is_ok() { 200 } else { 500 });
+            return r;
+        }
+    }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
-        return handle_smart_http(&mut stream, &req, config);
+        let r = handle_smart_http(&mut stream, &req, config);
+        log_access(config, &req.method, &req.path, &req.query, if r.is_ok() { 200 } else { 500 });
+        return r;
     }
 
     // Route: /dumb/<path> → static file serving
@@ -281,6 +321,7 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         }
     }
 
+    log_access(config, &req.method, &req.path, &req.query, 404);
     send_response(
         &mut stream,
         404,
@@ -389,9 +430,16 @@ fn handle_smart_http(
     req: &Request,
     config: &Config,
 ) -> Result<(), String> {
-    // /smart/repo.git/info/refs?service=git-upload-pack
-    // /smart/repo.git/git-upload-pack
-    let smart_path = &req.path["/smart".len()..]; // e.g., /repo.git/info/refs
+    handle_smart_http_with_path(stream, req, config, "/smart")
+}
+
+fn handle_smart_http_with_path(
+    stream: &mut TcpStream,
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<(), String> {
+    let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
 
     let path_translated = format!(
         "{}{}",
@@ -415,6 +463,10 @@ fn handle_smart_http(
         cmd.env("CONTENT_TYPE", ct);
     }
     cmd.env("CONTENT_LENGTH", req.body.len().to_string());
+
+    if let Some(proto) = req.headers.get("git-protocol") {
+        cmd.env("GIT_PROTOCOL", proto);
+    }
 
     // Pass auth info if present
     if let Some(auth) = req.headers.get("authorization") {
@@ -509,6 +561,7 @@ fn parse_and_send_cgi_response(
         response.push_str(&format!("{k}: {v}\r\n"));
     }
     response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
 
     stream
@@ -531,6 +584,7 @@ fn send_response(
         response.push_str(&format!("{k}: {v}\r\n"));
     }
     response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    response.push_str("Connection: close\r\n");
     response.push_str("\r\n");
 
     stream
