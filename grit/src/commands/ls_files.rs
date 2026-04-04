@@ -270,22 +270,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // --error-unmatch: fail if any pathspec matched nothing.
-    if args.error_unmatch {
-        for (i, spec) in pathspec_filter.iter().enumerate() {
-            if !matched[i] {
-                let spec_str = match spec {
-                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
-                    Pathspec::Glob(s) => s.clone(),
-                };
-                anyhow::bail!(
-                    "error: pathspec '{}' did not match any file(s) known to git",
-                    spec_str
-                );
-            }
-        }
-    }
-
     // Build exclude/ignore matcher if needed
     let has_excludes = args.exclude_standard
         || !args.exclude.is_empty()
@@ -321,9 +305,10 @@ pub fn run(args: Args) -> Result<()> {
 
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
-                let matches = pathspec_filter.iter().any(|spec| spec.matches(path_bytes));
-                if !matches {
-                    continue;
+                let idx = pathspec_filter.iter().position(|spec| spec.matches(path_bytes));
+                match idx {
+                    Some(i) => matched[i] = true,
+                    None => continue,
                 }
             }
 
@@ -360,6 +345,22 @@ pub fn run(args: Args) -> Result<()> {
                 write!(out, "{name}")?;
             }
             out.write_all(&[term])?;
+        }
+    }
+
+    // --error-unmatch: fail if any pathspec matched nothing.
+    if args.error_unmatch {
+        for (i, spec) in pathspec_filter.iter().enumerate() {
+            if !matched[i] {
+                let spec_str = match spec {
+                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
+                    Pathspec::Glob(s) => s.clone(),
+                };
+                anyhow::bail!(
+                    "error: pathspec '{}' did not match any file(s) known to git",
+                    spec_str
+                );
+            }
         }
     }
 

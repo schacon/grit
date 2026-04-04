@@ -69,7 +69,7 @@ pub fn run(args: Args) -> Result<()> {
         committer,
         encoding: args.encoding.clone(),
         message,
-    raw_message: None,
+        raw_message: None,
     };
 
     let raw = serialize_commit(&commit_data);

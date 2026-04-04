@@ -453,7 +453,9 @@ fn do_abort() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
+    if !git_dir.join("CHERRY_PICK_HEAD").exists()
+        && !git_dir.join("sequencer").join("todo").exists()
+    {
         bail!("error: no cherry-pick in progress");
     }
 
@@ -659,7 +661,7 @@ fn create_cherry_pick_commit(
         committer,
         encoding: None,
         message: message.to_owned(),
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);

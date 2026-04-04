@@ -78,8 +78,8 @@ pub struct Args {
     #[arg(long = "no-post-rewrite")]
     pub no_post_rewrite: bool,
 
-    /// Paths to include in the commit (stages them first).
-    #[arg(value_name = "PATHSPEC", trailing_var_arg = true, allow_hyphen_values = true)]
+    /// Pathspec — files to include in the commit (stages them first).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
 }
 
@@ -95,10 +95,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // If paths are given, stage those specific files first
+    // If pathspec given, stage those specific files first
     if !args.pathspec.is_empty() {
         if let Some(wt) = work_tree {
-            stage_paths(&repo, wt, &args.pathspec)?;
+            stage_pathspec_files(&repo, wt, &args.pathspec)?;
         }
     }
 
@@ -237,59 +237,15 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-        // Determine encoding from i18n.commitEncoding config.
-    // Git only writes the "encoding" header when it is NOT UTF-8.
-    let encoding = config
-        .get("i18n.commitencoding")
-        .filter(|enc: &String| !enc.eq_ignore_ascii_case("utf-8") && !enc.eq_ignore_ascii_case("utf8"));
-
-    // For non-UTF-8 commit messages (-F file with non-UTF-8 encoding),
-    // build raw_message from the actual file bytes + signoff trailer.
-    let raw_message = if encoding.is_some() {
-        if let Some(ref file_path) = args.file {
-            if file_path != "-" {
-                let mut raw = fs::read(file_path).ok();
-                // Append signoff trailer in raw bytes if needed
-                if args.signoff {
-                    if let Some(ref mut bytes) = raw {
-                        let trailer = if let Some(angle_end) = committer.find('>') {
-                            format!("Signed-off-by: {}", &committer[..=angle_end])
-                        } else {
-                            format!("Signed-off-by: {committer}")
-                        };
-                        let trailer_bytes = trailer.as_bytes();
-                        // Check if trailer already present
-                        if !bytes.windows(trailer_bytes.len()).any(|w| w == trailer_bytes) {
-                            // Trim trailing whitespace
-                            while bytes.last() == Some(&b'\n') || bytes.last() == Some(&b' ') {
-                                bytes.pop();
-                            }
-                            bytes.extend_from_slice(b"\n\n");
-                            bytes.extend_from_slice(trailer_bytes);
-                            bytes.push(b'\n');
-                        }
-                    }
-                }
-                raw
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
     // Build commit object
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author,
         committer,
-        encoding,
+        encoding: None,
         message,
-        raw_message,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -573,6 +529,40 @@ fn walk_untracked(
     Ok(())
 }
 
+/// Stage specific files given as pathspec arguments to `commit`.
+fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String]) -> Result<()> {
+    let mut index = match Index::load(&repo.index_path()) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    for spec in pathspecs {
+        let abs_path = work_tree.join(spec);
+        if abs_path.exists() {
+            use std::os::unix::fs::MetadataExt;
+            let meta = fs::symlink_metadata(&abs_path)?;
+            let data = if meta.file_type().is_symlink() {
+                let target = fs::read_link(&abs_path)?;
+                target.to_string_lossy().into_owned().into_bytes()
+            } else {
+                fs::read(&abs_path)?
+            };
+            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+            let mode = grit_lib::index::normalize_mode(meta.mode());
+            let raw_path = spec.as_bytes().to_vec();
+            let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+            index.add_or_replace(entry);
+        } else {
+            // File deleted — remove from index
+            index.remove(spec.as_bytes());
+        }
+    }
+
+    index.write(&repo.index_path())?;
+    Ok(())
+}
+
 /// Auto-stage tracked files (for `commit -a`).
 fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     let mut index = match Index::load(&repo.index_path()) {
@@ -685,17 +675,7 @@ fn build_message(args: &Args, repo: &Repository) -> Result<String> {
             std::io::stdin().read_to_string(&mut buf)?;
             buf
         } else {
-            // Try UTF-8 first; fall back to lossy conversion for
-            // non-UTF-8 encodings (e.g. iso-8859-7 commit messages
-            // when i18n.commitEncoding is set).
-            match fs::read_to_string(file_path) {
-                Ok(s) => s,
-                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
-                    let bytes = fs::read(file_path)?;
-                    String::from_utf8_lossy(&bytes).into_owned()
-                }
-                Err(e) => return Err(e.into()),
-            }
+            fs::read_to_string(file_path)?
         };
         return Ok(ensure_trailing_newline(&content));
     }
@@ -834,42 +814,4 @@ fn ensure_trailing_newline(s: &str) -> String {
     } else {
         format!("{s}\n")
     }
-}
-
-/// Stage specific paths for commit (like `git add <path>...` before commit).
-fn stage_paths(repo: &Repository, work_tree: &Path, paths: &[String]) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let mut index = match Index::load(&repo.index_path()) {
-        Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
-        Err(e) => return Err(e.into()),
-    };
-    let mut changed = false;
-    for path_str in paths {
-        let abs_path = work_tree.join(path_str);
-        let raw_path = path_str.as_bytes().to_vec();
-        if abs_path.exists() {
-            let meta = fs::symlink_metadata(&abs_path)?;
-            let data = if meta.file_type().is_symlink() {
-                fs::read_link(&abs_path)?
-                    .to_string_lossy()
-                    .into_owned()
-                    .into_bytes()
-            } else {
-                fs::read(&abs_path)?
-            };
-            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-            let mode = grit_lib::index::normalize_mode(meta.mode());
-            let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
-            index.add_or_replace(entry);
-            changed = true;
-        } else {
-            index.remove(&raw_path);
-            changed = true;
-        }
-    }
-    if changed {
-        index.write(&repo.index_path())?;
-    }
-    Ok(())
 }

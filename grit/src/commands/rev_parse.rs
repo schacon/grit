@@ -118,7 +118,8 @@ pub fn run(args: Args) -> Result<()> {
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
-                short_len = Some(0); // sentinel: resolve from core.abbrev later
+                // Default short length will be resolved later from core.abbrev
+                short_len = Some(0);
             } else if arg == "--default" {
                 i += 1;
                 let value = args
@@ -213,16 +214,19 @@ pub fn run(args: Args) -> Result<()> {
         let Some(current) = repo.as_ref() else {
             return fail_verify(quiet);
         };
-        // Resolve --short sentinel (0) to core.abbrev or default 7
-        if short_len == Some(0) {
-            let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
-            short_len = Some(config.get("core.abbrev").and_then(|v| v.parse().ok()).unwrap_or(7));
-        }
         let oid = match resolve_revision(current, rev_list[0]) {
             Ok(oid) => oid,
             Err(_) => return fail_verify(quiet),
         };
-        if let Some(len) = short_len {
+        if let Some(mut len) = short_len {
+            if len == 0 {
+                use grit_lib::config::ConfigSet;
+                let config = ConfigSet::load(Some(&current.git_dir), false)
+                    .unwrap_or_else(|_| ConfigSet::new());
+                len = config.get("core.abbrev")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(7);
+            }
             println!("{}", abbreviate_object_id(current, oid, len)?);
         } else {
             println!("{oid}");
@@ -238,14 +242,19 @@ pub fn run(args: Args) -> Result<()> {
 
     let repo = discover_optional(None)?;
 
-    // Resolve --short sentinel (0) to core.abbrev or default 7
+    // Resolve default --short length from core.abbrev config if not explicitly given
     if short_len == Some(0) {
-        if let Some(ref r) = repo {
-            let config = grit_lib::config::ConfigSet::load(Some(&r.git_dir), true)?;
-            short_len = Some(config.get("core.abbrev").and_then(|v| v.parse().ok()).unwrap_or(7));
+        let default_abbrev = if let Some(ref r) = repo {
+            use grit_lib::config::ConfigSet;
+            let config = ConfigSet::load(Some(&r.git_dir), false)
+                .unwrap_or_else(|_| ConfigSet::new());
+            config.get("core.abbrev")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(7)
         } else {
-            short_len = Some(7);
-        }
+            7
+        };
+        short_len = Some(default_abbrev);
     }
 
     // Process actions in order

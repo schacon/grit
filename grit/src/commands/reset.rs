@@ -38,6 +38,7 @@ enum ResetMode {
     Mixed,
     Hard,
     Keep,
+    Merge,
 }
 
 impl ResetMode {
@@ -47,6 +48,7 @@ impl ResetMode {
             Self::Mixed => "mixed",
             Self::Hard => "hard",
             Self::Keep => "keep",
+            Self::Merge => "merge",
         }
     }
 }
@@ -69,6 +71,10 @@ pub struct Args {
     /// Like --hard but refuse to reset if uncommitted changes would be lost.
     #[arg(long)]
     pub keep: bool,
+
+    /// Reset index and working tree like --hard, but keep local changes where possible.
+    #[arg(long = "merge")]
+    pub merge: bool,
 
     /// Suppress feedback messages.
     #[arg(short = 'q', long)]
@@ -101,13 +107,14 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Parse the reset mode from the flag combination.
 fn parse_mode(args: &Args) -> Result<ResetMode> {
-    match (args.soft, args.mixed, args.hard, args.keep) {
-        (true, false, false, false) => Ok(ResetMode::Soft),
-        (false, true, false, false) => Ok(ResetMode::Mixed),
-        (false, false, true, false) => Ok(ResetMode::Hard),
-        (false, false, false, true) => Ok(ResetMode::Keep),
-        (false, false, false, false) => Ok(ResetMode::default()),
-        _ => bail!("cannot mix --soft, --mixed, --hard and --keep"),
+    match (args.soft, args.mixed, args.hard, args.keep, args.merge) {
+        (true, false, false, false, false) => Ok(ResetMode::Soft),
+        (false, true, false, false, false) => Ok(ResetMode::Mixed),
+        (false, false, true, false, false) => Ok(ResetMode::Hard),
+        (false, false, false, true, false) => Ok(ResetMode::Keep),
+        (false, false, false, false, true) => Ok(ResetMode::Merge),
+        (false, false, false, false, false) => Ok(ResetMode::default()),
+        _ => bail!("cannot mix --soft, --mixed, --hard, --keep, and --merge"),
     }
 }
 
@@ -264,7 +271,24 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         }
     }
 
-    let target_oid = resolve_to_commit(repo, commit_spec)?;
+    let target_oid = match resolve_to_commit(repo, commit_spec) {
+        Ok(oid) => oid,
+        Err(_) if (mode == ResetMode::Hard || mode == ResetMode::Merge) && head.oid().is_none() => {
+            // Unborn branch: reset --hard just clears the index and working tree
+            let index_path = repo.index_path();
+            let old_index = match Index::load(&index_path) {
+                Ok(idx) => idx,
+                Err(_) => Index::new(),
+            };
+            let new_index = Index::new();
+            if let Some(_wt) = &repo.work_tree {
+                checkout_index_to_worktree(repo, &old_index, &mut new_index.clone())?;
+            }
+            new_index.write(&index_path).context("writing index")?;
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
 
     // For --keep, we need to check safety before making any changes.
     if mode == ResetMode::Keep {
@@ -309,7 +333,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     new_index.entries = tree_entries;
     new_index.sort();
 
-    if mode == ResetMode::Hard || mode == ResetMode::Keep {
+    if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
         // Hard/Keep: also update working tree.
         if repo.work_tree.is_some() {
             checkout_index_to_worktree(repo, &old_index, &mut new_index)?;

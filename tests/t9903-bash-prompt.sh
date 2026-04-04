@@ -298,7 +298,7 @@ test_expect_failure 'prompt - dirty status indicator - dirty index and worktree'
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - orphan branch - clean' '
+test_expect_success 'prompt - dirty status indicator - orphan branch - clean' '
 	printf " (orphan #)" >expected &&
 	test_when_finished "git checkout main" &&
 	git checkout --orphan orphan &&
@@ -459,7 +459,7 @@ test_expect_success 'prompt - untracked files status indicator - empty untracked
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - non-empty untracked dir' '
+test_expect_success 'prompt - untracked files status indicator - non-empty untracked dir' '
 	printf " (main %%)" >expected &&
 	mkdir otherrepo/untracked-dir &&
 	test_when_finished "rm -rf otherrepo/untracked-dir" &&
@@ -768,7 +768,7 @@ test_expect_success 'prompt - hide if pwd ignored - inside gitdir' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - conflict indicator' '
+test_expect_success 'prompt - conflict indicator' '
 	printf " (main|CONFLICT)" >expected &&
 	echo "stash" >file &&
 	git stash &&
