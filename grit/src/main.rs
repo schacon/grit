@@ -277,7 +277,9 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
 /// Apply global options (env vars, chdir).
 fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if let Some(dir) = &opts.change_dir {
-        std::env::set_current_dir(dir)?;
+        if dir.as_os_str().len() > 0 {
+            std::env::set_current_dir(dir)?;
+        }
     }
     if let Some(git_dir) = &opts.git_dir {
         std::env::set_var("GIT_DIR", git_dir);

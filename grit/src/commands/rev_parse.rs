@@ -341,7 +341,19 @@ pub fn run(args: Args) -> Result<()> {
         let Some(current) = repo.as_ref() else {
             bail!("not a git repository (or any of the parent directories)");
         };
-        println!("{}", to_relative_path(&current.git_dir, &cwd));
+        // Match git behavior:
+        // - output "." when cwd IS the git dir
+        // - output ".git" (relative) when in the toplevel of the work tree
+        // - output absolute path otherwise
+        if cwd == current.git_dir.as_path() {
+            println!(".");
+        } else if current.git_dir.parent() == Some(cwd.as_ref()) {
+            // cwd is the worktree toplevel, output relative
+            println!("{}", to_relative_path(&current.git_dir, &cwd));
+        } else {
+            // subdirectory or external git dir: output absolute
+            println!("{}", current.git_dir.display());
+        }
     }
     if show_absolute_git_dir {
         let Some(current) = repo.as_ref() else {

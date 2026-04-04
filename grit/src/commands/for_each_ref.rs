@@ -549,15 +549,27 @@ fn compare_on_key(
 fn expand_format(repo: &Repository, entry: &RefEntry, format: &str, head_branch: &Option<String>) -> Result<String, FormatError> {
     let mut out = String::new();
     let mut rest = format;
-    while let Some(start) = rest.find("%(") {
+    while let Some(start) = rest.find('%') {
         out.push_str(&rest[..start]);
-        let after = &rest[start + 2..];
-        let Some(end) = after.find(')') else {
-            return Err(FormatError::Other("unterminated format atom".to_owned()));
-        };
-        let atom = &after[..end];
-        out.push_str(&atom_value(repo, entry, atom, head_branch)?);
-        rest = &after[end + 1..];
+        let after = &rest[start + 1..];
+        if after.starts_with('%') {
+            // %% -> literal %
+            out.push('%');
+            rest = &after[1..];
+        } else if after.starts_with('(') {
+            // %(atom) -> expand
+            let inner = &after[1..];
+            let Some(end) = inner.find(')') else {
+                return Err(FormatError::Other("unterminated format atom".to_owned()));
+            };
+            let atom = &inner[..end];
+            out.push_str(&atom_value(repo, entry, atom, head_branch)?);
+            rest = &inner[end + 1..];
+        } else {
+            // bare % - output literally
+            out.push('%');
+            rest = after;
+        }
     }
     out.push_str(rest);
     Ok(out)
@@ -579,6 +591,18 @@ fn atom_value(
     match base {
         "refname" => match modifier {
             Some("short") => Ok(short_refname(&entry.name)),
+            Some(m) if m.starts_with("strip=") => {
+                let n: usize = m["strip=".len()..].parse().map_err(|_| {
+                    FormatError::Other(format!("invalid strip count in refname modifier: {m}"))
+                })?;
+                let parts: Vec<&str> = entry.name.splitn(n + 1, '/').collect();
+                if parts.len() > n {
+                    Ok(parts[n..].join("/"))
+                } else {
+                    // If strip count >= number of components, return empty
+                    Ok(String::new())
+                }
+            }
             Some(m) => Err(FormatError::Other(format!("unsupported refname modifier: {m}"))),
             None => Ok(entry.name.clone()),
         },
