@@ -85,6 +85,50 @@ pub struct Args {
     /// Do not add Signed-off-by trailer.
     #[arg(long = "no-signoff")]
     pub no_signoff: bool,
+
+    /// Show a diffstat at the end of the merge.
+    #[arg(long = "stat")]
+    pub stat: bool,
+
+    /// Synonym for --stat.
+    #[arg(short = 'n', long = "no-stat")]
+    pub no_stat: bool,
+
+    /// Show log messages from commits being merged.
+    #[arg(long = "log", value_name = "N", num_args = 0..=1, default_missing_value = "20")]
+    pub log: Option<usize>,
+
+    /// Do not include log messages.
+    #[arg(long = "no-log")]
+    pub no_log: bool,
+
+    /// Show compact-summary in diffstat output.
+    #[arg(long = "compact-summary")]
+    pub compact_summary: bool,
+
+    /// Show summary (deprecated synonym for --stat).
+    #[arg(long = "summary")]
+    pub summary: bool,
+
+    /// Allow fast-forward (default).
+    #[arg(long = "ff")]
+    pub ff: bool,
+
+    /// Allow fast-forward (aliases for configuration).
+    #[arg(long = "commit")]
+    pub commit: bool,
+
+    /// Undo --squash.
+    #[arg(long = "no-squash")]
+    pub no_squash: bool,
+
+    /// Quit merge.
+    #[arg(long = "quit")]
+    pub quit: bool,
+
+    /// Automatically stash/unstash before/after merge.
+    #[arg(long = "autostash")]
+    pub autostash: bool,
 }
 
 /// Run the `merge` command.

@@ -152,6 +152,9 @@ test_debug () {
 	test -n "$TEST_DEBUG" && eval "$@" || true
 }
 
+# Default diff program
+DIFF="${DIFF:-diff}"
+
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
 XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
