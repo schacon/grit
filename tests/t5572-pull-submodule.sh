@@ -37,7 +37,7 @@ test_expect_success 'pull --rebase works' '
 '
 
 # grit does not support --recurse-submodules for pull
-test_expect_failure 'pull --recurse-submodules' '
+test_expect_success 'pull --recurse-submodules' '
 	git init sub &&
 	test_commit -C sub submod_commit &&
 	git submodule add ./sub sub &&
