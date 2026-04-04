@@ -391,7 +391,10 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
             }
         }
         opts.push("--".to_string());
-        // Also list subcommands (used by completion for commands like reflog, config)
+        // List subcommands AFTER the -- separator
+        // __gitcomp stops at --, but __gitcompappend iterates all items,
+        // so subcommands are available for commands like reflog that use
+        // __gitcompappend for subcommand completion.
         for sub in cmd.get_subcommands() {
             let name = sub.get_name().to_string();
             if name != "help" {
