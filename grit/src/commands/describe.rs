@@ -64,6 +64,11 @@ pub struct Args {
     #[arg(long)]
     pub all: bool,
 
+    /// Instead of finding the tag that is an ancestor, find the tag
+    /// that contains the commit (i.e., is a descendant).
+    #[arg(long)]
+    pub contains: bool,
+
     /// Describe the working tree.  After the version string, append
     /// the given mark (default: "-dirty") if the working tree has
     /// local modifications.
@@ -122,6 +127,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Build a map from commit OID → ref name for all qualifying refs.
     let ref_map = build_ref_map(&repo, args.tags, args.all, &args.match_pattern)?;
+
+    // --contains mode: find the nearest tag that is a descendant of the target
+    if args.contains {
+        return run_contains(&repo, &target_oid, &ref_map);
+    }
 
     // Determine the dirty suffix (if applicable)
     let dirty_suffix = if args.dirty.is_some() || args.broken.is_some() {
@@ -183,6 +193,73 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Check if the working tree has uncommitted changes.
+/// --contains: find the nearest tag that is a descendant of (contains) the target commit.
+/// Walk forward from each tag's commit to check if the target is an ancestor.
+fn run_contains(
+    repo: &Repository,
+    target_oid: &ObjectId,
+    ref_map: &HashMap<ObjectId, String>,
+) -> Result<()> {
+    // For each tag, check if target is reachable from the tag commit.
+    // Track the best (shortest path) tag.
+    let mut best: Option<(String, usize)> = None;
+
+    for (tag_oid, tag_name) in ref_map {
+        if let Some(depth) = ancestor_depth(repo, tag_oid, target_oid) {
+            if best.as_ref().map_or(true, |(_, d)| depth < *d) {
+                best = Some((tag_name.clone(), depth));
+            }
+        }
+    }
+
+    match best {
+        Some((name, depth)) => {
+            if depth == 0 {
+                println!("{name}");
+            } else {
+                println!("{name}~{depth}");
+            }
+            Ok(())
+        }
+        None => {
+            bail!("fatal: cannot describe '{}'", target_oid.to_hex());
+        }
+    }
+}
+
+/// Check if `ancestor` is reachable from `descendant` by walking parents.
+/// Returns Some(depth) if reachable, None otherwise.
+fn ancestor_depth(
+    repo: &Repository,
+    descendant: &ObjectId,
+    ancestor: &ObjectId,
+) -> Option<usize> {
+    if descendant == ancestor {
+        return Some(0);
+    }
+    let mut queue: VecDeque<(ObjectId, usize)> = VecDeque::new();
+    let mut visited = HashSet::new();
+    queue.push_back((*descendant, 0));
+    visited.insert(*descendant);
+
+    while let Some((oid, depth)) = queue.pop_front() {
+        let obj = repo.odb.read(&oid).ok()?;
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data).ok()?;
+        for parent in &commit.parents {
+            if parent == ancestor {
+                return Some(depth + 1);
+            }
+            if visited.insert(*parent) {
+                queue.push_back((*parent, depth + 1));
+            }
+        }
+    }
+    None
+}
+
 fn is_worktree_dirty(repo: &Repository) -> bool {
     // Use `git diff-index --quiet HEAD` approach:
     // Check if there are any modified/added/deleted files in the index or working tree.

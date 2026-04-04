@@ -30,7 +30,7 @@ test_set_editor () {
 	export EDITOR
 }
 
-test_expect_failure 'setup for prompt tests' '
+test_expect_success 'setup for prompt tests' '
 	git init &&
 	git init otherrepo &&
 	echo 1 >file &&
@@ -56,7 +56,7 @@ test_expect_failure 'setup for prompt tests' '
 	git checkout main
 '
 
-test_expect_failure 'prompt - branch name' '
+test_expect_success 'prompt - branch name' '
 	printf " (main)" >expected &&
 	__git_ps1 >"$actual" &&
 	test_cmp expected "$actual"
@@ -104,7 +104,7 @@ test_expect_failure 'prompt - detached head' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - describe detached head - contains' '
+test_expect_success 'prompt - describe detached head - contains' '
 	printf " ((t2~1))" >expected &&
 	git checkout b1^ &&
 	test_when_finished "git checkout main" &&
@@ -126,7 +126,7 @@ test_expect_failure 'prompt - describe detached head - branch' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - describe detached head - describe' '
+test_expect_success 'prompt - describe detached head - describe' '
 	printf " ((t1-1-g%s))" $(git log -1 --format="%h" b1^) >expected &&
 	git checkout b1^ &&
 	test_when_finished "git checkout main" &&
@@ -137,7 +137,7 @@ test_expect_failure 'prompt - describe detached head - describe' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - describe detached head - default' '
+test_expect_success 'prompt - describe detached head - default' '
 	printf " ((t2))" >expected &&
 	git checkout --detach b1 &&
 	test_when_finished "git checkout main" &&
@@ -310,7 +310,7 @@ test_expect_failure 'prompt - dirty status indicator - orphan branch - clean' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - orphan branch - dirty index' '
+test_expect_success 'prompt - dirty status indicator - orphan branch - dirty index' '
 	printf " (orphan +)" >expected &&
 	test_when_finished "git checkout main" &&
 	git checkout --orphan orphan &&
@@ -321,7 +321,7 @@ test_expect_failure 'prompt - dirty status indicator - orphan branch - dirty ind
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - orphan branch - dirty index and worktree' '
+test_expect_success 'prompt - dirty status indicator - orphan branch - dirty index and worktree' '
 	printf " (orphan *+)" >expected &&
 	test_when_finished "git checkout main" &&
 	git checkout --orphan orphan &&
@@ -333,7 +333,7 @@ test_expect_failure 'prompt - dirty status indicator - orphan branch - dirty ind
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - shell variable unset with config disabled' '
+test_expect_success 'prompt - dirty status indicator - shell variable unset with config disabled' '
 	printf " (main)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -345,7 +345,7 @@ test_expect_failure 'prompt - dirty status indicator - shell variable unset with
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - shell variable unset with config enabled' '
+test_expect_success 'prompt - dirty status indicator - shell variable unset with config enabled' '
 	printf " (main)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -357,7 +357,7 @@ test_expect_failure 'prompt - dirty status indicator - shell variable unset with
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - shell variable set with config disabled' '
+test_expect_success 'prompt - dirty status indicator - shell variable set with config disabled' '
 	printf " (main)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -369,7 +369,7 @@ test_expect_failure 'prompt - dirty status indicator - shell variable set with c
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - shell variable set with config enabled' '
+test_expect_success 'prompt - dirty status indicator - shell variable set with config enabled' '
 	printf " (main *)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -381,7 +381,7 @@ test_expect_failure 'prompt - dirty status indicator - shell variable set with c
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - not shown inside .git directory' '
+test_expect_success 'prompt - dirty status indicator - not shown inside .git directory' '
 	printf " (GIT_DIR!)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -393,7 +393,7 @@ test_expect_failure 'prompt - dirty status indicator - not shown inside .git dir
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - stash status indicator - no stash' '
+test_expect_success 'prompt - stash status indicator - no stash' '
 	printf " (main)" >expected &&
 	(
 		GIT_PS1_SHOWSTASHSTATE=y &&
@@ -402,7 +402,7 @@ test_expect_failure 'prompt - stash status indicator - no stash' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - stash status indicator - stash' '
+test_expect_success 'prompt - stash status indicator - stash' '
 	printf " (main $)" >expected &&
 	echo 2 >file &&
 	git stash &&
@@ -415,7 +415,7 @@ test_expect_failure 'prompt - stash status indicator - stash' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - stash status indicator - not shown inside .git directory' '
+test_expect_success 'prompt - stash status indicator - not shown inside .git directory' '
 	printf " (GIT_DIR!)" >expected &&
 	echo 2 >file &&
 	git stash &&
@@ -438,7 +438,7 @@ test_expect_success 'prompt - untracked files status indicator - no untracked fi
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - untracked files' '
+test_expect_success 'prompt - untracked files status indicator - untracked files' '
 	printf " (main %%)" >expected &&
 	(
 		GIT_PS1_SHOWUNTRACKEDFILES=y &&
@@ -472,7 +472,7 @@ test_expect_failure 'prompt - untracked files status indicator - non-empty untra
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - untracked files outside cwd' '
+test_expect_success 'prompt - untracked files status indicator - untracked files outside cwd' '
 	printf " (main %%)" >expected &&
 	(
 		mkdir -p ignored_dir &&
@@ -483,7 +483,7 @@ test_expect_failure 'prompt - untracked files status indicator - untracked files
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - shell variable unset with config disabled' '
+test_expect_success 'prompt - untracked files status indicator - shell variable unset with config disabled' '
 	printf " (main)" >expected &&
 	test_config bash.showUntrackedFiles false &&
 	(
@@ -493,7 +493,7 @@ test_expect_failure 'prompt - untracked files status indicator - shell variable 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - shell variable unset with config enabled' '
+test_expect_success 'prompt - untracked files status indicator - shell variable unset with config enabled' '
 	printf " (main)" >expected &&
 	test_config bash.showUntrackedFiles true &&
 	(
@@ -503,7 +503,7 @@ test_expect_failure 'prompt - untracked files status indicator - shell variable 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - shell variable set with config disabled' '
+test_expect_success 'prompt - untracked files status indicator - shell variable set with config disabled' '
 	printf " (main)" >expected &&
 	test_config bash.showUntrackedFiles false &&
 	(
@@ -513,7 +513,7 @@ test_expect_failure 'prompt - untracked files status indicator - shell variable 
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - untracked files status indicator - shell variable set with config enabled' '
+test_expect_success 'prompt - untracked files status indicator - shell variable set with config enabled' '
 	printf " (main %%)" >expected &&
 	test_config bash.showUntrackedFiles true &&
 	(
@@ -533,13 +533,13 @@ test_expect_success 'prompt - untracked files status indicator - not shown insid
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - format string starting with dash' '
+test_expect_success 'prompt - format string starting with dash' '
 	printf -- "-main" >expected &&
 	__git_ps1 "-%s" >"$actual" &&
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - pc mode' '
+test_expect_success 'prompt - pc mode' '
 	printf "BEFORE: (\${__git_ps1_branch_name}):AFTER\\nmain" >expected &&
 	(
 		__git_ps1 "BEFORE:" ":AFTER" >"$actual" &&
@@ -549,7 +549,7 @@ test_expect_failure 'prompt - pc mode' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - branch name' '
+test_expect_success 'prompt - bash color pc mode - branch name' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear}):AFTER\\nmain" >expected &&
 	(
 		GIT_PS1_SHOWCOLORHINTS=y &&
@@ -584,7 +584,7 @@ test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirt
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirty index' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirty index' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_green}+${c_clear}):AFTER\\nmain" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -598,7 +598,7 @@ test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirt
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirty index and worktree' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirty index and worktree' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_red}*${c_clear}${c_green}+${c_clear}):AFTER\\nmain" >expected &&
 	echo "dirty index" >file &&
 	test_when_finished "git reset --hard" &&
@@ -613,7 +613,7 @@ test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirt
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - before root commit' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - before root commit' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_green}#${c_clear}):AFTER\\nmain" >expected &&
 	(
 		GIT_PS1_SHOWDIRTYSTATE=y &&
@@ -625,7 +625,7 @@ test_expect_failure 'prompt - bash color pc mode - dirty status indicator - befo
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - inside .git directory' '
+test_expect_success 'prompt - bash color pc mode - inside .git directory' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear}):AFTER\\nGIT_DIR!" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -639,7 +639,7 @@ test_expect_failure 'prompt - bash color pc mode - inside .git directory' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - stash status indicator' '
+test_expect_success 'prompt - bash color pc mode - stash status indicator' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_lblue}\$${c_clear}):AFTER\\nmain" >expected &&
 	echo 2 >file &&
 	git stash &&
@@ -653,7 +653,7 @@ test_expect_failure 'prompt - bash color pc mode - stash status indicator' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - untracked files status indicator' '
+test_expect_success 'prompt - bash color pc mode - untracked files status indicator' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_red}%%${c_clear}):AFTER\\nmain" >expected &&
 	(
 		GIT_PS1_SHOWUNTRACKEDFILES=y &&
@@ -664,7 +664,7 @@ test_expect_failure 'prompt - bash color pc mode - untracked files status indica
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - zsh color pc mode' '
+test_expect_success 'prompt - zsh color pc mode' '
 	printf "BEFORE: (%%F{green}main%%f):AFTER" >expected &&
 	(
 		ZSH_VERSION=5.0.0 &&
@@ -675,7 +675,7 @@ test_expect_failure 'prompt - zsh color pc mode' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var unset, config disabled' '
+test_expect_success 'prompt - hide if pwd ignored - env var unset, config disabled' '
 	printf " (main)" >expected &&
 	test_config bash.hideIfPwdIgnored false &&
 	(
@@ -696,7 +696,7 @@ test_expect_success 'prompt - hide if pwd ignored - env var unset, config disabl
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var unset, config unset' '
+test_expect_success 'prompt - hide if pwd ignored - env var unset, config unset' '
 	printf " (main)" >expected &&
 	(
 		cd ignored_dir &&
@@ -715,7 +715,7 @@ test_expect_success 'prompt - hide if pwd ignored - env var unset, config unset,
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - hide if pwd ignored - env var set, config disabled' '
+test_expect_success 'prompt - hide if pwd ignored - env var set, config disabled' '
 	printf " (main)" >expected &&
 	test_config bash.hideIfPwdIgnored false &&
 	(
