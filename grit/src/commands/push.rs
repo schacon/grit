@@ -525,6 +525,18 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Check remote's receive.advertisePushOptions config
+    if !args.push_option.is_empty() {
+        let remote_config = ConfigSet::load(Some(&remote_repo.git_dir), true)?;
+        let advertise = remote_config
+            .get("receive.advertisePushOptions")
+            .map(|v| v != "false")
+            .unwrap_or(true);
+        if !advertise {
+            bail!("the receiving end does not support push options");
+        }
+    }
+
     // Write push options file for the remote (local transport simulation)
     if !args.push_option.is_empty() {
         let push_opts_path = remote_repo.git_dir.join("push_options");
