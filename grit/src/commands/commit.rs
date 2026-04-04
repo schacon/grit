@@ -77,6 +77,10 @@ pub struct Args {
     /// Suppress the post-rewrite hook.
     #[arg(long = "no-post-rewrite")]
     pub no_post_rewrite: bool,
+
+    /// Pathspec — files to include in the commit (stages them first).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    pub pathspec: Vec<String>,
 }
 
 /// Run the `commit` command.
@@ -88,6 +92,13 @@ pub fn run(args: Args) -> Result<()> {
     if args.all {
         if let Some(wt) = work_tree {
             auto_stage_tracked(&repo, wt)?;
+        }
+    }
+
+    // If pathspec given, stage those specific files first
+    if !args.pathspec.is_empty() {
+        if let Some(wt) = work_tree {
+            stage_pathspec_files(&repo, wt, &args.pathspec)?;
         }
     }
 
@@ -514,6 +525,40 @@ fn walk_untracked(
             out.push(rel);
         }
     }
+    Ok(())
+}
+
+/// Stage specific files given as pathspec arguments to `commit`.
+fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String]) -> Result<()> {
+    let mut index = match Index::load(&repo.index_path()) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(e) => return Err(e.into()),
+    };
+
+    for spec in pathspecs {
+        let abs_path = work_tree.join(spec);
+        if abs_path.exists() {
+            use std::os::unix::fs::MetadataExt;
+            let meta = fs::symlink_metadata(&abs_path)?;
+            let data = if meta.file_type().is_symlink() {
+                let target = fs::read_link(&abs_path)?;
+                target.to_string_lossy().into_owned().into_bytes()
+            } else {
+                fs::read(&abs_path)?
+            };
+            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+            let mode = grit_lib::index::normalize_mode(meta.mode());
+            let raw_path = spec.as_bytes().to_vec();
+            let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+            index.add_or_replace(entry);
+        } else {
+            // File deleted — remove from index
+            index.remove(spec.as_bytes());
+        }
+    }
+
+    index.write(&repo.index_path())?;
     Ok(())
 }
 

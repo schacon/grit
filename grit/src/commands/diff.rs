@@ -298,6 +298,10 @@ pub struct Args {
     #[arg(long = "submodule", value_name = "FORMAT", default_missing_value = "short", num_args = 0..=1, require_equals = true)]
     pub submodule: Option<String>,
 
+    /// Disable external diff drivers (no-op, for compatibility).
+    #[arg(long = "no-ext-diff")]
+    pub no_ext_diff: bool,
+
     /// Compare two paths outside a git repository.
     #[arg(long = "no-index")]
     pub no_index: bool,

@@ -537,6 +537,17 @@ fn resolve_pathspec(
         return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
     }
     let pathspec_str = pathspec.to_string_lossy();
+    // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
+    if let Some(rest) = pathspec_str.strip_prefix(":/") {
+        if rest.is_empty() || rest == "*" {
+            // Match everything from root
+            return Ok(Pathspec::Literal(Vec::new()));
+        }
+        if has_glob_chars(rest) {
+            return Ok(Pathspec::Glob(rest.to_string()));
+        }
+        return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
+    }
     if has_glob_chars(&pathspec_str) {
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;

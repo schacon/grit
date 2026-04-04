@@ -6,7 +6,7 @@
 //! subcommand's clap `Args` struct is parsed.
 
 use anyhow::{bail, Result};
-use clap::{Args, FromArgMatches, Parser};
+use clap::{Args, Command, FromArgMatches, Parser};
 use std::path::PathBuf;
 
 mod commands;
@@ -191,11 +191,15 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
     while i < items.len() {
         let arg = &items[i];
 
-        // -C <dir>
+        // -C <dir> — cumulative: each -C is relative to the previous one
         if arg == "-C" {
             i += 1;
             if i < items.len() {
-                opts.change_dir = Some(PathBuf::from(&items[i]));
+                let new_dir = PathBuf::from(&items[i]);
+                opts.change_dir = Some(match opts.change_dir.take() {
+                    Some(prev) => prev.join(&new_dir),
+                    None => new_dir,
+                });
             }
             i += 1;
             continue;
@@ -246,6 +250,11 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             opts.bare = true;
             i += 1;
             continue;
+        }
+
+        // --list-cmds=<categories>
+        if let Some(val) = arg.strip_prefix("--list-cmds=") {
+            return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
         }
 
         // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
@@ -338,7 +347,225 @@ fn run() -> Result<()> {
 
     apply_globals(&opts)?;
 
+    // Handle --git-completion-helper / --git-completion-helper-all
+    if rest.iter().any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all") {
+        let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
+        // Check if there's a sub-subcommand (e.g., 'config get --git-completion-helper')
+        let sub_subcmd: Option<&str> = rest.iter()
+            .find(|a| !a.starts_with('-'))
+            .map(|s| s.as_str());
+        let key = if let Some(sub) = sub_subcmd {
+            format!("{}_{}", subcmd, sub)
+        } else {
+            subcmd.clone()
+        };
+        return print_completion_helper(&key, show_all);
+    }
+
     dispatch(&subcmd, &rest, &opts)
+}
+
+/// Print --git-completion-helper output for a subcommand.
+///
+/// This mimics git's `--git-completion-helper` by listing all long options
+/// (and their `--no-` negations) for the given subcommand.
+fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
+    fn extract_options<T: Args>(show_all: bool) -> Vec<String> {
+        let cmd = Command::new("grit")
+            .flatten_help(false);
+        let cmd = T::augment_args(cmd);
+        let mut opts = Vec::new();
+        for arg in cmd.get_arguments() {
+            if arg.get_id() == "help" || arg.get_id() == "version" {
+                continue;
+            }
+            // Skip positional arguments
+            if arg.get_long().is_none() && arg.get_short().is_none() {
+                continue;
+            }
+            if let Some(long) = arg.get_long() {
+                opts.push(format!("--{long}"));
+                // Add aliases (only with --git-completion-helper-all)
+                if show_all {
+                    if let Some(aliases) = arg.get_aliases() {
+                        for alias in aliases {
+                            opts.push(format!("--{alias}"));
+                        }
+                    }
+                }
+                // Add --no- variant unless it already starts with no-
+                if !long.starts_with("no-") {
+                    opts.push(format!("--no-{long}"));
+                }
+            }
+        }
+        // Collect subcommand names
+        let mut subcmds: Vec<String> = Vec::new();
+        for sub in cmd.get_subcommands() {
+            let name = sub.get_name().to_string();
+            if name != "help" {
+                subcmds.push(name);
+            }
+        }
+
+        if subcmds.is_empty() {
+            // No subcommands: return options + --
+            opts.push("--".to_string());
+            opts
+        } else {
+            // Has subcommands: return ONLY subcommands.
+            // Options come from 'git <cmd> <subcmd> --git-completion-helper'.
+            // __gitcomp will show subcommand names for empty cur,
+            // and the completion script handles --options via subcommand-
+            // specific helpers.
+            subcmds
+        }
+    }
+
+    let options = match subcmd {
+        "add" => extract_options::<commands::add::Args>(show_all),
+        "am" => extract_options::<commands::am::Args>(show_all),
+        "apply" => extract_options::<commands::apply::Args>(show_all),
+        "bisect" => extract_options::<commands::bisect::Args>(show_all),
+        "blame" => extract_options::<commands::blame::Args>(show_all),
+        "branch" => extract_options::<commands::branch::Args>(show_all),
+        "cat-file" => extract_options::<commands::cat_file::Args>(show_all),
+        "check-ignore" => extract_options::<commands::check_ignore::Args>(show_all),
+        "checkout" => extract_options::<commands::checkout::Args>(show_all),
+        "cherry-pick" => extract_options::<commands::cherry_pick::Args>(show_all),
+        "clean" => extract_options::<commands::clean::Args>(show_all),
+        "clone" => extract_options::<commands::clone::Args>(show_all),
+        "commit" => extract_options::<commands::commit::Args>(show_all),
+        "config" => extract_options::<commands::config::Args>(show_all),
+        "config_get" => extract_options::<commands::config::GetArgs>(show_all),
+        "config_set" => extract_options::<commands::config::SetArgs>(show_all),
+        "config_unset" => extract_options::<commands::config::UnsetArgs>(show_all),
+        "config_list" => extract_options::<commands::config::ListArgs>(show_all),
+        "config_edit" => extract_options::<commands::config::EditArgs>(show_all),
+        "reflog_show" => extract_options::<commands::reflog::ShowArgs>(show_all),
+        "reflog_expire" => extract_options::<commands::reflog::ExpireArgs>(show_all),
+        "reflog_delete" => extract_options::<commands::reflog::DeleteArgs>(show_all),
+        "reflog_exists" => extract_options::<commands::reflog::ExistsArgs>(show_all),
+        "describe" => extract_options::<commands::describe::Args>(show_all),
+        "diff" => extract_options::<commands::diff::Args>(show_all),
+        "fetch" => extract_options::<commands::fetch::Args>(show_all),
+        "for-each-ref" => extract_options::<commands::for_each_ref::Args>(show_all),
+        "format-patch" => extract_options::<commands::format_patch::Args>(show_all),
+        "fsck" => extract_options::<commands::fsck::Args>(show_all),
+        "gc" => extract_options::<commands::gc::Args>(show_all),
+        "grep" => extract_options::<commands::grep::Args>(show_all),
+        "init" => extract_options::<commands::init::Args>(show_all),
+        "log" => extract_options::<commands::log::Args>(show_all),
+        "ls-files" => extract_options::<commands::ls_files::Args>(show_all),
+        "ls-remote" => extract_options::<commands::ls_remote::Args>(show_all),
+        "ls-tree" => extract_options::<commands::ls_tree::Args>(show_all),
+        "merge" => extract_options::<commands::merge::Args>(show_all),
+        "merge-base" => extract_options::<commands::merge_base::Args>(show_all),
+        "mv" => extract_options::<commands::mv::Args>(show_all),
+        "notes" => extract_options::<commands::notes::Args>(show_all),
+        "pull" => extract_options::<commands::pull::Args>(show_all),
+        "push" => extract_options::<commands::push::Args>(show_all),
+        "rebase" => extract_options::<commands::rebase::Args>(show_all),
+        "reflog" => extract_options::<commands::reflog::Args>(show_all),
+        "remote" => extract_options::<commands::remote::Args>(show_all),
+        "reset" => extract_options::<commands::reset::Args>(show_all),
+        "restore" => extract_options::<commands::restore::Args>(show_all),
+        "rev-list" => extract_options::<commands::rev_list::Args>(show_all),
+        "rev-parse" => extract_options::<commands::rev_parse::Args>(show_all),
+        "revert" => extract_options::<commands::revert::Args>(show_all),
+        "rm" => extract_options::<commands::rm::Args>(show_all),
+        "show" => extract_options::<commands::show::Args>(show_all),
+        "show-ref" => extract_options::<commands::show_ref::Args>(show_all),
+        "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(show_all),
+        "stash" => extract_options::<commands::stash::Args>(show_all),
+        "status" => extract_options::<commands::status::Args>(show_all),
+        "submodule" => extract_options::<commands::submodule::Args>(show_all),
+        "switch" => extract_options::<commands::switch::Args>(show_all),
+        "symbolic-ref" => extract_options::<commands::symbolic_ref::Args>(show_all),
+        "tag" => extract_options::<commands::tag::Args>(show_all),
+        "update-index" => extract_options::<commands::update_index::Args>(show_all),
+        "update-ref" => extract_options::<commands::update_ref::Args>(show_all),
+        "worktree" => extract_options::<commands::worktree::Args>(show_all),
+        _ => Vec::new(),
+    };
+
+    println!("{}", options.join(" "));
+    Ok(())
+}
+
+/// Handle --list-cmds=<categories> for bash completion.
+///
+/// Categories are comma-separated. Supported:
+/// - list-mainporcelain: high-level user commands
+/// - list-complete: other useful commands
+/// - list-all: all commands (porcelain + plumbing)
+/// - config: commands from completion.commands config
+fn print_list_cmds(categories: &str) {
+    let mainporcelain = [
+        "add", "am", "archive", "bisect", "branch", "bundle", "checkout",
+        "cherry-pick", "clean", "clone", "commit", "describe", "diff",
+        "fetch", "format-patch", "gc", "grep", "init", "log", "merge",
+        "mv", "notes", "pull", "push", "range-diff", "rebase", "reset",
+        "restore", "revert", "rm", "shortlog", "show", "sparse-checkout",
+        "stash", "status", "submodule", "switch", "tag", "worktree",
+    ];
+    let complete = [
+        "apply", "blame", "cherry", "config", "difftool", "fsck", "help",
+        "mergetool", "prune", "reflog", "remote", "repack", "replace",
+        "send-email", "show-branch", "whatchanged",
+    ];
+    let plumbing = [
+        "cat-file", "check-attr", "check-ignore", "check-ref-format",
+        "checkout-index", "commit-graph", "commit-tree", "count-objects",
+        "diff-files", "diff-index", "diff-tree", "for-each-ref",
+        "hash-object", "index-pack", "ls-files", "ls-remote", "ls-tree",
+        "merge-base", "merge-file", "mktag", "mktree", "multi-pack-index",
+        "name-rev", "pack-objects", "pack-refs", "read-tree", "rev-list",
+        "rev-parse", "show-ref", "symbolic-ref", "update-index",
+        "update-ref", "verify-commit", "verify-pack", "verify-tag",
+        "write-tree",
+    ];
+
+    let mut result: Vec<&str> = Vec::new();
+    for cat in categories.split(',') {
+        match cat {
+            "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
+            "list-complete" => result.extend_from_slice(&complete),
+            "list-all" | "builtins" | "main" => {
+                result.extend_from_slice(&mainporcelain);
+                result.extend_from_slice(&complete);
+                result.extend_from_slice(&plumbing);
+            }
+            "others" | "alias" | "nohelpers" => {
+                // others = non-builtin commands (we don't have these)
+                // alias = git aliases (handled by config, could list them)
+                // nohelpers = filter out helper programs
+                // For now, these are no-ops
+            }
+            "config" => {
+                // Check completion.commands config for additions/removals
+                if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+                    if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+                        if let Some(val) = config.get("completion.commands") {
+                            for token in val.split_whitespace() {
+                                if let Some(cmd) = token.strip_prefix('-') {
+                                    result.retain(|c| *c != cmd);
+                                } else {
+                                    // Can't push a &str from config into &str vec, just print separately
+                                    println!("{token}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for cmd in &result {
+        println!("{cmd}");
+    }
 }
 
 /// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
@@ -607,6 +834,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
+        "__list_cmds" => {
+            let categories = rest.first().map(|s| s.as_str()).unwrap_or("");
+            print_list_cmds(categories);
+            Ok(())
+        }
         _ => {
             let commands = KNOWN_COMMANDS;
             // Find similar commands using edit distance

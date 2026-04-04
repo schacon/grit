@@ -284,7 +284,7 @@ test_expect_success '__git_find_repo_path - "git -C" while .git directory in cwd
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_find_repo_path - "git -C" while cwd is a .git directory' '
+test_expect_success '__git_find_repo_path - "git -C" while cwd is a .git directory' '
 	echo "$ROOT/otherrepo/.git" >expected &&
 	(
 		cd .git &&
@@ -295,7 +295,7 @@ test_expect_failure '__git_find_repo_path - "git -C" while cwd is a .git directo
 	test_cmp expected "$actual"
 '
 
-test_expect_failure '__git_find_repo_path - "git -C" while .git directory in parent' '
+test_expect_success '__git_find_repo_path - "git -C" while .git directory in parent' '
 	echo "$ROOT/otherrepo/.git" >expected &&
 	(
 		cd subdir &&
@@ -2668,7 +2668,7 @@ test_expect_failure 'git --help completion' '
 	test_completion "git --help core" "core-tutorial "
 '
 
-test_expect_failure 'completion.commands removes multiple commands' '
+test_expect_success 'completion.commands removes multiple commands' '
 	test_config completion.commands "-cherry -mergetool" &&
 	git --list-cmds=list-mainporcelain,list-complete,config >out &&
 	! grep -E "^(cherry|mergetool)$" out
@@ -2721,7 +2721,7 @@ test_expect_success 'checkout completes pseudo refs case insensitively with GIT_
 	)
 '
 
-test_expect_failure 'git -C <path> checkout uses the right repo' '
+test_expect_success 'git -C <path> checkout uses the right repo' '
 	test_completion "git -C subdir -C subsubdir -C .. -C ../otherrepo checkout b" <<-\EOF
 	branch-in-other Z
 	EOF
@@ -2761,7 +2761,7 @@ test_expect_success 'complete tree filename with metacharacters' '
 	EOF
 '
 
-test_expect_failure 'symbolic-ref completes builtin options' '
+test_expect_success 'symbolic-ref completes builtin options' '
 	test_completion "git symbolic-ref --d" <<-\EOF
 	--delete Z
 	EOF
@@ -2985,7 +2985,7 @@ do
 	'
 done
 
-test_expect_failure 'git config subcommand' '
+test_expect_success 'git config subcommand' '
 	test_completion "git config " <<-\EOF
 	edit Z
 	get Z
@@ -2997,7 +2997,7 @@ test_expect_failure 'git config subcommand' '
 	EOF
 '
 
-test_expect_failure 'git config subcommand options' '
+test_expect_success 'git config subcommand options' '
 	test_completion "git config get --show-" <<-\EOF
 	--show-names Z
 	--show-origin Z
@@ -3071,7 +3071,7 @@ test_expect_failure 'git config set - variable name - __git_compute_second_level
 	EOF
 '
 
-test_expect_failure 'git config set - value' '
+test_expect_success 'git config set - value' '
 	test_completion "git config set color.pager " <<-\EOF
 	false Z
 	true Z
@@ -3122,7 +3122,7 @@ test_expect_success 'git clone --config= - value' '
 	EOF
 '
 
-test_expect_failure 'git reflog show' '
+test_expect_success 'git reflog show' '
 	test_when_finished "git checkout - && git branch -d shown" &&
 	git checkout -b shown &&
 	test_completion "git reflog sho" <<-\EOF &&
@@ -3142,7 +3142,7 @@ test_expect_success 'options with value' '
 	EOF
 '
 
-test_expect_failure 'sourcing the completion script clears cached commands' '
+test_expect_success 'sourcing the completion script clears cached commands' '
 	(
 		__git_compute_all_commands &&
 		test -n "$__git_all_commands" &&
@@ -3160,7 +3160,7 @@ test_expect_failure 'sourcing the completion script clears cached merge strategi
 	)
 '
 
-test_expect_failure 'sourcing the completion script clears cached --options' '
+test_expect_success 'sourcing the completion script clears cached --options' '
 	(
 		__gitcomp_builtin checkout &&
 		test -n "$__gitcomp_builtin_checkout" &&
@@ -3172,11 +3172,11 @@ test_expect_failure 'sourcing the completion script clears cached --options' '
 	)
 '
 
-test_expect_failure 'option aliases are not shown by default' '
+test_expect_success 'option aliases are not shown by default' '
 	test_completion "git clone --recurs" "--recurse-submodules "
 '
 
-test_expect_failure 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
+test_expect_success 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		GIT_COMPLETION_SHOW_ALL=1 && export GIT_COMPLETION_SHOW_ALL &&
@@ -3187,7 +3187,7 @@ test_expect_failure 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
 	)
 '
 
-test_expect_failure 'plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS' '
+test_expect_success 'plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		sane_unset GIT_TESTING_PORCELAIN_COMMAND_LIST &&
