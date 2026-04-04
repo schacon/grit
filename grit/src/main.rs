@@ -874,7 +874,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "replay" => commands::replay::run(parse_cmd_args(subcmd, rest)),
         "repo" => commands::repo::run(parse_cmd_args(subcmd, rest)),
         "rerere" => commands::rerere::run(parse_cmd_args(subcmd, rest)),
-        "reset" => commands::reset::run(parse_cmd_args(subcmd, rest)),
+        "reset" => {
+            commands::reset::pre_validate_args(rest)?;
+            let filtered = commands::reset::filter_args(rest);
+            commands::reset::run(parse_cmd_args(subcmd, &filtered))
+        }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
         "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
         "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),

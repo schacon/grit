@@ -694,6 +694,13 @@ test_expect_success () {
 	local result=$_test_eval_result
 	# Ensure errexit is off at top level
 	set +e
+	# Run test_when_finished cleanups (like upstream's per-test subshell EXIT trap).
+	if test -n "${_twf_cmd+set}"
+	then
+		eval "$_twf_cmd" 2>/dev/null
+		_twf_cmd=
+		trap - EXIT
+	fi
 	cd "$_old_cwd" 2>/dev/null || true
 
 	if test $result -eq 0

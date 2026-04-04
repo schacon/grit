@@ -106,6 +106,24 @@ impl IndexEntry {
             *fe &= !0x4000;
         }
     }
+
+    /// Whether the intent-to-add bit is set (extended flags, v3+).
+    #[must_use]
+    pub fn intent_to_add(&self) -> bool {
+        self.flags_extended
+            .map(|f| f & 0x2000 != 0)
+            .unwrap_or(false)
+    }
+
+    /// Set the intent-to-add bit (promotes entry to v3).
+    pub fn set_intent_to_add(&mut self, value: bool) {
+        let fe = self.flags_extended.get_or_insert(0);
+        if value {
+            *fe |= 0x2000;
+        } else {
+            *fe &= !0x2000;
+        }
+    }
 }
 
 /// The in-memory representation of the Git index file.
