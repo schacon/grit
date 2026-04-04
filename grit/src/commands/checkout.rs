@@ -797,17 +797,10 @@ fn check_dirty_worktree(
                     continue; // target removes, but our staged version can be carried
                 }
 
-                // Only flag as conflict if the worktree differs from the index
-                // (actual user modification).  If worktree matches index, the
-                // "staged change" may be an artifact of update-ref moving the
-                // branch pointer, and the user's work is safe.
+                // The index differs from both HEAD and the target, so
+                // switching would silently discard the staged change.
                 let rel_path = String::from_utf8_lossy(path_bytes);
-                let abs_path = work_tree.join(rel_path.as_ref());
-                let worktree_dirty = abs_path.exists()
-                    && is_worktree_dirty(repo, old_entry, &abs_path).unwrap_or(true);
-                if worktree_dirty {
-                    staged_conflicts.push(rel_path.into_owned());
-                }
+                staged_conflicts.push(rel_path.into_owned());
             }
             if !staged_conflicts.is_empty() {
                 let mut msg = String::from("error: Your local changes to the following files would be overwritten by checkout:\n");
