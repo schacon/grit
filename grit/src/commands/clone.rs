@@ -176,6 +176,15 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         copy_objects(&source.git_dir, &dest.git_dir)
             .context("copying objects")?;
+        // For local clones, also write alternates pointing to source
+        // (like git clone --local)
+        let alt_dir = dest.git_dir.join("objects/info");
+        let _ = fs::create_dir_all(&alt_dir);
+        let source_objects = source.git_dir.join("objects");
+        if let Ok(abs) = source_objects.canonicalize() {
+            let alt_path = alt_dir.join("alternates");
+            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
+        }
     }
 
     let remote_name = "origin";
