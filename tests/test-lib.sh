@@ -114,6 +114,9 @@ PATH="$TEST_DIRECTORY:$PATH"
 			echo "warning: could not git init trash directory" >&2
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
 		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
+		# Exclude .bin/ wrapper directory from status/clean output
+		mkdir -p .git/info 2>/dev/null
+		echo '/.bin/' >>.git/info/exclude 2>/dev/null
 	fi
 }
 

@@ -235,7 +235,7 @@ fn format_short(
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
-    if args.branch || args.porcelain {
+    if args.branch {
         let branch = head.branch_name().unwrap_or("HEAD (no branch)");
         write!(out, "## {branch}")?;
         if !args.no_ahead_behind {
