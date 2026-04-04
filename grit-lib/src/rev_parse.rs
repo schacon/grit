@@ -259,12 +259,17 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     // Handle A...B (symmetric difference / merge-base)
+    // Also handles A... (implies A...HEAD)
     if let Some(idx) = spec.find("...") {
         let left = &spec[..idx];
-        let right = &spec[idx + 3..];
-        if !left.is_empty() && !right.is_empty() {
+        let right_raw = &spec[idx + 3..];
+        if !left.is_empty() {
             let left_oid = resolve_revision(repo, left)?;
-            let right_oid = resolve_revision(repo, right)?;
+            let right_oid = if right_raw.is_empty() {
+                resolve_revision(repo, "HEAD")?
+            } else {
+                resolve_revision(repo, right_raw)?
+            };
             let bases = crate::merge_base::merge_bases_first_vs_rest(
                 repo, left_oid, &[right_oid],
             )?;
