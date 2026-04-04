@@ -157,18 +157,269 @@ fn optimize_refs(_repo: &Repository) -> Result<()> {
     crate::commands::pack_refs::run(crate::commands::pack_refs::Args { all: true, no_prune: false })
 }
 
-fn migrate_refs(_repo: &Repository, ref_format: &str) -> Result<()> {
-    match ref_format {
-        "files" => {
-            eprintln!("ref storage is already in 'files' format");
-        }
-        "reftable" => {
-            eprintln!("reftable migration is not yet implemented");
-            std::process::exit(1);
-        }
-        other => {
+/// Detect the current ref storage format of a repository.
+fn current_ref_format(repo: &Repository) -> &'static str {
+    if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        "reftable"
+    } else {
+        "files"
+    }
+}
+
+/// Migrate ref storage between backends.
+///
+/// Supported migrations:
+/// - `files` → `reftable`: reads all loose/packed refs, writes them into a
+///   reftable stack, updates the config, removes old files.
+/// - `reftable` → `files`: reads all reftable refs, writes them as loose
+///   refs + packed-refs, updates the config, removes the reftable directory.
+fn migrate_refs(repo: &Repository, target_format: &str) -> Result<()> {
+    let current = current_ref_format(repo);
+    if current == target_format {
+        eprintln!("ref storage is already in '{target_format}' format");
+        return Ok(());
+    }
+
+    match (current, target_format) {
+        ("files", "reftable") => migrate_files_to_reftable(repo),
+        ("reftable", "files") => migrate_reftable_to_files(repo),
+        (_, other) => {
             eprintln!("unknown ref format: {other}");
             std::process::exit(1);
+        }
+    }
+}
+
+/// Collect all refs from the files backend (loose + packed).
+fn collect_files_refs(git_dir: &Path) -> Result<Vec<(String, String)>> {
+    // `String` values: either an OID hex or "symref:<target>" for symbolic refs.
+    let mut result: Vec<(String, String)> = Vec::new();
+
+    // Read HEAD
+    let head = fs::read_to_string(git_dir.join("HEAD")).context("reading HEAD")?;
+    let head = head.trim();
+    if let Some(target) = head.strip_prefix("ref: ") {
+        result.push(("HEAD".to_owned(), format!("symref:{target}")));
+    } else {
+        result.push(("HEAD".to_owned(), head.to_owned()));
+    }
+
+    // Collect loose refs
+    fn walk_loose(dir: &Path, prefix: &str, out: &mut Vec<(String, String)>) -> Result<()> {
+        let rd = match fs::read_dir(dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        for entry in rd {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            let refname = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.file_type()?.is_dir() {
+                walk_loose(&entry.path(), &refname, out)?;
+            } else {
+                let content = fs::read_to_string(entry.path())?.trim().to_owned();
+                if let Some(target) = content.strip_prefix("ref: ") {
+                    out.push((refname, format!("symref:{target}")));
+                } else {
+                    out.push((refname, content));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    walk_loose(&git_dir.join("refs"), "refs", &mut result)?;
+
+    // Read packed-refs (lower priority — only add if not already present)
+    let packed_path = git_dir.join("packed-refs");
+    if let Ok(content) = fs::read_to_string(&packed_path) {
+        let existing: std::collections::HashSet<String> =
+            result.iter().map(|(n, _)| n.clone()).collect();
+        for line in content.lines() {
+            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                continue;
+            }
+            if let Some((hex, name)) = line.split_once(' ') {
+                if hex.len() == 40 && !existing.contains(name) {
+                    result.push((name.to_owned(), hex.to_owned()));
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Migrate from files backend to reftable.
+fn migrate_files_to_reftable(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    let refs = collect_files_refs(git_dir)?;
+
+    // Create reftable directory
+    let reftable_dir = git_dir.join("reftable");
+    fs::create_dir_all(&reftable_dir)?;
+    let tables_list = reftable_dir.join("tables.list");
+    if !tables_list.exists() {
+        fs::write(&tables_list, "")?;
+    }
+
+    // Update config to enable reftable BEFORE writing refs
+    update_config_ref_format(git_dir, "reftable")?;
+
+    // Write all refs into reftable
+    for (refname, value) in &refs {
+        if refname == "HEAD" {
+            // HEAD is kept as a file, not in reftable
+            continue;
+        }
+        if let Some(target) = value.strip_prefix("symref:") {
+            grit_lib::reftable::reftable_write_symref(git_dir, refname, target, None, None)
+                .with_context(|| format!("writing symref {refname}"))?;
+        } else {
+            let oid: grit_lib::objects::ObjectId = value.parse()
+                .with_context(|| format!("parsing oid for {refname}"))?;
+            grit_lib::reftable::reftable_write_ref(git_dir, refname, &oid, None, None)
+                .with_context(|| format!("writing ref {refname}"))?;
+        }
+    }
+
+    // Remove old files backend artifacts
+    let _ = fs::remove_file(git_dir.join("packed-refs"));
+    let _ = remove_dir_contents(&git_dir.join("refs").join("heads"));
+    let _ = remove_dir_contents(&git_dir.join("refs").join("tags"));
+
+    Ok(())
+}
+
+/// Migrate from reftable backend to files.
+fn migrate_reftable_to_files(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+
+    // Read all refs from reftable
+    let refs = grit_lib::reftable::reftable_list_refs(git_dir, "refs/")
+        .context("reading reftable refs")?;
+
+    // Also read HEAD
+    let head_content = fs::read_to_string(git_dir.join("HEAD"))
+        .unwrap_or_default();
+
+    // Update config to files format BEFORE writing
+    update_config_ref_format(git_dir, "files")?;
+
+    // Write refs as loose files
+    for (refname, oid) in &refs {
+        let ref_path = git_dir.join(refname);
+        if let Some(parent) = ref_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&ref_path, format!("{oid}\n"))?;
+    }
+
+    // Ensure refs/heads and refs/tags directories exist
+    fs::create_dir_all(git_dir.join("refs").join("heads"))?;
+    fs::create_dir_all(git_dir.join("refs").join("tags"))?;
+
+    // Remove reftable directory
+    let reftable_dir = git_dir.join("reftable");
+    if reftable_dir.exists() {
+        fs::remove_dir_all(&reftable_dir)?;
+    }
+
+    // Ensure HEAD is preserved
+    if !head_content.is_empty() {
+        let head_path = git_dir.join("HEAD");
+        if !head_path.exists() {
+            fs::write(head_path, head_content)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Update the repository config to reflect the new ref storage format.
+fn update_config_ref_format(git_dir: &Path, format: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let content = fs::read_to_string(&config_path)
+        .unwrap_or_default();
+
+    let mut new_content = String::new();
+    let mut in_extensions = false;
+    let mut wrote_ref_storage = false;
+    let mut has_extensions = false;
+    let mut _wrote_version = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Track section headers
+        if trimmed.starts_with('[') {
+            // If we were in [extensions] and didn't write refStorage, do it now
+            if in_extensions && !wrote_ref_storage && format == "reftable" {
+                new_content.push_str(&format!("\trefStorage = {format}\n"));
+                wrote_ref_storage = true;
+            }
+            in_extensions = trimmed.starts_with("[extensions]");
+            if in_extensions {
+                has_extensions = true;
+            }
+        }
+
+        // Handle repositoryformatversion
+        if trimmed.starts_with("repositoryformatversion") {
+            let version = if format == "reftable" { 1 } else { 0 };
+            new_content.push_str(&format!("\trepositoryformatversion = {version}\n"));
+            _wrote_version = true;
+            continue;
+        }
+
+        // Handle refStorage line
+        if in_extensions && trimmed.to_lowercase().starts_with("refstorage") {
+            if format == "reftable" {
+                new_content.push_str(&format!("\trefStorage = {format}\n"));
+            }
+            // For "files", just skip (remove) the refStorage line
+            wrote_ref_storage = true;
+            continue;
+        }
+
+        new_content.push_str(line);
+        new_content.push('\n');
+    }
+
+    // If [extensions] section existed and we still need to write refStorage
+    if has_extensions && !wrote_ref_storage && format == "reftable" {
+        new_content.push_str(&format!("\trefStorage = {format}\n"));
+    }
+
+    // If no [extensions] section and we need one
+    if !has_extensions && format == "reftable" {
+        new_content.push_str("[extensions]\n");
+        new_content.push_str(&format!("\trefStorage = {format}\n"));
+    }
+
+    fs::write(&config_path, &new_content)?;
+    Ok(())
+}
+
+/// Remove all files and subdirectories inside a directory (but keep the dir).
+fn remove_dir_contents(dir: &Path) -> Result<()> {
+    let rd = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in rd {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            fs::remove_dir_all(&path)?;
+        } else {
+            fs::remove_file(&path)?;
         }
     }
     Ok(())
