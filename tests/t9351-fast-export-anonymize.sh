@@ -94,7 +94,7 @@ test_expect_success 'result has two branches' '
 	main_branch=$(grep -v $other_branch branches)
 '
 
-test_expect_failure 'repo has original shape and timestamps' '
+test_expect_success 'repo has original shape and timestamps' '
 	shape () {
 		git log --format="%m %ct" --left-right --boundary "$@"
 	} &&
@@ -103,7 +103,7 @@ test_expect_failure 'repo has original shape and timestamps' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'root tree has original shape' '
+test_expect_success 'root tree has original shape' '
 	git -C .. ls-tree HEAD >orig-root &&
 	cut -d" " -f2 <orig-root | sort >expect &&
 	git ls-tree $other_branch >root &&
@@ -111,7 +111,7 @@ test_expect_failure 'root tree has original shape' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'paths in subdir ended up in one tree' '
+test_expect_success 'paths in subdir ended up in one tree' '
 	git -C .. ls-tree other:subdir >orig-subdir &&
 	cut -d" " -f2 <orig-subdir | sort >expect &&
 	tree=$(grep tree root | cut -f2) &&
@@ -131,7 +131,7 @@ test_expect_success 'all tags point to branch tip' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'idents are shared' '
+test_expect_success 'idents are shared' '
 	git log --all --format="%an <%ae>" >authors &&
 	sort -u authors >unique &&
 	test_line_count = 1 unique &&
