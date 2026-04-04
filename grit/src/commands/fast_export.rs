@@ -19,5 +19,14 @@ pub struct Args {
 
 /// Run `grit fast-export` by delegating to the system Git binary.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("fast-export", &args.args)
+    // Normalize newer option names for compatibility with older system Git.
+    let normalized: Vec<String> = args.args.iter().map(|a| {
+        if a == "--signed-tags=warn-verbatim" {
+            // --signed-tags=warn-verbatim → --signed-tags=warn
+            "--signed-tags=warn".to_string()
+        } else {
+            a.clone()
+        }
+    }).collect();
+    git_passthrough::run("fast-export", &normalized)
 }

@@ -95,6 +95,7 @@ pub fn run(args: Args) -> Result<()> {
         porcelain: false,
         no_show_forced_updates: false,
         show_forced_updates: false,
+        negotiate_only: false,
     };
     super::fetch::run(fetch_args)?;
 

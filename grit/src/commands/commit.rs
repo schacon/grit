@@ -179,13 +179,19 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Build commit message
-    let mut message = build_message(&args, &repo)?;
+    let msg_result = build_message(&args, &repo)?;
+    let mut message = msg_result.message;
+    let mut raw_message = msg_result.raw_bytes;
     if message.trim().is_empty() && !args.allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
 
     // Resolve author and committer
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+
+    // Check i18n.commitEncoding for non-UTF-8 commit messages
+    let commit_encoding = config.get("i18n.commitEncoding")
+        .or_else(|| config.get("i18n.commitencoding"));
     let now = OffsetDateTime::now_utc();
 
     // When amending, preserve original author unless explicitly overridden
@@ -217,13 +223,31 @@ pub fn run(args: Args) -> Result<()> {
         if !message.contains(&trailer) {
             let trimmed = message.trim_end();
             message = format!("{trimmed}\n\n{trailer}\n");
+            // Also update raw_message if present
+            if let Some(ref raw) = raw_message {
+                let trimmed_raw = {
+                    let mut end = raw.len();
+                    while end > 0 && (raw[end - 1] == b'\n' || raw[end - 1] == b' ' || raw[end - 1] == b'\r') {
+                        end -= 1;
+                    }
+                    &raw[..end]
+                };
+                let mut new_raw = trimmed_raw.to_vec();
+                new_raw.extend_from_slice(format!("\n\n{trailer}\n").as_bytes());
+                raw_message = Some(new_raw);
+            }
         }
     }
 
     // Run commit-msg hook with temp file containing the message
     {
         let msg_file = repo.git_dir.join("COMMIT_EDITMSG");
-        fs::write(&msg_file, &message)?;
+        // Write raw bytes when available so the hook sees the original encoding
+        if let Some(ref raw) = raw_message {
+            fs::write(&msg_file, raw)?;
+        } else {
+            fs::write(&msg_file, &message)?;
+        }
         let msg_path_str = msg_file.to_string_lossy().to_string();
         match run_hook(&repo, "commit-msg", &[&msg_path_str], None) {
             HookResult::Failed(code) => {
@@ -231,21 +255,38 @@ pub fn run(args: Args) -> Result<()> {
             }
             HookResult::Success => {
                 // Re-read the message in case the hook modified it
-                message = fs::read_to_string(&msg_file)?;
+                let new_raw = fs::read(&msg_file)?;
+                match String::from_utf8(new_raw.clone()) {
+                    Ok(s) => {
+                        message = s;
+                        raw_message = None;
+                    }
+                    Err(_) => {
+                        message = String::from_utf8_lossy(&new_raw).to_string();
+                        raw_message = Some(new_raw);
+                    }
+                }
             }
             _ => {}
         }
     }
 
-    // Build commit object
+    // Build commit object — set encoding header when i18n.commitEncoding is configured
+    // and differs from UTF-8.
+    let encoding = match &commit_encoding {
+        Some(enc) if !enc.eq_ignore_ascii_case("utf-8") && !enc.eq_ignore_ascii_case("utf8") => {
+            Some(enc.clone())
+        }
+        _ => None,
+    };
     let commit_data = CommitData {
         tree: tree_oid,
         parents,
         author,
         committer,
-        encoding: None,
+        encoding,
         message,
-        raw_message: None,
+        raw_message,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -651,38 +692,62 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Result of building a commit message — may be UTF-8 or raw bytes.
+struct MessageResult {
+    /// UTF-8 message (always set; lossy if raw_bytes is Some).
+    message: String,
+    /// Raw bytes when the message is not valid UTF-8.
+    raw_bytes: Option<Vec<u8>>,
+}
+
 /// Build the commit message from --reuse-message, -m, -F, MERGE_MSG, or editor.
-fn build_message(args: &Args, repo: &Repository) -> Result<String> {
+fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
     // --reuse-message: take message (and author) from an existing commit
     if let Some(ref rev) = args.reuse_message {
         let oid = resolve_revision(repo, rev)?;
         let obj = repo.odb.read(&oid)?;
         let commit = grit_lib::objects::parse_commit(&obj.data)?;
-        return Ok(commit.message);
+        return Ok(MessageResult { message: commit.message, raw_bytes: None });
     }
 
     // -m flags
     if !args.message.is_empty() {
         let msg = args.message.join("\n\n");
-        return Ok(ensure_trailing_newline(&msg));
+        return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
     }
 
     // -F file
     if let Some(ref file_path) = args.file {
-        let content = if file_path == "-" {
+        let raw = if file_path == "-" {
             use std::io::Read;
-            let mut buf = String::new();
-            std::io::stdin().read_to_string(&mut buf)?;
+            let mut buf = Vec::new();
+            std::io::stdin().read_to_end(&mut buf)?;
             buf
         } else {
-            fs::read_to_string(file_path)?
+            fs::read(file_path)?
         };
-        return Ok(ensure_trailing_newline(&content));
+        match String::from_utf8(raw.clone()) {
+            Ok(s) => {
+                return Ok(MessageResult { message: ensure_trailing_newline(&s), raw_bytes: None });
+            }
+            Err(_) => {
+                // Non-UTF-8 message — store raw bytes.
+                let lossy = String::from_utf8_lossy(&raw).to_string();
+                let mut raw_nl = raw;
+                if !raw_nl.ends_with(b"\n") {
+                    raw_nl.push(b'\n');
+                }
+                return Ok(MessageResult {
+                    message: ensure_trailing_newline(&lossy),
+                    raw_bytes: Some(raw_nl),
+                });
+            }
+        }
     }
 
     // Check for MERGE_MSG
     if let Some(msg) = grit_lib::state::read_merge_msg(&repo.git_dir)? {
-        return Ok(ensure_trailing_newline(&msg));
+        return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
     }
 
     // If amend, use the previous commit message as default
@@ -691,7 +756,7 @@ fn build_message(args: &Args, repo: &Repository) -> Result<String> {
         if let Some(oid) = head.oid() {
             let obj = repo.odb.read(oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
-            return Ok(commit.message);
+            return Ok(MessageResult { message: commit.message, raw_bytes: None });
         }
     }
 

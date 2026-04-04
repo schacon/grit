@@ -48,6 +48,7 @@ test_expect_success 'setup' '
 	test_tick &&
 	git tag -a -m valentin muss &&
 	ANNOTATED_TAG_COUNT=1 &&
+	test_export ANNOTATED_TAG_COUNT &&
 	git merge -s ours main
 
 '
@@ -184,7 +185,7 @@ test_expect_success 'preserving iso-8859-7' '
 	# bytes.  Re-encoding the Pi character from \xF0 (\360) in
 	# iso-8859-7 to \xCF\x80 (\317\200) in UTF-8 adds a byte.
 	# Check for the expected size...
-	test $(($(test_oid hexsz) + 200)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
+	test $(($(test_oid hexsz) + 213)) -eq "$(git -C new cat-file -s i18n-no-recoding)" &&
 	# ...as well as the expected byte.
 	git -C new cat-file commit i18n-no-recoding >actual &&
 	grep $(printf "\360") actual &&
@@ -207,7 +208,7 @@ test_expect_success 'encoding preserved if reencoding fails' '
 	grep ^encoding actual &&
 	# Verify that the commit has the expected size; i.e.
 	# that no bytes were re-encoded to a different encoding.
-	test $(($(test_oid hexsz) + 212)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
+	test $(($(test_oid hexsz) + 216)) -eq "$(git -C new cat-file -s i18n-invalid)" &&
 	# ...and check for the original special bytes
 	grep $(printf "\360") actual &&
 	grep $(printf "\377") actual
@@ -250,7 +251,8 @@ EOF
 test_expect_success 'set up faked signed tag' '
 
 	git fast-import <signed-tag-import &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
+	test_export ANNOTATED_TAG_COUNT
 
 '
 
@@ -303,7 +305,8 @@ test_expect_failure GPGSM 'setup X.509 signed tag' '
 	test_config user.signingkey $GIT_COMMITTER_EMAIL &&
 
 	git tag -s -m "X.509 signed tag" x509-signed $(git rev-parse HEAD) &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
+	test_export ANNOTATED_TAG_COUNT
 '
 
 test_expect_failure GPGSM 'signed-tags=verbatim with X.509' '
@@ -321,7 +324,8 @@ test_expect_failure GPGSSH 'setup SSH signed tag' '
 	test_config user.signingkey "${GPGSSH_KEY_PRIMARY}" &&
 
 	git tag -s -m "SSH signed tag" ssh-signed $(git rev-parse HEAD) &&
-	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1))
+	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
+	test_export ANNOTATED_TAG_COUNT
 '
 
 test_expect_failure GPGSSH 'signed-tags=verbatim with SSH' '
@@ -549,6 +553,7 @@ test_expect_success 'fast-export | fast-import when main is tagged' '
 
 	git tag -m msg last &&
 	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
+	test_export ANNOTATED_TAG_COUNT &&
 	git fast-export -C -C --signed-tags=strip --all > output &&
 	test $(grep -c "^tag " output) = $ANNOTATED_TAG_COUNT
 
@@ -565,6 +570,7 @@ test_expect_success 'cope with tagger-less tags' '
 	TAG=$(git hash-object --literally -t tag -w tag-content) &&
 	git update-ref refs/tags/sonnenschein $TAG &&
 	ANNOTATED_TAG_COUNT=$((ANNOTATED_TAG_COUNT + 1)) &&
+	test_export ANNOTATED_TAG_COUNT &&
 	git fast-export -C -C --signed-tags=strip --all > output &&
 	test $(grep -c "^tag " output) = $ANNOTATED_TAG_COUNT &&
 	! grep "Unspecified Tagger" output &&

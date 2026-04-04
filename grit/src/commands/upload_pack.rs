@@ -20,11 +20,19 @@ pub struct Args {
     /// Path to the repository (bare or non-bare).
     #[arg(value_name = "DIRECTORY")]
     pub directory: PathBuf,
+
+    /// Only advertise refs and capabilities, then exit.
+    #[arg(long)]
+    pub advertise_refs: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let repo = open_repo(&args.directory)
         .with_context(|| format!("could not open repository at '{}'", args.directory.display()))?;
+
+    if args.advertise_refs {
+        return advertise_refs_with_caps(&repo);
+    }
 
     // Phase 1: Advertise refs
     advertise_refs(&repo.git_dir)?;
@@ -83,6 +91,53 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    out.flush()?;
+    Ok(())
+}
+
+/// Advertise refs with capabilities in pkt-line format (for --advertise-refs).
+fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    let version = crate::version_string();
+    let caps = format!(
+        "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
+         deepen-relative no-progress include-tag multi_ack_detailed allow-tip-sha1-in-want \
+         allow-reachable-sha1-in-want no-done symref=HEAD:{} filter object-format=sha1 \
+         agent=git/{} ref-in-want",
+        refs::read_symbolic_ref(git_dir, "HEAD")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "refs/heads/main".to_owned()),
+        version,
+    );
+
+    // HEAD first, with capabilities after NUL
+    let mut first = true;
+    if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
+        let line = format!("{}\tHEAD\0{}\n", head_oid.to_hex(), caps);
+        let len = 4 + line.len();
+        write!(out, "{:04x}{}", len, line)?;
+        first = false;
+    }
+
+    let all_refs = list_all_refs(git_dir)?;
+    for (refname, oid) in &all_refs {
+        if first {
+            let line = format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps);
+            let len = 4 + line.len();
+            write!(out, "{:04x}{}", len, line)?;
+            first = false;
+        } else {
+            let line = format!("{}\t{}\n", oid.to_hex(), refname);
+            let len = 4 + line.len();
+            write!(out, "{:04x}{}", len, line)?;
+        }
+    }
+
+    write!(out, "0000")?;
     out.flush()?;
     Ok(())
 }

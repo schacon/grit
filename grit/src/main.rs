@@ -11,7 +11,13 @@ use std::path::PathBuf;
 
 mod commands;
 pub mod pathspec;
+pub mod pkt_line;
 pub mod protocol;
+
+/// Return the version string, e.g. `"2.47.0.grit"`.
+pub fn version_string() -> String {
+    "2.47.0.grit".to_owned()
+}
 
 fn main() {
     let start = std::time::Instant::now();
@@ -838,6 +844,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "name-rev" => commands::name_rev::run(parse_cmd_args(subcmd, rest)),
         "notes" => commands::notes::run(parse_cmd_args(subcmd, rest)),
         "pack-objects" => commands::pack_objects::run(parse_cmd_args(subcmd, rest)),
+        "pkt-line" => {
+            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
+            match sub {
+                "pack" => pkt_line::cmd_pack().map_err(Into::into),
+                "unpack" => pkt_line::cmd_unpack().map_err(Into::into),
+                other => bail!("pkt-line: unknown subcommand '{other}'"),
+            }
+        }
         "pack-redundant" => commands::pack_redundant::run(parse_cmd_args(subcmd, rest)),
         "pack-refs" => commands::pack_refs::run(parse_cmd_args(subcmd, rest)),
         "patch-id" => commands::patch_id::run(parse_cmd_args(subcmd, rest)),
@@ -869,6 +883,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "scalar" => commands::scalar::run(rest),
         "send-email" => commands::send_email::run(parse_cmd_args(subcmd, rest)),
         "send-pack" => commands::send_pack::run(parse_cmd_args(subcmd, rest)),
+        "serve-v2" => commands::serve_v2::run(parse_cmd_args(subcmd, rest)),
         "sh-i18n" => commands::sh_i18n::run(parse_cmd_args(subcmd, rest)),
         "sh-setup" => commands::sh_setup::run(parse_cmd_args(subcmd, rest)),
         "shell" => commands::shell::run(parse_cmd_args(subcmd, rest)),

@@ -79,6 +79,19 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             std::env::current_dir()?.join(sep)
         };
         fs::canonicalize(&sep_abs).unwrap_or(sep_abs)
+    } else if let Ok(env_git_dir) = std::env::var("GIT_DIR") {
+        // Respect GIT_DIR env var (set by --git-dir global option)
+        let gd = PathBuf::from(&env_git_dir);
+        let gd_abs = if gd.is_absolute() {
+            gd
+        } else {
+            std::env::current_dir()?.join(gd)
+        };
+        // Ensure parent directory exists
+        if let Some(parent) = gd_abs.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        gd_abs
     } else if bare {
         abs_path.clone()
     } else {
