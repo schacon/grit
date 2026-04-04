@@ -26,8 +26,7 @@ test_expect_success setup '
 	test_commit C
 '
 
-# grit --force-with-lease is a boolean flag only, not --force-with-lease=ref:val
-test_expect_failure 'push to update (protected)' '
+test_expect_success 'push to update (protected)' '
 	setup_srcdst_basic &&
 	(
 		cd dst &&
@@ -64,8 +63,7 @@ test_expect_success 'push to update (allowed)' '
 	test_cmp expect actual
 '
 
-# grit --force-with-lease does not support =ref:val syntax
-test_expect_failure 'push to update (allowed, tracking)' '
+test_expect_success 'push to update (allowed, tracking)' '
 	setup_srcdst_basic &&
 	(
 		cd dst &&
@@ -77,25 +75,22 @@ test_expect_failure 'push to update (allowed, tracking)' '
 	test_cmp expect actual
 '
 
-# grit --force-with-lease does not properly protect against stale delete
-test_expect_failure 'push to delete (protected)' '
+test_expect_success 'push to delete (protected)' '
 	setup_srcdst_basic &&
 	git ls-remote src refs/heads/main >expect &&
 	(
 		cd dst &&
-		test_must_fail git push --force-with-lease --delete origin main
+		test_must_fail git push --force-with-lease=main:main^ origin :main
 	) &&
 	git ls-remote src refs/heads/main >actual &&
 	test_cmp expect actual
 '
 
-# grit --force-with-lease + --delete combination
-test_expect_failure 'push to delete (allowed)' '
+test_expect_success 'push to delete (allowed)' '
 	setup_srcdst_basic &&
 	(
 		cd dst &&
-		git fetch &&
-		git push --force-with-lease --delete origin main
+		git push --force-with-lease=main origin :main
 	) &&
 	git ls-remote src refs/heads/main >actual &&
 	test_must_be_empty actual

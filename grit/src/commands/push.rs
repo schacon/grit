@@ -48,8 +48,10 @@ pub struct Args {
     pub set_upstream: bool,
 
     /// Force push only if the remote ref matches the expected old value.
-    #[arg(long = "force-with-lease")]
-    pub force_with_lease: bool,
+    /// Accepts: --force-with-lease, --force-with-lease=<refname>,
+    /// or --force-with-lease=<refname>:<expect>
+    #[arg(long = "force-with-lease", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    pub force_with_lease: Option<String>,
 
     /// Request an atomic push: either all refs update or none do.
     #[arg(long)]
@@ -282,12 +284,15 @@ fn push_to_url(
             if old_oid.is_none() {
                 bail!("remote ref '{}' not found", spec);
             }
+            let expected_oid = resolve_force_with_lease_expect(
+                &args.force_with_lease, &repo.git_dir, remote_name, spec,
+            );
             updates.push(RefUpdate {
                 local_ref: None,
                 remote_ref,
                 old_oid,
                 new_oid: None,
-                expected_oid: None,
+                expected_oid,
             });
         }
     } else if !args.refspecs.is_empty() {
@@ -302,12 +307,15 @@ fn push_to_url(
                 if old_oid.is_none() {
                     bail!("remote ref '{}' not found", dst);
                 }
+                let expected_oid = resolve_force_with_lease_expect(
+                    &args.force_with_lease, &repo.git_dir, remote_name, &dst,
+                );
                 updates.push(RefUpdate {
                     local_ref: None,
                     remote_ref,
                     old_oid,
                     new_oid: None,
-                    expected_oid: None,
+                    expected_oid,
                 });
                 continue;
             }
@@ -332,20 +340,9 @@ fn push_to_url(
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-            // For --force-with-lease, the expected oid comes from the local
-            // remote-tracking ref (what `fetch` last stored), NOT re-reading
-            // the remote. This detects when someone else pushed since our
-            // last fetch.
-            let expected_oid = if args.force_with_lease {
-                let tracking_ref = format!(
-                    "refs/remotes/{}/{}",
-                    remote_name,
-                    dst.strip_prefix("refs/heads/").unwrap_or(&dst)
-                );
-                refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
-            } else {
-                None
-            };
+            let expected_oid = resolve_force_with_lease_expect(
+                &args.force_with_lease, &repo.git_dir, remote_name, &dst,
+            );
 
             updates.push(RefUpdate {
                 local_ref: Some(local_ref),
@@ -418,14 +415,9 @@ fn push_to_url(
             .with_context(|| format!("branch '{}' has no commits", branch))?;
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
-        // For --force-with-lease, the expected oid comes from the local
-        // remote-tracking ref.
-        let expected_oid = if args.force_with_lease {
-            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
-            refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
-        } else {
-            None
-        };
+        let expected_oid = resolve_force_with_lease_expect(
+            &args.force_with_lease, &repo.git_dir, remote_name, branch,
+        );
 
         updates.push(RefUpdate {
             local_ref: Some(local_ref),
@@ -480,7 +472,7 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force && !args.force_with_lease && !is_ancestor(&repo, *old, *new)? {
+            if !args.force && args.force_with_lease.is_none() && !is_ancestor(&repo, *old, *new)? {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\
@@ -788,6 +780,65 @@ fn apply_ref_update(
     }
 
     Ok(())
+}
+
+/// Parsed --force-with-lease argument.
+#[derive(Debug)]
+enum ForceWithLease {
+    /// --force-with-lease (bare, use tracking ref for the ref being pushed)
+    Bare,
+    /// --force-with-lease=<refname> (use tracking ref for this specific ref)
+    Ref(String),
+    /// --force-with-lease=<refname>:<expect> (explicit expected OID)
+    RefExpect(String, String),
+}
+
+/// Resolve the expected OID for --force-with-lease, given the push target ref.
+fn resolve_force_with_lease_expect(
+    fwl: &Option<String>,
+    git_dir: &Path,
+    remote_name: &str,
+    dst_branch: &str,
+) -> Option<ObjectId> {
+    let val = match fwl {
+        Some(v) => v.as_str(),
+        None => return None,
+    };
+    let parsed = parse_force_with_lease(val);
+    match parsed {
+        ForceWithLease::Bare => {
+            // Use the remote-tracking ref for the branch being pushed
+            let branch = dst_branch.strip_prefix("refs/heads/").unwrap_or(dst_branch);
+            let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::Ref(refname) => {
+            // Use the remote-tracking ref for the given refname
+            let tracking_ref = format!("refs/remotes/{remote_name}/{refname}");
+            refs::resolve_ref(git_dir, &tracking_ref).ok()
+        }
+        ForceWithLease::RefExpect(_refname, expect) => {
+            // Try to resolve expect as a revision expression (handles main^, etc.)
+            // We need a Repository for rev_parse, so open one from git_dir.
+            if let Ok(repo) = Repository::open(git_dir, None) {
+                if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, &expect) {
+                    return Some(oid);
+                }
+            }
+            // Fall back: try as raw OID
+            expect.parse::<ObjectId>().ok()
+        }
+    }
+}
+
+fn parse_force_with_lease(val: &str) -> ForceWithLease {
+    if val.is_empty() {
+        ForceWithLease::Bare
+    } else if let Some(idx) = val.find(':') {
+        ForceWithLease::RefExpect(val[..idx].to_owned(), val[idx + 1..].to_owned())
+    } else {
+        ForceWithLease::Ref(val.to_owned())
+    }
 }
 
 /// Match a glob pattern (e.g. "refs/heads/*") against a ref name.
