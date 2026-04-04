@@ -529,8 +529,8 @@ t0021-conversion::delayed-checkout-honors-no-progress-mode-checkout	t0021-conver
 t0022-crlf-rename::diff-m	t0022-crlf-rename	diff -M	diff-tree	pass
 t0023-crlf-am::setup	t0023-crlf-am	setup	add	pass
 t0023-crlf-am::am	t0023-crlf-am	am	am	pass
-t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	pass
-t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	pass
+t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	partial
+t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	partial
 t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	pass
 t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	pass
 t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
@@ -577,19 +577,19 @@ t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-crlf-mi	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=CRLF_mix_LF		pass
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-lf-mix	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=LF_mix_CR		pass
 t0027-auto-crlf::checkout-attr-attr-ident-aeol-aeol-core-autocrlf-crlf-core-eol-ceol-file-lf-nul	t0027-auto-crlf	checkout attr=$attr $ident aeol=$aeol core.autocrlf=$crlf core.eol=$ceol file=LF_nul		pass
-t0028-working-tree-encoding::setup-test-files	t0028-working-tree-encoding	setup test files	add	pass
-t0028-working-tree-encoding::ensure-utf-8-is-stored-in-git	t0028-working-tree-encoding	ensure UTF-8 is stored in Git	cat-file	pass
-t0028-working-tree-encoding::re-encode-to-utf-16-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16 on checkout	checkout	pass
-t0028-working-tree-encoding::re-encode-to-utf-16-le-bom-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16-LE-BOM on checkout	checkout	pass
-t0028-working-tree-encoding::check-git-dir-info-attributes-support	t0028-working-tree-encoding	check $GIT_DIR/info/attributes support	add	pass
-t0028-working-tree-encoding::check-unsupported-encodings	t0028-working-tree-encoding	check unsupported encodings	add	pass
-t0028-working-tree-encoding::error-if-encoding-round-trip-is-not-the-same-during-refresh	t0028-working-tree-encoding	error if encoding round trip is not the same during refresh	checkout	pass
-t0028-working-tree-encoding::error-if-encoding-garbage-is-already-in-git	t0028-working-tree-encoding	error if encoding garbage is already in Git	commit-tree	pass
-t0028-working-tree-encoding::check-roundtrip-encoding	t0028-working-tree-encoding	check roundtrip encoding	add	pass
-t0028-working-tree-encoding::check-prohibited-utf-i-bom	t0028-working-tree-encoding	check prohibited UTF-${i} BOM	add	pass
-t0028-working-tree-encoding::check-required-utf-i-bom	t0028-working-tree-encoding	check required UTF-${i} BOM	add	pass
-t0028-working-tree-encoding::eol-conversion-for-utf-i-encoded-files-on-checkout	t0028-working-tree-encoding	eol conversion for UTF-${i} encoded files on checkout	add	pass
-t0028-working-tree-encoding::commit-utf-8-checkout-encoding	t0028-working-tree-encoding	Commit UTF-8, checkout $encoding	add	pass
+t0028-working-tree-encoding::setup-test-files	t0028-working-tree-encoding	setup test files	add	partial
+t0028-working-tree-encoding::ensure-utf-8-is-stored-in-git	t0028-working-tree-encoding	ensure UTF-8 is stored in Git	cat-file	partial
+t0028-working-tree-encoding::re-encode-to-utf-16-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16 on checkout	checkout	partial
+t0028-working-tree-encoding::re-encode-to-utf-16-le-bom-on-checkout	t0028-working-tree-encoding	re-encode to UTF-16-LE-BOM on checkout	checkout	partial
+t0028-working-tree-encoding::check-git-dir-info-attributes-support	t0028-working-tree-encoding	check $GIT_DIR/info/attributes support	add	partial
+t0028-working-tree-encoding::check-unsupported-encodings	t0028-working-tree-encoding	check unsupported encodings	add	partial
+t0028-working-tree-encoding::error-if-encoding-round-trip-is-not-the-same-during-refresh	t0028-working-tree-encoding	error if encoding round trip is not the same during refresh	checkout	partial
+t0028-working-tree-encoding::error-if-encoding-garbage-is-already-in-git	t0028-working-tree-encoding	error if encoding garbage is already in Git	commit-tree	partial
+t0028-working-tree-encoding::check-roundtrip-encoding	t0028-working-tree-encoding	check roundtrip encoding	add	partial
+t0028-working-tree-encoding::check-prohibited-utf-i-bom	t0028-working-tree-encoding	check prohibited UTF-${i} BOM	add	partial
+t0028-working-tree-encoding::check-required-utf-i-bom	t0028-working-tree-encoding	check required UTF-${i} BOM	add	partial
+t0028-working-tree-encoding::eol-conversion-for-utf-i-encoded-files-on-checkout	t0028-working-tree-encoding	eol conversion for UTF-${i} encoded files on checkout	add	partial
+t0028-working-tree-encoding::commit-utf-8-checkout-encoding	t0028-working-tree-encoding	Commit UTF-8, checkout $encoding	add	partial
 t0029-core-unsetenvvars::setup	t0029-core-unsetenvvars	setup		pass
 t0029-core-unsetenvvars::core-unsetenvvars-works	t0029-core-unsetenvvars	core.unsetenvvars works	commit	pass
 t0030-stripspace::long-lines-without-spaces-should-be-unchanged	t0030-stripspace	long lines without spaces should be unchanged	stripspace	pass
@@ -659,18 +659,18 @@ t0034-root-safe-directory::can-access-if-addressed-explicitly	t0034-root-safe-di
 t0034-root-safe-directory::can-access-with-sudo-if-root	t0034-root-safe-directory	can access with sudo if root	status	pass
 t0034-root-safe-directory::can-access-with-sudo-if-root-by-removing-sudo-uid	t0034-root-safe-directory	can access with sudo if root by removing SUDO_UID	status	pass
 t0034-root-safe-directory::cleanup	t0034-root-safe-directory	cleanup		pass
-t0035-safe-bare-repository::setup-an-embedded-bare-repo-secondary-worktree-and-submodule	t0035-safe-bare-repository	setup an embedded bare repo, secondary worktree and submodule	init	pass
-t0035-safe-bare-repository::safe-barerepository-unset	t0035-safe-bare-repository	safe.bareRepository unset		pass
-t0035-safe-bare-repository::safe-barerepository-all	t0035-safe-bare-repository	safe.bareRepository=all		pass
-t0035-safe-bare-repository::safe-barerepository-explicit	t0035-safe-bare-repository	safe.bareRepository=explicit		pass
-t0035-safe-bare-repository::safe-barerepository-in-the-repository	t0035-safe-bare-repository	safe.bareRepository in the repository	config	pass
-t0035-safe-bare-repository::safe-barerepository-on-the-command-line	t0035-safe-bare-repository	safe.bareRepository on the command line		pass
-t0035-safe-bare-repository::safe-barerepository-in-included-file	t0035-safe-bare-repository	safe.bareRepository in included file	config	pass
-t0035-safe-bare-repository::no-trace-when-git-dir-is-explicitly-provided	t0035-safe-bare-repository	no trace when GIT_DIR is explicitly provided		pass
-t0035-safe-bare-repository::no-trace-when-bare-repository-is-git	t0035-safe-bare-repository	no trace when "bare repository" is .git		pass
-t0035-safe-bare-repository::no-trace-when-bare-repository-is-a-subdir-of-git	t0035-safe-bare-repository	no trace when "bare repository" is a subdir of .git		pass
-t0035-safe-bare-repository::no-trace-in-git-dir-of-secondary-worktree	t0035-safe-bare-repository	no trace in $GIT_DIR of secondary worktree		pass
-t0035-safe-bare-repository::no-trace-in-git-dir-of-a-submodule	t0035-safe-bare-repository	no trace in $GIT_DIR of a submodule		pass
+t0035-safe-bare-repository::setup-an-embedded-bare-repo-secondary-worktree-and-submodule	t0035-safe-bare-repository	setup an embedded bare repo, secondary worktree and submodule	init	partial
+t0035-safe-bare-repository::safe-barerepository-unset	t0035-safe-bare-repository	safe.bareRepository unset		partial
+t0035-safe-bare-repository::safe-barerepository-all	t0035-safe-bare-repository	safe.bareRepository=all		partial
+t0035-safe-bare-repository::safe-barerepository-explicit	t0035-safe-bare-repository	safe.bareRepository=explicit		partial
+t0035-safe-bare-repository::safe-barerepository-in-the-repository	t0035-safe-bare-repository	safe.bareRepository in the repository	config	partial
+t0035-safe-bare-repository::safe-barerepository-on-the-command-line	t0035-safe-bare-repository	safe.bareRepository on the command line		partial
+t0035-safe-bare-repository::safe-barerepository-in-included-file	t0035-safe-bare-repository	safe.bareRepository in included file	config	partial
+t0035-safe-bare-repository::no-trace-when-git-dir-is-explicitly-provided	t0035-safe-bare-repository	no trace when GIT_DIR is explicitly provided		partial
+t0035-safe-bare-repository::no-trace-when-bare-repository-is-git	t0035-safe-bare-repository	no trace when "bare repository" is .git		partial
+t0035-safe-bare-repository::no-trace-when-bare-repository-is-a-subdir-of-git	t0035-safe-bare-repository	no trace when "bare repository" is a subdir of .git		partial
+t0035-safe-bare-repository::no-trace-in-git-dir-of-secondary-worktree	t0035-safe-bare-repository	no trace in $GIT_DIR of secondary worktree		partial
+t0035-safe-bare-repository::no-trace-in-git-dir-of-a-submodule	t0035-safe-bare-repository	no trace in $GIT_DIR of a submodule		partial
 t0040-parse-options::test-help	t0040-parse-options	test help		partial
 t0040-parse-options::opt-bool-1	t0040-parse-options	OPT_BOOL() #1		partial
 t0040-parse-options::opt-bool-2	t0040-parse-options	OPT_BOOL() #2		partial
@@ -1017,33 +1017,33 @@ t0210-trace2-normal::a-valueless-true-configuration-variable-is-handled	t0210-tr
 t0210-trace2-normal::using-global-config-normal-stream-return-code-0	t0210-trace2-normal	using global config, normal stream, return code 0		pass
 t0210-trace2-normal::using-global-config-with-include	t0210-trace2-normal	using global config with include		pass
 t0210-trace2-normal::unsafe-urls-are-redacted-by-default	t0210-trace2-normal	unsafe URLs are redacted by default	clone	pass
-t0211-trace2-perf::perf-stream-return-code-0	t0211-trace2-perf	perf stream, return code 0		pass
-t0211-trace2-perf::perf-stream-return-code-1	t0211-trace2-perf	perf stream, return code 1		pass
-t0211-trace2-perf::perf-stream-error-event	t0211-trace2-perf	perf stream, error event		pass
-t0211-trace2-perf::perf-stream-child-processes	t0211-trace2-perf	perf stream, child processes		pass
-t0211-trace2-perf::using-global-config-perf-stream-return-code-0	t0211-trace2-perf	using global config, perf stream, return code 0		pass
-t0211-trace2-perf::stopwatch-timer-test-test1	t0211-trace2-perf	stopwatch timer test/test1		pass
-t0211-trace2-perf::stopwatch-timer-test-test2	t0211-trace2-perf	stopwatch timer test/test2		pass
-t0211-trace2-perf::global-counter-test-test1	t0211-trace2-perf	global counter test/test1		pass
-t0211-trace2-perf::global-counter-test-test2	t0211-trace2-perf	global counter test/test2		pass
-t0211-trace2-perf::unsafe-urls-are-redacted-by-default	t0211-trace2-perf	unsafe URLs are redacted by default	clone	pass
-t0211-trace2-perf::expect-def-params-for-normal-builtin-command	t0211-trace2-perf	expect def_params for normal builtin command	version	pass
-t0211-trace2-perf::expect-def-params-for-query-command	t0211-trace2-perf	expect def_params for query command		pass
-t0211-trace2-perf::expect-def-params-during-git-alias-expansion	t0211-trace2-perf	expect def_params during git alias expansion	version	pass
-t0211-trace2-perf::expect-def-params-during-shell-alias-expansion	t0211-trace2-perf	expect def_params during shell alias expansion	version	pass
-t0211-trace2-perf::expect-def-params-during-nested-git-alias-expansion	t0211-trace2-perf	expect def_params during nested git alias expansion	version	pass
-t0212-trace2-event::event-stream-error-event	t0212-trace2-event	event stream, error event		pass
-t0212-trace2-event::event-stream-return-code-0	t0212-trace2-event	event stream, return code 0		pass
-t0212-trace2-event::event-stream-list-config	t0212-trace2-event	event stream, list config	config	pass
-t0212-trace2-event::event-stream-list-env-vars	t0212-trace2-event	event stream, list env vars		pass
-t0212-trace2-event::basic-trace2-data	t0212-trace2-event	basic trace2_data		pass
-t0212-trace2-event::using-global-config-event-stream-error-event	t0212-trace2-event	using global config, event stream, error event		pass
-t0212-trace2-event::discard-traces-when-there-are-too-many-files	t0212-trace2-event	discard traces when there are too many files		pass
-t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-cmd-start-events	t0212-trace2-event	unsafe URLs are redacted by default in cmd_start events	clone	pass
-t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-child-start-events	t0212-trace2-event	unsafe URLs are redacted by default in child_start events	clone	pass
-t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-exec-events	t0212-trace2-event	unsafe URLs are redacted by default in exec events	clone	pass
-t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-def-param-events	t0212-trace2-event	unsafe URLs are redacted by default in def_param events		pass
-t0213-trace2-ancestry::detect-cmd-ancestry-support	t0213-trace2-ancestry	detect cmd_ancestry support		pass
+t0211-trace2-perf::perf-stream-return-code-0	t0211-trace2-perf	perf stream, return code 0		partial
+t0211-trace2-perf::perf-stream-return-code-1	t0211-trace2-perf	perf stream, return code 1		partial
+t0211-trace2-perf::perf-stream-error-event	t0211-trace2-perf	perf stream, error event		partial
+t0211-trace2-perf::perf-stream-child-processes	t0211-trace2-perf	perf stream, child processes		partial
+t0211-trace2-perf::using-global-config-perf-stream-return-code-0	t0211-trace2-perf	using global config, perf stream, return code 0		partial
+t0211-trace2-perf::stopwatch-timer-test-test1	t0211-trace2-perf	stopwatch timer test/test1		partial
+t0211-trace2-perf::stopwatch-timer-test-test2	t0211-trace2-perf	stopwatch timer test/test2		partial
+t0211-trace2-perf::global-counter-test-test1	t0211-trace2-perf	global counter test/test1		partial
+t0211-trace2-perf::global-counter-test-test2	t0211-trace2-perf	global counter test/test2		partial
+t0211-trace2-perf::unsafe-urls-are-redacted-by-default	t0211-trace2-perf	unsafe URLs are redacted by default	clone	partial
+t0211-trace2-perf::expect-def-params-for-normal-builtin-command	t0211-trace2-perf	expect def_params for normal builtin command	version	partial
+t0211-trace2-perf::expect-def-params-for-query-command	t0211-trace2-perf	expect def_params for query command		partial
+t0211-trace2-perf::expect-def-params-during-git-alias-expansion	t0211-trace2-perf	expect def_params during git alias expansion	version	partial
+t0211-trace2-perf::expect-def-params-during-shell-alias-expansion	t0211-trace2-perf	expect def_params during shell alias expansion	version	partial
+t0211-trace2-perf::expect-def-params-during-nested-git-alias-expansion	t0211-trace2-perf	expect def_params during nested git alias expansion	version	partial
+t0212-trace2-event::event-stream-error-event	t0212-trace2-event	event stream, error event		partial
+t0212-trace2-event::event-stream-return-code-0	t0212-trace2-event	event stream, return code 0		partial
+t0212-trace2-event::event-stream-list-config	t0212-trace2-event	event stream, list config	config	partial
+t0212-trace2-event::event-stream-list-env-vars	t0212-trace2-event	event stream, list env vars		partial
+t0212-trace2-event::basic-trace2-data	t0212-trace2-event	basic trace2_data		partial
+t0212-trace2-event::using-global-config-event-stream-error-event	t0212-trace2-event	using global config, event stream, error event		partial
+t0212-trace2-event::discard-traces-when-there-are-too-many-files	t0212-trace2-event	discard traces when there are too many files		partial
+t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-cmd-start-events	t0212-trace2-event	unsafe URLs are redacted by default in cmd_start events	clone	partial
+t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-child-start-events	t0212-trace2-event	unsafe URLs are redacted by default in child_start events	clone	partial
+t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-exec-events	t0212-trace2-event	unsafe URLs are redacted by default in exec events	clone	partial
+t0212-trace2-event::unsafe-urls-are-redacted-by-default-in-def-param-events	t0212-trace2-event	unsafe URLs are redacted by default in def_param events		partial
+t0213-trace2-ancestry::detect-cmd-ancestry-support	t0213-trace2-ancestry	detect cmd_ancestry support		partial
 t0300-credentials::setup-helper-scripts	t0300-credentials	setup helper scripts		pass
 t0300-credentials::credential-fill-invokes-helper	t0300-credentials	credential_fill invokes helper		pass
 t0300-credentials::credential-fill-invokes-helper-with-credential	t0300-credentials	credential_fill invokes helper with credential		pass
@@ -1100,12 +1100,12 @@ t0300-credentials::url-parser-handles-bare-fragment-marker	t0300-credentials	url
 t0300-credentials::url-parser-not-confused-by-encoded-markers	t0300-credentials	url parser not confused by encoded markers		pass
 t0300-credentials::credential-config-with-partial-urls	t0300-credentials	credential config with partial URLs	credential	pass
 t0300-credentials::interactive-prompt-is-sanitized	t0300-credentials	interactive prompt is sanitized		pass
-t0301-credential-cache::socket-defaults-to-cache-git-credential-socket	t0301-credential-cache	socket defaults to ~/.cache/git/credential/socket	credential-cache	pass
-t0301-credential-cache::credential-cache-socket-option-overrides-default-location	t0301-credential-cache	credential-cache --socket option overrides default location	credential-cache	pass
-t0301-credential-cache::use-user-socket-if-user-directory-exists	t0301-credential-cache	use user socket if user directory exists	credential-cache	pass
-t0301-credential-cache::use-user-socket-if-user-directory-is-a-symlink-to-a-directory	t0301-credential-cache	use user socket if user directory is a symlink to a directory	credential-cache	pass
-t0301-credential-cache::use-custom-xdg-cache-home-if-set-and-default-sockets-are-not-created	t0301-credential-cache	use custom XDG_CACHE_HOME if set and default sockets are not created	credential-cache	pass
-t0301-credential-cache::use-custom-xdg-cache-home-even-if-xdg-socket-exists	t0301-credential-cache	use custom XDG_CACHE_HOME even if xdg socket exists	credential-cache	pass
+t0301-credential-cache::socket-defaults-to-cache-git-credential-socket	t0301-credential-cache	socket defaults to ~/.cache/git/credential/socket	credential-cache	partial
+t0301-credential-cache::credential-cache-socket-option-overrides-default-location	t0301-credential-cache	credential-cache --socket option overrides default location	credential-cache	partial
+t0301-credential-cache::use-user-socket-if-user-directory-exists	t0301-credential-cache	use user socket if user directory exists	credential-cache	partial
+t0301-credential-cache::use-user-socket-if-user-directory-is-a-symlink-to-a-directory	t0301-credential-cache	use user socket if user directory is a symlink to a directory	credential-cache	partial
+t0301-credential-cache::use-custom-xdg-cache-home-if-set-and-default-sockets-are-not-created	t0301-credential-cache	use custom XDG_CACHE_HOME if set and default sockets are not created	credential-cache	partial
+t0301-credential-cache::use-custom-xdg-cache-home-even-if-xdg-socket-exists	t0301-credential-cache	use custom XDG_CACHE_HOME even if xdg socket exists	credential-cache	partial
 t0302-credential-store::when-xdg-file-does-not-exist-xdg-file-not-created	t0302-credential-store	when xdg file does not exist, xdg file not created	credential-store	pass
 t0302-credential-store::setup-xdg-file	t0302-credential-store	setup xdg file	credential-store	pass
 t0302-credential-store::when-xdg-file-exists-home-file-not-created	t0302-credential-store	when xdg file exists, home file not created	credential-store	pass
@@ -1122,51 +1122,51 @@ t0302-credential-store::get-credentials-with-dos-line-endings-are-invalid-if-pat
 t0302-credential-store::get-store-file-can-contain-empty-bogus-lines	t0302-credential-store	get: store file can contain empty/bogus lines	credential-store	pass
 t0302-credential-store::get-ignore-credentials-without-1-as-invalid	t0302-credential-store	get: ignore credentials without $1 as invalid	credential-store	pass
 t0303-credential-external::test-cleanup-removes-everything	t0303-credential-external	test cleanup removes everything	credential	pass
-t0410-partial-clone::extensions-partialclone-without-filter	t0410-partial-clone	extensions.partialclone without filter	clone	pass
-t0410-partial-clone::convert-shallow-clone-to-partial-clone	t0410-partial-clone	convert shallow clone to partial clone	clone	pass
-t0410-partial-clone::convert-to-partial-clone-with-noop-extension	t0410-partial-clone	convert to partial clone with noop extension	clone	pass
-t0410-partial-clone::converting-to-partial-clone-fails-with-unrecognized-extension	t0410-partial-clone	converting to partial clone fails with unrecognized extension	clone	pass
-t0410-partial-clone::missing-reflog-object-but-promised-by-a-commit-passes-fsck	t0410-partial-clone	missing reflog object, but promised by a commit, passes fsck	branch	pass
-t0410-partial-clone::missing-reflog-object-but-promised-by-a-tag-passes-fsck	t0410-partial-clone	missing reflog object, but promised by a tag, passes fsck	branch	pass
-t0410-partial-clone::missing-reflog-object-alone-fails-fsck-even-with-extension-set	t0410-partial-clone	missing reflog object alone fails fsck, even with extension set	branch	pass
-t0410-partial-clone::missing-ref-object-but-promised-passes-fsck	t0410-partial-clone	missing ref object, but promised, passes fsck	branch	pass
-t0410-partial-clone::missing-object-but-promised-passes-fsck	t0410-partial-clone	missing object, but promised, passes fsck	config	pass
-t0410-partial-clone::missing-cli-object-but-promised-passes-fsck	t0410-partial-clone	missing CLI object, but promised, passes fsck	commit-tree	pass
-t0410-partial-clone::fetching-of-missing-objects	t0410-partial-clone	fetching of missing objects	cat-file	pass
-t0410-partial-clone::fetching-of-a-promised-object-that-promisor-remote-no-longer-has	t0410-partial-clone	fetching of a promised object that promisor remote no longer has	checkout	pass
-t0410-partial-clone::fetching-of-missing-objects-works-with-ref-in-want-enabled	t0410-partial-clone	fetching of missing objects works with ref-in-want enabled	cat-file	pass
-t0410-partial-clone::fetching-from-another-promisor-remote	t0410-partial-clone	fetching from another promisor remote	cat-file	pass
-t0410-partial-clone::fetching-with-filter-configures-a-promisor-remote	t0410-partial-clone	fetching with --filter configures a promisor remote	config	pass
-t0410-partial-clone::fetching-of-missing-blobs-works	t0410-partial-clone	fetching of missing blobs works	cat-file	pass
-t0410-partial-clone::fetching-of-missing-trees-does-not-fetch-blobs	t0410-partial-clone	fetching of missing trees does not fetch blobs	cat-file	pass
-t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-commit	t0410-partial-clone	rev-list stops traversal at missing and promised commit	config	pass
-t0410-partial-clone::missing-tree-objects-with-missing-allow-promisor-and-exclude-promisor-objects	t0410-partial-clone	missing tree objects with --missing=allow-promisor and --exclude-promisor-objects	config	pass
-t0410-partial-clone::missing-non-root-tree-object-and-rev-list	t0410-partial-clone	missing non-root tree object and rev-list	add	pass
-t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-tree	t0410-partial-clone	rev-list stops traversal at missing and promised tree	add	pass
-t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-blob	t0410-partial-clone	rev-list stops traversal at missing and promised blob	add	pass
-t0410-partial-clone::rev-list-stops-traversal-at-promisor-commit-tree-and-blob	t0410-partial-clone	rev-list stops traversal at promisor commit, tree, and blob	config	pass
-t0410-partial-clone::rev-list-dies-for-missing-objects-on-cmd-line	t0410-partial-clone	rev-list dies for missing objects on cmd line	config	pass
-t0410-partial-clone::single-promisor-remote-can-be-re-initialized-gracefully	t0410-partial-clone	single promisor remote can be re-initialized gracefully	config	pass
-t0410-partial-clone::gc-repacks-promisor-objects-separately-from-non-promisor-objects	t0410-partial-clone	gc repacks promisor objects separately from non-promisor objects	config	pass
-t0410-partial-clone::gc-does-not-repack-promisor-objects-if-there-are-none	t0410-partial-clone	gc does not repack promisor objects if there are none	config	pass
-t0410-partial-clone::repack-d-does-not-irreversibly-delete-promisor-objects	t0410-partial-clone	repack -d does not irreversibly delete promisor objects	commit	pass
-t0410-partial-clone::gc-stops-traversal-when-a-missing-but-promised-object-is-reached	t0410-partial-clone	gc stops traversal when a missing but promised object is reached	config	pass
-t0410-partial-clone::do-not-fetch-when-checking-existence-of-tree-we-construct-ourselves	t0410-partial-clone	do not fetch when checking existence of tree we construct ourselves	checkout	pass
-t0410-partial-clone::exact-rename-does-not-need-to-fetch-the-blob-lazily	t0410-partial-clone	exact rename does not need to fetch the blob lazily	clone	pass
-t0410-partial-clone::lazy-fetch-when-accessing-object-not-in-the-repository	t0410-partial-clone	lazy-fetch when accessing object not in the_repository	cat-file	pass
-t0410-partial-clone::push-should-not-fetch-new-commit-objects	t0410-partial-clone	push should not fetch new commit objects	clone	pass
-t0410-partial-clone::setup-for-promisor-quiet-tests	t0410-partial-clone	setup for promisor.quiet tests	commit	pass
-t0410-partial-clone::promisor-quiet-false-shows-progress-messages	t0410-partial-clone	promisor.quiet=false shows progress messages	cat-file	pass
-t0410-partial-clone::promisor-quiet-true-does-not-show-progress-messages	t0410-partial-clone	promisor.quiet=true does not show progress messages	cat-file	pass
-t0410-partial-clone::promisor-quiet-unconfigured-shows-progress-messages	t0410-partial-clone	promisor.quiet=unconfigured shows progress messages	cat-file	pass
-t0410-partial-clone::fetching-of-missing-objects-from-an-http-server	t0410-partial-clone	fetching of missing objects from an HTTP server	cat-file	pass
-t0411-clone-from-partial::create-evil-repo	t0411-clone-from-partial	create evil repo	clone	pass
-t0411-clone-from-partial::local-clone-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	local clone must not fetch from promisor remote and execute script	clone	pass
-t0411-clone-from-partial::clone-from-file-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	clone from file://... must not fetch from promisor remote and execute script	clone	pass
-t0411-clone-from-partial::fetch-from-file-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	fetch from file://... must not fetch from promisor remote and execute script	clone	pass
-t0411-clone-from-partial::pack-objects-should-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	pack-objects should fetch from promisor remote and execute script	clone	pass
-t0411-clone-from-partial::clone-from-promisor-remote-does-not-lazy-fetch-by-default	t0411-clone-from-partial	clone from promisor remote does not lazy-fetch by default	clone	pass
-t0411-clone-from-partial::promisor-lazy-fetching-can-be-re-enabled	t0411-clone-from-partial	promisor lazy-fetching can be re-enabled	clone	pass
+t0410-partial-clone::extensions-partialclone-without-filter	t0410-partial-clone	extensions.partialclone without filter	clone	partial
+t0410-partial-clone::convert-shallow-clone-to-partial-clone	t0410-partial-clone	convert shallow clone to partial clone	clone	partial
+t0410-partial-clone::convert-to-partial-clone-with-noop-extension	t0410-partial-clone	convert to partial clone with noop extension	clone	partial
+t0410-partial-clone::converting-to-partial-clone-fails-with-unrecognized-extension	t0410-partial-clone	converting to partial clone fails with unrecognized extension	clone	partial
+t0410-partial-clone::missing-reflog-object-but-promised-by-a-commit-passes-fsck	t0410-partial-clone	missing reflog object, but promised by a commit, passes fsck	branch	partial
+t0410-partial-clone::missing-reflog-object-but-promised-by-a-tag-passes-fsck	t0410-partial-clone	missing reflog object, but promised by a tag, passes fsck	branch	partial
+t0410-partial-clone::missing-reflog-object-alone-fails-fsck-even-with-extension-set	t0410-partial-clone	missing reflog object alone fails fsck, even with extension set	branch	partial
+t0410-partial-clone::missing-ref-object-but-promised-passes-fsck	t0410-partial-clone	missing ref object, but promised, passes fsck	branch	partial
+t0410-partial-clone::missing-object-but-promised-passes-fsck	t0410-partial-clone	missing object, but promised, passes fsck	config	partial
+t0410-partial-clone::missing-cli-object-but-promised-passes-fsck	t0410-partial-clone	missing CLI object, but promised, passes fsck	commit-tree	partial
+t0410-partial-clone::fetching-of-missing-objects	t0410-partial-clone	fetching of missing objects	cat-file	partial
+t0410-partial-clone::fetching-of-a-promised-object-that-promisor-remote-no-longer-has	t0410-partial-clone	fetching of a promised object that promisor remote no longer has	checkout	partial
+t0410-partial-clone::fetching-of-missing-objects-works-with-ref-in-want-enabled	t0410-partial-clone	fetching of missing objects works with ref-in-want enabled	cat-file	partial
+t0410-partial-clone::fetching-from-another-promisor-remote	t0410-partial-clone	fetching from another promisor remote	cat-file	partial
+t0410-partial-clone::fetching-with-filter-configures-a-promisor-remote	t0410-partial-clone	fetching with --filter configures a promisor remote	config	partial
+t0410-partial-clone::fetching-of-missing-blobs-works	t0410-partial-clone	fetching of missing blobs works	cat-file	partial
+t0410-partial-clone::fetching-of-missing-trees-does-not-fetch-blobs	t0410-partial-clone	fetching of missing trees does not fetch blobs	cat-file	partial
+t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-commit	t0410-partial-clone	rev-list stops traversal at missing and promised commit	config	partial
+t0410-partial-clone::missing-tree-objects-with-missing-allow-promisor-and-exclude-promisor-objects	t0410-partial-clone	missing tree objects with --missing=allow-promisor and --exclude-promisor-objects	config	partial
+t0410-partial-clone::missing-non-root-tree-object-and-rev-list	t0410-partial-clone	missing non-root tree object and rev-list	add	partial
+t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-tree	t0410-partial-clone	rev-list stops traversal at missing and promised tree	add	partial
+t0410-partial-clone::rev-list-stops-traversal-at-missing-and-promised-blob	t0410-partial-clone	rev-list stops traversal at missing and promised blob	add	partial
+t0410-partial-clone::rev-list-stops-traversal-at-promisor-commit-tree-and-blob	t0410-partial-clone	rev-list stops traversal at promisor commit, tree, and blob	config	partial
+t0410-partial-clone::rev-list-dies-for-missing-objects-on-cmd-line	t0410-partial-clone	rev-list dies for missing objects on cmd line	config	partial
+t0410-partial-clone::single-promisor-remote-can-be-re-initialized-gracefully	t0410-partial-clone	single promisor remote can be re-initialized gracefully	config	partial
+t0410-partial-clone::gc-repacks-promisor-objects-separately-from-non-promisor-objects	t0410-partial-clone	gc repacks promisor objects separately from non-promisor objects	config	partial
+t0410-partial-clone::gc-does-not-repack-promisor-objects-if-there-are-none	t0410-partial-clone	gc does not repack promisor objects if there are none	config	partial
+t0410-partial-clone::repack-d-does-not-irreversibly-delete-promisor-objects	t0410-partial-clone	repack -d does not irreversibly delete promisor objects	commit	partial
+t0410-partial-clone::gc-stops-traversal-when-a-missing-but-promised-object-is-reached	t0410-partial-clone	gc stops traversal when a missing but promised object is reached	config	partial
+t0410-partial-clone::do-not-fetch-when-checking-existence-of-tree-we-construct-ourselves	t0410-partial-clone	do not fetch when checking existence of tree we construct ourselves	checkout	partial
+t0410-partial-clone::exact-rename-does-not-need-to-fetch-the-blob-lazily	t0410-partial-clone	exact rename does not need to fetch the blob lazily	clone	partial
+t0410-partial-clone::lazy-fetch-when-accessing-object-not-in-the-repository	t0410-partial-clone	lazy-fetch when accessing object not in the_repository	cat-file	partial
+t0410-partial-clone::push-should-not-fetch-new-commit-objects	t0410-partial-clone	push should not fetch new commit objects	clone	partial
+t0410-partial-clone::setup-for-promisor-quiet-tests	t0410-partial-clone	setup for promisor.quiet tests	commit	partial
+t0410-partial-clone::promisor-quiet-false-shows-progress-messages	t0410-partial-clone	promisor.quiet=false shows progress messages	cat-file	partial
+t0410-partial-clone::promisor-quiet-true-does-not-show-progress-messages	t0410-partial-clone	promisor.quiet=true does not show progress messages	cat-file	partial
+t0410-partial-clone::promisor-quiet-unconfigured-shows-progress-messages	t0410-partial-clone	promisor.quiet=unconfigured shows progress messages	cat-file	partial
+t0410-partial-clone::fetching-of-missing-objects-from-an-http-server	t0410-partial-clone	fetching of missing objects from an HTTP server	cat-file	partial
+t0411-clone-from-partial::create-evil-repo	t0411-clone-from-partial	create evil repo	clone	partial
+t0411-clone-from-partial::local-clone-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	local clone must not fetch from promisor remote and execute script	clone	partial
+t0411-clone-from-partial::clone-from-file-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	clone from file://... must not fetch from promisor remote and execute script	clone	partial
+t0411-clone-from-partial::fetch-from-file-must-not-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	fetch from file://... must not fetch from promisor remote and execute script	clone	partial
+t0411-clone-from-partial::pack-objects-should-fetch-from-promisor-remote-and-execute-script	t0411-clone-from-partial	pack-objects should fetch from promisor remote and execute script	clone	partial
+t0411-clone-from-partial::clone-from-promisor-remote-does-not-lazy-fetch-by-default	t0411-clone-from-partial	clone from promisor remote does not lazy-fetch by default	clone	partial
+t0411-clone-from-partial::promisor-lazy-fetching-can-be-re-enabled	t0411-clone-from-partial	promisor lazy-fetching can be re-enabled	clone	partial
 t0450-txt-doc-vs-help::setup-list-of-builtins	t0450-txt-doc-vs-help	setup: list of builtins		pass
 t0450-txt-doc-vs-help::list-of-adoc-and-help-mismatches-is-sorted	t0450-txt-doc-vs-help	list of adoc and help mismatches is sorted		pass
 t0450-txt-doc-vs-help::builtin-h-output-has-no-t	t0450-txt-doc-vs-help	$builtin -h output has no \t		pass
@@ -1670,7 +1670,7 @@ t1020-subdirectory::no-file-rev-ambiguity-check-inside-git	t1020-subdirectory	no
 t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo-explicit-git-dir	t1020-subdirectory	no file/rev ambiguity check inside a bare repo (explicit GIT_DIR)	clone	pass
 t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo	t1020-subdirectory	no file/rev ambiguity check inside a bare repo	clone	pass
 t1020-subdirectory::detection-should-not-be-fooled-by-a-symlink	t1020-subdirectory	detection should not be fooled by a symlink	clone	pass
-t1022-read-tree-partial-clone::read-tree-in-partial-clone-prefetches-in-one-batch	t1022-read-tree-partial-clone	read-tree in partial clone prefetches in one batch	read-tree	pass
+t1022-read-tree-partial-clone::read-tree-in-partial-clone-prefetches-in-one-batch	t1022-read-tree-partial-clone	read-tree in partial clone prefetches in one batch	read-tree	partial
 t1050-large::core-bigfilethreshold-must-be-non-negative	t1050-large	core.bigFileThreshold must be non-negative	hash-object	pass
 t1050-large::enter-large-codepath-with-small-core-bigfilethreshold	t1050-large	enter "large" codepath, with small core.bigFileThreshold	fsck	pass
 t1050-large::add-a-large-file-or-two	t1050-large	add a large file or two	add	pass
@@ -1718,190 +1718,190 @@ t1060-object-corruption::clone-local-detects-missing-objects	t1060-object-corrup
 t1060-object-corruption::fetch-into-corrupted-repo-with-index-pack	t1060-object-corruption	fetch into corrupted repo with index-pack		pass
 t1060-object-corruption::internal-tree-objects-are-not-missing	t1060-object-corruption	internal tree objects are not "missing"	commit-tree	pass
 t1060-object-corruption::partial-clone-of-corrupted-repository	t1060-object-corruption	partial clone of corrupted repository	checkout	pass
-t1090-sparse-checkout-scope::setup	t1090-sparse-checkout-scope	setup	sparse-checkout	pass
-t1090-sparse-checkout-scope::create-feature-branch	t1090-sparse-checkout-scope	create feature branch	sparse-checkout	pass
-t1090-sparse-checkout-scope::perform-sparse-checkout-of-main	t1090-sparse-checkout-scope	perform sparse checkout of main	sparse-checkout	pass
-t1090-sparse-checkout-scope::merge-feature-branch-into-sparse-checkout-of-main	t1090-sparse-checkout-scope	merge feature branch into sparse checkout of main	sparse-checkout	pass
-t1090-sparse-checkout-scope::return-to-full-checkout-of-main	t1090-sparse-checkout-scope	return to full checkout of main	sparse-checkout	pass
-t1090-sparse-checkout-scope::skip-worktree-on-files-outside-sparse-patterns	t1090-sparse-checkout-scope	skip-worktree on files outside sparse patterns	sparse-checkout	pass
-t1090-sparse-checkout-scope::in-partial-clone-sparse-checkout-only-fetches-needed-blobs	t1090-sparse-checkout-scope	in partial clone, sparse checkout only fetches needed blobs	sparse-checkout	pass
-t1091-sparse-checkout-builtin::setup	t1091-sparse-checkout-builtin	setup	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-list-not-sparse	t1091-sparse-checkout-builtin	git sparse-checkout list (not sparse)	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-list-not-sparse-2	t1091-sparse-checkout-builtin	git sparse-checkout list (not sparse)	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-list-populated	t1091-sparse-checkout-builtin	git sparse-checkout list (populated)	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-init	t1091-sparse-checkout-builtin	git sparse-checkout init	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-init-in-empty-repo	t1091-sparse-checkout-builtin	git sparse-checkout init in empty repo	sparse-checkout	pass
-t1091-sparse-checkout-builtin::git-sparse-checkout-list-after-init	t1091-sparse-checkout-builtin	git sparse-checkout list after init	sparse-checkout	pass
-t1091-sparse-checkout-builtin::init-with-existing-sparse-checkout	t1091-sparse-checkout-builtin	init with existing sparse-checkout	sparse-checkout	pass
-t1091-sparse-checkout-builtin::clone-sparse	t1091-sparse-checkout-builtin	clone --sparse	sparse-checkout	pass
-t1091-sparse-checkout-builtin::switching-to-cone-mode-with-non-cone-mode-patterns	t1091-sparse-checkout-builtin	switching to cone mode with non-cone mode patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::interaction-with-clone-no-checkout-unborn-index	t1091-sparse-checkout-builtin	interaction with clone --no-checkout (unborn index)	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-enables-config	t1091-sparse-checkout-builtin	set enables config	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-sparse-checkout-using-builtin	t1091-sparse-checkout-builtin	set sparse-checkout using builtin	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-sparse-checkout-using-stdin	t1091-sparse-checkout-builtin	set sparse-checkout using --stdin	sparse-checkout	pass
-t1091-sparse-checkout-builtin::add-to-sparse-checkout	t1091-sparse-checkout-builtin	add to sparse-checkout	sparse-checkout	pass
-t1091-sparse-checkout-builtin::worktree-add-copies-sparse-checkout-patterns	t1091-sparse-checkout-builtin	worktree: add copies sparse-checkout patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-match-patterns	t1091-sparse-checkout-builtin	cone mode: match patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-warn-on-bad-pattern	t1091-sparse-checkout-builtin	cone mode: warn on bad pattern	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-disable	t1091-sparse-checkout-builtin	sparse-checkout disable	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-index-enabled-and-disabled	t1091-sparse-checkout-builtin	sparse-index enabled and disabled	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-init-and-set	t1091-sparse-checkout-builtin	cone mode: init and set	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-list	t1091-sparse-checkout-builtin	cone mode: list	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-set-with-nested-folders	t1091-sparse-checkout-builtin	cone mode: set with nested folders	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-add-independent-path	t1091-sparse-checkout-builtin	cone mode: add independent path	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-add-sibling-path	t1091-sparse-checkout-builtin	cone mode: add sibling path	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-add-parent-path	t1091-sparse-checkout-builtin	cone mode: add parent path	sparse-checkout	pass
-t1091-sparse-checkout-builtin::not-up-to-date-does-not-block-rest-of-sparsification	t1091-sparse-checkout-builtin	not-up-to-date does not block rest of sparsification	sparse-checkout	pass
-t1091-sparse-checkout-builtin::revert-to-old-sparse-checkout-on-empty-update	t1091-sparse-checkout-builtin	revert to old sparse-checkout on empty update	sparse-checkout	pass
-t1091-sparse-checkout-builtin::fail-when-lock-is-taken	t1091-sparse-checkout-builtin	fail when lock is taken	sparse-checkout	pass
-t1091-sparse-checkout-builtin::gitignore-should-not-warn-about-cone-mode	t1091-sparse-checkout-builtin	.gitignore should not warn about cone mode	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-init-set-disable-warns-with-dirty-status	t1091-sparse-checkout-builtin	sparse-checkout (init|set|disable) warns with dirty status	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-init-set-disable-warns-with-unmerged-status	t1091-sparse-checkout-builtin	sparse-checkout (init|set|disable) warns with unmerged status	sparse-checkout	pass
-t1091-sparse-checkout-builtin::reapply-can-handle-config-options	t1091-sparse-checkout-builtin	reapply can handle config options	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-set-with-core-ignorecase-true	t1091-sparse-checkout-builtin	cone mode: set with core.ignoreCase=true	sparse-checkout	pass
-t1091-sparse-checkout-builtin::setup-submodules	t1091-sparse-checkout-builtin	setup submodules	sparse-checkout	pass
-t1091-sparse-checkout-builtin::interaction-with-submodules	t1091-sparse-checkout-builtin	interaction with submodules	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-interaction-with-submodules	t1091-sparse-checkout-builtin	check-rules interaction with submodules	sparse-checkout	pass
-t1091-sparse-checkout-builtin::different-sparse-checkouts-with-worktrees	t1091-sparse-checkout-builtin	different sparse-checkouts with worktrees	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-using-filename-keeps-file-on-disk	t1091-sparse-checkout-builtin	set using filename keeps file on-disk	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-a	t1091-sparse-checkout-builtin	pattern-checks: /A/**	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-a-b	t1091-sparse-checkout-builtin	pattern-checks: /A/**/B/	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-too-short	t1091-sparse-checkout-builtin	pattern-checks: too short	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-not-too-short	t1091-sparse-checkout-builtin	pattern-checks: not too short	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-trailing	t1091-sparse-checkout-builtin	pattern-checks: trailing "*"	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-starting	t1091-sparse-checkout-builtin	pattern-checks: starting "*"	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-non-directory-pattern	t1091-sparse-checkout-builtin	pattern-checks: non directory pattern	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-contained-glob-characters	t1091-sparse-checkout-builtin	pattern-checks: contained glob characters	sparse-checkout	pass
-t1091-sparse-checkout-builtin::pattern-checks-escaped-characters	t1091-sparse-checkout-builtin	pattern-checks: escaped characters	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-replaces-backslashes-with-slashes	t1091-sparse-checkout-builtin	cone mode replaces backslashes with slashes	sparse-checkout	pass
-t1091-sparse-checkout-builtin::cone-mode-clears-ignored-subdirectories	t1091-sparse-checkout-builtin	cone mode clears ignored subdirectories	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-deduplicates-repeated-cone-patterns	t1091-sparse-checkout-builtin	sparse-checkout deduplicates repeated cone patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-list-deduplicates-repeated-cone-patterns	t1091-sparse-checkout-builtin	sparse-checkout list deduplicates repeated cone patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::malformed-cone-mode-patterns	t1091-sparse-checkout-builtin	malformed cone-mode patterns	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-from-subdir-pays-attention-to-prefix	t1091-sparse-checkout-builtin	set from subdir pays attention to prefix	sparse-checkout	pass
-t1091-sparse-checkout-builtin::add-from-subdir-pays-attention-to-prefix	t1091-sparse-checkout-builtin	add from subdir pays attention to prefix	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-from-subdir-in-non-cone-mode-throws-an-error	t1091-sparse-checkout-builtin	set from subdir in non-cone mode throws an error	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-from-subdir-in-non-cone-mode-throws-an-error-2	t1091-sparse-checkout-builtin	set from subdir in non-cone mode throws an error	sparse-checkout	pass
-t1091-sparse-checkout-builtin::by-default-cone-mode-will-error-out-when-passed-files	t1091-sparse-checkout-builtin	by default, cone mode will error out when passed files	sparse-checkout	pass
-t1091-sparse-checkout-builtin::error-on-mistyped-command-line-options	t1091-sparse-checkout-builtin	error on mistyped command line options	sparse-checkout	pass
-t1091-sparse-checkout-builtin::by-default-non-cone-mode-will-warn-on-individual-files	t1091-sparse-checkout-builtin	by default, non-cone mode will warn on individual files	sparse-checkout	pass
-t1091-sparse-checkout-builtin::setup-bare-repo	t1091-sparse-checkout-builtin	setup bare repo	sparse-checkout	pass
-t1091-sparse-checkout-builtin::list-fails-outside-work-tree	t1091-sparse-checkout-builtin	list fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::add-fails-outside-work-tree	t1091-sparse-checkout-builtin	add fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::set-fails-outside-work-tree	t1091-sparse-checkout-builtin	set fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::init-fails-outside-work-tree	t1091-sparse-checkout-builtin	init fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::reapply-fails-outside-work-tree	t1091-sparse-checkout-builtin	reapply fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::disable-fails-outside-work-tree	t1091-sparse-checkout-builtin	disable fails outside work tree	sparse-checkout	pass
-t1091-sparse-checkout-builtin::setup-clean	t1091-sparse-checkout-builtin	setup clean	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-cone-mode	t1091-sparse-checkout-builtin	check-rules cone mode	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-non-cone-mode	t1091-sparse-checkout-builtin	check-rules non-cone mode	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-cone-mode-is-default	t1091-sparse-checkout-builtin	check-rules cone mode is default	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-quoting	t1091-sparse-checkout-builtin	check-rules quoting	sparse-checkout	pass
-t1091-sparse-checkout-builtin::check-rules-null-termination	t1091-sparse-checkout-builtin	check-rules null termination	sparse-checkout	pass
-t1091-sparse-checkout-builtin::clean	t1091-sparse-checkout-builtin	clean	sparse-checkout	pass
-t1091-sparse-checkout-builtin::clean-with-sparse-file-states	t1091-sparse-checkout-builtin	clean with sparse file states	sparse-checkout	pass
-t1091-sparse-checkout-builtin::sparse-checkout-operations-with-merge-conflicts	t1091-sparse-checkout-builtin	sparse-checkout operations with merge conflicts	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::setup	t1092-sparse-checkout-compatibility	setup	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-contents	t1092-sparse-checkout-compatibility	sparse-index contents	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::expanded-in-memory-index-matches-full-index	t1092-sparse-checkout-compatibility	expanded in-memory index matches full index	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::root-directory-cannot-be-sparse	t1092-sparse-checkout-compatibility	root directory cannot be sparse	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::status-with-options	t1092-sparse-checkout-compatibility	status with options	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::status-with-diff-in-unexpanded-sparse-directory	t1092-sparse-checkout-compatibility	status with diff in unexpanded sparse directory	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::status-reports-sparse-checkout	t1092-sparse-checkout-compatibility	status reports sparse-checkout	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::add-commit-checkout	t1092-sparse-checkout-compatibility	add, commit, checkout	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::git-add-checkout-and-reset-with-p	t1092-sparse-checkout-compatibility	git add, checkout, and reset with -p	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::deep-changes-during-checkout	t1092-sparse-checkout-compatibility	deep changes during checkout	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-with-modified-sparse-directory	t1092-sparse-checkout-compatibility	checkout with modified sparse directory	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-orphan-then-non-orphan	t1092-sparse-checkout-compatibility	checkout orphan then non-orphan	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::add-outside-sparse-cone	t1092-sparse-checkout-compatibility	add outside sparse cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::commit-including-unstaged-changes	t1092-sparse-checkout-compatibility	commit including unstaged changes	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::status-add-outside-sparse-cone	t1092-sparse-checkout-compatibility	status/add: outside sparse cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-and-reset-hard	t1092-sparse-checkout-compatibility	checkout and reset --hard	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-cached	t1092-sparse-checkout-compatibility	diff --cached	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-with-renames-and-conflicts	t1092-sparse-checkout-compatibility	diff with renames and conflicts	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-with-directory-file-conflicts	t1092-sparse-checkout-compatibility	diff with directory/file conflicts	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::log-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	log with pathspec outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::blame-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	blame with pathspec inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::blame-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	blame with pathspec outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-and-reset-mixed	t1092-sparse-checkout-compatibility	checkout and reset (mixed)	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-and-reset-merge	t1092-sparse-checkout-compatibility	checkout and reset (merge)	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-and-reset-keep	t1092-sparse-checkout-compatibility	checkout and reset (keep)	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::reset-with-pathspecs-inside-sparse-definition	t1092-sparse-checkout-compatibility	reset with pathspecs inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::reset-with-pathspecs-outside-sparse-definition	t1092-sparse-checkout-compatibility	reset with pathspecs outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::reset-with-wildcard-pathspec	t1092-sparse-checkout-compatibility	reset with wildcard pathspec	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::reset-hard-with-removed-sparse-dir	t1092-sparse-checkout-compatibility	reset hard with removed sparse dir	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-modify-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index modify outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-add-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --add outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-remove-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --remove outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-with-directories	t1092-sparse-checkout-compatibility	update-index with directories	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-again-file-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --again file outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::update-index-cacheinfo	t1092-sparse-checkout-compatibility	update-index --cacheinfo	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::read-tree-merge-with-edit-edit-conflicts-in-sparse-directories	t1092-sparse-checkout-compatibility	read-tree --merge with edit/edit conflicts in sparse directories	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::read-tree-prefix	t1092-sparse-checkout-compatibility	read-tree --prefix	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::read-tree-merge-with-directory-file-conflicts	t1092-sparse-checkout-compatibility	read-tree --merge with directory-file conflicts	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::merge-cherry-pick-and-rebase	t1092-sparse-checkout-compatibility	merge, cherry-pick, and rebase	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::merge-with-conflict-outside-cone	t1092-sparse-checkout-compatibility	merge with conflict outside cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::cherry-pick-rebase-with-conflict-outside-cone	t1092-sparse-checkout-compatibility	cherry-pick/rebase with conflict outside cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::merge-with-outside-renames	t1092-sparse-checkout-compatibility	merge with outside renames	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::cherry-pick-with-conflicts	t1092-sparse-checkout-compatibility	cherry-pick with conflicts	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::stash	t1092-sparse-checkout-compatibility	stash	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-index-inside-sparse-definition	t1092-sparse-checkout-compatibility	checkout-index inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-index-outside-sparse-definition	t1092-sparse-checkout-compatibility	checkout-index outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-index-with-folders	t1092-sparse-checkout-compatibility	checkout-index with folders	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-index-all	t1092-sparse-checkout-compatibility	checkout-index --all	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::clean	t1092-sparse-checkout-compatibility	clean	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::submodule-handling	t1092-sparse-checkout-compatibility	submodule handling	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::git-apply-functionality	t1092-sparse-checkout-compatibility	git apply functionality	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-expanded-and-converted-back	t1092-sparse-checkout-compatibility	sparse-index is expanded and converted back	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::index-sparse-disabled-inline-uses-full-index	t1092-sparse-checkout-compatibility	index.sparse disabled inline uses full index	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded	t1092-sparse-checkout-compatibility	sparse-index is not expanded	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-merge-conflict-in-cone	t1092-sparse-checkout-compatibility	sparse-index is not expanded: merge conflict in cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-stash	t1092-sparse-checkout-compatibility	sparse-index is not expanded: stash	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::describe-tested-on-all	t1092-sparse-checkout-compatibility	describe tested on all	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::ls-files-filtering-and-expansion	t1092-sparse-checkout-compatibility	ls-files filtering and expansion	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-describe	t1092-sparse-checkout-compatibility	sparse-index is not expanded: describe	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-and-diff-index	t1092-sparse-checkout-compatibility	sparse index is not expanded: diff and diff-index	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-show-and-rev-parse	t1092-sparse-checkout-compatibility	sparse index is not expanded: show and rev-parse	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-update-index	t1092-sparse-checkout-compatibility	sparse index is not expanded: update-index	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-blame	t1092-sparse-checkout-compatibility	sparse index is not expanded: blame	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-fetch-pull	t1092-sparse-checkout-compatibility	sparse index is not expanded: fetch/pull	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-read-tree	t1092-sparse-checkout-compatibility	sparse index is not expanded: read-tree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::ls-files	t1092-sparse-checkout-compatibility	ls-files	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-sparse-checkout	t1092-sparse-checkout-compatibility	sparse index is not expanded: sparse-checkout	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::reset-mixed-and-checkout-orphan	t1092-sparse-checkout-compatibility	reset mixed and checkout orphan	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::add-everything-with-deep-new-file	t1092-sparse-checkout-compatibility	add everything with deep new file	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-behaves-oddly-with-df-conflict-1	t1092-sparse-checkout-compatibility	checkout behaves oddly with df-conflict-1	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::checkout-behaves-oddly-with-df-conflict-2	t1092-sparse-checkout-compatibility	checkout behaves oddly with df-conflict-2	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::mv-directory-from-out-of-cone-to-in-cone	t1092-sparse-checkout-compatibility	mv directory from out-of-cone to in-cone	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::rm-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	rm pathspec inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::rm-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	rm pathspec outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::rm-pathspec-expands-index-when-necessary	t1092-sparse-checkout-compatibility	rm pathspec expands index when necessary	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-rm	t1092-sparse-checkout-compatibility	sparse index is not expanded: rm	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::grep-with-and-cached	t1092-sparse-checkout-compatibility	grep with and --cached	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::grep-is-not-expanded	t1092-sparse-checkout-compatibility	grep is not expanded	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::grep-sparse-directory-within-submodules	t1092-sparse-checkout-compatibility	grep sparse directory within submodules	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::write-tree	t1092-sparse-checkout-compatibility	write-tree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-write-tree	t1092-sparse-checkout-compatibility	sparse-index is not expanded: write-tree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-files-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	diff-files with pathspec inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-files-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	diff-files with pathspec outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-files	t1092-sparse-checkout-compatibility	sparse index is not expanded: diff-files	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::diff-tree	t1092-sparse-checkout-compatibility	diff-tree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-tree	t1092-sparse-checkout-compatibility	sparse-index is not expanded: diff-tree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::worktree	t1092-sparse-checkout-compatibility	worktree	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::worktree-is-not-expanded	t1092-sparse-checkout-compatibility	worktree is not expanded	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::check-attr-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	check-attr with pathspec inside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::check-attr-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	check-attr with pathspec outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-check-attr	t1092-sparse-checkout-compatibility	sparse-index is not expanded: check-attr	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-git-apply	t1092-sparse-checkout-compatibility	sparse-index is not expanded: git apply	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-git-add-p	t1092-sparse-checkout-compatibility	sparse-index is not expanded: git add -p	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-checkout-p-reset-p	t1092-sparse-checkout-compatibility	sparse-index is not expanded: checkout -p, reset -p	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::advice-sparseindexexpanded	t1092-sparse-checkout-compatibility	advice.sparseIndexExpanded	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::cat-file-p	t1092-sparse-checkout-compatibility	cat-file -p	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::cat-file-batch	t1092-sparse-checkout-compatibility	cat-file --batch	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::merge-s-ours	t1092-sparse-checkout-compatibility	merge -s ours	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-merge-ours	t1092-sparse-checkout-compatibility	sparse-index is not expanded: merge-ours	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::read-tree-mu-merge-trees-with-files-outside-sparse-definition	t1092-sparse-checkout-compatibility	'read-tree -mu $MERGE_TREES' with files outside sparse definition	sparse-checkout	pass
-t1092-sparse-checkout-compatibility::builtin-cached-blobs-trees	t1092-sparse-checkout-compatibility	$builtin (cached blobs/trees)	sparse-checkout	pass
+t1090-sparse-checkout-scope::setup	t1090-sparse-checkout-scope	setup	sparse-checkout	partial
+t1090-sparse-checkout-scope::create-feature-branch	t1090-sparse-checkout-scope	create feature branch	sparse-checkout	partial
+t1090-sparse-checkout-scope::perform-sparse-checkout-of-main	t1090-sparse-checkout-scope	perform sparse checkout of main	sparse-checkout	partial
+t1090-sparse-checkout-scope::merge-feature-branch-into-sparse-checkout-of-main	t1090-sparse-checkout-scope	merge feature branch into sparse checkout of main	sparse-checkout	partial
+t1090-sparse-checkout-scope::return-to-full-checkout-of-main	t1090-sparse-checkout-scope	return to full checkout of main	sparse-checkout	partial
+t1090-sparse-checkout-scope::skip-worktree-on-files-outside-sparse-patterns	t1090-sparse-checkout-scope	skip-worktree on files outside sparse patterns	sparse-checkout	partial
+t1090-sparse-checkout-scope::in-partial-clone-sparse-checkout-only-fetches-needed-blobs	t1090-sparse-checkout-scope	in partial clone, sparse checkout only fetches needed blobs	sparse-checkout	partial
+t1091-sparse-checkout-builtin::setup	t1091-sparse-checkout-builtin	setup	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-list-not-sparse	t1091-sparse-checkout-builtin	git sparse-checkout list (not sparse)	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-list-not-sparse-2	t1091-sparse-checkout-builtin	git sparse-checkout list (not sparse)	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-list-populated	t1091-sparse-checkout-builtin	git sparse-checkout list (populated)	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-init	t1091-sparse-checkout-builtin	git sparse-checkout init	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-init-in-empty-repo	t1091-sparse-checkout-builtin	git sparse-checkout init in empty repo	sparse-checkout	partial
+t1091-sparse-checkout-builtin::git-sparse-checkout-list-after-init	t1091-sparse-checkout-builtin	git sparse-checkout list after init	sparse-checkout	partial
+t1091-sparse-checkout-builtin::init-with-existing-sparse-checkout	t1091-sparse-checkout-builtin	init with existing sparse-checkout	sparse-checkout	partial
+t1091-sparse-checkout-builtin::clone-sparse	t1091-sparse-checkout-builtin	clone --sparse	sparse-checkout	partial
+t1091-sparse-checkout-builtin::switching-to-cone-mode-with-non-cone-mode-patterns	t1091-sparse-checkout-builtin	switching to cone mode with non-cone mode patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::interaction-with-clone-no-checkout-unborn-index	t1091-sparse-checkout-builtin	interaction with clone --no-checkout (unborn index)	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-enables-config	t1091-sparse-checkout-builtin	set enables config	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-sparse-checkout-using-builtin	t1091-sparse-checkout-builtin	set sparse-checkout using builtin	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-sparse-checkout-using-stdin	t1091-sparse-checkout-builtin	set sparse-checkout using --stdin	sparse-checkout	partial
+t1091-sparse-checkout-builtin::add-to-sparse-checkout	t1091-sparse-checkout-builtin	add to sparse-checkout	sparse-checkout	partial
+t1091-sparse-checkout-builtin::worktree-add-copies-sparse-checkout-patterns	t1091-sparse-checkout-builtin	worktree: add copies sparse-checkout patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-match-patterns	t1091-sparse-checkout-builtin	cone mode: match patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-warn-on-bad-pattern	t1091-sparse-checkout-builtin	cone mode: warn on bad pattern	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-disable	t1091-sparse-checkout-builtin	sparse-checkout disable	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-index-enabled-and-disabled	t1091-sparse-checkout-builtin	sparse-index enabled and disabled	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-init-and-set	t1091-sparse-checkout-builtin	cone mode: init and set	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-list	t1091-sparse-checkout-builtin	cone mode: list	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-set-with-nested-folders	t1091-sparse-checkout-builtin	cone mode: set with nested folders	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-add-independent-path	t1091-sparse-checkout-builtin	cone mode: add independent path	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-add-sibling-path	t1091-sparse-checkout-builtin	cone mode: add sibling path	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-add-parent-path	t1091-sparse-checkout-builtin	cone mode: add parent path	sparse-checkout	partial
+t1091-sparse-checkout-builtin::not-up-to-date-does-not-block-rest-of-sparsification	t1091-sparse-checkout-builtin	not-up-to-date does not block rest of sparsification	sparse-checkout	partial
+t1091-sparse-checkout-builtin::revert-to-old-sparse-checkout-on-empty-update	t1091-sparse-checkout-builtin	revert to old sparse-checkout on empty update	sparse-checkout	partial
+t1091-sparse-checkout-builtin::fail-when-lock-is-taken	t1091-sparse-checkout-builtin	fail when lock is taken	sparse-checkout	partial
+t1091-sparse-checkout-builtin::gitignore-should-not-warn-about-cone-mode	t1091-sparse-checkout-builtin	.gitignore should not warn about cone mode	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-init-set-disable-warns-with-dirty-status	t1091-sparse-checkout-builtin	sparse-checkout (init|set|disable) warns with dirty status	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-init-set-disable-warns-with-unmerged-status	t1091-sparse-checkout-builtin	sparse-checkout (init|set|disable) warns with unmerged status	sparse-checkout	partial
+t1091-sparse-checkout-builtin::reapply-can-handle-config-options	t1091-sparse-checkout-builtin	reapply can handle config options	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-set-with-core-ignorecase-true	t1091-sparse-checkout-builtin	cone mode: set with core.ignoreCase=true	sparse-checkout	partial
+t1091-sparse-checkout-builtin::setup-submodules	t1091-sparse-checkout-builtin	setup submodules	sparse-checkout	partial
+t1091-sparse-checkout-builtin::interaction-with-submodules	t1091-sparse-checkout-builtin	interaction with submodules	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-interaction-with-submodules	t1091-sparse-checkout-builtin	check-rules interaction with submodules	sparse-checkout	partial
+t1091-sparse-checkout-builtin::different-sparse-checkouts-with-worktrees	t1091-sparse-checkout-builtin	different sparse-checkouts with worktrees	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-using-filename-keeps-file-on-disk	t1091-sparse-checkout-builtin	set using filename keeps file on-disk	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-a	t1091-sparse-checkout-builtin	pattern-checks: /A/**	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-a-b	t1091-sparse-checkout-builtin	pattern-checks: /A/**/B/	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-too-short	t1091-sparse-checkout-builtin	pattern-checks: too short	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-not-too-short	t1091-sparse-checkout-builtin	pattern-checks: not too short	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-trailing	t1091-sparse-checkout-builtin	pattern-checks: trailing "*"	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-starting	t1091-sparse-checkout-builtin	pattern-checks: starting "*"	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-non-directory-pattern	t1091-sparse-checkout-builtin	pattern-checks: non directory pattern	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-contained-glob-characters	t1091-sparse-checkout-builtin	pattern-checks: contained glob characters	sparse-checkout	partial
+t1091-sparse-checkout-builtin::pattern-checks-escaped-characters	t1091-sparse-checkout-builtin	pattern-checks: escaped characters	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-replaces-backslashes-with-slashes	t1091-sparse-checkout-builtin	cone mode replaces backslashes with slashes	sparse-checkout	partial
+t1091-sparse-checkout-builtin::cone-mode-clears-ignored-subdirectories	t1091-sparse-checkout-builtin	cone mode clears ignored subdirectories	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-deduplicates-repeated-cone-patterns	t1091-sparse-checkout-builtin	sparse-checkout deduplicates repeated cone patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-list-deduplicates-repeated-cone-patterns	t1091-sparse-checkout-builtin	sparse-checkout list deduplicates repeated cone patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::malformed-cone-mode-patterns	t1091-sparse-checkout-builtin	malformed cone-mode patterns	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-from-subdir-pays-attention-to-prefix	t1091-sparse-checkout-builtin	set from subdir pays attention to prefix	sparse-checkout	partial
+t1091-sparse-checkout-builtin::add-from-subdir-pays-attention-to-prefix	t1091-sparse-checkout-builtin	add from subdir pays attention to prefix	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-from-subdir-in-non-cone-mode-throws-an-error	t1091-sparse-checkout-builtin	set from subdir in non-cone mode throws an error	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-from-subdir-in-non-cone-mode-throws-an-error-2	t1091-sparse-checkout-builtin	set from subdir in non-cone mode throws an error	sparse-checkout	partial
+t1091-sparse-checkout-builtin::by-default-cone-mode-will-error-out-when-passed-files	t1091-sparse-checkout-builtin	by default, cone mode will error out when passed files	sparse-checkout	partial
+t1091-sparse-checkout-builtin::error-on-mistyped-command-line-options	t1091-sparse-checkout-builtin	error on mistyped command line options	sparse-checkout	partial
+t1091-sparse-checkout-builtin::by-default-non-cone-mode-will-warn-on-individual-files	t1091-sparse-checkout-builtin	by default, non-cone mode will warn on individual files	sparse-checkout	partial
+t1091-sparse-checkout-builtin::setup-bare-repo	t1091-sparse-checkout-builtin	setup bare repo	sparse-checkout	partial
+t1091-sparse-checkout-builtin::list-fails-outside-work-tree	t1091-sparse-checkout-builtin	list fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::add-fails-outside-work-tree	t1091-sparse-checkout-builtin	add fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::set-fails-outside-work-tree	t1091-sparse-checkout-builtin	set fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::init-fails-outside-work-tree	t1091-sparse-checkout-builtin	init fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::reapply-fails-outside-work-tree	t1091-sparse-checkout-builtin	reapply fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::disable-fails-outside-work-tree	t1091-sparse-checkout-builtin	disable fails outside work tree	sparse-checkout	partial
+t1091-sparse-checkout-builtin::setup-clean	t1091-sparse-checkout-builtin	setup clean	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-cone-mode	t1091-sparse-checkout-builtin	check-rules cone mode	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-non-cone-mode	t1091-sparse-checkout-builtin	check-rules non-cone mode	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-cone-mode-is-default	t1091-sparse-checkout-builtin	check-rules cone mode is default	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-quoting	t1091-sparse-checkout-builtin	check-rules quoting	sparse-checkout	partial
+t1091-sparse-checkout-builtin::check-rules-null-termination	t1091-sparse-checkout-builtin	check-rules null termination	sparse-checkout	partial
+t1091-sparse-checkout-builtin::clean	t1091-sparse-checkout-builtin	clean	sparse-checkout	partial
+t1091-sparse-checkout-builtin::clean-with-sparse-file-states	t1091-sparse-checkout-builtin	clean with sparse file states	sparse-checkout	partial
+t1091-sparse-checkout-builtin::sparse-checkout-operations-with-merge-conflicts	t1091-sparse-checkout-builtin	sparse-checkout operations with merge conflicts	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::setup	t1092-sparse-checkout-compatibility	setup	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-contents	t1092-sparse-checkout-compatibility	sparse-index contents	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::expanded-in-memory-index-matches-full-index	t1092-sparse-checkout-compatibility	expanded in-memory index matches full index	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::root-directory-cannot-be-sparse	t1092-sparse-checkout-compatibility	root directory cannot be sparse	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::status-with-options	t1092-sparse-checkout-compatibility	status with options	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::status-with-diff-in-unexpanded-sparse-directory	t1092-sparse-checkout-compatibility	status with diff in unexpanded sparse directory	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::status-reports-sparse-checkout	t1092-sparse-checkout-compatibility	status reports sparse-checkout	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::add-commit-checkout	t1092-sparse-checkout-compatibility	add, commit, checkout	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::git-add-checkout-and-reset-with-p	t1092-sparse-checkout-compatibility	git add, checkout, and reset with -p	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::deep-changes-during-checkout	t1092-sparse-checkout-compatibility	deep changes during checkout	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-with-modified-sparse-directory	t1092-sparse-checkout-compatibility	checkout with modified sparse directory	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-orphan-then-non-orphan	t1092-sparse-checkout-compatibility	checkout orphan then non-orphan	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::add-outside-sparse-cone	t1092-sparse-checkout-compatibility	add outside sparse cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::commit-including-unstaged-changes	t1092-sparse-checkout-compatibility	commit including unstaged changes	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::status-add-outside-sparse-cone	t1092-sparse-checkout-compatibility	status/add: outside sparse cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-and-reset-hard	t1092-sparse-checkout-compatibility	checkout and reset --hard	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-cached	t1092-sparse-checkout-compatibility	diff --cached	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-with-renames-and-conflicts	t1092-sparse-checkout-compatibility	diff with renames and conflicts	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-with-directory-file-conflicts	t1092-sparse-checkout-compatibility	diff with directory/file conflicts	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::log-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	log with pathspec outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::blame-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	blame with pathspec inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::blame-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	blame with pathspec outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-and-reset-mixed	t1092-sparse-checkout-compatibility	checkout and reset (mixed)	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-and-reset-merge	t1092-sparse-checkout-compatibility	checkout and reset (merge)	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-and-reset-keep	t1092-sparse-checkout-compatibility	checkout and reset (keep)	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::reset-with-pathspecs-inside-sparse-definition	t1092-sparse-checkout-compatibility	reset with pathspecs inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::reset-with-pathspecs-outside-sparse-definition	t1092-sparse-checkout-compatibility	reset with pathspecs outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::reset-with-wildcard-pathspec	t1092-sparse-checkout-compatibility	reset with wildcard pathspec	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::reset-hard-with-removed-sparse-dir	t1092-sparse-checkout-compatibility	reset hard with removed sparse dir	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-modify-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index modify outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-add-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --add outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-remove-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --remove outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-with-directories	t1092-sparse-checkout-compatibility	update-index with directories	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-again-file-outside-sparse-definition	t1092-sparse-checkout-compatibility	update-index --again file outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::update-index-cacheinfo	t1092-sparse-checkout-compatibility	update-index --cacheinfo	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::read-tree-merge-with-edit-edit-conflicts-in-sparse-directories	t1092-sparse-checkout-compatibility	read-tree --merge with edit/edit conflicts in sparse directories	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::read-tree-prefix	t1092-sparse-checkout-compatibility	read-tree --prefix	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::read-tree-merge-with-directory-file-conflicts	t1092-sparse-checkout-compatibility	read-tree --merge with directory-file conflicts	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::merge-cherry-pick-and-rebase	t1092-sparse-checkout-compatibility	merge, cherry-pick, and rebase	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::merge-with-conflict-outside-cone	t1092-sparse-checkout-compatibility	merge with conflict outside cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::cherry-pick-rebase-with-conflict-outside-cone	t1092-sparse-checkout-compatibility	cherry-pick/rebase with conflict outside cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::merge-with-outside-renames	t1092-sparse-checkout-compatibility	merge with outside renames	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::cherry-pick-with-conflicts	t1092-sparse-checkout-compatibility	cherry-pick with conflicts	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::stash	t1092-sparse-checkout-compatibility	stash	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-index-inside-sparse-definition	t1092-sparse-checkout-compatibility	checkout-index inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-index-outside-sparse-definition	t1092-sparse-checkout-compatibility	checkout-index outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-index-with-folders	t1092-sparse-checkout-compatibility	checkout-index with folders	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-index-all	t1092-sparse-checkout-compatibility	checkout-index --all	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::clean	t1092-sparse-checkout-compatibility	clean	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::submodule-handling	t1092-sparse-checkout-compatibility	submodule handling	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::git-apply-functionality	t1092-sparse-checkout-compatibility	git apply functionality	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-expanded-and-converted-back	t1092-sparse-checkout-compatibility	sparse-index is expanded and converted back	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::index-sparse-disabled-inline-uses-full-index	t1092-sparse-checkout-compatibility	index.sparse disabled inline uses full index	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded	t1092-sparse-checkout-compatibility	sparse-index is not expanded	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-merge-conflict-in-cone	t1092-sparse-checkout-compatibility	sparse-index is not expanded: merge conflict in cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-stash	t1092-sparse-checkout-compatibility	sparse-index is not expanded: stash	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::describe-tested-on-all	t1092-sparse-checkout-compatibility	describe tested on all	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::ls-files-filtering-and-expansion	t1092-sparse-checkout-compatibility	ls-files filtering and expansion	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-describe	t1092-sparse-checkout-compatibility	sparse-index is not expanded: describe	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-and-diff-index	t1092-sparse-checkout-compatibility	sparse index is not expanded: diff and diff-index	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-show-and-rev-parse	t1092-sparse-checkout-compatibility	sparse index is not expanded: show and rev-parse	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-update-index	t1092-sparse-checkout-compatibility	sparse index is not expanded: update-index	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-blame	t1092-sparse-checkout-compatibility	sparse index is not expanded: blame	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-fetch-pull	t1092-sparse-checkout-compatibility	sparse index is not expanded: fetch/pull	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-read-tree	t1092-sparse-checkout-compatibility	sparse index is not expanded: read-tree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::ls-files	t1092-sparse-checkout-compatibility	ls-files	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-sparse-checkout	t1092-sparse-checkout-compatibility	sparse index is not expanded: sparse-checkout	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::reset-mixed-and-checkout-orphan	t1092-sparse-checkout-compatibility	reset mixed and checkout orphan	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::add-everything-with-deep-new-file	t1092-sparse-checkout-compatibility	add everything with deep new file	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-behaves-oddly-with-df-conflict-1	t1092-sparse-checkout-compatibility	checkout behaves oddly with df-conflict-1	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::checkout-behaves-oddly-with-df-conflict-2	t1092-sparse-checkout-compatibility	checkout behaves oddly with df-conflict-2	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::mv-directory-from-out-of-cone-to-in-cone	t1092-sparse-checkout-compatibility	mv directory from out-of-cone to in-cone	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::rm-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	rm pathspec inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::rm-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	rm pathspec outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::rm-pathspec-expands-index-when-necessary	t1092-sparse-checkout-compatibility	rm pathspec expands index when necessary	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-rm	t1092-sparse-checkout-compatibility	sparse index is not expanded: rm	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::grep-with-and-cached	t1092-sparse-checkout-compatibility	grep with and --cached	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::grep-is-not-expanded	t1092-sparse-checkout-compatibility	grep is not expanded	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::grep-sparse-directory-within-submodules	t1092-sparse-checkout-compatibility	grep sparse directory within submodules	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::write-tree	t1092-sparse-checkout-compatibility	write-tree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-write-tree	t1092-sparse-checkout-compatibility	sparse-index is not expanded: write-tree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-files-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	diff-files with pathspec inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-files-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	diff-files with pathspec outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-files	t1092-sparse-checkout-compatibility	sparse index is not expanded: diff-files	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::diff-tree	t1092-sparse-checkout-compatibility	diff-tree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-diff-tree	t1092-sparse-checkout-compatibility	sparse-index is not expanded: diff-tree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::worktree	t1092-sparse-checkout-compatibility	worktree	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::worktree-is-not-expanded	t1092-sparse-checkout-compatibility	worktree is not expanded	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::check-attr-with-pathspec-inside-sparse-definition	t1092-sparse-checkout-compatibility	check-attr with pathspec inside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::check-attr-with-pathspec-outside-sparse-definition	t1092-sparse-checkout-compatibility	check-attr with pathspec outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-check-attr	t1092-sparse-checkout-compatibility	sparse-index is not expanded: check-attr	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-git-apply	t1092-sparse-checkout-compatibility	sparse-index is not expanded: git apply	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-git-add-p	t1092-sparse-checkout-compatibility	sparse-index is not expanded: git add -p	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-checkout-p-reset-p	t1092-sparse-checkout-compatibility	sparse-index is not expanded: checkout -p, reset -p	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::advice-sparseindexexpanded	t1092-sparse-checkout-compatibility	advice.sparseIndexExpanded	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::cat-file-p	t1092-sparse-checkout-compatibility	cat-file -p	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::cat-file-batch	t1092-sparse-checkout-compatibility	cat-file --batch	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::merge-s-ours	t1092-sparse-checkout-compatibility	merge -s ours	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::sparse-index-is-not-expanded-merge-ours	t1092-sparse-checkout-compatibility	sparse-index is not expanded: merge-ours	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::read-tree-mu-merge-trees-with-files-outside-sparse-definition	t1092-sparse-checkout-compatibility	'read-tree -mu $MERGE_TREES' with files outside sparse definition	sparse-checkout	partial
+t1092-sparse-checkout-compatibility::builtin-cached-blobs-trees	t1092-sparse-checkout-compatibility	$builtin (cached blobs/trees)	sparse-checkout	partial
 t1100-commit-tree-options::flags-and-then-non-flags	t1100-commit-tree-options	flags and then non flags	commit-tree	pass
 t1300-config::setup-whitespace-config	t1300-config	setup whitespace config	config	pass
 t1300-config::no-internal-whitespace	t1300-config	no internal whitespace	config	pass
@@ -2285,14 +2285,14 @@ t1308-config-set::check-line-errors-for-malformed-values	t1308-config-set	check 
 t1308-config-set::error-on-modifying-repo-config-without-repo	t1308-config-set	error on modifying repo config without repo	config	pass
 t1308-config-set::iteration-shows-correct-origins	t1308-config-set	iteration shows correct origins	config	pass
 t1308-config-set::op-null-value-in-config-file-in-file	t1308-config-set	$op: NULL value in config${file:+ in $file}	config	pass
-t1309-early-config::read-early-config	t1309-early-config	read early config		pass
-t1309-early-config::in-a-sub-directory	t1309-early-config	in a sub-directory		pass
-t1309-early-config::ceiling	t1309-early-config	ceiling		pass
-t1309-early-config::ceiling-2	t1309-early-config	ceiling #2	config	pass
-t1309-early-config::read-config-file-in-right-order	t1309-early-config	read config file in right order	init	pass
-t1309-early-config::ignore-git-with-incompatible-repository-version	t1309-early-config	ignore .git/ with incompatible repository version		pass
-t1309-early-config::early-config-and-onbranch	t1309-early-config	early config and onbranch		pass
-t1309-early-config::onbranch-config-outside-of-git-repo	t1309-early-config	onbranch config outside of git repo	help	pass
+t1309-early-config::read-early-config	t1309-early-config	read early config		partial
+t1309-early-config::in-a-sub-directory	t1309-early-config	in a sub-directory		partial
+t1309-early-config::ceiling	t1309-early-config	ceiling		partial
+t1309-early-config::ceiling-2	t1309-early-config	ceiling #2	config	partial
+t1309-early-config::read-config-file-in-right-order	t1309-early-config	read config file in right order	init	partial
+t1309-early-config::ignore-git-with-incompatible-repository-version	t1309-early-config	ignore .git/ with incompatible repository version		partial
+t1309-early-config::early-config-and-onbranch	t1309-early-config	early config and onbranch		partial
+t1309-early-config::onbranch-config-outside-of-git-repo	t1309-early-config	onbranch config outside of git repo	help	partial
 t1310-config-default::uses-default-when-entry-missing	t1310-config-default	uses --default when entry missing	config	pass
 t1310-config-default::does-not-use-default-when-entry-present	t1310-config-default	does not use --default when entry present	config	pass
 t1310-config-default::canonicalizes-default-with-appropriate-type	t1310-config-default	canonicalizes --default with appropriate type	config	pass
@@ -2301,10 +2301,10 @@ t1310-config-default::does-not-allow-default-without-get	t1310-config-default	do
 t1311-config-optional::var-optional-path-exists	t1311-config-optional	var=:(optional)path-exists	config	pass
 t1311-config-optional::missing-optional-value-is-ignored	t1311-config-optional	missing optional value is ignored	config	pass
 t1311-config-optional::missing-optional-value-is-ignored-in-multi-value-config	t1311-config-optional	missing optional value is ignored in multi-value config	config	pass
-t1350-config-hooks-path::set-up-a-pre-commit-hook-in-core-hookspath	t1350-config-hooks-path	set up a pre-commit hook in core.hooksPath	config	pass
-t1350-config-hooks-path::check-that-various-forms-of-specifying-core-hookspath-work	t1350-config-hooks-path	Check that various forms of specifying core.hooksPath work	config	pass
-t1350-config-hooks-path::git-rev-parse-git-path-hooks	t1350-config-hooks-path	git rev-parse --git-path hooks	config	pass
-t1350-config-hooks-path::core-hookspath-dev-null	t1350-config-hooks-path	core.hooksPath=/dev/null	config	pass
+t1350-config-hooks-path::set-up-a-pre-commit-hook-in-core-hookspath	t1350-config-hooks-path	set up a pre-commit hook in core.hooksPath	config	partial
+t1350-config-hooks-path::check-that-various-forms-of-specifying-core-hookspath-work	t1350-config-hooks-path	Check that various forms of specifying core.hooksPath work	config	partial
+t1350-config-hooks-path::git-rev-parse-git-path-hooks	t1350-config-hooks-path	git rev-parse --git-path hooks	config	partial
+t1350-config-hooks-path::core-hookspath-dev-null	t1350-config-hooks-path	core.hooksPath=/dev/null	config	partial
 t1400-update-ref::update-ref-does-not-create-reflogs-by-default	t1400-update-ref	update-ref does not create reflogs by default	update-ref	pass
 t1400-update-ref::update-ref-creates-reflogs-with-create-reflog	t1400-update-ref	update-ref creates reflogs with --create-reflog	update-ref	pass
 t1400-update-ref::creates-no-reflog-in-bare-repository	t1400-update-ref	creates no reflog in bare repository	update-ref	pass
@@ -3023,41 +3023,41 @@ t1501-work-tree::git-dir-common-overrides-core-worktree	t1501-work-tree	$GIT_DIR
 t1501-work-tree::git-work-tree-overrides-git-dir-common	t1501-work-tree	$GIT_WORK_TREE overrides $GIT_DIR/common	ls-files	pass
 t1501-work-tree::error-out-gracefully-on-invalid-git-work-tree	t1501-work-tree	error out gracefully on invalid $GIT_WORK_TREE	rev-parse	pass
 t1501-work-tree::refs-work-with-relative-gitdir-and-work-tree	t1501-work-tree	refs work with relative gitdir and work tree	commit	pass
-t1502-rev-parse-parseopt::setup-optionspec	t1502-rev-parse-parseopt	setup optionspec	rev-parse	pass
-t1502-rev-parse-parseopt::setup-optionspec-no-switches	t1502-rev-parse-parseopt	setup optionspec-no-switches	rev-parse	pass
-t1502-rev-parse-parseopt::setup-optionspec-only-hidden-switches	t1502-rev-parse-parseopt	setup optionspec-only-hidden-switches	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output	t1502-rev-parse-parseopt	test --parseopt help output	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output-no-switches	t1502-rev-parse-parseopt	test --parseopt help output no switches	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help output hidden switches	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-all-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help-all output hidden switches	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-invalid-switch-help-output	t1502-rev-parse-parseopt	test --parseopt invalid switch help output	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-1	t1502-rev-parse-parseopt	setup expect.1	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt	t1502-rev-parse-parseopt	test --parseopt	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-with-mixed-options-and-arguments	t1502-rev-parse-parseopt	test --parseopt with mixed options and arguments	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-2	t1502-rev-parse-parseopt	setup expect.2	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-with	t1502-rev-parse-parseopt	test --parseopt with --	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-stop-at-non-option	t1502-rev-parse-parseopt	test --parseopt --stop-at-non-option	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-3	t1502-rev-parse-parseopt	setup expect.3	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-4	t1502-rev-parse-parseopt	setup expect.4	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-with	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option with --	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-5	t1502-rev-parse-parseopt	setup expect.5	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-without	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option without --	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-6	t1502-rev-parse-parseopt	setup expect.6	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-stuck-long	t1502-rev-parse-parseopt	test --parseopt --stuck-long	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-7	t1502-rev-parse-parseopt	setup expect.7	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-empty-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and empty optional argument	rev-parse	pass
-t1502-rev-parse-parseopt::setup-expect-8	t1502-rev-parse-parseopt	setup expect.8	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-long-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and long option with unset optional argument	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-short-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and short option with unset optional argument	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output-wrapped-options-normal-or-lines	t1502-rev-parse-parseopt	test --parseopt help output: "wrapped" options normal "or:" lines	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-invalid-opt-spec	t1502-rev-parse-parseopt	test --parseopt invalid opt-spec	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output-multi-line-blurb-after-empty-line	t1502-rev-parse-parseopt	test --parseopt help output: multi-line blurb after empty line	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-help-output-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt help output for optionspec-neg	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-valid-options-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt valid options for optionspec-neg	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-positivated-option-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt positivated option for optionspec-neg	rev-parse	pass
-t1502-rev-parse-parseopt::ambiguous-no-matches-both-noble-and-no-noble	t1502-rev-parse-parseopt	ambiguous: --no matches both --noble and --no-noble	rev-parse	pass
-t1502-rev-parse-parseopt::test-parseopt-invalid-switch-opt-help-output-for-spec	t1502-rev-parse-parseopt	test --parseopt invalid switch $opt help output for $spec	rev-parse	pass
+t1502-rev-parse-parseopt::setup-optionspec	t1502-rev-parse-parseopt	setup optionspec	rev-parse	partial
+t1502-rev-parse-parseopt::setup-optionspec-no-switches	t1502-rev-parse-parseopt	setup optionspec-no-switches	rev-parse	partial
+t1502-rev-parse-parseopt::setup-optionspec-only-hidden-switches	t1502-rev-parse-parseopt	setup optionspec-only-hidden-switches	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output	t1502-rev-parse-parseopt	test --parseopt help output	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output-no-switches	t1502-rev-parse-parseopt	test --parseopt help output no switches	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help output hidden switches	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-all-output-hidden-switches	t1502-rev-parse-parseopt	test --parseopt help-all output hidden switches	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-invalid-switch-help-output	t1502-rev-parse-parseopt	test --parseopt invalid switch help output	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-1	t1502-rev-parse-parseopt	setup expect.1	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt	t1502-rev-parse-parseopt	test --parseopt	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-with-mixed-options-and-arguments	t1502-rev-parse-parseopt	test --parseopt with mixed options and arguments	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-2	t1502-rev-parse-parseopt	setup expect.2	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-with	t1502-rev-parse-parseopt	test --parseopt with --	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-stop-at-non-option	t1502-rev-parse-parseopt	test --parseopt --stop-at-non-option	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-3	t1502-rev-parse-parseopt	setup expect.3	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-4	t1502-rev-parse-parseopt	setup expect.4	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-with	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option with --	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-5	t1502-rev-parse-parseopt	setup expect.5	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-keep-dashdash-stop-at-non-option-without	t1502-rev-parse-parseopt	test --parseopt --keep-dashdash --stop-at-non-option without --	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-6	t1502-rev-parse-parseopt	setup expect.6	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-stuck-long	t1502-rev-parse-parseopt	test --parseopt --stuck-long	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-7	t1502-rev-parse-parseopt	setup expect.7	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-empty-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and empty optional argument	rev-parse	partial
+t1502-rev-parse-parseopt::setup-expect-8	t1502-rev-parse-parseopt	setup expect.8	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-long-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and long option with unset optional argument	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-stuck-long-and-short-option-with-unset-optional-argument	t1502-rev-parse-parseopt	test --parseopt --stuck-long and short option with unset optional argument	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output-wrapped-options-normal-or-lines	t1502-rev-parse-parseopt	test --parseopt help output: "wrapped" options normal "or:" lines	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-invalid-opt-spec	t1502-rev-parse-parseopt	test --parseopt invalid opt-spec	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output-multi-line-blurb-after-empty-line	t1502-rev-parse-parseopt	test --parseopt help output: multi-line blurb after empty line	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-help-output-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt help output for optionspec-neg	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-valid-options-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt valid options for optionspec-neg	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-positivated-option-for-optionspec-neg	t1502-rev-parse-parseopt	test --parseopt positivated option for optionspec-neg	rev-parse	partial
+t1502-rev-parse-parseopt::ambiguous-no-matches-both-noble-and-no-noble	t1502-rev-parse-parseopt	ambiguous: --no matches both --noble and --no-noble	rev-parse	partial
+t1502-rev-parse-parseopt::test-parseopt-invalid-switch-opt-help-output-for-spec	t1502-rev-parse-parseopt	test --parseopt invalid switch $opt help output for $spec	rev-parse	partial
 t1503-rev-parse-verify::set-up-basic-repo-with-1-file-hello-and-4-commits	t1503-rev-parse-verify	set up basic repo with 1 file (hello) and 4 commits	rev-parse	pass
 t1503-rev-parse-verify::works-with-one-good-rev	t1503-rev-parse-verify	works with one good rev	rev-parse	pass
 t1503-rev-parse-verify::fails-with-any-bad-rev-or-many-good-revs	t1503-rev-parse-verify	fails with any bad rev or many good revs	rev-parse	pass
@@ -7373,79 +7373,79 @@ t4051-diff-function-context::context-includes-begin-7	t4051-diff-function-contex
 t4051-diff-function-context::context-includes-end-7	t4051-diff-function-context	 context includes end	diff	pass
 t4051-diff-function-context::overlapping-hunks-are-merged	t4051-diff-function-context	 overlapping hunks are merged	diff	pass
 t4051-diff-function-context::desc	t4051-diff-function-context	$desc	diff	pass
-t4052-stat-output::preparation	t4052-stat-output	preparation	add	pass
-t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	pass
-t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	pass
-t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	pass
-t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	pass
-t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	pass
-t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	pass
-t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	pass
-t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	pass
-t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		pass
-t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	pass
-t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	pass
-t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		pass
-t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		pass
-t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		pass
-t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		pass
-t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	pass
-t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		pass
-t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		pass
-t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		pass
-t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		pass
-t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	pass
-t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	pass
-t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		pass
-t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		pass
-t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		pass
-t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		pass
-t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		pass
-t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		pass
-t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		pass
-t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		pass
-t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		pass
-t4053-diff-no-index::setup	t4053-diff-no-index	setup	diff	pass
-t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	pass
-t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	pass
-t4053-diff-no-index::git-diff-no-index-with	t4053-diff-no-index	git diff --no-index with -	diff	pass
-t4053-diff-no-index::git-diff-no-index-relative-path-outside-repo	t4053-diff-no-index	git diff --no-index relative path outside repo	diff	pass
-t4053-diff-no-index::git-diff-no-index-with-broken-index	t4053-diff-no-index	git diff --no-index with broken index	diff	pass
-t4053-diff-no-index::git-diff-outside-repo-with-broken-index	t4053-diff-no-index	git diff outside repo with broken index	diff	pass
-t4053-diff-no-index::git-diff-no-index-executed-outside-repo-gives-correct-error-message	t4053-diff-no-index	git diff --no-index executed outside repo gives correct error message	diff	pass
-t4053-diff-no-index::git-diff-find-object-outside-repo-fails-gracefully	t4053-diff-no-index	git diff --find-object outside repo fails gracefully	diff	pass
-t4053-diff-no-index::diff-d-f-and-diff-f-d	t4053-diff-no-index	diff D F and diff F D	diff	pass
-t4053-diff-no-index::turning-a-file-into-a-directory	t4053-diff-no-index	turning a file into a directory	diff	pass
-t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-explicit	t4053-diff-no-index	diff from repo subdir shows real paths (explicit)	diff	pass
-t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-implicit	t4053-diff-no-index	diff from repo subdir shows real paths (implicit)	diff	pass
-t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-explicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (explicit)	diff	pass
-t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-implicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (implicit)	diff	pass
-t4053-diff-no-index::diff-no-index-from-repo-subdir-with-absolute-paths	t4053-diff-no-index	diff --no-index from repo subdir with absolute paths	diff	pass
-t4053-diff-no-index::diff-no-index-allows-external-diff	t4053-diff-no-index	diff --no-index allows external diff	diff	pass
-t4053-diff-no-index::diff-no-index-normalizes-mode-no-changes	t4053-diff-no-index	diff --no-index normalizes mode: no changes	diff	pass
-t4053-diff-no-index::diff-no-index-normalizes-mode-chmod-x	t4053-diff-no-index	diff --no-index normalizes mode: chmod +x	diff	pass
-t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode	diff	pass
-t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode-symlink	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode (symlink)	diff	pass
-t4053-diff-no-index::external-diff-with-mode-only-change	t4053-diff-no-index	external diff with mode-only change	diff	pass
-t4053-diff-no-index::diff-no-index-refuses-to-diff-stdin-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff stdin and a directory	diff	pass
-t4053-diff-no-index::diff-no-index-refuses-to-diff-a-named-pipe-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff a named pipe and a directory	diff	pass
-t4053-diff-no-index::diff-no-index-reads-from-pipes	t4053-diff-no-index	diff --no-index reads from pipes	diff	pass
-t4053-diff-no-index::diff-no-index-f-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index F F rejects pathspecs	diff	pass
-t4053-diff-no-index::diff-no-index-d-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index D F rejects pathspecs	diff	pass
-t4053-diff-no-index::diff-no-index-f-d-rejects-pathspecs	t4053-diff-no-index	diff --no-index F D rejects pathspecs	diff	pass
-t4053-diff-no-index::diff-no-index-rejects-absolute-pathspec	t4053-diff-no-index	diff --no-index rejects absolute pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec	t4053-diff-no-index	diff --no-index with pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-first-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index first path ending in slash with pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-second-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index second path ending in slash with pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec-no-matches	t4053-diff-no-index	diff --no-index with pathspec no matches	diff	pass
-t4053-diff-no-index::diff-no-index-with-negative-pathspec	t4053-diff-no-index	diff --no-index with negative pathspec	diff	pass
-t4053-diff-no-index::setup-nested	t4053-diff-no-index	setup nested	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec-nested-negative-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested negative pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec-nested-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested pathspec	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec-glob	t4053-diff-no-index	diff --no-index with pathspec glob	diff	pass
-t4053-diff-no-index::diff-no-index-with-pathspec-glob-and-exclude	t4053-diff-no-index	diff --no-index with pathspec glob and exclude	diff	pass
-t4053-diff-no-index::diff-no-index-treats-as-stdin	t4053-diff-no-index	diff --no-index treats '-' as stdin	diff	pass
-t4053-diff-no-index::diff-no-index-r-treats-as-stdin	t4053-diff-no-index	diff --no-index -R treats '-' as stdin	diff	pass
+t4052-stat-output::preparation	t4052-stat-output	preparation	add	partial
+t4052-stat-output::preparation-for-big-change-tests	t4052-stat-output	preparation for big-change tests	add	partial
+t4052-stat-output::preparation-for-long-name-tests	t4052-stat-output	preparation for long-name tests	add	partial
+t4052-stat-output::merge-stat-respects-diff-statgraphwidth-with-big-change	t4052-stat-output	merge --stat respects diff.statGraphWidth with big change	checkout	partial
+t4052-stat-output::merge-stat-respects-columns-with-big-change	t4052-stat-output	merge --stat respects COLUMNS with big change	checkout	partial
+t4052-stat-output::merge-stat-respects-diff-statnamewidth-with-long-name	t4052-stat-output	merge --stat respects diff.statNameWidth with long name	merge	partial
+t4052-stat-output::merge-stat-respects-columns-with-long-name	t4052-stat-output	merge --stat respects COLUMNS with long name	merge	partial
+t4052-stat-output::diffstat-where-line-prefix-contains-ansi-escape-codes-is-correct-width	t4052-stat-output	diffstat where line_prefix contains ANSI escape codes is correct width	add	partial
+t4052-stat-output::format-patch-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	format-patch: small change with long name gives more space to the name	format-patch	partial
+t4052-stat-output::cmd-small-change-with-long-name-gives-more-space-to-the-name	t4052-stat-output	$cmd: small change with long name gives more space to the name		partial
+t4052-stat-output::cmd-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd $verb diff.statNameWidth with long name	diff	partial
+t4052-stat-output::cmd-stat-width-verb-diff-statnamewidth-with-long-name	t4052-stat-output	$cmd --stat=width $verb diff.statNameWidth with long name	diff	partial
+t4052-stat-output::cmd-stat-width-a-long-name-is-given-more-room-when-the-bar-is-short	t4052-stat-output	$cmd --stat=width: a long name is given more room when the bar is short		partial
+t4052-stat-output::cmd-stat-width-width-with-long-name	t4052-stat-output	$cmd --stat-width=width with long name		partial
+t4052-stat-output::cmd-stat-width-name-width-with-long-name	t4052-stat-output	$cmd --stat=width,name-width with long name		partial
+t4052-stat-output::cmd-stat-name-width-width-with-long-name	t4052-stat-output	$cmd --stat-name-width=width with long name		partial
+t4052-stat-output::format-patch-cover-letter-ignores-columns-with-big-change	t4052-stat-output	format-patch --cover-letter ignores COLUMNS with big change	format-patch	partial
+t4052-stat-output::cmd-verb-columns-with-big-change	t4052-stat-output	$cmd $verb COLUMNS with big change		partial
+t4052-stat-output::cmd-graph-verb-columns-with-big-change	t4052-stat-output	$cmd --graph $verb COLUMNS with big change		partial
+t4052-stat-output::cmd-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd $verb not enough COLUMNS with big change		partial
+t4052-stat-output::cmd-graph-verb-not-enough-columns-with-big-change	t4052-stat-output	$cmd --graph $verb not enough COLUMNS with big change		partial
+t4052-stat-output::cmd-verb-diff-statgraphwidth	t4052-stat-output	$cmd $verb diff.statGraphWidth	diff	partial
+t4052-stat-output::cmd-graph-verb-diff-statgraphwidth	t4052-stat-output	$cmd --graph $verb diff.statGraphWidth	diff	partial
+t4052-stat-output::cmd-stat-width-with-big-change	t4052-stat-output	$cmd --stat=width with big change		partial
+t4052-stat-output::cmd-stat-width-width-with-big-change	t4052-stat-output	$cmd --stat-width=width with big change		partial
+t4052-stat-output::cmd-stat-graph-width-width-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width with big change		partial
+t4052-stat-output::cmd-stat-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-width=width --graph with big change		partial
+t4052-stat-output::cmd-stat-graph-width-width-graph-with-big-change	t4052-stat-output	$cmd --stat-graph-width=width --graph with big change		partial
+t4052-stat-output::cmd-stat-width-with-big-change-is-more-balanced	t4052-stat-output	$cmd --stat=width with big change is more balanced		partial
+t4052-stat-output::cmd-stat-width-graph-with-big-change-is-balanced	t4052-stat-output	$cmd --stat=width --graph with big change is balanced		partial
+t4052-stat-output::cmd-verb-columns-with-long-name	t4052-stat-output	$cmd $verb COLUMNS with long name		partial
+t4052-stat-output::cmd-graph-verb-columns-with-long-name	t4052-stat-output	$cmd --graph $verb COLUMNS with long name		partial
+t4053-diff-no-index::setup	t4053-diff-no-index	setup	diff	partial
+t4053-diff-no-index::git-diff-no-index-exit-code	t4053-diff-no-index	git diff --no-index --exit-code	diff	partial
+t4053-diff-no-index::git-diff-no-index-directories	t4053-diff-no-index	git diff --no-index directories	diff	partial
+t4053-diff-no-index::git-diff-no-index-with	t4053-diff-no-index	git diff --no-index with -	diff	partial
+t4053-diff-no-index::git-diff-no-index-relative-path-outside-repo	t4053-diff-no-index	git diff --no-index relative path outside repo	diff	partial
+t4053-diff-no-index::git-diff-no-index-with-broken-index	t4053-diff-no-index	git diff --no-index with broken index	diff	partial
+t4053-diff-no-index::git-diff-outside-repo-with-broken-index	t4053-diff-no-index	git diff outside repo with broken index	diff	partial
+t4053-diff-no-index::git-diff-no-index-executed-outside-repo-gives-correct-error-message	t4053-diff-no-index	git diff --no-index executed outside repo gives correct error message	diff	partial
+t4053-diff-no-index::git-diff-find-object-outside-repo-fails-gracefully	t4053-diff-no-index	git diff --find-object outside repo fails gracefully	diff	partial
+t4053-diff-no-index::diff-d-f-and-diff-f-d	t4053-diff-no-index	diff D F and diff F D	diff	partial
+t4053-diff-no-index::turning-a-file-into-a-directory	t4053-diff-no-index	turning a file into a directory	diff	partial
+t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-explicit	t4053-diff-no-index	diff from repo subdir shows real paths (explicit)	diff	partial
+t4053-diff-no-index::diff-from-repo-subdir-shows-real-paths-implicit	t4053-diff-no-index	diff from repo subdir shows real paths (implicit)	diff	partial
+t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-explicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (explicit)	diff	partial
+t4053-diff-no-index::diff-no-index-from-repo-subdir-respects-config-implicit	t4053-diff-no-index	diff --no-index from repo subdir respects config (implicit)	diff	partial
+t4053-diff-no-index::diff-no-index-from-repo-subdir-with-absolute-paths	t4053-diff-no-index	diff --no-index from repo subdir with absolute paths	diff	partial
+t4053-diff-no-index::diff-no-index-allows-external-diff	t4053-diff-no-index	diff --no-index allows external diff	diff	partial
+t4053-diff-no-index::diff-no-index-normalizes-mode-no-changes	t4053-diff-no-index	diff --no-index normalizes mode: no changes	diff	partial
+t4053-diff-no-index::diff-no-index-normalizes-mode-chmod-x	t4053-diff-no-index	diff --no-index normalizes mode: chmod +x	diff	partial
+t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode	diff	partial
+t4053-diff-no-index::diff-no-index-normalizes-mode-not-like-git-mode-symlink	t4053-diff-no-index	diff --no-index normalizes: mode not like git mode (symlink)	diff	partial
+t4053-diff-no-index::external-diff-with-mode-only-change	t4053-diff-no-index	external diff with mode-only change	diff	partial
+t4053-diff-no-index::diff-no-index-refuses-to-diff-stdin-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff stdin and a directory	diff	partial
+t4053-diff-no-index::diff-no-index-refuses-to-diff-a-named-pipe-and-a-directory	t4053-diff-no-index	diff --no-index refuses to diff a named pipe and a directory	diff	partial
+t4053-diff-no-index::diff-no-index-reads-from-pipes	t4053-diff-no-index	diff --no-index reads from pipes	diff	partial
+t4053-diff-no-index::diff-no-index-f-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index F F rejects pathspecs	diff	partial
+t4053-diff-no-index::diff-no-index-d-f-rejects-pathspecs	t4053-diff-no-index	diff --no-index D F rejects pathspecs	diff	partial
+t4053-diff-no-index::diff-no-index-f-d-rejects-pathspecs	t4053-diff-no-index	diff --no-index F D rejects pathspecs	diff	partial
+t4053-diff-no-index::diff-no-index-rejects-absolute-pathspec	t4053-diff-no-index	diff --no-index rejects absolute pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec	t4053-diff-no-index	diff --no-index with pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-first-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index first path ending in slash with pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-second-path-ending-in-slash-with-pathspec	t4053-diff-no-index	diff --no-index second path ending in slash with pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec-no-matches	t4053-diff-no-index	diff --no-index with pathspec no matches	diff	partial
+t4053-diff-no-index::diff-no-index-with-negative-pathspec	t4053-diff-no-index	diff --no-index with negative pathspec	diff	partial
+t4053-diff-no-index::setup-nested	t4053-diff-no-index	setup nested	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec-nested-negative-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested negative pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec-nested-pathspec	t4053-diff-no-index	diff --no-index with pathspec nested pathspec	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec-glob	t4053-diff-no-index	diff --no-index with pathspec glob	diff	partial
+t4053-diff-no-index::diff-no-index-with-pathspec-glob-and-exclude	t4053-diff-no-index	diff --no-index with pathspec glob and exclude	diff	partial
+t4053-diff-no-index::diff-no-index-treats-as-stdin	t4053-diff-no-index	diff --no-index treats '-' as stdin	diff	partial
+t4053-diff-no-index::diff-no-index-r-treats-as-stdin	t4053-diff-no-index	diff --no-index -R treats '-' as stdin	diff	partial
 t4054-diff-bogus-tree::create-bogus-tree	t4054-diff-bogus-tree	create bogus tree	diff	pass
 t4054-diff-bogus-tree::create-tree-with-matching-file	t4054-diff-bogus-tree	create tree with matching file	diff	pass
 t4054-diff-bogus-tree::raw-diff-shows-null-sha1-addition	t4054-diff-bogus-tree	raw diff shows null sha1 (addition)	diff	pass
@@ -7470,24 +7470,24 @@ t4055-diff-context::non-integer-config-parsing	t4055-diff-context	non-integer co
 t4055-diff-context::negative-integer-config-parsing	t4055-diff-context	negative integer config parsing	diff	pass
 t4055-diff-context::u0-is-valid-so-is-diff-context-0	t4055-diff-context	-U0 is valid, so is diff.context=0	diff	pass
 t4055-diff-context::u2147483647-works	t4055-diff-context	-U2147483647 works	diff	pass
-t4056-diff-order::setup	t4056-diff-order	setup	diff	pass
-t4056-diff-order::missing-orderfile	t4056-diff-order	missing orderfile	diff	pass
-t4056-diff-order::unreadable-orderfile	t4056-diff-order	unreadable orderfile	diff	pass
-t4056-diff-order::setup-for-testing-combine-diff-order	t4056-diff-order	setup for testing combine-diff order	diff	pass
-t4056-diff-order::rotate-and-skip-setup	t4056-diff-order	rotate and skip setup	diff	pass
-t4056-diff-order::diff-rotate-to	t4056-diff-order	diff --rotate-to	diff	pass
-t4056-diff-order::diff-skip-to	t4056-diff-order	diff --skip-to	diff	pass
-t4056-diff-order::diff-rotate-skip-to-error-condition	t4056-diff-order	diff --rotate/skip-to error condition	diff	pass
-t4056-diff-order::log-rotate-to	t4056-diff-order	log --rotate-to	diff	pass
-t4056-diff-order::log-skip-to	t4056-diff-order	log --skip-to	diff	pass
-t4056-diff-order::no-order-tree-object-order	t4056-diff-order	no order (=tree object order)	diff	pass
-t4056-diff-order::orderfile-using-option-from-subdir-with-output	t4056-diff-order	orderfile using option from subdir with --output	diff	pass
-t4056-diff-order::orderfile-using-option-i	t4056-diff-order	orderfile using option ($i)	diff	pass
-t4056-diff-order::orderfile-is-fifo-i	t4056-diff-order	orderfile is fifo ($i)	diff	pass
-t4056-diff-order::orderfile-using-config-i	t4056-diff-order	orderfile using config ($i)	diff	pass
-t4056-diff-order::cancelling-configured-orderfile-i	t4056-diff-order	cancelling configured orderfile ($i)	diff	pass
-t4056-diff-order::combine-diff-no-order-tree-object-order	t4056-diff-order	combine-diff: no order (=tree object order)	diff	pass
-t4056-diff-order::combine-diff-orderfile-using-option-i	t4056-diff-order	combine-diff: orderfile using option ($i)	diff	pass
+t4056-diff-order::setup	t4056-diff-order	setup	diff	partial
+t4056-diff-order::missing-orderfile	t4056-diff-order	missing orderfile	diff	partial
+t4056-diff-order::unreadable-orderfile	t4056-diff-order	unreadable orderfile	diff	partial
+t4056-diff-order::setup-for-testing-combine-diff-order	t4056-diff-order	setup for testing combine-diff order	diff	partial
+t4056-diff-order::rotate-and-skip-setup	t4056-diff-order	rotate and skip setup	diff	partial
+t4056-diff-order::diff-rotate-to	t4056-diff-order	diff --rotate-to	diff	partial
+t4056-diff-order::diff-skip-to	t4056-diff-order	diff --skip-to	diff	partial
+t4056-diff-order::diff-rotate-skip-to-error-condition	t4056-diff-order	diff --rotate/skip-to error condition	diff	partial
+t4056-diff-order::log-rotate-to	t4056-diff-order	log --rotate-to	diff	partial
+t4056-diff-order::log-skip-to	t4056-diff-order	log --skip-to	diff	partial
+t4056-diff-order::no-order-tree-object-order	t4056-diff-order	no order (=tree object order)	diff	partial
+t4056-diff-order::orderfile-using-option-from-subdir-with-output	t4056-diff-order	orderfile using option from subdir with --output	diff	partial
+t4056-diff-order::orderfile-using-option-i	t4056-diff-order	orderfile using option ($i)	diff	partial
+t4056-diff-order::orderfile-is-fifo-i	t4056-diff-order	orderfile is fifo ($i)	diff	partial
+t4056-diff-order::orderfile-using-config-i	t4056-diff-order	orderfile using config ($i)	diff	partial
+t4056-diff-order::cancelling-configured-orderfile-i	t4056-diff-order	cancelling configured orderfile ($i)	diff	partial
+t4056-diff-order::combine-diff-no-order-tree-object-order	t4056-diff-order	combine-diff: no order (=tree object order)	diff	partial
+t4056-diff-order::combine-diff-orderfile-using-option-i	t4056-diff-order	combine-diff: orderfile using option ($i)	diff	partial
 t4057-diff-combined-paths::trivial-merge-combine-diff-empty	t4057-diff-combined-paths	trivial merge - combine-diff empty	diff	pass
 t4057-diff-combined-paths::only-one-truly-conflicting-path	t4057-diff-combined-paths	only one truly conflicting path	diff	pass
 t4057-diff-combined-paths::merge-introduces-new-file	t4057-diff-combined-paths	merge introduces new file	diff	pass
@@ -7617,16 +7617,16 @@ t4063-diff-blobs::index-of-blob-file-diff	t4063-diff-blobs	index of blob-file di
 t4063-diff-blobs::blob-file-diff-uses-filename-as-paths	t4063-diff-blobs	blob-file diff uses filename as paths	diff	pass
 t4063-diff-blobs::blob-file-diff-shows-mode-change	t4063-diff-blobs	blob-file diff shows mode change	diff	pass
 t4063-diff-blobs::blob-file-diff-prefers-filename-to-sha1	t4063-diff-blobs	blob-file diff prefers filename to sha1	diff	pass
-t4064-diff-oidfind::setup	t4064-diff-oidfind	setup 	diff	pass
-t4064-diff-oidfind::find-the-greeting-blob	t4064-diff-oidfind	find the greeting blob	diff	pass
-t4064-diff-oidfind::setup-a-tree	t4064-diff-oidfind	setup a tree	diff	pass
-t4064-diff-oidfind::find-a-tree	t4064-diff-oidfind	find a tree	diff	pass
-t4064-diff-oidfind::setup-a-submodule	t4064-diff-oidfind	setup a submodule	diff	pass
-t4064-diff-oidfind::find-a-submodule	t4064-diff-oidfind	find a submodule	diff	pass
-t4064-diff-oidfind::set-up-merge-tests	t4064-diff-oidfind	set up merge tests	diff	pass
-t4064-diff-oidfind::detect-merge-which-introduces-blob	t4064-diff-oidfind	detect merge which introduces blob	diff	pass
-t4064-diff-oidfind::detect-merge-which-removes-blob	t4064-diff-oidfind	detect merge which removes blob	diff	pass
-t4064-diff-oidfind::do-not-detect-merge-that-does-not-touch-blob	t4064-diff-oidfind	do not detect merge that does not touch blob	diff	pass
+t4064-diff-oidfind::setup	t4064-diff-oidfind	setup 	diff	partial
+t4064-diff-oidfind::find-the-greeting-blob	t4064-diff-oidfind	find the greeting blob	diff	partial
+t4064-diff-oidfind::setup-a-tree	t4064-diff-oidfind	setup a tree	diff	partial
+t4064-diff-oidfind::find-a-tree	t4064-diff-oidfind	find a tree	diff	partial
+t4064-diff-oidfind::setup-a-submodule	t4064-diff-oidfind	setup a submodule	diff	partial
+t4064-diff-oidfind::find-a-submodule	t4064-diff-oidfind	find a submodule	diff	partial
+t4064-diff-oidfind::set-up-merge-tests	t4064-diff-oidfind	set up merge tests	diff	partial
+t4064-diff-oidfind::detect-merge-which-introduces-blob	t4064-diff-oidfind	detect merge which introduces blob	diff	partial
+t4064-diff-oidfind::detect-merge-which-removes-blob	t4064-diff-oidfind	detect merge which removes blob	diff	partial
+t4064-diff-oidfind::do-not-detect-merge-that-does-not-touch-blob	t4064-diff-oidfind	do not detect merge that does not touch blob	diff	partial
 t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	pass
 t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	pass
 t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	pass
@@ -7695,12 +7695,12 @@ t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t
 t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	pass
 t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	pass
 t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	pass
-t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	pass
-t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	pass
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	pass
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	pass
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	pass
-t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	pass
+t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	partial
+t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	partial
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	partial
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	partial
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	partial
+t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	partial
 t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	pass
 t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	pass
 t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	pass
@@ -10541,34 +10541,34 @@ t5530-upload-pack-error::upload-pack-tolerates-eof-just-after-stateless-client-w
 t5530-upload-pack-error::fetch-fails	t5530-upload-pack-error	fetch fails	upload-pack	pass
 t5530-upload-pack-error::upload-pack-acks-repeated-non-commit-objects-repeatedly-protocol-v0	t5530-upload-pack-error	upload-pack ACKs repeated non-commit objects repeatedly (protocol v0)	upload-pack	pass
 t5530-upload-pack-error::upload-pack-acks-repeated-non-commit-objects-once-only-protocol-v2	t5530-upload-pack-error	upload-pack ACKs repeated non-commit objects once only (protocol v2)	upload-pack	pass
-t5531-deep-submodule-push::push-works-with-recorded-gitlink	t5531-deep-submodule-push	push works with recorded gitlink	push	pass
-t5531-deep-submodule-push::push-if-submodule-has-no-remote	t5531-deep-submodule-push	push if submodule has no remote	add	pass
-t5531-deep-submodule-push::push-fails-if-submodule-commit-not-on-remote	t5531-deep-submodule-push	push fails if submodule commit not on remote	add	pass
-t5531-deep-submodule-push::push-succeeds-after-commit-was-pushed-to-remote	t5531-deep-submodule-push	push succeeds after commit was pushed to remote	push	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-on-demand-on-command-l	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using on-demand on command line	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-on-demand-from-config	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using on-demand from config	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-auto-on-demand-via-sub	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using auto-on-demand via submodule.recurse config	add	pass
-t5531-deep-submodule-push::push-recurse-submodules-on-command-line-overrides-config	t5531-deep-submodule-push	push recurse-submodules on command line overrides config	add	pass
-t5531-deep-submodule-push::push-recurse-submodules-last-one-wins-on-command-line	t5531-deep-submodule-push	push recurse-submodules last one wins on command line	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-using-on-demand-from-cmdline-ove	t5531-deep-submodule-push	push succeeds if submodule commit not on remote using on-demand from cmdline overriding config	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-disabling-recursion-from-cmdline-overriding-co	t5531-deep-submodule-push	push succeeds if submodule commit disabling recursion from cmdline overriding config	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-commit-disabling-recursion-from-cmdline-alternative-f	t5531-deep-submodule-push	push succeeds if submodule commit disabling recursion from cmdline (alternative form) overriding config	add	pass
-t5531-deep-submodule-push::submodule-entry-pointing-at-a-tag-is-error	t5531-deep-submodule-push	submodule entry pointing at a tag is error	commit	pass
-t5531-deep-submodule-push::push-fails-if-recurse-submodules-option-passed-as-yes	t5531-deep-submodule-push	push fails if recurse submodules option passed as yes	add	pass
-t5531-deep-submodule-push::push-fails-when-commit-on-multiple-branches-if-one-branch-has-no-remote	t5531-deep-submodule-push	push fails when commit on multiple branches if one branch has no remote	add	pass
-t5531-deep-submodule-push::push-succeeds-if-submodule-has-no-remote-and-is-on-the-first-superproject-commit	t5531-deep-submodule-push	push succeeds if submodule has no remote and is on the first superproject commit	add	pass
-t5531-deep-submodule-push::push-unpushed-submodules-when-not-needed	t5531-deep-submodule-push	push unpushed submodules when not needed	add	pass
-t5531-deep-submodule-push::push-unpushed-submodules-when-not-needed-2	t5531-deep-submodule-push	push unpushed submodules when not needed 2	add	pass
-t5531-deep-submodule-push::push-unpushed-submodules-recursively	t5531-deep-submodule-push	push unpushed submodules recursively	add	pass
-t5531-deep-submodule-push::push-unpushable-submodule-recursively-fails	t5531-deep-submodule-push	push unpushable submodule recursively fails	add	pass
-t5531-deep-submodule-push::push-dry-run-does-not-recursively-update-submodules	t5531-deep-submodule-push	push --dry-run does not recursively update submodules	add	pass
-t5531-deep-submodule-push::push-dry-run-does-not-recursively-update-submodules-2	t5531-deep-submodule-push	push --dry-run does not recursively update submodules	push	pass
-t5531-deep-submodule-push::push-only-unpushed-submodules-recursively	t5531-deep-submodule-push	push only unpushed submodules recursively	push	pass
-t5531-deep-submodule-push::push-with-push-recursesubmodules-only-on-superproject	t5531-deep-submodule-push	push with push.recurseSubmodules=only on superproject	config	pass
-t5531-deep-submodule-push::push-with-push-recursesubmodules-only-on-superproject-and-top-level-submodule	t5531-deep-submodule-push	push with push.recurseSubmodules=only on superproject and top-level submodule	config	pass
-t5531-deep-submodule-push::push-propagating-the-remotes-name-to-a-submodule	t5531-deep-submodule-push	push propagating the remotes name to a submodule	add	pass
-t5531-deep-submodule-push::push-propagating-refspec-to-a-submodule	t5531-deep-submodule-push	push propagating refspec to a submodule	add	pass
-t5531-deep-submodule-push::push-propagating-head-refspec-to-a-submodule	t5531-deep-submodule-push	push propagating HEAD refspec to a submodule	add	pass
+t5531-deep-submodule-push::push-works-with-recorded-gitlink	t5531-deep-submodule-push	push works with recorded gitlink	push	partial
+t5531-deep-submodule-push::push-if-submodule-has-no-remote	t5531-deep-submodule-push	push if submodule has no remote	add	partial
+t5531-deep-submodule-push::push-fails-if-submodule-commit-not-on-remote	t5531-deep-submodule-push	push fails if submodule commit not on remote	add	partial
+t5531-deep-submodule-push::push-succeeds-after-commit-was-pushed-to-remote	t5531-deep-submodule-push	push succeeds after commit was pushed to remote	push	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-on-demand-on-command-l	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using on-demand on command line	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-on-demand-from-config	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using on-demand from config	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-but-using-auto-on-demand-via-sub	t5531-deep-submodule-push	push succeeds if submodule commit not on remote but using auto-on-demand via submodule.recurse config	add	partial
+t5531-deep-submodule-push::push-recurse-submodules-on-command-line-overrides-config	t5531-deep-submodule-push	push recurse-submodules on command line overrides config	add	partial
+t5531-deep-submodule-push::push-recurse-submodules-last-one-wins-on-command-line	t5531-deep-submodule-push	push recurse-submodules last one wins on command line	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-not-on-remote-using-on-demand-from-cmdline-ove	t5531-deep-submodule-push	push succeeds if submodule commit not on remote using on-demand from cmdline overriding config	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-disabling-recursion-from-cmdline-overriding-co	t5531-deep-submodule-push	push succeeds if submodule commit disabling recursion from cmdline overriding config	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-commit-disabling-recursion-from-cmdline-alternative-f	t5531-deep-submodule-push	push succeeds if submodule commit disabling recursion from cmdline (alternative form) overriding config	add	partial
+t5531-deep-submodule-push::submodule-entry-pointing-at-a-tag-is-error	t5531-deep-submodule-push	submodule entry pointing at a tag is error	commit	partial
+t5531-deep-submodule-push::push-fails-if-recurse-submodules-option-passed-as-yes	t5531-deep-submodule-push	push fails if recurse submodules option passed as yes	add	partial
+t5531-deep-submodule-push::push-fails-when-commit-on-multiple-branches-if-one-branch-has-no-remote	t5531-deep-submodule-push	push fails when commit on multiple branches if one branch has no remote	add	partial
+t5531-deep-submodule-push::push-succeeds-if-submodule-has-no-remote-and-is-on-the-first-superproject-commit	t5531-deep-submodule-push	push succeeds if submodule has no remote and is on the first superproject commit	add	partial
+t5531-deep-submodule-push::push-unpushed-submodules-when-not-needed	t5531-deep-submodule-push	push unpushed submodules when not needed	add	partial
+t5531-deep-submodule-push::push-unpushed-submodules-when-not-needed-2	t5531-deep-submodule-push	push unpushed submodules when not needed 2	add	partial
+t5531-deep-submodule-push::push-unpushed-submodules-recursively	t5531-deep-submodule-push	push unpushed submodules recursively	add	partial
+t5531-deep-submodule-push::push-unpushable-submodule-recursively-fails	t5531-deep-submodule-push	push unpushable submodule recursively fails	add	partial
+t5531-deep-submodule-push::push-dry-run-does-not-recursively-update-submodules	t5531-deep-submodule-push	push --dry-run does not recursively update submodules	add	partial
+t5531-deep-submodule-push::push-dry-run-does-not-recursively-update-submodules-2	t5531-deep-submodule-push	push --dry-run does not recursively update submodules	push	partial
+t5531-deep-submodule-push::push-only-unpushed-submodules-recursively	t5531-deep-submodule-push	push only unpushed submodules recursively	push	partial
+t5531-deep-submodule-push::push-with-push-recursesubmodules-only-on-superproject	t5531-deep-submodule-push	push with push.recurseSubmodules=only on superproject	config	partial
+t5531-deep-submodule-push::push-with-push-recursesubmodules-only-on-superproject-and-top-level-submodule	t5531-deep-submodule-push	push with push.recurseSubmodules=only on superproject and top-level submodule	config	partial
+t5531-deep-submodule-push::push-propagating-the-remotes-name-to-a-submodule	t5531-deep-submodule-push	push propagating the remotes name to a submodule	add	partial
+t5531-deep-submodule-push::push-propagating-refspec-to-a-submodule	t5531-deep-submodule-push	push propagating refspec to a submodule	add	partial
+t5531-deep-submodule-push::push-propagating-head-refspec-to-a-submodule	t5531-deep-submodule-push	push propagating HEAD refspec to a submodule	add	partial
 t5532-fetch-proxy::setup-remote-repo	t5532-fetch-proxy	setup remote repo	fetch	not_ported
 t5532-fetch-proxy::setup-proxy-script	t5532-fetch-proxy	setup proxy script	fetch	not_ported
 t5532-fetch-proxy::setup-local-repo	t5532-fetch-proxy	setup local repo	fetch	not_ported
@@ -11286,22 +11286,22 @@ t5606-clone-options::redirected-clone-v-does-show-progress	t5606-clone-options	r
 t5606-clone-options::clone-does-not-segfault-with-bare-and-core-bare-false	t5606-clone-options	clone does not segfault with --bare and core.bare=false	clone	pass
 t5606-clone-options::chooses-correct-default-initial-branch-name	t5606-clone-options	chooses correct default initial branch name	clone	pass
 t5606-clone-options::guesses-initial-branch-name-correctly	t5606-clone-options	guesses initial branch name correctly	clone	pass
-t5607-clone-bundle::setup	t5607-clone-bundle	setup	clone	pass
-t5607-clone-bundle::verify-needs-a-worktree	t5607-clone-bundle	"verify" needs a worktree	clone	pass
-t5607-clone-bundle::annotated-tags-can-be-excluded-by-rev-list-options	t5607-clone-bundle	annotated tags can be excluded by rev-list options	clone	pass
-t5607-clone-bundle::die-if-bundle-file-cannot-be-created	t5607-clone-bundle	die if bundle file cannot be created	clone	pass
-t5607-clone-bundle::bundle-stdin	t5607-clone-bundle	bundle --stdin	clone	pass
-t5607-clone-bundle::bundle-stdin-rev-list-options	t5607-clone-bundle	bundle --stdin <rev-list options>	clone	pass
-t5607-clone-bundle::empty-bundle-file-is-rejected	t5607-clone-bundle	empty bundle file is rejected	clone	pass
-t5607-clone-bundle::ridiculously-long-subject-in-boundary	t5607-clone-bundle	ridiculously long subject in boundary	clone	pass
-t5607-clone-bundle::prerequisites-with-an-empty-commit-message	t5607-clone-bundle	prerequisites with an empty commit message	clone	pass
-t5607-clone-bundle::failed-bundle-creation-does-not-leave-cruft	t5607-clone-bundle	failed bundle creation does not leave cruft	clone	pass
-t5607-clone-bundle::fetch-sha-1-from-bundle	t5607-clone-bundle	fetch SHA-1 from bundle	clone	pass
-t5607-clone-bundle::clone-bundle-with-different-fsckobjects-configurations	t5607-clone-bundle	clone bundle with different fsckObjects configurations	clone	pass
-t5607-clone-bundle::git-bundle-uses-expected-default-format	t5607-clone-bundle	git bundle uses expected default format	clone	pass
-t5607-clone-bundle::git-bundle-v3-has-expected-contents	t5607-clone-bundle	git bundle v3 has expected contents	clone	pass
-t5607-clone-bundle::git-bundle-v3-rejects-unknown-capabilities	t5607-clone-bundle	git bundle v3 rejects unknown capabilities	clone	pass
-t5607-clone-bundle::cloning-bundle-suppresses-default-branch-name-advice	t5607-clone-bundle	cloning bundle suppresses default branch name advice	clone	pass
+t5607-clone-bundle::setup	t5607-clone-bundle	setup	clone	partial
+t5607-clone-bundle::verify-needs-a-worktree	t5607-clone-bundle	"verify" needs a worktree	clone	partial
+t5607-clone-bundle::annotated-tags-can-be-excluded-by-rev-list-options	t5607-clone-bundle	annotated tags can be excluded by rev-list options	clone	partial
+t5607-clone-bundle::die-if-bundle-file-cannot-be-created	t5607-clone-bundle	die if bundle file cannot be created	clone	partial
+t5607-clone-bundle::bundle-stdin	t5607-clone-bundle	bundle --stdin	clone	partial
+t5607-clone-bundle::bundle-stdin-rev-list-options	t5607-clone-bundle	bundle --stdin <rev-list options>	clone	partial
+t5607-clone-bundle::empty-bundle-file-is-rejected	t5607-clone-bundle	empty bundle file is rejected	clone	partial
+t5607-clone-bundle::ridiculously-long-subject-in-boundary	t5607-clone-bundle	ridiculously long subject in boundary	clone	partial
+t5607-clone-bundle::prerequisites-with-an-empty-commit-message	t5607-clone-bundle	prerequisites with an empty commit message	clone	partial
+t5607-clone-bundle::failed-bundle-creation-does-not-leave-cruft	t5607-clone-bundle	failed bundle creation does not leave cruft	clone	partial
+t5607-clone-bundle::fetch-sha-1-from-bundle	t5607-clone-bundle	fetch SHA-1 from bundle	clone	partial
+t5607-clone-bundle::clone-bundle-with-different-fsckobjects-configurations	t5607-clone-bundle	clone bundle with different fsckObjects configurations	clone	partial
+t5607-clone-bundle::git-bundle-uses-expected-default-format	t5607-clone-bundle	git bundle uses expected default format	clone	partial
+t5607-clone-bundle::git-bundle-v3-has-expected-contents	t5607-clone-bundle	git bundle v3 has expected contents	clone	partial
+t5607-clone-bundle::git-bundle-v3-rejects-unknown-capabilities	t5607-clone-bundle	git bundle v3 rejects unknown capabilities	clone	partial
+t5607-clone-bundle::cloning-bundle-suppresses-default-branch-name-advice	t5607-clone-bundle	cloning bundle suppresses default branch name advice	clone	partial
 t5608-clone-2gb::setup	t5608-clone-2gb	setup	clone	not_ported
 t5608-clone-2gb::clone-bare	t5608-clone-2gb	clone - bare	clone	not_ported
 t5608-clone-2gb::clone-with-worktree-file-protocol	t5608-clone-2gb	clone - with worktree, file:// protocol	clone	not_ported
@@ -11437,12 +11437,12 @@ t5617-clone-submodules-remote::clone-with-single-branch	t5617-clone-submodules-r
 t5617-clone-submodules-remote::clone-with-filter	t5617-clone-submodules-remote	clone with --filter	clone	pass
 t5617-clone-submodules-remote::filters-applied-with-clone-filtersubmodules	t5617-clone-submodules-remote	filters applied with clone.filterSubmodules	clone	pass
 t5617-clone-submodules-remote::no-also-filter-submodules-overrides-clone-filtersubmodules-true	t5617-clone-submodules-remote	--no-also-filter-submodules overrides clone.filterSubmodules=true	clone	pass
-t5618-alternate-refs::set-up-local-refs	t5618-alternate-refs	set up local refs	checkout	pass
-t5618-alternate-refs::set-up-shared-clone	t5618-alternate-refs	set up shared clone	clone	pass
-t5618-alternate-refs::rev-list-alternate-refs	t5618-alternate-refs	rev-list --alternate-refs	rev-list	pass
-t5618-alternate-refs::rev-list-not-alternate-refs	t5618-alternate-refs	rev-list --not --alternate-refs	rev-list	pass
-t5618-alternate-refs::limiting-with-alternaterefsprefixes	t5618-alternate-refs	limiting with alternateRefsPrefixes	rev-list	pass
-t5618-alternate-refs::log-source-shows-alternate-marker	t5618-alternate-refs	log --source shows .alternate marker	log	pass
+t5618-alternate-refs::set-up-local-refs	t5618-alternate-refs	set up local refs	checkout	partial
+t5618-alternate-refs::set-up-shared-clone	t5618-alternate-refs	set up shared clone	clone	partial
+t5618-alternate-refs::rev-list-alternate-refs	t5618-alternate-refs	rev-list --alternate-refs	rev-list	partial
+t5618-alternate-refs::rev-list-not-alternate-refs	t5618-alternate-refs	rev-list --not --alternate-refs	rev-list	partial
+t5618-alternate-refs::limiting-with-alternaterefsprefixes	t5618-alternate-refs	limiting with alternateRefsPrefixes	rev-list	partial
+t5618-alternate-refs::log-source-shows-alternate-marker	t5618-alternate-refs	log --source shows .alternate marker	log	partial
 t5619-clone-local-ambiguous-transport::setup	t5619-clone-local-ambiguous-transport	setup	clone	pass
 t5619-clone-local-ambiguous-transport::ambiguous-transport-does-not-lead-to-arbitrary-file-inclusion	t5619-clone-local-ambiguous-transport	ambiguous transport does not lead to arbitrary file-inclusion	clone	pass
 t5620-backfill::setup-repo-for-object-creation	t5620-backfill	setup repo for object creation	backfill	pass
@@ -11845,8 +11845,8 @@ t6007-rev-list-cherry-pick-file::cherry-pick-with-independent-but-identical-bran
 t6007-rev-list-cherry-pick-file::count-left-right	t6007-rev-list-cherry-pick-file	--count --left-right	rev-list	pass
 t6007-rev-list-cherry-pick-file::cherry-pick-with-duplicates-on-each-side	t6007-rev-list-cherry-pick-file	--cherry-pick with duplicates on each side	rev-list	pass
 t6007-rev-list-cherry-pick-file::cherry-pick-avoids-looking-at-full-diffs	t6007-rev-list-cherry-pick-file	--cherry-pick avoids looking at full diffs	rev-list	pass
-t6008-rev-list-submodule::setup	t6008-rev-list-submodule	setup	rev-list	pass
-t6008-rev-list-submodule::ilari-s-test	t6008-rev-list-submodule	Ilari's test	rev-list	pass
+t6008-rev-list-submodule::setup	t6008-rev-list-submodule	setup	rev-list	partial
+t6008-rev-list-submodule::ilari-s-test	t6008-rev-list-submodule	Ilari's test	rev-list	partial
 t6009-rev-list-parent::one-is-ancestor-of-others-and-should-not-be-shown	t6009-rev-list-parent	one is ancestor of others and should not be shown	rev-list	pass
 t6009-rev-list-parent::setup-roots-merges-and-octopuses	t6009-rev-list-parent	setup roots, merges and octopuses	rev-list	pass
 t6009-rev-list-parent::parse-max-parents-min-parents	t6009-rev-list-parent	parse --max-parents & --min-parents	rev-list	pass
@@ -12483,9 +12483,9 @@ t6133-pathspec-rev-dwim::tree-path-with-metacharacters-dwims-to-rev	t6133-pathsp
 t6133-pathspec-rev-dwim::foo-with-metacharacters-dwims-to-rev	t6133-pathspec-rev-dwim	^{foo} with metacharacters dwims to rev	log	pass
 t6133-pathspec-rev-dwim::foo-with-metacharacters-dwims-to-rev-2	t6133-pathspec-rev-dwim	@{foo} with metacharacters dwims to rev	log	pass
 t6133-pathspec-rev-dwim::t-from-a-subdir-dwims-to-a-pathspec	t6133-pathspec-rev-dwim	:/*.t from a subdir dwims to a pathspec	log	pass
-t6134-pathspec-in-submodule::setup-a-submodule	t6134-pathspec-in-submodule	setup a submodule	add	pass
-t6134-pathspec-in-submodule::error-message-for-path-inside-submodule	t6134-pathspec-in-submodule	error message for path inside submodule	add	pass
-t6134-pathspec-in-submodule::error-message-for-path-inside-submodule-from-within-submodule	t6134-pathspec-in-submodule	error message for path inside submodule from within submodule	add	pass
+t6134-pathspec-in-submodule::setup-a-submodule	t6134-pathspec-in-submodule	setup a submodule	add	partial
+t6134-pathspec-in-submodule::error-message-for-path-inside-submodule	t6134-pathspec-in-submodule	error message for path inside submodule	add	partial
+t6134-pathspec-in-submodule::error-message-for-path-inside-submodule-from-within-submodule	t6134-pathspec-in-submodule	error message for path inside submodule from within submodule	add	partial
 t6135-pathspec-with-attrs::setup-a-tree	t6135-pathspec-with-attrs	setup a tree	add	pass
 t6135-pathspec-with-attrs::pathspec-with-no-attr	t6135-pathspec-with-attrs	pathspec with no attr	ls-files	pass
 t6135-pathspec-with-attrs::pathspec-with-labels-and-non-existent-gitattributes	t6135-pathspec-with-attrs	pathspec with labels and non existent .gitattributes	ls-files	pass
@@ -14298,11 +14298,11 @@ t7401-submodule-summary::given-commit	t7401-submodule-summary	given commit	submo
 t7401-submodule-summary::for-status	t7401-submodule-summary	--for-status	submodule	pass
 t7401-submodule-summary::fail-when-using-files-together-with-cached	t7401-submodule-summary	fail when using --files together with --cached	submodule	pass
 t7401-submodule-summary::should-not-fail-in-an-empty-repo	t7401-submodule-summary	should not fail in an empty repo	submodule	pass
-t7402-submodule-rebase::rebase-with-a-dirty-submodule	t7402-submodule-rebase	rebase with a dirty submodule	submodule	pass
-t7402-submodule-rebase::interactive-rebase-with-a-dirty-submodule	t7402-submodule-rebase	interactive rebase with a dirty submodule	submodule	pass
-t7402-submodule-rebase::rebase-with-dirty-file-and-submodule-fails	t7402-submodule-rebase	rebase with dirty file and submodule fails	submodule	pass
-t7402-submodule-rebase::stash-with-a-dirty-submodule	t7402-submodule-rebase	stash with a dirty submodule	submodule	pass
-t7402-submodule-rebase::rebasing-submodule-that-should-conflict	t7402-submodule-rebase	rebasing submodule that should conflict	submodule	pass
+t7402-submodule-rebase::rebase-with-a-dirty-submodule	t7402-submodule-rebase	rebase with a dirty submodule	submodule	partial
+t7402-submodule-rebase::interactive-rebase-with-a-dirty-submodule	t7402-submodule-rebase	interactive rebase with a dirty submodule	submodule	partial
+t7402-submodule-rebase::rebase-with-dirty-file-and-submodule-fails	t7402-submodule-rebase	rebase with dirty file and submodule fails	submodule	partial
+t7402-submodule-rebase::stash-with-a-dirty-submodule	t7402-submodule-rebase	stash with a dirty submodule	submodule	partial
+t7402-submodule-rebase::rebasing-submodule-that-should-conflict	t7402-submodule-rebase	rebasing submodule that should conflict	submodule	partial
 t7403-submodule-sync::change-submodule	t7403-submodule-sync	change submodule	submodule	pass
 t7403-submodule-sync::change-submodule-url	t7403-submodule-sync	change submodule url	submodule	pass
 t7403-submodule-sync::git-submodule-sync-should-update-submodule-urls	t7403-submodule-sync	"git submodule sync" should update submodule URLs	submodule	pass
@@ -14412,25 +14412,25 @@ t7407-submodule-foreach::command-passed-to-foreach-recursive-retains-notion-of-s
 t7407-submodule-foreach::multi-argument-command-passed-to-foreach-is-not-shell-evaluated-twice	t7407-submodule-foreach	multi-argument command passed to foreach is not shell-evaluated twice	submodule	pass
 t7407-submodule-foreach::option-like-arguments-passed-to-foreach-commands-are-not-lost	t7407-submodule-foreach	option-like arguments passed to foreach commands are not lost	submodule	pass
 t7407-submodule-foreach::option-like-arguments-passed-to-foreach-recurse-correctly	t7407-submodule-foreach	option-like arguments passed to foreach recurse correctly	submodule	pass
-t7408-submodule-reference::setup	t7408-submodule-reference	setup	submodule	partial
-t7408-submodule-reference::preparing-first-repository	t7408-submodule-reference	preparing first repository	submodule	partial
-t7408-submodule-reference::preparing-second-repository	t7408-submodule-reference	preparing second repository	submodule	partial
-t7408-submodule-reference::preparing-superproject	t7408-submodule-reference	preparing superproject	submodule	partial
-t7408-submodule-reference::submodule-add-reference-uses-alternates	t7408-submodule-reference	submodule add --reference uses alternates	submodule	partial
-t7408-submodule-reference::submodule-add-reference-with-dissociate-does-not-use-alternates	t7408-submodule-reference	submodule add --reference with --dissociate does not use alternates	submodule	partial
-t7408-submodule-reference::that-reference-gets-used-with-add	t7408-submodule-reference	that reference gets used with add	submodule	partial
-t7408-submodule-reference::updating-superproject-keeps-alternates	t7408-submodule-reference	updating superproject keeps alternates	submodule	partial
-t7408-submodule-reference::updating-superproject-with-dissociate-does-not-keep-alternates	t7408-submodule-reference	updating superproject with --dissociate does not keep alternates	submodule	partial
-t7408-submodule-reference::submodules-use-alternates-when-cloning-a-superproject	t7408-submodule-reference	submodules use alternates when cloning a superproject	submodule	partial
-t7408-submodule-reference::missing-submodule-alternate-fails-clone-and-submodule-update	t7408-submodule-reference	missing submodule alternate fails clone and submodule update	submodule	partial
-t7408-submodule-reference::ignoring-missing-submodule-alternates-passes-clone-and-submodule-update	t7408-submodule-reference	ignoring missing submodule alternates passes clone and submodule update	submodule	partial
-t7408-submodule-reference::preparing-second-superproject-with-a-nested-submodule-plus-partial-clone	t7408-submodule-reference	preparing second superproject with a nested submodule plus partial clone	submodule	partial
-t7408-submodule-reference::nested-submodule-alternate-in-works-and-is-actually-used	t7408-submodule-reference	nested submodule alternate in works and is actually used	submodule	partial
-t7408-submodule-reference::missing-nested-submodule-alternate-fails-clone-and-submodule-update	t7408-submodule-reference	missing nested submodule alternate fails clone and submodule update	submodule	partial
-t7408-submodule-reference::missing-nested-submodule-alternate-in-reference-if-able-mode	t7408-submodule-reference	missing nested submodule alternate in --reference-if-able mode	submodule	partial
-t7409-submodule-detached-work-tree::setup	t7409-submodule-detached-work-tree	setup	submodule	pass
-t7409-submodule-detached-work-tree::submodule-on-detached-working-tree	t7409-submodule-detached-work-tree	submodule on detached working tree	submodule	pass
-t7409-submodule-detached-work-tree::submodule-on-detached-working-pointed-by-core-worktree	t7409-submodule-detached-work-tree	submodule on detached working pointed by core.worktree	submodule	pass
+t7408-submodule-reference::setup	t7408-submodule-reference	setup	submodule	pass
+t7408-submodule-reference::preparing-first-repository	t7408-submodule-reference	preparing first repository	submodule	pass
+t7408-submodule-reference::preparing-second-repository	t7408-submodule-reference	preparing second repository	submodule	pass
+t7408-submodule-reference::preparing-superproject	t7408-submodule-reference	preparing superproject	submodule	pass
+t7408-submodule-reference::submodule-add-reference-uses-alternates	t7408-submodule-reference	submodule add --reference uses alternates	submodule	pass
+t7408-submodule-reference::submodule-add-reference-with-dissociate-does-not-use-alternates	t7408-submodule-reference	submodule add --reference with --dissociate does not use alternates	submodule	pass
+t7408-submodule-reference::that-reference-gets-used-with-add	t7408-submodule-reference	that reference gets used with add	submodule	pass
+t7408-submodule-reference::updating-superproject-keeps-alternates	t7408-submodule-reference	updating superproject keeps alternates	submodule	pass
+t7408-submodule-reference::updating-superproject-with-dissociate-does-not-keep-alternates	t7408-submodule-reference	updating superproject with --dissociate does not keep alternates	submodule	pass
+t7408-submodule-reference::submodules-use-alternates-when-cloning-a-superproject	t7408-submodule-reference	submodules use alternates when cloning a superproject	submodule	pass
+t7408-submodule-reference::missing-submodule-alternate-fails-clone-and-submodule-update	t7408-submodule-reference	missing submodule alternate fails clone and submodule update	submodule	pass
+t7408-submodule-reference::ignoring-missing-submodule-alternates-passes-clone-and-submodule-update	t7408-submodule-reference	ignoring missing submodule alternates passes clone and submodule update	submodule	pass
+t7408-submodule-reference::preparing-second-superproject-with-a-nested-submodule-plus-partial-clone	t7408-submodule-reference	preparing second superproject with a nested submodule plus partial clone	submodule	pass
+t7408-submodule-reference::nested-submodule-alternate-in-works-and-is-actually-used	t7408-submodule-reference	nested submodule alternate in works and is actually used	submodule	pass
+t7408-submodule-reference::missing-nested-submodule-alternate-fails-clone-and-submodule-update	t7408-submodule-reference	missing nested submodule alternate fails clone and submodule update	submodule	pass
+t7408-submodule-reference::missing-nested-submodule-alternate-in-reference-if-able-mode	t7408-submodule-reference	missing nested submodule alternate in --reference-if-able mode	submodule	pass
+t7409-submodule-detached-work-tree::setup	t7409-submodule-detached-work-tree	setup	submodule	partial
+t7409-submodule-detached-work-tree::submodule-on-detached-working-tree	t7409-submodule-detached-work-tree	submodule on detached working tree	submodule	partial
+t7409-submodule-detached-work-tree::submodule-on-detached-working-pointed-by-core-worktree	t7409-submodule-detached-work-tree	submodule on detached working pointed by core.worktree	submodule	partial
 t7411-submodule-config::setup	t7411-submodule-config	setup	submodule	pass
 t7411-submodule-config::submodule-config-cache-setup	t7411-submodule-config	submodule config cache setup	submodule	pass
 t7411-submodule-config::configuration-parsing-with-error	t7411-submodule-config	configuration parsing with error	submodule	pass
@@ -14473,11 +14473,11 @@ t7413-submodule-is-active::is-active-works-with-exclusions-in-submodule-active-c
 t7413-submodule-is-active::is-active-with-submodule-active-and-submodule-name-active	t7413-submodule-is-active	is-active with submodule.active and submodule.<name>.active	submodule	pass
 t7413-submodule-is-active::is-active-submodule-active-and-submodule-add	t7413-submodule-is-active	is-active, submodule.active and submodule add	submodule	pass
 t7413-submodule-is-active::submodule-add-skips-redundant-active-entry	t7413-submodule-is-active	submodule add skips redundant active entry	submodule	pass
-t7414-submodule-mistakes::create-embedded-repository	t7414-submodule-mistakes	create embedded repository	submodule	pass
-t7414-submodule-mistakes::git-add-on-embedded-repository-warns	t7414-submodule-mistakes	git-add on embedded repository warns	submodule	pass
-t7414-submodule-mistakes::no-warn-embedded-repo-suppresses-warning	t7414-submodule-mistakes	--no-warn-embedded-repo suppresses warning	submodule	pass
-t7414-submodule-mistakes::no-warning-when-updating-entry	t7414-submodule-mistakes	no warning when updating entry	submodule	pass
-t7414-submodule-mistakes::submodule-add-does-not-warn	t7414-submodule-mistakes	submodule add does not warn	submodule	pass
+t7414-submodule-mistakes::create-embedded-repository	t7414-submodule-mistakes	create embedded repository	submodule	partial
+t7414-submodule-mistakes::git-add-on-embedded-repository-warns	t7414-submodule-mistakes	git-add on embedded repository warns	submodule	partial
+t7414-submodule-mistakes::no-warn-embedded-repo-suppresses-warning	t7414-submodule-mistakes	--no-warn-embedded-repo suppresses warning	submodule	partial
+t7414-submodule-mistakes::no-warning-when-updating-entry	t7414-submodule-mistakes	no warning when updating entry	submodule	partial
+t7414-submodule-mistakes::submodule-add-does-not-warn	t7414-submodule-mistakes	submodule add does not warn	submodule	partial
 t7416-submodule-dash-url::setup	t7416-submodule-dash-url	setup	submodule	pass
 t7416-submodule-dash-url::create-submodule-with-protected-dash-in-url	t7416-submodule-dash-url	create submodule with protected dash in url	submodule	pass
 t7416-submodule-dash-url::clone-can-recurse-submodule	t7416-submodule-dash-url	clone can recurse submodule	submodule	pass
@@ -14501,15 +14501,15 @@ t7417-submodule-path-url::create-submodule-with-dash-in-path	t7417-submodule-pat
 t7417-submodule-path-url::clone-rejects-unprotected-dash	t7417-submodule-path-url	clone rejects unprotected dash	submodule	pass
 t7417-submodule-path-url::fsck-rejects-unprotected-dash	t7417-submodule-path-url	fsck rejects unprotected dash	submodule	pass
 t7417-submodule-path-url::submodule-paths-disallows-trailing-spaces	t7417-submodule-path-url	submodule paths disallows trailing spaces	submodule	pass
-t7418-submodule-sparse-gitmodules::setup	t7418-submodule-sparse-gitmodules	setup	submodule	pass
-t7418-submodule-sparse-gitmodules::sparse-checkout-setup-which-hides-gitmodules	t7418-submodule-sparse-gitmodules	sparse checkout setup which hides .gitmodules	submodule	pass
-t7418-submodule-sparse-gitmodules::reading-gitmodules-config-file-when-it-is-not-checked-out	t7418-submodule-sparse-gitmodules	reading gitmodules config file when it is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::not-writing-gitmodules-config-file-when-it-is-not-checked-out	t7418-submodule-sparse-gitmodules	not writing gitmodules config file when it is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::initialising-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	initialising submodule when the gitmodules config is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::updating-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	updating submodule when the gitmodules config is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::re-updating-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	re-updating submodule when the gitmodules config is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::not-adding-submodules-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	not adding submodules when the gitmodules config is not checked out	submodule	pass
-t7418-submodule-sparse-gitmodules::init-submodule-still-works-even-after-the-previous-add-failed	t7418-submodule-sparse-gitmodules	init submodule still works even after the previous add failed	submodule	pass
+t7418-submodule-sparse-gitmodules::setup	t7418-submodule-sparse-gitmodules	setup	submodule	partial
+t7418-submodule-sparse-gitmodules::sparse-checkout-setup-which-hides-gitmodules	t7418-submodule-sparse-gitmodules	sparse checkout setup which hides .gitmodules	submodule	partial
+t7418-submodule-sparse-gitmodules::reading-gitmodules-config-file-when-it-is-not-checked-out	t7418-submodule-sparse-gitmodules	reading gitmodules config file when it is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::not-writing-gitmodules-config-file-when-it-is-not-checked-out	t7418-submodule-sparse-gitmodules	not writing gitmodules config file when it is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::initialising-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	initialising submodule when the gitmodules config is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::updating-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	updating submodule when the gitmodules config is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::re-updating-submodule-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	re-updating submodule when the gitmodules config is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::not-adding-submodules-when-the-gitmodules-config-is-not-checked-out	t7418-submodule-sparse-gitmodules	not adding submodules when the gitmodules config is not checked out	submodule	partial
+t7418-submodule-sparse-gitmodules::init-submodule-still-works-even-after-the-previous-add-failed	t7418-submodule-sparse-gitmodules	init submodule still works even after the previous add failed	submodule	partial
 t7419-submodule-set-branch::setup	t7419-submodule-set-branch	setup	submodule	pass
 t7419-submodule-set-branch::submodule-config-cache-setup	t7419-submodule-set-branch	submodule config cache setup	submodule	pass
 t7419-submodule-set-branch::ensure-submodule-branch-is-unset	t7419-submodule-set-branch	ensure submodule branch is unset	submodule	pass
