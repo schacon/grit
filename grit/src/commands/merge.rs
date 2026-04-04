@@ -16,6 +16,7 @@ use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -331,7 +332,7 @@ fn do_real_merge(
             repo.git_dir.join("MERGE_HEAD"),
             format!("{}\n", merge_oid.to_hex()),
         )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
 
@@ -356,7 +357,7 @@ fn do_real_merge(
             repo.git_dir.join("MERGE_HEAD"),
             format!("{}\n", merge_oid.to_hex()),
         )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
 
@@ -368,7 +369,7 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -599,7 +600,7 @@ fn do_strategy_ours(
     )?;
 
     let tree_oid = commit_tree(repo, head_oid)?;
-    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -1148,11 +1149,19 @@ fn append_signoff(msg: &str, name: &str, email: &str) -> String {
     format!("{}\n\n{}\n", trimmed, trailer)
 }
 
-fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>) -> String {
+fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>, repo: &Repository) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
-    let base_msg = format!("Merge branch '{branch_name}'");
+    // Determine if the merge target is a tag, branch, or commit
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
+        "tag"
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
+        "remote-tracking branch"
+    } else {
+        "branch"
+    };
+    let base_msg = format!("Merge {kind} '{branch_name}'");
     // Append "into <branch>" if not merging into main/master
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {
