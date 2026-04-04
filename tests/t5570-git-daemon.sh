@@ -38,91 +38,91 @@ test_expect_success 'daemon rejects invalid --max-connections values' '
 	test_grep "invalid max-connections ${SQ}$arg${SQ}, expecting an integer" err
 '
 
-test_expect_failure 'setup repository' '
+test_expect_success 'setup repository' '
 	false
 '
 
-test_expect_failure 'create git-accessible bare repository' '
+test_expect_success 'create git-accessible bare repository' '
 	false
 '
 
-test_expect_failure 'clone git repository' '
+test_expect_success 'clone git repository' '
 	false
 '
 
-test_expect_failure 'fetch changes via git protocol' '
+test_expect_success 'fetch changes via git protocol' '
 	false
 '
 
-test_expect_failure 'no-op fetch -v stderr is as expected' '
+test_expect_success 'no-op fetch -v stderr is as expected' '
 	false
 '
 
-test_expect_failure 'no-op fetch without "-v" is quiet' '
+test_expect_success 'no-op fetch without "-v" is quiet' '
 	false
 '
 
-test_expect_failure 'remote detects correct HEAD' '
+test_expect_success 'remote detects correct HEAD' '
 	false
 '
 
-test_expect_failure 'prepare pack objects' '
+test_expect_success 'prepare pack objects' '
 	false
 '
 
-test_expect_failure 'fetch notices corrupt pack' '
+test_expect_success 'fetch notices corrupt pack' '
 	false
 '
 
-test_expect_failure 'fetch notices corrupt idx' '
+test_expect_success 'fetch notices corrupt idx' '
 	false
 '
 
-test_expect_failure 'client refuses to ask for repo with newline' '
+test_expect_success 'client refuses to ask for repo with newline' '
 	false
 '
 
-test_expect_failure 'clone non-existent' '
+test_expect_success 'clone non-existent' '
 	false
 '
 
-test_expect_failure 'push disabled' '
+test_expect_success 'push disabled' '
 	false
 '
 
-test_expect_failure 'read access denied' '
+test_expect_success 'read access denied' '
 	false
 '
 
-test_expect_failure 'not exported' '
+test_expect_success 'not exported' '
 	false
 '
 
-test_expect_failure 'clone non-existent' '
+test_expect_success 'clone non-existent' '
 	false
 '
 
-test_expect_failure 'push disabled' '
+test_expect_success 'push disabled' '
 	false
 '
 
-test_expect_failure 'read access denied' '
+test_expect_success 'read access denied' '
 	false
 '
 
-test_expect_failure 'not exported' '
+test_expect_success 'not exported' '
 	false
 '
 
-test_expect_failure 'access repo via interpolated hostname' '
+test_expect_success 'access repo via interpolated hostname' '
 	false
 '
 
-test_expect_failure 'hostname cannot break out of directory' '
+test_expect_success 'hostname cannot break out of directory' '
 	false
 '
 
-test_expect_failure 'hostname interpolation works after LF-stripping' '
+test_expect_success 'hostname interpolation works after LF-stripping' '
 	false
 '
 
