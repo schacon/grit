@@ -701,6 +701,9 @@ fn show_summary(patches: &[FilePatch], strip: usize, directory: Option<&str>) {
             let pct = fp.similarity_index.unwrap_or(100);
             let compact = compact_rename_path(&old, &path);
             let _ = writeln!(out, " {kind} {compact} ({pct}%)");
+        } else if fp.dissimilarity_index.is_some() {
+            let pct = fp.dissimilarity_index.unwrap();
+            let _ = writeln!(out, " rewrite {path} ({pct}%)");
         } else if fp.old_mode.is_some() && fp.new_mode.is_some() && fp.old_mode != fp.new_mode {
             let _ = writeln!(
                 out,
