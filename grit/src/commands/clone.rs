@@ -109,6 +109,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Detect SSH URL: host:/path (colon after hostname, no preceding //)
     if is_ssh_url(&args.repository) {
+        crate::protocol::check_protocol_allowed("ssh", None)?;
+        return run_ssh_clone(args);
+    }
+    if args.repository.starts_with("ssh://") {
+        crate::protocol::check_protocol_allowed("ssh", None)?;
         return run_ssh_clone(args);
     }
 
