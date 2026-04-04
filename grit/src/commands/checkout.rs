@@ -869,11 +869,12 @@ fn check_dirty_worktree(
         }
     }
 
-    // Check for untracked files that would be overwritten by new entries
+    // Check for untracked files that would be overwritten by new entries.
+    // Include all stages (not just stage 0) so that files in a merge conflict
+    // (which only have higher-stage entries) are still recognized as tracked.
     let old_paths: HashSet<&[u8]> = old_index
         .entries
         .iter()
-        .filter(|e| e.stage() == 0)
         .map(|e| e.path.as_slice())
         .collect();
 

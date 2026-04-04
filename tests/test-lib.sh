@@ -715,8 +715,9 @@ test_expect_failure () {
 test_when_finished () {
 	# Register a command to run when the current test's subshell exits.
 	# Since each test_expect_success body runs in its own subshell, an EXIT
-	# trap is the right hook.  Multiple calls accumulate.
-	_twf_cmd="${_twf_cmd:+${_twf_cmd}; }$*"
+	# trap is the right hook.  Multiple calls accumulate in LIFO order
+	# (matching git's real test-lib), so later registrations run first.
+	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
 	trap 'eval "$_twf_cmd"' EXIT
 }
 
