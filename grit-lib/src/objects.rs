@@ -331,7 +331,6 @@ pub struct CommitData {
     /// Optional raw message bytes for non-UTF-8 commit messages.
     /// When set, `serialize_commit` uses these bytes instead of `message`.
     #[doc = "Optional raw message bytes for non-UTF-8 messages."]
-    #[cfg_attr(feature = "serde", serde(default))]
     pub raw_message: Option<Vec<u8>>,
 }
 
