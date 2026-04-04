@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	pass
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	pass
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	pass
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
@@ -8790,63 +8790,63 @@ t4301-merge-tree-write-tree::error-out-on-missing-tree-objects	t4301-merge-tree-
 t4301-merge-tree-write-tree::error-out-on-missing-blob-objects	t4301-merge-tree-write-tree	error out on missing blob objects	merge-tree	pass
 t4301-merge-tree-write-tree::error-out-on-missing-commits-as-well	t4301-merge-tree-write-tree	error out on missing commits as well	merge-tree	pass
 t4301-merge-tree-write-tree::usage-trivial-merge-is-incompatible-with-opt	t4301-merge-tree-write-tree	usage: --trivial-merge is incompatible with $opt	merge-tree	pass
-t5000-tar-tree::extract-tar-archive	t5000-tar-tree	extract tar archive	archive	pass
-t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	interpret pax headers	archive	pass
-t5000-tar-tree::validate-filenames	t5000-tar-tree	validate filenames	archive	pass
-t5000-tar-tree::validate-file-contents	t5000-tar-tree	validate file contents	archive	pass
-t5000-tar-tree::setup	t5000-tar-tree	setup	archive	pass
-t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	pass
-t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	pass
-t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	archive	pass
-t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	archive	pass
-t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	archive	pass
-t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	archive	pass
-t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file	archive	pass
-t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	pass
-t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	pass
-t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	pass
-t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	pass
-t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	pass
-t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	pass
-t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	pass
-t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	pass
-t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo	archive	pass
-t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	pass
-t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	pass
-t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	pass
-t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	archive	pass
-t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	pass
-t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	pass
-t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	pass
-t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	pass
-t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	pass
-t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	pass
-t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	archive	pass
-t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	pass
-t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	pass
-t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	pass
-t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	pass
-t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	pass
-t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	pass
-t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	pass
-t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	pass
-t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	pass
-t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	pass
-t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file	archive	pass
-t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	pass
-t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	pass
-t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	pass
-t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	pass
-t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)	archive	pass
-t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	pass
-t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	pass
-t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	pass
-t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	pass
-t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	pass
-t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	validate extra file $path_in_archive	archive	pass
-t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	validate mtime of $path_in_archive	archive	pass
+t5000-tar-tree::extract-tar-archive	t5000-tar-tree	extract tar archive	archive	partial
+t5000-tar-tree::interpret-pax-headers	t5000-tar-tree	interpret pax headers	archive	partial
+t5000-tar-tree::validate-filenames	t5000-tar-tree	validate filenames	archive	partial
+t5000-tar-tree::validate-file-contents	t5000-tar-tree	validate file contents	archive	partial
+t5000-tar-tree::setup	t5000-tar-tree	setup	archive	partial
+t5000-tar-tree::list-notices-extra-parameters	t5000-tar-tree	--list notices extra parameters	archive	partial
+t5000-tar-tree::end-of-options-is-correctly-eaten	t5000-tar-tree	end-of-options is correctly eaten	archive	partial
+t5000-tar-tree::populate-workdir	t5000-tar-tree	populate workdir	archive	partial
+t5000-tar-tree::add-files-to-repository	t5000-tar-tree	add files to repository	archive	partial
+t5000-tar-tree::setup-export-subst	t5000-tar-tree	setup export-subst	archive	partial
+t5000-tar-tree::create-bare-clone	t5000-tar-tree	create bare clone	archive	partial
+t5000-tar-tree::remove-ignored-file	t5000-tar-tree	remove ignored file	archive	partial
+t5000-tar-tree::git-archive	t5000-tar-tree	git archive	archive	partial
+t5000-tar-tree::git-archive-mtime	t5000-tar-tree	git archive --mtime	archive	partial
+t5000-tar-tree::git-archive-prefix-prefix	t5000-tar-tree	git archive --prefix=prefix/	archive	partial
+t5000-tar-tree::git-archive-prefix-olde	t5000-tar-tree	git-archive --prefix=olde-	archive	partial
+t5000-tar-tree::git-archive-add-file	t5000-tar-tree	git archive --add-file	archive	partial
+t5000-tar-tree::git-archive-add-file-twice	t5000-tar-tree	git archive --add-file twice	archive	partial
+t5000-tar-tree::git-archive-on-large-files	t5000-tar-tree	git archive on large files	archive	partial
+t5000-tar-tree::git-archive-in-a-bare-repo	t5000-tar-tree	git archive in a bare repo	archive	partial
+t5000-tar-tree::git-archive-vs-the-same-in-a-bare-repo	t5000-tar-tree	git archive vs. the same in a bare repo	archive	partial
+t5000-tar-tree::git-archive-with-output	t5000-tar-tree	git archive with --output	archive	partial
+t5000-tar-tree::git-archive-remote	t5000-tar-tree	git archive --remote	archive	partial
+t5000-tar-tree::git-archive-remote-with-configured-remote	t5000-tar-tree	git archive --remote with configured remote	archive	partial
+t5000-tar-tree::git-get-tar-commit-id	t5000-tar-tree	git get-tar-commit-id	archive	partial
+t5000-tar-tree::git-archive-with-output-override-inferred-format	t5000-tar-tree	git archive with --output, override inferred format	archive	partial
+t5000-tar-tree::git-archive-with-output-and-remote-creates-tgz	t5000-tar-tree	git archive with --output and --remote creates .tgz	archive	partial
+t5000-tar-tree::git-archive-list-outside-of-a-git-repo	t5000-tar-tree	git archive --list outside of a git repo	archive	partial
+t5000-tar-tree::git-archive-remote-outside-of-a-git-repo	t5000-tar-tree	git archive --remote outside of a git repo	archive	partial
+t5000-tar-tree::clients-cannot-access-unreachable-commits	t5000-tar-tree	clients cannot access unreachable commits	archive	partial
+t5000-tar-tree::upload-archive-can-allow-unreachable-commits	t5000-tar-tree	upload-archive can allow unreachable commits	archive	partial
+t5000-tar-tree::setup-tar-filters	t5000-tar-tree	setup tar filters	archive	partial
+t5000-tar-tree::archive-list-mentions-user-filter	t5000-tar-tree	archive --list mentions user filter	archive	partial
+t5000-tar-tree::archive-list-shows-only-enabled-remote-filters	t5000-tar-tree	archive --list shows only enabled remote filters	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-format	t5000-tar-tree	invoke tar filter by format	archive	partial
+t5000-tar-tree::invoke-tar-filter-by-extension	t5000-tar-tree	invoke tar filter by extension	archive	partial
+t5000-tar-tree::default-output-format-remains-tar	t5000-tar-tree	default output format remains tar	archive	partial
+t5000-tar-tree::extension-matching-requires-dot	t5000-tar-tree	extension matching requires dot	archive	partial
+t5000-tar-tree::only-enabled-filters-are-available-remotely	t5000-tar-tree	only enabled filters are available remotely	archive	partial
+t5000-tar-tree::invalid-filter-is-reported-only-once	t5000-tar-tree	invalid filter is reported only once	archive	partial
+t5000-tar-tree::git-archive-format-tgz	t5000-tar-tree	git archive --format=tgz	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz	t5000-tar-tree	git archive --format=tar.gz	archive	partial
+t5000-tar-tree::infer-tgz-from-tgz-filename	t5000-tar-tree	infer tgz from .tgz filename	archive	partial
+t5000-tar-tree::infer-tgz-from-tar-gz-filename	t5000-tar-tree	infer tgz from .tar.gz filename	archive	partial
+t5000-tar-tree::extract-tgz-file	t5000-tar-tree	extract tgz file	archive	partial
+t5000-tar-tree::remote-tar-gz-is-allowed-by-default	t5000-tar-tree	remote tar.gz is allowed by default	archive	partial
+t5000-tar-tree::remote-tar-gz-can-be-disabled	t5000-tar-tree	remote tar.gz can be disabled	archive	partial
+t5000-tar-tree::git-archive-format-tgz-external-gzip	t5000-tar-tree	git archive --format=tgz (external gzip)	archive	partial
+t5000-tar-tree::git-archive-format-tar-gz-external-gzip	t5000-tar-tree	git archive --format=tar.gz (external gzip)	archive	partial
+t5000-tar-tree::extract-tgz-file-external-gzip	t5000-tar-tree	extract tgz file (external gzip)	archive	partial
+t5000-tar-tree::archive-and-glob	t5000-tar-tree	archive and :(glob)	archive	partial
+t5000-tar-tree::catch-non-matching-pathspec	t5000-tar-tree	catch non-matching pathspec	archive	partial
+t5000-tar-tree::reject-paths-outside-the-current-directory	t5000-tar-tree	reject paths outside the current directory	archive	partial
+t5000-tar-tree::allow-pathspecs-that-resolve-to-the-current-directory	t5000-tar-tree	allow pathspecs that resolve to the current directory	archive	partial
+t5000-tar-tree::attr-pathspec-in-bare-repo	t5000-tar-tree	attr pathspec in bare repo	archive	partial
+t5000-tar-tree::validate-extra-file-path-in-archive	t5000-tar-tree	validate extra file $path_in_archive	archive	partial
+t5000-tar-tree::validate-mtime-of-path-in-archive	t5000-tar-tree	validate mtime of $path_in_archive	archive	partial
 t5001-archive-attr::setup	t5001-archive-attr	setup	archive	pass
 t5001-archive-attr::git-archive	t5001-archive-attr	git archive	archive	pass
 t5001-archive-attr::git-archive-with-pathspec	t5001-archive-attr	git archive with pathspec	archive	pass
