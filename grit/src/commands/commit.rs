@@ -919,7 +919,7 @@ fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Resul
         .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
 
     let timestamp = match date_str {
-        Some(d) => d,
+        Some(d) => parse_date_to_git_timestamp(&d).unwrap_or(d),
         None => format_git_timestamp(now),
     };
 
@@ -940,11 +940,67 @@ fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> 
 
     let date_str = std::env::var("GIT_COMMITTER_DATE").ok();
     let timestamp = match date_str {
-        Some(d) => d,
+        Some(d) => parse_date_to_git_timestamp(&d).unwrap_or(d),
         None => format_git_timestamp(now),
     };
 
     Ok(format!("{name} <{email}> {timestamp}"))
+}
+
+/// Parse a date string (like "2006-06-26 00:04:00 +0000") into git's
+/// `<epoch> <offset>` format. Returns None if already in epoch format.
+fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
+    let trimmed = date_str.trim();
+
+    // Already in `<epoch> <offset>` format? (epoch is all digits)
+    let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let maybe_epoch = parts[1];
+        if maybe_epoch.chars().all(|c| c.is_ascii_digit()) {
+            // Already epoch + offset
+            return None;
+        }
+    }
+
+    // Try parsing "YYYY-MM-DD HH:MM:SS <tz>" format
+    if parts.len() == 2 {
+        let tz = parts[0];
+        let datetime = parts[1];
+
+        // Parse tz offset
+        let tz_bytes = tz.as_bytes();
+        if tz_bytes.len() >= 5 {
+            let sign: i64 = if tz_bytes[0] == b'-' { -1 } else { 1 };
+            let h: i64 = tz[1..3].parse().unwrap_or(0);
+            let m: i64 = tz[3..5].parse().unwrap_or(0);
+            let tz_secs = sign * (h * 3600 + m * 60);
+
+            // Try YYYY-MM-DD HH:MM:SS
+            if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs as i32) {
+                let fmt = time::format_description::parse(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]"
+                ).ok()?;
+                if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &fmt) {
+                    let dt = naive.assume_offset(offset);
+                    let epoch = dt.unix_timestamp();
+                    return Some(format!("{epoch} {tz}"));
+                }
+            }
+        }
+    }
+
+    // Try "@<epoch>" format (git uses this for testing)
+    if let Some(epoch_str) = trimmed.strip_prefix('@') {
+        // @<epoch> <tz>
+        let ep_parts: Vec<&str> = epoch_str.splitn(2, ' ').collect();
+        if ep_parts.len() == 2 {
+            if let Ok(_epoch) = ep_parts[0].parse::<i64>() {
+                return Some(format!("{} {}", ep_parts[0], ep_parts[1]));
+            }
+        }
+    }
+
+    None
 }
 
 /// Format a timestamp in Git's format: `<epoch> <offset>`.
