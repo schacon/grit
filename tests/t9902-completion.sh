@@ -2985,7 +2985,7 @@ do
 	'
 done
 
-test_expect_failure 'git config subcommand' '
+test_expect_success 'git config subcommand' '
 	test_completion "git config " <<-\EOF
 	edit Z
 	get Z

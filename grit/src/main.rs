@@ -390,18 +390,27 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
                 }
             }
         }
-        opts.push("--".to_string());
-        // List subcommands AFTER the -- separator
-        // __gitcomp stops at --, but __gitcompappend iterates all items,
-        // so subcommands are available for commands like reflog that use
-        // __gitcompappend for subcommand completion.
+        // Collect subcommand names
+        let mut subcmds: Vec<String> = Vec::new();
         for sub in cmd.get_subcommands() {
             let name = sub.get_name().to_string();
             if name != "help" {
-                opts.push(name);
+                subcmds.push(name);
             }
         }
-        opts
+
+        if subcmds.is_empty() {
+            // No subcommands: return options + --
+            opts.push("--".to_string());
+            opts
+        } else {
+            // Has subcommands: return ONLY subcommands.
+            // Options come from 'git <cmd> <subcmd> --git-completion-helper'.
+            // __gitcomp will show subcommand names for empty cur,
+            // and the completion script handles --options via subcommand-
+            // specific helpers.
+            subcmds
+        }
     }
 
     let options = match subcmd {
