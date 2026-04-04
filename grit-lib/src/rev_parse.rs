@@ -348,12 +348,14 @@ fn apply_nav_step(repo: &Repository, oid: ObjectId, step: NavStep) -> Result<Obj
 /// Returns [`Error::ObjectNotFound`] when the target OID does not exist in the
 /// object database.
 pub fn abbreviate_object_id(repo: &Repository, oid: ObjectId, min_len: usize) -> Result<String> {
-    if !repo.odb.exists(&oid) {
-        return Err(Error::ObjectNotFound(oid.to_hex()));
-    }
-
     let min_len = min_len.clamp(4, 40);
     let target = oid.to_hex();
+
+    // If object doesn't exist, just return the minimum abbreviation
+    if !repo.odb.exists(&oid) {
+        return Ok(target[..min_len].to_owned());
+    }
+
     let all = collect_loose_object_ids(repo)?;
 
     for len in min_len..=40 {
