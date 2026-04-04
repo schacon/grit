@@ -501,6 +501,7 @@ fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
     };
 
     // Apply skip-worktree to all entries not matching any pattern
+    let mut any_skip = false;
     for entry in &mut index.entries {
         if entry.stage() != 0 {
             continue;
@@ -508,6 +509,14 @@ fn apply_sparse_checkout(git_dir: &Path, index: &mut Index) -> Result<()> {
         let path_str = String::from_utf8_lossy(&entry.path);
         let matches = sparse_matches(&patterns, &path_str);
         entry.set_skip_worktree(!matches);
+        if !matches {
+            any_skip = true;
+        }
+    }
+
+    // Promote to v3 so skip-worktree extended flags are written
+    if any_skip && index.version < 3 {
+        index.version = 3;
     }
 
     Ok(())
