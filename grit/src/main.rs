@@ -916,6 +916,49 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
+        "test-tool" => {
+            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
+            match sub {
+                "wildmatch" => {
+                    // test-tool wildmatch <mode> <text> <pattern>
+                    if rest.len() < 4 {
+                        bail!("usage: test-tool wildmatch <mode> <text> <pattern>");
+                    }
+                    let mode = &rest[1];
+                    let mut text = rest[2].clone();
+                    let pattern = rest[3].clone();
+
+                    // Handle XXX/ prefix (substitute for leading /)
+                    let text_bytes = if text.starts_with("XXX/") {
+                        text = text[3..].to_string();
+                        text.as_bytes().to_vec()
+                    } else {
+                        text.as_bytes().to_vec()
+                    };
+                    let pat_bytes = if pattern.starts_with("XXX/") {
+                        pattern[3..].as_bytes().to_vec()
+                    } else {
+                        pattern.as_bytes().to_vec()
+                    };
+
+                    let flags = match mode.as_str() {
+                        "wildmatch" => grit_lib::wildmatch::WM_PATHNAME,
+                        "iwildmatch" => grit_lib::wildmatch::WM_PATHNAME | grit_lib::wildmatch::WM_CASEFOLD,
+                        "pathmatch" => 0,
+                        "ipathmatch" => grit_lib::wildmatch::WM_CASEFOLD,
+                        _ => bail!("unknown wildmatch mode: {mode}"),
+                    };
+
+                    let matched = grit_lib::wildmatch::wildmatch(&pat_bytes, &text_bytes, flags);
+                    if matched {
+                        Ok(())
+                    } else {
+                        std::process::exit(1);
+                    }
+                }
+                other => bail!("test-tool: unknown subcommand '{other}'"),
+            }
+        }
         "__list_cmds" => {
             let categories = rest.first().map(|s| s.as_str()).unwrap_or("");
             print_list_cmds(categories);

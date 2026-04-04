@@ -136,6 +136,9 @@ case "$1" in
   serve-v2)
     shift
     exec git serve-v2 "$@" ;;
+  wildmatch)
+    shift
+    exec git test-tool wildmatch "$@" ;;
   *)
     echo "test-tool: unknown subcommand '$1'" >&2
     exit 1 ;;
