@@ -48,8 +48,13 @@ pub struct Args {
     pub set_upstream: bool,
 
     /// Force push only if the remote ref matches the expected old value.
-    #[arg(long = "force-with-lease")]
-    pub force_with_lease: bool,
+    /// Accepts optional `=<refname>` or `=<refname>:<expect>` syntax.
+    #[arg(long = "force-with-lease", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    pub force_with_lease: Option<String>,
+
+    /// Disable force-with-lease.
+    #[arg(long = "no-force-with-lease", hide = true)]
+    pub no_force_with_lease: bool,
 
     /// Request an atomic push: either all refs update or none do.
     #[arg(long)]
@@ -297,7 +302,7 @@ pub fn run(args: Args) -> Result<()> {
             // remote-tracking ref (what `fetch` last stored), NOT re-reading
             // the remote. This detects when someone else pushed since our
             // last fetch.
-            let expected_oid = if args.force_with_lease {
+            let expected_oid = if args.force_with_lease.is_some() {
                 let tracking_ref = format!(
                     "refs/remotes/{}/{}",
                     remote_name,
@@ -331,7 +336,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // For --force-with-lease, the expected oid comes from the local
         // remote-tracking ref.
-        let expected_oid = if args.force_with_lease {
+        let expected_oid = if args.force_with_lease.is_some() {
             let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
             refs::resolve_ref(&repo.git_dir, &tracking_ref).ok()
         } else {
@@ -391,7 +396,7 @@ pub fn run(args: Args) -> Result<()> {
             if old == new {
                 continue;
             }
-            if !args.force && !args.force_with_lease && !is_ancestor(&repo, *old, *new)? {
+            if !args.force && args.force_with_lease.is_none() && !is_ancestor(&repo, *old, *new)? {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\

@@ -65,7 +65,7 @@ test_expect_success 'push to update (allowed)' '
 '
 
 # grit --force-with-lease does not support =ref:val syntax
-test_expect_failure 'push to update (allowed, tracking)' '
+test_expect_success 'push to update (allowed, tracking)' '
 	setup_srcdst_basic &&
 	(
 		cd dst &&
