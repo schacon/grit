@@ -548,6 +548,29 @@ pub fn run(args: Args) -> Result<()> {
                 colorize_remote_output(&output_str, color_remote);
             }
             if let HookResult::Failed(_code) = hook_result {
+                if args.atomic {
+                    // Rollback all applied updates
+                    for (prev_update, prev_old) in &applied_updates {
+                        if let Some(old_oid) = prev_old {
+                            let _ = refs::write_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                                old_oid,
+                            );
+                        } else {
+                            let _ = refs::delete_ref(
+                                &remote_repo.git_dir,
+                                &prev_update.remote_ref,
+                            );
+                        }
+                    }
+                    // Report all updates as rejected for atomic
+                    rejected.push((update, "hook declined".to_string()));
+                    for remaining in updates.iter().skip(updates.iter().position(|u| std::ptr::eq(u, update)).unwrap_or(0) + 1) {
+                        rejected.push((remaining, "atomic push failed".to_string()));
+                    }
+                    break;
+                }
                 rejected.push((update, "hook declined".to_string()));
                 continue;
             }
