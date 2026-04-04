@@ -1,15 +1,37 @@
 #!/bin/sh
-# Ported from git/t/t9110-git-svn-use-svm-props.sh
-# git svn useSvmProps test
+#
+# Upstream: t9110-git-svn-use-svm-props.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn useSvmProps test'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'load svm repo' '
+	false
+'
+
+test_expect_failure 'verify metadata for /bar' '
+	false
+'
+
+test_expect_failure 'verify metadata for /dir/a/b/c/d/e' '
+	false
+'
+
+test_expect_failure 'verify metadata for /dir' '
+	false
+'
+
+test_expect_failure 'find commit based on SVN revision number' '
+	false
+'
+
+test_expect_failure 'empty rebase' '
 	false
 '
 
