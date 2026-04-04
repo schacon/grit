@@ -187,7 +187,7 @@ t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	4	4	0	ok	4	4	0
 t2020-checkout-detach	yes	31	31	0	ok	31	31	0
 t2021-checkout-overwrite	yes	22	22	0	ok	22	22	0
-t2022-checkout-paths	yes	20	20	0	ok	20	20	0
+t2022-checkout-paths	yes	20	19	1	ok	19	20	0
 t2023-checkout-m	yes	4	4	0	ok	4	4	0
 t2024-checkout-dwim	yes	7	7	0	ok	7	7	0
 t2025-checkout-no-overlay	yes	18	18	0	ok	18	18	0
@@ -1008,5 +1008,5 @@ t9834-git-p4-file-dir-bug	yes	5	5	0	ok	0	0	5
 t9835-git-p4-metadata-encoding-python2	yes	12	12	0	ok	0	0	12
 t9836-git-p4-metadata-encoding-python3	yes	12	12	0	ok	0	0	12
 t9850-shell	yes	5	5	0	ok	0	0	5
-t9902-completion	yes	263	115	148	ok	107	255	8
-t9903-bash-prompt	yes	67	14	53	ok	2	55	12
+t9902-completion	yes	263	114	149	ok	107	256	7
+t9903-bash-prompt	yes	67	4	63	ok	2	65	2
