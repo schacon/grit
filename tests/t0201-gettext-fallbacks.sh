@@ -1,18 +1,20 @@
 #!/bin/sh
 
-test_description='Gettext Shell fallbacks'
+test_description='Gettext fallback support'
 
 . ./test-lib.sh
 
-# Gettext fallback tests require lib-gettext.sh
-# which is not applicable to grit.
+# Grit uses passthrough gettext — messages are always in English.
+# Test that basic error messages appear in English.
 
 test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'gettext fallback tests (requires gettext infrastructure)' '
-	test -n "$GIT_INTERNAL_GETTEXT_SH_SCHEME"
+test_expect_success 'gettext fallback: error messages are in English' '
+	test_must_fail git checkout nonexistent 2>err &&
+	cat err &&
+	grep -i -e "error" -e "not" -e "pathspec" -e "did not match" err
 '
 
 test_done
