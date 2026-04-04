@@ -153,6 +153,10 @@ pub struct Args {
     #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
     pub abbrev: Option<String>,
 
+    /// Use NUL as record terminator.
+    #[arg(short = 'z')]
+    pub null_terminator: bool,
+
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
@@ -192,6 +196,62 @@ pub struct Args {
     /// Disable color.
     #[arg(long = "no-color")]
     pub no_color: bool,
+
+    /// Filter decoration refs.
+    #[arg(long = "decorate-refs", value_name = "PATTERN")]
+    pub decorate_refs: Vec<String>,
+
+    /// Exclude decoration refs.
+    #[arg(long = "decorate-refs-exclude", value_name = "PATTERN")]
+    pub decorate_refs_exclude: Vec<String>,
+
+    /// Show line prefix.
+    #[arg(long = "line-prefix", value_name = "PREFIX")]
+    pub line_prefix: Option<String>,
+
+    /// Disable graph output.
+    #[arg(long = "no-graph")]
+    pub no_graph: bool,
+
+    /// Show GPG signature.
+    #[arg(long = "show-signature")]
+    pub show_signature: bool,
+
+    /// Disable abbreviation.
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
+    /// Grep log messages.
+    #[arg(long = "grep", value_name = "PATTERN")]
+    pub grep_patterns: Vec<String>,
+
+    /// Invert grep match.
+    #[arg(long = "invert-grep")]
+    pub invert_grep: bool,
+
+    /// Case insensitive grep.
+    #[arg(short = 'i', long = "regexp-ignore-case")]
+    pub regexp_ignore_case: bool,
+
+    /// Date ordering.
+    #[arg(long = "date-order")]
+    pub date_order: bool,
+
+    /// Topo ordering.
+    #[arg(long = "topo-order")]
+    pub topo_order: bool,
+
+    /// Ignore missing refs.
+    #[arg(long = "ignore-missing")]
+    pub ignore_missing: bool,
+
+    /// Clear all decorations.
+    #[arg(long = "clear-decorations")]
+    pub clear_decorations: bool,
+
+    /// Show shortstat.
+    #[arg(long = "shortstat")]
+    pub shortstat: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]
