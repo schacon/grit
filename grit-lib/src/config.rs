@@ -117,7 +117,10 @@ pub struct ConfigSet {
 pub fn canonical_key(raw: &str) -> Result<String> {
     // Reject keys containing newlines
     if raw.contains('\n') || raw.contains('\r') {
-        return Err(Error::ConfigError(format!("invalid key: '{}'" , raw.replace('\n', "\\n"))));
+        return Err(Error::ConfigError(format!(
+            "invalid key: '{}'",
+            raw.replace('\n', "\\n")
+        )));
     }
 
     let first_dot = raw
@@ -138,7 +141,9 @@ pub fn canonical_key(raw: &str) -> Result<String> {
 
     // Validate section name: must be alphanumeric or hyphen
     if section.is_empty() || !section.chars().all(|c| c.is_alphanumeric() || c == '-') {
-        return Err(Error::ConfigError(format!("invalid key (bad section): '{raw}'")));
+        return Err(Error::ConfigError(format!(
+            "invalid key (bad section): '{raw}'"
+        )));
     }
 
     // Validate variable name: must start with alpha, rest alphanumeric or hyphen
@@ -146,7 +151,9 @@ pub fn canonical_key(raw: &str) -> Result<String> {
         || !name.chars().next().unwrap().is_ascii_alphabetic()
         || !name.chars().all(|c| c.is_alphanumeric() || c == '-')
     {
-        return Err(Error::ConfigError(format!("invalid key (bad variable name): '{raw}'")));
+        return Err(Error::ConfigError(format!(
+            "invalid key (bad variable name): '{raw}'"
+        )));
     }
 
     if first_dot == last_dot {
@@ -197,7 +204,13 @@ impl Parser {
     /// Parse a section header line like `[section]` or `[section "subsection"]`.
     ///
     /// Returns `true` if the line was a section header.
-    fn try_parse_section(&mut self, line: &str) -> bool {
+    /// If there is content after `]` (an inline key=value), it is returned
+    /// via the `inline_remainder` parameter.
+    fn try_parse_section_with_remainder<'a>(
+        &mut self,
+        line: &'a str,
+        inline_remainder: &mut Option<&'a str>,
+    ) -> bool {
         let trimmed = line.trim();
         if !trimmed.starts_with('[') {
             return false;
@@ -220,7 +233,20 @@ impl Parser {
             self.section = inside.trim().to_owned();
             self.subsection = None;
         }
+        // Check for inline content after the closing `]`
+        let after = trimmed[end + 1..].trim();
+        if !after.is_empty() && !after.starts_with('#') && !after.starts_with(';') {
+            *inline_remainder = Some(after);
+        } else {
+            *inline_remainder = None;
+        }
         true
+    }
+
+    /// Parse a section header line (without inline remainder tracking).
+    fn try_parse_section(&mut self, line: &str) -> bool {
+        let mut _remainder = None;
+        self.try_parse_section_with_remainder(line, &mut _remainder)
     }
 
     /// Parse a `key = value` or bare `key` line.
@@ -389,7 +415,29 @@ fn escape_value(s: &str) -> String {
     out
 }
 
-// ── ConfigFile ──────────────────────────────────────────────────────
+/// Format a comment suffix for appending to a config value line.
+///
+/// Git's `--comment` flag normalises the comment:
+/// - If the comment already starts with `#` (possibly preceded by whitespace/tab),
+///   it is used as-is.
+/// - Otherwise, ` # ` is prepended.
+fn format_comment_suffix(comment: Option<&str>) -> String {
+    match comment {
+        None => String::new(),
+        Some(c) => {
+            if c.starts_with(' ') || c.starts_with('\t') {
+                // Comment has its own leading whitespace separator
+                c.to_owned()
+            } else if c.starts_with('#') {
+                // Comment starts with #, just prepend a space separator
+                format!(" {c}")
+            } else {
+                // Plain text comment, prepend " # "
+                format!(" # {c}")
+            }
+        }
+    }
+}
 
 impl ConfigFile {
     /// Parse a config file from its raw text content.
@@ -420,7 +468,20 @@ impl ConfigFile {
                 continue;
             }
 
-            if parser.try_parse_section(line) {
+            let mut inline_remainder = None;
+            if parser.try_parse_section_with_remainder(line, &mut inline_remainder) {
+                // Check if there's an inline key=value after the section header
+                if let Some(remainder) = inline_remainder {
+                    if let Some((key, value)) = parser.try_parse_entry(remainder) {
+                        entries.push(ConfigEntry {
+                            key,
+                            value,
+                            scope,
+                            file: Some(path.to_path_buf()),
+                            line: start_idx + 1,
+                        });
+                    }
+                }
                 continue;
             }
 
@@ -483,27 +544,53 @@ impl ConfigFile {
     /// - `key` — canonical key (e.g. `core.bare`).
     /// - `value` — the value to set.
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
+        self.set_with_comment(key, value, None)
+    }
+
+    /// Set a value in this config file, optionally appending an inline comment.
+    pub fn set_with_comment(
+        &mut self,
+        key: &str,
+        value: &str,
+        comment: Option<&str>,
+    ) -> Result<()> {
         let canon = canonical_key(key)?;
-        // Git lowercases variable names when writing
-        let var_lower = raw_variable_name(key).to_lowercase();
+        let raw_var = raw_variable_name(key);
+        let comment_suffix = format_comment_suffix(comment);
 
         // Find the last entry with this key to replace in-place.
         let existing_idx = self.entries.iter().rposition(|e| e.key == canon);
 
         if let Some(idx) = existing_idx {
             let line_idx = self.entries[idx].line - 1;
-            self.raw_lines[line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
-            self.entries[idx].value = Some(value.to_owned());
+            let raw_line = &self.raw_lines[line_idx];
+            if is_section_header_with_inline_entry(raw_line) {
+                // Entry is on the same line as a section header — split it
+                let header_only = extract_section_header(raw_line);
+                self.raw_lines[line_idx] = header_only;
+                let new_line = format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
+                self.raw_lines.insert(line_idx + 1, new_line);
+                // Re-parse to fix up entries and line numbers
+                let content = self.raw_lines.join("\n");
+                let reparsed = Self::parse(&self.path, &content, self.scope)?;
+                self.entries = reparsed.entries;
+                self.raw_lines = reparsed.raw_lines;
+            } else {
+                self.raw_lines[line_idx] =
+                    format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
+                self.entries[idx].value = Some(value.to_owned());
+            }
         } else {
             // Need to add: find or create the section
             let (section, subsection, _var) = split_key(&canon)?;
-            // Git lowercases section names; subsection preserves case
-            let (_raw_sec, raw_sub) = raw_section_parts(key);
+            let (raw_sec, raw_sub) = raw_section_parts(key);
             let section_line = self.find_or_create_section_preserving_case(
-                &section, subsection.as_deref(),
-                &section, raw_sub.as_deref(),
+                &section,
+                subsection.as_deref(),
+                &raw_sec,
+                raw_sub.as_deref(),
             );
-            let new_line = format!("\t{} = {}", var_lower, escape_value(value));
+            let new_line = format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
 
             // Insert after the section header (or last entry in section)
             let insert_at = self.last_line_in_section(section_line) + 1;
@@ -523,16 +610,42 @@ impl ConfigFile {
     ///
     /// Removes all but the last occurrence from the file, then updates
     /// the last occurrence with the new value (matching Git behaviour).
-    pub fn replace_all(&mut self, key: &str, value: &str, value_pattern: Option<&str>) -> Result<()> {
-        let canon = canonical_key(key)?;
-        let var_lower = raw_variable_name(key).to_lowercase();
+    pub fn replace_all(
+        &mut self,
+        key: &str,
+        value: &str,
+        value_pattern: Option<&str>,
+    ) -> Result<()> {
+        self.replace_all_with_comment(key, value, value_pattern, None)
+    }
 
-        // Compile optional regex pattern
-        let re = match value_pattern {
-            Some(pat) => Some(
-                regex::Regex::new(pat)
-                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?),
-            None => None,
+    /// Replace all occurrences, optionally appending an inline comment.
+    ///
+    /// Value patterns starting with `!` are treated as negated regex
+    /// (matching values that do NOT match the pattern).
+    pub fn replace_all_with_comment(
+        &mut self,
+        key: &str,
+        value: &str,
+        value_pattern: Option<&str>,
+        comment: Option<&str>,
+    ) -> Result<()> {
+        let canon = canonical_key(key)?;
+        let comment_suffix = format_comment_suffix(comment);
+
+        // Parse optional regex pattern, handling `!` negation
+        let (re, negated) = match value_pattern {
+            Some(pat) => {
+                let (neg, actual_pat) = if let Some(rest) = pat.strip_prefix('!') {
+                    (true, rest)
+                } else {
+                    (false, pat)
+                };
+                let compiled = regex::Regex::new(actual_pat)
+                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?;
+                (Some(compiled), neg)
+            }
+            None => (None, false),
         };
 
         // Find all matching entries (by key, and optionally by value pattern)
@@ -546,7 +659,12 @@ impl ConfigFile {
                 }
                 if let Some(ref re) = re {
                     let v = e.value.as_deref().unwrap_or("");
-                    re.is_match(v)
+                    let matched = re.is_match(v);
+                    if negated {
+                        !matched
+                    } else {
+                        matched
+                    }
                 } else {
                     true
                 }
@@ -555,28 +673,54 @@ impl ConfigFile {
             .collect();
 
         if matching_indices.is_empty() {
-            // No matching entries — add a new one (same as set)
-            return self.set(key, value);
+            // No matching entries — add a new one at the end of the section
+            return self.add_value_with_comment(key, value, comment);
         }
 
-        // Update the last matching entry with the new value, remove all others
-        let last_match = *matching_indices.last().unwrap();
+        let raw_var = raw_variable_name(key);
 
-        // Update the last matching entry's line with the new value
-        let last_line_idx = self.entries[last_match].line - 1;
-        self.raw_lines[last_line_idx] = format!("\t{} = {}", var_lower, escape_value(value));
-        self.entries[last_match].value = Some(value.to_owned());
-
-        // Remove all other matching entries (iterate in reverse to preserve indices)
-        for &idx in matching_indices.iter().rev() {
-            if idx == last_match {
-                continue;
+        if matching_indices.len() == 1 {
+            // Single match: update in-place (preserves position)
+            let match_idx = matching_indices[0];
+            let line_idx = self.entries[match_idx].line - 1;
+            let raw_line = &self.raw_lines[line_idx];
+            if is_section_header_with_inline_entry(raw_line) {
+                let header = extract_section_header(raw_line);
+                self.raw_lines[line_idx] = header;
+                let new_line = format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
+                self.raw_lines.insert(line_idx + 1, new_line);
+            } else {
+                self.raw_lines[line_idx] =
+                    format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
             }
-            let line_idx = self.entries[idx].line - 1;
-            self.raw_lines.remove(line_idx);
+        } else {
+            // Multiple matches: remove ALL, then add one new entry at end of section
+            for &idx in matching_indices.iter().rev() {
+                let line_idx = self.entries[idx].line - 1;
+                self.remove_entry_line(line_idx);
+            }
+
+            // Re-parse after removals
+            let content = self.raw_lines.join("\n");
+            let reparsed = Self::parse(&self.path, &content, self.scope)?;
+            self.entries = reparsed.entries;
+            self.raw_lines = reparsed.raw_lines;
+
+            // Add the new entry at the end of the section
+            let (section, subsection, _var) = split_key(&canon)?;
+            let (raw_sec, raw_sub) = raw_section_parts(key);
+            let section_line = self.find_or_create_section_preserving_case(
+                &section,
+                subsection.as_deref(),
+                &raw_sec,
+                raw_sub.as_deref(),
+            );
+            let new_line = format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
+            let insert_at = self.last_line_in_section(section_line) + 1;
+            self.raw_lines.insert(insert_at, new_line);
         }
 
-        // Re-parse after modifications
+        // Re-parse
         let content = self.raw_lines.join("\n");
         let reparsed = Self::parse(&self.path, &content, self.scope)?;
         self.entries = reparsed.entries;
@@ -591,6 +735,37 @@ impl ConfigFile {
         Ok(self.entries.iter().filter(|e| e.key == canon).count())
     }
 
+    /// Remove an entry at the given raw line index.
+    ///
+    /// If the line is a section header with an inline entry, only the inline
+    /// portion is removed (the header is kept). Otherwise the entire line is
+    /// removed. Also removes continuation lines following the entry.
+    /// Remove an entry at the given raw line index.
+    ///
+    /// If the line is a section header with an inline entry, only the inline
+    /// portion is removed (the header is kept). Otherwise the entire line
+    /// (and any continuation lines) is removed.
+    fn remove_entry_line(&mut self, line_idx: usize) {
+        if is_section_header_with_inline_entry(&self.raw_lines[line_idx]) {
+            // Keep the section header, strip the inline entry
+            let header = extract_section_header(&self.raw_lines[line_idx]);
+            self.raw_lines[line_idx] = header;
+        } else {
+            // Check if this line has continuation lines and remove them too
+            let mut lines_to_remove = 1;
+            let mut check_line = self.raw_lines[line_idx].clone();
+            while value_line_continues(&check_line)
+                && (line_idx + lines_to_remove) < self.raw_lines.len()
+            {
+                check_line = self.raw_lines[line_idx + lines_to_remove].clone();
+                lines_to_remove += 1;
+            }
+            for _ in 0..lines_to_remove {
+                self.raw_lines.remove(line_idx);
+            }
+        }
+    }
+
     /// Unset (remove) only the last occurrence of a key.
     ///
     /// Returns the number of entries removed (0 or 1).
@@ -600,7 +775,7 @@ impl ConfigFile {
 
         if let Some(idx) = last_idx {
             let line_idx = self.entries[idx].line - 1;
-            self.raw_lines.remove(line_idx);
+            self.remove_entry_line(line_idx);
             let content = self.raw_lines.join("\n");
             let reparsed = Self::parse(&self.path, &content, self.scope)?;
             self.entries = reparsed.entries;
@@ -632,7 +807,7 @@ impl ConfigFile {
         let count = line_indices.len();
         // Remove from bottom to top to keep indices valid
         for &idx in line_indices.iter().rev() {
-            self.raw_lines.remove(idx);
+            self.remove_entry_line(idx);
         }
 
         if count > 0 {
@@ -654,7 +829,8 @@ impl ConfigFile {
         let re = match value_pattern {
             Some(pat) => Some(
                 regex::Regex::new(pat)
-                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?),
+                    .map_err(|e| Error::ConfigError(format!("invalid value-pattern regex: {e}")))?,
+            ),
             None => None,
         };
 
@@ -677,7 +853,7 @@ impl ConfigFile {
 
         let count = line_indices.len();
         for &idx in line_indices.iter().rev() {
-            self.raw_lines.remove(idx);
+            self.remove_entry_line(idx);
         }
 
         if count > 0 {
@@ -779,16 +955,29 @@ impl ConfigFile {
     /// This is the behaviour of `git config --add section.key value`.
     /// If the section doesn't exist, it is created.
     pub fn add_value(&mut self, key: &str, value: &str) -> Result<()> {
+        self.add_value_with_comment(key, value, None)
+    }
+
+    /// Append a new value with an optional inline comment.
+    pub fn add_value_with_comment(
+        &mut self,
+        key: &str,
+        value: &str,
+        comment: Option<&str>,
+    ) -> Result<()> {
         let canon = canonical_key(key)?;
         let raw_var = raw_variable_name(key);
+        let comment_suffix = format_comment_suffix(comment);
         let (section, subsection, _var) = split_key(&canon)?;
         let (raw_sec, raw_sub) = raw_section_parts(key);
 
         let section_line = self.find_or_create_section_preserving_case(
-            &section, subsection.as_deref(),
-            &raw_sec, raw_sub.as_deref(),
+            &section,
+            subsection.as_deref(),
+            &raw_sec,
+            raw_sub.as_deref(),
         );
-        let new_line = format!("\t{} = {}", raw_var, escape_value(value));
+        let new_line = format!("\t{} = {}{}", raw_var, escape_value(value), comment_suffix);
         let insert_at = self.last_line_in_section(section_line) + 1;
         self.raw_lines.insert(insert_at, new_line);
 
@@ -813,6 +1002,10 @@ impl ConfigFile {
         for i in 0..len {
             let line = &self.raw_lines[i];
             if !section_re.is_match(line) {
+                continue;
+            }
+            // Don't remove section headers that have inline key=value entries
+            if is_section_header_with_inline_entry(line) {
                 continue;
             }
             // Check if this section header is followed only by blank lines,
@@ -846,7 +1039,7 @@ impl ConfigFile {
         }
 
         // Also remove trailing blank lines
-        while self.raw_lines.last().map_or(false, |l| l.trim().is_empty()) {
+        while self.raw_lines.last().is_some_and(|l| l.trim().is_empty()) {
             self.raw_lines.pop();
         }
     }
@@ -1023,9 +1216,9 @@ impl ConfigSet {
     /// Used by `git config --get-regexp`. Returns an error if the pattern
     /// is not a valid regex.
     pub fn get_regexp(&self, pattern: &str) -> std::result::Result<Vec<&ConfigEntry>, String> {
-        let re = regex::Regex::new(pattern)
-            .map_err(|e| format!("invalid key pattern: {e}"))?;
-        Ok(self.entries
+        let re = regex::Regex::new(pattern).map_err(|e| format!("invalid key pattern: {e}"))?;
+        Ok(self
+            .entries
             .iter()
             .filter(|e| re.is_match(&e.key))
             .collect())
@@ -1055,9 +1248,7 @@ impl ConfigSet {
             let system_path = std::env::var("GIT_CONFIG_SYSTEM")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
-            if let Ok(Some(f)) =
-                ConfigFile::from_path(&system_path, ConfigScope::System)
-            {
+            if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
                 Self::merge_with_includes(&mut set, &f, true)?;
             }
         }
@@ -1290,8 +1481,7 @@ pub fn url_matches(pattern_url: &str, target_url: &str) -> bool {
     if target == pattern {
         return true;
     }
-    if target.starts_with(pattern) {
-        let rest = &target[pattern.len()..];
+    if let Some(rest) = target.strip_prefix(pattern) {
         return rest.starts_with('/') || rest.is_empty();
     }
     let pattern_slash = format!("{}/", pattern);
@@ -1311,8 +1501,14 @@ pub fn get_urlmatch_entries<'a>(
 
     for entry in entries {
         let key = &entry.key;
-        let first_dot = match key.find('.') { Some(i) => i, None => continue };
-        let last_dot = match key.rfind('.') { Some(i) => i, None => continue };
+        let first_dot = match key.find('.') {
+            Some(i) => i,
+            None => continue,
+        };
+        let last_dot = match key.rfind('.') {
+            Some(i) => i,
+            None => continue,
+        };
         let entry_section = &key[..first_dot];
         let entry_variable = &key[last_dot + 1..];
         if entry_section.to_lowercase() != section_lower
@@ -1344,20 +1540,40 @@ pub fn get_urlmatch_all_in_section(
 
     for entry in entries {
         let key = &entry.key;
-        let first_dot = match key.find('.') { Some(i) => i, None => continue };
-        let last_dot = match key.rfind('.') { Some(i) => i, None => continue };
+        let first_dot = match key.find('.') {
+            Some(i) => i,
+            None => continue,
+        };
+        let last_dot = match key.rfind('.') {
+            Some(i) => i,
+            None => continue,
+        };
         let entry_section = &key[..first_dot];
-        if entry_section.to_lowercase() != section_lower { continue; }
+        if entry_section.to_lowercase() != section_lower {
+            continue;
+        }
         let entry_variable = &key[last_dot + 1..];
         let val = entry.value.as_deref().unwrap_or("true");
         if first_dot == last_dot {
             let canonical = format!("{}.{}", section_lower, entry_variable);
-            matches.push((entry_variable.to_lowercase(), 0, val.to_owned(), canonical, entry.scope));
+            matches.push((
+                entry_variable.to_lowercase(),
+                0,
+                val.to_owned(),
+                canonical,
+                entry.scope,
+            ));
         } else {
             let subsection = &key[first_dot + 1..last_dot];
             if url_matches(subsection, url) {
                 let canonical = format!("{}.{}", section_lower, entry_variable);
-                matches.push((entry_variable.to_lowercase(), subsection.len(), val.to_owned(), canonical, entry.scope));
+                matches.push((
+                    entry_variable.to_lowercase(),
+                    subsection.len(),
+                    val.to_owned(),
+                    canonical,
+                    entry.scope,
+                ));
             }
         }
     }
@@ -1365,12 +1581,16 @@ pub fn get_urlmatch_all_in_section(
     let mut best: std::collections::BTreeMap<String, (usize, String, String, ConfigScope)> =
         std::collections::BTreeMap::new();
     for (var, specificity, val, canonical, scope) in matches {
-        let entry = best.entry(var).or_insert((0, String::new(), String::new(), scope));
+        let entry = best
+            .entry(var)
+            .or_insert((0, String::new(), String::new(), scope));
         if specificity >= entry.0 {
             *entry = (specificity, val, canonical, scope);
         }
     }
-    best.into_values().map(|(_, val, canonical, scope)| (canonical, val, scope)).collect()
+    best.into_values()
+        .map(|(_, val, canonical, scope)| (canonical, val, scope))
+        .collect()
 }
 
 /// Parse a Git path value (expand `~/` to home directory).
@@ -1536,4 +1756,32 @@ fn raw_section_parts(raw_key: &str) -> (String, Option<String>) {
         let subsection = raw_key[first_dot + 1..last_dot].to_owned();
         (section, Some(subsection))
     }
+}
+
+/// Check if a raw line is a section header that also contains an inline key=value.
+fn is_section_header_with_inline_entry(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') {
+        return false;
+    }
+    let end = match trimmed.find(']') {
+        Some(i) => i,
+        None => return false,
+    };
+    let after = trimmed[end + 1..].trim();
+    // Has non-comment content after the ]
+    !after.is_empty() && !after.starts_with('#') && !after.starts_with(';')
+}
+
+/// Extract just the section header portion (up to and including `]` and any
+/// comment after it, but not any inline key=value) from a raw line.
+fn extract_section_header(line: &str) -> String {
+    let trimmed = line.trim();
+    let end = match trimmed.find(']') {
+        Some(i) => i,
+        None => return line.to_owned(),
+    };
+    // Preserve any comment on the section header itself (between ] and key),
+    // but git doesn't really do this. Just return up to ].
+    trimmed[..=end].to_owned()
 }

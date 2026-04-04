@@ -5,7 +5,9 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{parse_bool, parse_color, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{
+    parse_bool, parse_color, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet,
+};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -78,6 +80,10 @@ pub struct Args {
     /// Replace all matching values (legacy).
     #[arg(long = "replace-all")]
     pub replace_all: bool,
+
+    /// Append an inline comment to the value.
+    #[arg(long = "comment", global = true)]
+    pub comment: Option<String>,
 
     /// Rename a section (legacy).
     #[arg(long = "rename-section")]
@@ -290,7 +296,9 @@ pub fn run(args: Args) -> Result<()> {
         return match sub {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref(), None),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
-            ConfigSubcommand::Unset(unset_args) => cmd_unset(&args, unset_args, scope, &file_path, None),
+            ConfigSubcommand::Unset(unset_args) => {
+                cmd_unset(&args, unset_args, scope, &file_path, None)
+            }
             ConfigSubcommand::List(list_args) => {
                 // Merge list-level flags into top-level args
                 let mut merged = Args {
@@ -316,7 +324,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if let Some(ref key) = args.get_key {
-        let value_pattern = if args.fixed_value { args.positional.first().map(|s| s.as_str()) } else { None };
+        let value_pattern = args.positional.first().map(|s| s.as_str());
         let get_args = GetArgs {
             key: key.clone(),
             all: false,
@@ -331,7 +339,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if let Some(ref key) = args.get_all_key {
-        let value_pattern = if args.fixed_value { args.positional.first().map(|s| s.as_str()) } else { None };
+        let value_pattern = args.positional.first().map(|s| s.as_str());
         let get_args = GetArgs {
             key: key.clone(),
             all: true,
@@ -417,6 +425,9 @@ pub fn run(args: Args) -> Result<()> {
             bail!("usage: grit config [<options>]");
         }
         1 => {
+            if args.replace_all {
+                bail!("error: wrong number of arguments, should be 2");
+            }
             // Legacy get: `git config key`
             let get_args = GetArgs {
                 key: args.positional[0].clone(),
@@ -424,10 +435,10 @@ pub fn run(args: Args) -> Result<()> {
                 regexp: false,
                 show_names: false,
                 default: args.default_value.clone(),
-            url: None,
+                url: None,
                 show_origin: false,
-            show_scope: false,
-        };
+                show_scope: false,
+            };
             cmd_get(&args, &get_args, git_dir.as_deref(), None)
         }
         2 => {
@@ -448,7 +459,13 @@ pub fn run(args: Args) -> Result<()> {
                     value: args.positional[1].clone(),
                     all: true,
                 };
-                cmd_set(&args, &set_args, scope, &file_path, Some(&args.positional[2]))
+                cmd_set(
+                    &args,
+                    &set_args,
+                    scope,
+                    &file_path,
+                    Some(&args.positional[2]),
+                )
             } else {
                 // `git config key value value-pattern` (legacy with value-pattern)
                 let set_args = SetArgs {
@@ -456,7 +473,13 @@ pub fn run(args: Args) -> Result<()> {
                     value: args.positional[1].clone(),
                     all: false,
                 };
-                cmd_set(&args, &set_args, scope, &file_path, Some(&args.positional[2]))
+                cmd_set(
+                    &args,
+                    &set_args,
+                    scope,
+                    &file_path,
+                    Some(&args.positional[2]),
+                )
             }
         }
         _ => bail!("too many arguments"),
@@ -465,7 +488,12 @@ pub fn run(args: Args) -> Result<()> {
 
 // ── Subcommand implementations ──────────────────────────────────────
 
-fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_pattern: Option<&str>) -> Result<()> {
+fn cmd_get(
+    args: &Args,
+    get_args: &GetArgs,
+    git_dir: Option<&Path>,
+    value_pattern: Option<&str>,
+) -> Result<()> {
     let config = load_config(args, git_dir)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
@@ -475,7 +503,8 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_patter
             Some(i) => (&get_args.key[..i], &get_args.key[i + 1..]),
             None => bail!("key does not contain a section: '{}'", get_args.key),
         };
-        let entries = grit_lib::config::get_urlmatch_entries(config.entries(), section, variable, url);
+        let entries =
+            grit_lib::config::get_urlmatch_entries(config.entries(), section, variable, url);
         if entries.is_empty() {
             if let Some(ref default) = get_args.default {
                 let val = format_typed_value(args, default)?;
@@ -492,14 +521,18 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_patter
     }
 
     if get_args.regexp {
-        let matches = config.get_regexp(&get_args.key)
+        let matches = config
+            .get_regexp(&get_args.key)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         if matches.is_empty() {
             std::process::exit(1);
         }
         for entry in matches {
-            let _has_type_flag = args.type_bool || args.type_int || args.type_bool_or_int
-                || args.type_path || args.type_name.is_some();
+            let _has_type_flag = args.type_bool
+                || args.type_int
+                || args.type_bool_or_int
+                || args.type_path
+                || args.type_name.is_some();
             let _is_bare = entry.value.is_none();
             let val = entry.value.as_deref().unwrap_or("true");
             let val = format_typed_value(args, val)?;
@@ -516,9 +549,8 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_patter
 
     if get_args.all {
         let mut values = config.get_all(&get_args.key);
-        // Apply --fixed-value filter
         if let Some(pattern) = value_pattern {
-            values.retain(|v| v == pattern);
+            filter_values_by_pattern(&mut values, pattern, args.fixed_value)?;
         }
         if values.is_empty() {
             if let Some(ref default) = get_args.default {
@@ -535,19 +567,25 @@ fn cmd_get(args: &Args, get_args: &GetArgs, git_dir: Option<&Path>, value_patter
         return Ok(());
     }
 
+    if let Some(pattern) = value_pattern {
+        // --get with value-regex: get all values, filter, return last match
+        let mut values = config.get_all(&get_args.key);
+        filter_values_by_pattern(&mut values, pattern, args.fixed_value)?;
+        if let Some(val) = values.last() {
+            let val = format_typed_value(args, val)?;
+            print!("{val}{terminator}");
+            return Ok(());
+        }
+        if let Some(ref default) = get_args.default {
+            let d = format_typed_value(args, default)?;
+            print!("{d}{terminator}");
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
     match config.get(&get_args.key) {
         Some(val) => {
-            // Apply --fixed-value filter
-            if let Some(pattern) = value_pattern {
-                if val != pattern {
-                    if let Some(ref default) = get_args.default {
-                        let d = format_typed_value(args, default)?;
-                        print!("{d}{terminator}");
-                        return Ok(());
-                    }
-                    std::process::exit(1);
-                }
-            }
             let val = format_typed_value(args, &val)?;
             print!("{val}{terminator}");
             Ok(())
@@ -570,8 +608,16 @@ fn cmd_set(
     file_path: &Path,
     value_pattern: Option<&str>,
 ) -> Result<()> {
+    // Validate --comment: must not contain LF
+    if let Some(ref c) = args.comment {
+        if c.contains('\n') {
+            bail!("invalid comment: must not contain newline");
+        }
+    }
+
     // Canonicalize the value if a type flag is given
     let value = canonicalize_value_for_set(args, &set_args.value)?;
+    let comment = args.comment.as_deref();
 
     let mut config = match ConfigFile::from_path(file_path, scope).context("reading config file")? {
         Some(cfg) => cfg,
@@ -579,12 +625,11 @@ fn cmd_set(
     };
 
     if set_args.all {
-        config.replace_all(&set_args.key, &value, value_pattern)?;
+        config.replace_all_with_comment(&set_args.key, &value, value_pattern, comment)?;
     } else if let Some(pattern) = value_pattern {
-        // Single replace with value-pattern: only replace if existing value matches
-        config.replace_all(&set_args.key, &value, Some(pattern))?;
+        config.replace_all_with_comment(&set_args.key, &value, Some(pattern), comment)?;
     } else {
-        config.set(&set_args.key, &value)?;
+        config.set_with_comment(&set_args.key, &value, comment)?;
     }
     config.write().context("writing config file")?;
     Ok(())
@@ -761,9 +806,8 @@ fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -
     if let Some(dot) = key.find('.') {
         let section = &key[..dot];
         let variable = &key[dot + 1..];
-        let entries = grit_lib::config::get_urlmatch_entries(
-            config.entries(), section, variable, url,
-        );
+        let entries =
+            grit_lib::config::get_urlmatch_entries(config.entries(), section, variable, url);
         if entries.is_empty() {
             std::process::exit(1);
         }
@@ -773,9 +817,7 @@ fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -
         print!("{val}{terminator}");
     } else {
         // Section-only: return all variables from that section matching the URL
-        let entries = grit_lib::config::get_urlmatch_all_in_section(
-            config.entries(), key, url,
-        );
+        let entries = grit_lib::config::get_urlmatch_all_in_section(config.entries(), key, url);
         if entries.is_empty() {
             std::process::exit(1);
         }
@@ -816,18 +858,23 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let oid = resolve_revision(&repo, blob_spec)
         .map_err(|_| anyhow::anyhow!("unable to resolve spec '{}' to a blob", blob_spec))?;
-    let obj = repo.odb.read(&oid)
+    let obj = repo
+        .odb
+        .read(&oid)
         .map_err(|_| anyhow::anyhow!("unable to read object {}", oid))?;
     if obj.kind != ObjectKind::Blob {
-        bail!("object {} is a {}, not a blob", oid, match obj.kind {
-            ObjectKind::Tree => "tree",
-            ObjectKind::Commit => "commit",
-            ObjectKind::Tag => "tag",
-            _ => "unknown",
-        });
+        bail!(
+            "object {} is a {}, not a blob",
+            oid,
+            match obj.kind {
+                ObjectKind::Tree => "tree",
+                ObjectKind::Commit => "commit",
+                ObjectKind::Tag => "tag",
+                _ => "unknown",
+            }
+        );
     }
-    let content = String::from_utf8(obj.data)
-        .context("blob is not valid UTF-8")?;
+    let content = String::from_utf8(obj.data).context("blob is not valid UTF-8")?;
     let blob_path = std::path::Path::new("<blob>");
     let config_file = ConfigFile::parse(blob_path, &content, ConfigScope::Command)?;
     let mut config = ConfigSet::new();
@@ -850,7 +897,8 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
 
     // --get-regexp
     if let Some(ref pattern) = args.get_regexp {
-        let matches = config.get_regexp(pattern)
+        let matches = config
+            .get_regexp(pattern)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         if matches.is_empty() {
             std::process::exit(1);
@@ -913,7 +961,8 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
         match sub {
             ConfigSubcommand::Get(get_args) => {
                 if get_args.regexp {
-                    let matches = config.get_regexp(&get_args.key)
+                    let matches = config
+                        .get_regexp(&get_args.key)
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
                     if matches.is_empty() {
                         std::process::exit(1);
@@ -968,6 +1017,37 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/// Filter a list of values by a value-pattern.
+///
+/// If `fixed_value` is true, the pattern is treated as a literal string.
+/// Otherwise it is treated as a regex. A `!` prefix inverts the match.
+fn filter_values_by_pattern(
+    values: &mut Vec<String>,
+    pattern: &str,
+    fixed_value: bool,
+) -> Result<()> {
+    if fixed_value {
+        values.retain(|v| v == pattern);
+    } else {
+        let (negated, pat) = if let Some(rest) = pattern.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, pattern)
+        };
+        let re = regex::Regex::new(pat)
+            .with_context(|| format!("invalid value-pattern regex: {pat}"))?;
+        values.retain(|v| {
+            let matched = re.is_match(v);
+            if negated {
+                !matched
+            } else {
+                matched
+            }
+        });
+    }
+    Ok(())
+}
 
 /// Resolve the git directory (best-effort; returns None outside a repo).
 fn resolve_git_dir() -> Option<PathBuf> {
