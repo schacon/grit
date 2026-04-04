@@ -524,8 +524,8 @@ test_commit () {
 		esac
 	done
 	message="${1:?test_commit}" && shift
-	file="${1:-$message.t}" && shift || true
-	contents="${1:-$message}" && shift || true
+	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
+	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
 		printf '%s' "$contents" >"$file" &&
