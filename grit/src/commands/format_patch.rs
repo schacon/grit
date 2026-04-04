@@ -104,6 +104,22 @@ pub struct Args {
     /// Number of context lines in patches.
     #[arg(short = 'U', value_name = "N")]
     pub context_lines: Option<usize>,
+
+    /// Do not use a/b/ prefix in diff output.
+    #[arg(long = "no-prefix")]
+    pub no_prefix: bool,
+
+    /// Detect renames.
+    #[arg(short = 'M')]
+    pub detect_renames: bool,
+
+    /// Use numbered filenames (0001, 0002, ...) instead of subject-based names.
+    #[arg(long = "numbered-files")]
+    pub numbered_files: bool,
+
+    /// Limit number of patches (e.g., -1 for only the last commit).
+    #[arg(short = '1', hide = true)]
+    pub last_one: bool,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.

@@ -172,22 +172,44 @@ pub fn run(args: Args) -> Result<()> {
         return run_no_walk(&repo, &args);
     }
 
-    // Determine starting points
-    let start_oids = if args.all {
-        collect_all_ref_oids(&repo.git_dir)?
+    // Determine starting points and excluded commits.
+    // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
+    // ancestors" — standard git revision range syntax.
+    let (start_oids, exclude_oids) = if args.all {
+        (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
     } else if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
-            Some(oid) => vec![*oid],
+            Some(oid) => (vec![*oid], Vec::new()),
             None => return Ok(()), // Unborn branch — nothing to show
         }
     } else {
         let mut oids = Vec::new();
+        let mut excludes = Vec::new();
         for rev in &args.revisions {
-            let oid = resolve_revision(&repo, rev)?;
-            oids.push(oid);
+            if let Some(stripped) = rev.strip_prefix('^') {
+                let oid = resolve_revision(&repo, stripped)?;
+                excludes.push(oid);
+            } else {
+                let oid = resolve_revision(&repo, rev)?;
+                oids.push(oid);
+            }
         }
-        oids
+        // If only excludes are given with no positive refs, use HEAD
+        if oids.is_empty() {
+            let head = resolve_head(&repo.git_dir)?;
+            if let Some(oid) = head.oid() {
+                oids.push(*oid);
+            }
+        }
+        (oids, excludes)
+    };
+
+    // Pre-compute the set of OIDs reachable from excluded refs.
+    let excluded_set = if exclude_oids.is_empty() {
+        HashSet::new()
+    } else {
+        collect_reachable(&repo.odb, &exclude_oids)?
     };
 
     // Build source map for --source
@@ -265,6 +287,7 @@ pub fn run(args: Args) -> Result<()> {
         args.no_merges,
         args.merges,
         effective_pathspecs,
+        &excluded_set,
     )?;
 
     // Apply --follow: filter commits and track renames
@@ -634,6 +657,27 @@ struct CommitInfo {
 }
 
 /// Walk the commit graph in reverse chronological order.
+/// Collect all OIDs reachable from the given starting points.
+fn collect_reachable(odb: &Odb, starts: &[ObjectId]) -> Result<HashSet<ObjectId>> {
+    let mut visited = HashSet::new();
+    let mut queue: Vec<ObjectId> = starts.to_vec();
+    while let Some(oid) = queue.pop() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if let Ok(obj) = odb.read(&oid) {
+            if let Ok(commit) = parse_commit(&obj.data) {
+                for parent in &commit.parents {
+                    if !visited.contains(parent) {
+                        queue.push(*parent);
+                    }
+                }
+            }
+        }
+    }
+    Ok(visited)
+}
+
 fn walk_commits(
     odb: &Odb,
     git_dir: &Path,
@@ -647,6 +691,7 @@ fn walk_commits(
     no_merges: bool,
     merges_only: bool,
     pathspecs: &[String],
+    excluded: &HashSet<ObjectId>,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
     // Short-circuit: if max_count is explicitly 0, return nothing.
     if max_count == Some(0) {
@@ -655,7 +700,7 @@ fn walk_commits(
 
     let shallow_boundaries = load_shallow_boundaries(git_dir);
 
-    let mut visited = HashSet::new();
+    let mut visited: HashSet<ObjectId> = excluded.clone();
     let mut queue: Vec<ObjectId> = start.to_vec();
     let mut result = Vec::new();
     let mut skipped = 0;

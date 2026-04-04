@@ -147,6 +147,11 @@ test_tick () {
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
 }
 
+# Stub for git test infrastructure function (no-op unless TEST_DEBUG is set)
+test_debug () {
+	test -n "$TEST_DEBUG" && eval "$@" || true
+}
+
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
 XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
