@@ -16,6 +16,7 @@ use time::{format_description, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 
 /// Arguments for `grit commit-tree`.
 #[derive(Debug, ClapArgs)]
@@ -214,6 +215,10 @@ fn local_tz_string() -> String {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    // Try full rev-parse first (handles HEAD^{tree}, tags, etc.)
+    if let Ok(oid) = resolve_revision(repo, s) {
+        return Ok(oid);
+    }
     if let Ok(oid) = s.parse::<ObjectId>() {
         return Ok(oid);
     }
