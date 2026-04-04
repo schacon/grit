@@ -1,5 +1,6 @@
 # Shell library sourced instead of ./test-lib.sh by tests that need
-# to run under Bash; primarily intended for tests of the prompt script.
+# to run under Bash; primarily intended for tests of the completion
+# script.
 
 if test -n "$BASH" && test -z "$POSIXLY_CORRECT"
 then

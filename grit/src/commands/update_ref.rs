@@ -207,6 +207,13 @@ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
     if let Ok(oid) = resolve_ref(&repo.git_dir, s) {
         return Ok(oid);
     }
+    // Try DWIM-style resolution: refs/heads/<s>, refs/tags/<s>, refs/remotes/<s>
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        let full = format!("{prefix}{s}");
+        if let Ok(oid) = resolve_ref(&repo.git_dir, &full) {
+            return Ok(oid);
+        }
+    }
     bail!("not a valid object name: '{s}'")
 }
 

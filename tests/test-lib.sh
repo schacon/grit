@@ -413,14 +413,25 @@ test_line_count () {
 test_must_be_empty () { test ! -s "$1"; }
 
 test_have_prereq () {
-	case "$1" in
+	local _p="$1"
+	# Handle negation: !PREREQ means "PREREQ is NOT set"
+	if test "${_p#!}" != "$_p"; then
+		local _neg="${_p#!}"
+		! test_have_prereq "$_neg"
+		return $?
+	fi
+	case "$_p" in
 	POSIXPERM) return 0 ;;
 	SYMLINKS)  return 0 ;;
 	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; return 1 ;;
 	SANITY)    return 0 ;;
+	MINGW)     return 1 ;;  # Not on Windows
+	CYGWIN)    return 1 ;;  # Not on Cygwin
+	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
 	*)
 		# Check dynamic prereqs set by test_set_prereq
-		eval "test \"\${_prereq_$1:-}\" = set"
+		local _var="_prereq_${_p}"
+		eval "test \"\${${_var}:-}\" = set"
 		return $?
 		;;
 	esac
@@ -495,12 +506,32 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local file="$1.t"
-	printf '%s' "${2-$1}" >"$file"
-	git add "$file"
-	test_tick
-	git commit -q -m "$1"
-	git tag "$1"
+	local notick= signoff= indir= tag=yes message= file= contents=
+	while test $# != 0
+	do
+		case "$1" in
+		--notick) notick=yes; shift ;;
+		--signoff) signoff="$1"; shift ;;
+		--no-tag) tag=; shift ;;
+		-C) indir="$2"; shift 2 ;;
+		*) break ;;
+		esac
+	done
+	message="${1:?test_commit}" && shift
+	file="${1:-$message.t}" && shift || true
+	contents="${1:-$message}" && shift || true
+	(
+		test -n "$indir" && cd "$indir"
+		printf '%s' "$contents" >"$file" &&
+		git add "$file" &&
+		if test -z "$notick"; then
+			test_tick
+		fi &&
+		git commit -q ${signoff:+$signoff} -m "$message" &&
+		if test -n "$tag"; then
+			git tag "$message"
+		fi
+	)
 }
 
 # Evaluate $2 and check $1 == stdout.

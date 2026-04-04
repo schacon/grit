@@ -86,6 +86,10 @@ pub struct Args {
     #[arg(long = "directory")]
     pub directory: bool,
 
+    /// Do not list empty directories (only meaningful with --directory).
+    #[arg(long = "no-empty-directory")]
+    pub no_empty_directory: bool,
+
     /// Show line-ending information for files.
     #[arg(long)]
     pub eol: bool,
