@@ -7,10 +7,11 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
 . ./test-lib.sh
 
-# Submodule ref store tests require test-tool ref-store
-# which is not available in grit.
+# The upstream test uses test-tool ref-store which is a C test helper
+# not available in grit. Instead, test submodule ref operations via
+# normal git commands.
 
-test_expect_success 'setup' '
+test_expect_success 'setup submodule' '
 	git init sub &&
 	(
 		cd sub &&
@@ -20,8 +21,17 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'submodule ref-store tests (requires test-tool ref-store)' '
-	test-tool ref-store submodule:sub pack-refs 3
+test_expect_success 'submodule refs are accessible' '
+	git -C sub show-ref >actual &&
+	grep refs/heads/main actual &&
+	grep refs/heads/new-main actual &&
+	grep refs/tags/new-tag actual
+'
+
+test_expect_success 'submodule pack-refs works' '
+	git -C sub pack-refs --all &&
+	git -C sub show-ref >actual &&
+	grep refs/heads/main actual
 '
 
 test_done

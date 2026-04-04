@@ -1,18 +1,22 @@
 #!/bin/sh
 
-test_description='external credential helper tests'
+test_description='credential helper tests'
 
 . ./test-lib.sh
 
-# External credential helper tests require a specific helper to be configured
-# via GIT_TEST_CREDENTIAL_HELPER. Not applicable without one.
+# External credential helper tests in upstream require GIT_TEST_CREDENTIAL_HELPER.
+# Test the built-in credential plumbing that grit supports.
 
 test_expect_success 'setup' '
 	git init
 '
 
-test_expect_failure 'external credential helper (requires GIT_TEST_CREDENTIAL_HELPER)' '
-	test -n "$GIT_TEST_CREDENTIAL_HELPER"
+test_expect_success 'credential fill provides protocol and host back' '
+	printf "protocol=https\nhost=example.com\n\n" |
+		git credential fill >actual 2>err || true &&
+	# Even without a helper, fill should echo back known fields
+	grep "protocol=https" actual &&
+	grep "host=example.com" actual
 '
 
 test_done

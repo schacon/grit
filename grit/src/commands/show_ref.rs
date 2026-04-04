@@ -266,11 +266,36 @@ fn collect_all_refs(git_dir: &Path) -> Result<BTreeMap<String, ObjectId>> {
     }
 
     let mut refs = BTreeMap::new();
+
+    // For worktrees, collect from the common (shared) dir first, then overlay
+    // worktree-local refs on top.
+    let common_dir = worktree_common_dir(git_dir);
+    if let Some(ref cdir) = common_dir {
+        if cdir.as_path() != git_dir {
+            collect_loose_refs(git_dir, &cdir.join("refs"), "refs", &mut refs)?;
+            for (name, oid) in parse_packed_refs(cdir)? {
+                refs.entry(name).or_insert(oid);
+            }
+        }
+    }
+
     collect_loose_refs(git_dir, &git_dir.join("refs"), "refs", &mut refs)?;
     for (name, oid) in parse_packed_refs(git_dir)? {
         refs.entry(name).or_insert(oid);
     }
     Ok(refs)
+}
+
+/// Determine the common git directory for a possibly-worktree git dir.
+fn worktree_common_dir(git_dir: &Path) -> Option<std::path::PathBuf> {
+    let raw = fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let rel = raw.trim();
+    let path = if std::path::Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().ok()
 }
 
 fn collect_loose_refs(
