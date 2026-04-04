@@ -252,6 +252,11 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --list-cmds=<categories>
+        if let Some(val) = arg.strip_prefix("--list-cmds=") {
+            return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
+        }
+
         // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
         if arg == "--version" || arg == "-v" || arg == "-V" {
             subcmd = Some("version".to_owned());
@@ -456,6 +461,75 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
 
     println!("{}", options.join(" "));
     Ok(())
+}
+
+/// Handle --list-cmds=<categories> for bash completion.
+///
+/// Categories are comma-separated. Supported:
+/// - list-mainporcelain: high-level user commands
+/// - list-complete: other useful commands
+/// - list-all: all commands (porcelain + plumbing)
+/// - config: commands from completion.commands config
+fn print_list_cmds(categories: &str) {
+    let mainporcelain = [
+        "add", "am", "archive", "bisect", "branch", "bundle", "checkout",
+        "cherry-pick", "clean", "clone", "commit", "describe", "diff",
+        "fetch", "format-patch", "gc", "grep", "init", "log", "merge",
+        "mv", "notes", "pull", "push", "range-diff", "rebase", "reset",
+        "restore", "revert", "rm", "shortlog", "show", "sparse-checkout",
+        "stash", "status", "submodule", "switch", "tag", "worktree",
+    ];
+    let complete = [
+        "apply", "blame", "cherry", "config", "difftool", "fsck", "help",
+        "mergetool", "prune", "reflog", "remote", "repack", "replace",
+        "send-email", "show-branch", "whatchanged",
+    ];
+    let plumbing = [
+        "cat-file", "check-attr", "check-ignore", "check-ref-format",
+        "checkout-index", "commit-graph", "commit-tree", "count-objects",
+        "diff-files", "diff-index", "diff-tree", "for-each-ref",
+        "hash-object", "index-pack", "ls-files", "ls-remote", "ls-tree",
+        "merge-base", "merge-file", "mktag", "mktree", "multi-pack-index",
+        "name-rev", "pack-objects", "pack-refs", "read-tree", "rev-list",
+        "rev-parse", "show-ref", "symbolic-ref", "update-index",
+        "update-ref", "verify-commit", "verify-pack", "verify-tag",
+        "write-tree",
+    ];
+
+    let mut result: Vec<&str> = Vec::new();
+    for cat in categories.split(',') {
+        match cat {
+            "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
+            "list-complete" => result.extend_from_slice(&complete),
+            "list-all" | "builtins" => {
+                result.extend_from_slice(&mainporcelain);
+                result.extend_from_slice(&complete);
+                result.extend_from_slice(&plumbing);
+            }
+            "config" => {
+                // Check completion.commands config for additions/removals
+                if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+                    if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+                        if let Some(val) = config.get("completion.commands") {
+                            for token in val.split_whitespace() {
+                                if let Some(cmd) = token.strip_prefix('-') {
+                                    result.retain(|c| *c != cmd);
+                                } else {
+                                    // Can't push a &str from config into &str vec, just print separately
+                                    println!("{token}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for cmd in &result {
+        println!("{cmd}");
+    }
 }
 
 /// Preprocess diff arguments: expand `-U<N>` to `--unified=<N>` so that
@@ -724,6 +798,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
+        "__list_cmds" => {
+            let categories = rest.first().map(|s| s.as_str()).unwrap_or("");
+            print_list_cmds(categories);
+            Ok(())
+        }
         _ => {
             let commands = KNOWN_COMMANDS;
             // Find similar commands using edit distance

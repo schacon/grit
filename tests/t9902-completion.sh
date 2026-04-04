@@ -2668,7 +2668,7 @@ test_expect_failure 'git --help completion' '
 	test_completion "git --help core" "core-tutorial "
 '
 
-test_expect_failure 'completion.commands removes multiple commands' '
+test_expect_success 'completion.commands removes multiple commands' '
 	test_config completion.commands "-cherry -mergetool" &&
 	git --list-cmds=list-mainporcelain,list-complete,config >out &&
 	! grep -E "^(cherry|mergetool)$" out
@@ -3187,7 +3187,7 @@ test_expect_success 'option aliases are shown with GIT_COMPLETION_SHOW_ALL' '
 	)
 '
 
-test_expect_failure 'plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS' '
+test_expect_success 'plumbing commands are excluded without GIT_COMPLETION_SHOW_ALL_COMMANDS' '
 	(
 		. "$TEST_DIRECTORY/contrib/completion/git-completion.bash" &&
 		sane_unset GIT_TESTING_PORCELAIN_COMMAND_LIST &&
