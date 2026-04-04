@@ -36,7 +36,7 @@ test_expect_success 'diff --cached --numstat for simple text change' '
 test_expect_success 'commit text change and add binary file' '
 	(cd repo &&
 		grit commit -m "modify text" &&
-		printf '\000\001\002\377' >binary.dat &&
+		printf "\000\001\002\377" >binary.dat &&
 		grit add binary.dat &&
 		grit commit -m "add binary"
 	)
@@ -44,7 +44,7 @@ test_expect_success 'commit text change and add binary file' '
 
 test_expect_success 'diff --cached --stat for new binary' '
 	(cd repo &&
-		printf '\000\001\002\376' >binary.dat &&
+		printf "\000\001\002\376" >binary.dat &&
 		grit add binary.dat &&
 		grit diff --cached --stat >../actual
 	) &&
@@ -71,7 +71,7 @@ test_expect_success 'commit binary change' '
 test_expect_success 'diff --cached --stat with both text and binary changes' '
 	(cd repo &&
 		printf "line1\nnew\nline3\n" >text.txt &&
-		printf '\000\003' >binary.dat &&
+		printf "\000\003" >binary.dat &&
 		grit add text.txt binary.dat &&
 		grit diff --cached --stat >../actual
 	) &&
@@ -163,7 +163,7 @@ test_expect_success 'commit deletion' '
 
 test_expect_success 'diff --cached --stat for new binary file' '
 	(cd repo &&
-		printf '\377\376\375' >new_bin.dat &&
+		printf "\377\376\375" >new_bin.dat &&
 		grit add new_bin.dat &&
 		grit diff --cached --stat >../actual
 	) &&

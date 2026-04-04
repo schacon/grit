@@ -713,39 +713,30 @@ fn write_patch_entry(
         _ => {}
     }
 
-    let z = zero_oid();
-    let old_content = if entry.old_oid == z {
-        String::new()
-    } else {
-        match odb.read(&entry.old_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => String::new(),
-        }
-    };
-    let new_content = if entry.new_oid == z && entry.status == DiffStatus::Deleted {
-        String::new()
-    } else if entry.new_oid == z {
+    // Read raw bytes for binary detection
+    let old_raw = read_blob_raw(odb, &entry.old_oid);
+    let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
         // Zero OID for non-deleted entries means worktree content
         if let Some(wt) = work_tree {
             let path = entry.new_path.as_deref().unwrap_or(new_path);
-            fs::read_to_string(wt.join(path)).unwrap_or_default()
+            fs::read(wt.join(path)).unwrap_or_default()
         } else {
-            String::new()
+            Vec::new()
         }
     } else {
-        match odb.read(&entry.new_oid) {
-            Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-            Err(_) => {
-                // Fall back to reading from worktree (for non-cached diffs)
-                if let Some(wt) = work_tree {
-                    let path = entry.new_path.as_deref().unwrap_or(new_path);
-                    fs::read_to_string(wt.join(path)).unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            }
-        }
+        read_blob_raw(odb, &entry.new_oid)
     };
+
+    // Check for binary content
+    if is_binary(&old_raw) || is_binary(&new_raw) {
+        let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
+        let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
+        writeln!(out, "Binary files a/{display_old} and b/{display_new} differ")?;
+        return Ok(());
+    }
+
+    let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+    let new_content = String::from_utf8_lossy(&new_raw).into_owned();
 
     let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
     let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
@@ -756,43 +747,60 @@ fn write_patch_entry(
     Ok(())
 }
 
+/// Check whether data looks binary (contains NUL in first 8 KiB).
+fn is_binary(data: &[u8]) -> bool {
+    let check_len = data.len().min(8192);
+    data[..check_len].contains(&0)
+}
+
+/// Read raw blob bytes, returning empty vec for zero OID.
+fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
+    if *oid == zero_oid() {
+        Vec::new()
+    } else {
+        odb.read(oid).map(|o| o.data).unwrap_or_default()
+    }
+}
+
 /// Write --stat output for diff-index.
 fn write_diff_index_stat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
-    let z = zero_oid();
-    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
+    let mut file_stats: Vec<(&str, usize, usize, bool)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
 
     for entry in entries {
-        let old_content = if entry.old_oid == z {
-            String::new()
+        let old_raw = read_blob_raw(odb, &entry.old_oid);
+        let new_raw = read_blob_raw(odb, &entry.new_oid);
+        let binary = is_binary(&old_raw) || is_binary(&new_raw);
+        let (ins, del) = if binary {
+            (0, 0)
         } else {
-            odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            count_line_changes(&old_content, &new_content)
         };
-        let new_content = if entry.new_oid == z {
-            String::new()
-        } else {
-            odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
-        };
-        let (ins, del) = count_line_changes(&old_content, &new_content);
-        file_stats.push((entry.path(), ins, del));
+        file_stats.push((entry.path(), ins, del, binary));
         total_ins += ins;
         total_del += del;
         files_changed += 1;
     }
 
-    let max_path_len = file_stats.iter().map(|(p, _, _)| p.len()).max().unwrap_or(0);
-    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
+    let max_path_len = file_stats.iter().map(|(p, _, _, _)| p.len()).max().unwrap_or(0);
+    let max_count = file_stats.iter().map(|(_, i, d, _)| i + d).max().unwrap_or(0);
     let count_width = format!("{}", max_count).len();
 
-    for (path, ins, del) in &file_stats {
-        let total = ins + del;
-        let bar_len = if max_count > 0 { (total * 40) / max_count.max(1) } else { 0 };
-        let plus_len = if total > 0 { (ins * bar_len) / total.max(1) } else { 0 };
-        let minus_len = bar_len.saturating_sub(plus_len);
-        let bar: String = "+".repeat(plus_len) + &"-".repeat(minus_len);
-        println!(" {:<width$} | {:>cw$} {}", path, total, bar, width = max_path_len, cw = count_width);
+    for (path, ins, del, binary) in &file_stats {
+        if *binary {
+            println!(" {:<width$} | Bin", path, width = max_path_len);
+        } else {
+            let total = ins + del;
+            let bar_len = if max_count > 0 { (total * 40) / max_count.max(1) } else { 0 };
+            let plus_len = if total > 0 { (ins * bar_len) / total.max(1) } else { 0 };
+            let minus_len = bar_len.saturating_sub(plus_len);
+            let bar: String = "+".repeat(plus_len) + &"-".repeat(minus_len);
+            println!(" {:<width$} | {:>cw$} {}", path, total, bar, width = max_path_len, cw = count_width);
+        }
     }
 
     let mut summary = format!(" {} file{} changed", files_changed, if files_changed == 1 { "" } else { "s" });
@@ -808,20 +816,17 @@ fn write_diff_index_stat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
 
 /// Write --numstat output for diff-index.
 fn write_diff_index_numstat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
-    let z = zero_oid();
     for entry in entries {
-        let old_content = if entry.old_oid == z {
-            String::new()
+        let old_raw = read_blob_raw(odb, &entry.old_oid);
+        let new_raw = read_blob_raw(odb, &entry.new_oid);
+        if is_binary(&old_raw) || is_binary(&new_raw) {
+            println!("-\t-\t{}", entry.path());
         } else {
-            odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
-        };
-        let new_content = if entry.new_oid == z {
-            String::new()
-        } else {
-            odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
-        };
-        let (ins, del) = count_line_changes(&old_content, &new_content);
-        println!("{}\t{}\t{}", ins, del, entry.path());
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_line_changes(&old_content, &new_content);
+            println!("{}\t{}\t{}", ins, del, entry.path());
+        }
     }
     Ok(())
 }
