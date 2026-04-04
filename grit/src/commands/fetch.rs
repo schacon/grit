@@ -8,6 +8,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigSet};
+use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -177,10 +178,16 @@ fn fetch_remote(
         // e.g. "main:refs/heads/from-one" means: fetch remote's refs/heads/main,
         // store locally as refs/heads/from-one.
         for spec in cli_refspecs {
-            let (src, dst) = if let Some(idx) = spec.find(':') {
-                (spec[..idx].to_owned(), spec[idx + 1..].to_owned())
+            // Check for force prefix '+'
+            let (force, spec_clean) = if spec.starts_with('+') {
+                (true, &spec[1..])
             } else {
-                (spec.clone(), String::new())
+                (false, spec.as_str())
+            };
+            let (src, dst) = if let Some(idx) = spec_clean.find(':') {
+                (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+            } else {
+                (spec_clean.to_owned(), String::new())
             };
 
             // Normalize source: if it doesn't start with refs/, assume refs/heads/
@@ -210,6 +217,18 @@ fn fetch_remote(
                 };
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
+
+                // Check fast-forward: reject non-ff updates unless forced
+                if let Some(ref old) = old_oid {
+                    if old != &remote_oid && !force {
+                        let is_ff = merge_base::is_ancestor(&remote_repo, old.clone(), remote_oid.clone())
+                            .unwrap_or(false);
+                        if !is_ff {
+                            eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
+                            bail!("cannot fast-forward ref '{local_ref}'");
+                        }
+                    }
+                }
 
                 if old_oid.as_ref() != Some(&remote_oid) {
                     if !has_updates && !args.quiet {
