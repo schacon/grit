@@ -296,13 +296,7 @@ pub fn run(args: Args) -> Result<()> {
         walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
 
-        // Collapse to directories if --directory
-        let untracked = if args.directory {
-            collapse_to_directories(&untracked)
-        } else {
-            untracked
-        };
-
+        let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
                 let idx = pathspec_filter.iter().position(|spec| spec.matches(path_bytes));
@@ -337,7 +331,19 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
 
+            // Make path relative to cwd before collecting
             let display = display_path_from_cwd(path_bytes, &cwd_prefix);
+            filtered_untracked.push(display.to_vec());
+        }
+
+        // Collapse to directories if --directory (after making paths cwd-relative)
+        let output_paths = if args.directory {
+            collapse_to_directories(&filtered_untracked)
+        } else {
+            filtered_untracked
+        };
+
+        for display in &output_paths {
             let name = String::from_utf8_lossy(display);
             if args.show_tag {
                 write!(out, "? {name}")?;
