@@ -361,8 +361,20 @@ fn read_worktree_info_fast(
     let _ = repo;
 
     // Fast path: if stat info matches the index, file is unchanged.
+    // But also check if the index mode differs from the worktree mode
+    // (e.g., after git update-index --chmod=+x).
     if meta.file_type().is_file() && stat_matches(index_entry, &meta) {
-        return Ok(WorktreeStatus::Unchanged);
+        let wt_mode = if meta.permissions().mode() & 0o111 != 0 {
+            MODE_EXECUTABLE
+        } else {
+            MODE_REGULAR
+        };
+        let idx_mode = canonicalize_mode(index_entry.mode);
+        if wt_mode == idx_mode {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        // Mode differs — report as modified with same OID.
+        return Ok(WorktreeStatus::Modified(wt_mode, index_entry.oid));
     }
 
     if meta.file_type().is_symlink() {

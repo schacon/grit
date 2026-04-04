@@ -512,7 +512,25 @@ pub fn diff_index_to_worktree(
             Ok(meta) => {
                 // Check if the file has changed using stat data first
                 if stat_matches(ie, &meta) {
-                    continue; // Fast path: stat data matches, assume unchanged
+                    // Stat data matches content-wise, but also check mode.
+                    // The index mode might have been changed via --chmod=+x.
+                    let worktree_mode = mode_from_metadata(&meta);
+                    if worktree_mode == ie.mode {
+                        continue; // Fast path: stat+mode match, assume unchanged
+                    }
+                    // Mode differs — emit a mode-only change entry.
+                    let path_owned = path_str_ref.to_owned();
+                    result.push(DiffEntry {
+                        status: DiffStatus::Modified,
+                        old_path: Some(path_owned.clone()),
+                        new_path: Some(path_owned),
+                        old_mode: format_mode(ie.mode),
+                        new_mode: format_mode(worktree_mode),
+                        old_oid: ie.oid,
+                        new_oid: ie.oid,
+                        score: None,
+                    });
+                    continue;
                 }
 
                 // Stat differs — hash the file to check actual content
