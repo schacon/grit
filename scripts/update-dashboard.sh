@@ -15,4 +15,7 @@ python3 "$SCRIPT_DIR/subscripts/generate-progress-html.py"
 echo "==> Generating progress badge SVG..."
 python3 "$SCRIPT_DIR/subscripts/generate-progress-svg.py"
 
+echo "==> Generating development timeline..."
+bash "$SCRIPT_DIR/timeline.sh"
+
 echo "==> Dashboard updated."
