@@ -617,17 +617,24 @@ fn add_path(
             }
         }
     } else {
-        // Check ignore patterns for explicitly named files (like real git).
-        if let Some(ref mut matcher) = ignore_matcher {
-            let (is_ignored, _match_info) =
-                matcher.check_path(repo, Some(&*index), path, false)
-                    .map_err(|e| AddPathError::Other(e.into()))?;
-            if is_ignored {
-                return Err(AddPathError::Ignored(format!(
-                    "The following paths are ignored by one of your .gitignore files:\n\
-                     {path}\n\
-                     Use -f if you really want to add them."
-                )));
+        // Allow adding ignored files when resolving merge conflicts (unmerged entries).
+        let path_bytes = path.as_bytes();
+        let has_unmerged = (1..=3).any(|stage| index.get(path_bytes, stage).is_some());
+
+        // Check ignore patterns for explicitly named files (like real git),
+        // but skip the check if the file has unmerged entries (conflict resolution).
+        if !has_unmerged {
+            if let Some(ref mut matcher) = ignore_matcher {
+                let (is_ignored, _match_info) =
+                    matcher.check_path(repo, Some(&*index), path, false)
+                        .map_err(|e| AddPathError::Other(e.into()))?;
+                if is_ignored {
+                    return Err(AddPathError::Ignored(format!(
+                        "The following paths are ignored by one of your .gitignore files:\n\
+                         {path}\n\
+                         Use -f if you really want to add them."
+                    )));
+                }
             }
         }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
