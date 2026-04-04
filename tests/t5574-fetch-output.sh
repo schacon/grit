@@ -1,16 +1,224 @@
 #!/bin/sh
 # Ported from git/t/t5574-fetch-output.sh
-# git fetch output format
 
 test_description='git fetch output format'
 
-cd "$(dirname "$0")" || exit 1
+GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
+export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+test_expect_success 'setup' '
+	git init &&
+	test_commit initial
+'
 
-test_expect_failure 'HTTP transport (requires httpd) — not yet ported' '
-	false
+test_expect_failure 'fetch with invalid output format configuration (grit: fetch.output config not supported)' '
+	test_when_finished "rm -rf clone" &&
+	git clone . clone &&
+
+	test_must_fail git -C clone -c fetch.output fetch origin 2>actual.err &&
+	cat >expect <<-EOF &&
+	error: missing value for ${SQ}fetch.output${SQ}
+	fatal: unable to parse ${SQ}fetch.output${SQ} from command-line config
+	EOF
+	test_cmp expect actual.err &&
+
+	test_must_fail git -C clone -c fetch.output= fetch origin 2>actual.err &&
+	cat >expect <<-EOF &&
+	fatal: invalid value for ${SQ}fetch.output${SQ}: ${SQ}${SQ}
+	EOF
+	test_cmp expect actual.err &&
+
+	test_must_fail git -C clone -c fetch.output=garbage fetch origin 2>actual.err &&
+	cat >expect <<-EOF &&
+	fatal: invalid value for ${SQ}fetch.output${SQ}: ${SQ}garbage${SQ}
+	EOF
+	test_cmp expect actual.err
+'
+
+test_expect_failure 'fetch aligned output (grit: fetch.output=full not supported)' '
+	git clone . full-output &&
+	test_commit looooooooooooong-tag &&
+	(
+		cd full-output &&
+		git -c fetch.output=full fetch origin >actual 2>&1 &&
+		grep -e "->" actual | cut -c 22- >../actual
+	) &&
+	cat >expect <<-\EOF &&
+	main                 -> origin/main
+	looooooooooooong-tag -> looooooooooooong-tag
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_failure 'fetch compact output (grit: fetch.output=compact not supported)' '
+	git clone . compact &&
+	test_commit extraaa &&
+	(
+		cd compact &&
+		git -c fetch.output=compact fetch origin >actual 2>&1 &&
+		grep -e "->" actual | cut -c 22- >../actual
+	) &&
+	cat >expect <<-\EOF &&
+	main       -> origin/*
+	extraaa    -> *
+	EOF
+	test_cmp expect actual
+'
+
+test_expect_success 'setup for fetch porcelain output' '
+	test_commit commit-for-porcelain-output &&
+	MAIN_OLD=$(git rev-parse HEAD) &&
+	git branch "fast-forward" &&
+	git branch "deleted-branch" &&
+	git checkout -b force-updated &&
+	echo force-update-old >force-update-old.t &&
+	git add force-update-old.t &&
+	test_tick &&
+	git commit -q -m force-update-old &&
+	FORCE_UPDATED_OLD=$(git rev-parse HEAD) &&
+	git checkout main &&
+
+	git clone --mirror . preseed.git &&
+
+	git branch new-branch &&
+	git branch -d deleted-branch &&
+	git checkout fast-forward &&
+	echo fast-forward-new >fast-forward-new.t &&
+	git add fast-forward-new.t &&
+	test_tick &&
+	git commit -q -m fast-forward-new &&
+	FAST_FORWARD_NEW=$(git rev-parse HEAD) &&
+	git checkout force-updated &&
+	git reset --hard HEAD~ &&
+	echo force-update-new >force-update-new.t &&
+	git add force-update-new.t &&
+	test_tick &&
+	git commit -q -m force-update-new &&
+	FORCE_UPDATED_NEW=$(git rev-parse HEAD)
+'
+
+for opt in "" "--atomic"
+do
+	test_expect_failure "fetch porcelain output ${opt:+(atomic)} (grit: fetch --porcelain not supported)" '
+		test_when_finished "rm -rf porcelain" &&
+
+		refspecs="refs/heads/*:refs/unforced/* +refs/heads/*:refs/forced/*" &&
+		git clone preseed.git porcelain &&
+		git -C porcelain fetch origin $opt $refspecs &&
+
+		cat >expect <<-EOF &&
+		- $MAIN_OLD $ZERO_OID refs/forced/deleted-branch
+		- $MAIN_OLD $ZERO_OID refs/unforced/deleted-branch
+		  $MAIN_OLD $FAST_FORWARD_NEW refs/unforced/fast-forward
+		! $FORCE_UPDATED_OLD $FORCE_UPDATED_NEW refs/unforced/force-updated
+		* $ZERO_OID $MAIN_OLD refs/unforced/new-branch
+		  $MAIN_OLD $FAST_FORWARD_NEW refs/forced/fast-forward
+		+ $FORCE_UPDATED_OLD $FORCE_UPDATED_NEW refs/forced/force-updated
+		* $ZERO_OID $MAIN_OLD refs/forced/new-branch
+		  $MAIN_OLD $FAST_FORWARD_NEW refs/remotes/origin/fast-forward
+		+ $FORCE_UPDATED_OLD $FORCE_UPDATED_NEW refs/remotes/origin/force-updated
+		* $ZERO_OID $MAIN_OLD refs/remotes/origin/new-branch
+		EOF
+
+		git -C porcelain remote set-url origin .. &&
+
+		test_must_fail git -C porcelain fetch $opt \
+			--porcelain --dry-run --prune origin $refspecs >actual &&
+		test_cmp expect actual &&
+
+		test_must_fail git -C porcelain fetch $opt \
+			--porcelain --prune origin $refspecs >actual 2>stderr &&
+		test_cmp expect actual &&
+		test_must_be_empty stderr
+	'
+done
+
+test_expect_failure 'fetch porcelain with multiple remotes (grit: fetch --porcelain not supported)' '
+	test_when_finished "rm -rf porcelain" &&
+
+	git checkout -b multiple-remotes &&
+	git clone . porcelain &&
+	git -C porcelain remote add second-remote "$PWD" &&
+	git -C porcelain fetch second-remote &&
+
+	echo multi-commit >multi-commit.t &&
+	git add multi-commit.t &&
+	test_tick &&
+	git commit -q -m multi-commit &&
+	old_commit=$(git rev-parse HEAD~) &&
+	new_commit=$(git rev-parse HEAD) &&
+
+	cat >expect <<-EOF &&
+	  $old_commit $new_commit refs/remotes/origin/multiple-remotes
+	  $old_commit $new_commit refs/remotes/second-remote/multiple-remotes
+	EOF
+
+	git -C porcelain fetch --porcelain --all >actual 2>stderr &&
+	test_cmp expect actual &&
+	test_must_be_empty stderr
+'
+
+test_expect_failure 'fetch porcelain refuses to work with submodules (grit: fetch --porcelain not supported)' '
+	test_when_finished "rm -rf porcelain" &&
+
+	cat >expect <<-EOF &&
+	fatal: options ${SQ}--porcelain${SQ} and ${SQ}--recurse-submodules${SQ} cannot be used together
+	EOF
+
+	git init porcelain &&
+	test_must_fail git -C porcelain fetch --porcelain --recurse-submodules=yes 2>stderr &&
+	test_cmp expect stderr &&
+
+	test_must_fail git -C porcelain fetch --porcelain --recurse-submodules=on-demand 2>stderr &&
+	test_cmp expect stderr
+'
+
+test_expect_failure 'fetch porcelain overrides fetch.output config (grit: fetch --porcelain not supported)' '
+	test_when_finished "rm -rf porcelain" &&
+
+	git checkout -b config-override &&
+	git clone . porcelain &&
+	echo new-commit >new-commit.t &&
+	git add new-commit.t &&
+	test_tick &&
+	git commit -q -m new-commit &&
+	git tag new-commit &&
+	old_commit=$(git rev-parse HEAD~) &&
+	new_commit=$(git rev-parse HEAD) &&
+
+	cat >expect <<-EOF &&
+	  $old_commit $new_commit refs/remotes/origin/config-override
+	* $ZERO_OID $new_commit refs/tags/new-commit
+	EOF
+
+	git -C porcelain -c fetch.output=compact fetch --porcelain >stdout 2>stderr &&
+	test_must_be_empty stderr &&
+	test_cmp expect stdout
+'
+
+test_expect_failure '--no-show-forced-updates (grit: --show-forced-updates not supported)' '
+	mkdir forced-updates &&
+	(
+		cd forced-updates &&
+		git init &&
+		test_commit 1 &&
+		test_commit 2
+	) &&
+	git clone forced-updates forced-update-clone &&
+	git clone forced-updates no-forced-update-clone &&
+	git -C forced-updates reset --hard HEAD~1 &&
+	(
+		cd forced-update-clone &&
+		git fetch --show-forced-updates origin 2>output &&
+		test_grep "(forced update)" output
+	) &&
+	(
+		cd no-forced-update-clone &&
+		git fetch --no-show-forced-updates origin 2>output &&
+		test_grep ! "(forced update)" output
+	)
 '
 
 test_done
