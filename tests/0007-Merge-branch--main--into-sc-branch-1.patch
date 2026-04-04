@@ -1,0 +1,488 @@
+From d3c46e725d53fd063c8a0329a4aa9229a1a10ce7 Mon Sep 17 00:00:00 2001
+From: Scott Chacon <schacon@gmail.com>
+Date: Tue, 31 Mar 2026 20:58:06 -0700
+Subject: [PATCH 7/624] Merge branch 'main' into sc-branch-1
+
+---
+ AGENT.md | 84 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ README.md | 1 -
+ docs/manpage-parity.md | 25 +++++++++++++++++++++++++
+ logs/2026-03-31_2039-phase-9.4-commit-tree-options.md | 25 +++++++++++++++++++++++++
+ plan.md                                               | 54 +++++++++++++++++++++++++++---------------------------
+ progress.md                                           | 28 ++++++++++++++++++++++++++++
+ test-results.md                                       | 22 ++++++++++++++++++++++
+ tests/harness/selected-tests.txt                      | 1 +
+ tests/t1100-commit-tree-options.sh                    | 29 +++++++++++++++++++++--------
+ tests/trash/actual                                    | 1 +
+ tests/trash/bare.git/HEAD                             | 1 +
+ tests/trash/bare.git/config                           | 4 ++++
+ tests/trash/bare.git/description                      | 1 +
+ tests/trash/bare2.git/HEAD                            | 1 +
+ tests/trash/bare2.git/config                          | 4 ++++
+ tests/trash/bare2.git/description                     | 1 +
+ tests/trash/expected                                  | 1 +
+ tests/trash/out                                       | 0
+ tests/trash/tmpl/myfile                               | 1 +
+ 19 files changed, 248 insertions(+), 36 deletions(-)
+
+diff --git a/AGENT.md b/AGENT.md
+index eba69a9..4cb45bd 100644
+--- a/AGENT.md
++++ b/AGENT.md
+@@ -138,4 +138,88 @@ - Do not write or run tests that are not
+ ## Committing and Version Control
+ 
+ - If available, always prefer the `but` (GitButler) cli over `git`. Always load the respective skill.
++||||||| d521bdd
++=======
++7. Update `plan.md` to reflect reality.
++8. Update this file only if you discover durable run/build/test knowledge.
++9. Update the log for this task as you go.
++10. Commit if the increment is coherent and validated.
++11. Immediately continue to the next item unless the repo is truly complete, blocked, unsafe, or user-stopped.
++
++Do not stop just because you reached a nice milestone.
++
++## Completion rule
++
++The loop is only complete when the v1 subcommands are fully implmented, pass all associated tests, and fulfill the documentation.
++
++If stopping, state one exact reason:
++
++- `complete`
++- `blocked`
++- `unsafe`
++- `user-stopped`
++
++## Rust Style and Idioms
++
++- Use traits for behaviour boundaries.
++- Derive `Default` when all fields have sensible defaults.
++- Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
++- **Match on types, never strings.** Only convert to strings at serialization/display boundaries.
++- Prefer `From`/`Into`/`TryFrom`/`TryInto` over manual conversions. Ask before adding manual conversion paths.
++- **Forbidden:** `Mutex<()>` / `Arc<Mutex<()>>` — mutex must guard actual state.
++- Use `anyhow::Result` for app errors, `thiserror` for library errors. Propagate with `?`.
++- **Never `.unwrap()`/`.expect()` in production.** Workspace lints deny these. Use `?`, `ok_or_else`, `unwrap_or_default`, `unwrap_or_else(|e| e.into_inner())` for locks.
++- Prefer `Option<T>` over sentinel values.
++- Use `time` crate (workspace dep) for date/time — no manual epoch math or magic constants like `86400`.
++- Prefer guard clauses (early returns) over nested `if` blocks.
++- Prefer iterators/combinators over manual loops. Use `Cow<'_, str>` when allocation is conditional.
++- **No banner/separator comments.** Do not use decorative divider comments like `// ── Section ───`. Use normal `//` comments or doc comments to explain _why_, not to visually partition files.
++
++## Dependencies
++
++- **Do not use `gix` (gitoxide) or `git2` (libgit2).** This should be a clean reimplementation of Git and not rely on any other existing libraries.
++- You may introduce any other stable Rust libraries that improve the process (such as for SHA1 hashing or command line parsing).
++
++## Architecture and Design
++
++- For code that you create, **always** include doc comments for all public functions, structs, enums, and methods and also document function parameters, return values, and errors.
++- Documentation and comments **must** be kept up-to-date with code changes.
++- Avoid implicitly using the current time like `std::time::SystemTime::now()`, instead pass the current time as argument.
++- Keep public API surfaces small. Use `#[must_use]` where return values matter.
++
++## Library crate layout and public API
++
++The Git-compatible engine should live in a **library crate** (`gust-lib`); the **`gust` binary** should stay a thin layer: parse CLI, open a `Repository` (or equivalent), call library APIs, map `gust_lib::Error` to exit codes and stderr. Agents should implement features in the library first and only wire them through the binary.
++
++### When to use one crate vs several
++
++- **Start with one library crate** plus the binary crate in a workspace unless a split is clearly needed. Prefer **modules** (`objects`, `index`, `refs`, `odb`, `tree`, `worktree`, …) for boundaries before adding more crates.
++- **Split into additional library crates** when there is a stable boundary that yields real benefit: faster incremental builds for huge code, optional `#[cfg(feature = …)]` surfaces, or a subsystem that tests/tools want to depend on without pulling the whole repo stack. Avoid many tiny crates without a strong reason.
++- **Integration tests** and future callers (benchmarks, fuzz targets) should depend on the **library**, not on private modules of the binary.
++
++### What the library API should look like
++
++- **Entry type:** Expose a single primary handle (e.g. `Repository`) obtained by opening a path or an explicit `GitDir` + work tree. Most operations are methods on that type or on focused borrows (`repo.index()`, `repo.odb()`) so callers do not thread global state.
++- **Typed operations, not argv:** Public APIs take enums and newtypes (`ObjectId`, `RefName`, modes, tree entry kinds), not unparsed CLI strings. Parsing human-facing strings belongs at the CLI boundary.
++- **Explicit context:** Time, randomness, and environment (e.g. `HOME`, config discovery) are **arguments or injectable providers**, not hidden `std::env` reads inside deep library calls—so the library stays testable and matches the rule against implicit “now” in core logic.
++- **Errors:** Library uses **`thiserror`** enums with specific variants per failure mode; binary may wrap with `anyhow` for top-level reporting. Do not leak stringly “Git stderr” shapes from the library as the only error type.
++- **IO boundaries:** Prefer passing `&mut dyn Read` / `Write` / `AsRef<Path>` where streams matter; for whole-repo operations, centralize filesystem access enough that tests can use temp dirs or in-memory backends without reimplementing commands.
++- **Visibility:** Default to `pub(crate)` and lift to `pub` only when part of the supported API. Use `#[doc(hidden)]` sparingly for compatibility shims, not to hide a messy surface.
++- **Stability mindset:** Treat the library as a long-lived API: avoid `pub` reexports of entire dependency modules; prefer small, documented extension points (traits) only where Git’s own abstraction demands it.
++
++### Traits and boundaries
++
++- Use **traits** for behaviors that must vary (e.g. object storage backend, ref storage, optional fsmonitor-style hooks) or for non-consuming extension points—not for every struct.
++- Keep “plumbing” operations as **coherent methods** on the appropriate type (`Index::write_tree`, `Odb::hash_object`) rather than a flat bag of free functions, unless a function group is truly stateless.
++
++## Testing
++
++- As tests in `git/t/` are being implemented, copy them to `./tests` and run them from there with `gust` aliased to `git` for the purposes of the tests.
++- Do not write or run tests that are not from this directory.
++
++## Committing and Version Control
++
++- **Do not use GitButler** (`but`) or GitButler MCP for this project. Use plain **`git`** on branch **`main`** only.
++- Commit after every subagent completes its scoped task: stage the files that subagent changed, write a clear message describing that work, then `git commit`.
++- **After every successful commit** that concludes a subagent handoff, run **`git push origin main`** so the remote stays backed up (skip only if `origin` is missing or push is impossible—then say so in the log).
+ - Before committing, always run `cargo fmt` and `cargo clippy --fix --allow-dirty` and ensure no warnings remain.
+diff --git a/README.md b/README.md
+index e702f35..327ff5b 100644
+--- a/README.md
++++ b/README.md
+@@ -41,6 +41,5 @@ 2. **Ported Git shell tests (harness)**
+    ```
+ 
+ 3. **Where results are recorded**
+-
+    - Latest summarized output: [`test-results.md`](test-results.md) (refreshed when plan work updates tests).
+    - Plan checklist: [`plan.md`](plan.md); counts and remaining work: [`progress.md`](progress.md).
+diff --git a/docs/manpage-parity.md b/docs/manpage-parity.md
+new file mode 100644
+index 0000000..955cb68
+--- /dev/null
++++ b/docs/manpage-parity.md
+@@ -0,0 +1,25 @@
++# Manpage/Behavior Parity Checklist (v1 Plumbing)
++
++This is a living checklist for reviewing `gust` against upstream Git docs and observed behavior.  
++Status values are intentionally conservative until reviewed command-by-command.
++
++| Command | Upstream doc path | Behavior areas to verify vs docs/tests | Reviewed vs `gust` |
++|---|---|---|---|
++| `init` | `git/Documentation/git-init.adoc` | Repo directory layout (`.git` / bare), templates, `HEAD` initialization, `--initial-branch`, `--shared`, `--separate-git-dir`, re-init messaging | ☐ Not reviewed |
++| `hash-object` | `git/Documentation/git-hash-object.adoc` | stdin/file input modes, type selection, `-w` write semantics, `--stdin-paths`, `--path`, `--literally`, error handling for invalid paths/types | ☐ Not reviewed |
++| `cat-file` | `git/Documentation/git-cat-file.adoc` | `-t`/`-s`/`-p`/existence modes, object type rendering, tag dereference behavior, batch modes (`--batch*`), malformed object/error output | ☐ Not reviewed |
++| `update-index` | `git/Documentation/git-update-index.adoc` | add/remove/update paths, `--cacheinfo`/`--index-info`, refresh/racy stat handling, flag toggles (`assume-unchanged`, `skip-worktree` as applicable), index format compatibility | ☐ Not reviewed |
++| `ls-files` | `git/Documentation/git-ls-files.adoc` | default index listing, status filters (`-o/-i/-m/-d/-k/-u`), stage output (`-s`), excludes/pathspec behavior, formatting (`-z`, `--format`, `--deduplicate`) | ☐ Not reviewed |
++| `write-tree` | `git/Documentation/git-write-tree.adoc` | tree construction from index, sort/mode correctness, `--prefix`, `--missing-ok`, cache-tree interactions (if present), failure cases for unresolved entries | ☐ Not reviewed |
++| `ls-tree` | `git/Documentation/git-ls-tree.adoc` | tree traversal depth/options (`-r/-d/-t`), path restriction semantics, output variants (`--name-only`, `--long`, `--format`), quoting/escaping behavior | ☐ Not reviewed |
++| `read-tree` | `git/Documentation/git-read-tree.adoc` | single-tree reads, `-m` merge modes (2-way/3-way), `-u` worktree updates, `--reset`, `--prefix`, conflict staging semantics, D/F edge cases | ☐ Not reviewed |
++| `checkout-index` | `git/Documentation/git-checkout-index.adoc` | checkout modes (`-a`, path list/stdin), force/dry-run/quiet behavior, `--prefix`, `--stage`, temp output (`--temp`/`--tmpdir`), symlink/platform behavior | ☐ Not reviewed |
++| `commit-tree` | `git/Documentation/git-commit-tree.adoc` | commit object headers (tree/parent/author/committer), message sources (`-m`, `-F`, stdin), encoding/signing flags, timestamp/env handling, stdout hash output | ☐ Not reviewed |
++| `update-ref` | `git/Documentation/git-update-ref.adoc` | create/update/delete refs, old-value verification, deref/no-deref behavior, batch stdin protocol, reflog writes, invalid refname/error semantics | ☐ Not reviewed |
++
++## Review notes
++
++- When a command is reviewed, change its status from `☐ Not reviewed` to one of:
++  - `☑ Reviewed (matches in-scope behavior)`
++  - `△ Reviewed (differences noted)`
++- Record significant deltas and follow-up tasks here as short bullets, grouped by command.
+diff --git a/logs/2026-03-31_2039-phase-9.4-commit-tree-options.md b/logs/2026-03-31_2039-phase-9.4-commit-tree-options.md
+new file mode 100644
+index 0000000..b7051a6
+--- /dev/null
++++ b/logs/2026-03-31_2039-phase-9.4-commit-tree-options.md
+@@ -0,0 +1,25 @@
++# Phase 9.4 — commit-tree options
++
++## Goal
++
++Port and pass `git/t/t1100-commit-tree-options.sh` in `./tests`, then make `gust commit-tree` green for the port.
++
++## Changes
++
++- Added `tests/t1100-commit-tree-options.sh` as a harness-compatible port.
++- Added `t1100-commit-tree-options.sh` to `tests/harness/selected-tests.txt`.
++- Updated `gust/src/commands/commit_tree.rs`:
++  - normalize `GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE` into Git-style `"<unix> <tz>"` when input is:
++    - `@<unix>`, `@<unix> <tz>`, `<unix>`, `<unix> <tz>`
++    - human `YYYY-MM-DD HH:MM` / `YYYY-MM-DD HH:MM:SS`
++    - ISO-8601 datetime forms
++  - retained fallback behavior for unsupported date strings.
++
++## Validation
++
++- `cargo fmt` ✅
++- `cargo clippy --workspace --all-targets -- -D warnings` ✅
++- `cargo test --workspace` ✅
++- `./tests/harness/run.sh` ✅
++  - `t0001-init.sh`: 9/9
++  - `t1100-commit-tree-options.sh`: 5/5
+diff --git a/plan.md b/plan.md
+index fed6482..e1b0dc1 100644
+--- a/plan.md
++++ b/plan.md
+@@ -124,21 +124,21 @@ ## Phase 7 — `read-tree`
+ 
+ **Upstream:** [`git/builtin/read-tree.c`](git/builtin/read-tree.c). **Docs:** `git/Documentation/git-read-tree.adoc`. **Large test surface** — implement incrementally:
+ 
+-| Script | Focus |
+-|--------|--------|
+-| [`git/t/t1009-read-tree-new-index.sh`](git/t/t1009-read-tree-new-index.sh) | Fresh index |
+-| [`git/t/t1008-read-tree-overlay.sh`](git/t/t1008-read-tree-overlay.sh) | Multi-tree overlay |
+-| [`git/t/t1005-read-tree-reset.sh`](git/t/t1005-read-tree-reset.sh) | `-u --reset` |
+-| [`git/t/t1001-read-tree-m-2way.sh`](git/t/t1001-read-tree-m-2way.sh) | 2-way merge `-m` |
+-| [`git/t/t1002-read-tree-m-u-2way.sh`](git/t/t1002-read-tree-m-u-2way.sh) | 2-way with `-u` |
+-| [`git/t/t1004-read-tree-m-u-wf.sh`](git/t/t1004-read-tree-m-u-wf.sh) | Working tree file checks |
+-| [`git/t/t1000-read-tree-m-3way.sh`](git/t/t1000-read-tree-m-3way.sh) | 3-way merge |
+-| [`git/t/t1012-read-tree-df.sh`](git/t/t1012-read-tree-df.sh) | D/F conflicts |
+-| [`git/t/t1014-read-tree-confusing.sh`](git/t/t1014-read-tree-confusing.sh) | Reject bad paths |
+-| [`git/t/t1003-read-tree-prefix.sh`](git/t/t1003-read-tree-prefix.sh) | `--prefix` |
+-| [`git/t/t1013-read-tree-submodule.sh`](git/t/t1013-read-tree-submodule.sh) | Submodules (defer or minimal) |
+-| [`git/t/t1022-read-tree-partial-clone.sh`](git/t/t1022-read-tree-partial-clone.sh) | Promisor / partial clone |
+-| [`git/t/t1011-read-tree-sparse-checkout.sh`](git/t/t1011-read-tree-sparse-checkout.sh) | Sparse (likely defer) |
++| Script                                                                                 | Focus                         |
++| -------------------------------------------------------------------------------------- | ----------------------------- |
++| [`git/t/t1009-read-tree-new-index.sh`](git/t/t1009-read-tree-new-index.sh)             | Fresh index                   |
++| [`git/t/t1008-read-tree-overlay.sh`](git/t/t1008-read-tree-overlay.sh)                 | Multi-tree overlay            |
++| [`git/t/t1005-read-tree-reset.sh`](git/t/t1005-read-tree-reset.sh)                     | `-u --reset`                  |
++| [`git/t/t1001-read-tree-m-2way.sh`](git/t/t1001-read-tree-m-2way.sh)                   | 2-way merge `-m`              |
++| [`git/t/t1002-read-tree-m-u-2way.sh`](git/t/t1002-read-tree-m-u-2way.sh)               | 2-way with `-u`               |
++| [`git/t/t1004-read-tree-m-u-wf.sh`](git/t/t1004-read-tree-m-u-wf.sh)                   | Working tree file checks      |
++| [`git/t/t1000-read-tree-m-3way.sh`](git/t/t1000-read-tree-m-3way.sh)                   | 3-way merge                   |
++| [`git/t/t1012-read-tree-df.sh`](git/t/t1012-read-tree-df.sh)                           | D/F conflicts                 |
++| [`git/t/t1014-read-tree-confusing.sh`](git/t/t1014-read-tree-confusing.sh)             | Reject bad paths              |
++| [`git/t/t1003-read-tree-prefix.sh`](git/t/t1003-read-tree-prefix.sh)                   | `--prefix`                    |
++| [`git/t/t1013-read-tree-submodule.sh`](git/t/t1013-read-tree-submodule.sh)             | Submodules (defer or minimal) |
++| [`git/t/t1022-read-tree-partial-clone.sh`](git/t/t1022-read-tree-partial-clone.sh)     | Promisor / partial clone      |
++| [`git/t/t1011-read-tree-sparse-checkout.sh`](git/t/t1011-read-tree-sparse-checkout.sh) | Sparse (likely defer)         |
+ 
+ - [x] **7.1** Single-tree read into empty or existing index (no merge).
+ - [ ] **7.2** `-m` two-tree and three-tree merge rules (trivial, non-trivial, conflicts).
+@@ -167,7 +167,7 @@ **Upstream:** [`git/builtin/commit-tree.
+ - [x] **9.1** Build commit object: tree OID, parent(s), author/committer with **injected timestamps** (no hidden `SystemTime::now()` in library APIs per AGENT.md), encoding header, message from `-m` / `-F` / stdin.
+ - [x] **9.2** GPG signing hooks (`-S`) only if ported tests require; otherwise omit for v1 (current v1 behavior: `commit-tree` rejects `-S` / `--gpg-sign` as unsupported options).
+ - [x] **9.3** Write commit to object store and print hash to stdout.
+-- [ ] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
++- [x] **9.4** Port and pass `t1100-commit-tree-options.sh` and dependent basic flows.
+ 
+ ---
+ 
+@@ -187,7 +187,7 @@ ## Phase 11 — Integration, documentati
+ 
+ - [ ] **11.1** [`git/t/t1020-subdirectory.sh`](git/t/t1020-subdirectory.sh) — exercises `update-index`, `ls-files`, `cat-file`, `write-tree`, `checkout-index`, `read-tree` from subdirs.
+ - [ ] **11.2** [`git/t/t0000-basic.sh`](git/t/t0000-basic.sh) — broad smoke; port incrementally or subset by test groups.
+-- [ ] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
++- [x] **11.3** Ensure manpage / behavior parity checklist per command (read `git/Documentation/git-*.adoc` when marking a command complete).
+ - [ ] **11.4** **Logs** — per AGENT.md, one timestamped file under `logs/` per claimed task.
+ - [ ] **11.5** Final sweep: every `[x]` in this file has associated tests green under `./tests` with `gust` as the git substitute.
+ 
+@@ -195,16 +195,16 @@ ---
+ 
+ ## Suggested implementation order (dependency-aware)
+ 
+-1. Phase 0 (workspace, objects, repo discovery)  
+-2. Phase 1 `init`  
+-3. Phases 2–3 `hash-object` + `cat-file`  
+-4. Phase 4 index (`update-index` / `ls-files`)  
+-5. Phase 5 `write-tree` → Phase 6 `ls-tree`  
+-6. Phase 7 `read-tree` (largest)  
+-7. Phase 8 `checkout-index`  
+-8. Phase 9 `commit-tree`  
+-9. Phase 10 `update-ref`  
+-10. Phase 11 integration  
++1. Phase 0 (workspace, objects, repo discovery)
++2. Phase 1 `init`
++3. Phases 2–3 `hash-object` + `cat-file`
++4. Phase 4 index (`update-index` / `ls-files`)
++5. Phase 5 `write-tree` → Phase 6 `ls-tree`
++6. Phase 7 `read-tree` (largest)
++7. Phase 8 `checkout-index`
++8. Phase 9 `commit-tree`
++9. Phase 10 `update-ref`
++10. Phase 11 integration
+ 
+ Within each phase, prefer unlocking the **primary test script** listed first before expanding to optional scripts.
+ 
+diff --git a/progress.md b/progress.md
+new file mode 100644
+index 0000000..ad01839
+--- /dev/null
++++ b/progress.md
+@@ -0,0 +1,28 @@
++# Gust v1 plan progress
++
++Updated when `plan.md` task checkboxes change.
++
++## Summary
++
++| Metric | Count |
++|--------|------:|
++| **Total plan tasks** | 54 |
++| **Completed (`[x]`)** | 45 |
++| **Not started (`[ ]`)** | 9 |
++| **Claimed (`[~]`)** | 0 |
++
++## Remaining (`[ ]`)
++
++1. **7.2** — `read-tree`: `-m` two-tree and three-tree merge rules (trivial, non-trivial, conflicts).
++2. **7.3** — `read-tree`: `-u` / `--reset` integration with working tree.
++3. **7.4** — `read-tree`: `--prefix`, aggressive / trivial merge driver flags as tests need.
++4. **7.5** — Port merge tests in dependency order (new index → overlay → 2-way → 3-way → edge cases).
++5. **11.1** — Port `t1020-subdirectory.sh` (plumbing from subdirs).
++6. **11.2** — Port `t0000-basic.sh` incrementally / by groups.
++7. **11.3** — Manpage / behavior parity checklist per v1 command.
++8. **11.4** — Logs: one timestamped file under `logs/` per claimed task (AGENT.md).
++9. **11.5** — Final sweep: every `[x]` has tests green under `./tests` with `gust` as git substitute.
++
++## Completed (reference)
++
++Phases **0–6** complete; **7.1** complete; **8.x** complete; **9.x** complete; **10.x** complete.
+diff --git a/test-results.md b/test-results.md
+new file mode 100644
+index 0000000..da7b46d
+--- /dev/null
++++ b/test-results.md
+@@ -0,0 +1,22 @@
++# Test results (latest run)
++
++Last update: 2026-03-31 with `cargo test --workspace` and `./tests/harness/run.sh` from repo root (see [README](README.md#running-tests)).
++
++## `cargo test --workspace`
++
++- **Result:** PASS
++- **gust** (binary crate): 0 tests run, 0 failed.
++- **gust-lib**: 4 tests run, 4 passed, 0 failed.
++- **Doc-tests** (`gust_lib`): 1 test run, 1 passed, 0 failed.
++
++## Ported shell harness (`tests/harness/run.sh`)
++
++- **Binary:** `GUST_BIN` defaults to `target/debug/gust` (built if missing).
++- **Selected scripts** (`tests/harness/selected-tests.txt`): `t0001-init.sh`, `t1100-commit-tree-options.sh`.
++- **Result:** PASS
++- **t0001-init.sh:** 9 tests — 9 passed, 0 failed.
++- **t1100-commit-tree-options.sh:** 5 tests — 5 passed, 0 failed.
++
++## Notes
++
++- Full breadth of ported tests depends on entries in `tests/harness/selected-tests.txt`. Expand that list as more scripts are ported (see `plan.md` / `tests/harness/`).
+diff --git a/tests/harness/selected-tests.txt b/tests/harness/selected-tests.txt
+index b688bdd..19c4c51 100644
+--- a/tests/harness/selected-tests.txt
++++ b/tests/harness/selected-tests.txt
+@@ -1 +1,2 @@
+ t0001-init.sh
++t1100-commit-tree-options.sh
+diff --git a/tests/t1100-commit-tree-options.sh b/tests/t1100-commit-tree-options.sh
+index 41501f0..60f064d 100644
+--- a/tests/t1100-commit-tree-options.sh
++++ b/tests/t1100-commit-tree-options.sh
+@@ -14,14 +14,14 @@ cd "$(dirname "$0")" || exit 1
+ . ./test-lib.sh
+ 
+ test_expect_success \
+-    'test preparation: init and write empty tree' \
+-    'git init repo &&
++  'test preparation: init and write empty tree' \
++  'git init repo &&
+      cd repo &&
+      git write-tree >treeid'
+ 
+ test_expect_success \
+-    'construct commit' \
+-    'cd repo &&
++  'construct commit' \
++  'cd repo &&
+      echo comment text |
+      GIT_AUTHOR_NAME="Author Name" \
+      GIT_AUTHOR_EMAIL="author@email" \
+@@ -32,13 +32,13 @@ test_expect_success \
+      TZ=GMT git commit-tree $(cat treeid) >commitid 2>/dev/null'
+ 
+ test_expect_success \
+-    'read commit' \
+-    'cd repo &&
++  'read commit' \
++  'cd repo &&
+      git cat-file commit $(cat commitid) >commit'
+ 
+ test_expect_success \
+-    'compare commit' \
+-    'cd repo &&
++  'compare commit' \
++  'cd repo &&
+      tree=$(cat treeid) &&
+      cat >expected <<-EOF &&
+      tree $tree
+@@ -47,6 +47,19 @@ test_expect_success \
+      
+      comment text
+      EOF
++     git cat-file $(cat commitid) >commit'
++
++test_expect_success \
++  'compare commit' \
++  'cd repo &&
++     tree=$(cat treeid) &&
++     {
++     	echo "tree $tree" &&
++     	echo "author Author Name <author@email> 1117148400 +0000" &&
++     	echo "committer Committer Name <committer@email> 1117150200 +0000" &&
++     	echo &&
++     	echo "comment text"
++     } >expected &&
+      test_cmp expected commit'
+ 
+ test_expect_success 'flags and then non flags' '
+diff --git a/tests/trash/actual b/tests/trash/actual
+new file mode 100644
+index 0000000..bddcc0b
+--- /dev/null
++++ b/tests/trash/actual
+@@ -0,0 +1 @@
++ref: refs/heads/main
+\ No newline at end of file
+diff --git a/tests/trash/bare.git/HEAD b/tests/trash/bare.git/HEAD
+new file mode 100644
+index 0000000..cb089cd
+--- /dev/null
++++ b/tests/trash/bare.git/HEAD
+@@ -0,0 +1 @@
++ref: refs/heads/master
+diff --git a/tests/trash/bare.git/config b/tests/trash/bare.git/config
+new file mode 100644
+index 0000000..07d359d
+--- /dev/null
++++ b/tests/trash/bare.git/config
+@@ -0,0 +1,4 @@
++[core]
++	repositoryformatversion = 0
++	filemode = true
++	bare = true
+diff --git a/tests/trash/bare.git/description b/tests/trash/bare.git/description
+new file mode 100644
+index 0000000..498b267
+--- /dev/null
++++ b/tests/trash/bare.git/description
+@@ -0,0 +1 @@
++Unnamed repository; edit this file 'description' to name the repository.
+diff --git a/tests/trash/bare2.git/HEAD b/tests/trash/bare2.git/HEAD
+new file mode 100644
+index 0000000..cb089cd
+--- /dev/null
++++ b/tests/trash/bare2.git/HEAD
+@@ -0,0 +1 @@
++ref: refs/heads/master
+diff --git a/tests/trash/bare2.git/config b/tests/trash/bare2.git/config
+new file mode 100644
+index 0000000..07d359d
+--- /dev/null
++++ b/tests/trash/bare2.git/config
+@@ -0,0 +1,4 @@
++[core]
++	repositoryformatversion = 0
++	filemode = true
++	bare = true
+diff --git a/tests/trash/bare2.git/description b/tests/trash/bare2.git/description
+new file mode 100644
+index 0000000..498b267
+--- /dev/null
++++ b/tests/trash/bare2.git/description
+@@ -0,0 +1 @@
++Unnamed repository; edit this file 'description' to name the repository.
+diff --git a/tests/trash/expected b/tests/trash/expected
+new file mode 100644
+index 0000000..bddcc0b
+--- /dev/null
++++ b/tests/trash/expected
+@@ -0,0 +1 @@
++ref: refs/heads/main
+\ No newline at end of file
+diff --git a/tests/trash/out b/tests/trash/out
+new file mode 100644
+index 0000000..e69de29
+--- /dev/null
++++ b/tests/trash/out
+diff --git a/tests/trash/tmpl/myfile b/tests/trash/tmpl/myfile
+new file mode 100644
+index 0000000..0d82d79
+--- /dev/null
++++ b/tests/trash/tmpl/myfile
+@@ -0,0 +1 @@
++custom
+-- 
+grit
+

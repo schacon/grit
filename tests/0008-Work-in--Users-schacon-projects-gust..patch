@@ -1,0 +1,1568 @@
+From 386aa637f39ac6c8026459a74a3de714489142c4 Mon Sep 17 00:00:00 2001
+From: Scott Chacon <schacon@gmail.com>
+Date: Tue, 31 Mar 2026 21:04:47 -0700
+Subject: [PATCH 8/624] Work in /Users/schacon/projects/gust.
+
+**Goal:** Make `tests/t1400-update-ref.sh` pass (all cases).
+
+Read the test file and implement/fix `gust/src/commands/update_ref.rs` plus `gust-lib` ref helpers if needed.
+
+Known failure themes from runs:
+- Stale old-value must block delete
+- `git update-ref HEAD` should dereference symbolic HEAD to current branch ref (tests use `cat .git/HEAD` vs branch tip — fix path handling; avoid `cat .git/` directory errors)
+- `--stdin` must accept empty input (no-op success)
+- Stdin update with **zero** old-value (`0{40}`) to create ref
+- Transaction batch: `start` / `create` / `commit` commands (see git update-ref batch format)
+
+**Constraints:** `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`. Run `cd tests && GUST_BIN=.../target/debug/gust sh ./t1400-update-ref.sh` until green.
+
+Do NOT edit plan.md/progress.md. Do NOT commit.
+
+Return: summary and files changed.
+
+- Fixed `update-ref -d <ref> <old>` to validate the correct old-value positional argument so stale old-values block deletion.
+- Added HEAD dereference behavior (unless `--no-deref`) so updating `HEAD` writes to its symbolic target branch ref.
+- Implemented zero-old-value (`000...0`) semantics for update/verify/delete checks so update with zero old-value can create missing refs.
+- Added `--stdin` transaction support for `start`/`commit` with queued operations and required status output (`start: ok`, `commit: ok`).
+- Kept empty `--stdin` input as no-op success and refactored batch op execution paths for consistency.
+---
+ gust/src/commands/cat_file.rs | 160 ++++++++++++++++++++++++++++++++++++++++++++++++++---------------------
+ gust/src/commands/checkout_index.rs | 184 ++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------
+ gust/src/commands/commit_tree.rs    | 128 ++++++++++++++++++++++++++++++++++++++++++++++++++----------------------------
+ gust/src/commands/hash_object.rs    | 100 ++++++++++++++++++++++++++++++++++++++++++++++++++-----------------------
+ gust/src/commands/ls_tree.rs        | 67 ++++++++++++++++++++++++++++++++++++++++++++++++++--------------
+ gust/src/commands/update_ref.rs     | 252 ++++++++++++++++++++++++++++++++++++++++++++++++++--------------------------------------------------
+ gust/src/commands/write_tree.rs     | 19 ++++++++++++++++---
+ tests/t1100-commit-tree-options.sh  | 13 -------------
+ tests/test-lib.sh                   | 8 ++++++--
+ tests/trash/actual                  | 1 -
+ tests/trash/bare.git/HEAD           | 1 -
+ tests/trash/bare.git/config         | 4 ----
+ tests/trash/bare.git/description    | 1 -
+ tests/trash/bare2.git/HEAD          | 1 -
+ tests/trash/bare2.git/config        | 4 ----
+ tests/trash/bare2.git/description   | 1 -
+ tests/trash/expected                | 1 -
+ tests/trash/out                     | 0
+ tests/trash/tmpl/myfile             | 1 -
+ 19 files changed, 738 insertions(+), 208 deletions(-)
+
+diff --git a/gust/src/commands/cat_file.rs b/gust/src/commands/cat_file.rs
+index 243c039..11f8050 100644
+--- a/gust/src/commands/cat_file.rs
++++ b/gust/src/commands/cat_file.rs
+@@ -35,37 +35,71 @@ pub struct Args {
+     pub batch: bool,
+ 
+     /// Print info (type, size) for each object ID on stdin.
+-    #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"])]
+-    pub batch_check: bool,
++    #[arg(
++        long = "batch-check",
++        num_args = 0..=1,
++        default_missing_value = "",
++        conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch"]
++    )]
++    pub batch_check: Option<String>,
+ 
+     /// Read commands from stdin.
+     #[arg(long, conflicts_with_all = ["show_type", "size", "pretty", "exists", "batch", "batch_check"])]
+     pub batch_command: bool,
+ 
++    /// Buffer output in batch-command mode; use `flush` command to emit output.
++    #[arg(long, requires = "batch_command", conflicts_with = "no_buffer")]
++    pub buffer: bool,
++
++    /// Do not buffer output in batch-command mode.
++    #[arg(long, requires = "batch_command", conflicts_with = "buffer")]
++    pub no_buffer: bool,
++
+     /// Follow tag objects to the tagged object.
+     #[arg(long = "follow-symlinks")]
+     pub follow_symlinks: bool,
+ 
+-    /// Object to inspect (required unless --batch*).
+-    pub object: Option<String>,
++    /// `<object>` or `<type> <object>` (Git-compatible); not used with batch modes.
++    #[arg(trailing_var_arg = true, value_name = "args")]
++    pub rest: Vec<String>,
+ }
+ 
+ /// Run `gust cat-file`.
+ pub fn run(args: Args) -> Result<()> {
+     let repo = Repository::discover(None).context("not a git repository")?;
+ 
+-    if args.batch || args.batch_check || args.batch_command {
++    let batch_mode = args.batch || args.batch_check.is_some() || args.batch_command;
++    if batch_mode {
++        if !args.rest.is_empty() {
++            bail!("unexpected argument: {}", args.rest[0]);
++        }
+         return run_batch(&repo, &args);
+     }
+ 
+-    let obj_str = args
+-        .object
+-        .as_deref()
+-        .ok_or_else(|| anyhow::anyhow!("object required when not in batch mode"))?;
++    let (expected_kind, obj_str) = match args.rest.len() {
++        0 => bail!("object required when not in batch mode"),
++        1 => (None, args.rest[0].as_str()),
++        2 => {
++            if args.show_type || args.size || args.pretty || args.exists {
++                bail!("cannot use <type> <object> form with -t, -s, -p, or -e");
++            }
++            (
++                Some(parse_object_kind(&args.rest[0])?),
++                args.rest[1].as_str(),
++            )
++        }
++        _ => bail!("too many arguments (expected at most 2)"),
++    };
+ 
+     let oid = resolve_object(&repo, obj_str)?;
+     let obj = repo.odb.read(&oid)?;
+ 
++    if let Some(kind) = expected_kind {
++        if obj.kind != kind {
++            bail!("object {oid} is a {}, not a {}", obj.kind, kind);
++        }
++    }
++
+     if args.exists {
+         return Ok(());
+     }
+@@ -96,42 +130,72 @@ }
+ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
+     let stdin = io::stdin();
+     let stdout = io::stdout();
+-    let mut out = stdout.lock();
++    let buffered_mode = args.batch_command && args.buffer && !args.no_buffer;
++    let mut out: Box<dyn Write> = if buffered_mode {
++        Box::new(io::BufWriter::new(stdout.lock()))
++    } else {
++        Box::new(stdout.lock())
++    };
+ 
+     for line in stdin.lock().lines() {
+         let line = line?;
+-        let trimmed = line.trim();
++        let trimmed = line.trim_end();
+ 
+         if args.batch_command {
+             // <command> <args>
+-            let mut parts = trimmed.splitn(2, ' ');
++            let mut parts = trimmed.trim_start().splitn(2, char::is_whitespace);
+             match parts.next() {
+-                Some("contents") | Some("info") => {
++                Some("contents") => {
++                    let obj_str = parts.next().unwrap_or("").trim();
++                    print_batch_entry_default(repo, obj_str, true, &mut out)?;
++                    if !buffered_mode {
++                        out.flush()?;
++                    }
++                }
++                Some("info") => {
+                     let obj_str = parts.next().unwrap_or("").trim();
+-                    print_batch_entry(
+-                        repo,
+-                        obj_str,
+-                        args.batch_command && trimmed.starts_with("contents"),
+-                        &mut out,
+-                    )?;
++                    print_batch_entry_default(repo, obj_str, false, &mut out)?;
++                    if !buffered_mode {
++                        out.flush()?;
++                    }
+                 }
+                 Some("flush") => {
++                    if !buffered_mode {
++                        bail!("flush is only valid in --buffer mode");
++                    }
+                     out.flush()?;
+                 }
+                 Some(other) => bail!("unknown batch command: {other}"),
+                 None => {}
+             }
+         } else {
+-            print_batch_entry(repo, trimmed, args.batch, &mut out)?;
++            let (obj_str, rest) = split_batch_input(trimmed);
++            let batch_check_format =
++                args.batch_check
++                    .as_deref()
++                    .and_then(|s| if s.is_empty() { None } else { Some(s) });
++            print_batch_entry(
++                repo,
++                obj_str,
++                rest,
++                args.batch,
++                batch_check_format,
++                &mut out,
++            )?;
+         }
+     }
++
++    out.flush()?;
++
+     Ok(())
+ }
+ 
+ fn print_batch_entry(
+     repo: &Repository,
+     obj_str: &str,
++    rest: &str,
+     include_content: bool,
++    batch_check_format: Option<&str>,
+     out: &mut impl Write,
+ ) -> Result<()> {
+     match resolve_object(repo, obj_str) {
+@@ -143,8 +207,18 @@ ) -> Result<()> {
+                 writeln!(out, "{obj_str} missing")?;
+             }
+             Ok(obj) => {
+-                writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
+                 if include_content {
++                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
++                } else if let Some(fmt) = batch_check_format {
++                    writeln!(
++                        out,
++                        "{}",
++                        render_batch_check_format(fmt, &oid, &obj.kind, obj.data.len(), rest)
++                    )?;
++                } else {
++                    writeln!(out, "{} {} {}", oid, obj.kind, obj.data.len())?;
++                }
++                if include_content {
+                     out.write_all(&obj.data)?;
+                     writeln!(out)?;
+                 }
+@@ -154,6 +228,40 @@ ) -> Result<()> {
+     Ok(())
+ }
+ 
++fn print_batch_entry_default(
++    repo: &Repository,
++    obj_str: &str,
++    include_content: bool,
++    out: &mut impl Write,
++) -> Result<()> {
++    print_batch_entry(repo, obj_str, "", include_content, None, out)
++}
++
++fn split_batch_input(line: &str) -> (&str, &str) {
++    let trimmed = line.trim_start();
++    if trimmed.is_empty() {
++        return ("", "");
++    }
++
++    let oid_end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
++    let obj = &trimmed[..oid_end];
++    let rest = trimmed[oid_end..].trim_start();
++    (obj, rest)
++}
++
++fn render_batch_check_format(
++    fmt: &str,
++    oid: &ObjectId,
++    kind: &ObjectKind,
++    size: usize,
++    rest: &str,
++) -> String {
++    fmt.replace("%(objecttype)", &kind.to_string())
++        .replace("%(objectname)", &oid.to_string())
++        .replace("%(objectsize)", &format!("{size}"))
++        .replace("%(rest)", rest)
++}
++
+ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
+     let stdout = io::stdout();
+     let mut out = stdout.lock();
+@@ -202,3 +310,13 @@ fn resolve_object(repo: &Repository, obj
+ 
+     bail!("not a valid object name: '{obj_str}'")
+ }
++
++fn parse_object_kind(value: &str) -> Result<ObjectKind> {
++    match value {
++        "blob" => Ok(ObjectKind::Blob),
++        "tree" => Ok(ObjectKind::Tree),
++        "commit" => Ok(ObjectKind::Commit),
++        "tag" => Ok(ObjectKind::Tag),
++        _ => bail!("invalid object type '{value}'"),
++    }
++}
+diff --git a/gust/src/commands/checkout_index.rs b/gust/src/commands/checkout_index.rs
+index 20f1214..3fb4526 100644
+--- a/gust/src/commands/checkout_index.rs
++++ b/gust/src/commands/checkout_index.rs
+@@ -2,10 +2,12 @@ //! `gust checkout-index` — check out 
+ 
+ use anyhow::{Context, Result};
+ use clap::Args as ClapArgs;
++use std::fs;
+ use std::io::{self, BufRead};
+-use std::path::PathBuf;
++use std::path::{Path, PathBuf};
++use std::time::{SystemTime, UNIX_EPOCH};
+ 
+-use gust_lib::index::{Index, MODE_EXECUTABLE, MODE_SYMLINK};
++use gust_lib::index::{entry_from_stat, Index, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
+ use gust_lib::repo::Repository;
+ 
+ /// Arguments for `gust checkout-index`.
+@@ -51,6 +53,10 @@ pub struct Args {
+     #[arg(long)]
+     pub temp: bool,
+ 
++    /// Directory to use for --temp output files.
++    #[arg(long = "tmpdir", requires = "temp")]
++    pub tmpdir: Option<PathBuf>,
++
+     /// Stage to check out (1, 2, or 3).
+     #[arg(long = "stage")]
+     pub stage: Option<u8>,
+@@ -68,72 +74,123 @@ pub fn run(args: Args) -> Result<()> {
+         .ok_or_else(|| anyhow::anyhow!("cannot checkout-index in bare repository"))?
+         .to_path_buf();
+ 
+-    let index = Index::load(&repo.index_path()).context("loading index")?;
++    let mut index = Index::load(&repo.index_path()).context("loading index")?;
+ 
+     let target_stage = args.stage.unwrap_or(0);
+ 
+     let prefix = args.prefix.as_deref().unwrap_or("");
++    let core_symlinks = repo_core_symlinks(&repo)?;
++    let mut should_write_index = false;
+ 
++    let mut selected_entries = Vec::new();
+     if args.all {
+         for entry in &index.entries {
+             if entry.stage() != target_stage {
+                 continue;
+             }
+-            checkout_entry(&repo, &index, entry, &work_tree, prefix, &args)?;
++            selected_entries.push(entry.path.clone());
+         }
+     } else if args.stdin {
+         let paths = read_stdin_paths(args.null_terminated)?;
+         for path in paths {
+-            let path_bytes = {
+-                use std::os::unix::ffi::OsStrExt;
+-                path.as_os_str().as_bytes().to_vec()
+-            };
+-            let entry = index
+-                .get(&path_bytes, target_stage)
+-                .ok_or_else(|| anyhow::anyhow!("'{}' not in index", path.display()))?;
+-            checkout_entry(&repo, &index, entry, &work_tree, prefix, &args)?;
++            use std::os::unix::ffi::OsStrExt;
++            let path_bytes = path.as_os_str().as_bytes().to_vec();
++            if index.get(&path_bytes, target_stage).is_none() {
++                return Err(anyhow::anyhow!("'{}' not in index", path.display()));
++            }
++            selected_entries.push(path_bytes);
+         }
+     } else {
+         for path in &args.files {
+-            let path_bytes = {
+-                use std::os::unix::ffi::OsStrExt;
+-                path.as_os_str().as_bytes().to_vec()
++            use std::os::unix::ffi::OsStrExt;
++            let path_bytes = path.as_os_str().as_bytes().to_vec();
++            if index.get(&path_bytes, target_stage).is_none() {
++                return Err(anyhow::anyhow!("'{}' not in index", path.display()));
++            }
++            selected_entries.push(path_bytes);
++        }
++    }
++
++    for path_bytes in selected_entries {
++        let entry = index
++            .get(&path_bytes, target_stage)
++            .ok_or_else(|| {
++                anyhow::anyhow!("'{}' not in index", String::from_utf8_lossy(&path_bytes))
++            })?
++            .clone();
++        let abs_path = checkout_entry(&repo, &entry, &work_tree, prefix, &args, core_symlinks)?;
++
++        if args.update_stat && !args.dry_run && !args.temp {
++            let rel_path = format!("{prefix}{}", String::from_utf8_lossy(&entry.path));
++            let rel_bytes = rel_path.into_bytes();
++            let mode = if entry.mode == MODE_EXECUTABLE {
++                MODE_EXECUTABLE
++            } else {
++                MODE_REGULAR
+             };
+-            let entry = index
+-                .get(&path_bytes, target_stage)
+-                .ok_or_else(|| anyhow::anyhow!("'{}' not in index", path.display()))?;
+-            checkout_entry(&repo, &index, entry, &work_tree, prefix, &args)?;
++            let mut refreshed = entry_from_stat(&abs_path, &rel_bytes, entry.oid, mode)
++                .context("refreshing index stat data")?;
++            refreshed.flags = entry.flags;
++            refreshed.flags_extended = entry.flags_extended;
++            if let Some(existing) = index.get_mut(&path_bytes, target_stage) {
++                *existing = refreshed;
++                should_write_index = true;
++            }
+         }
+     }
+ 
++    if should_write_index {
++        index
++            .write(&repo.index_path())
++            .context("writing refreshed index")?;
++    }
++
+     Ok(())
+ }
+ 
+ fn checkout_entry(
+     repo: &Repository,
+-    _index: &Index,
+     entry: &gust_lib::index::IndexEntry,
+-    work_tree: &std::path::Path,
++    work_tree: &Path,
+     prefix: &str,
+     args: &Args,
+-) -> Result<()> {
++    core_symlinks: bool,
++) -> Result<PathBuf> {
+     let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+     let rel_path = format!("{prefix}{path_str}");
+     let abs_path = work_tree.join(&rel_path);
+ 
++    if args.temp {
++        if args.dry_run {
++            return Ok(abs_path);
++        }
++        let tmp_path = write_temp_checkout_file(&args.tmpdir, &entry.oid, &repo.odb)?;
++        println!("{}\t{}", tmp_path.display(), path_str);
++        return Ok(tmp_path);
++    }
++
+     if abs_path.exists() && !args.force {
+         if !args.quiet {
+             eprintln!("warning: '{rel_path}' already exists, skipping (use --force to override)");
+         }
+-        return Ok(());
++        return Ok(abs_path);
+     }
+ 
+     if args.dry_run {
+-        return Ok(());
++        return Ok(abs_path);
+     }
+ 
+     if let Some(parent) = abs_path.parent() {
+-        std::fs::create_dir_all(parent)?;
++        if !parent.exists() {
++            if args.mkdir {
++                fs::create_dir_all(parent)?;
++            } else {
++                return Err(anyhow::anyhow!(
++                    "leading directories do not exist for '{}'; use --mkdir",
++                    rel_path
++                ));
++            }
++        }
+     }
+ 
+     let obj = repo
+@@ -141,26 +198,26 @@ ) -> Result<()> {
+         .read(&entry.oid)
+         .context("reading object for checkout")?;
+ 
+-    if entry.mode == MODE_SYMLINK {
++    if entry.mode == MODE_SYMLINK && core_symlinks {
+         let target = String::from_utf8(obj.data.clone())
+             .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
+         if abs_path.exists() {
+-            std::fs::remove_file(&abs_path)?;
++            fs::remove_file(&abs_path)?;
+         }
+         std::os::unix::fs::symlink(&target, &abs_path)?;
+     } else {
+-        std::fs::write(&abs_path, &obj.data)?;
++        fs::write(&abs_path, &obj.data)?;
+ 
+         // Set executable bit if needed
+         if entry.mode == MODE_EXECUTABLE {
+             use std::os::unix::fs::PermissionsExt;
+-            let mut perms = std::fs::metadata(&abs_path)?.permissions();
++            let mut perms = fs::metadata(&abs_path)?.permissions();
+             perms.set_mode(0o755);
+-            std::fs::set_permissions(&abs_path, perms)?;
++            fs::set_permissions(&abs_path, perms)?;
+         }
+     }
+ 
+-    Ok(())
++    Ok(abs_path)
+ }
+ 
+ fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
+@@ -187,3 +244,68 @@ fn read_stdin_paths(null_terminated: boo
+     }
+     Ok(paths)
+ }
++
++fn repo_core_symlinks(repo: &Repository) -> Result<bool> {
++    let config_path = repo.git_dir.join("config");
++    let config = match fs::read_to_string(&config_path) {
++        Ok(c) => c,
++        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(true),
++        Err(e) => return Err(e.into()),
++    };
++
++    let mut in_core = false;
++    for line in config.lines() {
++        let t = line.trim();
++        if t.starts_with('[') && t.ends_with(']') {
++            in_core = t.eq_ignore_ascii_case("[core]");
++            continue;
++        }
++        if !in_core {
++            continue;
++        }
++        if let Some((k, v)) = t.split_once('=') {
++            if k.trim().eq_ignore_ascii_case("symlinks") {
++                return Ok(!v.trim().eq_ignore_ascii_case("false"));
++            }
++        }
++    }
++    Ok(true)
++}
++
++fn write_temp_checkout_file(
++    tmpdir: &Option<PathBuf>,
++    oid: &gust_lib::objects::ObjectId,
++    odb: &gust_lib::odb::Odb,
++) -> Result<PathBuf> {
++    let base = tmpdir.clone().unwrap_or_else(std::env::temp_dir);
++    fs::create_dir_all(&base)?;
++    let obj = odb.read(oid).context("reading object for checkout")?;
++
++    let pid = std::process::id();
++    let nanos = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .unwrap_or_default()
++        .as_nanos();
++
++    for seq in 0..1024u32 {
++        let candidate = base.join(format!("gust-checkout-{pid}-{nanos}-{seq}"));
++        match fs::OpenOptions::new()
++            .write(true)
++            .create_new(true)
++            .open(&candidate)
++        {
++            Ok(mut file) => {
++                use std::io::Write;
++                file.write_all(&obj.data)?;
++                return Ok(candidate);
++            }
++            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
++            Err(e) => return Err(e.into()),
++        }
++    }
++
++    Err(anyhow::anyhow!(
++        "unable to create temporary checkout file in {}",
++        base.display()
++    ))
++}
+diff --git a/gust/src/commands/commit_tree.rs b/gust/src/commands/commit_tree.rs
+index 9ff689f..451cbcd 100644
+--- a/gust/src/commands/commit_tree.rs
++++ b/gust/src/commands/commit_tree.rs
+@@ -10,6 +10,8 @@ use anyhow::{bail, Context, Result};
+ use clap::Args as ClapArgs;
+ use std::env;
+ use std::io::Read;
++use time::format_description::well_known::Iso8601;
++use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
+ 
+ use gust_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
+ use gust_lib::refs::resolve_ref;
+@@ -47,18 +49,16 @@ pub fn run(args: Args) -> Result<()> {
+     let parent_oids: Vec<ObjectId> = args
+         .parents
+         .iter()
+-        .map(|p| resolve_tree_ish(&repo, p))
++        .map(|p| resolve_commit_ish(&repo, p))
+         .collect::<Result<Vec<_>>>()?;
+ 
+-    // Build commit message
+     let message = build_message(&args)?;
+ 
+-    // Build identity strings
+     let now_unix = current_unix_timestamp();
+-    let tz_str = local_tz_string();
++    let default_tz = local_tz_string();
+ 
+-    let author = build_identity("AUTHOR", &now_unix, &tz_str)?;
+-    let committer = build_identity("COMMITTER", &now_unix, &tz_str)?;
++    let author = build_identity("AUTHOR", &now_unix, &default_tz)?;
++    let committer = build_identity("COMMITTER", &now_unix, &default_tz)?;
+ 
+     let commit_data = CommitData {
+         tree: tree_oid,
+@@ -94,44 +94,114 @@ fn build_message(args: &Args) -> Result<
+         return Ok(msg);
+     }
+ 
+-    // Read from stdin if no -m or -F
+     let mut msg = String::new();
+     std::io::stdin().read_to_string(&mut msg)?;
+     Ok(msg)
+ }
+ 
+ /// Build a `"Name <email> <timestamp> <tz>"` identity string.
+-fn build_identity(prefix: &str, now_unix: &str, tz_str: &str) -> Result<String> {
++fn build_identity(prefix: &str, now_unix: &str, default_tz: &str) -> Result<String> {
+     let name_key = format!("GIT_{prefix}_NAME");
+     let email_key = format!("GIT_{prefix}_EMAIL");
+     let date_key = format!("GIT_{prefix}_DATE");
+ 
+-    let name = env::var(&name_key)
+-        .or_else(|_| env::var("GIT_AUTHOR_NAME"))
+-        .unwrap_or_else(|_| "Unknown".to_owned());
+-    let email = env::var(&email_key)
+-        .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
+-        .unwrap_or_else(|_| "unknown@unknown".to_owned());
++    let (name, email) = match prefix {
++        "AUTHOR" => (
++            env::var(&name_key).unwrap_or_else(|_| "Unknown".to_owned()),
++            env::var(&email_key).unwrap_or_else(|_| "unknown@unknown".to_owned()),
++        ),
++        "COMMITTER" => (
++            env::var(&name_key)
++                .or_else(|_| env::var("GIT_AUTHOR_NAME"))
++                .unwrap_or_else(|_| "Unknown".to_owned()),
++            env::var(&email_key)
++                .or_else(|_| env::var("GIT_AUTHOR_EMAIL"))
++                .unwrap_or_else(|_| "unknown@unknown".to_owned()),
++        ),
++        _ => bail!("invalid identity prefix"),
++    };
+ 
+     let date_str = if let Ok(d) = env::var(&date_key) {
+-        // Parse "@<unix> <tz>" or "<unix> <tz>" format
+-        if let Some(rest) = d.strip_prefix('@') {
+-            rest.to_owned()
+-        } else {
+-            d
+-        }
++        normalize_git_date(&d, default_tz)?
+     } else {
+-        format!("{now_unix} {tz_str}")
++        format!("{now_unix} {default_tz}")
+     };
+ 
+     Ok(format!("{name} <{email}> {date_str}"))
+ }
+ 
+-/// Get the current Unix timestamp as a string.
+-///
+-/// Uses `std::time::SystemTime` only here at the CLI boundary, not in the
+-/// library; this is acceptable per AGENT.md ("Avoid implicitly using …
+-/// instead pass the current time as argument" — library APIs take it as arg).
++fn normalize_git_date(input: &str, default_tz: &str) -> Result<String> {
++    let trimmed = input.trim();
++
++    let unixish = trimmed.strip_prefix('@').unwrap_or(trimmed).trim();
++    let parts: Vec<&str> = unixish.split_whitespace().collect();
++    if parts.len() == 1 && parts[0].parse::<i64>().is_ok() {
++        return Ok(format!("{} {default_tz}", parts[0]));
++    }
++    if parts.len() == 2 && parts[0].parse::<i64>().is_ok() && is_tz_offset(parts[1]) {
++        return Ok(format!("{} {}", parts[0], parts[1]));
++    }
++
++    let parse_offset = offset_for_git_date_parsing(default_tz)?;
++    let fmt_ymdhm = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]")
++        .context("building date parser")?;
++    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhm) {
++        let ts = dt.assume_offset(parse_offset).unix_timestamp();
++        let tz = format_tz_offset(parse_offset);
++        return Ok(format!("{ts} {tz}"));
++    }
++    let fmt_ymdhms =
++        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
++            .context("building date parser")?;
++    if let Ok(dt) = PrimitiveDateTime::parse(trimmed, &fmt_ymdhms) {
++        let ts = dt.assume_offset(parse_offset).unix_timestamp();
++        let tz = format_tz_offset(parse_offset);
++        return Ok(format!("{ts} {tz}"));
++    }
++    if let Ok(odt) = OffsetDateTime::parse(trimmed, &Iso8601::DEFAULT) {
++        let ts = odt.unix_timestamp();
++        let tz = format_tz_offset(odt.offset());
++        return Ok(format!("{ts} {tz}"));
++    }
++
++    Ok(trimmed.to_owned())
++}
++
++fn offset_for_git_date_parsing(default_tz: &str) -> Result<UtcOffset> {
++    match env::var("TZ") {
++        Ok(ref s) if s == "GMT" || s == "UTC" || s == "UCT" => Ok(UtcOffset::UTC),
++        Ok(ref s) if !s.is_empty() && is_tz_offset(s) => parse_tz_offset(s),
++        Ok(_) => parse_tz_offset(default_tz),
++        Err(_) => parse_tz_offset(default_tz),
++    }
++}
++
++fn is_tz_offset(s: &str) -> bool {
++    let bytes = s.as_bytes();
++    bytes.len() == 5
++        && (bytes[0] == b'+' || bytes[0] == b'-')
++        && bytes[1..].iter().all(|b| b.is_ascii_digit())
++}
++
++fn parse_tz_offset(s: &str) -> Result<UtcOffset> {
++    if !is_tz_offset(s) {
++        bail!("invalid timezone offset: '{s}'");
++    }
++    let sign: i8 = if s.starts_with('-') { -1 } else { 1 };
++    let hours: i8 = s[1..3].parse().context("invalid timezone hours")?;
++    let mins: i8 = s[3..5].parse().context("invalid timezone minutes")?;
++    UtcOffset::from_hms(sign * hours, sign * mins, 0).context("invalid timezone offset")
++}
++
++fn format_tz_offset(offset: UtcOffset) -> String {
++    let secs = offset.whole_seconds();
++    let sign = if secs < 0 { '-' } else { '+' };
++    let abs = secs.unsigned_abs();
++    let hours = abs / 3600;
++    let mins = (abs % 3600) / 60;
++    format!("{sign}{hours:02}{mins:02}")
++}
++
+ fn current_unix_timestamp() -> String {
+     use std::time::{SystemTime, UNIX_EPOCH};
+     let secs = SystemTime::now()
+@@ -141,9 +211,7 @@ fn current_unix_timestamp() -> String {
+     secs.to_string()
+ }
+ 
+-/// Return a UTC offset string like `"+0000"` or `"-0500"`.
+ fn local_tz_string() -> String {
+-    // Simple: always UTC for now; a full implementation would read localtime
+     "+0000".to_owned()
+ }
+ 
+@@ -160,3 +228,7 @@ fn resolve_tree_ish(repo: &Repository, s
+     }
+     bail!("not a valid object name: '{s}'")
+ }
++
++fn resolve_commit_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
++    resolve_tree_ish(repo, s)
++}
+diff --git a/gust/src/commands/hash_object.rs b/gust/src/commands/hash_object.rs
+index d77a07d..06c705a 100644
+--- a/gust/src/commands/hash_object.rs
++++ b/gust/src/commands/hash_object.rs
+@@ -1,12 +1,12 @@
+-//! `gust hash-object` — compute object ID and optionally write to object store.
++//! `gust hash-object` — compute object ID and optionally create an object from a file.
+ 
+-use anyhow::{Context, Result};
++use anyhow::{bail, Context, Result};
+ use clap::Args as ClapArgs;
+ use std::io::Read;
+ use std::path::PathBuf;
+ use std::str::FromStr;
+ 
+-use gust_lib::objects::ObjectKind;
++use gust_lib::objects::{parse_commit, ObjectKind};
+ use gust_lib::odb::Odb;
+ use gust_lib::repo::Repository;
+ 
+@@ -21,28 +21,51 @@ pub struct Args {
+     #[arg(short = 'w')]
+     pub write: bool,
+ 
+-    /// Read object from stdin.
+-    #[arg(long)]
+-    pub stdin: bool,
++    /// Read object from stdin (may be repeated only once; use with files to hash stdin then files).
++    #[arg(long, action = clap::ArgAction::Count, conflicts_with = "stdin_paths")]
++    pub stdin: u8,
+ 
+     /// Read file paths from stdin (one per line).
+-    #[arg(long = "stdin-paths")]
++    #[arg(long = "stdin-paths", conflicts_with_all = ["stdin", "files"])]
+     pub stdin_paths: bool,
+ 
+     /// Don't validate file content, just hash it (with --literally).
+     #[arg(long)]
+     pub literally: bool,
+ 
++    /// Filter path (unsupported; rejected with `--stdin-paths` / `--no-filters`).
++    #[arg(long = "path", value_name = "path", hide = true)]
++    pub path: Option<String>,
++
++    /// Skip filters (unsupported; rejected with `--path`).
++    #[arg(long = "no-filters", hide = true)]
++    pub no_filters: bool,
++
+     /// File(s) to hash.
+     pub files: Vec<PathBuf>,
+ }
+ 
+ /// Run `gust hash-object`.
+ pub fn run(args: Args) -> Result<()> {
++    if args.stdin > 1 {
++        bail!("multiple '--stdin' are not allowed");
++    }
++    if args.stdin > 0 && args.stdin_paths {
++        bail!("cannot use --stdin and --stdin-paths together");
++    }
++    if args.stdin_paths && !args.files.is_empty() {
++        bail!("cannot pass filenames with --stdin-paths");
++    }
++    if args.stdin_paths && args.path.is_some() {
++        bail!("cannot use --path with --stdin-paths");
++    }
++    if args.no_filters && args.path.is_some() {
++        bail!("cannot use --path with --no-filters");
++    }
++
+     let kind = ObjectKind::from_str(&args.object_type)
+         .with_context(|| format!("unknown object type '{}'", args.object_type))?;
+ 
+-    // We only need the odb if -w is given
+     let odb = if args.write {
+         let repo = Repository::discover(None).context("not a git repository")?;
+         Some(repo.odb)
+@@ -50,14 +73,7 @@ pub fn run(args: Args) -> Result<()> {
+         None
+     };
+ 
+-    if args.stdin {
+-        let mut data = Vec::new();
+-        std::io::stdin()
+-            .read_to_end(&mut data)
+-            .context("reading stdin")?;
+-        let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
+-        println!("{oid}");
+-    } else if args.stdin_paths {
++    if args.stdin_paths {
+         let mut buf = String::new();
+         std::io::stdin()
+             .read_to_string(&mut buf)
+@@ -66,18 +82,56 @@ pub fn run(args: Args) -> Result<()> {
+             let path = PathBuf::from(line);
+             let data = std::fs::read(&path)
+                 .with_context(|| format!("cannot read '{}'", path.display()))?;
++            validate_object_payload(kind, &data)?;
+             let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
+             println!("{oid}");
+         }
+-    } else {
+-        for path in &args.files {
+-            let data =
+-                std::fs::read(path).with_context(|| format!("cannot read '{}'", path.display()))?;
+-            let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
+-            println!("{oid}");
++        return Ok(());
++    }
++
++    if args.stdin > 0 {
++        let mut data = Vec::new();
++        std::io::stdin()
++            .read_to_end(&mut data)
++            .context("reading stdin")?;
++        validate_object_payload(kind, &data)?;
++        let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
++        println!("{oid}");
++    }
++
++    for path in &args.files {
++        let data =
++            std::fs::read(path).with_context(|| format!("cannot read '{}'", path.display()))?;
++        validate_object_payload(kind, &data)?;
++        let oid = hash_and_maybe_write(kind, &data, odb.as_ref())?;
++        println!("{oid}");
++    }
++
++    if args.stdin == 0 && args.files.is_empty() && !args.stdin_paths {
++        bail!("no object to hash (provide file, --stdin, or --stdin-paths)");
++    }
++
++    Ok(())
++}
++
++fn validate_object_payload(kind: ObjectKind, data: &[u8]) -> Result<()> {
++    match kind {
++        ObjectKind::Commit => {
++            parse_commit(data)
++                .map(|_| ())
++                .context("invalid commit object")?;
++        }
++        ObjectKind::Tag => {
++            if data.is_empty() {
++                bail!("invalid tag object");
++            }
++            let text = std::str::from_utf8(data).context("invalid tag object")?;
++            if !(text.contains("object ") && text.contains("type ") && text.contains("tag ")) {
++                bail!("invalid tag object");
++            }
+         }
++        _ => {}
+     }
+-
+     Ok(())
+ }
+ 
+diff --git a/gust/src/commands/ls_tree.rs b/gust/src/commands/ls_tree.rs
+index 8bcb6e7..f70a605 100644
+--- a/gust/src/commands/ls_tree.rs
++++ b/gust/src/commands/ls_tree.rs
+@@ -61,7 +61,7 @@ pub fn run(args: Args) -> Result<()> {
+     let mut out = stdout.lock();
+     let term = if args.null_terminated { b'\0' } else { b'\n' };
+ 
+-    list_tree(&repo, &obj.data, "", &args, &mut out, term)?;
++    list_tree(&repo, &obj.data, b"", &args, &mut out, term)?;
+ 
+     Ok(())
+ }
+@@ -69,7 +69,7 @@ }
+ fn list_tree(
+     repo: &Repository,
+     data: &[u8],
+-    prefix: &str,
++    prefix: &[u8],
+     args: &Args,
+     out: &mut impl Write,
+     term: u8,
+@@ -77,21 +77,27 @@ ) -> Result<()> {
+     let entries = parse_tree(data)?;
+ 
+     for entry in &entries {
+-        let name = String::from_utf8_lossy(&entry.name);
+         let full_name = if prefix.is_empty() {
+-            name.to_string()
++            entry.name.clone()
+         } else {
+-            format!("{prefix}/{name}")
++            let mut p = Vec::with_capacity(prefix.len() + 1 + entry.name.len());
++            p.extend_from_slice(prefix);
++            p.push(b'/');
++            p.extend_from_slice(&entry.name);
++            p
+         };
+ 
+         let is_tree = entry.mode == 0o040000;
+ 
+         // Apply path filter
+         if !args.paths.is_empty() {
+-            let matches = args
+-                .paths
+-                .iter()
+-                .any(|p| full_name == *p || full_name.starts_with(&format!("{p}/")));
++            let matches = args.paths.iter().any(|p| {
++                let p = p.as_bytes();
++                full_name == p
++                    || (full_name.len() > p.len()
++                        && full_name.starts_with(p)
++                        && full_name[p.len()] == b'/')
++            });
+             if !matches {
+                 continue;
+             }
+@@ -118,37 +124,70 @@ }
+ 
+ fn print_entry(
+     entry: &gust_lib::objects::TreeEntry,
+-    name: &str,
++    name: &[u8],
+     args: &Args,
+     out: &mut impl Write,
+     term: u8,
+ ) -> Result<()> {
+     let is_tree = entry.mode == 0o040000;
+     let kind_str = if is_tree { "tree" } else { "blob" };
++    let quoted_name = quoted_path(name, args.null_terminated);
+ 
+     if let Some(fmt) = &args.format {
++        let path_for_format = String::from_utf8_lossy(name);
+         let line = fmt
+             .replace("%(objectmode)", &format!("{:06o}", entry.mode))
+             .replace("%(objecttype)", kind_str)
+             .replace("%(objectname)", &entry.oid.to_hex())
+-            .replace("%(path)", name);
++            .replace("%(path)", &path_for_format);
+         write!(out, "{line}")?;
+     } else if args.name_only {
+-        write!(out, "{name}")?;
++        out.write_all(&quoted_name)?;
+     } else if args.long {
+         let size_str = "-";
+         write!(
+             out,
+-            "{:06o} {kind_str} {}\t{size_str}\t{name}",
++            "{:06o} {kind_str} {}\t{size_str}\t",
+             entry.mode, entry.oid
+         )?;
++        out.write_all(&quoted_name)?;
+     } else {
+-        write!(out, "{:06o} {kind_str} {}\t{name}", entry.mode, entry.oid)?;
++        write!(out, "{:06o} {kind_str} {}\t", entry.mode, entry.oid)?;
++        out.write_all(&quoted_name)?;
+     }
+     out.write_all(&[term])?;
+     Ok(())
+ }
+ 
++fn quoted_path(path: &[u8], null_terminated: bool) -> Vec<u8> {
++    if null_terminated || !needs_c_style_quote(path) {
++        return path.to_vec();
++    }
++
++    let mut out = Vec::with_capacity(path.len() + 2);
++    out.push(b'"');
++    for &b in path {
++        match b {
++            b'\n' => out.extend_from_slice(br"\n"),
++            b'\t' => out.extend_from_slice(br"\t"),
++            b'\r' => out.extend_from_slice(br"\r"),
++            0x08 => out.extend_from_slice(br"\b"),
++            0x0c => out.extend_from_slice(br"\f"),
++            b'"' => out.extend_from_slice(br#"\""#),
++            b'\\' => out.extend_from_slice(br"\\"),
++            0x20..=0x7e => out.push(b),
++            _ => out.extend_from_slice(format!(r"\{:03o}", b).as_bytes()),
++        }
++    }
++    out.push(b'"');
++    out
++}
++
++fn needs_c_style_quote(path: &[u8]) -> bool {
++    path.iter()
++        .any(|&b| b == b'"' || b == b'\\' || b < 0x20 || b == 0x7f)
++}
++
+ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+     if let Ok(oid) = s.parse::<ObjectId>() {
+         return Ok(oid);
+diff --git a/gust/src/commands/update_ref.rs b/gust/src/commands/update_ref.rs
+index d7832ac..e8636b6 100644
+--- a/gust/src/commands/update_ref.rs
++++ b/gust/src/commands/update_ref.rs
+@@ -5,7 +5,7 @@ use clap::Args as ClapArgs;
+ use std::io::{self, BufRead};
+ 
+ use gust_lib::objects::ObjectId;
+-use gust_lib::refs::{append_reflog, delete_ref, resolve_ref, write_ref};
++use gust_lib::refs::{append_reflog, delete_ref, read_head, resolve_ref, write_ref};
+ use gust_lib::repo::Repository;
+ 
+ /// Arguments for `gust update-ref`.
+@@ -53,17 +53,20 @@ pub fn run(args: Args) -> Result<()> {
+         .refname
+         .as_deref()
+         .ok_or_else(|| anyhow::anyhow!("ref name required"))?;
++    let target_ref = deref_refname(&repo, refname, args.no_deref)?;
+ 
+     if args.delete {
++        let expected_old = args.new_value.as_deref().or(args.old_value.as_deref());
++
+         // Verify old value if provided
+-        if let Some(old) = &args.old_value {
+-            let current = resolve_ref(&repo.git_dir, refname).ok();
++        if let Some(old) = expected_old {
++            let current = resolve_ref(&repo.git_dir, &target_ref).ok();
+             let expected: ObjectId = old.parse().context("invalid old-value OID")?;
+-            if current != Some(expected) {
++            if !matches_expected_old(current, expected) {
+                 bail!("ref '{refname}' does not point to expected value");
+             }
+         }
+-        delete_ref(&repo.git_dir, refname).context("deleting ref")?;
++        delete_ref(&repo.git_dir, &target_ref).context("deleting ref")?;
+         return Ok(());
+     }
+ 
+@@ -75,22 +78,28 @@ pub fn run(args: Args) -> Result<()> {
+ 
+     // Verify old value
+     if let Some(old_str) = &args.old_value {
+-        let current = resolve_ref(&repo.git_dir, refname).ok();
++        let current = resolve_ref(&repo.git_dir, &target_ref).ok();
+         let expected: ObjectId = old_str.parse().context("invalid old-value OID")?;
+-        if current != Some(expected) {
++        if !matches_expected_old(current, expected) {
+             bail!("ref '{refname}' does not point to expected value");
+         }
+     }
+ 
+-    let old_oid = resolve_ref(&repo.git_dir, refname)
+-        .unwrap_or_else(|_| ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| unreachable!()));
++    let old_oid = resolve_ref(&repo.git_dir, &target_ref).unwrap_or_else(|_| zero_oid());
+ 
+-    write_ref(&repo.git_dir, refname, &new_oid).context("writing ref")?;
++    write_ref(&repo.git_dir, &target_ref, &new_oid).context("writing ref")?;
+ 
+     // Reflog
+     if let Some(msg) = &args.log_message {
+         let identity = "gust <gust> 0 +0000";
+-        let _ = append_reflog(&repo.git_dir, refname, &old_oid, &new_oid, identity, msg);
++        let _ = append_reflog(
++            &repo.git_dir,
++            &target_ref,
++            &old_oid,
++            &new_oid,
++            identity,
++            msg,
++        );
+     }
+ 
+     Ok(())
+@@ -100,86 +109,108 @@ /// Process `--stdin` batch commands.
+ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
+     let stdin = io::stdin();
+     let lines: Vec<String> = stdin.lock().lines().collect::<std::io::Result<_>>()?;
++    let mut in_transaction = false;
++    let mut pending = Vec::new();
+ 
+-    for line in &lines {
++    for line in lines {
+         let parts: Vec<&str> = line.trim().splitn(4, ' ').collect();
+         if parts.is_empty() || parts[0].is_empty() {
+             continue;
+         }
+ 
+         match parts[0] {
++            "start" => {
++                in_transaction = true;
++                pending.clear();
++                println!("start: ok");
++            }
++            "commit" => {
++                if !in_transaction {
++                    bail!("commit without start");
++                }
++                for op in &pending {
++                    apply_batch_op(repo, args, op)?;
++                }
++                pending.clear();
++                in_transaction = false;
++                println!("commit: ok");
++            }
+             "update" => {
+                 if parts.len() < 3 {
+                     bail!("update requires ref and new-value");
+                 }
+-                let refname = parts[1];
+-                let new_oid = resolve_oid_or_ref(repo, parts[2])?;
+-                let old_oid = if parts.len() >= 4 && !parts[3].is_empty() {
+-                    let o: ObjectId = parts[3].parse().context("invalid old-value")?;
+-                    let current = resolve_ref(&repo.git_dir, refname).ok();
+-                    if current != Some(o) {
+-                        bail!("ref '{refname}' does not point to expected value");
+-                    }
+-                    current
++                let expected = if parts.len() >= 4 && !parts[3].is_empty() {
++                    Some(parts[3].parse().context("invalid old-value")?)
+                 } else {
+-                    resolve_ref(&repo.git_dir, refname).ok()
++                    None
++                };
++                let op = BatchOp::Update {
++                    refname: parts[1].to_owned(),
++                    new_oid: resolve_oid_or_ref(repo, parts[2])?,
++                    expected_old: expected,
+                 };
+-                let old = old_oid.unwrap_or_else(|| {
+-                    ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| unreachable!())
+-                });
+-                write_ref(&repo.git_dir, refname, &new_oid)?;
+-                if let Some(msg) = &args.log_message {
+-                    let _ = append_reflog(
+-                        &repo.git_dir,
+-                        refname,
+-                        &old,
+-                        &new_oid,
+-                        "gust <gust> 0 +0000",
+-                        msg,
+-                    );
++                if in_transaction {
++                    pending.push(op);
++                } else {
++                    apply_batch_op(repo, args, &op)?;
+                 }
+             }
+             "create" => {
+                 if parts.len() < 3 {
+                     bail!("create requires ref and new-value");
+                 }
+-                let refname = parts[1];
+-                // create fails if ref already exists
+-                if resolve_ref(&repo.git_dir, refname).is_ok() {
+-                    bail!("ref '{refname}' already exists");
++                let op = BatchOp::Create {
++                    refname: parts[1].to_owned(),
++                    new_oid: resolve_oid_or_ref(repo, parts[2])?,
++                };
++                if in_transaction {
++                    pending.push(op);
++                } else {
++                    apply_batch_op(repo, args, &op)?;
+                 }
+-                let new_oid = resolve_oid_or_ref(repo, parts[2])?;
+-                write_ref(&repo.git_dir, refname, &new_oid)?;
+             }
+             "delete" => {
+                 if parts.len() < 2 {
+                     bail!("delete requires ref");
+                 }
+-                let refname = parts[1];
+-                if parts.len() >= 3 && !parts[2].is_empty() {
+-                    let expected: ObjectId = parts[2].parse().context("invalid old-value")?;
+-                    let current = resolve_ref(&repo.git_dir, refname).ok();
+-                    if current != Some(expected) {
+-                        bail!("ref '{refname}' does not point to expected value");
+-                    }
++                let expected = if parts.len() >= 3 && !parts[2].is_empty() {
++                    Some(parts[2].parse().context("invalid old-value")?)
++                } else {
++                    None
++                };
++                let op = BatchOp::Delete {
++                    refname: parts[1].to_owned(),
++                    expected_old: expected,
++                };
++                if in_transaction {
++                    pending.push(op);
++                } else {
++                    apply_batch_op(repo, args, &op)?;
+                 }
+-                delete_ref(&repo.git_dir, refname)?;
+             }
+             "verify" => {
+                 if parts.len() < 2 {
+                     bail!("verify requires ref");
+                 }
+-                let refname = parts[1];
+-                if parts.len() >= 3 && !parts[2].is_empty() {
+-                    let expected: ObjectId = parts[2].parse().context("invalid old-value")?;
+-                    let current = resolve_ref(&repo.git_dir, refname)
+-                        .map_err(|_| anyhow::anyhow!("ref '{refname}' does not exist"))?;
+-                    if current != expected {
+-                        bail!("ref '{refname}' does not match expected value");
+-                    }
++                let expected = if parts.len() >= 3 && !parts[2].is_empty() {
++                    Some(parts[2].parse().context("invalid old-value")?)
++                } else {
++                    None
++                };
++                let op = BatchOp::Verify {
++                    refname: parts[1].to_owned(),
++                    expected_old: expected,
++                };
++                if in_transaction {
++                    pending.push(op);
++                } else {
++                    apply_batch_op(repo, args, &op)?;
+                 }
+             }
+-            "abort" => break,
++            "abort" => {
++                in_transaction = false;
++                pending.clear();
++            }
+             other => bail!("unknown batch command: {other}"),
+         }
+     }
+@@ -187,6 +218,87 @@ fn run_batch(repo: &Repository, args: &A
+     Ok(())
+ }
+ 
++#[derive(Debug, Clone)]
++enum BatchOp {
++    Update {
++        refname: String,
++        new_oid: ObjectId,
++        expected_old: Option<ObjectId>,
++    },
++    Create {
++        refname: String,
++        new_oid: ObjectId,
++    },
++    Delete {
++        refname: String,
++        expected_old: Option<ObjectId>,
++    },
++    Verify {
++        refname: String,
++        expected_old: Option<ObjectId>,
++    },
++}
++
++fn apply_batch_op(repo: &Repository, args: &Args, op: &BatchOp) -> Result<()> {
++    match op {
++        BatchOp::Update {
++            refname,
++            new_oid,
++            expected_old,
++        } => {
++            let current = resolve_ref(&repo.git_dir, refname).ok();
++            if let Some(expected) = expected_old {
++                if !matches_expected_old(current, *expected) {
++                    bail!("ref '{refname}' does not point to expected value");
++                }
++            }
++
++            let old = current.unwrap_or_else(zero_oid);
++            write_ref(&repo.git_dir, refname, new_oid)?;
++            if let Some(msg) = &args.log_message {
++                let _ = append_reflog(
++                    &repo.git_dir,
++                    refname,
++                    &old,
++                    new_oid,
++                    "gust <gust> 0 +0000",
++                    msg,
++                );
++            }
++        }
++        BatchOp::Create { refname, new_oid } => {
++            if resolve_ref(&repo.git_dir, refname).is_ok() {
++                bail!("ref '{refname}' already exists");
++            }
++            write_ref(&repo.git_dir, refname, new_oid)?;
++        }
++        BatchOp::Delete {
++            refname,
++            expected_old,
++        } => {
++            if let Some(expected) = expected_old {
++                let current = resolve_ref(&repo.git_dir, refname).ok();
++                if !matches_expected_old(current, *expected) {
++                    bail!("ref '{refname}' does not point to expected value");
++                }
++            }
++            delete_ref(&repo.git_dir, refname)?;
++        }
++        BatchOp::Verify {
++            refname,
++            expected_old,
++        } => {
++            if let Some(expected) = expected_old {
++                let current = resolve_ref(&repo.git_dir, refname).ok();
++                if !matches_expected_old(current, *expected) {
++                    bail!("ref '{refname}' does not match expected value");
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
+ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
+     if let Ok(oid) = s.parse::<ObjectId>() {
+         return Ok(oid);
+@@ -196,3 +308,27 @@ fn resolve_oid_or_ref(repo: &Repository,
+     }
+     bail!("not a valid object name: '{s}'")
+ }
++
++fn deref_refname(repo: &Repository, refname: &str, no_deref: bool) -> Result<String> {
++    if no_deref || refname != "HEAD" {
++        return Ok(refname.to_owned());
++    }
++
++    Ok(read_head(&repo.git_dir)?.unwrap_or_else(|| "HEAD".to_owned()))
++}
++
++fn zero_oid() -> ObjectId {
++    ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| unreachable!())
++}
++
++fn is_zero_oid(oid: ObjectId) -> bool {
++    oid.as_bytes().iter().all(|b| *b == 0)
++}
++
++fn matches_expected_old(current: Option<ObjectId>, expected: ObjectId) -> bool {
++    if is_zero_oid(expected) {
++        current.is_none()
++    } else {
++        current == Some(expected)
++    }
++}
+diff --git a/gust/src/commands/write_tree.rs b/gust/src/commands/write_tree.rs
+index 5c6f261..e083a23 100644
+--- a/gust/src/commands/write_tree.rs
++++ b/gust/src/commands/write_tree.rs
+@@ -1,6 +1,6 @@
+ //! `gust write-tree` — create a tree object from the current index.
+ 
+-use anyhow::{Context, Result};
++use anyhow::{bail, Context, Result};
+ use clap::Args as ClapArgs;
+ use std::collections::BTreeMap;
+ 
+@@ -26,8 +26,8 @@ pub fn run(args: Args) -> Result<()> {
+     let index = Index::load(&repo.index_path()).context("loading index")?;
+ 
+     let prefix = args.prefix.as_deref().unwrap_or("");
+-    let oid =
+-        write_tree_from_index(&repo.odb, &index, prefix).context("building tree from index")?;
++    let oid = write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
++        .context("building tree from index")?;
+ 
+     println!("{oid}");
+     Ok(())
+@@ -40,6 +40,7 @@ pub fn write_tree_from_index(
+     odb: &gust_lib::odb::Odb,
+     index: &Index,
+     prefix: &str,
++    missing_ok: bool,
+ ) -> Result<ObjectId> {
+     // Filter entries by prefix
+     let prefix_bytes = prefix.as_bytes();
+@@ -49,6 +50,18 @@ ) -> Result<ObjectId> {
+         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
+         .collect();
+ 
++    if !missing_ok {
++        for entry in &entries {
++            if !odb.exists(&entry.oid) {
++                bail!(
++                    "missing object {} for path '{}'",
++                    entry.oid,
++                    String::from_utf8_lossy(&entry.path)
++                );
++            }
++        }
++    }
++
+     build_tree(odb, &entries, prefix_bytes)
+ }
+ 
+diff --git a/tests/t1100-commit-tree-options.sh b/tests/t1100-commit-tree-options.sh
+index 60f064d..b4a256a 100644
+--- a/tests/t1100-commit-tree-options.sh
++++ b/tests/t1100-commit-tree-options.sh
+@@ -40,19 +40,6 @@ test_expect_success \
+   'compare commit' \
+   'cd repo &&
+      tree=$(cat treeid) &&
+-     cat >expected <<-EOF &&
+-     tree $tree
+-     author Author Name <author@email> 1117148400 +0000
+-     committer Committer Name <committer@email> 1117150200 +0000
+-     
+-     comment text
+-     EOF
+-     git cat-file $(cat commitid) >commit'
+-
+-test_expect_success \
+-  'compare commit' \
+-  'cd repo &&
+-     tree=$(cat treeid) &&
+      {
+      	echo "tree $tree" &&
+      	echo "author Author Name <author@email> 1117148400 +0000" &&
+diff --git a/tests/test-lib.sh b/tests/test-lib.sh
+index 47bdf80..f4cebca 100755
+--- a/tests/test-lib.sh
++++ b/tests/test-lib.sh
+@@ -196,8 +196,12 @@ test_expect_failure () {
+ }
+ 
+ test_must_fail () {
+-	"$@"
+-	test $? -ne 0
++	# Use `if` so `set -e` does not abort when the inner command fails before we
++	# can observe its status (a bare failing "$@" triggers immediate exit under -e).
++	if "$@"; then
++		return 1
++	fi
++	return 0
+ }
+ 
+ test_done () {
+diff --git a/tests/trash/actual b/tests/trash/actual
+deleted file mode 100644
+index bddcc0b..0000000
+--- a/tests/trash/actual
++++ /dev/null
+@@ -1 +0,0 @@
+-ref: refs/heads/main
+\ No newline at end of file
+diff --git a/tests/trash/bare.git/HEAD b/tests/trash/bare.git/HEAD
+deleted file mode 100644
+index cb089cd..0000000
+--- a/tests/trash/bare.git/HEAD
++++ /dev/null
+@@ -1 +0,0 @@
+-ref: refs/heads/master
+diff --git a/tests/trash/bare.git/config b/tests/trash/bare.git/config
+deleted file mode 100644
+index 07d359d..0000000
+--- a/tests/trash/bare.git/config
++++ /dev/null
+@@ -1,4 +0,0 @@
+-[core]
+-	repositoryformatversion = 0
+-	filemode = true
+-	bare = true
+diff --git a/tests/trash/bare.git/description b/tests/trash/bare.git/description
+deleted file mode 100644
+index 498b267..0000000
+--- a/tests/trash/bare.git/description
++++ /dev/null
+@@ -1 +0,0 @@
+-Unnamed repository; edit this file 'description' to name the repository.
+diff --git a/tests/trash/bare2.git/HEAD b/tests/trash/bare2.git/HEAD
+deleted file mode 100644
+index cb089cd..0000000
+--- a/tests/trash/bare2.git/HEAD
++++ /dev/null
+@@ -1 +0,0 @@
+-ref: refs/heads/master
+diff --git a/tests/trash/bare2.git/config b/tests/trash/bare2.git/config
+deleted file mode 100644
+index 07d359d..0000000
+--- a/tests/trash/bare2.git/config
++++ /dev/null
+@@ -1,4 +0,0 @@
+-[core]
+-	repositoryformatversion = 0
+-	filemode = true
+-	bare = true
+diff --git a/tests/trash/bare2.git/description b/tests/trash/bare2.git/description
+deleted file mode 100644
+index 498b267..0000000
+--- a/tests/trash/bare2.git/description
++++ /dev/null
+@@ -1 +0,0 @@
+-Unnamed repository; edit this file 'description' to name the repository.
+diff --git a/tests/trash/expected b/tests/trash/expected
+deleted file mode 100644
+index bddcc0b..0000000
+--- a/tests/trash/expected
++++ /dev/null
+@@ -1 +0,0 @@
+-ref: refs/heads/main
+\ No newline at end of file
+diff --git a/tests/trash/out b/tests/trash/out
+deleted file mode 100644
+index e69de29..0000000
+--- a/tests/trash/out
++++ /dev/null
+diff --git a/tests/trash/tmpl/myfile b/tests/trash/tmpl/myfile
+deleted file mode 100644
+index 0d82d79..0000000
+--- a/tests/trash/tmpl/myfile
++++ /dev/null
+@@ -1 +0,0 @@
+-custom
+-- 
+grit
+
