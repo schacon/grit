@@ -12,7 +12,7 @@ cd "$(dirname "$0")" || exit 1
 # Initialize a repo in the trash directory
 git init --quiet
 
-test_expect_failure 'create loose objects on import' '
+test_expect_success 'create loose objects on import' '
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/main
@@ -30,7 +30,7 @@ test_expect_failure 'create loose objects on import' '
 	test $(find .git/objects/pack -type f | wc -l) -eq 0
 '
 
-test_expect_failure 'bigger packs are preserved' '
+test_expect_success 'bigger packs are preserved' '
 	test_tick &&
 	cat >input <<-INPUT_END &&
 	commit refs/heads/main
