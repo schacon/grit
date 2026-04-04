@@ -87,6 +87,22 @@ pub struct Args {
     /// Keep subject intact (do not strip/add [PATCH] prefix).
     #[arg(short = 'k', long = "keep-subject")]
     pub keep_subject: bool,
+
+    /// Include patches for commits that don't change any files.
+    #[arg(long = "always")]
+    pub always: bool,
+
+    /// Use RFC 2047 encoding for non-ASCII characters.
+    #[arg(long = "rfc")]
+    pub rfc: bool,
+
+    /// Add extra header.
+    #[arg(long = "add-header", value_name = "HEADER")]
+    pub add_header: Vec<String>,
+
+    /// Number of context lines in patches.
+    #[arg(short = 'U', value_name = "N")]
+    pub context_lines: Option<usize>,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
