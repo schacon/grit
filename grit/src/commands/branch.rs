@@ -736,8 +736,12 @@ fn create_branch(
         }
         let ident = get_reflog_identity();
         let zero = "0000000000000000000000000000000000000000";
-        let entry = format!("{zero} {oid} {ident}\tbranch: Created from {}\n",
-            start_point.unwrap_or("HEAD"));
+        // Use the branch name of start_point, or the current branch name
+        let from = match start_point {
+            Some(sp) => sp.to_string(),
+            None => head.branch_name().unwrap_or("HEAD").to_string(),
+        };
+        let entry = format!("{zero} {oid} {ident}\tbranch: Created from {from}\n");
         let _ = fs::write(&reflog_path, entry);
     }
 
