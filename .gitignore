@@ -10,3 +10,4 @@ bench/.scratch
 tests/actual
 tests/expect
 tests/trash/
+scripts/subscripts/__pycache__

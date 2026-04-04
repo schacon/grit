@@ -29,27 +29,184 @@ GIT_SUBCOMMANDS = {
     "check-mailmap", "check-ref-format", "checkout", "checkout-index",
     "cherry", "cherry-pick", "clean", "clone", "column", "commit",
     "commit-graph", "commit-tree", "config", "count-objects", "credential",
-    "credential-cache", "credential-store", "daemon", "describe", "diagnose",
+    "credential-cache", "credential-store", "cvsimport", "cvsserver",
+    "daemon", "describe", "diagnose",
     "diff", "diff-files", "diff-index", "diff-tree", "difftool",
     "fast-export", "fast-import", "fetch", "fetch-pack", "filter-branch",
     "fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch", "fsck",
-    "gc", "get-tar-commit-id", "grep", "hash-object", "help", "hook",
-    "http-backend", "imap-send", "index-pack", "init", "interpret-trailers",
-    "log", "ls-files", "ls-remote", "ls-tree", "mailinfo", "mailsplit",
-    "maintenance", "merge", "merge-base", "merge-file", "merge-index",
-    "merge-one-file", "merge-tree", "mergetool", "mktag", "mktree",
-    "multi-pack-index", "mv", "name-rev", "notes", "pack-objects",
-    "pack-redundant", "pack-refs", "patch-id", "prune", "prune-packed",
-    "pull", "push", "range-diff", "read-tree", "rebase", "receive-pack",
-    "reflog", "refs", "remote", "repack", "replace", "replay",
-    "request-pull", "rerere", "reset", "restore", "rev-list", "rev-parse",
-    "revert", "rm", "scalar", "send-email", "send-pack", "shortlog", "show",
-    "show-branch", "show-index", "show-ref", "sparse-checkout", "stash",
-    "status", "stripspace", "submodule", "switch", "symbolic-ref", "tag",
-    "unpack-file", "unpack-objects", "update-index", "update-ref",
-    "update-server-info", "upload-archive", "upload-pack", "var",
-    "verify-commit", "verify-pack", "verify-tag", "version", "whatchanged",
-    "worktree", "write-tree",
+    "gc", "get-tar-commit-id", "gitweb", "grep", "hash-object", "help",
+    "hook", "http-backend", "imap-send", "index-pack", "init",
+    "interpret-trailers", "log", "ls-files", "ls-remote", "ls-tree",
+    "mailinfo", "mailsplit", "maintenance", "merge", "merge-base",
+    "merge-file", "merge-index", "merge-one-file", "merge-tree", "mergetool",
+    "mktag", "mktree", "multi-pack-index", "mv", "name-rev", "notes",
+    "p4", "pack-objects", "pack-redundant", "pack-refs", "patch-id", "prune",
+    "prune-packed", "pull", "push", "range-diff", "read-tree", "rebase",
+    "receive-pack", "reflog", "refs", "remote", "repack", "replace",
+    "replay", "request-pull", "rerere", "reset", "restore", "rev-list",
+    "rev-parse", "revert", "rm", "scalar", "send-email", "send-pack",
+    "shortlog", "show", "show-branch", "show-index", "show-ref",
+    "sparse-checkout", "stash", "status", "stripspace", "submodule", "svn",
+    "switch", "symbolic-ref", "tag", "unpack-file", "unpack-objects",
+    "update-index", "update-ref", "update-server-info", "upload-archive",
+    "upload-pack", "var", "verify-commit", "verify-pack", "verify-tag",
+    "version", "whatchanged", "worktree", "write-tree",
+}
+
+# ── File name overrides ──
+# Maps test file basenames to a subcommand when the filename doesn't
+# directly encode a known subcommand and body-scanning can't find one.
+
+FILE_COMMAND_OVERRIDES = {
+    # Infrastructure / core
+    "t0000-basic": "init",
+    "t0002-gitfile": "init",
+    "t0003-attributes": "check-attr",
+    "t0004-unwritable": "init",
+    "t0005-signals": "init",
+    "t0006-date": "log",
+    "t0008-ignores": "check-ignore",
+    "t0013-sha1dc": "hash-object",
+    "t0014-alias": "config",
+    "t0017-env-helper": "var",
+    "t0018-advice": "config",
+    "t0019-json-writer": "init",
+    "t0020-crlf": "config",
+    "t0021-conversion": "config",
+    "t0027-auto-crlf": "config",
+    "t0029-core-unsetenvvars": "config",
+    "t0033-safe-directory": "config",
+    "t0034-root-safe-directory": "config",
+    "t0035-safe-bare-repository": "config",
+    "t0040-parse-options": "init",
+    "t0041-usage": "help",
+    "t0052-simple-ipc": "init",
+    "t0056-git-C": "rev-parse",
+    "t0060-path-utils": "init",
+    "t0061-run-command": "init",
+    "t0062-revision-walking": "rev-list",
+    "t0066-dir-iterator": "init",
+    "t0067-parse_pathspec_file": "init",
+    "t0070-fundamental": "init",
+    "t0071-sort": "init",
+    "t0080-unit-test-output": "init",
+    "t0081-find-pack": "pack-objects",
+    "t0090-cache-tree": "read-tree",
+    "t0091-bugreport": "diagnose",
+    "t0095-bloom": "commit-graph",
+    "t0101-at-syntax": "rev-parse",
+    "t0200-gettext-basic": "init",
+    "t0201-gettext-fallbacks": "init",
+    "t0202-gettext-perl": "init",
+    "t0204-gettext-reencode-sanity": "init",
+    "t0210-trace2-normal": "init",
+    "t0211-trace2-perf": "init",
+    "t0212-trace2-event": "init",
+    "t0213-trace2-ancestry": "init",
+    "t0300-credentials": "credential",
+    "t0450-txt-doc-vs-help": "help",
+    "t0500-progress-display": "init",
+    "t0600-reffiles-backend": "refs",
+    # Large file handling
+    "t1050-large": "add",
+    "t1051-large-conversion": "add",
+    "t1060-object-corruption": "fsck",
+    # Config / setup
+    "t1304-default-acl": "init",
+    "t1306-xdg-files": "config",
+    "t1309-early-config": "config",
+    "t1405-main-ref-store": "refs",
+    "t1419-exclude-refs": "rev-list",
+    "t1501-work-tree": "init",
+    "t1509-root-work-tree": "init",
+    "t1510-repo-setup": "init",
+    "t1517-outside-repo": "rev-parse",
+    "t1600-index": "update-index",
+    "t1700-split-index": "update-index",
+    "t1900-repo-info": "rev-parse",
+    "t2050-git-dir-relative": "init",
+    "t2081-parallel-checkout-collisions": "checkout",
+    "t2501-cwd-empty": "init",
+    # Matching / naming
+    "t3070-wildmatch": "ls-files",
+    "t3211-peel-ref": "show-ref",
+    "t3300-funny-names": "ls-files",
+    "t3450-history": "log",
+    "t3900-i18n-commit": "commit",
+    "t3902-quoted": "ls-files",
+    "t3910-mac-os-precompose": "init",
+    "t3920-crlf-messages": "commit",
+    # Diff-related
+    "t4007-rename-3": "diff",
+    "t4026-color": "config",
+    "t4052-stat-output": "diff",
+    "t4203-mailmap": "check-mailmap",
+    "t4211-line-log": "log",
+    # Pack / archive
+    "t5000-tar-tree": "archive",
+    "t5300-pack-object": "pack-objects",
+    "t5302-pack-index": "index-pack",
+    "t5303-pack-corruption-resilience": "pack-objects",
+    "t5308-pack-detect-duplicates": "pack-objects",
+    "t5310-pack-bitmaps": "pack-objects",
+    "t5313-pack-bounds-checks": "pack-objects",
+    "t5320-delta-islands": "pack-objects",
+    "t5324-split-commit-graph": "commit-graph",
+    "t5325-reverse-index": "index-pack",
+    "t5332-multi-pack-reuse": "multi-pack-index",
+    "t5333-pseudo-merge-bitmaps": "multi-pack-index",
+    "t5334-incremental-multi-pack-index": "multi-pack-index",
+    "t5351-unpack-large-objects": "unpack-objects",
+    # Hooks
+    "t5401-update-hooks": "receive-pack",
+    "t5402-post-merge-hook": "merge",
+    # Transport / fetch / push
+    "t5503-tagfollow": "fetch",
+    "t5511-refspec": "fetch",
+    "t5540-http-push-webdav": "push",
+    "t5541-http-push-smart": "push",
+    "t5546-receive-limits": "receive-pack",
+    "t5550-http-fetch-dumb": "fetch",
+    "t5551-http-fetch-smart": "fetch",
+    "t5555-http-smart-common": "fetch",
+    "t5557-http-get": "fetch",
+    "t5563-simple-http-auth": "fetch",
+    "t5570-git-daemon": "daemon",
+    "t5615-alternate-env": "init",
+    "t5616-partial-clone": "clone",
+    "t5700-protocol-v1": "fetch",
+    "t5701-git-serve": "upload-pack",
+    "t5702-protocol-v2": "fetch",
+    "t5810-proto-disable-local": "fetch",
+    "t5812-proto-disable-http": "fetch",
+    "t5900-repo-selection": "init",
+    # Internals
+    "t6114-keep-packs": "repack",
+    "t6130-pathspec-noglob": "ls-files",
+    "t6131-pathspec-icase": "ls-files",
+    "t6404-recursive-merge": "merge",
+    "t6501-freshen-objects": "gc",
+    "t6600-test-reach": "commit-graph",
+    "t6700-tree-depth": "read-tree",
+    # UI / pager
+    "t7006-pager": "log",
+    "t7010-setup": "init",
+    "t7450-bad-git-dotfiles": "init",
+    "t7505-prepare-commit-msg-hook": "commit",
+    "t7527-builtin-fsmonitor": "status",
+    "t8020-last-modified": "status",
+    # SVN edge cases
+    "t9150-svk-mergetickets": "svn",
+    "t9151-svn-mergeinfo": "svn",
+    "t9152-svn-empty-dirs-after-gc": "svn",
+    # Completion / prompt / shell
+    "t9700-perl-git": "init",
+    "t9850-shell": "help",
+    "t9902-completion": "help",
+    "t9903-bash-prompt": "status",
+    # P4 edge cases
+    "t9832-unshelve": "p4",
+    "t9833-errors": "p4",
 }
 
 
@@ -89,7 +246,9 @@ def extract_tests_from_file(filepath):
     )
 
     for m in desc_pattern.finditer(content):
-        desc = m.group(1)
+        desc = m.group(1).replace('\n', ' ').replace('\t', ' ').strip()
+        if not desc:
+            continue
         rest = content[m.end():]
         body = _extract_body(rest)
         tests.append((desc, body))
@@ -101,7 +260,9 @@ def extract_tests_from_file(filepath):
         r'"([^"]*)"'
     )
     for m in desc_pattern2.finditer(content):
-        desc = m.group(1)
+        desc = m.group(1).replace('\n', ' ').replace('\t', ' ').strip()
+        if not desc:
+            continue
         rest = content[m.end():]
         body = _extract_body(rest)
         tests.append((desc, body))
@@ -149,8 +310,23 @@ def extract_subcommands(body):
 
 def file_theme_command(file_base):
     """Infer the primary git subcommand from a test filename like t3200-branch."""
-    # Strip the tNNNN- prefix
+    # Check explicit overrides first
+    if file_base in FILE_COMMAND_OVERRIDES:
+        return FILE_COMMAND_OVERRIDES[file_base]
+
+    # Pattern-based overrides for external tool test families
     name = re.sub(r'^t\d+-', '', file_base)
+    if name.startswith('git-svn') or name.startswith('svn'):
+        return 'svn'
+    if name.startswith('git-p4'):
+        return 'p4'
+    if name.startswith('git-cvsserver') or name.startswith('cvsserver'):
+        return 'cvsserver'
+    if name.startswith('cvsimport'):
+        return 'cvsimport'
+    if name.startswith('gitweb'):
+        return 'gitweb'
+
     # Try progressively shorter prefixes of the name against known subcommands
     # e.g. "status-untracked-cache" → try "status-untracked-cache", "status-untracked", "status"
     parts = name.split('-')
@@ -181,7 +357,8 @@ def pick_best_subcommand(body, file_base):
     if found:
         return found[0]
 
-    return ""
+    # Last resort: assign to 'init' (general infrastructure)
+    return "init"
 
 
 def generate_test_cases():

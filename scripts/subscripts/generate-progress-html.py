@@ -91,18 +91,10 @@ def generate_html(commands, total_upstream, upstream_passing, upstream_partial,
     complete_cmds = sum(1 for c in commands if c['started'] and c['total_tests'] > 0 and c['pct'] == 100)
     pct_cmds = round(100 * started_cmds / total_cmds, 1) if total_cmds > 0 else 0
 
-    # Effective passing: tests in fully passing files + proportional from partial files
-    effective_passing = upstream_passing  # files fully passing
-    # For partial files, we can estimate based on overall ported pass rate
-    if ported_tests > 0:
-        partial_rate = ported_pass / ported_tests
-        effective_passing_est = upstream_passing + round(upstream_partial * partial_rate)
-    else:
-        effective_passing_est = upstream_passing
-    pct_tests = round(100 * effective_passing_est / total_upstream, 1) if total_upstream > 0 else 0
-    raw_pct = round(100 * ported_pass / total_upstream, 1) if total_upstream > 0 else 0
-
-    ported_pass_rate = round(100 * ported_pass / ported_tests, 1) if ported_tests > 0 else 0
+    # Derive headline totals by summing command-status so they match per-command bars
+    sum_passing = sum(c['passing'] for c in commands)
+    sum_total = sum(c['total_tests'] for c in commands)
+    raw_pct = round(100 * sum_passing / sum_total, 1) if sum_total > 0 else 0
 
     # Timestamp and commit info
     now = datetime.now(timezone.utc)
@@ -131,7 +123,17 @@ def generate_html(commands, total_upstream, upstream_passing, upstream_partial,
     for cat in cat_order:
         cmds = categories.get(cat, [])
         started_in_cat = sum(1 for c in cmds if c['started'])
-        grid_html += f'<div class="cat-section"><h3>{cat} <span class="cat-count">{started_in_cat}/{len(cmds)}</span></h3><div class="cmd-grid">\n'
+        complete_in_cat = sum(1 for c in cmds if c['started'] and c['total_tests'] > 0 and c['pct'] == 100)
+        cat_passing = sum(c['passing'] for c in cmds)
+        cat_total = sum(c['total_tests'] for c in cmds)
+        cat_pct = round(100 * cat_passing / cat_total, 1) if cat_total > 0 else 0
+        grid_html += f'<div class="cat-section"><h3>{cat} <span class="cat-count">{complete_in_cat}/{len(cmds)} complete</span></h3>\n'
+        grid_html += f'  <div style="margin-bottom:0.6rem;"><div style="display:flex;align-items:center;gap:0.6rem;">'
+        grid_html += f'<div style="flex:1;background:#21262d;border-radius:4px;height:14px;overflow:hidden;border:1px solid #30363d;">'
+        grid_html += f'<div style="width:{cat_pct}%;height:100%;background:linear-gradient(90deg,#238636,#2ea043);border-radius:4px 0 0 4px;"></div></div>'
+        grid_html += f'<span style="font-size:0.78rem;color:#7d8590;white-space:nowrap;">{cat_passing:,} / {cat_total:,} ({cat_pct}%)</span>'
+        grid_html += f'</div></div>\n'
+        grid_html += '<div class="cmd-grid">\n'
         for cmd in cmds:
             if not cmd['started']:
                 cls = "cmd-cell not-started"
@@ -434,16 +436,16 @@ a.cmd-cell {{
 
 <div class="cards">
   <div class="card green">
-    <div class="number">{ported_pass:,}</div>
-    <div class="label">Ported Tests Passing</div>
+    <div class="number">{sum_passing:,}</div>
+    <div class="label">Tests Passing</div>
   </div>
   <div class="card blue">
-    <div class="number">{total_upstream:,}</div>
+    <div class="number">{sum_total:,}</div>
     <div class="label">Total Git Test Cases</div>
   </div>
   <div class="card green">
     <div class="number">{raw_pct}%</div>
-    <div class="label">Tests Passing</div>
+    <div class="label">Passing Rate</div>
   </div>
   <div class="card yellow">
     <div class="number">{partially_impl}</div>
@@ -464,12 +466,12 @@ a.cmd-cell {{
   <div class="progress-bar-bg">
     <div style="display:flex;width:100%;height:100%;">
       <div class="progress-bar-fill green" style="width:{raw_pct}%;justify-content:center;">
-        {ported_pass:,} passing
+        {sum_passing:,} passing
       </div>
     </div>
   </div>
   <div class="progress-labels">
-    <span style="color:#3fb950;">{ported_pass:,} / {total_upstream:,} upstream tests passing ({raw_pct}%)</span>
+    <span style="color:#3fb950;">{sum_passing:,} / {sum_total:,} upstream tests passing ({raw_pct}%)</span>
     <span>{ported_files} test files ported · {fully_passing_files} fully passing</span>
   </div>
 </div>

@@ -31,24 +31,25 @@ CATEGORIES = {
     ],
     "Ancillary Porcelain": [
         "annotate", "blame", "bundle", "cherry", "config", "count-objects",
-        "diagnose", "difftool", "fast-export", "fast-import", "filter-branch",
-        "fsck", "help", "maintenance", "merge-tree", "mergetool", "pack-refs",
-        "prune", "reflog", "remote", "repack", "replace", "request-pull",
-        "rerere", "scalar", "show-branch", "sparse-checkout", "verify-commit",
-        "verify-tag", "version", "whatchanged",
+        "cvsimport", "cvsserver", "diagnose", "difftool", "fast-export",
+        "fast-import", "filter-branch", "fsck", "gitweb", "help", "imap-send",
+        "maintenance", "merge-tree", "mergetool", "p4", "pack-refs", "prune",
+        "reflog", "remote", "repack", "replace", "request-pull", "rerere",
+        "scalar", "send-email", "show-branch", "sparse-checkout", "svn",
+        "verify-commit", "verify-tag", "version", "whatchanged",
     ],
     "Plumbing": [
-        "apply", "cat-file", "check-attr", "check-ignore", "check-mailmap",
-        "check-ref-format", "checkout-index", "column", "commit-graph",
-        "commit-tree", "credential", "credential-cache", "credential-store",
-        "daemon", "diff-files", "diff-index", "diff-tree", "fetch-pack",
-        "fmt-merge-msg", "for-each-ref", "for-each-repo", "get-tar-commit-id",
-        "hash-object", "hook", "http-backend", "index-pack",
-        "interpret-trailers", "ls-files", "ls-remote", "ls-tree", "mailinfo",
-        "mailsplit", "merge-base", "merge-file", "merge-index",
+        "apply", "backfill", "cat-file", "check-attr", "check-ignore",
+        "check-mailmap", "check-ref-format", "checkout-index", "column",
+        "commit-graph", "commit-tree", "credential", "credential-cache",
+        "credential-store", "daemon", "diff-files", "diff-index", "diff-tree",
+        "fetch-pack", "fmt-merge-msg", "for-each-ref", "for-each-repo",
+        "get-tar-commit-id", "hash-object", "hook", "http-backend",
+        "index-pack", "interpret-trailers", "ls-files", "ls-remote", "ls-tree",
+        "mailinfo", "mailsplit", "merge-base", "merge-file", "merge-index",
         "merge-one-file", "mktag", "mktree", "multi-pack-index", "name-rev",
         "pack-objects", "pack-redundant", "patch-id", "prune-packed",
-        "read-tree", "receive-pack", "refs", "rev-list", "rev-parse",
+        "read-tree", "receive-pack", "refs", "replay", "rev-list", "rev-parse",
         "send-pack", "show-index", "show-ref", "stripspace", "symbolic-ref",
         "unpack-file", "unpack-objects", "update-index", "update-ref",
         "update-server-info", "upload-archive", "upload-pack", "var",
@@ -112,8 +113,10 @@ def load_test_results(file_pass_rates):
             subcmds_str = parts[3]
             status = parts[4]
             if not subcmds_str:
+                # Every test should have a subcommand after extraction;
+                # skip any that slipped through (shouldn't happen).
                 continue
-            subcmds = [c.strip() for c in subcmds_str.split(',') if c.strip()]
+            subcmds = [subcmds_str.strip()]
             for cmd in subcmds:
                 stats[cmd]['total'] += 1
                 if status == 'pass':
