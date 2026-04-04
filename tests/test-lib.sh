@@ -487,8 +487,28 @@ test_skip_or_die () {
 
 # test_env — run command with additional env vars
 # Usage: test_env VAR=VALUE ... command args
+# Works with both binaries and shell functions
 test_env () {
-	env "$@"
+	local _te_vars=""
+	while test $# -gt 0; do
+		case "$1" in
+		*=*)
+			export "$1"
+			_te_vars="$_te_vars $1"
+			shift
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+	"$@"
+	local _te_ret=$?
+	# Unset the exported variables
+	for _te_v in $_te_vars; do
+		unset "${_te_v%%=*}"
+	done
+	return $_te_ret
 }
 
 # test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
