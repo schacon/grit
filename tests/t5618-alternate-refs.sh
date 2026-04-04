@@ -20,7 +20,7 @@ test_expect_success 'set up clone' '
 	git clone . child
 '
 
-test_expect_failure 'rev-list --alternate-refs' '
+test_expect_success 'rev-list --alternate-refs' '
 	(
 		cd child &&
 		git rev-list --alternate-refs >actual &&

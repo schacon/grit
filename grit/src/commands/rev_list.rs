@@ -179,6 +179,35 @@ pub fn run(args: Args) -> Result<()> {
                         revision_specs.push(oid.to_hex());
                     }
                 }
+                "--alternate-refs" => {
+                    // List refs from alternate object directories
+                    let objects_dir = repo.git_dir.join("objects");
+                    if let Ok(alts) = grit_lib::pack::read_alternates_recursive(&objects_dir) {
+                        for alt_dir in alts {
+                            // alt_dir is an objects dir; the git_dir is its parent
+                            if let Some(alt_git_dir) = alt_dir.parent() {
+                                if let Ok(refs) = grit_lib::refs::list_refs(alt_git_dir, "refs/") {
+                                    for (_, oid) in refs {
+                                        revision_specs.push(oid.to_hex());
+                                    }
+                                }
+                                // Also include HEAD
+                                let head_path = alt_git_dir.join("HEAD");
+                                if let Ok(content) = std::fs::read_to_string(&head_path) {
+                                    let content = content.trim();
+                                    if let Some(ref_target) = content.strip_prefix("ref: ") {
+                                        let ref_path = alt_git_dir.join(ref_target);
+                                        if let Ok(oid_hex) = std::fs::read_to_string(&ref_path) {
+                                            revision_specs.push(oid_hex.trim().to_string());
+                                        }
+                                    } else if content.len() == 40 {
+                                        revision_specs.push(content.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 _ if arg.starts_with("--min-parents=") => {
                     let value = arg.trim_start_matches("--min-parents=");
                     options.min_parents = Some(parse_non_negative(value, "--min-parents")?);

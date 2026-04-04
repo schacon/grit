@@ -16,7 +16,7 @@ test_expect_success 'setup' '
 	git config core.eol lf
 '
 
-test_expect_failure 'working-tree-encoding UTF-16 round-trips through git' '
+test_expect_success 'working-tree-encoding UTF-16 round-trips through git' '
 	echo "*.utf16 text working-tree-encoding=utf-16" >.gitattributes &&
 	printf "hello\\nworld\\n" >test.utf8.raw &&
 	printf "hello\\nworld\\n" | iconv -f UTF-8 -t UTF-16 >test.utf16 &&
@@ -26,7 +26,7 @@ test_expect_failure 'working-tree-encoding UTF-16 round-trips through git' '
 	test_cmp test.utf8.raw actual
 '
 
-test_expect_failure 'working-tree-encoding error on invalid encoding' '
+test_expect_success 'working-tree-encoding error on invalid encoding' '
 	echo "*.bad text working-tree-encoding=INVALID-ENCODING" >.gitattributes &&
 	echo "content" >test.bad &&
 	git add .gitattributes &&

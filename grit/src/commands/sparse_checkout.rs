@@ -86,7 +86,105 @@ fn cmd_set(repo: &Repository, patterns: &[String]) -> Result<()> {
     }
     fs::write(&sc_path, &content).context("writing sparse-checkout file")?;
 
+    // Apply sparse checkout patterns to the working tree
+    apply_sparse_patterns(repo, patterns)?;
+
     Ok(())
+}
+
+/// Apply sparse checkout patterns: remove files from the working tree that
+/// don't match any pattern, and set skip-worktree bit in the index.
+fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
+    use grit_lib::index::Index;
+
+    let work_tree = repo.work_tree.as_deref()
+        .ok_or_else(|| anyhow::anyhow!("bare repository cannot use sparse checkout"))?;
+
+    let index_path = repo.git_dir.join("index");
+    let mut index = Index::load(&index_path)
+        .context("reading index")?;
+
+    // Promote to version 3 if needed (skip-worktree requires extended flags)
+    if index.version < 3 {
+        index.version = 3;
+    }
+
+    for entry in &mut index.entries {
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        let matches = path_matches_sparse_patterns(&path_str, patterns);
+
+        if matches {
+            // File should be in the working tree
+            if entry.skip_worktree() {
+                entry.set_skip_worktree(false);
+                // Restore the file if missing
+                let full_path = work_tree.join(&path_str);
+                if !full_path.exists() {
+                    if let Some(parent) = full_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    if let Ok(obj) = repo.odb.read(&entry.oid) {
+                        let _ = fs::write(&full_path, &obj.data);
+                    }
+                }
+            }
+        } else {
+            // File should NOT be in the working tree — remove it
+            entry.set_skip_worktree(true);
+            let full_path = work_tree.join(&path_str);
+            if full_path.exists() {
+                let _ = fs::remove_file(&full_path);
+                // Clean up empty parent directories
+                if let Some(parent) = full_path.parent() {
+                    remove_empty_dirs_up_to(parent, work_tree);
+                }
+            }
+        }
+    }
+
+    index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+/// Check if a file path matches any of the sparse checkout patterns.
+/// Patterns are treated as directory prefixes (like git's cone mode).
+fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
+    // Always include top-level files (not in subdirectories)
+    if !path.contains('/') {
+        return true;
+    }
+
+    for pattern in patterns {
+        // Treat pattern as a directory prefix
+        let prefix = pattern.trim_end_matches('/');
+        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
+            return true;
+        }
+        // Also check if path IS the pattern (exact match)
+        if path == prefix {
+            return true;
+        }
+    }
+    false
+}
+
+/// Remove empty directories walking up from `dir` to `stop` (exclusive).
+fn remove_empty_dirs_up_to(dir: &std::path::Path, stop: &std::path::Path) {
+    let mut current = dir.to_path_buf();
+    while current != stop {
+        if let Ok(mut entries) = fs::read_dir(&current) {
+            if entries.next().is_some() {
+                break; // Not empty
+            }
+            let _ = fs::remove_dir(&current);
+        } else {
+            break;
+        }
+        match current.parent() {
+            Some(p) => current = p.to_path_buf(),
+            None => break,
+        }
+    }
 }
 
 /// List the current sparse checkout patterns.
@@ -119,9 +217,51 @@ fn cmd_list(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-/// Disable sparse checkout by setting `core.sparseCheckout = false`.
+/// Disable sparse checkout by setting `core.sparseCheckout = false`
+/// and restoring all files to the working tree.
 fn cmd_disable(repo: &Repository) -> Result<()> {
+    use grit_lib::index::Index;
     set_sparse_config(repo, false)?;
+
+    // Restore all skip-worktree files to the working tree
+    let work_tree = match repo.work_tree.as_deref() {
+        Some(wt) => wt,
+        None => return Ok(()),
+    };
+
+    let index_path = repo.git_dir.join("index");
+    let mut index = Index::load(&index_path).context("reading index")?;
+
+    // Ensure version 3 for extended flags
+    if index.version < 3 {
+        index.version = 3;
+    }
+
+    for entry in &mut index.entries {
+        if entry.skip_worktree() {
+            entry.set_skip_worktree(false);
+            let path_str = String::from_utf8_lossy(&entry.path).to_string();
+            let full_path = work_tree.join(&path_str);
+            if !full_path.exists() {
+                // Restore file from the ODB
+                if let Some(parent) = full_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if entry.oid != grit_lib::diff::zero_oid() {
+                    if let Ok(obj) = repo.odb.read(&entry.oid) {
+                        let _ = fs::write(&full_path, &obj.data);
+                    }
+                }
+            }
+        }
+    }
+
+    index.write(&index_path).context("writing index")?;
+
+    // Remove sparse-checkout file
+    let sc_path = sparse_checkout_path(repo);
+    let _ = fs::remove_file(&sc_path);
+
     Ok(())
 }
 

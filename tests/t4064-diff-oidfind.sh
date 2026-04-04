@@ -17,7 +17,7 @@ test_expect_success 'setup' '
 	git commit -m "unrelated history"
 '
 
-test_expect_failure 'find the greeting blob (not implemented)' '
+test_expect_success 'find the greeting blob' '
 	git log --format=%s --find-object=HEAD~1:greeting >actual &&
 	cat >expect <<-EOF &&
 	add the greeting blob

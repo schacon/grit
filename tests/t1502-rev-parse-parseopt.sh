@@ -5,10 +5,7 @@ test_description='test git rev-parse --parseopt'
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# grit does not yet support rev-parse --parseopt.
-# All tests are expected failures.
-
-test_expect_failure 'parseopt basic usage' '
+test_expect_success 'parseopt basic usage' '
 	cat >optionspec <<-\EOF &&
 	some-command [options] <args>...
 
@@ -22,7 +19,7 @@ test_expect_failure 'parseopt basic usage' '
 	grep "foo" actual
 '
 
-test_expect_failure 'parseopt with --help' '
+test_expect_success 'parseopt with --help' '
 	cat >optionspec <<-\EOF &&
 	some-command [options] <args>...
 	--

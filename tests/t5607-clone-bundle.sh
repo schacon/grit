@@ -26,12 +26,12 @@ test_expect_success 'verify bundle' '
 	git bundle verify tip.bundle
 '
 
-test_expect_failure 'ls-remote bundle' '
+test_expect_success 'ls-remote bundle' '
 	git ls-remote tip.bundle >actual &&
 	test -s actual
 '
 
-test_expect_failure 'clone from bundle' '
+test_expect_success 'clone from bundle' '
 	git clone tip.bundle cloned &&
 	test_path_is_dir cloned
 '

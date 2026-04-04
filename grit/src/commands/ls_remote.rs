@@ -52,6 +52,12 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
+
+    // Check if the path is a bundle file
+    if is_bundle_file(&effective_path) {
+        return run_bundle_ls_remote(&effective_path, &args);
+    }
+
     let repo = open_local_repo(&effective_path)?;
 
     let opts = Options {
@@ -126,6 +132,82 @@ fn resolve_remote_or_path(path: &Path) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+/// Check if a path looks like a git bundle file (starts with v2 bundle header).
+fn is_bundle_file(path: &Path) -> bool {
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let mut buf = [0u8; 20];
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            return buf[..n].starts_with(b"# v2 git bundle");
+        }
+    }
+    false
+}
+
+/// Run ls-remote against a bundle file.
+fn run_bundle_ls_remote(path: &Path, args: &Args) -> Result<()> {
+    let data = std::fs::read(path)
+        .with_context(|| format!("could not read bundle '{}'.", path.display()))?;
+    let refs = parse_bundle_refs(&data)?;
+
+    if refs.is_empty() && !args.patterns.is_empty() {
+        std::process::exit(2);
+    }
+
+    if args.quiet {
+        return Ok(());
+    }
+
+    for (refname, oid) in &refs {
+        if args.heads && !refname.starts_with("refs/heads/") {
+            continue;
+        }
+        if args.tags && !refname.starts_with("refs/tags/") {
+            continue;
+        }
+        if !args.patterns.is_empty() {
+            let matched = args.patterns.iter().any(|p| refname.contains(p) || refname.ends_with(p));
+            if !matched {
+                continue;
+            }
+        }
+        println!("{oid}\t{refname}");
+    }
+    Ok(())
+}
+
+/// Parse refs from a v2 bundle header.
+fn parse_bundle_refs(data: &[u8]) -> Result<Vec<(String, grit_lib::objects::ObjectId)>> {
+    let header_line = b"# v2 git bundle\n";
+    if !data.starts_with(header_line) {
+        anyhow::bail!("not a v2 git bundle");
+    }
+    let mut pos = header_line.len();
+    let mut refs = Vec::new();
+    loop {
+        let eol = data[pos..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|i| pos + i)
+            .ok_or_else(|| anyhow::anyhow!("truncated bundle header"))?;
+        let line = &data[pos..eol];
+        if line.is_empty() {
+            break;
+        }
+        let line_str = std::str::from_utf8(line)?;
+        if line_str.starts_with('-') {
+            pos = eol + 1;
+            continue;
+        }
+        if let Some((hex, refname)) = line_str.split_once(' ') {
+            let oid = grit_lib::objects::ObjectId::from_hex(hex)
+                .map_err(|e| anyhow::anyhow!("bad oid in bundle: {e}"))?;
+            refs.push((refname.to_string(), oid));
+        }
+        pos = eol + 1;
+    }
+    Ok(refs)
 }
 
 fn parse_remote_url(config: &str, remote_name: &str) -> Option<String> {

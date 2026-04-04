@@ -18,6 +18,7 @@ hex = "0.4"
 tempfile = "3"
 similar = "2"
 regex = "1"
+unicode-width = "0.2"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

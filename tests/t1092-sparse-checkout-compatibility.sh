@@ -35,7 +35,7 @@ test_expect_success 'sparse-checkout set and list' '
 	)
 '
 
-test_expect_failure 'sparse-checkout limits working tree' '
+test_expect_success 'sparse-checkout limits working tree' '
 	(
 		cd repo &&
 		git sparse-checkout set folder1 &&

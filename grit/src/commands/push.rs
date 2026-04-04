@@ -6,7 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::hooks::{run_hook, HookResult};
+use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
@@ -71,8 +71,8 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
-    /// Check/push submodule commits (accepted but currently a no-op).
-    #[arg(long = "recurse-submodules", value_name = "MODE")]
+    /// Check, on-demand, or no recursion into submodules.
+    #[arg(long = "recurse-submodules")]
     pub recurse_submodules: Option<String>,
 }
 
@@ -226,7 +226,20 @@ pub fn run(args: Args) -> Result<()> {
                 continue;
             }
 
-            let local_ref = normalize_ref(&src);
+            // Resolve HEAD to its target ref
+            let resolved_src = if src == "HEAD" {
+                match grit_lib::state::resolve_head(&repo.git_dir) {
+                    Ok(head) => match head {
+                        grit_lib::state::HeadState::Branch { refname, .. } => refname,
+                        grit_lib::state::HeadState::Detached { oid, .. } => oid.to_hex(),
+                        grit_lib::state::HeadState::Invalid => src.clone(),
+                    },
+                    Err(_) => src.clone(),
+                }
+            } else {
+                src.clone()
+            };
+            let local_ref = normalize_ref(&resolved_src);
             let remote_ref = normalize_ref(&dst);
 
             let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
@@ -426,12 +439,18 @@ pub fn run(args: Args) -> Result<()> {
                 .new_oid
                 .map(|o| o.to_hex())
                 .unwrap_or_else(|| zero_oid_str.clone());
-            let hook_result = run_hook(
+            let (hook_result, hook_output) = run_hook_capture(
                 &remote_repo,
                 "update",
                 &[&update.remote_ref, &old_hex, &new_hex],
                 None,
             );
+            // Forward hook output to stderr, optionally colorized
+            if !hook_output.is_empty() {
+                let output_str = String::from_utf8_lossy(&hook_output);
+                let color_remote = resolve_color_remote(&repo, &args);
+                colorize_remote_output(&output_str, color_remote);
+            }
             if let HookResult::Failed(_code) = hook_result {
                 rejected.push((update, "hook declined".to_string()));
                 continue;
@@ -737,4 +756,70 @@ fn open_repo(path: &Path) -> Result<Repository> {
     }
     let git_dir = path.join(".git");
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
+}
+
+/// Determine if remote messages should be colorized.
+fn resolve_color_remote(repo: &Repository, _args: &Args) -> bool {
+    // Check -c color.remote=always from environment
+    // GIT_CONFIG_COUNT / GIT_CONFIG_KEY / GIT_CONFIG_VALUE override
+    for (key, val) in std::env::vars() {
+        if key.starts_with("GIT_CONFIG_KEY_") {
+            if val == "color.remote" {
+                let idx = key.strip_prefix("GIT_CONFIG_KEY_").unwrap_or("");
+                let val_key = format!("GIT_CONFIG_VALUE_{idx}");
+                if let Ok(v) = std::env::var(&val_key) {
+                    return v == "always" || v == "true";
+                }
+            }
+        }
+    }
+    // Check repo config
+    if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+        if let Some(val) = config.get("color.remote") {
+            return val == "always" || val == "true";
+        }
+    }
+    false
+}
+
+/// Write remote messages to stderr, colorizing keywords if enabled.
+fn colorize_remote_output(output: &str, colorize: bool) {
+    use std::io::Write;
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+    for line in output.lines() {
+        if colorize {
+            let colored = colorize_remote_line(line);
+            let _ = writeln!(err, "remote: {colored}");
+        } else {
+            let _ = writeln!(err, "remote: {line}");
+        }
+    }
+}
+
+/// Colorize a single remote message line based on keyword prefix.
+fn colorize_remote_line(line: &str) -> String {
+    // ANSI escape codes (separate bold + color for compatibility)
+    let bold_red = "\x1b[1m\x1b[31m";
+    let bold_yellow = "\x1b[1m\x1b[33m";
+    let bold_green = "\x1b[1m\x1b[32m";
+    let bold_cyan = "\x1b[1m\x1b[36m";
+    let reset = "\x1b[m";
+
+    // Check for keyword prefixes
+    let keywords: &[(&str, &str)] = &[
+        ("error", bold_red),
+        ("warning", bold_yellow),
+        ("hint", bold_cyan),
+        ("success", bold_green),
+    ];
+
+    for (keyword, color) in keywords {
+        if let Some(rest) = line.strip_prefix(keyword) {
+            if rest.starts_with(':') || rest.starts_with(' ') {
+                return format!("{color}{keyword}{reset}{rest}");
+            }
+        }
+    }
+    line.to_string()
 }

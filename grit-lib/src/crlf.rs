@@ -72,6 +72,8 @@ pub struct FileAttrs {
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     pub ident: bool,
+    /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
+    pub working_tree_encoding: Option<String>,
 }
 
 impl Default for FileAttrs {
@@ -82,6 +84,7 @@ impl Default for FileAttrs {
             filter_clean: None,
             filter_smudge: None,
             ident: false,
+            working_tree_encoding: None,
         }
     }
 }
@@ -251,6 +254,11 @@ pub fn get_file_attrs(
                     }
                     "ident" => {
                         fa.ident = value == "set";
+                    }
+                    "working-tree-encoding" => {
+                        if value != "unset" && !value.is_empty() {
+                            fa.working_tree_encoding = Some(value.clone());
+                        }
                     }
                     _ => {}
                 }
