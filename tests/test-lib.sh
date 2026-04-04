@@ -106,15 +106,6 @@ PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
-
-	# Initialize a git repository in the trash directory (like upstream)
-	if test -z "$TEST_NO_CREATE_REPO"
-	then
-		"$GUST_BIN" init >/dev/null 2>&1 ||
-			echo "warning: could not git init trash directory" >&2
-		"$GUST_BIN" config user.name "Test User" 2>/dev/null
-		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
-	fi
 }
 
 setup_trash
@@ -607,15 +598,28 @@ test_expect_success () {
 
 	# Run in a subshell so each test starts clean.
 	# Source any previously-exported variables so they persist across tests.
-	# Run test body in the current shell (like upstream) so that
-	# variables set in one test persist to subsequent tests.
-	# We save and restore 'set -e' state since eval doesn't
-	# propagate exit-on-error the way a subshell does.
-	local _old_cwd="$PWD"
-	cd "$TRASH_DIRECTORY" || return 1
-	eval "$commands" 2>&1
+	local _exports_file="$TRASH_DIRECTORY/.test-exports"
+	(
+		set -e
+		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
+		eval "$commands"
+	)
 	local result=$?
-	cd "$_old_cwd" 2>/dev/null || true
+	# Re-source exports in the parent so later tests inherit them.
+	test -f "$_exports_file" && . "$_exports_file"
+
+	# Sync test_tick state from file back to parent shell
+	if test -f "$_TICK_FILE"
+	then
+		test_tick=$(cat "$_TICK_FILE")
+		GIT_COMMITTER_DATE="$test_tick -0700"
+		GIT_AUTHOR_DATE="$test_tick -0700"
+		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+	elif test -n "${test_tick+set}"
+	then
+		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
+	fi
 
 	if test $result -eq 0
 	then
