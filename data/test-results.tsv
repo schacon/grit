@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	pass
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	pass
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	pass
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	pass
@@ -16852,210 +16852,210 @@ t9211-scalar-clone::progress-without-tty	t9211-scalar-clone	progress without tty
 t9211-scalar-clone::scalar-clone-warns-when-background-maintenance-fails	t9211-scalar-clone	scalar clone warns when background maintenance fails	scalar	pass
 t9211-scalar-clone::scalar-clone-no-maintenance	t9211-scalar-clone	scalar clone --no-maintenance	scalar	pass
 t9211-scalar-clone::scalar-clone-no-src	t9211-scalar-clone	`scalar clone --no-src`	scalar	pass
-t9300-fast-import::empty-stream-succeeds	t9300-fast-import	empty stream succeeds	fast-import	pass
-t9300-fast-import::truncated-stream-complains	t9300-fast-import	truncated stream complains	fast-import	pass
-t9300-fast-import::a-create-pack-from-stdin	t9300-fast-import	A: create pack from stdin	fast-import	pass
-t9300-fast-import::a-verify-pack	t9300-fast-import	A: verify pack	fast-import	pass
-t9300-fast-import::a-verify-commit	t9300-fast-import	A: verify commit	fast-import	pass
-t9300-fast-import::a-verify-tree	t9300-fast-import	A: verify tree	fast-import	pass
-t9300-fast-import::a-verify-file2	t9300-fast-import	A: verify file2	fast-import	pass
-t9300-fast-import::a-verify-file3	t9300-fast-import	A: verify file3	fast-import	pass
-t9300-fast-import::a-verify-file4	t9300-fast-import	A: verify file4	fast-import	pass
-t9300-fast-import::a-verify-tag-series-a	t9300-fast-import	A: verify tag/series-A	fast-import	pass
-t9300-fast-import::a-verify-tag-series-a-blob	t9300-fast-import	A: verify tag/series-A-blob	fast-import	pass
-t9300-fast-import::a-verify-tag-deletion-is-successful	t9300-fast-import	A: verify tag deletion is successful	fast-import	pass
-t9300-fast-import::a-verify-marks-output	t9300-fast-import	A: verify marks output	fast-import	pass
-t9300-fast-import::a-verify-marks-import	t9300-fast-import	A: verify marks import	fast-import	pass
-t9300-fast-import::a-tag-blob-by-sha1	t9300-fast-import	A: tag blob by sha1	fast-import	pass
-t9300-fast-import::a-verify-marks-import-does-not-crash	t9300-fast-import	A: verify marks import does not crash	fast-import	pass
-t9300-fast-import::a-verify-pack-2	t9300-fast-import	A: verify pack	fast-import	pass
-t9300-fast-import::a-verify-diff	t9300-fast-import	A: verify diff	fast-import	pass
-t9300-fast-import::a-export-marks-with-large-values	t9300-fast-import	A: export marks with large values	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-blob-sha1	t9300-fast-import	B: fail on invalid blob sha1	fast-import	pass
-t9300-fast-import::b-accept-branch-name-temp-tag	t9300-fast-import	B: accept branch name "TEMP_TAG"	fast-import	pass
-t9300-fast-import::b-accept-empty-committer	t9300-fast-import	B: accept empty committer	fast-import	pass
-t9300-fast-import::b-reject-invalid-timezone	t9300-fast-import	B: reject invalid timezone	fast-import	pass
-t9300-fast-import::b-accept-invalid-timezone-with-raw-permissive	t9300-fast-import	B: accept invalid timezone with raw-permissive	fast-import	pass
-t9300-fast-import::b-accept-and-fixup-committer-with-no-name	t9300-fast-import	B: accept and fixup committer with no name	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-committer-1	t9300-fast-import	B: fail on invalid committer (1)	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-committer-2	t9300-fast-import	B: fail on invalid committer (2)	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-committer-3	t9300-fast-import	B: fail on invalid committer (3)	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-committer-4	t9300-fast-import	B: fail on invalid committer (4)	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-committer-5	t9300-fast-import	B: fail on invalid committer (5)	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-file-path-of	t9300-fast-import	B: fail on invalid file path of ..	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-file-path-of-2	t9300-fast-import	B: fail on invalid file path of .	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-file-path-of-c	t9300-fast-import	B: fail on invalid file path of C:	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-file-path-of-git	t9300-fast-import	B: fail on invalid file path of .git	fast-import	pass
-t9300-fast-import::b-fail-on-invalid-file-path-of-gitmodules	t9300-fast-import	B: fail on invalid file path of .gitmodules	fast-import	pass
-t9300-fast-import::c-incremental-import-create-pack-from-stdin	t9300-fast-import	C: incremental import create pack from stdin	fast-import	pass
-t9300-fast-import::c-verify-pack	t9300-fast-import	C: verify pack	fast-import	pass
-t9300-fast-import::c-validate-reuse-existing-blob	t9300-fast-import	C: validate reuse existing blob	fast-import	pass
-t9300-fast-import::c-verify-commit	t9300-fast-import	C: verify commit	fast-import	pass
-t9300-fast-import::c-validate-rename-result	t9300-fast-import	C: validate rename result	fast-import	pass
-t9300-fast-import::d-inline-data-in-commit	t9300-fast-import	D: inline data in commit	fast-import	pass
-t9300-fast-import::d-verify-pack	t9300-fast-import	D: verify pack	fast-import	pass
-t9300-fast-import::d-validate-new-files-added	t9300-fast-import	D: validate new files added	fast-import	pass
-t9300-fast-import::d-verify-file5	t9300-fast-import	D: verify file5	fast-import	pass
-t9300-fast-import::d-verify-file6	t9300-fast-import	D: verify file6	fast-import	pass
-t9300-fast-import::e-rfc2822-date-date-format-raw	t9300-fast-import	E: rfc2822 date, --date-format=raw	fast-import	pass
-t9300-fast-import::e-rfc2822-date-date-format-rfc2822	t9300-fast-import	E: rfc2822 date, --date-format=rfc2822	fast-import	pass
-t9300-fast-import::e-verify-pack	t9300-fast-import	E: verify pack	fast-import	pass
-t9300-fast-import::e-verify-commit	t9300-fast-import	E: verify commit	fast-import	pass
-t9300-fast-import::f-non-fast-forward-update-skips	t9300-fast-import	F: non-fast-forward update skips	fast-import	pass
-t9300-fast-import::f-verify-pack	t9300-fast-import	F: verify pack	fast-import	pass
-t9300-fast-import::f-verify-other-commit	t9300-fast-import	F: verify other commit	fast-import	pass
-t9300-fast-import::g-non-fast-forward-update-forced	t9300-fast-import	G: non-fast-forward update forced	fast-import	pass
-t9300-fast-import::g-verify-pack	t9300-fast-import	G: verify pack	fast-import	pass
-t9300-fast-import::g-branch-changed-but-logged	t9300-fast-import	G: branch changed, but logged	fast-import	pass
-t9300-fast-import::h-deletall-add-1	t9300-fast-import	H: deletall, add 1	fast-import	pass
-t9300-fast-import::h-verify-pack	t9300-fast-import	H: verify pack	fast-import	pass
-t9300-fast-import::h-validate-old-files-removed-new-files-added	t9300-fast-import	H: validate old files removed, new files added	fast-import	pass
-t9300-fast-import::h-verify-file	t9300-fast-import	H: verify file	fast-import	pass
-t9300-fast-import::i-export-pack-edges	t9300-fast-import	I: export-pack-edges	fast-import	pass
-t9300-fast-import::i-verify-edge-list	t9300-fast-import	I: verify edge list	fast-import	pass
-t9300-fast-import::j-reset-existing-branch-creates-empty-commit	t9300-fast-import	J: reset existing branch creates empty commit	fast-import	pass
-t9300-fast-import::j-branch-has-1-commit-empty-tree	t9300-fast-import	J: branch has 1 commit, empty tree	fast-import	pass
-t9300-fast-import::j-tag-must-fail-on-empty-branch	t9300-fast-import	J: tag must fail on empty branch	fast-import	pass
-t9300-fast-import::k-reinit-branch-with-from	t9300-fast-import	K: reinit branch with from	fast-import	pass
-t9300-fast-import::k-verify-k-1-branch-1	t9300-fast-import	K: verify K^1 = branch^1	fast-import	pass
-t9300-fast-import::l-verify-internal-tree-sorting	t9300-fast-import	L: verify internal tree sorting	fast-import	pass
-t9300-fast-import::l-nested-tree-copy-does-not-corrupt-deltas	t9300-fast-import	L: nested tree copy does not corrupt deltas	fast-import	pass
-t9300-fast-import::m-rename-file-in-same-subdirectory	t9300-fast-import	M: rename file in same subdirectory	fast-import	pass
-t9300-fast-import::m-rename-file-to-new-subdirectory	t9300-fast-import	M: rename file to new subdirectory	fast-import	pass
-t9300-fast-import::m-rename-subdirectory-to-new-subdirectory	t9300-fast-import	M: rename subdirectory to new subdirectory	fast-import	pass
-t9300-fast-import::n-copy-file-in-same-subdirectory	t9300-fast-import	N: copy file in same subdirectory	fast-import	pass
-t9300-fast-import::n-copy-then-modify-subdirectory	t9300-fast-import	N: copy then modify subdirectory	fast-import	pass
-t9300-fast-import::n-copy-dirty-subdirectory	t9300-fast-import	N: copy dirty subdirectory	fast-import	pass
-t9300-fast-import::n-copy-directory-by-id	t9300-fast-import	N: copy directory by id	fast-import	pass
-t9300-fast-import::n-read-and-copy-directory	t9300-fast-import	N: read and copy directory	fast-import	pass
-t9300-fast-import::n-empty-directory-reads-as-missing	t9300-fast-import	N: empty directory reads as missing	fast-import	pass
-t9300-fast-import::n-delete-directory-by-copying	t9300-fast-import	N: delete directory by copying	fast-import	pass
-t9300-fast-import::n-modify-copied-tree	t9300-fast-import	N: modify copied tree	fast-import	pass
-t9300-fast-import::n-reject-foo-syntax	t9300-fast-import	N: reject foo/ syntax	fast-import	pass
-t9300-fast-import::n-reject-foo-syntax-in-copy-source	t9300-fast-import	N: reject foo/ syntax in copy source	fast-import	pass
-t9300-fast-import::n-reject-foo-syntax-in-rename-source	t9300-fast-import	N: reject foo/ syntax in rename source	fast-import	pass
-t9300-fast-import::n-reject-foo-syntax-in-ls-argument	t9300-fast-import	N: reject foo/ syntax in ls argument	fast-import	pass
-t9300-fast-import::o-comments-are-all-skipped	t9300-fast-import	O: comments are all skipped	fast-import	pass
-t9300-fast-import::o-blank-lines-not-necessary-after-data-commands	t9300-fast-import	O: blank lines not necessary after data commands	fast-import	pass
-t9300-fast-import::o-repack-before-next-test	t9300-fast-import	O: repack before next test	fast-import	pass
-t9300-fast-import::o-blank-lines-not-necessary-after-other-commands	t9300-fast-import	O: blank lines not necessary after other commands	fast-import	pass
-t9300-fast-import::o-progress-outputs-as-requested-by-input	t9300-fast-import	O: progress outputs as requested by input	fast-import	pass
-t9300-fast-import::p-superproject-submodule-mix	t9300-fast-import	P: superproject & submodule mix	fast-import	pass
-t9300-fast-import::p-verbatim-sha-gitlinks	t9300-fast-import	P: verbatim SHA gitlinks	fast-import	pass
-t9300-fast-import::p-fail-on-inline-gitlink	t9300-fast-import	P: fail on inline gitlink	fast-import	pass
-t9300-fast-import::p-fail-on-blob-mark-in-gitlink	t9300-fast-import	P: fail on blob mark in gitlink	fast-import	pass
-t9300-fast-import::q-commit-notes	t9300-fast-import	Q: commit notes	fast-import	pass
-t9300-fast-import::q-verify-pack	t9300-fast-import	Q: verify pack	fast-import	pass
-t9300-fast-import::q-verify-first-commit	t9300-fast-import	Q: verify first commit	fast-import	pass
-t9300-fast-import::q-verify-second-commit	t9300-fast-import	Q: verify second commit	fast-import	pass
-t9300-fast-import::q-verify-third-commit	t9300-fast-import	Q: verify third commit	fast-import	pass
-t9300-fast-import::q-verify-first-notes-commit	t9300-fast-import	Q: verify first notes commit	fast-import	pass
-t9300-fast-import::q-verify-first-notes-tree	t9300-fast-import	Q: verify first notes tree	fast-import	pass
-t9300-fast-import::q-verify-first-note-for-first-commit	t9300-fast-import	Q: verify first note for first commit	fast-import	pass
-t9300-fast-import::q-verify-first-note-for-second-commit	t9300-fast-import	Q: verify first note for second commit	fast-import	pass
-t9300-fast-import::q-verify-first-note-for-third-commit	t9300-fast-import	Q: verify first note for third commit	fast-import	pass
-t9300-fast-import::q-verify-second-notes-commit	t9300-fast-import	Q: verify second notes commit	fast-import	pass
-t9300-fast-import::q-verify-second-notes-tree	t9300-fast-import	Q: verify second notes tree	fast-import	pass
-t9300-fast-import::q-verify-second-note-for-first-commit	t9300-fast-import	Q: verify second note for first commit	fast-import	pass
-t9300-fast-import::q-verify-first-note-for-second-commit-2	t9300-fast-import	Q: verify first note for second commit	fast-import	pass
-t9300-fast-import::q-verify-first-note-for-third-commit-2	t9300-fast-import	Q: verify first note for third commit	fast-import	pass
-t9300-fast-import::q-verify-third-notes-commit	t9300-fast-import	Q: verify third notes commit	fast-import	pass
-t9300-fast-import::q-verify-third-notes-tree	t9300-fast-import	Q: verify third notes tree	fast-import	pass
-t9300-fast-import::q-verify-third-note-for-first-commit	t9300-fast-import	Q: verify third note for first commit	fast-import	pass
-t9300-fast-import::q-verify-fourth-notes-commit	t9300-fast-import	Q: verify fourth notes commit	fast-import	pass
-t9300-fast-import::q-verify-fourth-notes-tree	t9300-fast-import	Q: verify fourth notes tree	fast-import	pass
-t9300-fast-import::q-verify-second-note-for-second-commit	t9300-fast-import	Q: verify second note for second commit	fast-import	pass
-t9300-fast-import::q-deny-note-on-empty-branch	t9300-fast-import	Q: deny note on empty branch	fast-import	pass
-t9300-fast-import::r-abort-on-unsupported-feature	t9300-fast-import	R: abort on unsupported feature	fast-import	pass
-t9300-fast-import::r-supported-feature-is-accepted	t9300-fast-import	R: supported feature is accepted	fast-import	pass
-t9300-fast-import::r-abort-on-receiving-feature-after-data-command	t9300-fast-import	R: abort on receiving feature after data command	fast-import	pass
-t9300-fast-import::r-import-marks-features-forbidden-by-default	t9300-fast-import	R: import-marks features forbidden by default	fast-import	pass
-t9300-fast-import::r-only-one-import-marks-feature-allowed-per-stream	t9300-fast-import	R: only one import-marks feature allowed per stream	fast-import	pass
-t9300-fast-import::r-export-marks-feature-forbidden-by-default	t9300-fast-import	R: export-marks feature forbidden by default	fast-import	pass
-t9300-fast-import::r-export-marks-feature-results-in-a-marks-file-being-created	t9300-fast-import	R: export-marks feature results in a marks file being created	fast-import	pass
-t9300-fast-import::r-export-marks-options-can-be-overridden-by-commandline-options	t9300-fast-import	R: export-marks options can be overridden by commandline options	fast-import	pass
-t9300-fast-import::r-catch-typo-in-marks-file-name	t9300-fast-import	R: catch typo in marks file name	fast-import	pass
-t9300-fast-import::r-import-and-output-marks-can-be-the-same-file	t9300-fast-import	R: import and output marks can be the same file	fast-import	pass
-t9300-fast-import::r-import-marks-foo-output-marks-foo-to-create-foo-fails	t9300-fast-import	R: --import-marks=foo --output-marks=foo to create foo fails	fast-import	pass
-t9300-fast-import::r-import-marks-if-exists	t9300-fast-import	R: --import-marks-if-exists	fast-import	pass
-t9300-fast-import::r-feature-import-marks-if-exists	t9300-fast-import	R: feature import-marks-if-exists	fast-import	pass
-t9300-fast-import::r-import-to-output-marks-works-without-any-content	t9300-fast-import	R: import to output marks works without any content	fast-import	pass
-t9300-fast-import::r-import-marks-prefers-commandline-marks-file-over-the-stream	t9300-fast-import	R: import marks prefers commandline marks file over the stream	fast-import	pass
-t9300-fast-import::r-multiple-import-marks-should-be-honoured	t9300-fast-import	R: multiple --import-marks= should be honoured	fast-import	pass
-t9300-fast-import::r-feature-relative-marks-should-be-honoured	t9300-fast-import	R: feature relative-marks should be honoured	fast-import	pass
-t9300-fast-import::r-feature-no-relative-marks-should-be-honoured	t9300-fast-import	R: feature no-relative-marks should be honoured	fast-import	pass
-t9300-fast-import::r-feature-ls-supported	t9300-fast-import	R: feature ls supported	fast-import	pass
-t9300-fast-import::r-feature-cat-blob-supported	t9300-fast-import	R: feature cat-blob supported	fast-import	pass
-t9300-fast-import::r-cat-blob-fd-must-be-a-nonnegative-integer	t9300-fast-import	R: cat-blob-fd must be a nonnegative integer	fast-import	pass
-t9300-fast-import::r-print-old-blob	t9300-fast-import	R: print old blob	fast-import	pass
-t9300-fast-import::r-in-stream-cat-blob-fd-not-respected	t9300-fast-import	R: in-stream cat-blob-fd not respected	fast-import	pass
-t9300-fast-import::r-print-mark-for-new-blob	t9300-fast-import	R: print mark for new blob	fast-import	pass
-t9300-fast-import::r-print-new-blob	t9300-fast-import	R: print new blob	fast-import	pass
-t9300-fast-import::r-print-new-blob-by-sha1	t9300-fast-import	R: print new blob by sha1	fast-import	pass
-t9300-fast-import::setup-big-file	t9300-fast-import	setup: big file	fast-import	pass
-t9300-fast-import::r-print-two-blobs-to-stdout	t9300-fast-import	R: print two blobs to stdout	fast-import	pass
-t9300-fast-import::r-copy-using-cat-file	t9300-fast-import	R: copy using cat-file	fast-import	pass
-t9300-fast-import::r-print-blob-mid-commit	t9300-fast-import	R: print blob mid-commit	fast-import	pass
-t9300-fast-import::r-print-staged-blob-within-commit	t9300-fast-import	R: print staged blob within commit	fast-import	pass
-t9300-fast-import::r-quiet-option-results-in-no-stats-being-output	t9300-fast-import	R: quiet option results in no stats being output	fast-import	pass
-t9300-fast-import::r-feature-done-means-terminating-done-is-mandatory	t9300-fast-import	R: feature done means terminating "done" is mandatory	fast-import	pass
-t9300-fast-import::r-terminating-done-with-trailing-gibberish-is-ok	t9300-fast-import	R: terminating "done" with trailing gibberish is ok	fast-import	pass
-t9300-fast-import::r-terminating-done-within-commit	t9300-fast-import	R: terminating "done" within commit	fast-import	pass
-t9300-fast-import::r-die-on-unknown-option	t9300-fast-import	R: die on unknown option	fast-import	pass
-t9300-fast-import::r-unknown-commandline-options-are-rejected	t9300-fast-import	R: unknown commandline options are rejected	fast-import	pass
-t9300-fast-import::r-die-on-invalid-option-argument	t9300-fast-import	R: die on invalid option argument	fast-import	pass
-t9300-fast-import::r-ignore-non-git-options	t9300-fast-import	R: ignore non-git options	fast-import	pass
-t9300-fast-import::r-corrupt-lines-do-not-mess-marks-file	t9300-fast-import	R: corrupt lines do not mess marks file	fast-import	pass
-t9300-fast-import::r-blob-bigger-than-threshold	t9300-fast-import	R: blob bigger than threshold	fast-import	pass
-t9300-fast-import::r-verify-created-pack	t9300-fast-import	R: verify created pack	fast-import	pass
-t9300-fast-import::r-verify-written-objects	t9300-fast-import	R: verify written objects	fast-import	pass
-t9300-fast-import::r-blob-appears-only-once	t9300-fast-import	R: blob appears only once	fast-import	pass
-t9300-fast-import::s-initialize-for-s-tests	t9300-fast-import	S: initialize for S tests	fast-import	pass
-t9300-fast-import::s-filemodify-with-garbage-after-mark-must-fail	t9300-fast-import	S: filemodify with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-filemodify-with-garbage-after-inline-must-fail	t9300-fast-import	S: filemodify with garbage after inline must fail	fast-import	pass
-t9300-fast-import::s-filemodify-with-garbage-after-sha1-must-fail	t9300-fast-import	S: filemodify with garbage after sha1 must fail	fast-import	pass
-t9300-fast-import::s-notemodify-with-garbage-after-mark-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after mark dataref must fail	fast-import	pass
-t9300-fast-import::s-notemodify-with-garbage-after-inline-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after inline dataref must fail	fast-import	pass
-t9300-fast-import::s-notemodify-with-garbage-after-sha1-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after sha1 dataref must fail	fast-import	pass
-t9300-fast-import::s-notemodify-with-garbage-after-mark-commit-ish-must-fail	t9300-fast-import	S: notemodify with garbage after mark commit-ish must fail	fast-import	pass
-t9300-fast-import::s-from-with-garbage-after-mark-must-fail	t9300-fast-import	S: from with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-merge-with-garbage-after-mark-must-fail	t9300-fast-import	S: merge with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-tag-with-garbage-after-mark-must-fail	t9300-fast-import	S: tag with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-cat-blob-with-garbage-after-mark-must-fail	t9300-fast-import	S: cat-blob with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-ls-with-garbage-after-mark-must-fail	t9300-fast-import	S: ls with garbage after mark must fail	fast-import	pass
-t9300-fast-import::s-ls-with-garbage-after-sha1-must-fail	t9300-fast-import	S: ls with garbage after sha1 must fail	fast-import	pass
-t9300-fast-import::t-delete-branch	t9300-fast-import	T: delete branch	fast-import	pass
-t9300-fast-import::t-empty-reset-doesnt-delete-branch	t9300-fast-import	T: empty reset doesnt delete branch	fast-import	pass
-t9300-fast-import::u-initialize-for-u-tests	t9300-fast-import	U: initialize for U tests	fast-import	pass
-t9300-fast-import::u-filedelete-file-succeeds	t9300-fast-import	U: filedelete file succeeds	fast-import	pass
-t9300-fast-import::u-validate-file-delete-result	t9300-fast-import	U: validate file delete result	fast-import	pass
-t9300-fast-import::u-filedelete-directory-succeeds	t9300-fast-import	U: filedelete directory succeeds	fast-import	pass
-t9300-fast-import::u-validate-directory-delete-result	t9300-fast-import	U: validate directory delete result	fast-import	pass
-t9300-fast-import::v-checkpoint-helper-does-not-get-stuck-with-extra-output	t9300-fast-import	V: checkpoint helper does not get stuck with extra output	fast-import	pass
-t9300-fast-import::v-checkpoint-updates-refs-after-reset	t9300-fast-import	V: checkpoint updates refs after reset	fast-import	pass
-t9300-fast-import::v-checkpoint-updates-refs-and-marks-after-commit	t9300-fast-import	V: checkpoint updates refs and marks after commit	fast-import	pass
-t9300-fast-import::v-checkpoint-updates-refs-and-marks-after-commit-no-new-objects	t9300-fast-import	V: checkpoint updates refs and marks after commit (no new objects)	fast-import	pass
-t9300-fast-import::v-checkpoint-updates-tags-after-tag	t9300-fast-import	V: checkpoint updates tags after tag	fast-import	pass
-t9300-fast-import::w-get-mark-empty-orphan-commit-with-no-newlines	t9300-fast-import	W: get-mark & empty orphan commit with no newlines	fast-import	pass
-t9300-fast-import::w-get-mark-empty-orphan-commit-with-one-newline	t9300-fast-import	W: get-mark & empty orphan commit with one newline	fast-import	pass
-t9300-fast-import::w-get-mark-empty-orphan-commit-with-ugly-second-newline	t9300-fast-import	W: get-mark & empty orphan commit with ugly second newline	fast-import	pass
-t9300-fast-import::w-get-mark-empty-orphan-commit-with-erroneous-third-newline	t9300-fast-import	W: get-mark & empty orphan commit with erroneous third newline	fast-import	pass
-t9300-fast-import::x-handling-encoding	t9300-fast-import	X: handling encoding	fast-import	pass
-t9300-fast-import::x-replace-ref-that-becomes-useless-is-removed	t9300-fast-import	X: replace ref that becomes useless is removed	fast-import	pass
-t9300-fast-import::y-setup	t9300-fast-import	Y: setup	fast-import	pass
-t9300-fast-import::y-rewrite-submodules	t9300-fast-import	Y: rewrite submodules	fast-import	pass
-t9300-fast-import::m-rename-root-root-to-subdirectory	t9300-fast-import	M: rename root ($root) to subdirectory	fast-import	pass
-t9300-fast-import::n-copy-root-root-by-tree-hash	t9300-fast-import	N: copy root ($root) by tree hash	fast-import	pass
-t9300-fast-import::n-copy-root-root-by-path	t9300-fast-import	N: copy root ($root) by path	fast-import	pass
-t9300-fast-import::n-copy-to-root-root-by-id-and-modify	t9300-fast-import	N: copy to root ($root) by id and modify	fast-import	pass
-t9300-fast-import::n-extract-subtree-to-the-root-root	t9300-fast-import	N: extract subtree to the root ($root)	fast-import	pass
-t9300-fast-import::n-modify-subtree-extract-it-to-the-root-root-and-modify-again	t9300-fast-import	N: modify subtree, extract it to the root ($root), and modify again	fast-import	pass
-t9300-fast-import::s-paths-at-eol-with-test-must-work	t9300-fast-import	S: paths at EOL with $test must work	fast-import	pass
-t9300-fast-import::s-paths-before-space-with-test-must-work	t9300-fast-import	S: paths before space with $test must work	fast-import	pass
-t9300-fast-import::s-change-with-what-must-fail	t9300-fast-import	S: $change with $what must fail	fast-import	pass
-t9300-fast-import::t-ls-root-root-tree	t9300-fast-import	T: ls root ($root) tree	fast-import	pass
-t9300-fast-import::u-filedelete-root-root-succeeds	t9300-fast-import	U: filedelete root ($root) succeeds	fast-import	pass
-t9300-fast-import::u-validate-root-root-delete-result	t9300-fast-import	U: validate root ($root) delete result	fast-import	pass
+t9300-fast-import::empty-stream-succeeds	t9300-fast-import	empty stream succeeds	fast-import	not_ported
+t9300-fast-import::truncated-stream-complains	t9300-fast-import	truncated stream complains	fast-import	not_ported
+t9300-fast-import::a-create-pack-from-stdin	t9300-fast-import	A: create pack from stdin	fast-import	not_ported
+t9300-fast-import::a-verify-pack	t9300-fast-import	A: verify pack	fast-import	not_ported
+t9300-fast-import::a-verify-commit	t9300-fast-import	A: verify commit	fast-import	not_ported
+t9300-fast-import::a-verify-tree	t9300-fast-import	A: verify tree	fast-import	not_ported
+t9300-fast-import::a-verify-file2	t9300-fast-import	A: verify file2	fast-import	not_ported
+t9300-fast-import::a-verify-file3	t9300-fast-import	A: verify file3	fast-import	not_ported
+t9300-fast-import::a-verify-file4	t9300-fast-import	A: verify file4	fast-import	not_ported
+t9300-fast-import::a-verify-tag-series-a	t9300-fast-import	A: verify tag/series-A	fast-import	not_ported
+t9300-fast-import::a-verify-tag-series-a-blob	t9300-fast-import	A: verify tag/series-A-blob	fast-import	not_ported
+t9300-fast-import::a-verify-tag-deletion-is-successful	t9300-fast-import	A: verify tag deletion is successful	fast-import	not_ported
+t9300-fast-import::a-verify-marks-output	t9300-fast-import	A: verify marks output	fast-import	not_ported
+t9300-fast-import::a-verify-marks-import	t9300-fast-import	A: verify marks import	fast-import	not_ported
+t9300-fast-import::a-tag-blob-by-sha1	t9300-fast-import	A: tag blob by sha1	fast-import	not_ported
+t9300-fast-import::a-verify-marks-import-does-not-crash	t9300-fast-import	A: verify marks import does not crash	fast-import	not_ported
+t9300-fast-import::a-verify-pack-2	t9300-fast-import	A: verify pack	fast-import	not_ported
+t9300-fast-import::a-verify-diff	t9300-fast-import	A: verify diff	fast-import	not_ported
+t9300-fast-import::a-export-marks-with-large-values	t9300-fast-import	A: export marks with large values	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-blob-sha1	t9300-fast-import	B: fail on invalid blob sha1	fast-import	not_ported
+t9300-fast-import::b-accept-branch-name-temp-tag	t9300-fast-import	B: accept branch name "TEMP_TAG"	fast-import	not_ported
+t9300-fast-import::b-accept-empty-committer	t9300-fast-import	B: accept empty committer	fast-import	not_ported
+t9300-fast-import::b-reject-invalid-timezone	t9300-fast-import	B: reject invalid timezone	fast-import	not_ported
+t9300-fast-import::b-accept-invalid-timezone-with-raw-permissive	t9300-fast-import	B: accept invalid timezone with raw-permissive	fast-import	not_ported
+t9300-fast-import::b-accept-and-fixup-committer-with-no-name	t9300-fast-import	B: accept and fixup committer with no name	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-committer-1	t9300-fast-import	B: fail on invalid committer (1)	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-committer-2	t9300-fast-import	B: fail on invalid committer (2)	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-committer-3	t9300-fast-import	B: fail on invalid committer (3)	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-committer-4	t9300-fast-import	B: fail on invalid committer (4)	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-committer-5	t9300-fast-import	B: fail on invalid committer (5)	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-file-path-of	t9300-fast-import	B: fail on invalid file path of ..	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-file-path-of-2	t9300-fast-import	B: fail on invalid file path of .	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-file-path-of-c	t9300-fast-import	B: fail on invalid file path of C:	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-file-path-of-git	t9300-fast-import	B: fail on invalid file path of .git	fast-import	not_ported
+t9300-fast-import::b-fail-on-invalid-file-path-of-gitmodules	t9300-fast-import	B: fail on invalid file path of .gitmodules	fast-import	not_ported
+t9300-fast-import::c-incremental-import-create-pack-from-stdin	t9300-fast-import	C: incremental import create pack from stdin	fast-import	not_ported
+t9300-fast-import::c-verify-pack	t9300-fast-import	C: verify pack	fast-import	not_ported
+t9300-fast-import::c-validate-reuse-existing-blob	t9300-fast-import	C: validate reuse existing blob	fast-import	not_ported
+t9300-fast-import::c-verify-commit	t9300-fast-import	C: verify commit	fast-import	not_ported
+t9300-fast-import::c-validate-rename-result	t9300-fast-import	C: validate rename result	fast-import	not_ported
+t9300-fast-import::d-inline-data-in-commit	t9300-fast-import	D: inline data in commit	fast-import	not_ported
+t9300-fast-import::d-verify-pack	t9300-fast-import	D: verify pack	fast-import	not_ported
+t9300-fast-import::d-validate-new-files-added	t9300-fast-import	D: validate new files added	fast-import	not_ported
+t9300-fast-import::d-verify-file5	t9300-fast-import	D: verify file5	fast-import	not_ported
+t9300-fast-import::d-verify-file6	t9300-fast-import	D: verify file6	fast-import	not_ported
+t9300-fast-import::e-rfc2822-date-date-format-raw	t9300-fast-import	E: rfc2822 date, --date-format=raw	fast-import	not_ported
+t9300-fast-import::e-rfc2822-date-date-format-rfc2822	t9300-fast-import	E: rfc2822 date, --date-format=rfc2822	fast-import	not_ported
+t9300-fast-import::e-verify-pack	t9300-fast-import	E: verify pack	fast-import	not_ported
+t9300-fast-import::e-verify-commit	t9300-fast-import	E: verify commit	fast-import	not_ported
+t9300-fast-import::f-non-fast-forward-update-skips	t9300-fast-import	F: non-fast-forward update skips	fast-import	not_ported
+t9300-fast-import::f-verify-pack	t9300-fast-import	F: verify pack	fast-import	not_ported
+t9300-fast-import::f-verify-other-commit	t9300-fast-import	F: verify other commit	fast-import	not_ported
+t9300-fast-import::g-non-fast-forward-update-forced	t9300-fast-import	G: non-fast-forward update forced	fast-import	not_ported
+t9300-fast-import::g-verify-pack	t9300-fast-import	G: verify pack	fast-import	not_ported
+t9300-fast-import::g-branch-changed-but-logged	t9300-fast-import	G: branch changed, but logged	fast-import	not_ported
+t9300-fast-import::h-deletall-add-1	t9300-fast-import	H: deletall, add 1	fast-import	not_ported
+t9300-fast-import::h-verify-pack	t9300-fast-import	H: verify pack	fast-import	not_ported
+t9300-fast-import::h-validate-old-files-removed-new-files-added	t9300-fast-import	H: validate old files removed, new files added	fast-import	not_ported
+t9300-fast-import::h-verify-file	t9300-fast-import	H: verify file	fast-import	not_ported
+t9300-fast-import::i-export-pack-edges	t9300-fast-import	I: export-pack-edges	fast-import	not_ported
+t9300-fast-import::i-verify-edge-list	t9300-fast-import	I: verify edge list	fast-import	not_ported
+t9300-fast-import::j-reset-existing-branch-creates-empty-commit	t9300-fast-import	J: reset existing branch creates empty commit	fast-import	not_ported
+t9300-fast-import::j-branch-has-1-commit-empty-tree	t9300-fast-import	J: branch has 1 commit, empty tree	fast-import	not_ported
+t9300-fast-import::j-tag-must-fail-on-empty-branch	t9300-fast-import	J: tag must fail on empty branch	fast-import	not_ported
+t9300-fast-import::k-reinit-branch-with-from	t9300-fast-import	K: reinit branch with from	fast-import	not_ported
+t9300-fast-import::k-verify-k-1-branch-1	t9300-fast-import	K: verify K^1 = branch^1	fast-import	not_ported
+t9300-fast-import::l-verify-internal-tree-sorting	t9300-fast-import	L: verify internal tree sorting	fast-import	not_ported
+t9300-fast-import::l-nested-tree-copy-does-not-corrupt-deltas	t9300-fast-import	L: nested tree copy does not corrupt deltas	fast-import	not_ported
+t9300-fast-import::m-rename-file-in-same-subdirectory	t9300-fast-import	M: rename file in same subdirectory	fast-import	not_ported
+t9300-fast-import::m-rename-file-to-new-subdirectory	t9300-fast-import	M: rename file to new subdirectory	fast-import	not_ported
+t9300-fast-import::m-rename-subdirectory-to-new-subdirectory	t9300-fast-import	M: rename subdirectory to new subdirectory	fast-import	not_ported
+t9300-fast-import::n-copy-file-in-same-subdirectory	t9300-fast-import	N: copy file in same subdirectory	fast-import	not_ported
+t9300-fast-import::n-copy-then-modify-subdirectory	t9300-fast-import	N: copy then modify subdirectory	fast-import	not_ported
+t9300-fast-import::n-copy-dirty-subdirectory	t9300-fast-import	N: copy dirty subdirectory	fast-import	not_ported
+t9300-fast-import::n-copy-directory-by-id	t9300-fast-import	N: copy directory by id	fast-import	not_ported
+t9300-fast-import::n-read-and-copy-directory	t9300-fast-import	N: read and copy directory	fast-import	not_ported
+t9300-fast-import::n-empty-directory-reads-as-missing	t9300-fast-import	N: empty directory reads as missing	fast-import	not_ported
+t9300-fast-import::n-delete-directory-by-copying	t9300-fast-import	N: delete directory by copying	fast-import	not_ported
+t9300-fast-import::n-modify-copied-tree	t9300-fast-import	N: modify copied tree	fast-import	not_ported
+t9300-fast-import::n-reject-foo-syntax	t9300-fast-import	N: reject foo/ syntax	fast-import	not_ported
+t9300-fast-import::n-reject-foo-syntax-in-copy-source	t9300-fast-import	N: reject foo/ syntax in copy source	fast-import	not_ported
+t9300-fast-import::n-reject-foo-syntax-in-rename-source	t9300-fast-import	N: reject foo/ syntax in rename source	fast-import	not_ported
+t9300-fast-import::n-reject-foo-syntax-in-ls-argument	t9300-fast-import	N: reject foo/ syntax in ls argument	fast-import	not_ported
+t9300-fast-import::o-comments-are-all-skipped	t9300-fast-import	O: comments are all skipped	fast-import	not_ported
+t9300-fast-import::o-blank-lines-not-necessary-after-data-commands	t9300-fast-import	O: blank lines not necessary after data commands	fast-import	not_ported
+t9300-fast-import::o-repack-before-next-test	t9300-fast-import	O: repack before next test	fast-import	not_ported
+t9300-fast-import::o-blank-lines-not-necessary-after-other-commands	t9300-fast-import	O: blank lines not necessary after other commands	fast-import	not_ported
+t9300-fast-import::o-progress-outputs-as-requested-by-input	t9300-fast-import	O: progress outputs as requested by input	fast-import	not_ported
+t9300-fast-import::p-superproject-submodule-mix	t9300-fast-import	P: superproject & submodule mix	fast-import	not_ported
+t9300-fast-import::p-verbatim-sha-gitlinks	t9300-fast-import	P: verbatim SHA gitlinks	fast-import	not_ported
+t9300-fast-import::p-fail-on-inline-gitlink	t9300-fast-import	P: fail on inline gitlink	fast-import	not_ported
+t9300-fast-import::p-fail-on-blob-mark-in-gitlink	t9300-fast-import	P: fail on blob mark in gitlink	fast-import	not_ported
+t9300-fast-import::q-commit-notes	t9300-fast-import	Q: commit notes	fast-import	not_ported
+t9300-fast-import::q-verify-pack	t9300-fast-import	Q: verify pack	fast-import	not_ported
+t9300-fast-import::q-verify-first-commit	t9300-fast-import	Q: verify first commit	fast-import	not_ported
+t9300-fast-import::q-verify-second-commit	t9300-fast-import	Q: verify second commit	fast-import	not_ported
+t9300-fast-import::q-verify-third-commit	t9300-fast-import	Q: verify third commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-notes-commit	t9300-fast-import	Q: verify first notes commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-notes-tree	t9300-fast-import	Q: verify first notes tree	fast-import	not_ported
+t9300-fast-import::q-verify-first-note-for-first-commit	t9300-fast-import	Q: verify first note for first commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-note-for-second-commit	t9300-fast-import	Q: verify first note for second commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-note-for-third-commit	t9300-fast-import	Q: verify first note for third commit	fast-import	not_ported
+t9300-fast-import::q-verify-second-notes-commit	t9300-fast-import	Q: verify second notes commit	fast-import	not_ported
+t9300-fast-import::q-verify-second-notes-tree	t9300-fast-import	Q: verify second notes tree	fast-import	not_ported
+t9300-fast-import::q-verify-second-note-for-first-commit	t9300-fast-import	Q: verify second note for first commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-note-for-second-commit-2	t9300-fast-import	Q: verify first note for second commit	fast-import	not_ported
+t9300-fast-import::q-verify-first-note-for-third-commit-2	t9300-fast-import	Q: verify first note for third commit	fast-import	not_ported
+t9300-fast-import::q-verify-third-notes-commit	t9300-fast-import	Q: verify third notes commit	fast-import	not_ported
+t9300-fast-import::q-verify-third-notes-tree	t9300-fast-import	Q: verify third notes tree	fast-import	not_ported
+t9300-fast-import::q-verify-third-note-for-first-commit	t9300-fast-import	Q: verify third note for first commit	fast-import	not_ported
+t9300-fast-import::q-verify-fourth-notes-commit	t9300-fast-import	Q: verify fourth notes commit	fast-import	not_ported
+t9300-fast-import::q-verify-fourth-notes-tree	t9300-fast-import	Q: verify fourth notes tree	fast-import	not_ported
+t9300-fast-import::q-verify-second-note-for-second-commit	t9300-fast-import	Q: verify second note for second commit	fast-import	not_ported
+t9300-fast-import::q-deny-note-on-empty-branch	t9300-fast-import	Q: deny note on empty branch	fast-import	not_ported
+t9300-fast-import::r-abort-on-unsupported-feature	t9300-fast-import	R: abort on unsupported feature	fast-import	not_ported
+t9300-fast-import::r-supported-feature-is-accepted	t9300-fast-import	R: supported feature is accepted	fast-import	not_ported
+t9300-fast-import::r-abort-on-receiving-feature-after-data-command	t9300-fast-import	R: abort on receiving feature after data command	fast-import	not_ported
+t9300-fast-import::r-import-marks-features-forbidden-by-default	t9300-fast-import	R: import-marks features forbidden by default	fast-import	not_ported
+t9300-fast-import::r-only-one-import-marks-feature-allowed-per-stream	t9300-fast-import	R: only one import-marks feature allowed per stream	fast-import	not_ported
+t9300-fast-import::r-export-marks-feature-forbidden-by-default	t9300-fast-import	R: export-marks feature forbidden by default	fast-import	not_ported
+t9300-fast-import::r-export-marks-feature-results-in-a-marks-file-being-created	t9300-fast-import	R: export-marks feature results in a marks file being created	fast-import	not_ported
+t9300-fast-import::r-export-marks-options-can-be-overridden-by-commandline-options	t9300-fast-import	R: export-marks options can be overridden by commandline options	fast-import	not_ported
+t9300-fast-import::r-catch-typo-in-marks-file-name	t9300-fast-import	R: catch typo in marks file name	fast-import	not_ported
+t9300-fast-import::r-import-and-output-marks-can-be-the-same-file	t9300-fast-import	R: import and output marks can be the same file	fast-import	not_ported
+t9300-fast-import::r-import-marks-foo-output-marks-foo-to-create-foo-fails	t9300-fast-import	R: --import-marks=foo --output-marks=foo to create foo fails	fast-import	not_ported
+t9300-fast-import::r-import-marks-if-exists	t9300-fast-import	R: --import-marks-if-exists	fast-import	not_ported
+t9300-fast-import::r-feature-import-marks-if-exists	t9300-fast-import	R: feature import-marks-if-exists	fast-import	not_ported
+t9300-fast-import::r-import-to-output-marks-works-without-any-content	t9300-fast-import	R: import to output marks works without any content	fast-import	not_ported
+t9300-fast-import::r-import-marks-prefers-commandline-marks-file-over-the-stream	t9300-fast-import	R: import marks prefers commandline marks file over the stream	fast-import	not_ported
+t9300-fast-import::r-multiple-import-marks-should-be-honoured	t9300-fast-import	R: multiple --import-marks= should be honoured	fast-import	not_ported
+t9300-fast-import::r-feature-relative-marks-should-be-honoured	t9300-fast-import	R: feature relative-marks should be honoured	fast-import	not_ported
+t9300-fast-import::r-feature-no-relative-marks-should-be-honoured	t9300-fast-import	R: feature no-relative-marks should be honoured	fast-import	not_ported
+t9300-fast-import::r-feature-ls-supported	t9300-fast-import	R: feature ls supported	fast-import	not_ported
+t9300-fast-import::r-feature-cat-blob-supported	t9300-fast-import	R: feature cat-blob supported	fast-import	not_ported
+t9300-fast-import::r-cat-blob-fd-must-be-a-nonnegative-integer	t9300-fast-import	R: cat-blob-fd must be a nonnegative integer	fast-import	not_ported
+t9300-fast-import::r-print-old-blob	t9300-fast-import	R: print old blob	fast-import	not_ported
+t9300-fast-import::r-in-stream-cat-blob-fd-not-respected	t9300-fast-import	R: in-stream cat-blob-fd not respected	fast-import	not_ported
+t9300-fast-import::r-print-mark-for-new-blob	t9300-fast-import	R: print mark for new blob	fast-import	not_ported
+t9300-fast-import::r-print-new-blob	t9300-fast-import	R: print new blob	fast-import	not_ported
+t9300-fast-import::r-print-new-blob-by-sha1	t9300-fast-import	R: print new blob by sha1	fast-import	not_ported
+t9300-fast-import::setup-big-file	t9300-fast-import	setup: big file	fast-import	not_ported
+t9300-fast-import::r-print-two-blobs-to-stdout	t9300-fast-import	R: print two blobs to stdout	fast-import	not_ported
+t9300-fast-import::r-copy-using-cat-file	t9300-fast-import	R: copy using cat-file	fast-import	not_ported
+t9300-fast-import::r-print-blob-mid-commit	t9300-fast-import	R: print blob mid-commit	fast-import	not_ported
+t9300-fast-import::r-print-staged-blob-within-commit	t9300-fast-import	R: print staged blob within commit	fast-import	not_ported
+t9300-fast-import::r-quiet-option-results-in-no-stats-being-output	t9300-fast-import	R: quiet option results in no stats being output	fast-import	not_ported
+t9300-fast-import::r-feature-done-means-terminating-done-is-mandatory	t9300-fast-import	R: feature done means terminating "done" is mandatory	fast-import	not_ported
+t9300-fast-import::r-terminating-done-with-trailing-gibberish-is-ok	t9300-fast-import	R: terminating "done" with trailing gibberish is ok	fast-import	not_ported
+t9300-fast-import::r-terminating-done-within-commit	t9300-fast-import	R: terminating "done" within commit	fast-import	not_ported
+t9300-fast-import::r-die-on-unknown-option	t9300-fast-import	R: die on unknown option	fast-import	not_ported
+t9300-fast-import::r-unknown-commandline-options-are-rejected	t9300-fast-import	R: unknown commandline options are rejected	fast-import	not_ported
+t9300-fast-import::r-die-on-invalid-option-argument	t9300-fast-import	R: die on invalid option argument	fast-import	not_ported
+t9300-fast-import::r-ignore-non-git-options	t9300-fast-import	R: ignore non-git options	fast-import	not_ported
+t9300-fast-import::r-corrupt-lines-do-not-mess-marks-file	t9300-fast-import	R: corrupt lines do not mess marks file	fast-import	not_ported
+t9300-fast-import::r-blob-bigger-than-threshold	t9300-fast-import	R: blob bigger than threshold	fast-import	not_ported
+t9300-fast-import::r-verify-created-pack	t9300-fast-import	R: verify created pack	fast-import	not_ported
+t9300-fast-import::r-verify-written-objects	t9300-fast-import	R: verify written objects	fast-import	not_ported
+t9300-fast-import::r-blob-appears-only-once	t9300-fast-import	R: blob appears only once	fast-import	not_ported
+t9300-fast-import::s-initialize-for-s-tests	t9300-fast-import	S: initialize for S tests	fast-import	not_ported
+t9300-fast-import::s-filemodify-with-garbage-after-mark-must-fail	t9300-fast-import	S: filemodify with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-filemodify-with-garbage-after-inline-must-fail	t9300-fast-import	S: filemodify with garbage after inline must fail	fast-import	not_ported
+t9300-fast-import::s-filemodify-with-garbage-after-sha1-must-fail	t9300-fast-import	S: filemodify with garbage after sha1 must fail	fast-import	not_ported
+t9300-fast-import::s-notemodify-with-garbage-after-mark-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after mark dataref must fail	fast-import	not_ported
+t9300-fast-import::s-notemodify-with-garbage-after-inline-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after inline dataref must fail	fast-import	not_ported
+t9300-fast-import::s-notemodify-with-garbage-after-sha1-dataref-must-fail	t9300-fast-import	S: notemodify with garbage after sha1 dataref must fail	fast-import	not_ported
+t9300-fast-import::s-notemodify-with-garbage-after-mark-commit-ish-must-fail	t9300-fast-import	S: notemodify with garbage after mark commit-ish must fail	fast-import	not_ported
+t9300-fast-import::s-from-with-garbage-after-mark-must-fail	t9300-fast-import	S: from with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-merge-with-garbage-after-mark-must-fail	t9300-fast-import	S: merge with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-tag-with-garbage-after-mark-must-fail	t9300-fast-import	S: tag with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-cat-blob-with-garbage-after-mark-must-fail	t9300-fast-import	S: cat-blob with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-ls-with-garbage-after-mark-must-fail	t9300-fast-import	S: ls with garbage after mark must fail	fast-import	not_ported
+t9300-fast-import::s-ls-with-garbage-after-sha1-must-fail	t9300-fast-import	S: ls with garbage after sha1 must fail	fast-import	not_ported
+t9300-fast-import::t-delete-branch	t9300-fast-import	T: delete branch	fast-import	not_ported
+t9300-fast-import::t-empty-reset-doesnt-delete-branch	t9300-fast-import	T: empty reset doesnt delete branch	fast-import	not_ported
+t9300-fast-import::u-initialize-for-u-tests	t9300-fast-import	U: initialize for U tests	fast-import	not_ported
+t9300-fast-import::u-filedelete-file-succeeds	t9300-fast-import	U: filedelete file succeeds	fast-import	not_ported
+t9300-fast-import::u-validate-file-delete-result	t9300-fast-import	U: validate file delete result	fast-import	not_ported
+t9300-fast-import::u-filedelete-directory-succeeds	t9300-fast-import	U: filedelete directory succeeds	fast-import	not_ported
+t9300-fast-import::u-validate-directory-delete-result	t9300-fast-import	U: validate directory delete result	fast-import	not_ported
+t9300-fast-import::v-checkpoint-helper-does-not-get-stuck-with-extra-output	t9300-fast-import	V: checkpoint helper does not get stuck with extra output	fast-import	not_ported
+t9300-fast-import::v-checkpoint-updates-refs-after-reset	t9300-fast-import	V: checkpoint updates refs after reset	fast-import	not_ported
+t9300-fast-import::v-checkpoint-updates-refs-and-marks-after-commit	t9300-fast-import	V: checkpoint updates refs and marks after commit	fast-import	not_ported
+t9300-fast-import::v-checkpoint-updates-refs-and-marks-after-commit-no-new-objects	t9300-fast-import	V: checkpoint updates refs and marks after commit (no new objects)	fast-import	not_ported
+t9300-fast-import::v-checkpoint-updates-tags-after-tag	t9300-fast-import	V: checkpoint updates tags after tag	fast-import	not_ported
+t9300-fast-import::w-get-mark-empty-orphan-commit-with-no-newlines	t9300-fast-import	W: get-mark & empty orphan commit with no newlines	fast-import	not_ported
+t9300-fast-import::w-get-mark-empty-orphan-commit-with-one-newline	t9300-fast-import	W: get-mark & empty orphan commit with one newline	fast-import	not_ported
+t9300-fast-import::w-get-mark-empty-orphan-commit-with-ugly-second-newline	t9300-fast-import	W: get-mark & empty orphan commit with ugly second newline	fast-import	not_ported
+t9300-fast-import::w-get-mark-empty-orphan-commit-with-erroneous-third-newline	t9300-fast-import	W: get-mark & empty orphan commit with erroneous third newline	fast-import	not_ported
+t9300-fast-import::x-handling-encoding	t9300-fast-import	X: handling encoding	fast-import	not_ported
+t9300-fast-import::x-replace-ref-that-becomes-useless-is-removed	t9300-fast-import	X: replace ref that becomes useless is removed	fast-import	not_ported
+t9300-fast-import::y-setup	t9300-fast-import	Y: setup	fast-import	not_ported
+t9300-fast-import::y-rewrite-submodules	t9300-fast-import	Y: rewrite submodules	fast-import	not_ported
+t9300-fast-import::m-rename-root-root-to-subdirectory	t9300-fast-import	M: rename root ($root) to subdirectory	fast-import	not_ported
+t9300-fast-import::n-copy-root-root-by-tree-hash	t9300-fast-import	N: copy root ($root) by tree hash	fast-import	not_ported
+t9300-fast-import::n-copy-root-root-by-path	t9300-fast-import	N: copy root ($root) by path	fast-import	not_ported
+t9300-fast-import::n-copy-to-root-root-by-id-and-modify	t9300-fast-import	N: copy to root ($root) by id and modify	fast-import	not_ported
+t9300-fast-import::n-extract-subtree-to-the-root-root	t9300-fast-import	N: extract subtree to the root ($root)	fast-import	not_ported
+t9300-fast-import::n-modify-subtree-extract-it-to-the-root-root-and-modify-again	t9300-fast-import	N: modify subtree, extract it to the root ($root), and modify again	fast-import	not_ported
+t9300-fast-import::s-paths-at-eol-with-test-must-work	t9300-fast-import	S: paths at EOL with $test must work	fast-import	not_ported
+t9300-fast-import::s-paths-before-space-with-test-must-work	t9300-fast-import	S: paths before space with $test must work	fast-import	not_ported
+t9300-fast-import::s-change-with-what-must-fail	t9300-fast-import	S: $change with $what must fail	fast-import	not_ported
+t9300-fast-import::t-ls-root-root-tree	t9300-fast-import	T: ls root ($root) tree	fast-import	not_ported
+t9300-fast-import::u-filedelete-root-root-succeeds	t9300-fast-import	U: filedelete root ($root) succeeds	fast-import	not_ported
+t9300-fast-import::u-validate-root-root-delete-result	t9300-fast-import	U: validate root ($root) delete result	fast-import	not_ported
 t9301-fast-import-notes::set-up-main-branch	t9301-fast-import-notes	set up main branch	fast-import	pass
 t9301-fast-import-notes::add-notes-with-simple-m-command	t9301-fast-import-notes	add notes with simple M command	fast-import	pass
 t9301-fast-import-notes::add-notes-with-simple-n-command	t9301-fast-import-notes	add notes with simple N command	fast-import	pass
@@ -17078,14 +17078,14 @@ t9302-fast-import-unpack-limit::bigger-packs-are-preserved	t9302-fast-import-unp
 t9302-fast-import-unpack-limit::lookups-after-checkpoint-works	t9302-fast-import-unpack-limit	lookups after checkpoint works	fast-import	pass
 t9303-fast-import-compression::fast-import-packed-with-config	t9303-fast-import-compression	fast-import (packed) with $config	fast-import	pass
 t9303-fast-import-compression::fast-import-loose-with-config	t9303-fast-import-compression	fast-import (loose) with $config	fast-import	pass
-t9304-fast-import-marks::setup-dump-of-basic-history	t9304-fast-import-marks	setup dump of basic history	fast-import	pass
-t9304-fast-import-marks::setup-large-marks-file	t9304-fast-import-marks	setup large marks file	fast-import	pass
-t9304-fast-import-marks::import-with-large-marks-file	t9304-fast-import-marks	import with large marks file	fast-import	pass
-t9304-fast-import-marks::setup-dump-with-submodule	t9304-fast-import-marks	setup dump with submodule	fast-import	pass
-t9304-fast-import-marks::setup-submodule-mapping-with-large-id	t9304-fast-import-marks	setup submodule mapping with large id	fast-import	pass
-t9304-fast-import-marks::import-with-submodule-mapping	t9304-fast-import-marks	import with submodule mapping	fast-import	pass
-t9304-fast-import-marks::paths-adjusted-for-relative-subdir	t9304-fast-import-marks	paths adjusted for relative subdir	fast-import	pass
-t9304-fast-import-marks::relative-marks-are-not-affected-by-subdir	t9304-fast-import-marks	relative marks are not affected by subdir	fast-import	pass
+t9304-fast-import-marks::setup-dump-of-basic-history	t9304-fast-import-marks	setup dump of basic history	fast-import	partial
+t9304-fast-import-marks::setup-large-marks-file	t9304-fast-import-marks	setup large marks file	fast-import	partial
+t9304-fast-import-marks::import-with-large-marks-file	t9304-fast-import-marks	import with large marks file	fast-import	partial
+t9304-fast-import-marks::setup-dump-with-submodule	t9304-fast-import-marks	setup dump with submodule	fast-import	partial
+t9304-fast-import-marks::setup-submodule-mapping-with-large-id	t9304-fast-import-marks	setup submodule mapping with large id	fast-import	partial
+t9304-fast-import-marks::import-with-submodule-mapping	t9304-fast-import-marks	import with submodule mapping	fast-import	partial
+t9304-fast-import-marks::paths-adjusted-for-relative-subdir	t9304-fast-import-marks	paths adjusted for relative subdir	fast-import	partial
+t9304-fast-import-marks::relative-marks-are-not-affected-by-subdir	t9304-fast-import-marks	relative marks are not affected by subdir	fast-import	partial
 t9305-fast-import-signatures::set-up-unsigned-initial-commit-and-import-repo	t9305-fast-import-signatures	set up unsigned initial commit and import repo	fast-import	pass
 t9305-fast-import-signatures::set-up-openpgp-signed-commit	t9305-fast-import-signatures	set up OpenPGP signed commit	fast-import	pass
 t9305-fast-import-signatures::import-openpgp-signature-with-signed-commits-verbatim	t9305-fast-import-signatures	import OpenPGP signature with --signed-commits=verbatim	fast-import	pass
@@ -17112,95 +17112,95 @@ t9306-fast-import-signed-tags::import-x-509-signed-tag-with-signed-tags-warn-str
 t9306-fast-import-signed-tags::setup-ssh-signed-tag	t9306-fast-import-signed-tags	setup SSH signed tag	fast-import	pass
 t9306-fast-import-signed-tags::import-ssh-signed-tag-with-signed-tags-warn-verbatim	t9306-fast-import-signed-tags	import SSH signed tag with --signed-tags=warn-verbatim	fast-import	pass
 t9306-fast-import-signed-tags::import-ssh-signed-tag-with-signed-tags-strip	t9306-fast-import-signed-tags	import SSH signed tag with --signed-tags=strip	fast-import	pass
-t9350-fast-export::setup	t9350-fast-export	setup	fast-export	pass
-t9350-fast-export::fast-export-fast-import	t9350-fast-export	fast-export | fast-import	fast-export	pass
-t9350-fast-export::fast-export-muss-commit-muss	t9350-fast-export	fast-export ^muss^{commit} muss	fast-export	pass
-t9350-fast-export::fast-export-mark-tags-muss-commit-muss	t9350-fast-export	fast-export --mark-tags ^muss^{commit} muss	fast-export	pass
-t9350-fast-export::fast-export-main-2-main	t9350-fast-export	fast-export main~2..main	fast-export	pass
-t9350-fast-export::fast-export-reference-excluded-parents-main-2-main	t9350-fast-export	fast-export --reference-excluded-parents main~2..main	fast-export	pass
-t9350-fast-export::fast-export-show-original-ids	t9350-fast-export	fast-export --show-original-ids	fast-export	pass
-t9350-fast-export::fast-export-show-original-ids-git-fast-import	t9350-fast-export	fast-export --show-original-ids | git fast-import	fast-export	pass
-t9350-fast-export::reencoding-iso-8859-7	t9350-fast-export	reencoding iso-8859-7	fast-export	pass
-t9350-fast-export::aborting-on-iso-8859-7	t9350-fast-export	aborting on iso-8859-7	fast-export	pass
-t9350-fast-export::preserving-iso-8859-7	t9350-fast-export	preserving iso-8859-7	fast-export	pass
-t9350-fast-export::encoding-preserved-if-reencoding-fails	t9350-fast-export	encoding preserved if reencoding fails	fast-export	pass
-t9350-fast-export::import-export-marks	t9350-fast-export	import/export-marks	fast-export	pass
-t9350-fast-export::set-up-faked-signed-tag	t9350-fast-export	set up faked signed tag	fast-export	pass
-t9350-fast-export::signed-tags-abort	t9350-fast-export	signed-tags=abort	fast-export	pass
-t9350-fast-export::signed-tags-verbatim	t9350-fast-export	signed-tags=verbatim	fast-export	pass
-t9350-fast-export::signed-tags-warn-verbatim	t9350-fast-export	signed-tags=warn-verbatim	fast-export	pass
-t9350-fast-export::signed-tags-warn	t9350-fast-export	signed-tags=warn	fast-export	pass
-t9350-fast-export::signed-tags-strip	t9350-fast-export	signed-tags=strip	fast-export	pass
-t9350-fast-export::signed-tags-warn-strip	t9350-fast-export	signed-tags=warn-strip	fast-export	pass
-t9350-fast-export::setup-x-509-signed-tag	t9350-fast-export	setup X.509 signed tag	fast-export	pass
-t9350-fast-export::signed-tags-verbatim-with-x-509	t9350-fast-export	signed-tags=verbatim with X.509	fast-export	pass
-t9350-fast-export::signed-tags-strip-with-x-509	t9350-fast-export	signed-tags=strip with X.509	fast-export	pass
-t9350-fast-export::setup-ssh-signed-tag	t9350-fast-export	setup SSH signed tag	fast-export	pass
-t9350-fast-export::signed-tags-verbatim-with-ssh	t9350-fast-export	signed-tags=verbatim with SSH	fast-export	pass
-t9350-fast-export::signed-tags-strip-with-ssh	t9350-fast-export	signed-tags=strip with SSH	fast-export	pass
-t9350-fast-export::set-up-signed-commit	t9350-fast-export	set up signed commit	fast-export	pass
-t9350-fast-export::signed-commits-default-is-same-as-strip	t9350-fast-export	signed-commits default is same as strip	fast-export	pass
-t9350-fast-export::signed-commits-abort	t9350-fast-export	signed-commits=abort	fast-export	pass
-t9350-fast-export::signed-commits-verbatim	t9350-fast-export	signed-commits=verbatim	fast-export	pass
-t9350-fast-export::signed-commits-warn-verbatim	t9350-fast-export	signed-commits=warn-verbatim	fast-export	pass
-t9350-fast-export::signed-commits-strip	t9350-fast-export	signed-commits=strip	fast-export	pass
-t9350-fast-export::signed-commits-warn-strip	t9350-fast-export	signed-commits=warn-strip	fast-export	pass
-t9350-fast-export::setup-x-509-signed-commit	t9350-fast-export	setup X.509 signed commit	fast-export	pass
-t9350-fast-export::round-trip-x-509-signed-commit	t9350-fast-export	round-trip X.509 signed commit	fast-export	pass
-t9350-fast-export::setup-ssh-signed-commit	t9350-fast-export	setup SSH signed commit	fast-export	pass
-t9350-fast-export::round-trip-ssh-signed-commit	t9350-fast-export	round-trip SSH signed commit	fast-export	pass
-t9350-fast-export::setup-submodule	t9350-fast-export	setup submodule	fast-export	pass
-t9350-fast-export::submodule-fast-export-fast-import	t9350-fast-export	submodule fast-export | fast-import	fast-export	pass
-t9350-fast-export::setup-copies	t9350-fast-export	setup copies	fast-export	pass
-t9350-fast-export::fast-export-c-c-fast-import	t9350-fast-export	fast-export -C -C | fast-import	fast-export	pass
-t9350-fast-export::fast-export-fast-import-when-main-is-tagged	t9350-fast-export	fast-export | fast-import when main is tagged	fast-export	pass
-t9350-fast-export::cope-with-tagger-less-tags	t9350-fast-export	cope with tagger-less tags	fast-export	pass
-t9350-fast-export::setup-for-limiting-exports-by-path	t9350-fast-export	setup for limiting exports by PATH	fast-export	pass
-t9350-fast-export::dropping-tag-of-filtered-out-object	t9350-fast-export	dropping tag of filtered out object	fast-export	pass
-t9350-fast-export::rewriting-tag-of-filtered-out-object	t9350-fast-export	rewriting tag of filtered out object	fast-export	pass
-t9350-fast-export::rewrite-tag-predating-pathspecs-to-nothing	t9350-fast-export	rewrite tag predating pathspecs to nothing	fast-export	pass
-t9350-fast-export::path-limiting-with-import-marks-does-not-lose-unmodified-files	t9350-fast-export	path limiting with import-marks does not lose unmodified files	fast-export	pass
-t9350-fast-export::path-limiting-works	t9350-fast-export	path limiting works	fast-export	pass
-t9350-fast-export::avoid-corrupt-stream-with-non-existent-mark	t9350-fast-export	avoid corrupt stream with non-existent mark	fast-export	pass
-t9350-fast-export::full-tree-re-shows-unmodified-files	t9350-fast-export	full-tree re-shows unmodified files	fast-export	pass
-t9350-fast-export::set-up-a-few-more-tags-for-tag-export-tests	t9350-fast-export	set-up a few more tags for tag export tests	fast-export	pass
-t9350-fast-export::tree-tag	t9350-fast-export	tree_tag	fast-export	pass
-t9350-fast-export::tree-tag-obj	t9350-fast-export	tree_tag-obj	fast-export	pass
-t9350-fast-export::tag-obj-tag	t9350-fast-export	tag-obj_tag	fast-export	pass
-t9350-fast-export::tag-obj-tag-obj	t9350-fast-export	tag-obj_tag-obj	fast-export	pass
-t9350-fast-export::handling-tags-of-blobs	t9350-fast-export	handling tags of blobs	fast-export	pass
-t9350-fast-export::handling-nested-tags	t9350-fast-export	handling nested tags	fast-export	pass
-t9350-fast-export::directory-becomes-symlink	t9350-fast-export	directory becomes symlink	fast-export	pass
-t9350-fast-export::fast-export-quotes-pathnames	t9350-fast-export	fast-export quotes pathnames	fast-export	pass
-t9350-fast-export::test-bidirectionality	t9350-fast-export	test bidirectionality	fast-export	pass
-t9350-fast-export::avoid-uninteresting-refs	t9350-fast-export	avoid uninteresting refs	fast-export	pass
-t9350-fast-export::refs-are-updated-even-if-no-commits-need-to-be-exported	t9350-fast-export	refs are updated even if no commits need to be exported	fast-export	pass
-t9350-fast-export::use-refspec	t9350-fast-export	use refspec	fast-export	pass
-t9350-fast-export::delete-ref-because-entire-history-excluded	t9350-fast-export	delete ref because entire history excluded	fast-export	pass
-t9350-fast-export::delete-refspec	t9350-fast-export	delete refspec	fast-export	pass
-t9350-fast-export::when-using-c-do-not-declare-copy-when-source-of-copy-is-also-modified	t9350-fast-export	when using -C, do not declare copy when source of copy is also modified	fast-export	pass
-t9350-fast-export::merge-commit-gets-exported-with-import-marks	t9350-fast-export	merge commit gets exported with --import-marks	fast-export	pass
-t9350-fast-export::fast-export-first-parent-outputs-all-revisions-output-by-revision-walk	t9350-fast-export	fast-export --first-parent outputs all revisions output by revision walk	fast-export	pass
-t9350-fast-export::fast-export-handles-end-of-options	t9350-fast-export	fast-export handles --end-of-options	fast-export	pass
-t9350-fast-export::setup-a-commit-with-dual-signatures-on-its-sha-1-and-sha-256-formats	t9350-fast-export	setup a commit with dual signatures on its SHA-1 and SHA-256 formats	fast-export	pass
-t9350-fast-export::export-and-import-of-doubly-signed-commit	t9350-fast-export	export and import of doubly signed commit	fast-export	pass
-t9351-fast-export-anonymize::setup-simple-repo	t9351-fast-export-anonymize	setup simple repo	fast-export	pass
-t9351-fast-export-anonymize::export-anonymized-stream	t9351-fast-export-anonymize	export anonymized stream	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-path-names	t9351-fast-export-anonymize	stream omits path names	fast-export	pass
-t9351-fast-export-anonymize::stream-contains-user-specified-names	t9351-fast-export-anonymize	stream contains user-specified names	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-gitlink-oids	t9351-fast-export-anonymize	stream omits gitlink oids	fast-export	pass
-t9351-fast-export-anonymize::stream-retains-other-as-refname	t9351-fast-export-anonymize	stream retains other as refname	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-other-refnames	t9351-fast-export-anonymize	stream omits other refnames	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-identities	t9351-fast-export-anonymize	stream omits identities	fast-export	pass
-t9351-fast-export-anonymize::stream-omits-tag-message	t9351-fast-export-anonymize	stream omits tag message	fast-export	pass
-t9351-fast-export-anonymize::import-stream-to-new-repository	t9351-fast-export-anonymize	import stream to new repository	fast-export	pass
-t9351-fast-export-anonymize::result-has-two-branches	t9351-fast-export-anonymize	result has two branches	fast-export	pass
-t9351-fast-export-anonymize::repo-has-original-shape-and-timestamps	t9351-fast-export-anonymize	repo has original shape and timestamps	fast-export	pass
-t9351-fast-export-anonymize::root-tree-has-original-shape	t9351-fast-export-anonymize	root tree has original shape	fast-export	pass
-t9351-fast-export-anonymize::paths-in-subdir-ended-up-in-one-tree	t9351-fast-export-anonymize	paths in subdir ended up in one tree	fast-export	pass
-t9351-fast-export-anonymize::identical-gitlinks-got-identical-oid	t9351-fast-export-anonymize	identical gitlinks got identical oid	fast-export	pass
-t9351-fast-export-anonymize::all-tags-point-to-branch-tip	t9351-fast-export-anonymize	all tags point to branch tip	fast-export	pass
-t9351-fast-export-anonymize::idents-are-shared	t9351-fast-export-anonymize	idents are shared	fast-export	pass
+t9350-fast-export::setup	t9350-fast-export	setup	fast-export	partial
+t9350-fast-export::fast-export-fast-import	t9350-fast-export	fast-export | fast-import	fast-export	partial
+t9350-fast-export::fast-export-muss-commit-muss	t9350-fast-export	fast-export ^muss^{commit} muss	fast-export	partial
+t9350-fast-export::fast-export-mark-tags-muss-commit-muss	t9350-fast-export	fast-export --mark-tags ^muss^{commit} muss	fast-export	partial
+t9350-fast-export::fast-export-main-2-main	t9350-fast-export	fast-export main~2..main	fast-export	partial
+t9350-fast-export::fast-export-reference-excluded-parents-main-2-main	t9350-fast-export	fast-export --reference-excluded-parents main~2..main	fast-export	partial
+t9350-fast-export::fast-export-show-original-ids	t9350-fast-export	fast-export --show-original-ids	fast-export	partial
+t9350-fast-export::fast-export-show-original-ids-git-fast-import	t9350-fast-export	fast-export --show-original-ids | git fast-import	fast-export	partial
+t9350-fast-export::reencoding-iso-8859-7	t9350-fast-export	reencoding iso-8859-7	fast-export	partial
+t9350-fast-export::aborting-on-iso-8859-7	t9350-fast-export	aborting on iso-8859-7	fast-export	partial
+t9350-fast-export::preserving-iso-8859-7	t9350-fast-export	preserving iso-8859-7	fast-export	partial
+t9350-fast-export::encoding-preserved-if-reencoding-fails	t9350-fast-export	encoding preserved if reencoding fails	fast-export	partial
+t9350-fast-export::import-export-marks	t9350-fast-export	import/export-marks	fast-export	partial
+t9350-fast-export::set-up-faked-signed-tag	t9350-fast-export	set up faked signed tag	fast-export	partial
+t9350-fast-export::signed-tags-abort	t9350-fast-export	signed-tags=abort	fast-export	partial
+t9350-fast-export::signed-tags-verbatim	t9350-fast-export	signed-tags=verbatim	fast-export	partial
+t9350-fast-export::signed-tags-warn-verbatim	t9350-fast-export	signed-tags=warn-verbatim	fast-export	partial
+t9350-fast-export::signed-tags-warn	t9350-fast-export	signed-tags=warn	fast-export	partial
+t9350-fast-export::signed-tags-strip	t9350-fast-export	signed-tags=strip	fast-export	partial
+t9350-fast-export::signed-tags-warn-strip	t9350-fast-export	signed-tags=warn-strip	fast-export	partial
+t9350-fast-export::setup-x-509-signed-tag	t9350-fast-export	setup X.509 signed tag	fast-export	partial
+t9350-fast-export::signed-tags-verbatim-with-x-509	t9350-fast-export	signed-tags=verbatim with X.509	fast-export	partial
+t9350-fast-export::signed-tags-strip-with-x-509	t9350-fast-export	signed-tags=strip with X.509	fast-export	partial
+t9350-fast-export::setup-ssh-signed-tag	t9350-fast-export	setup SSH signed tag	fast-export	partial
+t9350-fast-export::signed-tags-verbatim-with-ssh	t9350-fast-export	signed-tags=verbatim with SSH	fast-export	partial
+t9350-fast-export::signed-tags-strip-with-ssh	t9350-fast-export	signed-tags=strip with SSH	fast-export	partial
+t9350-fast-export::set-up-signed-commit	t9350-fast-export	set up signed commit	fast-export	partial
+t9350-fast-export::signed-commits-default-is-same-as-strip	t9350-fast-export	signed-commits default is same as strip	fast-export	partial
+t9350-fast-export::signed-commits-abort	t9350-fast-export	signed-commits=abort	fast-export	partial
+t9350-fast-export::signed-commits-verbatim	t9350-fast-export	signed-commits=verbatim	fast-export	partial
+t9350-fast-export::signed-commits-warn-verbatim	t9350-fast-export	signed-commits=warn-verbatim	fast-export	partial
+t9350-fast-export::signed-commits-strip	t9350-fast-export	signed-commits=strip	fast-export	partial
+t9350-fast-export::signed-commits-warn-strip	t9350-fast-export	signed-commits=warn-strip	fast-export	partial
+t9350-fast-export::setup-x-509-signed-commit	t9350-fast-export	setup X.509 signed commit	fast-export	partial
+t9350-fast-export::round-trip-x-509-signed-commit	t9350-fast-export	round-trip X.509 signed commit	fast-export	partial
+t9350-fast-export::setup-ssh-signed-commit	t9350-fast-export	setup SSH signed commit	fast-export	partial
+t9350-fast-export::round-trip-ssh-signed-commit	t9350-fast-export	round-trip SSH signed commit	fast-export	partial
+t9350-fast-export::setup-submodule	t9350-fast-export	setup submodule	fast-export	partial
+t9350-fast-export::submodule-fast-export-fast-import	t9350-fast-export	submodule fast-export | fast-import	fast-export	partial
+t9350-fast-export::setup-copies	t9350-fast-export	setup copies	fast-export	partial
+t9350-fast-export::fast-export-c-c-fast-import	t9350-fast-export	fast-export -C -C | fast-import	fast-export	partial
+t9350-fast-export::fast-export-fast-import-when-main-is-tagged	t9350-fast-export	fast-export | fast-import when main is tagged	fast-export	partial
+t9350-fast-export::cope-with-tagger-less-tags	t9350-fast-export	cope with tagger-less tags	fast-export	partial
+t9350-fast-export::setup-for-limiting-exports-by-path	t9350-fast-export	setup for limiting exports by PATH	fast-export	partial
+t9350-fast-export::dropping-tag-of-filtered-out-object	t9350-fast-export	dropping tag of filtered out object	fast-export	partial
+t9350-fast-export::rewriting-tag-of-filtered-out-object	t9350-fast-export	rewriting tag of filtered out object	fast-export	partial
+t9350-fast-export::rewrite-tag-predating-pathspecs-to-nothing	t9350-fast-export	rewrite tag predating pathspecs to nothing	fast-export	partial
+t9350-fast-export::path-limiting-with-import-marks-does-not-lose-unmodified-files	t9350-fast-export	path limiting with import-marks does not lose unmodified files	fast-export	partial
+t9350-fast-export::path-limiting-works	t9350-fast-export	path limiting works	fast-export	partial
+t9350-fast-export::avoid-corrupt-stream-with-non-existent-mark	t9350-fast-export	avoid corrupt stream with non-existent mark	fast-export	partial
+t9350-fast-export::full-tree-re-shows-unmodified-files	t9350-fast-export	full-tree re-shows unmodified files	fast-export	partial
+t9350-fast-export::set-up-a-few-more-tags-for-tag-export-tests	t9350-fast-export	set-up a few more tags for tag export tests	fast-export	partial
+t9350-fast-export::tree-tag	t9350-fast-export	tree_tag	fast-export	partial
+t9350-fast-export::tree-tag-obj	t9350-fast-export	tree_tag-obj	fast-export	partial
+t9350-fast-export::tag-obj-tag	t9350-fast-export	tag-obj_tag	fast-export	partial
+t9350-fast-export::tag-obj-tag-obj	t9350-fast-export	tag-obj_tag-obj	fast-export	partial
+t9350-fast-export::handling-tags-of-blobs	t9350-fast-export	handling tags of blobs	fast-export	partial
+t9350-fast-export::handling-nested-tags	t9350-fast-export	handling nested tags	fast-export	partial
+t9350-fast-export::directory-becomes-symlink	t9350-fast-export	directory becomes symlink	fast-export	partial
+t9350-fast-export::fast-export-quotes-pathnames	t9350-fast-export	fast-export quotes pathnames	fast-export	partial
+t9350-fast-export::test-bidirectionality	t9350-fast-export	test bidirectionality	fast-export	partial
+t9350-fast-export::avoid-uninteresting-refs	t9350-fast-export	avoid uninteresting refs	fast-export	partial
+t9350-fast-export::refs-are-updated-even-if-no-commits-need-to-be-exported	t9350-fast-export	refs are updated even if no commits need to be exported	fast-export	partial
+t9350-fast-export::use-refspec	t9350-fast-export	use refspec	fast-export	partial
+t9350-fast-export::delete-ref-because-entire-history-excluded	t9350-fast-export	delete ref because entire history excluded	fast-export	partial
+t9350-fast-export::delete-refspec	t9350-fast-export	delete refspec	fast-export	partial
+t9350-fast-export::when-using-c-do-not-declare-copy-when-source-of-copy-is-also-modified	t9350-fast-export	when using -C, do not declare copy when source of copy is also modified	fast-export	partial
+t9350-fast-export::merge-commit-gets-exported-with-import-marks	t9350-fast-export	merge commit gets exported with --import-marks	fast-export	partial
+t9350-fast-export::fast-export-first-parent-outputs-all-revisions-output-by-revision-walk	t9350-fast-export	fast-export --first-parent outputs all revisions output by revision walk	fast-export	partial
+t9350-fast-export::fast-export-handles-end-of-options	t9350-fast-export	fast-export handles --end-of-options	fast-export	partial
+t9350-fast-export::setup-a-commit-with-dual-signatures-on-its-sha-1-and-sha-256-formats	t9350-fast-export	setup a commit with dual signatures on its SHA-1 and SHA-256 formats	fast-export	partial
+t9350-fast-export::export-and-import-of-doubly-signed-commit	t9350-fast-export	export and import of doubly signed commit	fast-export	partial
+t9351-fast-export-anonymize::setup-simple-repo	t9351-fast-export-anonymize	setup simple repo	fast-export	partial
+t9351-fast-export-anonymize::export-anonymized-stream	t9351-fast-export-anonymize	export anonymized stream	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-path-names	t9351-fast-export-anonymize	stream omits path names	fast-export	partial
+t9351-fast-export-anonymize::stream-contains-user-specified-names	t9351-fast-export-anonymize	stream contains user-specified names	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-gitlink-oids	t9351-fast-export-anonymize	stream omits gitlink oids	fast-export	partial
+t9351-fast-export-anonymize::stream-retains-other-as-refname	t9351-fast-export-anonymize	stream retains other as refname	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-other-refnames	t9351-fast-export-anonymize	stream omits other refnames	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-identities	t9351-fast-export-anonymize	stream omits identities	fast-export	partial
+t9351-fast-export-anonymize::stream-omits-tag-message	t9351-fast-export-anonymize	stream omits tag message	fast-export	partial
+t9351-fast-export-anonymize::import-stream-to-new-repository	t9351-fast-export-anonymize	import stream to new repository	fast-export	partial
+t9351-fast-export-anonymize::result-has-two-branches	t9351-fast-export-anonymize	result has two branches	fast-export	partial
+t9351-fast-export-anonymize::repo-has-original-shape-and-timestamps	t9351-fast-export-anonymize	repo has original shape and timestamps	fast-export	partial
+t9351-fast-export-anonymize::root-tree-has-original-shape	t9351-fast-export-anonymize	root tree has original shape	fast-export	partial
+t9351-fast-export-anonymize::paths-in-subdir-ended-up-in-one-tree	t9351-fast-export-anonymize	paths in subdir ended up in one tree	fast-export	partial
+t9351-fast-export-anonymize::identical-gitlinks-got-identical-oid	t9351-fast-export-anonymize	identical gitlinks got identical oid	fast-export	partial
+t9351-fast-export-anonymize::all-tags-point-to-branch-tip	t9351-fast-export-anonymize	all tags point to branch tip	fast-export	partial
+t9351-fast-export-anonymize::idents-are-shared	t9351-fast-export-anonymize	idents are shared	fast-export	partial
 t9400-git-cvsserver-server::setup	t9400-git-cvsserver-server	setup	cvsserver	pass
 t9400-git-cvsserver-server::basic-checkout	t9400-git-cvsserver-server	basic checkout	cvsserver	pass
 t9400-git-cvsserver-server::pserver-authentication	t9400-git-cvsserver-server	pserver authentication	cvsserver	pass

@@ -1,5 +1,5 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	541	540	0	99.9
+add	Main Porcelain	yes	541	541	0	100.0
 am	Main Porcelain	yes	160	160	0	100.0
 archive	Main Porcelain	yes	114	114	0	100.0
 bisect	Main Porcelain	yes	96	96	0	100.0
@@ -21,7 +21,7 @@ merge	Main Porcelain	yes	657	655	2	99.7
 mv	Main Porcelain	yes	77	77	0	100.0
 notes	Main Porcelain	yes	308	308	0	100.0
 pull	Main Porcelain	yes	142	140	0	98.6
-push	Main Porcelain	yes	233	215	0	92.5
+push	Main Porcelain	yes	233	220	0	94.6
 range-diff	Main Porcelain	yes	47	47	0	100.0
 rebase	Main Porcelain	yes	558	558	0	100.0
 reset	Main Porcelain	yes	119	119	0	100.0
@@ -46,8 +46,8 @@ cvsimport	Ancillary Porcelain	no	30	30	0	100.0
 cvsserver	Ancillary Porcelain	no	99	99	0	100.0
 diagnose	Ancillary Porcelain	yes	17	17	0	100.0
 difftool	Ancillary Porcelain	yes	61	61	0	100.0
-fast-export	Ancillary Porcelain	yes	89	89	0	100.0
-fast-import	Ancillary Porcelain	yes	262	262	0	100.0
+fast-export	Ancillary Porcelain	yes	89	82	0	92.2
+fast-import	Ancillary Porcelain	yes	262	57	204	21.8
 filter-branch	Ancillary Porcelain	yes	54	54	0	100.0
 fsck	Ancillary Porcelain	yes	106	106	0	100.0
 gitweb	Ancillary Porcelain	no	47	47	0	100.0
