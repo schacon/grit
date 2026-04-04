@@ -239,6 +239,11 @@ a.cmd-cell {
   border-color: #30363d;
   color: #e6edf3;
 }
+.cmd-cell.zero-pass {
+  background: #161b22;
+  border-color: #21262d;
+  color: #484f58;
+}
 
 /* ── Footer ── */
 .footer {
@@ -257,14 +262,14 @@ a.cmd-cell {
 
 <h1>Grit &mdash; Git Reimplementation Progress</h1>
 <p class="subtitle">Test-driven compatibility tracking against the upstream Git test suite
-  &middot; <span id="gen-time" data-ts="1775283713">2026-04-04 06:21 UTC</span>
-  &middot; <a href="https://github.com/schacon/grit/commit/dd55b890e1468ae3d4d53810814e18522196edda" style="color:#484f58">dd55b89</a>
+  &middot; <span id="gen-time" data-ts="1775288022">2026-04-04 07:33 UTC</span>
+  &middot; <a href="https://github.com/schacon/grit/commit/3480b0a13d5c5143032403dccda0c151705c1c73" style="color:#484f58">3480b0a</a>
   &middot; <a href="timeline.html" style="color:#58a6ff">Timeline</a>
 </p>
 
 <div class="cards">
   <div class="card green">
-    <div class="number">18,016</div>
+    <div class="number">13,155</div>
     <div class="label">Tests Passing</div>
   </div>
   <div class="card blue">
@@ -272,7 +277,7 @@ a.cmd-cell {
     <div class="label">Total Git Test Cases</div>
   </div>
   <div class="card green">
-    <div class="number">99.6%</div>
+    <div class="number">72.7%</div>
     <div class="label">Passing Rate</div>
   </div>
   <div class="card yellow">
@@ -293,13 +298,13 @@ a.cmd-cell {
   <h2>Overall Test Progress</h2>
   <div class="progress-bar-bg">
     <div style="display:flex;width:100%;height:100%;">
-      <div class="progress-bar-fill green" style="width:99.6%;justify-content:center;">
-        18,016 passing
+      <div class="progress-bar-fill green" style="width:72.7%;justify-content:center;">
+        13,155 passing
       </div>
     </div>
   </div>
   <div class="progress-labels">
-    <span style="color:#3fb950;">18,016 / 18,097 upstream tests passing (99.6%)</span>
+    <span style="color:#3fb950;">13,155 / 18,097 upstream tests passing (72.7%)</span>
     <span>1011 test files ported · 991 fully passing</span>
   </div>
 </div>
@@ -389,7 +394,7 @@ a.cmd-cell {
   <a href="tests.html?cmd=request-pull" class="cmd-cell not-started" title="request-pull: not started"><span class="cmd-name">request-pull</span></a>
   <a href="tests.html?cmd=rerere" class="cmd-cell complete" title="rerere: all 35 associated tests passing"><span class="cmd-name">rerere</span><span class="cmd-pct">35/35</span></a>
   <a href="tests.html?cmd=scalar" class="cmd-cell partial" title="scalar: 17/36 associated tests passing (48.5%)"><div class="cmd-bar bar-orange" style="width:48.5%"></div><span class="cmd-name">scalar</span><span class="cmd-pct">17/36</span></a>
-  <a href="tests.html?cmd=send-email" class="cmd-cell partial" title="send-email: 0/1 associated tests passing (40.0%)"><div class="cmd-bar bar-orange" style="width:40.0%"></div><span class="cmd-name">send-email</span><span class="cmd-pct">0/1</span></a>
+  <a href="tests.html?cmd=send-email" class="cmd-cell zero-pass" title="send-email: 0/1 associated tests passing"><span class="cmd-name">send-email</span><span class="cmd-pct">0/1</span></a>
   <a href="tests.html?cmd=show-branch" class="cmd-cell complete" title="show-branch: all 22 associated tests passing"><span class="cmd-name">show-branch</span><span class="cmd-pct">22/22</span></a>
   <a href="tests.html?cmd=sparse-checkout" class="cmd-cell complete" title="sparse-checkout: all 184 associated tests passing"><span class="cmd-name">sparse-checkout</span><span class="cmd-pct">184/184</span></a>
   <a href="tests.html?cmd=svn" class="cmd-cell not-started" title="svn: not started"><span class="cmd-name">svn</span></a>

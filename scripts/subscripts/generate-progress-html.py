@@ -92,8 +92,8 @@ def generate_html(commands, total_upstream, upstream_passing, upstream_partial,
     pct_cmds = round(100 * started_cmds / total_cmds, 1) if total_cmds > 0 else 0
 
     # Derive headline totals by summing command-status so they match per-command bars
-    sum_passing = sum(c['passing'] for c in commands)
-    sum_total = sum(c['total_tests'] for c in commands)
+    sum_passing = ported_pass  # real_pass from load_ported_test_stats()
+    sum_total = 18097  # total upstream test cases
     raw_pct = round(100 * sum_passing / sum_total, 1) if sum_total > 0 else 0
 
     # Timestamp and commit info

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate docs/progress.svg — a dynamic badge showing upstream test pass rate.
 
-Reads from data/command-status.tsv (same source as docs/index.html) so the
-badge, dashboard, and per-command bars all report the same numbers.
+Reads real_pass from data/file-results.tsv to get accurate counts
+that exclude test_expect_failure stubs.
 """
 import os
 
@@ -10,21 +10,20 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 DATA = os.path.join(REPO_ROOT, "data")
 OUTPUT = os.path.join(REPO_ROOT, "docs", "progress.svg")
 
+UPSTREAM_TOTAL = 18097
+
 
 def get_counts():
-    """Sum passing and total tests from command-status.tsv."""
-    path = os.path.join(DATA, "command-status.tsv")
-    total = 0
-    passing = 0
+    """Sum real_pass from file-results.tsv."""
+    path = os.path.join(DATA, "file-results.tsv")
+    real_pass = 0
     with open(path) as f:
-        f.readline()  # header
+        f.readline()
         for line in f:
             parts = line.strip().split('\t')
-            if len(parts) < 5:
-                continue
-            total += int(parts[3])
-            passing += int(parts[4])
-    return passing, total
+            if len(parts) >= 8 and parts[1] == 'yes':
+                real_pass += int(parts[6])
+    return real_pass, UPSTREAM_TOTAL
 
 
 def generate_svg(pass_count, total_count):
@@ -54,7 +53,6 @@ def main():
     svg = generate_svg(pass_count, total_count)
     with open(OUTPUT, "w") as f:
         f.write(svg)
-
     pct = pass_count * 100 / total_count if total_count else 0
     print(f"Generated {OUTPUT}: {pass_count:,}/{total_count:,} ({pct:.1f}%)")
 
