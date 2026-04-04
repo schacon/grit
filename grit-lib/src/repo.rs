@@ -161,7 +161,31 @@ impl Repository {
     /// Whether this is a bare repository (no working tree).
     #[must_use]
     pub fn is_bare(&self) -> bool {
-        self.work_tree.is_none()
+        if self.work_tree.is_some() {
+            return false;
+        }
+        // Check core.bare in the repo config.  A .git directory of a
+        // non-bare repo has objects/ and HEAD but core.bare=false.
+        let config_path = self.git_dir.join("config");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            let mut in_core = false;
+            for line in content.lines() {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_core = t.eq_ignore_ascii_case("[core]");
+                    continue;
+                }
+                if in_core {
+                    if let Some((k, v)) = t.split_once('=') {
+                        if k.trim().eq_ignore_ascii_case("bare") {
+                            return v.trim().eq_ignore_ascii_case("true");
+                        }
+                    }
+                }
+            }
+        }
+        // No core.bare setting — if work_tree is None, assume bare
+        true
     }
 
     /// Read an object, transparently following replace refs.
