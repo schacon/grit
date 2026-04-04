@@ -265,22 +265,19 @@ fn cmd_reset(args: &[String]) -> Result<()> {
 
     clean_bisect_state(git_dir)?;
 
-    // Use git checkout to restore the branch.
-    let status = std::process::Command::new(
-        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git")),
-    )
-    .arg("checkout")
-    .arg(&checkout_target)
-    .arg("--")
-    .status()
-    .context("failed to run git checkout")?;
+    // Use our own binary for checkout so we don't depend on system git.
+    let self_exe = std::env::current_exe().context("cannot determine own executable path")?;
+    let status = std::process::Command::new(&self_exe)
+        .arg("checkout")
+        .arg(&checkout_target)
+        .arg("--")
+        .status()
+        .context("failed to run checkout")?;
 
     if !status.success() {
-        bail!("git checkout {checkout_target} failed");
+        bail!("checkout {checkout_target} failed");
     }
 
-    println!("Previous HEAD position was bisect state.");
-    println!("Switched to branch '{checkout_target}'");
     Ok(())
 }
 

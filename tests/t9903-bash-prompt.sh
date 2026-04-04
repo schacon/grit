@@ -211,7 +211,7 @@ test_expect_failure 'prompt - rebase am' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - merge' '
+test_expect_success 'prompt - merge' '
 	printf " (b1|MERGING)" >expected &&
 	git checkout b1 &&
 	test_when_finished "git checkout main" &&
@@ -221,7 +221,7 @@ test_expect_failure 'prompt - merge' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - cherry-pick' '
+test_expect_success 'prompt - cherry-pick' '
 	printf " (main|CHERRY-PICKING)" >expected &&
 	test_must_fail git cherry-pick b1 b1^ &&
 	test_when_finished "git cherry-pick --abort" &&
@@ -233,7 +233,7 @@ test_expect_failure 'prompt - cherry-pick' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - revert' '
+test_expect_success 'prompt - revert' '
 	printf " (main|REVERTING)" >expected &&
 	test_must_fail git revert b1^ b1 &&
 	test_when_finished "git revert --abort" &&
@@ -253,7 +253,7 @@ test_expect_success 'prompt - bisect' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - clean' '
+test_expect_success 'prompt - dirty status indicator - clean' '
 	printf " (main)" >expected &&
 	(
 		GIT_PS1_SHOWDIRTYSTATE=y &&
@@ -262,7 +262,7 @@ test_expect_failure 'prompt - dirty status indicator - clean' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - dirty worktree' '
+test_expect_success 'prompt - dirty status indicator - dirty worktree' '
 	printf " (main *)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -273,7 +273,7 @@ test_expect_failure 'prompt - dirty status indicator - dirty worktree' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - dirty index' '
+test_expect_success 'prompt - dirty status indicator - dirty index' '
 	printf " (main +)" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&
@@ -285,7 +285,7 @@ test_expect_failure 'prompt - dirty status indicator - dirty index' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - dirty status indicator - dirty index and worktree' '
+test_expect_success 'prompt - dirty status indicator - dirty index and worktree' '
 	printf " (main *+)" >expected &&
 	echo "dirty index" >file &&
 	test_when_finished "git reset --hard" &&
