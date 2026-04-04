@@ -98,7 +98,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_failure '20 columns, dense' '
+test_expect_success '20 columns, dense' '
 	cat >expected <<\EOF &&
 one   five  nine
 two   six   ten
@@ -109,7 +109,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_failure '20 columns, nodense' '
+test_expect_success '20 columns, nodense' '
 	cat >expected <<\EOF &&
 one    seven
 two    eight
@@ -122,7 +122,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_failure '20 columns, row first, dense' '
+test_expect_success '20 columns, row first, dense' '
 	cat >expected <<\EOF &&
 one   two    three
 four  five   six
@@ -133,7 +133,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_failure '--nl option' '
+test_expect_success '--nl option' '
 	cat >expected <<\EOF &&
 oneZ
 twoZ
@@ -151,7 +151,7 @@ EOF
 	test_cmp expected actual
 '
 
-test_expect_failure 'negative padding rejected' '
+test_expect_success 'negative padding rejected' '
 	test_must_fail git column --mode=column --padding=-1 <lista 2>err &&
 	grep "non-negative" err
 '
