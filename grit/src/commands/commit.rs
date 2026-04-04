@@ -82,6 +82,94 @@ pub struct Args {
     #[arg(long = "no-post-rewrite")]
     pub no_post_rewrite: bool,
 
+    /// Give output in short format (for dry-run).
+    #[arg(long = "short")]
+    pub short: bool,
+
+    /// Give output in porcelain format (for dry-run).
+    #[arg(long = "porcelain")]
+    pub porcelain: bool,
+
+    /// Give output in long format (default for dry-run).
+    #[arg(long = "long")]
+    pub long: bool,
+
+    /// Include staged changes when given pathspec (with -i).
+    #[arg(short = 'i', long = "include")]
+    pub include: bool,
+
+    /// Only commit specified paths (with -o or --only).
+    #[arg(short = 'o', long = "only")]
+    pub only: bool,
+
+    /// Interactively add changes.
+    #[arg(long = "interactive")]
+    pub interactive: bool,
+
+    /// Untracked files mode.
+    #[arg(short = 'u', long = "untracked-files", value_name = "MODE", num_args = 0..=1, default_missing_value = "all")]
+    pub untracked_files: Option<String>,
+
+    /// Verbose - show diff in commit message editor.
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    pub verbose: u8,
+
+    /// Suppress verbose output.
+    #[arg(long = "no-verbose")]
+    pub no_verbose: bool,
+
+    /// Override cleanup mode.
+    #[arg(long = "cleanup", value_name = "MODE")]
+    pub cleanup: Option<String>,
+
+    /// Use specified template file.
+    #[arg(short = 't', long = "template", value_name = "FILE")]
+    pub template: Option<String>,
+
+    /// Edit the commit message (used with -C).
+    #[arg(short = 'e', long = "edit")]
+    pub edit: bool,
+
+    /// Suppress editing the commit message.
+    #[arg(long = "no-edit")]
+    pub no_edit: bool,
+
+    /// Set the commit status (accepted but not used).
+    #[arg(long = "status")]
+    pub status: bool,
+
+    /// Suppress commit status in editor template.
+    #[arg(long = "no-status")]
+    pub no_status: bool,
+
+    /// Add a Signed-off-by trailer with specific value.
+    #[arg(long = "trailer", value_name = "TOKEN:VALUE")]
+    pub trailer: Vec<String>,
+
+    /// Override gpg sign.
+    #[arg(short = 'S', long = "gpg-sign", value_name = "KEYID", num_args = 0..=1, default_missing_value = "")]
+    pub gpg_sign: Option<String>,
+
+    /// Don't sign the commit.
+    #[arg(long = "no-gpg-sign")]
+    pub no_gpg_sign: bool,
+
+    /// Don't verify the commit message.
+    #[arg(long = "no-verify", short = 'n')]
+    pub no_verify: bool,
+
+    /// Fixup commit.
+    #[arg(long = "fixup", value_name = "COMMIT")]
+    pub fixup: Option<String>,
+
+    /// Squash commit.
+    #[arg(long = "squash", value_name = "COMMIT")]
+    pub squash: Option<String>,
+
+    /// Reset author.
+    #[arg(long = "reset-author")]
+    pub reset_author: bool,
+
     /// Pathspec — files to include in the commit (stages them first).
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
@@ -89,6 +177,27 @@ pub struct Args {
 
 /// Run the `commit` command.
 pub fn run(args: Args) -> Result<()> {
+    // Validate conflicting options
+    let msg_source_count = [
+        !args.message.is_empty(),
+        args.file.is_some(),
+        args.reuse_message.is_some(),
+        args.reedit_message.is_some(),
+    ].iter().filter(|&&b| b).count();
+    if msg_source_count > 1 {
+        bail!("Only one of -m, -F, -C, -c can be used.");
+    }
+
+    // -a and explicit pathspec don't mix
+    if args.all && !args.pathspec.is_empty() {
+        bail!("paths '{}' with -a does not make sense", args.pathspec.join(" "));
+    }
+
+    // --include and --only don't mix
+    if args.include && args.only {
+        bail!("--include and --only are mutually exclusive");
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_deref();
 

@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use regex::{Regex, RegexBuilder};
 use std::io::{self, Write};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
@@ -137,13 +138,48 @@ impl Args {
         self.before_ctx() > 0 || self.after_ctx() > 0
     }
     fn show_line_number(&self) -> bool {
+        // effective_line_number is set in run() to account for config
         self.line_number && !self.no_line_number
     }
 }
 
 /// Run `grit grep`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Apply grep config settings
+    {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        if let Some(ref c) = config {
+            // grep.linenumber: if user didn't explicitly pass -n or --no-line-number
+            if !args.line_number && !args.no_line_number {
+                if let Some(val) = c.get("grep.linenumber") {
+                    args.line_number = val == "true" || val == "1" || val == "yes";
+                }
+            }
+            // grep.patternType / grep.extendedRegexp: affect regex mode
+            // Only apply if user didn't explicitly pass -E, -F, -P, or -G
+            if !args.extended_regexp && !args.fixed_strings && !args.perl_regexp {
+                if let Some(pt) = c.get("grep.patterntype").or_else(|| c.get("grep.patternType")) {
+                    match pt.to_lowercase().as_str() {
+                        "extended" => args.extended_regexp = true,
+                        "fixed" => args.fixed_strings = true,
+                        "perl" => args.perl_regexp = true,
+                        "basic" | "default" => { /* default BRE behavior */ }
+                        _ => {}
+                    }
+                }
+                // grep.extendedRegexp is lower priority than grep.patternType
+                if !args.extended_regexp && !args.fixed_strings && !args.perl_regexp {
+                    if let Some(val) = c.get("grep.extendedregexp").or_else(|| c.get("grep.extendedRegexp")) {
+                        if val == "true" || val == "1" || val == "yes" {
+                            args.extended_regexp = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Parse positional arguments: [pattern] [tree-ish] [-- pathspec...]
     let (mut patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
@@ -523,10 +559,52 @@ fn grep_content(
     if args.only_matching {
         for &idx in &match_indices {
             let line = lines[idx];
+            // For each matcher, iterate over matches tracking column
+            // as git does: accumulate cno from initial col+1 then add rm_eo
+            // after each match (git grep.c show_line logic).
             for re in matchers {
-                for m in re.find_iter(line) {
-                    let matched_text = m.as_str();
-                    let col = m.start() + 1;
+                // Find the first match to get the initial column.
+                let first_m = re.find(line);
+                if first_m.is_none() {
+                    continue;
+                }
+                let first_m = first_m.unwrap();
+                let mut cno = first_m.start() + 1; // 1-indexed initial column
+                let mut remaining = &line[first_m.start()..];
+
+                // Output first match
+                {
+                    let matched_text = first_m.as_str();
+                    let mut prefix_str = fmt_name(&display_name, color);
+                    prefix_str.push_str(&sep_char(':', color));
+                    if args.show_line_number() {
+                        prefix_str.push_str(&fmt_num(idx + 1, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if args.column {
+                        prefix_str.push_str(&fmt_col(cno, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if color {
+                        writeln!(out, "{prefix_str}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
+                    } else {
+                        writeln!(out, "{prefix_str}{matched_text}")?;
+                    }
+                }
+
+                // Advance past first match and find subsequent matches
+                let match_len = first_m.end() - first_m.start();
+                cno += match_len;
+                remaining = &remaining[match_len..];
+
+                loop {
+                    let next_m = re.find(remaining);
+                    if next_m.is_none() {
+                        break;
+                    }
+                    let next_m = next_m.unwrap();
+                    let matched_text = next_m.as_str();
+                    let col = cno + next_m.start();
                     let mut prefix_str = fmt_name(&display_name, color);
                     prefix_str.push_str(&sep_char(':', color));
                     if args.show_line_number() {
@@ -542,6 +620,9 @@ fn grep_content(
                     } else {
                         writeln!(out, "{prefix_str}{matched_text}")?;
                     }
+                    let advance = next_m.end();
+                    cno += advance;
+                    remaining = &remaining[advance..];
                 }
             }
         }
