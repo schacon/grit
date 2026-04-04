@@ -42,18 +42,18 @@ test_expect_success 'setup repository' '
 	 git commit -m one)
 '
 
-test_expect_failure 'cloning from local repo' '
+test_expect_success 'cloning from local repo' '
 	git clone "testgit::${PWD}/server" local &&
 	test_cmp server/file local/file
 '
 
-test_expect_failure 'clone with remote.*.vcs config' '
+test_expect_success 'clone with remote.*.vcs config' '
 	GIT_TRACE=$PWD/vcs-clone.trace \
 	git clone --no-local -c remote.origin.vcs=testgit "$PWD/server" vcs-clone &&
 	test_grep remote-testgit vcs-clone.trace
 '
 
-test_expect_failure 'fetch with configured remote.*.vcs' '
+test_expect_success 'fetch with configured remote.*.vcs' '
 	git init vcs-fetch &&
 	git -C vcs-fetch config remote.origin.vcs testgit &&
 	git -C vcs-fetch config remote.origin.url "$PWD/server" &&
@@ -62,7 +62,7 @@ test_expect_failure 'fetch with configured remote.*.vcs' '
 	test_grep remote-testgit vcs-fetch.trace
 '
 
-test_expect_failure 'vcs remote with no url' '
+test_expect_success 'vcs remote with no url' '
 	NOURL_UPSTREAM=$PWD/server &&
 	export NOURL_UPSTREAM &&
 	git init vcs-nourl &&
@@ -76,12 +76,12 @@ test_expect_success 'create new commit on remote' '
 	 git commit -a -m two)
 '
 
-test_expect_failure 'pulling from local repo' '
+test_expect_success 'pulling from local repo' '
 	(cd local && git pull) &&
 	test_cmp server/file local/file
 '
 
-test_expect_failure 'pushing to local repo' '
+test_expect_success 'pushing to local repo' '
 	(cd local &&
 	echo content >>file &&
 	git commit -a -m three &&
@@ -89,7 +89,7 @@ test_expect_failure 'pushing to local repo' '
 	compare_refs local HEAD server HEAD
 '
 
-test_expect_failure 'fetch new branch' '
+test_expect_success 'fetch new branch' '
 	(cd server &&
 	 git reset --hard &&
 	 git checkout -b new &&
@@ -102,7 +102,7 @@ test_expect_failure 'fetch new branch' '
 	compare_refs server HEAD local FETCH_HEAD
 '
 
-test_expect_failure 'fetch multiple branches' '
+test_expect_success 'fetch multiple branches' '
 	(cd local &&
 	 git fetch
 	) &&
@@ -110,7 +110,7 @@ test_expect_failure 'fetch multiple branches' '
 	compare_refs server new local refs/remotes/origin/new
 '
 
-test_expect_failure 'push when remote has extra refs' '
+test_expect_success 'push when remote has extra refs' '
 	(cd local &&
 	 git reset --hard origin/main &&
 	 echo content >>file &&
@@ -120,7 +120,7 @@ test_expect_failure 'push when remote has extra refs' '
 	compare_refs local main server main
 '
 
-test_expect_failure 'push new branch by name' '
+test_expect_success 'push new branch by name' '
 	(cd local &&
 	 git checkout -b new-name  &&
 	 echo content >>file &&
@@ -130,14 +130,14 @@ test_expect_failure 'push new branch by name' '
 	compare_refs local HEAD server refs/heads/new-name
 '
 
-test_expect_failure 'push new branch with old:new refspec' '
+test_expect_success 'push new branch with old:new refspec' '
 	(cd local &&
 	 git push origin new-name:new-refspec
 	) &&
 	compare_refs local HEAD server refs/heads/new-refspec
 '
 
-test_expect_failure 'push new branch with HEAD:new refspec' '
+test_expect_success 'push new branch with HEAD:new refspec' '
 	(cd local &&
 	 git checkout new-name &&
 	 git push origin HEAD:new-refspec-2
@@ -145,7 +145,7 @@ test_expect_failure 'push new branch with HEAD:new refspec' '
 	compare_refs local HEAD server refs/heads/new-refspec-2
 '
 
-test_expect_failure 'push delete branch' '
+test_expect_success 'push delete branch' '
 	(cd local &&
 	 git push origin :new-name
 	) &&
@@ -153,7 +153,7 @@ test_expect_failure 'push delete branch' '
 	 rev-parse --verify refs/heads/new-name
 '
 
-test_expect_failure 'forced push' '
+test_expect_success 'forced push' '
 	(cd local &&
 	git checkout -b force-test &&
 	echo content >> file &&
@@ -166,14 +166,14 @@ test_expect_failure 'forced push' '
 	compare_refs local refs/heads/force-test server refs/heads/force-test
 '
 
-test_expect_failure 'cloning without refspec' '
+test_expect_success 'cloning without refspec' '
 	GIT_REMOTE_TESTGIT_NOREFSPEC=1 \
 	git clone "testgit::${PWD}/server" local2 2>error &&
 	test_grep "this remote helper should implement refspec capability" error &&
 	compare_refs local2 HEAD server HEAD
 '
 
-test_expect_failure 'pulling without refspecs' '
+test_expect_success 'pulling without refspecs' '
 	(cd local2 &&
 	git reset --hard &&
 	GIT_REMOTE_TESTGIT_NOREFSPEC=1 git pull 2>../error) &&
@@ -181,7 +181,7 @@ test_expect_failure 'pulling without refspecs' '
 	compare_refs local2 HEAD server HEAD
 '
 
-test_expect_failure 'pushing without refspecs' '
+test_expect_success 'pushing without refspecs' '
 	test_when_finished "(cd local2 && git reset --hard origin)" &&
 	(cd local2 &&
 	echo content >>file &&
@@ -192,13 +192,13 @@ test_expect_failure 'pushing without refspecs' '
 	test_grep "remote-helper doesn.t support push; refspec needed" error
 '
 
-test_expect_failure 'pulling without marks' '
+test_expect_success 'pulling without marks' '
 	(cd local2 &&
 	GIT_REMOTE_TESTGIT_NO_MARKS=1 git pull) &&
 	compare_refs local2 HEAD server HEAD
 '
 
-test_expect_failure 'push all with existing object' '
+test_expect_success 'push all with existing object' '
 	(cd local &&
 	git branch dup2 main &&
 	git push origin --all
@@ -206,7 +206,7 @@ test_expect_failure 'push all with existing object' '
 	compare_refs local dup2 server dup2
 '
 
-test_expect_failure 'push ref with existing object' '
+test_expect_success 'push ref with existing object' '
 	(cd local &&
 	git branch dup main &&
 	git push origin dup
@@ -214,7 +214,7 @@ test_expect_failure 'push ref with existing object' '
 	compare_refs local dup server dup
 '
 
-test_expect_failure 'push signed tag' '
+test_expect_success 'push signed tag' '
 	(cd local &&
 	git checkout main &&
 	git tag -s -m signed-tag signed-tag &&
@@ -224,7 +224,7 @@ test_expect_failure 'push signed tag' '
 	compare_refs ! local signed-tag server signed-tag
 '
 
-test_expect_failure 'push signed tag with signed-tags capability' '
+test_expect_success 'push signed tag with signed-tags capability' '
 	(cd local &&
 	git checkout main &&
 	git tag -s -m signed-tag signed-tag-2 &&
@@ -233,7 +233,7 @@ test_expect_failure 'push signed tag with signed-tags capability' '
 	compare_refs local signed-tag-2 server signed-tag-2
 '
 
-test_expect_failure 'push update refs' '
+test_expect_success 'push update refs' '
 	(cd local &&
 	git checkout -b update main &&
 	echo update >>file &&
@@ -245,7 +245,7 @@ test_expect_failure 'push update refs' '
 	)
 '
 
-test_expect_failure 'push update refs disabled by no-private-update' '
+test_expect_success 'push update refs disabled by no-private-update' '
 	(cd local &&
 	echo more-update >>file &&
 	git commit -a -m more-update &&
@@ -256,7 +256,7 @@ test_expect_failure 'push update refs disabled by no-private-update' '
 	)
 '
 
-test_expect_failure 'push update refs failure' '
+test_expect_success 'push update refs failure' '
 	(cd local &&
 	git checkout update &&
 	echo "update fail" >>file &&
@@ -269,14 +269,14 @@ test_expect_failure 'push update refs failure' '
 	)
 '
 
-test_expect_failure 'proper failure checks for fetching' '
+test_expect_success 'proper failure checks for fetching' '
 	(cd local &&
 	test_must_fail env GIT_REMOTE_TESTGIT_FAILURE=1 git fetch 2>error &&
 	test_grep -q "error while running fast-import" error
 	)
 '
 
-test_expect_failure 'proper failure checks for pushing' '
+test_expect_success 'proper failure checks for pushing' '
 	test_when_finished "rm -rf local/git.marks local/testgit.marks" &&
 	(cd local &&
 	git checkout -b crash main &&
@@ -286,7 +286,7 @@ test_expect_failure 'proper failure checks for pushing' '
 	)
 '
 
-test_expect_failure 'push messages' '
+test_expect_success 'push messages' '
 	(cd local &&
 	git checkout -b new_branch main &&
 	echo new >>file &&
@@ -300,7 +300,7 @@ test_expect_failure 'push messages' '
 	)
 '
 
-test_expect_failure 'fetch HEAD' '
+test_expect_success 'fetch HEAD' '
 	(cd server &&
 	git checkout main &&
 	echo more >>file &&
@@ -312,7 +312,7 @@ test_expect_failure 'fetch HEAD' '
 	compare_refs server HEAD local FETCH_HEAD
 '
 
-test_expect_failure 'fetch url' '
+test_expect_success 'fetch url' '
 	(cd server &&
 	git checkout main &&
 	echo more >>file &&
@@ -324,7 +324,7 @@ test_expect_failure 'fetch url' '
 	compare_refs server HEAD local FETCH_HEAD
 '
 
-test_expect_failure 'fetch tag' '
+test_expect_success 'fetch tag' '
 	(cd server &&
 	 git tag v1.0
 	) &&
@@ -334,7 +334,7 @@ test_expect_failure 'fetch tag' '
 	compare_refs local v1.0 server v1.0
 '
 
-test_expect_failure 'totally broken helper reports failure message' '
+test_expect_success 'totally broken helper reports failure message' '
 	write_script git-remote-broken <<-\EOF &&
 	read cap_cmd
 	exit 1
