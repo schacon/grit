@@ -79,6 +79,43 @@ pub fn run(args: Args) -> Result<()> {
         diff_entries
     };
 
+    // Compute cwd-relative prefix for --relative
+    let rel_prefix = if options.relative {
+        if let Some(wt) = &repo.work_tree {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            if let Ok(rel) = cwd.strip_prefix(wt) {
+                let s = rel.to_string_lossy().to_string();
+                if s.is_empty() { String::new() } else { format!("{s}/") }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    // Apply --relative: filter and strip prefix
+    let diff_entries: Vec<DiffEntry> = if !rel_prefix.is_empty() {
+        diff_entries.into_iter().filter_map(|mut e| {
+            let path = e.path().to_owned();
+            if !path.starts_with(&rel_prefix) {
+                return None;
+            }
+            let stripped = path[rel_prefix.len()..].to_owned();
+            if e.old_path.is_some() {
+                e.old_path = Some(stripped.clone());
+            }
+            if e.new_path.is_some() {
+                e.new_path = Some(stripped);
+            }
+            Some(e)
+        }).collect()
+    } else {
+        diff_entries
+    };
+
     if !options.quiet {
         if options.stat {
             write_diff_index_stat(&diff_entries, &repo.odb)?;
@@ -157,6 +194,7 @@ struct Options {
     numstat: bool,
     context_lines: usize,
     nul_terminated: bool,
+    relative: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +240,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut numstat = false;
     let mut context_lines: usize = 3;
     let mut nul_terminated = false;
+    let mut relative = false;
 
     let mut idx = 0usize;
     while idx < argv.len() {
@@ -273,6 +312,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-z" => {
                     nul_terminated = true;
                 }
+                "--relative" => {
+                    relative = true;
+                }
+                _ if arg.starts_with("--relative=") => {
+                    relative = true;
+                    // Ignore the =<path> variant for now
+                }
                 "-C" | "--find-copies" => {
                     c_count += 1;
                     find_copies = true;
@@ -333,6 +379,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         numstat,
         context_lines,
         nul_terminated,
+        relative,
     })
 }
 
@@ -549,12 +596,49 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
         return true;
     }
     pathspecs.iter().any(|spec| {
-        if let Some(prefix) = spec.strip_suffix('/') {
+        if spec.contains('*') || spec.contains('?') || spec.contains('[') {
+            // Glob pattern
+            glob_match_pathspec(spec, path)
+        } else if let Some(prefix) = spec.strip_suffix('/') {
             path == prefix || path.starts_with(&format!("{prefix}/"))
         } else {
             path == spec || path.starts_with(&format!("{spec}/"))
         }
     })
+}
+
+/// Simple glob matching for pathspecs.
+fn glob_match_pathspec(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let mut pi = 0;
+    let mut ti = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0;
+
+    while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == b'?' && txt[ti] != b'/' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pat.len() && pat[pi] == txt[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            star_ti += 1;
+            ti = star_ti;
+            pi = star_pi + 1;
+        } else {
+            return false;
+        }
+    }
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 fn effective_index_path(repo: &Repository) -> Result<PathBuf> {

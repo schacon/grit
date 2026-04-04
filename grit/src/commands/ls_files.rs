@@ -296,13 +296,7 @@ pub fn run(args: Args) -> Result<()> {
         walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
 
-        // Collapse to directories if --directory
-        let untracked = if args.directory {
-            collapse_to_directories(&untracked)
-        } else {
-            untracked
-        };
-
+        let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
                 let idx = pathspec_filter.iter().position(|spec| spec.matches(path_bytes));
@@ -337,7 +331,48 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
 
+            // Make path relative to cwd before collecting
             let display = display_path_from_cwd(path_bytes, &cwd_prefix);
+            filtered_untracked.push(display.to_vec());
+        }
+
+        // Collapse to directories if --directory (after making paths cwd-relative)
+        let output_paths = if args.directory {
+            let mut collapsed = collapse_to_directories(&filtered_untracked);
+            if args.no_empty_directory {
+                // Remove directory entries that have no file children
+                // (empty directory markers from walk_worktree end with '/')
+                collapsed.retain(|p| {
+                    if !p.ends_with(b"/") {
+                        return true; // plain file, keep
+                    }
+                    // Check if any non-directory entry starts with this prefix
+                    let prefix = &p[..];
+                    filtered_untracked.iter().any(|f| {
+                        !f.ends_with(b"/") && f.starts_with(prefix)
+                    })
+                });
+            }
+            collapsed
+        } else if args.no_empty_directory {
+            // Even without --directory, filter out empty dir markers
+            filtered_untracked.into_iter().filter(|p| !p.ends_with(b"/")).collect()
+        } else {
+            filtered_untracked
+        };
+
+        // If --no-empty-directory removed entries, re-evaluate pathspec matching
+        // based on what actually gets output.
+        if args.no_empty_directory && !pathspec_filter.is_empty() && !output_paths.is_empty() {
+            // At least one path survived filtering, so pathspecs are matched.
+        } else if args.no_empty_directory && !pathspec_filter.is_empty() && output_paths.is_empty() {
+            // All entries were empty dirs that got filtered. Reset matched.
+            for m in matched.iter_mut() {
+                *m = false;
+            }
+        }
+
+        for display in &output_paths {
             let name = String::from_utf8_lossy(display);
             if args.show_tag {
                 write!(out, "? {name}")?;
@@ -401,7 +436,23 @@ fn walk_worktree(
             if dot_git.exists() {
                 continue;
             }
+            let before = out.len();
             walk_worktree(root, &path, indexed, out)?;
+            // If directory produced no untracked entries and no tracked
+            // files exist inside it, emit the directory itself as an
+            // untracked entry so --directory can report empty dirs.
+            if out.len() == before {
+                let dir_prefix_str = format!("{}/", String::from_utf8_lossy(&rel_bytes));
+                let has_tracked = indexed.iter().any(|t| {
+                    let t_str = String::from_utf8_lossy(t);
+                    t_str.starts_with(&dir_prefix_str)
+                });
+                if !has_tracked {
+                    let mut dir_entry = rel_bytes;
+                    dir_entry.push(b'/');
+                    out.push(dir_entry);
+                }
+            }
         }
     }
     Ok(())

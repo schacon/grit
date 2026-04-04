@@ -222,6 +222,11 @@ fn collect_untracked(
             let prefix = format!("{rel}/");
             let has_tracked = tracked.iter().any(|t| t.starts_with(&prefix));
 
+            // Check if a pathspec exactly matches this directory (treat as
+            // whole-dir removal even without -d).
+            let pathspec_exact_match = !pathspec_prefixes.is_empty()
+                && pathspec_prefixes.iter().any(|ps| ps == &rel);
+
             // Also check if a pathspec targets something inside this dir,
             // in which case we must recurse.
             let pathspec_wants_recurse = !pathspec_prefixes.is_empty()
@@ -229,7 +234,10 @@ fn collect_untracked(
                     ps.starts_with(&prefix) || ps == &rel
                 });
 
-            if has_tracked || pathspec_wants_recurse {
+            // If pathspec exactly matches this untracked dir, remove it whole
+            if !has_tracked && pathspec_exact_match {
+                out.push((rel, true));
+            } else if has_tracked || pathspec_wants_recurse {
                 // Directory contains tracked files or pathspec targets
                 // something inside — recurse into it.
                 collect_untracked(
