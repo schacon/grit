@@ -613,9 +613,19 @@ fn add_path(
             }
         }
     } else {
-        // Explicitly named files bypass gitignore checks (only directory
-        // traversal respects ignore patterns).  This matches grit's design
-        // decision to allow adding specific files regardless of ignore rules.
+        // Check ignore patterns for explicitly named files (like real git).
+        if let Some(ref mut matcher) = ignore_matcher {
+            let (is_ignored, _match_info) =
+                matcher.check_path(repo, Some(&*index), path, false)
+                    .map_err(|e| AddPathError::Other(e.into()))?;
+            if is_ignored {
+                return Err(AddPathError::Ignored(format!(
+                    "The following paths are ignored by one of your .gitignore files:\n\
+                     {path}\n\
+                     Use -f if you really want to add them."
+                )));
+            }
+        }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
     }
