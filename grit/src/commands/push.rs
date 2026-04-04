@@ -63,6 +63,14 @@ pub struct Args {
     #[arg(long)]
     pub porcelain: bool,
 
+    /// Push all branches (refs/heads/*).
+    #[arg(long)]
+    pub all: bool,
+
+    /// Push all branches (alias for --all).
+    #[arg(long)]
+    pub branches: bool,
+
     /// Mirror all refs to the remote.
     #[arg(long)]
     pub mirror: bool,
@@ -93,6 +101,22 @@ struct RefUpdate {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+
+    let push_all = args.all || args.branches;
+
+    // Validate flag combinations
+    if push_all && !args.refspecs.is_empty() {
+        bail!("--all/--branches can not be combined with refspecs");
+    }
+    if push_all && args.mirror {
+        bail!("--all and --mirror cannot be used together");
+    }
+    if push_all && args.tags {
+        bail!("--all and --tags cannot be used together");
+    }
+    if push_all && args.delete {
+        bail!("--all and --delete cannot be used together");
+    }
 
     let head = resolve_head(&repo.git_dir)?;
     let current_branch = head.branch_name().map(|s| s.to_owned());
@@ -187,6 +211,22 @@ pub fn run(args: Args) -> Result<()> {
                     expected_oid: None,
                 });
             }
+        }
+    } else if push_all {
+        // Push all branches (refs/heads/*)
+        let local_branches = refs::list_refs(&repo.git_dir, "refs/heads/")?;
+        for (refname, local_oid) in &local_branches {
+            let old_oid = refs::resolve_ref(&remote_repo.git_dir, refname).ok();
+            if old_oid.as_ref() == Some(local_oid) {
+                continue;
+            }
+            updates.push(RefUpdate {
+                local_ref: Some(refname.clone()),
+                remote_ref: refname.clone(),
+                old_oid,
+                new_oid: Some(*local_oid),
+                expected_oid: None,
+            });
         }
     } else if args.delete {
         // Delete mode: refspecs are remote ref names to delete

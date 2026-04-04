@@ -26,7 +26,7 @@ test_expect_success 'setup different types of references' '
 '
 
 # grit does not support --all for push
-test_expect_failure '--all pushes all branches' '
+test_expect_success '--all pushes all branches' '
 	git push ./remote-1 --all &&
 	commit=$(git rev-parse HEAD) &&
 	cat >expect <<-EOF &&
@@ -39,7 +39,7 @@ test_expect_failure '--all pushes all branches' '
 '
 
 # grit does not support --branches for push
-test_expect_failure '--branches pushes all branches' '
+test_expect_success '--branches pushes all branches' '
 	git init --bare remote-2 &&
 	git push ./remote-2 main &&
 	git push ./remote-2 --branches &&
@@ -54,25 +54,25 @@ test_expect_failure '--branches pushes all branches' '
 '
 
 # grit does not support --all for push
-test_expect_failure '--all or --branches can not be combined with refspecs' '
+test_expect_success '--all or --branches can not be combined with refspecs' '
 	test_must_fail git push ./remote-1 --all main 2>actual &&
 	grep "be combined with refspecs" actual
 '
 
 # grit does not support --all for push
-test_expect_failure '--all or --branches can not be combined with --mirror' '
+test_expect_success '--all or --branches can not be combined with --mirror' '
 	test_must_fail git push ./remote-1 --all --mirror 2>actual &&
 	grep "cannot be used together" actual
 '
 
 # grit does not support --all for push
-test_expect_failure '--all or --branches can not be combined with --tags' '
+test_expect_success '--all or --branches can not be combined with --tags' '
 	test_must_fail git push ./remote-1 --all --tags 2>actual &&
 	grep "cannot be used together" actual
 '
 
 # grit does not support --all for push
-test_expect_failure '--all or --branches can not be combined with --delete' '
+test_expect_success '--all or --branches can not be combined with --delete' '
 	test_must_fail git push ./remote-1 --all --delete 2>actual &&
 	grep "cannot be used together" actual
 '
