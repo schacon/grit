@@ -118,6 +118,9 @@ pub fn run(args: Args) -> Result<()> {
             merge: false,
             apply: false,
             no_ff: false,
+            keep_base: false,
+            fork_point: false,
+            no_fork_point: false,
         };
         super::rebase::run(rebase_args)
     } else {

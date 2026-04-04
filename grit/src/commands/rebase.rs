@@ -73,6 +73,18 @@ pub struct Args {
     #[arg(long = "no-ff", alias = "force-rebase")]
     pub no_ff: bool,
 
+    /// Keep the base of the branch (rebase onto the merge-base of upstream and branch).
+    #[arg(long = "keep-base")]
+    pub keep_base: bool,
+
+    /// Use the fork-point algorithm to find the merge base.
+    #[arg(long = "fork-point", overrides_with = "no_fork_point")]
+    pub fork_point: bool,
+
+    /// Do not use the fork-point algorithm.
+    #[arg(long = "no-fork-point")]
+    pub no_fork_point: bool,
+
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
@@ -172,20 +184,28 @@ fn do_rebase(args: Args) -> Result<()> {
     let upstream_oid = resolve_revision(&repo, upstream_spec)
         .with_context(|| format!("bad revision '{upstream_spec}'"))?;
 
-    // Resolve onto (defaults to upstream)
+    // Resolve current HEAD early (needed for --keep-base)
+    let head_state = resolve_head(git_dir)?;
+    let head_oid_early = head_state
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
+        .to_owned();
+
+    // Resolve onto (defaults to upstream, or merge-base with --keep-base)
     let onto_oid = if let Some(ref onto_spec) = args.onto {
         resolve_revision(&repo, onto_spec)
             .with_context(|| format!("bad revision '{onto_spec}'"))?
+    } else if args.keep_base {
+        // --keep-base: onto = merge-base(upstream, HEAD)
+        find_merge_base(&repo, upstream_oid, head_oid_early)
+            .unwrap_or(upstream_oid)
     } else {
         upstream_oid
     };
 
-    // Resolve current HEAD
-    let head = resolve_head(git_dir)?;
-    let head_oid = head
-        .oid()
-        .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
-        .to_owned();
+    // Use the already-resolved HEAD
+    let head = head_state;
+    let head_oid = head_oid_early;
 
     // Check if already up to date (skip if --no-ff forces replay)
     if !args.no_ff {
@@ -250,6 +270,14 @@ fn do_rebase(args: Args) -> Result<()> {
     replay_remaining(&repo)?;
 
     Ok(())
+}
+
+/// Find the merge-base of two commits.  Returns `None` when there is no
+/// common ancestor.
+fn find_merge_base(repo: &Repository, a: ObjectId, b: ObjectId) -> Option<ObjectId> {
+    grit_lib::merge_base::merge_bases_first_vs_rest(repo, a, &[b])
+        .ok()
+        .and_then(|bases| bases.into_iter().next())
 }
 
 /// Collect commits to replay: ancestors of `head` that are not ancestors of `upstream`.
