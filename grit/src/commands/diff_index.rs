@@ -483,13 +483,19 @@ fn diff_tree_vs_worktree(
             Some(worktree_snapshot) => {
                 if worktree_snapshot != *index_snapshot {
                     let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                    // Use zero OID for worktree side — the blob is not
+                    // in the object database, matching git's behaviour.
+                    let wt_placeholder = Snapshot {
+                        mode: worktree_snapshot.mode,
+                        oid: zero_oid(),
+                    };
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
                             status: 'M',
                             old,
-                            new: Some(worktree_snapshot),
+                            new: Some(wt_placeholder),
                         },
                     );
                 }
@@ -716,8 +722,16 @@ fn write_patch_entry(
             Err(_) => String::new(),
         }
     };
-    let new_content = if entry.new_oid == z {
+    let new_content = if entry.new_oid == z && entry.status == DiffStatus::Deleted {
         String::new()
+    } else if entry.new_oid == z {
+        // Zero OID for non-deleted entries means worktree content
+        if let Some(wt) = work_tree {
+            let path = entry.new_path.as_deref().unwrap_or(new_path);
+            fs::read_to_string(wt.join(path)).unwrap_or_default()
+        } else {
+            String::new()
+        }
     } else {
         match odb.read(&entry.new_oid) {
             Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
