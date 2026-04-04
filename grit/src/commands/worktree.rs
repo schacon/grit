@@ -61,6 +61,10 @@ pub struct AddArgs {
     /// Force creation even if the branch is already checked out elsewhere.
     #[arg(short, long)]
     pub force: bool,
+
+    /// Create a new unborn/orphan branch in the worktree.
+    #[arg(long)]
+    pub orphan: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -213,6 +217,39 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             "worktree '{}' already exists; use a different path or remove it first",
             wt_name
         );
+    }
+
+    // Handle --orphan: create worktree with unborn branch
+    if args.orphan {
+        // Create the working tree directory
+        fs::create_dir_all(&wt_path)
+            .with_context(|| format!("cannot create directory '{}'", wt_path.display()))?;
+
+        // Create the admin directory
+        fs::create_dir_all(&wt_admin)
+            .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
+
+        // Write gitdir file
+        let gitdir_content = format!("{}\n", wt_path.join(".git").display());
+        fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
+        fs::write(wt_admin.join("commondir"), format!("{}\n", common.display()))?;
+
+        // HEAD points to an unborn branch
+        fs::write(
+            wt_admin.join("HEAD"),
+            format!("ref: refs/heads/{}\n", wt_name),
+        )?;
+
+        // Write the .git file in the worktree
+        let dotgit_content = format!("gitdir: {}\n", wt_admin.display());
+        fs::write(wt_path.join(".git"), &dotgit_content)?;
+
+        println!(
+            "Preparing worktree (new branch '{}') at '{}'",
+            wt_name,
+            wt_path.display()
+        );
+        return Ok(());
     }
 
     // Determine branch name and commit

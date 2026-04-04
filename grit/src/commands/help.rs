@@ -6,6 +6,9 @@ use anyhow::Result;
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
 
+/// Config variable names for completion (from `git help --config-for-completion`).
+const CONFIG_VARS_FOR_COMPLETION: &str = include_str!("config_vars.txt");
+
 /// Arguments for `grit help`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Display help information")]
@@ -13,6 +16,14 @@ pub struct Args {
     /// List all available commands.
     #[arg(short = 'a', long = "all")]
     pub all: bool,
+
+    /// List config variable names for completion.
+    #[arg(long = "config-for-completion", hide = true)]
+    pub config_for_completion: bool,
+
+    /// List all config variable names.
+    #[arg(long = "config", hide = true)]
+    pub config_list: bool,
 
     /// Command to show help for.
     pub command: Option<String>,
@@ -117,6 +128,11 @@ const ALL_COMMANDS: &[&str] = &[
 pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
+
+    if args.config_for_completion || args.config_list {
+        print!("{}", CONFIG_VARS_FOR_COMPLETION);
+        return Ok(());
+    }
 
     if args.all {
         writeln!(out, "usage: grit <command> [<args>]")?;
