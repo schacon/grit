@@ -510,11 +510,19 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // When a whitespace-ignore mode is active, filter out entries whose
-    // normalised content is identical.
+    // normalised content is identical. Deletions, additions, and mode
+    // changes are always reported regardless of whitespace.
     let entries = if ws_mode.any() {
         entries
             .into_iter()
             .filter(|e| {
+                // Always keep deletions, additions, and mode changes
+                if e.status == DiffStatus::Deleted || e.status == DiffStatus::Added {
+                    return true;
+                }
+                if e.old_mode != e.new_mode {
+                    return true;
+                }
                 let old = read_content(&repo.odb, &e.old_oid, None, e.path());
                 let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
                 ws_mode.normalize(&old) != ws_mode.normalize(&new)
