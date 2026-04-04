@@ -11,6 +11,9 @@ config() {
 }
 
 test_expect_success 'setup repository' '
+	git init &&
+	git config user.name "Test User" &&
+	git config user.email "test@example.com" &&
 	echo content >file &&
 	git add file &&
 	git commit -m one &&
@@ -35,7 +38,8 @@ test_expect_success 'setup repository' '
 
 	LOOSE_URL=$(find_file objects/??) &&
 	PACK_URL=$(find_file objects/pack/*.pack) &&
-	IDX_URL=$(find_file objects/pack/*.idx)
+	IDX_URL=$(find_file objects/pack/*.idx) &&
+	test_export LOOSE_URL PACK_URL IDX_URL
 '
 
 get_static_files() {

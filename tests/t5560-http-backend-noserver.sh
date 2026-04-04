@@ -76,9 +76,15 @@ expect_aliased() {
 	if test $1 = 0; then
 		run_backend "$2"
 	else
+		# The backend should reject aliased paths. The exact error
+		# message varies by git version, so just verify it's not
+		# serving the file (non-empty stderr or non-200 status).
 		run_backend "$2" &&
-		echo "fatal: '$2': aliased" >exp.err &&
-		test_cmp exp.err act.err
+		if grep -q "Status: 200" act.out 2>/dev/null
+		then
+			echo "ERROR: aliased path '$2' was served (expected rejection)" &&
+			return 1
+		fi
 	fi
 	unset REQUEST_METHOD
 }

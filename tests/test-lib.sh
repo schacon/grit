@@ -736,7 +736,7 @@ test_export () {
 		# Quote the value with single quotes (escape existing ones).
 		local _escaped
 		_escaped=$(printf '%s' "$_val" | sed "s/'/'\\\\''/g")
-		printf "%s='%s'\n" "$_var" "$_escaped" >>"$_ef"
+		printf "export %s='%s'\n" "$_var" "$_escaped" >>"$_ef"
 	done
 }
 

@@ -163,7 +163,8 @@ setup_askpass_helper() {
 		EOF
 		GIT_ASKPASS="$TRASH_DIRECTORY/askpass" &&
 		export GIT_ASKPASS &&
-		export TRASH_DIRECTORY
+		export TRASH_DIRECTORY &&
+		test_export GIT_ASKPASS TRASH_DIRECTORY
 	'
 }
 
