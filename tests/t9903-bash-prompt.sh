@@ -571,7 +571,7 @@ test_expect_success 'prompt - bash color pc mode - detached head' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - bash color pc mode - dirty status indicator - dirty worktree' '
+test_expect_success 'prompt - bash color pc mode - dirty status indicator - dirty worktree' '
 	printf "BEFORE: (${c_green}\${__git_ps1_branch_name}${c_clear} ${c_red}*${c_clear}):AFTER\\nmain" >expected &&
 	echo "dirty" >file &&
 	test_when_finished "git reset --hard" &&

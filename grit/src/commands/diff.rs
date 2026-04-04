@@ -1084,10 +1084,17 @@ fn get_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
 
     // Resolve symbolic ref or direct OID
     let oid_str = if let Some(symref) = content.strip_prefix("ref: ") {
+        // Try loose ref file first, then fall back to packed-refs
         let ref_path = repo.git_dir.join(symref);
         match std::fs::read_to_string(&ref_path) {
             Ok(s) => s.trim().to_owned(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Look up in packed-refs
+                match resolve_packed_ref(&repo.git_dir, symref) {
+                    Some(oid) => oid,
+                    None => return Ok(None),
+                }
+            }
             Err(e) => return Err(e.into()),
         }
     } else {
@@ -1102,6 +1109,24 @@ fn get_head_tree(repo: &Repository) -> Result<Option<ObjectId>> {
     let obj = repo.odb.read(&oid).context("reading HEAD commit")?;
     let commit = parse_commit(&obj.data).context("parsing HEAD commit")?;
     Ok(Some(commit.tree))
+}
+
+/// Look up a ref name in the packed-refs file.
+fn resolve_packed_ref(git_dir: &std::path::Path, refname: &str) -> Option<String> {
+    let packed = git_dir.join("packed-refs");
+    let content = std::fs::read_to_string(packed).ok()?;
+    for line in content.lines() {
+        if line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let oid = parts.next()?;
+        let name = parts.next()?.trim();
+        if name == refname {
+            return Some(oid.to_owned());
+        }
+    }
+    None
 }
 
 /// Resolve a revision spec to a tree OID, handling both commit and tree objects.
