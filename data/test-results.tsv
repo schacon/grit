@@ -1319,7 +1319,7 @@ t0610-reftable-basics::writes-do-not-persist-peeled-value-for-invalid-tags	t0610
 t0610-reftable-basics::init-honors-shared-shared-with-umask-umask	t0610-reftable-basics	init: honors --shared=$shared with umask $umask	init	pass
 t0610-reftable-basics::pack-refs-honors-shared-shared-with-umask-umask	t0610-reftable-basics	pack-refs: honors --shared=$shared with umask $umask	init	pass
 t0610-reftable-basics::command-auto-compaction	t0610-reftable-basics	$command: auto compaction	branch	pass
-t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	pass
+t0611-reftable-httpd::serving-ls-remote	t0611-reftable-httpd	serving ls-remote	init	partial
 t0612-reftable-jgit-compatibility::cgit-repository-can-be-read-by-jgit	t0612-reftable-jgit-compatibility	CGit repository can be read by JGit	init	pass
 t0612-reftable-jgit-compatibility::jgit-repository-can-be-read-by-cgit	t0612-reftable-jgit-compatibility	JGit repository can be read by CGit	reflog	pass
 t0612-reftable-jgit-compatibility::mixed-writes-from-jgit-and-cgit	t0612-reftable-jgit-compatibility	mixed writes from JGit and CGit	init	pass
@@ -2960,30 +2960,30 @@ t1460-refs-migrate::from-format-to-format-reflogs-of-symrefs-with-target-deleted
 t1460-refs-migrate::from-format-to-format-reflogs-order-is-retained	t1460-refs-migrate	$from_format -> $to_format: reflogs order is retained	refs	pass
 t1460-refs-migrate::from-format-to-format-stash-is-retained	t1460-refs-migrate	$from_format -> $to_format: stash is retained	refs	pass
 t1460-refs-migrate::from-format-to-format-skip-reflog-with-skip-reflog	t1460-refs-migrate	$from_format -> $to_format: skip reflog with --skip-reflog	refs	pass
-t1500-rev-parse::setup	t1500-rev-parse	setup	rev-parse	pass
-t1500-rev-parse::rev-parse-path-format-absolute	t1500-rev-parse	rev-parse --path-format=absolute	rev-parse	pass
-t1500-rev-parse::rev-parse-path-format-relative	t1500-rev-parse	rev-parse --path-format=relative	rev-parse	pass
-t1500-rev-parse::path-format-relative-does-not-affect-absolute-git-dir	t1500-rev-parse	--path-format=relative does not affect --absolute-git-dir	rev-parse	pass
-t1500-rev-parse::path-format-can-change-in-the-middle-of-the-command-line	t1500-rev-parse	--path-format can change in the middle of the command line	rev-parse	pass
-t1500-rev-parse::path-format-does-not-segfault-without-an-argument	t1500-rev-parse	--path-format does not segfault without an argument	rev-parse	pass
-t1500-rev-parse::git-common-dir-from-worktree-root	t1500-rev-parse	git-common-dir from worktree root	rev-parse	pass
-t1500-rev-parse::git-common-dir-inside-sub-dir	t1500-rev-parse	git-common-dir inside sub-dir	rev-parse	pass
-t1500-rev-parse::git-path-from-worktree-root	t1500-rev-parse	git-path from worktree root	rev-parse	pass
-t1500-rev-parse::git-path-inside-sub-dir	t1500-rev-parse	git-path inside sub-dir	rev-parse	pass
-t1500-rev-parse::rev-parse-is-shallow-repository-in-shallow-repo	t1500-rev-parse	rev-parse --is-shallow-repository in shallow repo	rev-parse	pass
-t1500-rev-parse::rev-parse-is-shallow-repository-in-non-shallow-repo	t1500-rev-parse	rev-parse --is-shallow-repository in non-shallow repo	rev-parse	pass
-t1500-rev-parse::rev-parse-show-object-format-in-repo	t1500-rev-parse	rev-parse --show-object-format in repo	rev-parse	pass
-t1500-rev-parse::rev-parse-show-object-format-in-repo-with-compat-mode	t1500-rev-parse	rev-parse --show-object-format in repo with compat mode	rev-parse	pass
-t1500-rev-parse::rev-parse-show-ref-format	t1500-rev-parse	rev-parse --show-ref-format	rev-parse	pass
-t1500-rev-parse::rev-parse-show-ref-format-with-invalid-storage	t1500-rev-parse	rev-parse --show-ref-format with invalid storage	rev-parse	pass
-t1500-rev-parse::show-toplevel-from-subdir-of-working-tree	t1500-rev-parse	--show-toplevel from subdir of working tree	rev-parse	pass
-t1500-rev-parse::show-toplevel-from-inside-git	t1500-rev-parse	--show-toplevel from inside .git	rev-parse	pass
-t1500-rev-parse::showing-the-superproject-correctly	t1500-rev-parse	showing the superproject correctly	rev-parse	pass
-t1500-rev-parse::rev-parse-since-unsqueezed-ordering	t1500-rev-parse	rev-parse --since= unsqueezed ordering	rev-parse	pass
-t1500-rev-parse::rev-parse-bisect-includes-bad-excludes-good	t1500-rev-parse	rev-parse --bisect includes bad, excludes good	rev-parse	pass
-t1500-rev-parse::short-truncates-to-the-actual-hash-length	t1500-rev-parse	--short= truncates to the actual hash length	rev-parse	pass
-t1500-rev-parse::and-head-favor-more-recent-matching-commits	t1500-rev-parse	:/ and HEAD^{/} favor more recent matching commits	rev-parse	pass
-t1500-rev-parse::name-o	t1500-rev-parse	$name: $o	rev-parse	pass
+t1500-rev-parse::setup	t1500-rev-parse	setup	rev-parse	partial
+t1500-rev-parse::rev-parse-path-format-absolute	t1500-rev-parse	rev-parse --path-format=absolute	rev-parse	partial
+t1500-rev-parse::rev-parse-path-format-relative	t1500-rev-parse	rev-parse --path-format=relative	rev-parse	partial
+t1500-rev-parse::path-format-relative-does-not-affect-absolute-git-dir	t1500-rev-parse	--path-format=relative does not affect --absolute-git-dir	rev-parse	partial
+t1500-rev-parse::path-format-can-change-in-the-middle-of-the-command-line	t1500-rev-parse	--path-format can change in the middle of the command line	rev-parse	partial
+t1500-rev-parse::path-format-does-not-segfault-without-an-argument	t1500-rev-parse	--path-format does not segfault without an argument	rev-parse	partial
+t1500-rev-parse::git-common-dir-from-worktree-root	t1500-rev-parse	git-common-dir from worktree root	rev-parse	partial
+t1500-rev-parse::git-common-dir-inside-sub-dir	t1500-rev-parse	git-common-dir inside sub-dir	rev-parse	partial
+t1500-rev-parse::git-path-from-worktree-root	t1500-rev-parse	git-path from worktree root	rev-parse	partial
+t1500-rev-parse::git-path-inside-sub-dir	t1500-rev-parse	git-path inside sub-dir	rev-parse	partial
+t1500-rev-parse::rev-parse-is-shallow-repository-in-shallow-repo	t1500-rev-parse	rev-parse --is-shallow-repository in shallow repo	rev-parse	partial
+t1500-rev-parse::rev-parse-is-shallow-repository-in-non-shallow-repo	t1500-rev-parse	rev-parse --is-shallow-repository in non-shallow repo	rev-parse	partial
+t1500-rev-parse::rev-parse-show-object-format-in-repo	t1500-rev-parse	rev-parse --show-object-format in repo	rev-parse	partial
+t1500-rev-parse::rev-parse-show-object-format-in-repo-with-compat-mode	t1500-rev-parse	rev-parse --show-object-format in repo with compat mode	rev-parse	partial
+t1500-rev-parse::rev-parse-show-ref-format	t1500-rev-parse	rev-parse --show-ref-format	rev-parse	partial
+t1500-rev-parse::rev-parse-show-ref-format-with-invalid-storage	t1500-rev-parse	rev-parse --show-ref-format with invalid storage	rev-parse	partial
+t1500-rev-parse::show-toplevel-from-subdir-of-working-tree	t1500-rev-parse	--show-toplevel from subdir of working tree	rev-parse	partial
+t1500-rev-parse::show-toplevel-from-inside-git	t1500-rev-parse	--show-toplevel from inside .git	rev-parse	partial
+t1500-rev-parse::showing-the-superproject-correctly	t1500-rev-parse	showing the superproject correctly	rev-parse	partial
+t1500-rev-parse::rev-parse-since-unsqueezed-ordering	t1500-rev-parse	rev-parse --since= unsqueezed ordering	rev-parse	partial
+t1500-rev-parse::rev-parse-bisect-includes-bad-excludes-good	t1500-rev-parse	rev-parse --bisect includes bad, excludes good	rev-parse	partial
+t1500-rev-parse::short-truncates-to-the-actual-hash-length	t1500-rev-parse	--short= truncates to the actual hash length	rev-parse	partial
+t1500-rev-parse::and-head-favor-more-recent-matching-commits	t1500-rev-parse	:/ and HEAD^{/} favor more recent matching commits	rev-parse	partial
+t1500-rev-parse::name-o	t1500-rev-parse	$name: $o	rev-parse	partial
 t1501-work-tree::setup	t1501-work-tree	setup	init	pass
 t1501-work-tree::setup-helper-for-testing-rev-parse	t1501-work-tree	setup: helper for testing rev-parse	init	pass
 t1501-work-tree::setup-core-worktree-relative-path	t1501-work-tree	setup: core.worktree = relative path	init	pass
@@ -5362,29 +5362,29 @@ t3419-rebase-patch-id::detect-upstream-patch-modechange	t3419-rebase-patch-id	de
 t3419-rebase-patch-id::do-not-drop-patch	t3419-rebase-patch-id	do not drop patch	rebase	pass
 t3419-rebase-patch-id::do-not-drop-patch-binary	t3419-rebase-patch-id	do not drop patch binary	rebase	pass
 t3419-rebase-patch-id::do-not-drop-patch-modechange	t3419-rebase-patch-id	do not drop patch modechange	rebase	pass
-t3420-rebase-autostash::abort-rebase-i-with-autostash	t3420-rebase-autostash	abort rebase -i with --autostash	rebase	pass
-t3420-rebase-autostash::restore-autostash-on-editor-failure	t3420-rebase-autostash	restore autostash on editor failure	rebase	pass
-t3420-rebase-autostash::autostash-is-saved-on-editor-failure-with-conflict	t3420-rebase-autostash	autostash is saved on editor failure with conflict	rebase	pass
-t3420-rebase-autostash::autostash-with-dirty-submodules	t3420-rebase-autostash	autostash with dirty submodules	rebase	pass
-t3420-rebase-autostash::branch-is-left-alone-when-possible	t3420-rebase-autostash	branch is left alone when possible	rebase	pass
-t3420-rebase-autostash::never-change-active-branch	t3420-rebase-autostash	never change active branch	rebase	pass
-t3420-rebase-autostash::autostash-commit-is-marked-as-reachable	t3420-rebase-autostash	autostash commit is marked as reachable	rebase	pass
-t3420-rebase-autostash::rebase-type-restore-autostash-when-pre-rebase-hook-fails	t3420-rebase-autostash	rebase$type: restore autostash when pre-rebase hook fails	rebase	pass
-t3420-rebase-autostash::rebase-type-restore-autostash-when-checkout-onto-fails	t3420-rebase-autostash	rebase$type: restore autostash when checkout onto fails	rebase	pass
-t3420-rebase-autostash::rebase-type-restore-autostash-when-branch-checkout-fails	t3420-rebase-autostash	rebase$type: restore autostash when branch checkout fails	rebase	pass
-t3420-rebase-autostash::rebase-type-dirty-worktree-no-autostash	t3420-rebase-autostash	rebase$type: dirty worktree, --no-autostash	rebase	pass
-t3420-rebase-autostash::rebase-type-dirty-worktree-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty worktree, non-conflicting rebase	rebase	pass
-t3420-rebase-autostash::rebase-type-autostash-check-output	t3420-rebase-autostash	rebase$type --autostash: check output	rebase	pass
-t3420-rebase-autostash::rebase-type-dirty-index-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty index, non-conflicting rebase	rebase	pass
-t3420-rebase-autostash::rebase-type-conflicting-rebase	t3420-rebase-autostash	rebase$type: conflicting rebase	rebase	pass
-t3420-rebase-autostash::rebase-type-continue	t3420-rebase-autostash	rebase$type: --continue	rebase	pass
-t3420-rebase-autostash::rebase-type-skip	t3420-rebase-autostash	rebase$type: --skip	rebase	pass
-t3420-rebase-autostash::rebase-type-abort	t3420-rebase-autostash	rebase$type: --abort	rebase	pass
-t3420-rebase-autostash::rebase-type-quit	t3420-rebase-autostash	rebase$type: --quit	rebase	pass
-t3420-rebase-autostash::rebase-type-non-conflicting-rebase-conflicting-stash	t3420-rebase-autostash	rebase$type: non-conflicting rebase, conflicting stash	rebase	pass
-t3420-rebase-autostash::rebase-type-check-output-with-conflicting-stash	t3420-rebase-autostash	rebase$type: check output with conflicting stash	rebase	pass
-t3420-rebase-autostash::rebase-fast-forward-rebase	t3420-rebase-autostash	rebase: fast-forward rebase	rebase	pass
-t3420-rebase-autostash::rebase-noop-rebase	t3420-rebase-autostash	rebase: noop rebase	rebase	pass
+t3420-rebase-autostash::abort-rebase-i-with-autostash	t3420-rebase-autostash	abort rebase -i with --autostash	rebase	partial
+t3420-rebase-autostash::restore-autostash-on-editor-failure	t3420-rebase-autostash	restore autostash on editor failure	rebase	partial
+t3420-rebase-autostash::autostash-is-saved-on-editor-failure-with-conflict	t3420-rebase-autostash	autostash is saved on editor failure with conflict	rebase	partial
+t3420-rebase-autostash::autostash-with-dirty-submodules	t3420-rebase-autostash	autostash with dirty submodules	rebase	partial
+t3420-rebase-autostash::branch-is-left-alone-when-possible	t3420-rebase-autostash	branch is left alone when possible	rebase	partial
+t3420-rebase-autostash::never-change-active-branch	t3420-rebase-autostash	never change active branch	rebase	partial
+t3420-rebase-autostash::autostash-commit-is-marked-as-reachable	t3420-rebase-autostash	autostash commit is marked as reachable	rebase	partial
+t3420-rebase-autostash::rebase-type-restore-autostash-when-pre-rebase-hook-fails	t3420-rebase-autostash	rebase$type: restore autostash when pre-rebase hook fails	rebase	partial
+t3420-rebase-autostash::rebase-type-restore-autostash-when-checkout-onto-fails	t3420-rebase-autostash	rebase$type: restore autostash when checkout onto fails	rebase	partial
+t3420-rebase-autostash::rebase-type-restore-autostash-when-branch-checkout-fails	t3420-rebase-autostash	rebase$type: restore autostash when branch checkout fails	rebase	partial
+t3420-rebase-autostash::rebase-type-dirty-worktree-no-autostash	t3420-rebase-autostash	rebase$type: dirty worktree, --no-autostash	rebase	partial
+t3420-rebase-autostash::rebase-type-dirty-worktree-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty worktree, non-conflicting rebase	rebase	partial
+t3420-rebase-autostash::rebase-type-autostash-check-output	t3420-rebase-autostash	rebase$type --autostash: check output	rebase	partial
+t3420-rebase-autostash::rebase-type-dirty-index-non-conflicting-rebase	t3420-rebase-autostash	rebase$type: dirty index, non-conflicting rebase	rebase	partial
+t3420-rebase-autostash::rebase-type-conflicting-rebase	t3420-rebase-autostash	rebase$type: conflicting rebase	rebase	partial
+t3420-rebase-autostash::rebase-type-continue	t3420-rebase-autostash	rebase$type: --continue	rebase	partial
+t3420-rebase-autostash::rebase-type-skip	t3420-rebase-autostash	rebase$type: --skip	rebase	partial
+t3420-rebase-autostash::rebase-type-abort	t3420-rebase-autostash	rebase$type: --abort	rebase	partial
+t3420-rebase-autostash::rebase-type-quit	t3420-rebase-autostash	rebase$type: --quit	rebase	partial
+t3420-rebase-autostash::rebase-type-non-conflicting-rebase-conflicting-stash	t3420-rebase-autostash	rebase$type: non-conflicting rebase, conflicting stash	rebase	partial
+t3420-rebase-autostash::rebase-type-check-output-with-conflicting-stash	t3420-rebase-autostash	rebase$type: check output with conflicting stash	rebase	partial
+t3420-rebase-autostash::rebase-fast-forward-rebase	t3420-rebase-autostash	rebase: fast-forward rebase	rebase	partial
+t3420-rebase-autostash::rebase-noop-rebase	t3420-rebase-autostash	rebase: noop rebase	rebase	partial
 t3421-rebase-topology-linear::setup	t3421-rebase-topology-linear	setup	rebase	pass
 t3421-rebase-topology-linear::setup-branches-and-remote-tracking	t3421-rebase-topology-linear	setup branches and remote tracking	rebase	pass
 t3421-rebase-topology-linear::setup-of-linear-history-for-range-selection-tests	t3421-rebase-topology-linear	setup of linear history for range selection tests	rebase	pass
@@ -9723,8 +9723,8 @@ t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messa
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	pass
-t5411-proc-receive-hook::setup-upstream-and-workbench	t5411-proc-receive-hook	setup upstream and workbench	config	pass
-t5411-proc-receive-hook::setup-for-http-protocol	t5411-proc-receive-hook	setup for HTTP protocol	config	pass
+t5411-proc-receive-hook::setup-upstream-and-workbench	t5411-proc-receive-hook	setup upstream and workbench	config	partial
+t5411-proc-receive-hook::setup-for-http-protocol	t5411-proc-receive-hook	setup for HTTP protocol	config	partial
 t5500-fetch-pack::setup	t5500-fetch-pack	setup	fetch-pack	pass
 t5500-fetch-pack::post-1st-pull-setup	t5500-fetch-pack	post 1st pull setup	fetch-pack	pass
 t5500-fetch-pack::single-branch-clone	t5500-fetch-pack	single branch clone	fetch-pack	pass
@@ -10574,43 +10574,43 @@ t5532-fetch-proxy::setup-proxy-script	t5532-fetch-proxy	setup proxy script	fetch
 t5532-fetch-proxy::setup-local-repo	t5532-fetch-proxy	setup local repo	fetch	pass
 t5532-fetch-proxy::fetch-through-proxy-works	t5532-fetch-proxy	fetch through proxy works	fetch	pass
 t5532-fetch-proxy::funny-hostnames-are-rejected-before-running-proxy	t5532-fetch-proxy	funny hostnames are rejected before running proxy	fetch	pass
-t5533-push-cas::push-to-update-protected	t5533-push-cas	push to update (protected)	push	partial
-t5533-push-cas::push-to-update-protected-forced	t5533-push-cas	push to update (protected, forced)	push	partial
-t5533-push-cas::push-to-update-protected-tracking	t5533-push-cas	push to update (protected, tracking)	push	partial
-t5533-push-cas::push-to-update-protected-tracking-forced	t5533-push-cas	push to update (protected, tracking, forced)	push	partial
-t5533-push-cas::push-to-update-allowed	t5533-push-cas	push to update (allowed)	push	partial
-t5533-push-cas::push-to-update-allowed-tracking	t5533-push-cas	push to update (allowed, tracking)	push	partial
-t5533-push-cas::push-to-update-allowed-even-though-no-ff	t5533-push-cas	push to update (allowed even though no-ff)	push	partial
-t5533-push-cas::push-to-delete-protected	t5533-push-cas	push to delete (protected)	push	partial
-t5533-push-cas::push-to-delete-protected-forced	t5533-push-cas	push to delete (protected, forced)	push	partial
-t5533-push-cas::push-to-delete-allowed	t5533-push-cas	push to delete (allowed)	push	partial
-t5533-push-cas::cover-everything-with-default-force-with-lease-protected	t5533-push-cas	cover everything with default force-with-lease (protected)	push	partial
-t5533-push-cas::cover-everything-with-default-force-with-lease-allowed	t5533-push-cas	cover everything with default force-with-lease (allowed)	push	partial
-t5533-push-cas::new-branch-covered-by-force-with-lease	t5533-push-cas	new branch covered by force-with-lease	push	partial
-t5533-push-cas::new-branch-covered-by-force-with-lease-explicit	t5533-push-cas	new branch covered by force-with-lease (explicit)	push	partial
-t5533-push-cas::new-branch-already-exists	t5533-push-cas	new branch already exists	push	partial
-t5533-push-cas::background-updates-of-remote-can-be-mitigated-with-a-non-updated-remote-push	t5533-push-cas	background updates of REMOTE can be mitigated with a non-updated REMOTE-push	push	partial
-t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-force-if-includes	t5533-push-cas	background updates to remote can be mitigated with "--force-if-includes"	push	partial
-t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-push-useforceifincludes	t5533-push-cas	background updates to remote can be mitigated with "push.useForceIfIncludes"	push	partial
-t5533-push-cas::force-if-includes-should-be-disabled-for-force-with-lease-refname-expect	t5533-push-cas	"--force-if-includes" should be disabled for --force-with-lease="<refname>:<expect>"	push	partial
-t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase")	push	partial
-t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase-local-re	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase", local rebase)	push	partial
-t5533-push-cas::force-if-includes-should-allow-deletes	t5533-push-cas	"--force-if-includes" should allow deletes	push	partial
-t5534-push-signed::unsigned-push-does-not-send-push-certificate	t5534-push-signed	unsigned push does not send push certificate	push	partial
-t5534-push-signed::talking-with-a-receiver-without-push-certificate-support	t5534-push-signed	talking with a receiver without push certificate support	push	partial
-t5534-push-signed::push-signed-fails-with-a-receiver-without-push-certificate-support	t5534-push-signed	push --signed fails with a receiver without push certificate support	push	partial
-t5534-push-signed::push-signed-1-is-accepted	t5534-push-signed	push --signed=1 is accepted	push	partial
-t5534-push-signed::no-certificate-for-a-signed-push-with-no-update	t5534-push-signed	no certificate for a signed push with no update	push	partial
-t5534-push-signed::signed-push-sends-push-certificate	t5534-push-signed	signed push sends push certificate	push	partial
-t5534-push-signed::ssh-signed-push-sends-push-certificate	t5534-push-signed	ssh signed push sends push certificate	push	partial
-t5534-push-signed::inconsistent-push-options-in-signed-push-not-allowed	t5534-push-signed	inconsistent push options in signed push not allowed	push	partial
-t5534-push-signed::fail-without-key-and-heed-user-signingkey	t5534-push-signed	fail without key and heed user.signingkey	push	partial
-t5534-push-signed::fail-without-key-and-heed-user-signingkey-x509	t5534-push-signed	fail without key and heed user.signingkey x509	push	partial
-t5534-push-signed::fail-without-key-and-heed-user-signingkey-ssh	t5534-push-signed	fail without key and heed user.signingkey ssh	push	partial
-t5534-push-signed::failed-atomic-push-does-not-execute-gpg	t5534-push-signed	failed atomic push does not execute GPG	push	partial
-t5535-fetch-push-symref::setup	t5535-fetch-push-symref	setup	fetch	partial
-t5535-fetch-push-symref::push	t5535-fetch-push-symref	push	fetch	partial
-t5535-fetch-push-symref::fetch	t5535-fetch-push-symref	fetch	fetch	partial
+t5533-push-cas::push-to-update-protected	t5533-push-cas	push to update (protected)	push	pass
+t5533-push-cas::push-to-update-protected-forced	t5533-push-cas	push to update (protected, forced)	push	pass
+t5533-push-cas::push-to-update-protected-tracking	t5533-push-cas	push to update (protected, tracking)	push	pass
+t5533-push-cas::push-to-update-protected-tracking-forced	t5533-push-cas	push to update (protected, tracking, forced)	push	pass
+t5533-push-cas::push-to-update-allowed	t5533-push-cas	push to update (allowed)	push	pass
+t5533-push-cas::push-to-update-allowed-tracking	t5533-push-cas	push to update (allowed, tracking)	push	pass
+t5533-push-cas::push-to-update-allowed-even-though-no-ff	t5533-push-cas	push to update (allowed even though no-ff)	push	pass
+t5533-push-cas::push-to-delete-protected	t5533-push-cas	push to delete (protected)	push	pass
+t5533-push-cas::push-to-delete-protected-forced	t5533-push-cas	push to delete (protected, forced)	push	pass
+t5533-push-cas::push-to-delete-allowed	t5533-push-cas	push to delete (allowed)	push	pass
+t5533-push-cas::cover-everything-with-default-force-with-lease-protected	t5533-push-cas	cover everything with default force-with-lease (protected)	push	pass
+t5533-push-cas::cover-everything-with-default-force-with-lease-allowed	t5533-push-cas	cover everything with default force-with-lease (allowed)	push	pass
+t5533-push-cas::new-branch-covered-by-force-with-lease	t5533-push-cas	new branch covered by force-with-lease	push	pass
+t5533-push-cas::new-branch-covered-by-force-with-lease-explicit	t5533-push-cas	new branch covered by force-with-lease (explicit)	push	pass
+t5533-push-cas::new-branch-already-exists	t5533-push-cas	new branch already exists	push	pass
+t5533-push-cas::background-updates-of-remote-can-be-mitigated-with-a-non-updated-remote-push	t5533-push-cas	background updates of REMOTE can be mitigated with a non-updated REMOTE-push	push	pass
+t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-force-if-includes	t5533-push-cas	background updates to remote can be mitigated with "--force-if-includes"	push	pass
+t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-push-useforceifincludes	t5533-push-cas	background updates to remote can be mitigated with "push.useForceIfIncludes"	push	pass
+t5533-push-cas::force-if-includes-should-be-disabled-for-force-with-lease-refname-expect	t5533-push-cas	"--force-if-includes" should be disabled for --force-with-lease="<refname>:<expect>"	push	pass
+t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase")	push	pass
+t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase-local-re	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase", local rebase)	push	pass
+t5533-push-cas::force-if-includes-should-allow-deletes	t5533-push-cas	"--force-if-includes" should allow deletes	push	pass
+t5534-push-signed::unsigned-push-does-not-send-push-certificate	t5534-push-signed	unsigned push does not send push certificate	push	pass
+t5534-push-signed::talking-with-a-receiver-without-push-certificate-support	t5534-push-signed	talking with a receiver without push certificate support	push	pass
+t5534-push-signed::push-signed-fails-with-a-receiver-without-push-certificate-support	t5534-push-signed	push --signed fails with a receiver without push certificate support	push	pass
+t5534-push-signed::push-signed-1-is-accepted	t5534-push-signed	push --signed=1 is accepted	push	pass
+t5534-push-signed::no-certificate-for-a-signed-push-with-no-update	t5534-push-signed	no certificate for a signed push with no update	push	pass
+t5534-push-signed::signed-push-sends-push-certificate	t5534-push-signed	signed push sends push certificate	push	pass
+t5534-push-signed::ssh-signed-push-sends-push-certificate	t5534-push-signed	ssh signed push sends push certificate	push	pass
+t5534-push-signed::inconsistent-push-options-in-signed-push-not-allowed	t5534-push-signed	inconsistent push options in signed push not allowed	push	pass
+t5534-push-signed::fail-without-key-and-heed-user-signingkey	t5534-push-signed	fail without key and heed user.signingkey	push	pass
+t5534-push-signed::fail-without-key-and-heed-user-signingkey-x509	t5534-push-signed	fail without key and heed user.signingkey x509	push	pass
+t5534-push-signed::fail-without-key-and-heed-user-signingkey-ssh	t5534-push-signed	fail without key and heed user.signingkey ssh	push	pass
+t5534-push-signed::failed-atomic-push-does-not-execute-gpg	t5534-push-signed	failed atomic push does not execute GPG	push	pass
+t5535-fetch-push-symref::setup	t5535-fetch-push-symref	setup	fetch	pass
+t5535-fetch-push-symref::push	t5535-fetch-push-symref	push	fetch	pass
+t5535-fetch-push-symref::fetch	t5535-fetch-push-symref	fetch	fetch	pass
 t5536-fetch-conflicts::setup	t5536-fetch-conflicts	setup	fetch	pass
 t5536-fetch-conflicts::fetch-with-no-conflict	t5536-fetch-conflicts	fetch with no conflict	fetch	pass
 t5536-fetch-conflicts::fetch-conflict-config-vs-config	t5536-fetch-conflicts	fetch conflict: config vs. config	fetch	pass
@@ -10704,19 +10704,19 @@ t5541-http-push-smart::report-error-server-does-not-provide-ref-status	t5541-htt
 t5542-push-http-shallow::setup	t5542-push-http-shallow	setup	push	pass
 t5542-push-http-shallow::push-to-shallow-repo-via-http	t5542-push-http-shallow	push to shallow repo via http	push	pass
 t5542-push-http-shallow::push-from-shallow-repo-via-http	t5542-push-http-shallow	push from shallow repo via http	push	pass
-t5543-atomic-push::atomic-push-works-for-a-single-branch	t5543-atomic-push	atomic push works for a single branch	push	partial
-t5543-atomic-push::atomic-push-works-for-two-branches	t5543-atomic-push	atomic push works for two branches	branch	partial
-t5543-atomic-push::atomic-push-works-in-combination-with-mirror	t5543-atomic-push	atomic push works in combination with --mirror	checkout	partial
-t5543-atomic-push::atomic-push-works-in-combination-with-force	t5543-atomic-push	atomic push works in combination with --force	branch	partial
-t5543-atomic-push::atomic-push-fails-if-one-branch-fails	t5543-atomic-push	atomic push fails if one branch fails	checkout	partial
-t5543-atomic-push::atomic-push-fails-if-one-tag-fails-remotely	t5543-atomic-push	atomic push fails if one tag fails remotely	checkout	partial
-t5543-atomic-push::atomic-push-obeys-update-hook-preventing-a-branch-to-be-pushed	t5543-atomic-push	atomic push obeys update hook preventing a branch to be pushed	checkout	partial
-t5543-atomic-push::atomic-push-is-not-advertised-if-configured	t5543-atomic-push	atomic push is not advertised if configured	config	partial
-t5543-atomic-push::atomic-push-reports-reject-by-update-hook	t5543-atomic-push	atomic push reports (reject by update hook)	branch	partial
-t5543-atomic-push::atomic-push-reports-mirror-but-reject-by-update-hook	t5543-atomic-push	atomic push reports (mirror, but reject by update hook)	remote	partial
-t5543-atomic-push::atomic-push-reports-reject-by-non-ff	t5543-atomic-push	atomic push reports (reject by non-ff)	push	partial
-t5543-atomic-push::atomic-push-reports-exit-code-failure	t5543-atomic-push	atomic push reports exit code failure	push	partial
-t5543-atomic-push::atomic-push-reports-exit-code-failure-with-porcelain	t5543-atomic-push	atomic push reports exit code failure with porcelain	push	partial
+t5543-atomic-push::atomic-push-works-for-a-single-branch	t5543-atomic-push	atomic push works for a single branch	push	pass
+t5543-atomic-push::atomic-push-works-for-two-branches	t5543-atomic-push	atomic push works for two branches	branch	pass
+t5543-atomic-push::atomic-push-works-in-combination-with-mirror	t5543-atomic-push	atomic push works in combination with --mirror	checkout	pass
+t5543-atomic-push::atomic-push-works-in-combination-with-force	t5543-atomic-push	atomic push works in combination with --force	branch	pass
+t5543-atomic-push::atomic-push-fails-if-one-branch-fails	t5543-atomic-push	atomic push fails if one branch fails	checkout	pass
+t5543-atomic-push::atomic-push-fails-if-one-tag-fails-remotely	t5543-atomic-push	atomic push fails if one tag fails remotely	checkout	pass
+t5543-atomic-push::atomic-push-obeys-update-hook-preventing-a-branch-to-be-pushed	t5543-atomic-push	atomic push obeys update hook preventing a branch to be pushed	checkout	pass
+t5543-atomic-push::atomic-push-is-not-advertised-if-configured	t5543-atomic-push	atomic push is not advertised if configured	config	pass
+t5543-atomic-push::atomic-push-reports-reject-by-update-hook	t5543-atomic-push	atomic push reports (reject by update hook)	branch	pass
+t5543-atomic-push::atomic-push-reports-mirror-but-reject-by-update-hook	t5543-atomic-push	atomic push reports (mirror, but reject by update hook)	remote	pass
+t5543-atomic-push::atomic-push-reports-reject-by-non-ff	t5543-atomic-push	atomic push reports (reject by non-ff)	push	pass
+t5543-atomic-push::atomic-push-reports-exit-code-failure	t5543-atomic-push	atomic push reports exit code failure	push	pass
+t5543-atomic-push::atomic-push-reports-exit-code-failure-with-porcelain	t5543-atomic-push	atomic push reports exit code failure with porcelain	push	pass
 t5544-pack-objects-hook::create-some-history-to-fetch	t5544-pack-objects-hook	create some history to fetch	pack-objects	pass
 t5544-pack-objects-hook::create-debugging-hook-script	t5544-pack-objects-hook	create debugging hook script	pack-objects	pass
 t5544-pack-objects-hook::hook-runs-via-global-config	t5544-pack-objects-hook	hook runs via global config	pack-objects	pass
@@ -10724,19 +10724,19 @@ t5544-pack-objects-hook::hook-outputs-are-sane	t5544-pack-objects-hook	hook outp
 t5544-pack-objects-hook::hook-runs-from-c-config	t5544-pack-objects-hook	hook runs from -c config	pack-objects	pass
 t5544-pack-objects-hook::hook-does-not-run-from-repo-config	t5544-pack-objects-hook	hook does not run from repo config	pack-objects	pass
 t5544-pack-objects-hook::hook-works-with-partial-clone	t5544-pack-objects-hook	hook works with partial clone	pack-objects	pass
-t5545-push-options::one-push-option-works-for-a-single-branch	t5545-push-options	one push option works for a single branch	push	partial
-t5545-push-options::push-option-denied-by-remote	t5545-push-options	push option denied by remote	push	partial
-t5545-push-options::two-push-options-work	t5545-push-options	two push options work	push	partial
-t5545-push-options::push-options-and-submodules	t5545-push-options	push options and submodules	push	partial
-t5545-push-options::default-push-option	t5545-push-options	default push option	push	partial
-t5545-push-options::two-default-push-options	t5545-push-options	two default push options	push	partial
-t5545-push-options::push-option-from-command-line-overrides-from-config-push-option	t5545-push-options	push option from command line overrides from-config push option	push	partial
-t5545-push-options::empty-value-of-push-pushoption-in-config-clears-the-list	t5545-push-options	empty value of push.pushOption in config clears the list	push	partial
-t5545-push-options::invalid-push-option-in-config	t5545-push-options	invalid push option in config	push	partial
-t5545-push-options::push-options-keep-quoted-characters-intact-direct	t5545-push-options	push options keep quoted characters intact (direct)	push	partial
-t5545-push-options::push-option-denied-properly-by-http-server	t5545-push-options	push option denied properly by http server	push	partial
-t5545-push-options::push-options-work-properly-across-http	t5545-push-options	push options work properly across http	push	partial
-t5545-push-options::push-options-keep-quoted-characters-intact-http	t5545-push-options	push options keep quoted characters intact (http)	push	partial
+t5545-push-options::one-push-option-works-for-a-single-branch	t5545-push-options	one push option works for a single branch	push	pass
+t5545-push-options::push-option-denied-by-remote	t5545-push-options	push option denied by remote	push	pass
+t5545-push-options::two-push-options-work	t5545-push-options	two push options work	push	pass
+t5545-push-options::push-options-and-submodules	t5545-push-options	push options and submodules	push	pass
+t5545-push-options::default-push-option	t5545-push-options	default push option	push	pass
+t5545-push-options::two-default-push-options	t5545-push-options	two default push options	push	pass
+t5545-push-options::push-option-from-command-line-overrides-from-config-push-option	t5545-push-options	push option from command line overrides from-config push option	push	pass
+t5545-push-options::empty-value-of-push-pushoption-in-config-clears-the-list	t5545-push-options	empty value of push.pushOption in config clears the list	push	pass
+t5545-push-options::invalid-push-option-in-config	t5545-push-options	invalid push option in config	push	pass
+t5545-push-options::push-options-keep-quoted-characters-intact-direct	t5545-push-options	push options keep quoted characters intact (direct)	push	pass
+t5545-push-options::push-option-denied-properly-by-http-server	t5545-push-options	push option denied properly by http server	push	pass
+t5545-push-options::push-options-work-properly-across-http	t5545-push-options	push options work properly across http	push	pass
+t5545-push-options::push-options-keep-quoted-characters-intact-http	t5545-push-options	push options keep quoted characters intact (http)	push	pass
 t5546-receive-limits::prepare-destination-repository	t5546-receive-limits	prepare destination repository	receive-pack	pass
 t5546-receive-limits::setting-receive-maxinputsize-to-512-rejects-push	t5546-receive-limits	setting receive.maxInputSize to 512 rejects push	receive-pack	pass
 t5546-receive-limits::bumping-limit-to-4k-allows-push	t5546-receive-limits	bumping limit to 4k allows push	receive-pack	pass
@@ -10746,12 +10746,12 @@ t5546-receive-limits::prepare-destination-repository-once-more	t5546-receive-lim
 t5546-receive-limits::receive-trumps-transfer	t5546-receive-limits	receive trumps transfer	receive-pack	pass
 t5546-receive-limits::set-unpacklimit-to-unpack-limit	t5546-receive-limits	set unpacklimit to $unpack_limit	receive-pack	pass
 t5546-receive-limits::create-known-size-1024-bytes-commit	t5546-receive-limits	create known-size (1024 bytes) commit	receive-pack	pass
-t5547-push-quarantine::create-picky-dest-repo	t5547-push-quarantine	create picky dest repo	push	partial
-t5547-push-quarantine::accepted-objects-work	t5547-push-quarantine	accepted objects work	push	partial
-t5547-push-quarantine::rejected-objects-are-not-installed	t5547-push-quarantine	rejected objects are not installed	push	partial
-t5547-push-quarantine::rejected-objects-are-removed	t5547-push-quarantine	rejected objects are removed	push	partial
-t5547-push-quarantine::push-to-repo-path-with-path-separator-colon	t5547-push-quarantine	push to repo path with path separator (colon)	push	partial
-t5547-push-quarantine::updating-a-ref-from-quarantine-is-forbidden	t5547-push-quarantine	updating a ref from quarantine is forbidden	push	partial
+t5547-push-quarantine::create-picky-dest-repo	t5547-push-quarantine	create picky dest repo	push	pass
+t5547-push-quarantine::accepted-objects-work	t5547-push-quarantine	accepted objects work	push	pass
+t5547-push-quarantine::rejected-objects-are-not-installed	t5547-push-quarantine	rejected objects are not installed	push	pass
+t5547-push-quarantine::rejected-objects-are-removed	t5547-push-quarantine	rejected objects are removed	push	pass
+t5547-push-quarantine::push-to-repo-path-with-path-separator-colon	t5547-push-quarantine	push to repo path with path separator (colon)	push	pass
+t5547-push-quarantine::updating-a-ref-from-quarantine-is-forbidden	t5547-push-quarantine	updating a ref from quarantine is forbidden	push	pass
 t5548-push-porcelain::setup-upstream-repository-and-workbench	t5548-push-porcelain	setup upstream repository and workbench	push	pass
 t5548-push-porcelain::git-push-porcelain-protocol	t5548-push-porcelain	.. git-push --porcelain ($PROTOCOL)	push	pass
 t5548-push-porcelain::git-push-porcelain-force-protocol	t5548-push-porcelain	.. git-push --porcelain --force ($PROTOCOL)	push	pass
@@ -10995,7 +10995,7 @@ t5564-http-proxy::clone-can-prompt-for-proxy-password	t5564-http-proxy	clone can
 t5564-http-proxy::clone-via-unix-socket	t5564-http-proxy	clone via Unix socket	clone	pass
 t5564-http-proxy::unix-socket-requires-socks	t5564-http-proxy	Unix socket requires socks*:	clone	pass
 t5564-http-proxy::unix-socket-requires-localhost	t5564-http-proxy	Unix socket requires localhost	clone	pass
-t5565-push-multiple::push-to-group	t5565-push-multiple	push to group	push	partial
+t5565-push-multiple::push-to-group	t5565-push-multiple	push to group	push	pass
 t5570-git-daemon::daemon-rejects-invalid-init-timeout-values	t5570-git-daemon	daemon rejects invalid --init-timeout values	daemon	pass
 t5570-git-daemon::daemon-rejects-invalid-timeout-values	t5570-git-daemon	daemon rejects invalid --timeout values	daemon	pass
 t5570-git-daemon::daemon-rejects-invalid-max-connections-values	t5570-git-daemon	daemon rejects invalid --max-connections values	daemon	pass
@@ -11061,40 +11061,40 @@ t5573-pull-verify-signatures::pull-commit-into-unborn-branch-with-untrusted-sign
 t5573-pull-verify-signatures::pull-commit-into-unborn-branch-with-untrusted-signature-and-verify-signatures-an	t5573-pull-verify-signatures	pull commit into unborn branch with untrusted signature and --verify-signatures and minTrustLevel=ultimate	pull	pass
 t5573-pull-verify-signatures::pull-commit-into-unborn-branch-with-untrusted-signature-and-verify-signatures-an-2	t5573-pull-verify-signatures	pull commit into unborn branch with untrusted signature and --verify-signatures and minTrustLevel=marginal	pull	pass
 t5573-pull-verify-signatures::pull-commit-into-unborn-branch-with-untrusted-signature-and-verify-signatures-an-3	t5573-pull-verify-signatures	pull commit into unborn branch with untrusted signature and --verify-signatures and minTrustLevel=undefined	pull	pass
-t5574-fetch-output::fetch-with-invalid-output-format-configuration	t5574-fetch-output	fetch with invalid output format configuration	fetch	partial
-t5574-fetch-output::fetch-aligned-output	t5574-fetch-output	fetch aligned output	fetch	partial
-t5574-fetch-output::fetch-compact-output	t5574-fetch-output	fetch compact output	fetch	partial
-t5574-fetch-output::setup-for-fetch-porcelain-output	t5574-fetch-output	setup for fetch porcelain output	fetch	partial
-t5574-fetch-output::fetch-porcelain-with-multiple-remotes	t5574-fetch-output	fetch porcelain with multiple remotes	fetch	partial
-t5574-fetch-output::fetch-porcelain-refuses-to-work-with-submodules	t5574-fetch-output	fetch porcelain refuses to work with submodules	fetch	partial
-t5574-fetch-output::fetch-porcelain-overrides-fetch-output-config	t5574-fetch-output	fetch porcelain overrides fetch.output config	fetch	partial
-t5574-fetch-output::fetch-no-porcelain-overrides-previous-porcelain	t5574-fetch-output	fetch --no-porcelain overrides previous --porcelain	fetch	partial
-t5574-fetch-output::fetch-output-with-head	t5574-fetch-output	fetch output with HEAD	fetch	partial
-t5574-fetch-output::fetch-porcelain-output-with-head	t5574-fetch-output	fetch porcelain output with HEAD	fetch	partial
-t5574-fetch-output::fetch-output-with-object-id	t5574-fetch-output	fetch output with object ID	fetch	partial
-t5574-fetch-output::no-show-forced-updates	t5574-fetch-output	--no-show-forced-updates	fetch	partial
-t5574-fetch-output::fetch-porcelain-output-opt-atomic	t5574-fetch-output	fetch porcelain output ${opt:+(atomic)}	fetch	partial
+t5574-fetch-output::fetch-with-invalid-output-format-configuration	t5574-fetch-output	fetch with invalid output format configuration	fetch	pass
+t5574-fetch-output::fetch-aligned-output	t5574-fetch-output	fetch aligned output	fetch	pass
+t5574-fetch-output::fetch-compact-output	t5574-fetch-output	fetch compact output	fetch	pass
+t5574-fetch-output::setup-for-fetch-porcelain-output	t5574-fetch-output	setup for fetch porcelain output	fetch	pass
+t5574-fetch-output::fetch-porcelain-with-multiple-remotes	t5574-fetch-output	fetch porcelain with multiple remotes	fetch	pass
+t5574-fetch-output::fetch-porcelain-refuses-to-work-with-submodules	t5574-fetch-output	fetch porcelain refuses to work with submodules	fetch	pass
+t5574-fetch-output::fetch-porcelain-overrides-fetch-output-config	t5574-fetch-output	fetch porcelain overrides fetch.output config	fetch	pass
+t5574-fetch-output::fetch-no-porcelain-overrides-previous-porcelain	t5574-fetch-output	fetch --no-porcelain overrides previous --porcelain	fetch	pass
+t5574-fetch-output::fetch-output-with-head	t5574-fetch-output	fetch output with HEAD	fetch	pass
+t5574-fetch-output::fetch-porcelain-output-with-head	t5574-fetch-output	fetch porcelain output with HEAD	fetch	pass
+t5574-fetch-output::fetch-output-with-object-id	t5574-fetch-output	fetch output with object ID	fetch	pass
+t5574-fetch-output::no-show-forced-updates	t5574-fetch-output	--no-show-forced-updates	fetch	pass
+t5574-fetch-output::fetch-porcelain-output-opt-atomic	t5574-fetch-output	fetch porcelain output ${opt:+(atomic)}	fetch	pass
 t5580-unc-paths::clone-without-file	t5580-unc-paths	clone without file://	clone	pass
 t5580-unc-paths::clone-with-backslashed-path	t5580-unc-paths	clone with backslashed path	clone	pass
 t5580-unc-paths::remote-nick-cannot-contain-backslashes	t5580-unc-paths	remote nick cannot contain backslashes	ls-remote	pass
 t5580-unc-paths::unc-alternates	t5580-unc-paths	unc alternates	init	pass
 t5581-http-curl-verbose::setup-repository	t5581-http-curl-verbose	setup repository	add	pass
 t5581-http-curl-verbose::failure-in-git-upload-pack-is-shown	t5581-http-curl-verbose	failure in git-upload-pack is shown	clone	pass
-t5582-fetch-negative-refspec::prefetch-correctly-modifies-refspecs	t5582-fetch-negative-refspec	--prefetch correctly modifies refspecs	fetch	partial
-t5582-fetch-negative-refspec::prefetch-succeeds-when-refspec-becomes-empty	t5582-fetch-negative-refspec	--prefetch succeeds when refspec becomes empty	fetch	partial
-t5582-fetch-negative-refspec::prefetch-succeeds-with-empty-command-line-refspec	t5582-fetch-negative-refspec	--prefetch succeeds with empty command line refspec	fetch	partial
-t5582-fetch-negative-refspec::clone-and-setup-child-repos	t5582-fetch-negative-refspec	clone and setup child repos	fetch	partial
-t5582-fetch-negative-refspec::fetch-one	t5582-fetch-negative-refspec	fetch one	fetch	partial
-t5582-fetch-negative-refspec::fetch-with-negative-refspec-on-commandline	t5582-fetch-negative-refspec	fetch with negative refspec on commandline	fetch	partial
-t5582-fetch-negative-refspec::fetch-with-negative-sha1-refspec-fails	t5582-fetch-negative-refspec	fetch with negative sha1 refspec fails	fetch	partial
-t5582-fetch-negative-refspec::fetch-with-negative-pattern-refspec	t5582-fetch-negative-refspec	fetch with negative pattern refspec	fetch	partial
-t5582-fetch-negative-refspec::fetch-with-negative-pattern-refspec-does-not-expand-prefix	t5582-fetch-negative-refspec	fetch with negative pattern refspec does not expand prefix	fetch	partial
-t5582-fetch-negative-refspec::fetch-with-negative-refspec-avoids-duplicate-conflict	t5582-fetch-negative-refspec	fetch with negative refspec avoids duplicate conflict	fetch	partial
-t5582-fetch-negative-refspec::push-prune-with-negative-refspec	t5582-fetch-negative-refspec	push --prune with negative refspec	fetch	partial
-t5582-fetch-negative-refspec::push-prune-with-negative-refspec-apply-to-the-destination	t5582-fetch-negative-refspec	push --prune with negative refspec apply to the destination	fetch	partial
-t5582-fetch-negative-refspec::fetch-prune-with-negative-refspec	t5582-fetch-negative-refspec	fetch --prune with negative refspec	fetch	partial
-t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec	t5582-fetch-negative-refspec	push with matching : and negative refspec	fetch	partial
-t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec-2	t5582-fetch-negative-refspec	push with matching +: and negative refspec	fetch	partial
+t5582-fetch-negative-refspec::prefetch-correctly-modifies-refspecs	t5582-fetch-negative-refspec	--prefetch correctly modifies refspecs	fetch	pass
+t5582-fetch-negative-refspec::prefetch-succeeds-when-refspec-becomes-empty	t5582-fetch-negative-refspec	--prefetch succeeds when refspec becomes empty	fetch	pass
+t5582-fetch-negative-refspec::prefetch-succeeds-with-empty-command-line-refspec	t5582-fetch-negative-refspec	--prefetch succeeds with empty command line refspec	fetch	pass
+t5582-fetch-negative-refspec::clone-and-setup-child-repos	t5582-fetch-negative-refspec	clone and setup child repos	fetch	pass
+t5582-fetch-negative-refspec::fetch-one	t5582-fetch-negative-refspec	fetch one	fetch	pass
+t5582-fetch-negative-refspec::fetch-with-negative-refspec-on-commandline	t5582-fetch-negative-refspec	fetch with negative refspec on commandline	fetch	pass
+t5582-fetch-negative-refspec::fetch-with-negative-sha1-refspec-fails	t5582-fetch-negative-refspec	fetch with negative sha1 refspec fails	fetch	pass
+t5582-fetch-negative-refspec::fetch-with-negative-pattern-refspec	t5582-fetch-negative-refspec	fetch with negative pattern refspec	fetch	pass
+t5582-fetch-negative-refspec::fetch-with-negative-pattern-refspec-does-not-expand-prefix	t5582-fetch-negative-refspec	fetch with negative pattern refspec does not expand prefix	fetch	pass
+t5582-fetch-negative-refspec::fetch-with-negative-refspec-avoids-duplicate-conflict	t5582-fetch-negative-refspec	fetch with negative refspec avoids duplicate conflict	fetch	pass
+t5582-fetch-negative-refspec::push-prune-with-negative-refspec	t5582-fetch-negative-refspec	push --prune with negative refspec	fetch	pass
+t5582-fetch-negative-refspec::push-prune-with-negative-refspec-apply-to-the-destination	t5582-fetch-negative-refspec	push --prune with negative refspec apply to the destination	fetch	pass
+t5582-fetch-negative-refspec::fetch-prune-with-negative-refspec	t5582-fetch-negative-refspec	fetch --prune with negative refspec	fetch	pass
+t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec	t5582-fetch-negative-refspec	push with matching : and negative refspec	fetch	pass
+t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec-2	t5582-fetch-negative-refspec	push with matching +: and negative refspec	fetch	pass
 t5583-push-branches::setup-bare-remote	t5583-push-branches	setup bare remote	push	pass
 t5583-push-branches::setup-different-types-of-references	t5583-push-branches	setup different types of references	push	pass
 t5583-push-branches::all-and-branches-have-the-same-behavior	t5583-push-branches	--all and --branches have the same behavior	push	pass
@@ -11491,31 +11491,31 @@ t5700-protocol-v1::clone-with-http-using-protocol-v1-with-empty-sha-256-repo	t57
 t5700-protocol-v1::fetch-with-http-using-protocol-v1	t5700-protocol-v1	fetch with http:// using protocol v1	fetch	pass
 t5700-protocol-v1::pull-with-http-using-protocol-v1	t5700-protocol-v1	pull with http:// using protocol v1	fetch	pass
 t5700-protocol-v1::push-with-http-using-protocol-v1	t5700-protocol-v1	push with http:// using protocol v1	fetch	pass
-t5701-git-serve::setup-to-generate-files-with-expected-content	t5701-git-serve	setup to generate files with expected content	upload-pack	pass
-t5701-git-serve::test-capability-advertisement	t5701-git-serve	test capability advertisement	upload-pack	pass
-t5701-git-serve::stateless-rpc-flag-does-not-list-capabilities	t5701-git-serve	stateless-rpc flag does not list capabilities	upload-pack	pass
-t5701-git-serve::request-invalid-capability	t5701-git-serve	request invalid capability	upload-pack	pass
-t5701-git-serve::request-with-no-command	t5701-git-serve	request with no command	upload-pack	pass
-t5701-git-serve::request-invalid-command	t5701-git-serve	request invalid command	upload-pack	pass
-t5701-git-serve::request-capability-as-command	t5701-git-serve	request capability as command	upload-pack	pass
-t5701-git-serve::request-command-as-capability	t5701-git-serve	request command as capability	upload-pack	pass
-t5701-git-serve::requested-command-is-command-value	t5701-git-serve	requested command is command=value	upload-pack	pass
-t5701-git-serve::wrong-object-format	t5701-git-serve	wrong object-format	upload-pack	pass
-t5701-git-serve::setup-some-refs-and-tags	t5701-git-serve	setup some refs and tags	upload-pack	pass
-t5701-git-serve::basics-of-ls-refs	t5701-git-serve	basics of ls-refs	upload-pack	pass
-t5701-git-serve::ls-refs-complains-about-unknown-options	t5701-git-serve	ls-refs complains about unknown options	upload-pack	pass
-t5701-git-serve::basic-ref-prefixes	t5701-git-serve	basic ref-prefixes	upload-pack	pass
-t5701-git-serve::refs-heads-prefix	t5701-git-serve	refs/heads prefix	upload-pack	pass
-t5701-git-serve::ignore-very-large-set-of-prefixes	t5701-git-serve	ignore very large set of prefixes	upload-pack	pass
-t5701-git-serve::peel-parameter	t5701-git-serve	peel parameter	upload-pack	pass
-t5701-git-serve::symrefs-parameter	t5701-git-serve	symrefs parameter	upload-pack	pass
-t5701-git-serve::sending-server-options	t5701-git-serve	sending server-options	upload-pack	pass
-t5701-git-serve::unexpected-lines-are-not-allowed-in-fetch-request	t5701-git-serve	unexpected lines are not allowed in fetch request	upload-pack	pass
-t5701-git-serve::basics-of-object-info	t5701-git-serve	basics of object-info	upload-pack	pass
-t5701-git-serve::test-capability-advertisement-with-uploadpack-advertisebundleuris	t5701-git-serve	test capability advertisement with uploadpack.advertiseBundleURIs	upload-pack	pass
-t5701-git-serve::basics-of-bundle-uri-dies-if-not-enabled	t5701-git-serve	basics of bundle-uri: dies if not enabled	upload-pack	pass
-t5701-git-serve::object-info-missing-from-capabilities-when-disabled	t5701-git-serve	object-info missing from capabilities when disabled	upload-pack	pass
-t5701-git-serve::object-info-commands-rejected-when-disabled	t5701-git-serve	object-info commands rejected when disabled	upload-pack	pass
+t5701-git-serve::setup-to-generate-files-with-expected-content	t5701-git-serve	setup to generate files with expected content	upload-pack	partial
+t5701-git-serve::test-capability-advertisement	t5701-git-serve	test capability advertisement	upload-pack	partial
+t5701-git-serve::stateless-rpc-flag-does-not-list-capabilities	t5701-git-serve	stateless-rpc flag does not list capabilities	upload-pack	partial
+t5701-git-serve::request-invalid-capability	t5701-git-serve	request invalid capability	upload-pack	partial
+t5701-git-serve::request-with-no-command	t5701-git-serve	request with no command	upload-pack	partial
+t5701-git-serve::request-invalid-command	t5701-git-serve	request invalid command	upload-pack	partial
+t5701-git-serve::request-capability-as-command	t5701-git-serve	request capability as command	upload-pack	partial
+t5701-git-serve::request-command-as-capability	t5701-git-serve	request command as capability	upload-pack	partial
+t5701-git-serve::requested-command-is-command-value	t5701-git-serve	requested command is command=value	upload-pack	partial
+t5701-git-serve::wrong-object-format	t5701-git-serve	wrong object-format	upload-pack	partial
+t5701-git-serve::setup-some-refs-and-tags	t5701-git-serve	setup some refs and tags	upload-pack	partial
+t5701-git-serve::basics-of-ls-refs	t5701-git-serve	basics of ls-refs	upload-pack	partial
+t5701-git-serve::ls-refs-complains-about-unknown-options	t5701-git-serve	ls-refs complains about unknown options	upload-pack	partial
+t5701-git-serve::basic-ref-prefixes	t5701-git-serve	basic ref-prefixes	upload-pack	partial
+t5701-git-serve::refs-heads-prefix	t5701-git-serve	refs/heads prefix	upload-pack	partial
+t5701-git-serve::ignore-very-large-set-of-prefixes	t5701-git-serve	ignore very large set of prefixes	upload-pack	partial
+t5701-git-serve::peel-parameter	t5701-git-serve	peel parameter	upload-pack	partial
+t5701-git-serve::symrefs-parameter	t5701-git-serve	symrefs parameter	upload-pack	partial
+t5701-git-serve::sending-server-options	t5701-git-serve	sending server-options	upload-pack	partial
+t5701-git-serve::unexpected-lines-are-not-allowed-in-fetch-request	t5701-git-serve	unexpected lines are not allowed in fetch request	upload-pack	partial
+t5701-git-serve::basics-of-object-info	t5701-git-serve	basics of object-info	upload-pack	partial
+t5701-git-serve::test-capability-advertisement-with-uploadpack-advertisebundleuris	t5701-git-serve	test capability advertisement with uploadpack.advertiseBundleURIs	upload-pack	partial
+t5701-git-serve::basics-of-bundle-uri-dies-if-not-enabled	t5701-git-serve	basics of bundle-uri: dies if not enabled	upload-pack	partial
+t5701-git-serve::object-info-missing-from-capabilities-when-disabled	t5701-git-serve	object-info missing from capabilities when disabled	upload-pack	partial
+t5701-git-serve::object-info-commands-rejected-when-disabled	t5701-git-serve	object-info commands rejected when disabled	upload-pack	partial
 t5702-protocol-v2::create-repo-to-be-served-by-git-daemon	t5702-protocol-v2	create repo to be served by git-daemon	fetch	pass
 t5702-protocol-v2::list-refs-with-git-using-protocol-v2	t5702-protocol-v2	list refs with git:// using protocol v2	fetch	pass
 t5702-protocol-v2::ref-advertisement-is-filtered-with-ls-remote-using-protocol-v2	t5702-protocol-v2	ref advertisement is filtered with ls-remote using protocol v2	fetch	pass
@@ -11627,9 +11627,9 @@ t5703-upload-pack-ref-in-want::server-is-initially-ahead-ref-in-want	t5703-uploa
 t5703-upload-pack-ref-in-want::server-is-initially-behind-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - no ref in want	upload-pack	partial
 t5703-upload-pack-ref-in-want::server-is-initially-behind-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - ref in want	upload-pack	partial
 t5703-upload-pack-ref-in-want::server-loses-a-ref-ref-in-want	t5703-upload-pack-ref-in-want	server loses a ref - ref in want	upload-pack	partial
-t5704-protocol-violations::extra-delim-packet-in-v2-ls-refs-args	t5704-protocol-violations	extra delim packet in v2 ls-refs args	upload-pack	pass
-t5704-protocol-violations::extra-delim-packet-in-v2-fetch-args	t5704-protocol-violations	extra delim packet in v2 fetch args	upload-pack	pass
-t5704-protocol-violations::bogus-symref-in-v0-capabilities	t5704-protocol-violations	bogus symref in v0 capabilities	ls-remote	pass
+t5704-protocol-violations::extra-delim-packet-in-v2-ls-refs-args	t5704-protocol-violations	extra delim packet in v2 ls-refs args	upload-pack	partial
+t5704-protocol-violations::extra-delim-packet-in-v2-fetch-args	t5704-protocol-violations	extra delim packet in v2 fetch args	upload-pack	partial
+t5704-protocol-violations::bogus-symref-in-v0-capabilities	t5704-protocol-violations	bogus symref in v0 capabilities	ls-remote	partial
 t5705-session-id-in-capabilities::setup-repos-for-session-id-capability-tests	t5705-session-id-in-capabilities	setup repos for session ID capability tests	clone	partial
 t5705-session-id-in-capabilities::enable-sid-advertisement	t5705-session-id-in-capabilities	enable SID advertisement	config	partial
 t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-fetch-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (fetch v${PROTO})	fetch	partial
@@ -11637,81 +11637,81 @@ t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-push-v-p
 t5705-session-id-in-capabilities::session-ids-advertised-fetch-v-proto	t5705-session-id-in-capabilities	session IDs advertised (fetch v${PROTO})	fetch	partial
 t5705-session-id-in-capabilities::session-ids-advertised-push-v-proto	t5705-session-id-in-capabilities	session IDs advertised (push v${PROTO})	pull	partial
 t5705-session-id-in-capabilities::client-server-log-negotiated-version-v-proto	t5705-session-id-in-capabilities	client & server log negotiated version (v${PROTO})	fetch	partial
-t5710-promisor-remote-capability::setup-create-template-repository	t5710-promisor-remote-capability	setup: create "template" repository	add	pass
-t5710-promisor-remote-capability::setup-create-bare-server-repository	t5710-promisor-remote-capability	setup: create bare "server" repository	clone	pass
-t5710-promisor-remote-capability::setup-for-testing-promisor-remote-advertisement	t5710-promisor-remote-capability	setup for testing promisor remote advertisement	config	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true'	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-false	t5710-promisor-remote-capability	clone with promisor.advertise set to 'false'	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-none	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'None'	clone	pass
-t5710-promisor-remote-capability::init-fetch-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	init + fetch with promisor.advertise set to 'true'	config	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownname	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownName'	clone	pass
-t5710-promisor-remote-capability::clone-with-knownname-and-different-remote-names	t5710-promisor-remote-capability	clone with 'KnownName' and different remote names	clone	pass
-t5710-promisor-remote-capability::clone-with-knownname-and-missing-url-in-the-config	t5710-promisor-remote-capability	clone with 'KnownName' and missing URL in the config	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownurl	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownUrl'	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-different-remote-urls	t5710-promisor-remote-capability	clone with 'KnownUrl' and different remote urls	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-url-not-configured-on-the-server	t5710-promisor-remote-capability	clone with 'KnownUrl' and url not configured on the server	clone	pass
-t5710-promisor-remote-capability::clone-with-knownurl-and-empty-url-so-not-advertised	t5710-promisor-remote-capability	clone with 'KnownUrl' and empty url, so not advertised	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-sendfields	t5710-promisor-remote-capability	clone with promisor.sendFields	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-checkfields	t5710-promisor-remote-capability	clone with promisor.checkFields	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-storefields-partialclonefilter	t5710-promisor-remote-capability	clone with promisor.storeFields=partialCloneFilter	clone	pass
-t5710-promisor-remote-capability::clone-and-fetch-with-filter-auto	t5710-promisor-remote-capability	clone and fetch with --filter=auto	clone	pass
-t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true-but-don-t-delete-the-client	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true' but don't delete the client	clone	pass
-t5710-promisor-remote-capability::setup-for-subsequent-fetches	t5710-promisor-remote-capability	setup for subsequent fetches	add	pass
-t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-true	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is true	config	pass
-t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-false	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is false	config	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-just-uris	t5750-bundle-uri-parse	bundle_uri_parse_line() just URIs	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris-and-parent-paths	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs and parent paths	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty key or value	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty lines	bundle	pass
-t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-duplicate-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: duplicate lines	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-just-uris	t5750-bundle-uri-parse	parse config format: just URIs	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-relative-uris	t5750-bundle-uri-parse	parse config format: relative URIs	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	parse config format edge cases: empty key or value	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format: creationToken heuristic	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-edge-cases-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format edge cases: creationToken heuristic	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-bundle-with-missing-uri	t5750-bundle-uri-parse	parse config format: bundle with missing uri	bundle	pass
-t5750-bundle-uri-parse::parse-config-format-bundle-with-url-instead-of-uri	t5750-bundle-uri-parse	parse config format: bundle with url instead of uri	bundle	pass
-t5801-remote-helpers::setup-repository	t5801-remote-helpers	setup repository	remote	pass
-t5801-remote-helpers::cloning-from-local-repo	t5801-remote-helpers	cloning from local repo	remote	pass
-t5801-remote-helpers::clone-with-remote-vcs-config	t5801-remote-helpers	clone with remote.*.vcs config	remote	pass
-t5801-remote-helpers::fetch-with-configured-remote-vcs	t5801-remote-helpers	fetch with configured remote.*.vcs	remote	pass
-t5801-remote-helpers::vcs-remote-with-no-url	t5801-remote-helpers	vcs remote with no url	remote	pass
-t5801-remote-helpers::create-new-commit-on-remote	t5801-remote-helpers	create new commit on remote	remote	pass
-t5801-remote-helpers::pulling-from-local-repo	t5801-remote-helpers	pulling from local repo	remote	pass
-t5801-remote-helpers::pushing-to-local-repo	t5801-remote-helpers	pushing to local repo	remote	pass
-t5801-remote-helpers::fetch-new-branch	t5801-remote-helpers	fetch new branch	remote	pass
-t5801-remote-helpers::fetch-multiple-branches	t5801-remote-helpers	fetch multiple branches	remote	pass
-t5801-remote-helpers::push-when-remote-has-extra-refs	t5801-remote-helpers	push when remote has extra refs	remote	pass
-t5801-remote-helpers::push-new-branch-by-name	t5801-remote-helpers	push new branch by name	remote	pass
-t5801-remote-helpers::push-new-branch-with-old-new-refspec	t5801-remote-helpers	push new branch with old:new refspec	remote	pass
-t5801-remote-helpers::push-new-branch-with-head-new-refspec	t5801-remote-helpers	push new branch with HEAD:new refspec	remote	pass
-t5801-remote-helpers::push-delete-branch	t5801-remote-helpers	push delete branch	remote	pass
-t5801-remote-helpers::forced-push	t5801-remote-helpers	forced push	remote	pass
-t5801-remote-helpers::cloning-without-refspec	t5801-remote-helpers	cloning without refspec	remote	pass
-t5801-remote-helpers::pulling-without-refspecs	t5801-remote-helpers	pulling without refspecs	remote	pass
-t5801-remote-helpers::pushing-without-refspecs	t5801-remote-helpers	pushing without refspecs	remote	pass
-t5801-remote-helpers::pulling-without-marks	t5801-remote-helpers	pulling without marks	remote	pass
-t5801-remote-helpers::push-all-with-existing-object	t5801-remote-helpers	push all with existing object	remote	pass
-t5801-remote-helpers::push-ref-with-existing-object	t5801-remote-helpers	push ref with existing object	remote	pass
-t5801-remote-helpers::push-signed-tag	t5801-remote-helpers	push signed tag	remote	pass
-t5801-remote-helpers::push-signed-tag-with-signed-tags-capability	t5801-remote-helpers	push signed tag with signed-tags capability	remote	pass
-t5801-remote-helpers::push-update-refs	t5801-remote-helpers	push update refs	remote	pass
-t5801-remote-helpers::push-update-refs-disabled-by-no-private-update	t5801-remote-helpers	push update refs disabled by no-private-update	remote	pass
-t5801-remote-helpers::push-update-refs-failure	t5801-remote-helpers	push update refs failure	remote	pass
-t5801-remote-helpers::proper-failure-checks-for-fetching	t5801-remote-helpers	proper failure checks for fetching	remote	pass
-t5801-remote-helpers::proper-failure-checks-for-pushing	t5801-remote-helpers	proper failure checks for pushing	remote	pass
-t5801-remote-helpers::push-messages	t5801-remote-helpers	push messages	remote	pass
-t5801-remote-helpers::fetch-head	t5801-remote-helpers	fetch HEAD	remote	pass
-t5801-remote-helpers::fetch-url	t5801-remote-helpers	fetch url	remote	pass
-t5801-remote-helpers::fetch-tag	t5801-remote-helpers	fetch tag	remote	pass
-t5801-remote-helpers::totally-broken-helper-reports-failure-message	t5801-remote-helpers	totally broken helper reports failure message	remote	pass
-t5802-connect-helper::update-following-tag	t5802-connect-helper	update following tag	commit	pass
-t5802-connect-helper::update-backfilled-tag	t5802-connect-helper	update backfilled tag	commit	pass
-t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-connect-helper	update backfilled tag without primary transfer	for-each-ref	pass
-t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	pass
-t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	pass
-t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	pass
+t5710-promisor-remote-capability::setup-create-template-repository	t5710-promisor-remote-capability	setup: create "template" repository	add	partial
+t5710-promisor-remote-capability::setup-create-bare-server-repository	t5710-promisor-remote-capability	setup: create bare "server" repository	clone	partial
+t5710-promisor-remote-capability::setup-for-testing-promisor-remote-advertisement	t5710-promisor-remote-capability	setup for testing promisor remote advertisement	config	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true'	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-false	t5710-promisor-remote-capability	clone with promisor.advertise set to 'false'	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-none	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'None'	clone	partial
+t5710-promisor-remote-capability::init-fetch-with-promisor-advertise-set-to-true	t5710-promisor-remote-capability	init + fetch with promisor.advertise set to 'true'	config	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownname	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownName'	clone	partial
+t5710-promisor-remote-capability::clone-with-knownname-and-different-remote-names	t5710-promisor-remote-capability	clone with 'KnownName' and different remote names	clone	partial
+t5710-promisor-remote-capability::clone-with-knownname-and-missing-url-in-the-config	t5710-promisor-remote-capability	clone with 'KnownName' and missing URL in the config	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-acceptfromserver-set-to-knownurl	t5710-promisor-remote-capability	clone with promisor.acceptfromserver set to 'KnownUrl'	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-different-remote-urls	t5710-promisor-remote-capability	clone with 'KnownUrl' and different remote urls	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-url-not-configured-on-the-server	t5710-promisor-remote-capability	clone with 'KnownUrl' and url not configured on the server	clone	partial
+t5710-promisor-remote-capability::clone-with-knownurl-and-empty-url-so-not-advertised	t5710-promisor-remote-capability	clone with 'KnownUrl' and empty url, so not advertised	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-sendfields	t5710-promisor-remote-capability	clone with promisor.sendFields	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-checkfields	t5710-promisor-remote-capability	clone with promisor.checkFields	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-storefields-partialclonefilter	t5710-promisor-remote-capability	clone with promisor.storeFields=partialCloneFilter	clone	partial
+t5710-promisor-remote-capability::clone-and-fetch-with-filter-auto	t5710-promisor-remote-capability	clone and fetch with --filter=auto	clone	partial
+t5710-promisor-remote-capability::clone-with-promisor-advertise-set-to-true-but-don-t-delete-the-client	t5710-promisor-remote-capability	clone with promisor.advertise set to 'true' but don't delete the client	clone	partial
+t5710-promisor-remote-capability::setup-for-subsequent-fetches	t5710-promisor-remote-capability	setup for subsequent fetches	add	partial
+t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-true	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is true	config	partial
+t5710-promisor-remote-capability::subsequent-fetch-from-a-client-when-promisor-advertise-is-false	t5710-promisor-remote-capability	subsequent fetch from a client when promisor.advertise is false	config	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-just-uris	t5750-bundle-uri-parse	bundle_uri_parse_line() just URIs	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-relative-uris-and-parent-paths	t5750-bundle-uri-parse	bundle_uri_parse_line(): relative URIs and parent paths	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty key or value	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-empty-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: empty lines	bundle	partial
+t5750-bundle-uri-parse::bundle-uri-parse-line-parsing-edge-cases-duplicate-lines	t5750-bundle-uri-parse	bundle_uri_parse_line() parsing edge cases: duplicate lines	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-just-uris	t5750-bundle-uri-parse	parse config format: just URIs	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-relative-uris	t5750-bundle-uri-parse	parse config format: relative URIs	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-edge-cases-empty-key-or-value	t5750-bundle-uri-parse	parse config format edge cases: empty key or value	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format: creationToken heuristic	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-edge-cases-creationtoken-heuristic	t5750-bundle-uri-parse	parse config format edge cases: creationToken heuristic	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-bundle-with-missing-uri	t5750-bundle-uri-parse	parse config format: bundle with missing uri	bundle	partial
+t5750-bundle-uri-parse::parse-config-format-bundle-with-url-instead-of-uri	t5750-bundle-uri-parse	parse config format: bundle with url instead of uri	bundle	partial
+t5801-remote-helpers::setup-repository	t5801-remote-helpers	setup repository	remote	partial
+t5801-remote-helpers::cloning-from-local-repo	t5801-remote-helpers	cloning from local repo	remote	partial
+t5801-remote-helpers::clone-with-remote-vcs-config	t5801-remote-helpers	clone with remote.*.vcs config	remote	partial
+t5801-remote-helpers::fetch-with-configured-remote-vcs	t5801-remote-helpers	fetch with configured remote.*.vcs	remote	partial
+t5801-remote-helpers::vcs-remote-with-no-url	t5801-remote-helpers	vcs remote with no url	remote	partial
+t5801-remote-helpers::create-new-commit-on-remote	t5801-remote-helpers	create new commit on remote	remote	partial
+t5801-remote-helpers::pulling-from-local-repo	t5801-remote-helpers	pulling from local repo	remote	partial
+t5801-remote-helpers::pushing-to-local-repo	t5801-remote-helpers	pushing to local repo	remote	partial
+t5801-remote-helpers::fetch-new-branch	t5801-remote-helpers	fetch new branch	remote	partial
+t5801-remote-helpers::fetch-multiple-branches	t5801-remote-helpers	fetch multiple branches	remote	partial
+t5801-remote-helpers::push-when-remote-has-extra-refs	t5801-remote-helpers	push when remote has extra refs	remote	partial
+t5801-remote-helpers::push-new-branch-by-name	t5801-remote-helpers	push new branch by name	remote	partial
+t5801-remote-helpers::push-new-branch-with-old-new-refspec	t5801-remote-helpers	push new branch with old:new refspec	remote	partial
+t5801-remote-helpers::push-new-branch-with-head-new-refspec	t5801-remote-helpers	push new branch with HEAD:new refspec	remote	partial
+t5801-remote-helpers::push-delete-branch	t5801-remote-helpers	push delete branch	remote	partial
+t5801-remote-helpers::forced-push	t5801-remote-helpers	forced push	remote	partial
+t5801-remote-helpers::cloning-without-refspec	t5801-remote-helpers	cloning without refspec	remote	partial
+t5801-remote-helpers::pulling-without-refspecs	t5801-remote-helpers	pulling without refspecs	remote	partial
+t5801-remote-helpers::pushing-without-refspecs	t5801-remote-helpers	pushing without refspecs	remote	partial
+t5801-remote-helpers::pulling-without-marks	t5801-remote-helpers	pulling without marks	remote	partial
+t5801-remote-helpers::push-all-with-existing-object	t5801-remote-helpers	push all with existing object	remote	partial
+t5801-remote-helpers::push-ref-with-existing-object	t5801-remote-helpers	push ref with existing object	remote	partial
+t5801-remote-helpers::push-signed-tag	t5801-remote-helpers	push signed tag	remote	partial
+t5801-remote-helpers::push-signed-tag-with-signed-tags-capability	t5801-remote-helpers	push signed tag with signed-tags capability	remote	partial
+t5801-remote-helpers::push-update-refs	t5801-remote-helpers	push update refs	remote	partial
+t5801-remote-helpers::push-update-refs-disabled-by-no-private-update	t5801-remote-helpers	push update refs disabled by no-private-update	remote	partial
+t5801-remote-helpers::push-update-refs-failure	t5801-remote-helpers	push update refs failure	remote	partial
+t5801-remote-helpers::proper-failure-checks-for-fetching	t5801-remote-helpers	proper failure checks for fetching	remote	partial
+t5801-remote-helpers::proper-failure-checks-for-pushing	t5801-remote-helpers	proper failure checks for pushing	remote	partial
+t5801-remote-helpers::push-messages	t5801-remote-helpers	push messages	remote	partial
+t5801-remote-helpers::fetch-head	t5801-remote-helpers	fetch HEAD	remote	partial
+t5801-remote-helpers::fetch-url	t5801-remote-helpers	fetch url	remote	partial
+t5801-remote-helpers::fetch-tag	t5801-remote-helpers	fetch tag	remote	partial
+t5801-remote-helpers::totally-broken-helper-reports-failure-message	t5801-remote-helpers	totally broken helper reports failure message	remote	partial
+t5802-connect-helper::update-following-tag	t5802-connect-helper	update following tag	commit	partial
+t5802-connect-helper::update-backfilled-tag	t5802-connect-helper	update backfilled tag	commit	partial
+t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-connect-helper	update backfilled tag without primary transfer	for-each-ref	partial
+t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	partial
+t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	partial
+t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	partial
 t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	pass
 t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	pass
 t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	pass
@@ -12591,7 +12591,7 @@ t6200-fmt-merge-msg::merge-msg-lots-of-commits	t6200-fmt-merge-msg	merge-msg lot
 t6200-fmt-merge-msg::merge-msg-with-merging-an-annotated-tag	t6200-fmt-merge-msg	merge-msg with "merging" an annotated tag	fmt-merge-msg	pass
 t6200-fmt-merge-msg::merge-into-name-name	t6200-fmt-merge-msg	merge --into-name=<name>	fmt-merge-msg	pass
 t6200-fmt-merge-msg::merge-suppressdest-configuration	t6200-fmt-merge-msg	merge.suppressDest configuration	fmt-merge-msg	pass
-t6300-for-each-ref::for-each-ref-does-not-crash-with-h	t6300-for-each-ref	for-each-ref does not crash with -h	for-each-ref	pass
+t6300-for-each-ref::for-each-ref-does-not-crash-with-h	t6300-for-each-ref	for-each-ref does not crash with -h	for-each-ref	partial
 t6301-for-each-ref-errors::broken-refs-are-reported-correctly	t6301-for-each-ref-errors	Broken refs are reported correctly	for-each-ref	pass
 t6301-for-each-ref-errors::null-sha1-refs-are-reported-correctly	t6301-for-each-ref-errors	NULL_SHA1 refs are reported correctly	for-each-ref	pass
 t6301-for-each-ref-errors::missing-objects-are-reported-correctly	t6301-for-each-ref-errors	Missing objects are reported correctly	for-each-ref	pass
@@ -13416,218 +13416,218 @@ t7003-filter-branch::filter-branch-handles-ref-deletion	t7003-filter-branch	filt
 t7003-filter-branch::filter-branch-handles-ref-rewrite	t7003-filter-branch	filter-branch handles ref rewrite	filter-branch	pass
 t7003-filter-branch::filter-branch-handles-ancestor-rewrite	t7003-filter-branch	filter-branch handles ancestor rewrite	filter-branch	pass
 t7003-filter-branch::remove-a-certain-author-s-commits	t7003-filter-branch	remove a certain author's commits	filter-branch	pass
-t7004-tag::setup	t7004-tag	setup	tag	pass
-t7004-tag::listing-all-tags-in-an-empty-tree-should-succeed	t7004-tag	listing all tags in an empty tree should succeed	tag	pass
-t7004-tag::listing-all-tags-in-an-empty-tree-should-output-nothing	t7004-tag	listing all tags in an empty tree should output nothing	tag	pass
-t7004-tag::sort-tags-ignore-case	t7004-tag	sort tags, ignore case	tag	pass
-t7004-tag::looking-for-a-tag-in-an-empty-tree-should-fail	t7004-tag	looking for a tag in an empty tree should fail	tag	pass
-t7004-tag::creating-a-tag-in-an-empty-tree-should-fail	t7004-tag	creating a tag in an empty tree should fail	tag	pass
-t7004-tag::creating-a-tag-for-head-in-an-empty-tree-should-fail	t7004-tag	creating a tag for HEAD in an empty tree should fail	tag	pass
-t7004-tag::creating-a-tag-for-an-unknown-revision-should-fail	t7004-tag	creating a tag for an unknown revision should fail	tag	pass
-t7004-tag::creating-a-tag-using-default-head-should-succeed	t7004-tag	creating a tag using default HEAD should succeed	tag	pass
-t7004-tag::head-is-forbidden-as-a-tagname	t7004-tag	HEAD is forbidden as a tagname	tag	pass
-t7004-tag::git-tag-can-remove-a-tag-named-head	t7004-tag	"git tag" can remove a tag named HEAD	tag	pass
-t7004-tag::creating-a-tag-with-create-reflog-should-create-reflog	t7004-tag	creating a tag with --create-reflog should create reflog	tag	pass
-t7004-tag::annotated-tag-with-create-reflog-has-correct-message	t7004-tag	annotated tag with --create-reflog has correct message	tag	pass
-t7004-tag::create-reflog-does-not-create-reflog-on-failure	t7004-tag	--create-reflog does not create reflog on failure	tag	pass
-t7004-tag::option-core-logallrefupdates-always-creates-reflog	t7004-tag	option core.logAllRefUpdates=always creates reflog	tag	pass
-t7004-tag::listing-all-tags-if-one-exists-should-succeed	t7004-tag	listing all tags if one exists should succeed	tag	pass
-t7004-tag::multiple-l-or-list-options-are-equivalent-to-one-l-option	t7004-tag	Multiple -l or --list options are equivalent to one -l option	tag	pass
-t7004-tag::listing-all-tags-if-one-exists-should-output-that-tag	t7004-tag	listing all tags if one exists should output that tag	tag	pass
-t7004-tag::listing-a-tag-using-a-matching-pattern-should-succeed	t7004-tag	listing a tag using a matching pattern should succeed	tag	pass
-t7004-tag::listing-a-tag-with-ignore-case	t7004-tag	listing a tag with --ignore-case	tag	pass
-t7004-tag::listing-a-tag-using-a-matching-pattern-should-output-that-tag	t7004-tag	listing a tag using a matching pattern should output that tag	tag	pass
-t7004-tag::listing-tags-using-a-non-matching-pattern-should-succeed	t7004-tag	listing tags using a non-matching pattern should succeed	tag	pass
-t7004-tag::listing-tags-using-a-non-matching-pattern-should-output-nothing	t7004-tag	listing tags using a non-matching pattern should output nothing	tag	pass
-t7004-tag::trying-to-create-a-tag-with-the-name-of-one-existing-should-fail	t7004-tag	trying to create a tag with the name of one existing should fail	tag	pass
-t7004-tag::trying-to-create-a-tag-with-a-non-valid-name-should-fail	t7004-tag	trying to create a tag with a non-valid name should fail	tag	pass
-t7004-tag::creating-a-tag-using-head-directly-should-succeed	t7004-tag	creating a tag using HEAD directly should succeed	tag	pass
-t7004-tag::force-can-create-a-tag-with-the-name-of-one-existing	t7004-tag	--force can create a tag with the name of one existing	tag	pass
-t7004-tag::force-is-moot-with-a-non-existing-tag-name	t7004-tag	--force is moot with a non-existing tag name	tag	pass
-t7004-tag::trying-to-delete-an-unknown-tag-should-fail	t7004-tag	trying to delete an unknown tag should fail	tag	pass
-t7004-tag::trying-to-delete-tags-without-params-should-succeed-and-do-nothing	t7004-tag	trying to delete tags without params should succeed and do nothing	tag	pass
-t7004-tag::deleting-two-existing-tags-in-one-command-should-succeed	t7004-tag	deleting two existing tags in one command should succeed	tag	pass
-t7004-tag::creating-a-tag-with-the-name-of-another-deleted-one-should-succeed	t7004-tag	creating a tag with the name of another deleted one should succeed	tag	pass
-t7004-tag::trying-to-delete-two-tags-existing-and-not-should-fail-in-the-2nd	t7004-tag	trying to delete two tags, existing and not, should fail in the 2nd	tag	pass
-t7004-tag::trying-to-delete-an-already-deleted-tag-should-fail	t7004-tag	trying to delete an already deleted tag should fail	tag	pass
-t7004-tag::listing-all-tags-should-print-them-ordered	t7004-tag	listing all tags should print them ordered	tag	pass
-t7004-tag::listing-tags-with-substring-as-pattern-must-print-those-matching	t7004-tag	listing tags with substring as pattern must print those matching	tag	pass
-t7004-tag::listing-tags-with-a-suffix-as-pattern-must-print-those-matching	t7004-tag	listing tags with a suffix as pattern must print those matching	tag	pass
-t7004-tag::listing-tags-with-a-prefix-as-pattern-must-print-those-matching	t7004-tag	listing tags with a prefix as pattern must print those matching	tag	pass
-t7004-tag::listing-tags-using-a-name-as-pattern-must-print-that-one-matching	t7004-tag	listing tags using a name as pattern must print that one matching	tag	pass
-t7004-tag::listing-tags-using-a-name-as-pattern-must-print-that-one-matching-2	t7004-tag	listing tags using a name as pattern must print that one matching	tag	pass
-t7004-tag::listing-tags-with-in-the-pattern-should-print-those-matching	t7004-tag	listing tags with ? in the pattern should print those matching	tag	pass
-t7004-tag::listing-tags-using-v-should-print-nothing-because-none-have-v	t7004-tag	listing tags using v.* should print nothing because none have v.	tag	pass
-t7004-tag::listing-tags-using-v-should-print-only-those-having-v	t7004-tag	listing tags using v* should print only those having v	tag	pass
-t7004-tag::tag-l-can-accept-multiple-patterns	t7004-tag	tag -l can accept multiple patterns	tag	pass
-t7004-tag::tag-l-pattern-l-pattern-works-as-our-buggy-documentation-previously-suggested	t7004-tag	tag -l <pattern> -l <pattern> works, as our buggy documentation previously suggested	tag	pass
-t7004-tag::listing-tags-in-column	t7004-tag	listing tags in column	tag	pass
-t7004-tag::listing-tags-in-column-with-column	t7004-tag	listing tags in column with column.*	tag	pass
-t7004-tag::listing-tag-with-n-column-should-fail	t7004-tag	listing tag with -n --column should fail	tag	pass
-t7004-tag::listing-tags-n-in-column-with-column-ui-ignored	t7004-tag	listing tags -n in column with column.ui ignored	tag	pass
-t7004-tag::a-non-annotated-tag-created-without-parameters-should-point-to-head	t7004-tag	a non-annotated tag created without parameters should point to HEAD	tag	pass
-t7004-tag::trying-to-verify-an-unknown-tag-should-fail	t7004-tag	trying to verify an unknown tag should fail	tag	pass
-t7004-tag::trying-to-verify-a-non-annotated-and-non-signed-tag-should-fail	t7004-tag	trying to verify a non-annotated and non-signed tag should fail	tag	pass
-t7004-tag::trying-to-verify-many-non-annotated-or-unknown-tags-should-fail	t7004-tag	trying to verify many non-annotated or unknown tags, should fail	tag	pass
-t7004-tag::creating-an-annotated-tag-with-m-message-should-succeed	t7004-tag	creating an annotated tag with -m message should succeed	tag	pass
-t7004-tag::set-up-editor	t7004-tag	set up editor	tag	pass
-t7004-tag::creating-an-annotated-tag-with-m-message-edit-should-succeed	t7004-tag	creating an annotated tag with -m message --edit should succeed	tag	pass
-t7004-tag::creating-an-annotated-tag-with-f-messagefile-should-succeed	t7004-tag	creating an annotated tag with -F messagefile should succeed	tag	pass
-t7004-tag::set-up-editor-2	t7004-tag	set up editor	tag	pass
-t7004-tag::creating-an-annotated-tag-with-f-messagefile-edit-should-succeed	t7004-tag	creating an annotated tag with -F messagefile --edit should succeed	tag	pass
-t7004-tag::creating-an-annotated-tag-with-f-should-succeed	t7004-tag	creating an annotated tag with -F - should succeed	tag	pass
-t7004-tag::trying-to-create-a-tag-with-a-non-existing-f-file-should-fail	t7004-tag	trying to create a tag with a non-existing -F file should fail	tag	pass
-t7004-tag::trying-to-create-tags-giving-both-m-or-f-options-should-fail	t7004-tag	trying to create tags giving both -m or -F options should fail	tag	pass
-t7004-tag::creating-a-tag-with-an-empty-m-message-should-succeed	t7004-tag	creating a tag with an empty -m message should succeed	tag	pass
-t7004-tag::creating-a-tag-with-an-empty-f-messagefile-should-succeed	t7004-tag	creating a tag with an empty -F messagefile should succeed	tag	pass
-t7004-tag::extra-blanks-in-the-message-for-an-annotated-tag-should-be-removed	t7004-tag	extra blanks in the message for an annotated tag should be removed	tag	pass
-t7004-tag::creating-a-tag-with-blank-m-message-with-spaces-should-succeed	t7004-tag	creating a tag with blank -m message with spaces should succeed	tag	pass
-t7004-tag::creating-a-tag-with-blank-f-messagefile-with-spaces-should-succeed	t7004-tag	creating a tag with blank -F messagefile with spaces should succeed	tag	pass
-t7004-tag::creating-a-tag-with-f-file-of-spaces-and-no-newline-should-succeed	t7004-tag	creating a tag with -F file of spaces and no newline should succeed	tag	pass
-t7004-tag::creating-a-tag-using-a-f-messagefile-with-comments-should-succeed	t7004-tag	creating a tag using a -F messagefile with #comments should succeed	tag	pass
-t7004-tag::creating-a-tag-with-a-comment-in-the-m-message-should-succeed	t7004-tag	creating a tag with a #comment in the -m message should succeed	tag	pass
-t7004-tag::creating-a-tag-with-comments-in-the-f-messagefile-should-succeed	t7004-tag	creating a tag with #comments in the -F messagefile should succeed	tag	pass
-t7004-tag::creating-a-tag-with-a-file-of-comment-and-no-newline-should-succeed	t7004-tag	creating a tag with a file of #comment and no newline should succeed	tag	pass
-t7004-tag::create-tag-with-m-and-trailer	t7004-tag	create tag with -m and --trailer	tag	pass
-t7004-tag::list-tag-extracting-trailers	t7004-tag	list tag extracting trailers	tag	pass
-t7004-tag::create-tag-with-f-and-trailer	t7004-tag	create tag with -F and --trailer	tag	pass
-t7004-tag::create-tag-with-m-and-trailer-and-edit	t7004-tag	create tag with -m and --trailer and --edit	tag	pass
-t7004-tag::create-tag-with-f-and-trailer-and-edit	t7004-tag	create tag with -F and --trailer and --edit	tag	pass
-t7004-tag::create-annotated-tag-and-force-editor-when-only-trailer-is-given	t7004-tag	create annotated tag and force editor when only --trailer is given	tag	pass
-t7004-tag::bad-editor-causes-panic-when-only-trailer-is-given	t7004-tag	bad editor causes panic when only --trailer is given	tag	pass
-t7004-tag::listing-the-one-line-message-of-a-non-signed-tag-should-succeed	t7004-tag	listing the one-line message of a non-signed tag should succeed	tag	pass
-t7004-tag::the-n-100-invocation-means-n-list-100-not-n100	t7004-tag	The -n 100 invocation means -n --list 100, not -n100	tag	pass
-t7004-tag::listing-the-zero-lines-message-of-a-non-signed-tag-should-succeed	t7004-tag	listing the zero-lines message of a non-signed tag should succeed	tag	pass
-t7004-tag::listing-many-message-lines-of-a-non-signed-tag-should-succeed	t7004-tag	listing many message lines of a non-signed tag should succeed	tag	pass
-t7004-tag::annotations-for-blobs-are-empty	t7004-tag	annotations for blobs are empty	tag	pass
-t7004-tag::git-tag-format-with-ahead-behind	t7004-tag	git tag --format with ahead-behind	tag	pass
-t7004-tag::trying-to-verify-an-annotated-non-signed-tag-should-fail	t7004-tag	trying to verify an annotated non-signed tag should fail	tag	pass
-t7004-tag::trying-to-verify-a-file-annotated-non-signed-tag-should-fail	t7004-tag	trying to verify a file-annotated non-signed tag should fail	tag	pass
-t7004-tag::trying-to-verify-two-annotated-non-signed-tags-should-fail	t7004-tag	trying to verify two annotated non-signed tags should fail	tag	pass
-t7004-tag::creating-a-signed-tag-with-m-message-should-succeed	t7004-tag	creating a signed tag with -m message should succeed	tag	pass
-t7004-tag::sign-with-a-given-key-id	t7004-tag	sign with a given key id	tag	pass
-t7004-tag::sign-with-an-unknown-id-1	t7004-tag	sign with an unknown id (1)	tag	pass
-t7004-tag::sign-with-an-unknown-id-2	t7004-tag	sign with an unknown id (2)	tag	pass
-t7004-tag::u-implies-signed-tag	t7004-tag	-u implies signed tag	tag	pass
-t7004-tag::creating-a-signed-tag-with-f-messagefile-should-succeed	t7004-tag	creating a signed tag with -F messagefile should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-f-should-succeed	t7004-tag	creating a signed tag with -F - should succeed	tag	pass
-t7004-tag::s-implies-annotated-tag	t7004-tag	-s implies annotated tag	tag	pass
-t7004-tag::git-tag-s-implied-if-configured-with-tag-forcesignannotated	t7004-tag	git tag -s implied if configured with tag.forcesignannotated	tag	pass
-t7004-tag::lightweight-with-no-message-when-configured-with-tag-forcesignannotated	t7004-tag	lightweight with no message when configured with tag.forcesignannotated	tag	pass
-t7004-tag::git-tag-a-disable-configured-tag-forcesignannotated	t7004-tag	git tag -a disable configured tag.forcesignannotated	tag	pass
-t7004-tag::git-tag-sign-enable-gpg-sign	t7004-tag	git tag --sign enable GPG sign	tag	pass
-t7004-tag::git-tag-configured-tag-gpgsign-enables-gpg-sign	t7004-tag	git tag configured tag.gpgsign enables GPG sign	tag	pass
-t7004-tag::git-tag-no-sign-configured-tag-gpgsign-skip-gpg-sign	t7004-tag	git tag --no-sign configured tag.gpgsign skip GPG sign	tag	pass
-t7004-tag::trying-to-create-a-signed-tag-with-non-existing-f-file-should-fail	t7004-tag	trying to create a signed tag with non-existing -F file should fail	tag	pass
-t7004-tag::verifying-a-signed-tag-should-succeed	t7004-tag	verifying a signed tag should succeed	tag	pass
-t7004-tag::verifying-two-signed-tags-in-one-command-should-succeed	t7004-tag	verifying two signed tags in one command should succeed	tag	pass
-t7004-tag::verifying-many-signed-and-non-signed-tags-should-fail	t7004-tag	verifying many signed and non-signed tags should fail	tag	pass
-t7004-tag::verifying-a-forged-tag-should-fail	t7004-tag	verifying a forged tag should fail	tag	pass
-t7004-tag::verifying-a-proper-tag-with-format-pass-and-format-accordingly	t7004-tag	verifying a proper tag with --format pass and format accordingly	tag	pass
-t7004-tag::verifying-a-forged-tag-with-format-should-fail-silently	t7004-tag	verifying a forged tag with --format should fail silently	tag	pass
-t7004-tag::creating-a-signed-tag-with-an-empty-m-message-should-succeed	t7004-tag	creating a signed tag with an empty -m message should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-an-empty-f-messagefile-should-succeed	t7004-tag	creating a signed tag with an empty -F messagefile should succeed	tag	pass
-t7004-tag::extra-blanks-in-the-message-for-a-signed-tag-should-be-removed	t7004-tag	extra blanks in the message for a signed tag should be removed	tag	pass
-t7004-tag::creating-a-signed-tag-with-a-blank-m-message-should-succeed	t7004-tag	creating a signed tag with a blank -m message should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-blank-f-file-with-spaces-should-succeed	t7004-tag	creating a signed tag with blank -F file with spaces should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-spaces-and-no-newline-should-succeed	t7004-tag	creating a signed tag with spaces and no newline should succeed	tag	pass
-t7004-tag::signed-tag-with-embedded-pgp-message	t7004-tag	signed tag with embedded PGP message	tag	pass
-t7004-tag::creating-a-signed-tag-with-a-f-file-with-comments-should-succeed	t7004-tag	creating a signed tag with a -F file with #comments should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-commented-m-message-should-succeed	t7004-tag	creating a signed tag with #commented -m message should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-commented-f-messagefile-should-succeed	t7004-tag	creating a signed tag with #commented -F messagefile should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-with-a-comment-and-no-newline-should-succeed	t7004-tag	creating a signed tag with a #comment and no newline should succeed	tag	pass
-t7004-tag::listing-the-one-line-message-of-a-signed-tag-should-succeed	t7004-tag	listing the one-line message of a signed tag should succeed	tag	pass
-t7004-tag::listing-the-zero-lines-message-of-a-signed-tag-should-succeed	t7004-tag	listing the zero-lines message of a signed tag should succeed	tag	pass
-t7004-tag::listing-many-message-lines-of-a-signed-tag-should-succeed	t7004-tag	listing many message lines of a signed tag should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-pointing-to-a-tree-should-succeed	t7004-tag	creating a signed tag pointing to a tree should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-pointing-to-a-blob-should-succeed	t7004-tag	creating a signed tag pointing to a blob should succeed	tag	pass
-t7004-tag::creating-a-signed-tag-pointing-to-another-tag-should-succeed	t7004-tag	creating a signed tag pointing to another tag should succeed	tag	pass
-t7004-tag::git-tag-s-fails-if-gpg-is-misconfigured-bad-key	t7004-tag	git tag -s fails if gpg is misconfigured (bad key)	tag	pass
-t7004-tag::git-tag-s-fails-if-gpg-is-misconfigured-bad-signature-format	t7004-tag	git tag -s fails if gpg is misconfigured (bad signature format)	tag	pass
-t7004-tag::git-verifies-tag-is-valid-with-double-signature	t7004-tag	git verifies tag is valid with double signature	tag	pass
-t7004-tag::git-tag-s-fails-if-gpgsm-is-misconfigured-bad-key	t7004-tag	git tag -s fails if gpgsm is misconfigured (bad key)	tag	pass
-t7004-tag::git-tag-s-fails-if-gpgsm-is-misconfigured-bad-signature-format	t7004-tag	git tag -s fails if gpgsm is misconfigured (bad signature format)	tag	pass
-t7004-tag::verify-signed-tag-fails-when-public-key-is-not-present	t7004-tag	verify signed tag fails when public key is not present	tag	pass
-t7004-tag::git-tag-a-fails-if-tag-annotation-is-empty	t7004-tag	git tag -a fails if tag annotation is empty	tag	pass
-t7004-tag::message-in-editor-has-initial-comment	t7004-tag	message in editor has initial comment	tag	pass
-t7004-tag::message-in-editor-has-initial-comment-first-line	t7004-tag	message in editor has initial comment: first line	tag	pass
-t7004-tag::message-in-editor-has-initial-comment-remainder	t7004-tag	message in editor has initial comment: remainder	tag	pass
-t7004-tag::overwriting-an-annotated-tag-should-use-its-previous-body	t7004-tag	overwriting an annotated tag should use its previous body	tag	pass
-t7004-tag::filename-for-the-message-is-relative-to-cwd	t7004-tag	filename for the message is relative to cwd	tag	pass
-t7004-tag::filename-for-the-message-is-relative-to-cwd-2	t7004-tag	filename for the message is relative to cwd	tag	pass
-t7004-tag::creating-second-commit-and-tag	t7004-tag	creating second commit and tag	tag	pass
-t7004-tag::creating-third-commit-without-tag	t7004-tag	creating third commit without tag	tag	pass
-t7004-tag::checking-that-first-commit-is-in-all-tags-hash	t7004-tag	checking that first commit is in all tags (hash)	tag	pass
-t7004-tag::checking-that-first-commit-is-in-all-tags-tag	t7004-tag	checking that first commit is in all tags (tag)	tag	pass
-t7004-tag::checking-that-first-commit-is-in-all-tags-relative	t7004-tag	checking that first commit is in all tags (relative)	tag	pass
-t7004-tag::checking-that-first-commit-is-not-listed-in-any-tag-with-no-contains-hash	t7004-tag	checking that first commit is not listed in any tag with --no-contains  (hash)	tag	pass
-t7004-tag::checking-that-first-commit-is-in-all-tags-tag-2	t7004-tag	checking that first commit is in all tags (tag)	tag	pass
-t7004-tag::checking-that-first-commit-is-in-all-tags-relative-2	t7004-tag	checking that first commit is in all tags (relative)	tag	pass
-t7004-tag::checking-that-second-commit-only-has-one-tag	t7004-tag	checking that second commit only has one tag	tag	pass
-t7004-tag::inverse-of-the-last-test-with-no-contains	t7004-tag	inverse of the last test, with --no-contains	tag	pass
-t7004-tag::checking-that-third-commit-has-no-tags	t7004-tag	checking that third commit has no tags	tag	pass
-t7004-tag::conversely-no-contains-on-the-third-commit-lists-all-tags	t7004-tag	conversely --no-contains on the third commit lists all tags	tag	pass
-t7004-tag::creating-simple-branch	t7004-tag	creating simple branch	tag	pass
-t7004-tag::checking-that-branch-head-only-has-one-tag	t7004-tag	checking that branch head only has one tag	tag	pass
-t7004-tag::checking-that-branch-head-with-no-contains-lists-all-but-one-tag	t7004-tag	checking that branch head with --no-contains lists all but one tag	tag	pass
-t7004-tag::merging-original-branch-into-this-branch	t7004-tag	merging original branch into this branch	tag	pass
-t7004-tag::checking-that-original-branch-head-has-one-tag-now	t7004-tag	checking that original branch head has one tag now	tag	pass
-t7004-tag::checking-that-original-branch-head-with-no-contains-lists-all-but-one-tag-now	t7004-tag	checking that original branch head with --no-contains lists all but one tag now	tag	pass
-t7004-tag::checking-that-initial-commit-is-in-all-tags	t7004-tag	checking that initial commit is in all tags	tag	pass
-t7004-tag::checking-that-contains-can-be-used-in-non-list-mode	t7004-tag	checking that --contains can be used in non-list mode	tag	pass
-t7004-tag::checking-that-initial-commit-is-in-all-tags-with-no-contains	t7004-tag	checking that initial commit is in all tags with --no-contains	tag	pass
-t7004-tag::mixing-incompatibles-modes-and-options-is-forbidden	t7004-tag	mixing incompatibles modes and options is forbidden	tag	pass
-t7004-tag::points-at-can-be-used-in-non-list-mode	t7004-tag	--points-at can be used in non-list mode	tag	pass
-t7004-tag::points-at-is-a-synonym-for-points-at-head	t7004-tag	--points-at is a synonym for --points-at HEAD	tag	pass
-t7004-tag::points-at-finds-lightweight-tags	t7004-tag	--points-at finds lightweight tags	tag	pass
-t7004-tag::points-at-finds-annotated-tags-of-commits	t7004-tag	--points-at finds annotated tags of commits	tag	pass
-t7004-tag::points-at-finds-annotated-tags-of-tags	t7004-tag	--points-at finds annotated tags of tags	tag	pass
-t7004-tag::recursive-tagging-should-give-advice	t7004-tag	recursive tagging should give advice	tag	pass
-t7004-tag::multiple-points-at-are-or-ed-together	t7004-tag	multiple --points-at are OR-ed together	tag	pass
-t7004-tag::lexical-sort	t7004-tag	lexical sort	tag	pass
-t7004-tag::version-sort	t7004-tag	version sort	tag	pass
-t7004-tag::reverse-version-sort	t7004-tag	reverse version sort	tag	pass
-t7004-tag::reverse-lexical-sort	t7004-tag	reverse lexical sort	tag	pass
-t7004-tag::configured-lexical-sort	t7004-tag	configured lexical sort	tag	pass
-t7004-tag::option-override-configured-sort	t7004-tag	option override configured sort	tag	pass
-t7004-tag::no-sort-cancels-config-sort-keys	t7004-tag	--no-sort cancels config sort keys	tag	pass
-t7004-tag::no-sort-cancels-command-line-sort-keys	t7004-tag	--no-sort cancels command line sort keys	tag	pass
-t7004-tag::no-sort-without-subsequent-sort-prints-expected-tags	t7004-tag	--no-sort without subsequent --sort prints expected tags	tag	pass
-t7004-tag::invalid-sort-parameter-on-command-line	t7004-tag	invalid sort parameter on command line	tag	pass
-t7004-tag::invalid-sort-parameter-in-configuratoin	t7004-tag	invalid sort parameter in configuratoin	tag	pass
-t7004-tag::version-sort-handles-empty-value-for-versionsort-prereleasesuffix-suffix	t7004-tag	version sort handles empty value for versionsort.{prereleaseSuffix,suffix}	tag	pass
-t7004-tag::version-sort-with-prerelease-reordering	t7004-tag	version sort with prerelease reordering	tag	pass
-t7004-tag::reverse-version-sort-with-prerelease-reordering	t7004-tag	reverse version sort with prerelease reordering	tag	pass
-t7004-tag::version-sort-with-prerelease-reordering-and-common-leading-character	t7004-tag	version sort with prerelease reordering and common leading character	tag	pass
-t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-and-common-leading-cha	t7004-tag	version sort with prerelease reordering, multiple suffixes and common leading character	tag	pass
-t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-match-the-same-tag	t7004-tag	version sort with prerelease reordering, multiple suffixes match the same tag	tag	pass
-t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-match-starting-at-the	t7004-tag	version sort with prerelease reordering, multiple suffixes match starting at the same position	tag	pass
-t7004-tag::version-sort-with-general-suffix-reordering	t7004-tag	version sort with general suffix reordering	tag	pass
-t7004-tag::versionsort-suffix-overrides-versionsort-prereleasesuffix	t7004-tag	versionsort.suffix overrides versionsort.prereleaseSuffix	tag	pass
-t7004-tag::version-sort-with-very-long-prerelease-suffix	t7004-tag	version sort with very long prerelease suffix	tag	pass
-t7004-tag::contains-and-no-contains-work-in-a-deep-repo	t7004-tag	--contains and --no-contains work in a deep repo	tag	pass
-t7004-tag::format-should-list-tags-as-per-format-given	t7004-tag	--format should list tags as per format given	tag	pass
-t7004-tag::format-omit-empty-works	t7004-tag	--format --omit-empty works	tag	pass
-t7004-tag::git-tag-l-with-format-rest-must-fail	t7004-tag	git tag -l with --format="%(rest)" must fail	tag	pass
-t7004-tag::set-up-color-tests	t7004-tag	set up color tests	tag	pass
-t7004-tag::color-omitted-without-tty	t7004-tag	%(color) omitted without tty	tag	pass
-t7004-tag::color-present-with-tty	t7004-tag	%(color) present with tty	tag	pass
-t7004-tag::color-overrides-auto-color	t7004-tag	--color overrides auto-color	tag	pass
-t7004-tag::color-ui-always-overrides-auto-color	t7004-tag	color.ui=always overrides auto-color	tag	pass
-t7004-tag::setup-merged-test-tags	t7004-tag	setup --merged test tags	tag	pass
-t7004-tag::merged-can-be-used-in-non-list-mode	t7004-tag	--merged can be used in non-list mode	tag	pass
-t7004-tag::merged-is-compatible-with-no-merged	t7004-tag	--merged is compatible with --no-merged	tag	pass
-t7004-tag::merged-shows-merged-tags	t7004-tag	--merged shows merged tags	tag	pass
-t7004-tag::no-merged-show-unmerged-tags	t7004-tag	--no-merged show unmerged tags	tag	pass
-t7004-tag::no-merged-can-be-used-in-non-list-mode	t7004-tag	--no-merged can be used in non-list mode	tag	pass
-t7004-tag::ambiguous-branch-tags-not-marked	t7004-tag	ambiguous branch/tags not marked	tag	pass
-t7004-tag::contains-combined-with-no-contains	t7004-tag	--contains combined with --no-contains	tag	pass
-t7004-tag::does-no-contains-stop-at-commits-yes	t7004-tag	Does --[no-]contains stop at commits? Yes!	tag	pass
-t7004-tag::if-tag-is-created-then-tag-message-file-is-unlinked	t7004-tag	If tag is created then tag message file is unlinked	tag	pass
-t7004-tag::if-tag-cannot-be-created-then-tag-message-file-is-not-unlinked	t7004-tag	If tag cannot be created then tag message file is not unlinked	tag	pass
-t7004-tag::annotated-tag-version-sort	t7004-tag	annotated tag version sort	tag	pass
-t7004-tag::mixing-incompatible-modes-with-option-is-forbidden	t7004-tag	mixing incompatible modes with $option is forbidden	tag	pass
-t7004-tag::doing-git-tag-list-like-option-commit-pattern-is-permitted	t7004-tag	Doing 'git tag --list-like $option <commit> <pattern> is permitted	tag	pass
+t7004-tag::setup	t7004-tag	setup	tag	partial
+t7004-tag::listing-all-tags-in-an-empty-tree-should-succeed	t7004-tag	listing all tags in an empty tree should succeed	tag	partial
+t7004-tag::listing-all-tags-in-an-empty-tree-should-output-nothing	t7004-tag	listing all tags in an empty tree should output nothing	tag	partial
+t7004-tag::sort-tags-ignore-case	t7004-tag	sort tags, ignore case	tag	partial
+t7004-tag::looking-for-a-tag-in-an-empty-tree-should-fail	t7004-tag	looking for a tag in an empty tree should fail	tag	partial
+t7004-tag::creating-a-tag-in-an-empty-tree-should-fail	t7004-tag	creating a tag in an empty tree should fail	tag	partial
+t7004-tag::creating-a-tag-for-head-in-an-empty-tree-should-fail	t7004-tag	creating a tag for HEAD in an empty tree should fail	tag	partial
+t7004-tag::creating-a-tag-for-an-unknown-revision-should-fail	t7004-tag	creating a tag for an unknown revision should fail	tag	partial
+t7004-tag::creating-a-tag-using-default-head-should-succeed	t7004-tag	creating a tag using default HEAD should succeed	tag	partial
+t7004-tag::head-is-forbidden-as-a-tagname	t7004-tag	HEAD is forbidden as a tagname	tag	partial
+t7004-tag::git-tag-can-remove-a-tag-named-head	t7004-tag	"git tag" can remove a tag named HEAD	tag	partial
+t7004-tag::creating-a-tag-with-create-reflog-should-create-reflog	t7004-tag	creating a tag with --create-reflog should create reflog	tag	partial
+t7004-tag::annotated-tag-with-create-reflog-has-correct-message	t7004-tag	annotated tag with --create-reflog has correct message	tag	partial
+t7004-tag::create-reflog-does-not-create-reflog-on-failure	t7004-tag	--create-reflog does not create reflog on failure	tag	partial
+t7004-tag::option-core-logallrefupdates-always-creates-reflog	t7004-tag	option core.logAllRefUpdates=always creates reflog	tag	partial
+t7004-tag::listing-all-tags-if-one-exists-should-succeed	t7004-tag	listing all tags if one exists should succeed	tag	partial
+t7004-tag::multiple-l-or-list-options-are-equivalent-to-one-l-option	t7004-tag	Multiple -l or --list options are equivalent to one -l option	tag	partial
+t7004-tag::listing-all-tags-if-one-exists-should-output-that-tag	t7004-tag	listing all tags if one exists should output that tag	tag	partial
+t7004-tag::listing-a-tag-using-a-matching-pattern-should-succeed	t7004-tag	listing a tag using a matching pattern should succeed	tag	partial
+t7004-tag::listing-a-tag-with-ignore-case	t7004-tag	listing a tag with --ignore-case	tag	partial
+t7004-tag::listing-a-tag-using-a-matching-pattern-should-output-that-tag	t7004-tag	listing a tag using a matching pattern should output that tag	tag	partial
+t7004-tag::listing-tags-using-a-non-matching-pattern-should-succeed	t7004-tag	listing tags using a non-matching pattern should succeed	tag	partial
+t7004-tag::listing-tags-using-a-non-matching-pattern-should-output-nothing	t7004-tag	listing tags using a non-matching pattern should output nothing	tag	partial
+t7004-tag::trying-to-create-a-tag-with-the-name-of-one-existing-should-fail	t7004-tag	trying to create a tag with the name of one existing should fail	tag	partial
+t7004-tag::trying-to-create-a-tag-with-a-non-valid-name-should-fail	t7004-tag	trying to create a tag with a non-valid name should fail	tag	partial
+t7004-tag::creating-a-tag-using-head-directly-should-succeed	t7004-tag	creating a tag using HEAD directly should succeed	tag	partial
+t7004-tag::force-can-create-a-tag-with-the-name-of-one-existing	t7004-tag	--force can create a tag with the name of one existing	tag	partial
+t7004-tag::force-is-moot-with-a-non-existing-tag-name	t7004-tag	--force is moot with a non-existing tag name	tag	partial
+t7004-tag::trying-to-delete-an-unknown-tag-should-fail	t7004-tag	trying to delete an unknown tag should fail	tag	partial
+t7004-tag::trying-to-delete-tags-without-params-should-succeed-and-do-nothing	t7004-tag	trying to delete tags without params should succeed and do nothing	tag	partial
+t7004-tag::deleting-two-existing-tags-in-one-command-should-succeed	t7004-tag	deleting two existing tags in one command should succeed	tag	partial
+t7004-tag::creating-a-tag-with-the-name-of-another-deleted-one-should-succeed	t7004-tag	creating a tag with the name of another deleted one should succeed	tag	partial
+t7004-tag::trying-to-delete-two-tags-existing-and-not-should-fail-in-the-2nd	t7004-tag	trying to delete two tags, existing and not, should fail in the 2nd	tag	partial
+t7004-tag::trying-to-delete-an-already-deleted-tag-should-fail	t7004-tag	trying to delete an already deleted tag should fail	tag	partial
+t7004-tag::listing-all-tags-should-print-them-ordered	t7004-tag	listing all tags should print them ordered	tag	partial
+t7004-tag::listing-tags-with-substring-as-pattern-must-print-those-matching	t7004-tag	listing tags with substring as pattern must print those matching	tag	partial
+t7004-tag::listing-tags-with-a-suffix-as-pattern-must-print-those-matching	t7004-tag	listing tags with a suffix as pattern must print those matching	tag	partial
+t7004-tag::listing-tags-with-a-prefix-as-pattern-must-print-those-matching	t7004-tag	listing tags with a prefix as pattern must print those matching	tag	partial
+t7004-tag::listing-tags-using-a-name-as-pattern-must-print-that-one-matching	t7004-tag	listing tags using a name as pattern must print that one matching	tag	partial
+t7004-tag::listing-tags-using-a-name-as-pattern-must-print-that-one-matching-2	t7004-tag	listing tags using a name as pattern must print that one matching	tag	partial
+t7004-tag::listing-tags-with-in-the-pattern-should-print-those-matching	t7004-tag	listing tags with ? in the pattern should print those matching	tag	partial
+t7004-tag::listing-tags-using-v-should-print-nothing-because-none-have-v	t7004-tag	listing tags using v.* should print nothing because none have v.	tag	partial
+t7004-tag::listing-tags-using-v-should-print-only-those-having-v	t7004-tag	listing tags using v* should print only those having v	tag	partial
+t7004-tag::tag-l-can-accept-multiple-patterns	t7004-tag	tag -l can accept multiple patterns	tag	partial
+t7004-tag::tag-l-pattern-l-pattern-works-as-our-buggy-documentation-previously-suggested	t7004-tag	tag -l <pattern> -l <pattern> works, as our buggy documentation previously suggested	tag	partial
+t7004-tag::listing-tags-in-column	t7004-tag	listing tags in column	tag	partial
+t7004-tag::listing-tags-in-column-with-column	t7004-tag	listing tags in column with column.*	tag	partial
+t7004-tag::listing-tag-with-n-column-should-fail	t7004-tag	listing tag with -n --column should fail	tag	partial
+t7004-tag::listing-tags-n-in-column-with-column-ui-ignored	t7004-tag	listing tags -n in column with column.ui ignored	tag	partial
+t7004-tag::a-non-annotated-tag-created-without-parameters-should-point-to-head	t7004-tag	a non-annotated tag created without parameters should point to HEAD	tag	partial
+t7004-tag::trying-to-verify-an-unknown-tag-should-fail	t7004-tag	trying to verify an unknown tag should fail	tag	partial
+t7004-tag::trying-to-verify-a-non-annotated-and-non-signed-tag-should-fail	t7004-tag	trying to verify a non-annotated and non-signed tag should fail	tag	partial
+t7004-tag::trying-to-verify-many-non-annotated-or-unknown-tags-should-fail	t7004-tag	trying to verify many non-annotated or unknown tags, should fail	tag	partial
+t7004-tag::creating-an-annotated-tag-with-m-message-should-succeed	t7004-tag	creating an annotated tag with -m message should succeed	tag	partial
+t7004-tag::set-up-editor	t7004-tag	set up editor	tag	partial
+t7004-tag::creating-an-annotated-tag-with-m-message-edit-should-succeed	t7004-tag	creating an annotated tag with -m message --edit should succeed	tag	partial
+t7004-tag::creating-an-annotated-tag-with-f-messagefile-should-succeed	t7004-tag	creating an annotated tag with -F messagefile should succeed	tag	partial
+t7004-tag::set-up-editor-2	t7004-tag	set up editor	tag	partial
+t7004-tag::creating-an-annotated-tag-with-f-messagefile-edit-should-succeed	t7004-tag	creating an annotated tag with -F messagefile --edit should succeed	tag	partial
+t7004-tag::creating-an-annotated-tag-with-f-should-succeed	t7004-tag	creating an annotated tag with -F - should succeed	tag	partial
+t7004-tag::trying-to-create-a-tag-with-a-non-existing-f-file-should-fail	t7004-tag	trying to create a tag with a non-existing -F file should fail	tag	partial
+t7004-tag::trying-to-create-tags-giving-both-m-or-f-options-should-fail	t7004-tag	trying to create tags giving both -m or -F options should fail	tag	partial
+t7004-tag::creating-a-tag-with-an-empty-m-message-should-succeed	t7004-tag	creating a tag with an empty -m message should succeed	tag	partial
+t7004-tag::creating-a-tag-with-an-empty-f-messagefile-should-succeed	t7004-tag	creating a tag with an empty -F messagefile should succeed	tag	partial
+t7004-tag::extra-blanks-in-the-message-for-an-annotated-tag-should-be-removed	t7004-tag	extra blanks in the message for an annotated tag should be removed	tag	partial
+t7004-tag::creating-a-tag-with-blank-m-message-with-spaces-should-succeed	t7004-tag	creating a tag with blank -m message with spaces should succeed	tag	partial
+t7004-tag::creating-a-tag-with-blank-f-messagefile-with-spaces-should-succeed	t7004-tag	creating a tag with blank -F messagefile with spaces should succeed	tag	partial
+t7004-tag::creating-a-tag-with-f-file-of-spaces-and-no-newline-should-succeed	t7004-tag	creating a tag with -F file of spaces and no newline should succeed	tag	partial
+t7004-tag::creating-a-tag-using-a-f-messagefile-with-comments-should-succeed	t7004-tag	creating a tag using a -F messagefile with #comments should succeed	tag	partial
+t7004-tag::creating-a-tag-with-a-comment-in-the-m-message-should-succeed	t7004-tag	creating a tag with a #comment in the -m message should succeed	tag	partial
+t7004-tag::creating-a-tag-with-comments-in-the-f-messagefile-should-succeed	t7004-tag	creating a tag with #comments in the -F messagefile should succeed	tag	partial
+t7004-tag::creating-a-tag-with-a-file-of-comment-and-no-newline-should-succeed	t7004-tag	creating a tag with a file of #comment and no newline should succeed	tag	partial
+t7004-tag::create-tag-with-m-and-trailer	t7004-tag	create tag with -m and --trailer	tag	partial
+t7004-tag::list-tag-extracting-trailers	t7004-tag	list tag extracting trailers	tag	partial
+t7004-tag::create-tag-with-f-and-trailer	t7004-tag	create tag with -F and --trailer	tag	partial
+t7004-tag::create-tag-with-m-and-trailer-and-edit	t7004-tag	create tag with -m and --trailer and --edit	tag	partial
+t7004-tag::create-tag-with-f-and-trailer-and-edit	t7004-tag	create tag with -F and --trailer and --edit	tag	partial
+t7004-tag::create-annotated-tag-and-force-editor-when-only-trailer-is-given	t7004-tag	create annotated tag and force editor when only --trailer is given	tag	partial
+t7004-tag::bad-editor-causes-panic-when-only-trailer-is-given	t7004-tag	bad editor causes panic when only --trailer is given	tag	partial
+t7004-tag::listing-the-one-line-message-of-a-non-signed-tag-should-succeed	t7004-tag	listing the one-line message of a non-signed tag should succeed	tag	partial
+t7004-tag::the-n-100-invocation-means-n-list-100-not-n100	t7004-tag	The -n 100 invocation means -n --list 100, not -n100	tag	partial
+t7004-tag::listing-the-zero-lines-message-of-a-non-signed-tag-should-succeed	t7004-tag	listing the zero-lines message of a non-signed tag should succeed	tag	partial
+t7004-tag::listing-many-message-lines-of-a-non-signed-tag-should-succeed	t7004-tag	listing many message lines of a non-signed tag should succeed	tag	partial
+t7004-tag::annotations-for-blobs-are-empty	t7004-tag	annotations for blobs are empty	tag	partial
+t7004-tag::git-tag-format-with-ahead-behind	t7004-tag	git tag --format with ahead-behind	tag	partial
+t7004-tag::trying-to-verify-an-annotated-non-signed-tag-should-fail	t7004-tag	trying to verify an annotated non-signed tag should fail	tag	partial
+t7004-tag::trying-to-verify-a-file-annotated-non-signed-tag-should-fail	t7004-tag	trying to verify a file-annotated non-signed tag should fail	tag	partial
+t7004-tag::trying-to-verify-two-annotated-non-signed-tags-should-fail	t7004-tag	trying to verify two annotated non-signed tags should fail	tag	partial
+t7004-tag::creating-a-signed-tag-with-m-message-should-succeed	t7004-tag	creating a signed tag with -m message should succeed	tag	partial
+t7004-tag::sign-with-a-given-key-id	t7004-tag	sign with a given key id	tag	partial
+t7004-tag::sign-with-an-unknown-id-1	t7004-tag	sign with an unknown id (1)	tag	partial
+t7004-tag::sign-with-an-unknown-id-2	t7004-tag	sign with an unknown id (2)	tag	partial
+t7004-tag::u-implies-signed-tag	t7004-tag	-u implies signed tag	tag	partial
+t7004-tag::creating-a-signed-tag-with-f-messagefile-should-succeed	t7004-tag	creating a signed tag with -F messagefile should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-f-should-succeed	t7004-tag	creating a signed tag with -F - should succeed	tag	partial
+t7004-tag::s-implies-annotated-tag	t7004-tag	-s implies annotated tag	tag	partial
+t7004-tag::git-tag-s-implied-if-configured-with-tag-forcesignannotated	t7004-tag	git tag -s implied if configured with tag.forcesignannotated	tag	partial
+t7004-tag::lightweight-with-no-message-when-configured-with-tag-forcesignannotated	t7004-tag	lightweight with no message when configured with tag.forcesignannotated	tag	partial
+t7004-tag::git-tag-a-disable-configured-tag-forcesignannotated	t7004-tag	git tag -a disable configured tag.forcesignannotated	tag	partial
+t7004-tag::git-tag-sign-enable-gpg-sign	t7004-tag	git tag --sign enable GPG sign	tag	partial
+t7004-tag::git-tag-configured-tag-gpgsign-enables-gpg-sign	t7004-tag	git tag configured tag.gpgsign enables GPG sign	tag	partial
+t7004-tag::git-tag-no-sign-configured-tag-gpgsign-skip-gpg-sign	t7004-tag	git tag --no-sign configured tag.gpgsign skip GPG sign	tag	partial
+t7004-tag::trying-to-create-a-signed-tag-with-non-existing-f-file-should-fail	t7004-tag	trying to create a signed tag with non-existing -F file should fail	tag	partial
+t7004-tag::verifying-a-signed-tag-should-succeed	t7004-tag	verifying a signed tag should succeed	tag	partial
+t7004-tag::verifying-two-signed-tags-in-one-command-should-succeed	t7004-tag	verifying two signed tags in one command should succeed	tag	partial
+t7004-tag::verifying-many-signed-and-non-signed-tags-should-fail	t7004-tag	verifying many signed and non-signed tags should fail	tag	partial
+t7004-tag::verifying-a-forged-tag-should-fail	t7004-tag	verifying a forged tag should fail	tag	partial
+t7004-tag::verifying-a-proper-tag-with-format-pass-and-format-accordingly	t7004-tag	verifying a proper tag with --format pass and format accordingly	tag	partial
+t7004-tag::verifying-a-forged-tag-with-format-should-fail-silently	t7004-tag	verifying a forged tag with --format should fail silently	tag	partial
+t7004-tag::creating-a-signed-tag-with-an-empty-m-message-should-succeed	t7004-tag	creating a signed tag with an empty -m message should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-an-empty-f-messagefile-should-succeed	t7004-tag	creating a signed tag with an empty -F messagefile should succeed	tag	partial
+t7004-tag::extra-blanks-in-the-message-for-a-signed-tag-should-be-removed	t7004-tag	extra blanks in the message for a signed tag should be removed	tag	partial
+t7004-tag::creating-a-signed-tag-with-a-blank-m-message-should-succeed	t7004-tag	creating a signed tag with a blank -m message should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-blank-f-file-with-spaces-should-succeed	t7004-tag	creating a signed tag with blank -F file with spaces should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-spaces-and-no-newline-should-succeed	t7004-tag	creating a signed tag with spaces and no newline should succeed	tag	partial
+t7004-tag::signed-tag-with-embedded-pgp-message	t7004-tag	signed tag with embedded PGP message	tag	partial
+t7004-tag::creating-a-signed-tag-with-a-f-file-with-comments-should-succeed	t7004-tag	creating a signed tag with a -F file with #comments should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-commented-m-message-should-succeed	t7004-tag	creating a signed tag with #commented -m message should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-commented-f-messagefile-should-succeed	t7004-tag	creating a signed tag with #commented -F messagefile should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-with-a-comment-and-no-newline-should-succeed	t7004-tag	creating a signed tag with a #comment and no newline should succeed	tag	partial
+t7004-tag::listing-the-one-line-message-of-a-signed-tag-should-succeed	t7004-tag	listing the one-line message of a signed tag should succeed	tag	partial
+t7004-tag::listing-the-zero-lines-message-of-a-signed-tag-should-succeed	t7004-tag	listing the zero-lines message of a signed tag should succeed	tag	partial
+t7004-tag::listing-many-message-lines-of-a-signed-tag-should-succeed	t7004-tag	listing many message lines of a signed tag should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-pointing-to-a-tree-should-succeed	t7004-tag	creating a signed tag pointing to a tree should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-pointing-to-a-blob-should-succeed	t7004-tag	creating a signed tag pointing to a blob should succeed	tag	partial
+t7004-tag::creating-a-signed-tag-pointing-to-another-tag-should-succeed	t7004-tag	creating a signed tag pointing to another tag should succeed	tag	partial
+t7004-tag::git-tag-s-fails-if-gpg-is-misconfigured-bad-key	t7004-tag	git tag -s fails if gpg is misconfigured (bad key)	tag	partial
+t7004-tag::git-tag-s-fails-if-gpg-is-misconfigured-bad-signature-format	t7004-tag	git tag -s fails if gpg is misconfigured (bad signature format)	tag	partial
+t7004-tag::git-verifies-tag-is-valid-with-double-signature	t7004-tag	git verifies tag is valid with double signature	tag	partial
+t7004-tag::git-tag-s-fails-if-gpgsm-is-misconfigured-bad-key	t7004-tag	git tag -s fails if gpgsm is misconfigured (bad key)	tag	partial
+t7004-tag::git-tag-s-fails-if-gpgsm-is-misconfigured-bad-signature-format	t7004-tag	git tag -s fails if gpgsm is misconfigured (bad signature format)	tag	partial
+t7004-tag::verify-signed-tag-fails-when-public-key-is-not-present	t7004-tag	verify signed tag fails when public key is not present	tag	partial
+t7004-tag::git-tag-a-fails-if-tag-annotation-is-empty	t7004-tag	git tag -a fails if tag annotation is empty	tag	partial
+t7004-tag::message-in-editor-has-initial-comment	t7004-tag	message in editor has initial comment	tag	partial
+t7004-tag::message-in-editor-has-initial-comment-first-line	t7004-tag	message in editor has initial comment: first line	tag	partial
+t7004-tag::message-in-editor-has-initial-comment-remainder	t7004-tag	message in editor has initial comment: remainder	tag	partial
+t7004-tag::overwriting-an-annotated-tag-should-use-its-previous-body	t7004-tag	overwriting an annotated tag should use its previous body	tag	partial
+t7004-tag::filename-for-the-message-is-relative-to-cwd	t7004-tag	filename for the message is relative to cwd	tag	partial
+t7004-tag::filename-for-the-message-is-relative-to-cwd-2	t7004-tag	filename for the message is relative to cwd	tag	partial
+t7004-tag::creating-second-commit-and-tag	t7004-tag	creating second commit and tag	tag	partial
+t7004-tag::creating-third-commit-without-tag	t7004-tag	creating third commit without tag	tag	partial
+t7004-tag::checking-that-first-commit-is-in-all-tags-hash	t7004-tag	checking that first commit is in all tags (hash)	tag	partial
+t7004-tag::checking-that-first-commit-is-in-all-tags-tag	t7004-tag	checking that first commit is in all tags (tag)	tag	partial
+t7004-tag::checking-that-first-commit-is-in-all-tags-relative	t7004-tag	checking that first commit is in all tags (relative)	tag	partial
+t7004-tag::checking-that-first-commit-is-not-listed-in-any-tag-with-no-contains-hash	t7004-tag	checking that first commit is not listed in any tag with --no-contains  (hash)	tag	partial
+t7004-tag::checking-that-first-commit-is-in-all-tags-tag-2	t7004-tag	checking that first commit is in all tags (tag)	tag	partial
+t7004-tag::checking-that-first-commit-is-in-all-tags-relative-2	t7004-tag	checking that first commit is in all tags (relative)	tag	partial
+t7004-tag::checking-that-second-commit-only-has-one-tag	t7004-tag	checking that second commit only has one tag	tag	partial
+t7004-tag::inverse-of-the-last-test-with-no-contains	t7004-tag	inverse of the last test, with --no-contains	tag	partial
+t7004-tag::checking-that-third-commit-has-no-tags	t7004-tag	checking that third commit has no tags	tag	partial
+t7004-tag::conversely-no-contains-on-the-third-commit-lists-all-tags	t7004-tag	conversely --no-contains on the third commit lists all tags	tag	partial
+t7004-tag::creating-simple-branch	t7004-tag	creating simple branch	tag	partial
+t7004-tag::checking-that-branch-head-only-has-one-tag	t7004-tag	checking that branch head only has one tag	tag	partial
+t7004-tag::checking-that-branch-head-with-no-contains-lists-all-but-one-tag	t7004-tag	checking that branch head with --no-contains lists all but one tag	tag	partial
+t7004-tag::merging-original-branch-into-this-branch	t7004-tag	merging original branch into this branch	tag	partial
+t7004-tag::checking-that-original-branch-head-has-one-tag-now	t7004-tag	checking that original branch head has one tag now	tag	partial
+t7004-tag::checking-that-original-branch-head-with-no-contains-lists-all-but-one-tag-now	t7004-tag	checking that original branch head with --no-contains lists all but one tag now	tag	partial
+t7004-tag::checking-that-initial-commit-is-in-all-tags	t7004-tag	checking that initial commit is in all tags	tag	partial
+t7004-tag::checking-that-contains-can-be-used-in-non-list-mode	t7004-tag	checking that --contains can be used in non-list mode	tag	partial
+t7004-tag::checking-that-initial-commit-is-in-all-tags-with-no-contains	t7004-tag	checking that initial commit is in all tags with --no-contains	tag	partial
+t7004-tag::mixing-incompatibles-modes-and-options-is-forbidden	t7004-tag	mixing incompatibles modes and options is forbidden	tag	partial
+t7004-tag::points-at-can-be-used-in-non-list-mode	t7004-tag	--points-at can be used in non-list mode	tag	partial
+t7004-tag::points-at-is-a-synonym-for-points-at-head	t7004-tag	--points-at is a synonym for --points-at HEAD	tag	partial
+t7004-tag::points-at-finds-lightweight-tags	t7004-tag	--points-at finds lightweight tags	tag	partial
+t7004-tag::points-at-finds-annotated-tags-of-commits	t7004-tag	--points-at finds annotated tags of commits	tag	partial
+t7004-tag::points-at-finds-annotated-tags-of-tags	t7004-tag	--points-at finds annotated tags of tags	tag	partial
+t7004-tag::recursive-tagging-should-give-advice	t7004-tag	recursive tagging should give advice	tag	partial
+t7004-tag::multiple-points-at-are-or-ed-together	t7004-tag	multiple --points-at are OR-ed together	tag	partial
+t7004-tag::lexical-sort	t7004-tag	lexical sort	tag	partial
+t7004-tag::version-sort	t7004-tag	version sort	tag	partial
+t7004-tag::reverse-version-sort	t7004-tag	reverse version sort	tag	partial
+t7004-tag::reverse-lexical-sort	t7004-tag	reverse lexical sort	tag	partial
+t7004-tag::configured-lexical-sort	t7004-tag	configured lexical sort	tag	partial
+t7004-tag::option-override-configured-sort	t7004-tag	option override configured sort	tag	partial
+t7004-tag::no-sort-cancels-config-sort-keys	t7004-tag	--no-sort cancels config sort keys	tag	partial
+t7004-tag::no-sort-cancels-command-line-sort-keys	t7004-tag	--no-sort cancels command line sort keys	tag	partial
+t7004-tag::no-sort-without-subsequent-sort-prints-expected-tags	t7004-tag	--no-sort without subsequent --sort prints expected tags	tag	partial
+t7004-tag::invalid-sort-parameter-on-command-line	t7004-tag	invalid sort parameter on command line	tag	partial
+t7004-tag::invalid-sort-parameter-in-configuratoin	t7004-tag	invalid sort parameter in configuratoin	tag	partial
+t7004-tag::version-sort-handles-empty-value-for-versionsort-prereleasesuffix-suffix	t7004-tag	version sort handles empty value for versionsort.{prereleaseSuffix,suffix}	tag	partial
+t7004-tag::version-sort-with-prerelease-reordering	t7004-tag	version sort with prerelease reordering	tag	partial
+t7004-tag::reverse-version-sort-with-prerelease-reordering	t7004-tag	reverse version sort with prerelease reordering	tag	partial
+t7004-tag::version-sort-with-prerelease-reordering-and-common-leading-character	t7004-tag	version sort with prerelease reordering and common leading character	tag	partial
+t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-and-common-leading-cha	t7004-tag	version sort with prerelease reordering, multiple suffixes and common leading character	tag	partial
+t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-match-the-same-tag	t7004-tag	version sort with prerelease reordering, multiple suffixes match the same tag	tag	partial
+t7004-tag::version-sort-with-prerelease-reordering-multiple-suffixes-match-starting-at-the	t7004-tag	version sort with prerelease reordering, multiple suffixes match starting at the same position	tag	partial
+t7004-tag::version-sort-with-general-suffix-reordering	t7004-tag	version sort with general suffix reordering	tag	partial
+t7004-tag::versionsort-suffix-overrides-versionsort-prereleasesuffix	t7004-tag	versionsort.suffix overrides versionsort.prereleaseSuffix	tag	partial
+t7004-tag::version-sort-with-very-long-prerelease-suffix	t7004-tag	version sort with very long prerelease suffix	tag	partial
+t7004-tag::contains-and-no-contains-work-in-a-deep-repo	t7004-tag	--contains and --no-contains work in a deep repo	tag	partial
+t7004-tag::format-should-list-tags-as-per-format-given	t7004-tag	--format should list tags as per format given	tag	partial
+t7004-tag::format-omit-empty-works	t7004-tag	--format --omit-empty works	tag	partial
+t7004-tag::git-tag-l-with-format-rest-must-fail	t7004-tag	git tag -l with --format="%(rest)" must fail	tag	partial
+t7004-tag::set-up-color-tests	t7004-tag	set up color tests	tag	partial
+t7004-tag::color-omitted-without-tty	t7004-tag	%(color) omitted without tty	tag	partial
+t7004-tag::color-present-with-tty	t7004-tag	%(color) present with tty	tag	partial
+t7004-tag::color-overrides-auto-color	t7004-tag	--color overrides auto-color	tag	partial
+t7004-tag::color-ui-always-overrides-auto-color	t7004-tag	color.ui=always overrides auto-color	tag	partial
+t7004-tag::setup-merged-test-tags	t7004-tag	setup --merged test tags	tag	partial
+t7004-tag::merged-can-be-used-in-non-list-mode	t7004-tag	--merged can be used in non-list mode	tag	partial
+t7004-tag::merged-is-compatible-with-no-merged	t7004-tag	--merged is compatible with --no-merged	tag	partial
+t7004-tag::merged-shows-merged-tags	t7004-tag	--merged shows merged tags	tag	partial
+t7004-tag::no-merged-show-unmerged-tags	t7004-tag	--no-merged show unmerged tags	tag	partial
+t7004-tag::no-merged-can-be-used-in-non-list-mode	t7004-tag	--no-merged can be used in non-list mode	tag	partial
+t7004-tag::ambiguous-branch-tags-not-marked	t7004-tag	ambiguous branch/tags not marked	tag	partial
+t7004-tag::contains-combined-with-no-contains	t7004-tag	--contains combined with --no-contains	tag	partial
+t7004-tag::does-no-contains-stop-at-commits-yes	t7004-tag	Does --[no-]contains stop at commits? Yes!	tag	partial
+t7004-tag::if-tag-is-created-then-tag-message-file-is-unlinked	t7004-tag	If tag is created then tag message file is unlinked	tag	partial
+t7004-tag::if-tag-cannot-be-created-then-tag-message-file-is-not-unlinked	t7004-tag	If tag cannot be created then tag message file is not unlinked	tag	partial
+t7004-tag::annotated-tag-version-sort	t7004-tag	annotated tag version sort	tag	partial
+t7004-tag::mixing-incompatible-modes-with-option-is-forbidden	t7004-tag	mixing incompatible modes with $option is forbidden	tag	partial
+t7004-tag::doing-git-tag-list-like-option-commit-pattern-is-permitted	t7004-tag	Doing 'git tag --list-like $option <commit> <pattern> is permitted	tag	partial
 t7005-editor::determine-default-editor	t7005-editor	determine default editor	var	pass
 t7005-editor::dumb-should-error-out-when-falling-back-on-vi	t7005-editor	dumb should error out when falling back on vi	commit	pass
 t7005-editor::dumb-should-prefer-editor-to-visual	t7005-editor	dumb should prefer EDITOR to VISUAL	commit	pass
@@ -17056,26 +17056,26 @@ t9300-fast-import::s-change-with-what-must-fail	t9300-fast-import	S: $change wit
 t9300-fast-import::t-ls-root-root-tree	t9300-fast-import	T: ls root ($root) tree	fast-import	not_ported
 t9300-fast-import::u-filedelete-root-root-succeeds	t9300-fast-import	U: filedelete root ($root) succeeds	fast-import	not_ported
 t9300-fast-import::u-validate-root-root-delete-result	t9300-fast-import	U: validate root ($root) delete result	fast-import	not_ported
-t9301-fast-import-notes::set-up-main-branch	t9301-fast-import-notes	set up main branch	fast-import	pass
-t9301-fast-import-notes::add-notes-with-simple-m-command	t9301-fast-import-notes	add notes with simple M command	fast-import	pass
-t9301-fast-import-notes::add-notes-with-simple-n-command	t9301-fast-import-notes	add notes with simple N command	fast-import	pass
-t9301-fast-import-notes::update-existing-notes-with-n-command	t9301-fast-import-notes	update existing notes with N command	fast-import	pass
-t9301-fast-import-notes::add-concatenation-notes-with-m-command	t9301-fast-import-notes	add concatenation notes with M command	fast-import	pass
-t9301-fast-import-notes::verify-that-deleteall-also-removes-notes	t9301-fast-import-notes	verify that deleteall also removes notes	fast-import	pass
-t9301-fast-import-notes::verify-that-later-n-commands-override-earlier-m-commands	t9301-fast-import-notes	verify that later N commands override earlier M commands	fast-import	pass
-t9301-fast-import-notes::add-lots-of-commits-and-notes	t9301-fast-import-notes	add lots of commits and notes	fast-import	pass
-t9301-fast-import-notes::verify-that-lots-of-notes-trigger-a-fanout-scheme	t9301-fast-import-notes	verify that lots of notes trigger a fanout scheme	fast-import	pass
-t9301-fast-import-notes::verify-that-importing-a-notes-tree-respects-the-fanout-scheme	t9301-fast-import-notes	verify that importing a notes tree respects the fanout scheme	fast-import	pass
-t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	pass
-t9301-fast-import-notes::change-a-few-existing-notes	t9301-fast-import-notes	change a few existing notes	fast-import	pass
-t9301-fast-import-notes::verify-that-changing-notes-respect-existing-fanout	t9301-fast-import-notes	verify that changing notes respect existing fanout	fast-import	pass
-t9301-fast-import-notes::remove-lots-of-notes	t9301-fast-import-notes	remove lots of notes	fast-import	pass
-t9301-fast-import-notes::verify-that-removing-notes-trigger-fanout-consolidation	t9301-fast-import-notes	verify that removing notes trigger fanout consolidation	fast-import	pass
-t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change-2	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	pass
-t9301-fast-import-notes::add-notes-to-num-commits-commits-in-each-of-num-notes-refs-refs	t9301-fast-import-notes	add notes to $num_commits commits in each of $num_notes_refs refs	fast-import	pass
-t9302-fast-import-unpack-limit::create-loose-objects-on-import	t9302-fast-import-unpack-limit	create loose objects on import	fast-import	partial
-t9302-fast-import-unpack-limit::bigger-packs-are-preserved	t9302-fast-import-unpack-limit	bigger packs are preserved	fast-import	partial
-t9302-fast-import-unpack-limit::lookups-after-checkpoint-works	t9302-fast-import-unpack-limit	lookups after checkpoint works	fast-import	partial
+t9301-fast-import-notes::set-up-main-branch	t9301-fast-import-notes	set up main branch	fast-import	partial
+t9301-fast-import-notes::add-notes-with-simple-m-command	t9301-fast-import-notes	add notes with simple M command	fast-import	partial
+t9301-fast-import-notes::add-notes-with-simple-n-command	t9301-fast-import-notes	add notes with simple N command	fast-import	partial
+t9301-fast-import-notes::update-existing-notes-with-n-command	t9301-fast-import-notes	update existing notes with N command	fast-import	partial
+t9301-fast-import-notes::add-concatenation-notes-with-m-command	t9301-fast-import-notes	add concatenation notes with M command	fast-import	partial
+t9301-fast-import-notes::verify-that-deleteall-also-removes-notes	t9301-fast-import-notes	verify that deleteall also removes notes	fast-import	partial
+t9301-fast-import-notes::verify-that-later-n-commands-override-earlier-m-commands	t9301-fast-import-notes	verify that later N commands override earlier M commands	fast-import	partial
+t9301-fast-import-notes::add-lots-of-commits-and-notes	t9301-fast-import-notes	add lots of commits and notes	fast-import	partial
+t9301-fast-import-notes::verify-that-lots-of-notes-trigger-a-fanout-scheme	t9301-fast-import-notes	verify that lots of notes trigger a fanout scheme	fast-import	partial
+t9301-fast-import-notes::verify-that-importing-a-notes-tree-respects-the-fanout-scheme	t9301-fast-import-notes	verify that importing a notes tree respects the fanout scheme	fast-import	partial
+t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	partial
+t9301-fast-import-notes::change-a-few-existing-notes	t9301-fast-import-notes	change a few existing notes	fast-import	partial
+t9301-fast-import-notes::verify-that-changing-notes-respect-existing-fanout	t9301-fast-import-notes	verify that changing notes respect existing fanout	fast-import	partial
+t9301-fast-import-notes::remove-lots-of-notes	t9301-fast-import-notes	remove lots of notes	fast-import	partial
+t9301-fast-import-notes::verify-that-removing-notes-trigger-fanout-consolidation	t9301-fast-import-notes	verify that removing notes trigger fanout consolidation	fast-import	partial
+t9301-fast-import-notes::verify-that-non-notes-are-untouched-by-a-fanout-change-2	t9301-fast-import-notes	verify that non-notes are untouched by a fanout change	fast-import	partial
+t9301-fast-import-notes::add-notes-to-num-commits-commits-in-each-of-num-notes-refs-refs	t9301-fast-import-notes	add notes to $num_commits commits in each of $num_notes_refs refs	fast-import	partial
+t9302-fast-import-unpack-limit::create-loose-objects-on-import	t9302-fast-import-unpack-limit	create loose objects on import	fast-import	pass
+t9302-fast-import-unpack-limit::bigger-packs-are-preserved	t9302-fast-import-unpack-limit	bigger packs are preserved	fast-import	pass
+t9302-fast-import-unpack-limit::lookups-after-checkpoint-works	t9302-fast-import-unpack-limit	lookups after checkpoint works	fast-import	pass
 t9303-fast-import-compression::fast-import-packed-with-config	t9303-fast-import-compression	fast-import (packed) with $config	fast-import	pass
 t9303-fast-import-compression::fast-import-loose-with-config	t9303-fast-import-compression	fast-import (loose) with $config	fast-import	pass
 t9304-fast-import-marks::setup-dump-of-basic-history	t9304-fast-import-marks	setup dump of basic history	fast-import	partial
