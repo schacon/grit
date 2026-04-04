@@ -1,17 +1,12 @@
 #!/bin/sh
 #
 # Upstream: t9501-gitweb-standalone-http-status.sh
-# Requires gitweb/Perl CGI — ported as test_expect_failure stubs.
+# Requires gitweb/Perl CGI — not available in grit.
 #
 
-test_description='gitweb as standalone script (http status tests).
+test_description='gitweb HTTP status tests (requires gitweb CGI)'
 
-This test runs gitweb (git web interface) as a CGI script from the
-commandline, and checks that it returns the expected HTTP status
-code and message.'
-
-cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-skip_all='gitweb/Perl CGI not available in grit'
+skip_all='skipping gitweb tests, requires gitweb CGI infrastructure'
 test_done

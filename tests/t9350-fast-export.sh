@@ -487,7 +487,7 @@ test_expect_success 'setup submodule' '
 
 '
 
-test_expect_failure 'submodule fast-export | fast-import' '
+test_expect_success 'submodule fast-export | fast-import' '
 
 	test_config_global protocol.file.allow always &&
 	SUBENT1=$(git ls-tree main^ sub) &&
@@ -680,7 +680,7 @@ M 100644 :2 there
 
 EOF
 
-test_expect_failure 'no exact-ref revisions included' '
+test_expect_success 'no exact-ref revisions included' '
 	(
 		cd limit-by-paths &&
 		git fast-export main~2..main~1 > output &&
@@ -754,8 +754,8 @@ test_expect_success 'tree_tag'        '
 # tags resolve to a tree).  They exist just to make sure we do not
 # abort but instead just warn.
 test_expect_success 'tree_tag-obj'    'git fast-export tree_tag-obj'
-test_expect_failure 'tag-obj_tag'     'git fast-export tag-obj_tag'
-test_expect_failure 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
+test_expect_success 'tag-obj_tag'     'git fast-export tag-obj_tag'
+test_expect_success 'tag-obj_tag-obj' 'git fast-export tag-obj_tag-obj'
 
 test_expect_success 'handling tags of blobs' '
 	git tag -a -m "Tag of a blob" blobtag $(git rev-parse main:file) &&
@@ -834,7 +834,7 @@ test_expect_failure PERL_TEST_HELPERS 'fast-export quotes pathnames' '
 	)
 '
 
-test_expect_failure 'test bidirectionality' '
+test_expect_success 'test bidirectionality' '
 	git init marks-test &&
 	git fast-export --export-marks=marks-cur --import-marks-if-exists=marks-cur --branches | \
 	git --git-dir=marks-test/.git fast-import --export-marks=marks-new --import-marks-if-exists=marks-new &&
@@ -988,7 +988,7 @@ test_expect_success 'fast-export --first-parent outputs all revisions output by 
 	)
 '
 
-test_expect_failure 'fast-export handles --end-of-options' '
+test_expect_success 'fast-export handles --end-of-options' '
 	git update-ref refs/heads/nodash HEAD &&
 	git update-ref refs/heads/--dashes HEAD &&
 	git fast-export --end-of-options nodash >expect &&

@@ -16,7 +16,7 @@ test_cmp_config_output () {
 	test_cmp "$1" "$2"
 }
 
-test_expect_failure 'bundle_uri_parse_line() just URIs' '
+test_expect_success 'bundle_uri_parse_line() just URIs' '
 	cat >in <<-\EOF &&
 	bundle.one.uri=http://example.com/bundle.bdl
 	bundle.two.uri=https://example.com/bundle.bdl
@@ -40,7 +40,7 @@ test_expect_failure 'bundle_uri_parse_line() just URIs' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'bundle_uri_parse_line(): relative URIs' '
+test_expect_success 'bundle_uri_parse_line(): relative URIs' '
 	cat >in <<-\EOF &&
 	bundle.one.uri=bundle.bdl
 	bundle.two.uri=../bundle.bdl
@@ -64,7 +64,7 @@ test_expect_failure 'bundle_uri_parse_line(): relative URIs' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'bundle_uri_parse_line(): relative URIs and parent paths' '
+test_expect_success 'bundle_uri_parse_line(): relative URIs and parent paths' '
 	cat >in <<-\EOF &&
 	bundle.one.uri=bundle.bdl
 	bundle.two.uri=../bundle.bdl
@@ -75,7 +75,7 @@ test_expect_failure 'bundle_uri_parse_line(): relative URIs and parent paths' '
 	grep "fatal: cannot strip one component off url" err
 '
 
-test_expect_failure 'bundle_uri_parse_line() parsing edge cases: empty key or value' '
+test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty key or value' '
 	cat >in <<-\EOF &&
 	=bogus-value
 	bogus-key=
@@ -91,7 +91,7 @@ test_expect_failure 'bundle_uri_parse_line() parsing edge cases: empty key or va
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'bundle_uri_parse_line() parsing edge cases: empty lines' '
+test_expect_success 'bundle_uri_parse_line() parsing edge cases: empty lines' '
 	cat >in <<-\EOF &&
 	bundle.one.uri=http://example.com/bundle.bdl
 
@@ -116,7 +116,7 @@ test_expect_failure 'bundle_uri_parse_line() parsing edge cases: empty lines' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'bundle_uri_parse_line() parsing edge cases: duplicate lines' '
+test_expect_success 'bundle_uri_parse_line() parsing edge cases: duplicate lines' '
 	cat >in <<-\EOF &&
 	bundle.one.uri=http://example.com/bundle.bdl
 	bundle.two.uri=https://example.com/bundle.bdl
@@ -140,7 +140,7 @@ test_expect_failure 'bundle_uri_parse_line() parsing edge cases: duplicate lines
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'parse config format: just URIs' '
+test_expect_success 'parse config format: just URIs' '
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -158,7 +158,7 @@ test_expect_failure 'parse config format: just URIs' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'parse config format: relative URIs' '
+test_expect_success 'parse config format: relative URIs' '
 	cat >in <<-\EOF &&
 	[bundle]
 		version = 1
@@ -188,7 +188,7 @@ test_expect_failure 'parse config format: relative URIs' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'parse config format edge cases: empty key or value' '
+test_expect_success 'parse config format edge cases: empty key or value' '
 	cat >in1 <<-\EOF &&
 	= bogus-value
 	EOF
@@ -203,7 +203,7 @@ test_expect_failure 'parse config format edge cases: empty key or value' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'parse config format: creationToken heuristic' '
+test_expect_success 'parse config format: creationToken heuristic' '
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -225,7 +225,7 @@ test_expect_failure 'parse config format: creationToken heuristic' '
 	test_cmp_config_output expect actual
 '
 
-test_expect_failure 'parse config format edge cases: creationToken heuristic' '
+test_expect_success 'parse config format edge cases: creationToken heuristic' '
 	cat >expect <<-\EOF &&
 	[bundle]
 		version = 1
@@ -240,7 +240,7 @@ test_expect_failure 'parse config format edge cases: creationToken heuristic' '
 	grep "could not parse bundle list key creationToken" err
 '
 
-test_expect_failure 'parse config format: bundle with missing uri' '
+test_expect_success 'parse config format: bundle with missing uri' '
 	cat >input <<-\EOF &&
 	[bundle]
 		version = 1
@@ -253,7 +253,7 @@ test_expect_failure 'parse config format: bundle with missing uri' '
 	grep "bundle .missing-uri. has no uri" err
 '
 
-test_expect_failure 'parse config format: bundle with url instead of uri' '
+test_expect_success 'parse config format: bundle with url instead of uri' '
 	cat >input <<-\EOF &&
 	[bundle]
 		version = 1

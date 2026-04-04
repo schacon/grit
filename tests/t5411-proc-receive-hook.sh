@@ -26,7 +26,7 @@ test_expect_success 'push to bare repo works' '
 '
 
 # grit does not support proc-receive hook
-test_expect_failure 'proc-receive hook rejects push to refs/for/*' '
+test_expect_success 'proc-receive hook rejects push to refs/for/*' '
 	mkdir -p upstream.git/hooks &&
 	write_script upstream.git/hooks/proc-receive <<-\EOF &&
 	printf >&2 "# proc-receive hook\n"

@@ -119,7 +119,7 @@ cat >expect <<EXPECT_END
     first note for first commit
 EXPECT_END
 
-test_expect_failure 'add notes with simple M command' '
+test_expect_success 'add notes with simple M command' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
@@ -160,7 +160,7 @@ cat >expect <<EXPECT_END
     first note for first commit
 EXPECT_END
 
-test_expect_failure 'add notes with simple N command' '
+test_expect_success 'add notes with simple N command' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
@@ -210,7 +210,7 @@ cat >expect <<EXPECT_END
     second note for first commit
 EXPECT_END
 
-test_expect_failure 'update existing notes with N command' '
+test_expect_success 'update existing notes with N command' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
@@ -284,7 +284,7 @@ $whitespace
     third note for first commit
 EXPECT_END
 
-test_expect_failure 'add concatenation notes with M command' '
+test_expect_success 'add concatenation notes with M command' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
@@ -360,7 +360,7 @@ cat >expect <<EXPECT_END
     fourth note for first commit
 EXPECT_END
 
-test_expect_failure 'verify that later N commands override earlier M commands' '
+test_expect_success 'verify that later N commands override earlier M commands' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/test git log | grep "^    " > actual &&
@@ -469,7 +469,7 @@ EXPECT_END
 	i=$(($i - 1))
 done
 
-test_expect_failure 'add lots of commits and notes' '
+test_expect_success 'add lots of commits and notes' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/many_notes git log refs/heads/many_commits |
@@ -588,7 +588,7 @@ EXPECT_END
 	j=$(($j + 1))
 done
 
-test_expect_failure 'change a few existing notes' '
+test_expect_success 'change a few existing notes' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/many_notes git log -n3 refs/heads/many_commits |
@@ -646,7 +646,7 @@ EXPECT_END
 	i=$(($i - 1))
 done
 
-test_expect_failure 'remove lots of notes' '
+test_expect_success 'remove lots of notes' '
 
 	git fast-import <input &&
 	GIT_NOTES_REF=refs/notes/many_notes git log refs/heads/many_commits |
@@ -721,7 +721,7 @@ EXPECT_END
 	i=$(($i - 1))
 done
 
-test_expect_failure "add notes to $num_commits commits in each of $num_notes_refs refs" '
+test_expect_success "add notes to $num_commits commits in each of $num_notes_refs refs" '
 
 	git fast-import --active-branches=5 <input &&
 	GIT_NOTES_REF=refs/notes/more_notes_1 git log refs/heads/more_commits |

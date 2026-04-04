@@ -95,7 +95,7 @@ test_expect_success 'result has two branches' '
 	test_export other_branch main_branch
 '
 
-test_expect_failure 'repo has original shape and timestamps' '
+test_expect_success 'repo has original shape and timestamps' '
 	cd new &&
 	shape () {
 		git log --format="%m %ct" --left-right --boundary "$@"
@@ -137,7 +137,7 @@ test_expect_success 'all tags point to branch tip' '
 	test_cmp expect actual
 '
 
-test_expect_failure 'idents are shared' '
+test_expect_success 'idents are shared' '
 	cd new &&
 	git log --all --format="%an <%ae>" >authors &&
 	sort -u authors >unique &&
