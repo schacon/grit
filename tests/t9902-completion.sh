@@ -1392,7 +1392,7 @@ test_expect_success '__git_complete_fetch_refspecs - fully qualified & prefix' '
 	test_cmp expected out
 '
 
-test_expect_failure '__git_complete_worktree_paths' '
+test_expect_success '__git_complete_worktree_paths' '
 	test_when_finished "git worktree remove other_wt" &&
 	git worktree add --orphan other_wt &&
 	run_completion "git worktree remove " &&
@@ -1408,7 +1408,7 @@ test_expect_success '__git_complete_worktree_paths - not a git repository' '
 	)
 '
 
-test_expect_failure '__git_complete_worktree_paths with -C' '
+test_expect_success '__git_complete_worktree_paths with -C' '
 	test_when_finished "git -C otherrepo worktree remove otherrepo_wt" &&
 	git -C otherrepo worktree add --orphan otherrepo_wt &&
 	run_completion "git -C otherrepo worktree remove " &&
@@ -1480,14 +1480,14 @@ test_expect_success 'git bisect - start subcommand arguments after double-dash a
 	)
 '
 
-test_expect_failure 'setup for git-bisect tests requiring ongoing bisection' '
+test_expect_success 'setup for git-bisect tests requiring ongoing bisection' '
 	(
 		cd git-bisect &&
 		git bisect start --term-new=custom_new --term-old=custom_old final initial
 	)
 '
 
-test_expect_failure 'git-bisect - when bisecting all subcommands are candidates' '
+test_expect_success 'git-bisect - when bisecting all subcommands are candidates' '
 	(
 		cd git-bisect &&
 		test_completion "git bisect " <<-\EOF
@@ -1850,7 +1850,7 @@ test_expect_failure 'cone mode sparse-checkout completes directory names' '
 	)
 '
 
-test_expect_failure 'cone mode sparse-checkout completes directory names with spaces and accents' '
+test_expect_success 'cone mode sparse-checkout completes directory names with spaces and accents' '
 	# reset sparse-checkout
 	git -C sparse-checkout sparse-checkout disable &&
 	(
@@ -3027,7 +3027,7 @@ test_expect_failure 'git config set - section include, includeIf' '
 	EOF
 '
 
-test_expect_failure 'git config set - variable name' '
+test_expect_success 'git config set - variable name' '
 	test_completion "git config set log.d" <<-\EOF
 	log.date Z
 	log.decorate Z
@@ -3035,7 +3035,7 @@ test_expect_failure 'git config set - variable name' '
 	EOF
 '
 
-test_expect_failure 'git config set - variable name include' '
+test_expect_success 'git config set - variable name include' '
 	test_completion "git config set include.p" <<-\EOF
 	include.path Z
 	EOF
@@ -3047,7 +3047,7 @@ test_expect_success 'setup for git config submodule tests' '
 	git submodule add ./sub
 '
 
-test_expect_failure 'git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section' '
+test_expect_success 'git config set - variable name - submodule and __git_compute_first_level_config_vars_for_section' '
 	test_completion "git config set submodule." <<-\EOF
 	submodule.active Z
 	submodule.alternateErrorStrategy Z
@@ -3085,7 +3085,7 @@ test_expect_failure 'git -c - section' '
 	EOF
 '
 
-test_expect_failure 'git -c - variable name' '
+test_expect_success 'git -c - variable name' '
 	test_completion "git -c log.d" <<-\EOF
 	log.date=Z
 	log.decorate=Z
@@ -3107,7 +3107,7 @@ test_expect_failure 'git clone --config= - section' '
 	EOF
 '
 
-test_expect_failure 'git clone --config= - variable name' '
+test_expect_success 'git clone --config= - variable name' '
 	test_completion "git clone --config=log.d" <<-\EOF
 	log.date=Z
 	log.decorate=Z
