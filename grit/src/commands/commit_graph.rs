@@ -41,9 +41,53 @@ pub struct Args {
 #[derive(Debug, Subcommand)]
 pub enum CommitGraphCommand {
     /// Write a commit-graph file.
-    Write,
+    Write {
+        /// Include all reachable commits.
+        #[arg(long)]
+        reachable: bool,
+        /// Read commits from stdin.
+        #[arg(long)]
+        stdin_commits: bool,
+        /// Read packs from stdin.
+        #[arg(long)]
+        stdin_packs: bool,
+        /// Use changed paths Bloom filters.
+        #[arg(long)]
+        changed_paths: bool,
+        /// Enable split commit-graph.
+        #[arg(long)]
+        split: bool,
+        /// Set split strategy (no-merge, replace).
+        #[arg(long)]
+        split_strategy: Option<String>,
+        /// Set size multiple for split.
+        #[arg(long)]
+        size_multiple: Option<f64>,
+        /// Set max commits for split.
+        #[arg(long)]
+        max_commits: Option<u64>,
+        /// Set expire time.
+        #[arg(long)]
+        expire_time: Option<String>,
+        /// Show progress.
+        #[arg(long)]
+        progress: bool,
+        /// Don't show progress.
+        #[arg(long)]
+        no_progress: bool,
+    },
     /// Verify an existing commit-graph file.
-    Verify,
+    Verify {
+        /// Enable shallow mode.
+        #[arg(long)]
+        shallow: bool,
+        /// Show progress.
+        #[arg(long)]
+        progress: bool,
+        /// Don't show progress.
+        #[arg(long)]
+        no_progress: bool,
+    },
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -62,8 +106,8 @@ const PARENT_NONE: u32 = 0x7000_0000;
 /// Run `grit commit-graph`.
 pub fn run(args: Args) -> Result<()> {
     match args.command {
-        CommitGraphCommand::Write => cmd_write(args.object_dir),
-        CommitGraphCommand::Verify => cmd_verify(args.object_dir),
+        CommitGraphCommand::Write { .. } => cmd_write(args.object_dir),
+        CommitGraphCommand::Verify { .. } => cmd_verify(args.object_dir),
     }
 }
 
