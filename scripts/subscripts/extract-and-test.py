@@ -427,9 +427,9 @@ def run_ported_tests():
             )
             output = proc.stdout + proc.stderr
         except subprocess.TimeoutExpired:
-            return (base, 0, 0, 0, 'timeout')
+            return (base, 0, 0, 0, 'timeout', 0, 0, 0)
         except Exception:
-            return (base, 0, 0, 0, 'error')
+            return (base, 0, 0, 0, 'error', 0, 0, 0)
         finally:
             subprocess.run(['rm', '-rf', trash], capture_output=True)
 
@@ -442,7 +442,18 @@ def run_ported_tests():
                 pass_n = int(m.group(2))
                 fail_n = int(m.group(3))
 
-        return (base, total, pass_n, fail_n, 'ok')
+        # Count test_expect_failure in source to get real pass count
+        src_path = os.path.join(GRIT_TESTS, fname)
+        try:
+            with open(src_path) as sf:
+                src = sf.read()
+            ef_count = len(re.findall(r'^\s*test_expect_failure\s', src, re.MULTILINE))
+        except Exception:
+            ef_count = 0
+        real_pass = max(0, pass_n - ef_count)
+        real_total = max(0, total - ef_count) if total > 0 else 0
+
+        return (base, total, pass_n, fail_n, 'ok', real_pass, real_total, ef_count)
 
     print(f"Running {len(test_files)} ported test files...")
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -453,9 +464,15 @@ def run_ported_tests():
             if done % 50 == 0 or done == len(test_files):
                 print(f"  {done}/{len(test_files)} files completed")
             try:
-                base, total, pass_n, fail_n, status = future.result()
+                result = future.result()
+                if len(result) == 8:
+                    base, total, pass_n, fail_n, status, real_pass, real_total, ef_count = result
+                else:
+                    base, total, pass_n, fail_n, status = result[:5]
+                    real_pass, real_total, ef_count = pass_n, total, 0
                 file_stats[base] = {
-                    'total': total, 'pass': pass_n, 'fail': fail_n, 'status': status
+                    'total': total, 'pass': pass_n, 'fail': fail_n, 'status': status,
+                    'real_pass': real_pass, 'real_total': real_total, 'expect_failure': ef_count
                 }
             except Exception as e:
                 print(f"  Error in {futures[future]}: {e}", file=sys.stderr)
@@ -484,8 +501,11 @@ def generate_test_results(file_stats):
     # Write per-file results
     total_ported_pass = 0
     total_ported_tests = 0
+    total_real_pass = 0
+    total_real_tests = 0
+    total_ef = 0
     with open(file_results_path, 'w') as out:
-        out.write("file\tported\ttotal_tests\tpassing\tfailing\tstatus\n")
+        out.write("file\tported\ttotal_tests\tpassing\tfailing\tstatus\treal_pass\treal_total\texpect_failure\n")
         all_files = set()
         with open(cases_path) as inp:
             inp.readline()
@@ -498,13 +518,19 @@ def generate_test_results(file_stats):
             ported = fbase in ported_files
             if ported and fbase in file_stats:
                 s = file_stats[fbase]
+                rp = s.get('real_pass', s['pass'])
+                rt = s.get('real_total', s['total'])
+                ef = s.get('expect_failure', 0)
                 total_ported_tests += s['total']
                 total_ported_pass += s['pass']
-                out.write(f"{fbase}\tyes\t{s['total']}\t{s['pass']}\t{s['fail']}\t{s['status']}\n")
+                total_real_pass += rp
+                total_real_tests += rt
+                total_ef += ef
+                out.write(f"{fbase}\tyes\t{s['total']}\t{s['pass']}\t{s['fail']}\t{s['status']}\t{rp}\t{rt}\t{ef}\n")
             elif ported:
-                out.write(f"{fbase}\tyes\t0\t0\t0\tunknown\n")
+                out.write(f"{fbase}\tyes\t0\t0\t0\tunknown\t0\t0\t0\n")
             else:
-                out.write(f"{fbase}\tno\t0\t0\t0\tnot_ported\n")
+                out.write(f"{fbase}\tno\t0\t0\t0\tnot_ported\t0\t0\t0\n")
 
     # Write per-test-case results
     pass_count = 0
@@ -539,7 +565,9 @@ def generate_test_results(file_stats):
 
     print(f"\nPer upstream test case: {pass_count} pass (file fully passing), "
           f"{partial_count} partial, {not_ported_count} not ported")
-    print(f"Ported test suite: {total_ported_pass:,} / {total_ported_tests:,} individual tests passing")
+    print(f"Ported test suite (incl expected failures): {total_ported_pass:,} / {total_ported_tests:,}")
+    print(f"Real passing (excl test_expect_failure): {total_real_pass:,} / {total_real_tests:,}")
+    print(f"Expected failures (stubs): {total_ef:,}")
     print(f"Wrote {results_path}")
     print(f"Wrote {file_results_path}")
 

@@ -3627,10 +3627,10 @@ t2021-checkout-overwrite::the-symlink-remained	t2021-checkout-overwrite	the syml
 t2021-checkout-overwrite::cleanup-after-previous-symlink-tests	t2021-checkout-overwrite	cleanup after previous symlink tests	checkout	pass
 t2021-checkout-overwrite::checkout-f-must-not-follow-symlinks-when-removing-entries	t2021-checkout-overwrite	checkout -f must not follow symlinks when removing entries	checkout	pass
 t2021-checkout-overwrite::checkout-overwrite-ignore-should-succeed-if-only-ignored-files-in-the-way	t2021-checkout-overwrite	checkout --overwrite-ignore should succeed if only ignored files in the way	checkout	pass
-t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	pass
-t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	pass
-t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	pass
-t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	pass
+t2022-checkout-paths::checking-out-paths-out-of-a-tree-does-not-clobber-unrelated-paths	t2022-checkout-paths	checking out paths out of a tree does not clobber unrelated paths	checkout	partial
+t2022-checkout-paths::do-not-touch-unmerged-entries-matching-path-but-not-in-tree	t2022-checkout-paths	do not touch unmerged entries matching $path but not in $tree	checkout	partial
+t2022-checkout-paths::do-not-touch-files-that-are-already-up-to-date	t2022-checkout-paths	do not touch files that are already up-to-date	checkout	partial
+t2022-checkout-paths::checkout-head-adds-deleted-intent-to-add-file-back-to-index	t2022-checkout-paths	checkout HEAD adds deleted intent-to-add file back to index	checkout	partial
 t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	pass
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	pass
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	pass
@@ -9709,17 +9709,17 @@ t5408-send-pack-stdin::cmdline-refs-with-multiple-duplicates	t5408-send-pack-std
 t5408-send-pack-stdin::stdin-refs-come-after-cmdline	t5408-send-pack-stdin	--stdin refs come after cmdline	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-cmdline	t5408-send-pack-stdin	refspecs and --mirror do not mix (cmdline)	send-pack	pass
 t5408-send-pack-stdin::refspecs-and-mirror-do-not-mix-stdin	t5408-send-pack-stdin	refspecs and --mirror do not mix (stdin)	send-pack	pass
-t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	pass
-t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	pass
-t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	pass
-t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	pass
-t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	pass
-t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	pass
-t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	pass
-t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	pass
-t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	pass
-t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	pass
-t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	pass
+t5409-colorize-remote-messages::setup	t5409-colorize-remote-messages	setup	add	partial
+t5409-colorize-remote-messages::keywords	t5409-colorize-remote-messages	keywords	push	partial
+t5409-colorize-remote-messages::whole-words-at-line-start	t5409-colorize-remote-messages	whole words at line start	push	partial
+t5409-colorize-remote-messages::short-line	t5409-colorize-remote-messages	short line	push	partial
+t5409-colorize-remote-messages::case-insensitive	t5409-colorize-remote-messages	case-insensitive	push	partial
+t5409-colorize-remote-messages::leading-space	t5409-colorize-remote-messages	leading space	push	partial
+t5409-colorize-remote-messages::spaces-only	t5409-colorize-remote-messages	spaces only	push	partial
+t5409-colorize-remote-messages::no-coloring-for-redirected-output	t5409-colorize-remote-messages	no coloring for redirected output	push	partial
+t5409-colorize-remote-messages::push-with-customized-color	t5409-colorize-remote-messages	push with customized color	push	partial
+t5409-colorize-remote-messages::error-in-customized-color	t5409-colorize-remote-messages	error in customized color	push	partial
+t5409-colorize-remote-messages::fallback-to-color-ui	t5409-colorize-remote-messages	fallback to color.ui	push	partial
 t5410-receive-pack::setup	t5410-receive-pack	setup	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefscommand	t5410-receive-pack	with core.alternateRefsCommand	receive-pack	pass
 t5410-receive-pack::with-core-alternaterefsprefixes	t5410-receive-pack	with core.alternateRefsPrefixes	receive-pack	pass
@@ -10574,28 +10574,28 @@ t5532-fetch-proxy::setup-proxy-script	t5532-fetch-proxy	setup proxy script	fetch
 t5532-fetch-proxy::setup-local-repo	t5532-fetch-proxy	setup local repo	fetch	pass
 t5532-fetch-proxy::fetch-through-proxy-works	t5532-fetch-proxy	fetch through proxy works	fetch	pass
 t5532-fetch-proxy::funny-hostnames-are-rejected-before-running-proxy	t5532-fetch-proxy	funny hostnames are rejected before running proxy	fetch	pass
-t5533-push-cas::push-to-update-protected	t5533-push-cas	push to update (protected)	push	pass
-t5533-push-cas::push-to-update-protected-forced	t5533-push-cas	push to update (protected, forced)	push	pass
-t5533-push-cas::push-to-update-protected-tracking	t5533-push-cas	push to update (protected, tracking)	push	pass
-t5533-push-cas::push-to-update-protected-tracking-forced	t5533-push-cas	push to update (protected, tracking, forced)	push	pass
-t5533-push-cas::push-to-update-allowed	t5533-push-cas	push to update (allowed)	push	pass
-t5533-push-cas::push-to-update-allowed-tracking	t5533-push-cas	push to update (allowed, tracking)	push	pass
-t5533-push-cas::push-to-update-allowed-even-though-no-ff	t5533-push-cas	push to update (allowed even though no-ff)	push	pass
-t5533-push-cas::push-to-delete-protected	t5533-push-cas	push to delete (protected)	push	pass
-t5533-push-cas::push-to-delete-protected-forced	t5533-push-cas	push to delete (protected, forced)	push	pass
-t5533-push-cas::push-to-delete-allowed	t5533-push-cas	push to delete (allowed)	push	pass
-t5533-push-cas::cover-everything-with-default-force-with-lease-protected	t5533-push-cas	cover everything with default force-with-lease (protected)	push	pass
-t5533-push-cas::cover-everything-with-default-force-with-lease-allowed	t5533-push-cas	cover everything with default force-with-lease (allowed)	push	pass
-t5533-push-cas::new-branch-covered-by-force-with-lease	t5533-push-cas	new branch covered by force-with-lease	push	pass
-t5533-push-cas::new-branch-covered-by-force-with-lease-explicit	t5533-push-cas	new branch covered by force-with-lease (explicit)	push	pass
-t5533-push-cas::new-branch-already-exists	t5533-push-cas	new branch already exists	push	pass
-t5533-push-cas::background-updates-of-remote-can-be-mitigated-with-a-non-updated-remote-push	t5533-push-cas	background updates of REMOTE can be mitigated with a non-updated REMOTE-push	push	pass
-t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-force-if-includes	t5533-push-cas	background updates to remote can be mitigated with "--force-if-includes"	push	pass
-t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-push-useforceifincludes	t5533-push-cas	background updates to remote can be mitigated with "push.useForceIfIncludes"	push	pass
-t5533-push-cas::force-if-includes-should-be-disabled-for-force-with-lease-refname-expect	t5533-push-cas	"--force-if-includes" should be disabled for --force-with-lease="<refname>:<expect>"	push	pass
-t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase")	push	pass
-t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase-local-re	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase", local rebase)	push	pass
-t5533-push-cas::force-if-includes-should-allow-deletes	t5533-push-cas	"--force-if-includes" should allow deletes	push	pass
+t5533-push-cas::push-to-update-protected	t5533-push-cas	push to update (protected)	push	partial
+t5533-push-cas::push-to-update-protected-forced	t5533-push-cas	push to update (protected, forced)	push	partial
+t5533-push-cas::push-to-update-protected-tracking	t5533-push-cas	push to update (protected, tracking)	push	partial
+t5533-push-cas::push-to-update-protected-tracking-forced	t5533-push-cas	push to update (protected, tracking, forced)	push	partial
+t5533-push-cas::push-to-update-allowed	t5533-push-cas	push to update (allowed)	push	partial
+t5533-push-cas::push-to-update-allowed-tracking	t5533-push-cas	push to update (allowed, tracking)	push	partial
+t5533-push-cas::push-to-update-allowed-even-though-no-ff	t5533-push-cas	push to update (allowed even though no-ff)	push	partial
+t5533-push-cas::push-to-delete-protected	t5533-push-cas	push to delete (protected)	push	partial
+t5533-push-cas::push-to-delete-protected-forced	t5533-push-cas	push to delete (protected, forced)	push	partial
+t5533-push-cas::push-to-delete-allowed	t5533-push-cas	push to delete (allowed)	push	partial
+t5533-push-cas::cover-everything-with-default-force-with-lease-protected	t5533-push-cas	cover everything with default force-with-lease (protected)	push	partial
+t5533-push-cas::cover-everything-with-default-force-with-lease-allowed	t5533-push-cas	cover everything with default force-with-lease (allowed)	push	partial
+t5533-push-cas::new-branch-covered-by-force-with-lease	t5533-push-cas	new branch covered by force-with-lease	push	partial
+t5533-push-cas::new-branch-covered-by-force-with-lease-explicit	t5533-push-cas	new branch covered by force-with-lease (explicit)	push	partial
+t5533-push-cas::new-branch-already-exists	t5533-push-cas	new branch already exists	push	partial
+t5533-push-cas::background-updates-of-remote-can-be-mitigated-with-a-non-updated-remote-push	t5533-push-cas	background updates of REMOTE can be mitigated with a non-updated REMOTE-push	push	partial
+t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-force-if-includes	t5533-push-cas	background updates to remote can be mitigated with "--force-if-includes"	push	partial
+t5533-push-cas::background-updates-to-remote-can-be-mitigated-with-push-useforceifincludes	t5533-push-cas	background updates to remote can be mitigated with "push.useForceIfIncludes"	push	partial
+t5533-push-cas::force-if-includes-should-be-disabled-for-force-with-lease-refname-expect	t5533-push-cas	"--force-if-includes" should be disabled for --force-with-lease="<refname>:<expect>"	push	partial
+t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase")	push	partial
+t5533-push-cas::force-if-includes-should-allow-forced-update-after-a-rebase-pull-rebase-local-re	t5533-push-cas	"--force-if-includes" should allow forced update after a rebase ("pull --rebase", local rebase)	push	partial
+t5533-push-cas::force-if-includes-should-allow-deletes	t5533-push-cas	"--force-if-includes" should allow deletes	push	partial
 t5534-push-signed::unsigned-push-does-not-send-push-certificate	t5534-push-signed	unsigned push does not send push certificate	push	pass
 t5534-push-signed::talking-with-a-receiver-without-push-certificate-support	t5534-push-signed	talking with a receiver without push certificate support	push	pass
 t5534-push-signed::push-signed-fails-with-a-receiver-without-push-certificate-support	t5534-push-signed	push --signed fails with a receiver without push certificate support	push	pass
@@ -10996,42 +10996,42 @@ t5564-http-proxy::clone-via-unix-socket	t5564-http-proxy	clone via Unix socket	c
 t5564-http-proxy::unix-socket-requires-socks	t5564-http-proxy	Unix socket requires socks*:	clone	pass
 t5564-http-proxy::unix-socket-requires-localhost	t5564-http-proxy	Unix socket requires localhost	clone	pass
 t5565-push-multiple::push-to-group	t5565-push-multiple	push to group	push	pass
-t5570-git-daemon::daemon-rejects-invalid-init-timeout-values	t5570-git-daemon	daemon rejects invalid --init-timeout values	daemon	partial
-t5570-git-daemon::daemon-rejects-invalid-timeout-values	t5570-git-daemon	daemon rejects invalid --timeout values	daemon	partial
-t5570-git-daemon::daemon-rejects-invalid-max-connections-values	t5570-git-daemon	daemon rejects invalid --max-connections values	daemon	partial
-t5570-git-daemon::setup-repository	t5570-git-daemon	setup repository	daemon	partial
-t5570-git-daemon::create-git-accessible-bare-repository	t5570-git-daemon	create git-accessible bare repository	daemon	partial
-t5570-git-daemon::clone-git-repository	t5570-git-daemon	clone git repository	daemon	partial
-t5570-git-daemon::fetch-changes-via-git-protocol	t5570-git-daemon	fetch changes via git protocol	daemon	partial
-t5570-git-daemon::no-op-fetch-v-stderr-is-as-expected	t5570-git-daemon	no-op fetch -v stderr is as expected	daemon	partial
-t5570-git-daemon::no-op-fetch-without-v-is-quiet	t5570-git-daemon	no-op fetch without "-v" is quiet	daemon	partial
-t5570-git-daemon::remote-detects-correct-head	t5570-git-daemon	remote detects correct HEAD	daemon	partial
-t5570-git-daemon::prepare-pack-objects	t5570-git-daemon	prepare pack objects	daemon	partial
-t5570-git-daemon::fetch-notices-corrupt-pack	t5570-git-daemon	fetch notices corrupt pack	daemon	partial
-t5570-git-daemon::fetch-notices-corrupt-idx	t5570-git-daemon	fetch notices corrupt idx	daemon	partial
-t5570-git-daemon::client-refuses-to-ask-for-repo-with-newline	t5570-git-daemon	client refuses to ask for repo with newline	daemon	partial
-t5570-git-daemon::clone-non-existent	t5570-git-daemon	clone non-existent	daemon	partial
-t5570-git-daemon::push-disabled	t5570-git-daemon	push disabled	daemon	partial
-t5570-git-daemon::read-access-denied	t5570-git-daemon	read access denied	daemon	partial
-t5570-git-daemon::not-exported	t5570-git-daemon	not exported	daemon	partial
-t5570-git-daemon::clone-non-existent-2	t5570-git-daemon	clone non-existent	daemon	partial
-t5570-git-daemon::push-disabled-2	t5570-git-daemon	push disabled	daemon	partial
-t5570-git-daemon::read-access-denied-2	t5570-git-daemon	read access denied	daemon	partial
-t5570-git-daemon::not-exported-2	t5570-git-daemon	not exported	daemon	partial
-t5570-git-daemon::access-repo-via-interpolated-hostname	t5570-git-daemon	access repo via interpolated hostname	daemon	partial
-t5570-git-daemon::hostname-cannot-break-out-of-directory	t5570-git-daemon	hostname cannot break out of directory	daemon	partial
-t5570-git-daemon::hostname-interpolation-works-after-lf-stripping	t5570-git-daemon	hostname interpolation works after LF-stripping	daemon	partial
-t5571-pre-push-hook::setup	t5571-pre-push-hook	setup	config	partial
-t5571-pre-push-hook::push-with-failing-hook	t5571-pre-push-hook	push with failing hook	push	partial
-t5571-pre-push-hook::no-verify-bypasses-hook	t5571-pre-push-hook	--no-verify bypasses hook	push	partial
-t5571-pre-push-hook::push-with-hook	t5571-pre-push-hook	push with hook	push	partial
-t5571-pre-push-hook::add-a-branch	t5571-pre-push-hook	add a branch	checkout	partial
-t5571-pre-push-hook::push-to-default	t5571-pre-push-hook	push to default	push	partial
-t5571-pre-push-hook::push-non-branches	t5571-pre-push-hook	push non-branches	push	partial
-t5571-pre-push-hook::push-delete	t5571-pre-push-hook	push delete	push	partial
-t5571-pre-push-hook::push-to-url	t5571-pre-push-hook	push to URL	push	partial
-t5571-pre-push-hook::set-up-many-ref-tests	t5571-pre-push-hook	set up many-ref tests	update-ref	partial
-t5571-pre-push-hook::sigpipe-does-not-cause-pre-push-hook-failure	t5571-pre-push-hook	sigpipe does not cause pre-push hook failure	push	partial
+t5570-git-daemon::daemon-rejects-invalid-init-timeout-values	t5570-git-daemon	daemon rejects invalid --init-timeout values	daemon	pass
+t5570-git-daemon::daemon-rejects-invalid-timeout-values	t5570-git-daemon	daemon rejects invalid --timeout values	daemon	pass
+t5570-git-daemon::daemon-rejects-invalid-max-connections-values	t5570-git-daemon	daemon rejects invalid --max-connections values	daemon	pass
+t5570-git-daemon::setup-repository	t5570-git-daemon	setup repository	daemon	pass
+t5570-git-daemon::create-git-accessible-bare-repository	t5570-git-daemon	create git-accessible bare repository	daemon	pass
+t5570-git-daemon::clone-git-repository	t5570-git-daemon	clone git repository	daemon	pass
+t5570-git-daemon::fetch-changes-via-git-protocol	t5570-git-daemon	fetch changes via git protocol	daemon	pass
+t5570-git-daemon::no-op-fetch-v-stderr-is-as-expected	t5570-git-daemon	no-op fetch -v stderr is as expected	daemon	pass
+t5570-git-daemon::no-op-fetch-without-v-is-quiet	t5570-git-daemon	no-op fetch without "-v" is quiet	daemon	pass
+t5570-git-daemon::remote-detects-correct-head	t5570-git-daemon	remote detects correct HEAD	daemon	pass
+t5570-git-daemon::prepare-pack-objects	t5570-git-daemon	prepare pack objects	daemon	pass
+t5570-git-daemon::fetch-notices-corrupt-pack	t5570-git-daemon	fetch notices corrupt pack	daemon	pass
+t5570-git-daemon::fetch-notices-corrupt-idx	t5570-git-daemon	fetch notices corrupt idx	daemon	pass
+t5570-git-daemon::client-refuses-to-ask-for-repo-with-newline	t5570-git-daemon	client refuses to ask for repo with newline	daemon	pass
+t5570-git-daemon::clone-non-existent	t5570-git-daemon	clone non-existent	daemon	pass
+t5570-git-daemon::push-disabled	t5570-git-daemon	push disabled	daemon	pass
+t5570-git-daemon::read-access-denied	t5570-git-daemon	read access denied	daemon	pass
+t5570-git-daemon::not-exported	t5570-git-daemon	not exported	daemon	pass
+t5570-git-daemon::clone-non-existent-2	t5570-git-daemon	clone non-existent	daemon	pass
+t5570-git-daemon::push-disabled-2	t5570-git-daemon	push disabled	daemon	pass
+t5570-git-daemon::read-access-denied-2	t5570-git-daemon	read access denied	daemon	pass
+t5570-git-daemon::not-exported-2	t5570-git-daemon	not exported	daemon	pass
+t5570-git-daemon::access-repo-via-interpolated-hostname	t5570-git-daemon	access repo via interpolated hostname	daemon	pass
+t5570-git-daemon::hostname-cannot-break-out-of-directory	t5570-git-daemon	hostname cannot break out of directory	daemon	pass
+t5570-git-daemon::hostname-interpolation-works-after-lf-stripping	t5570-git-daemon	hostname interpolation works after LF-stripping	daemon	pass
+t5571-pre-push-hook::setup	t5571-pre-push-hook	setup	config	pass
+t5571-pre-push-hook::push-with-failing-hook	t5571-pre-push-hook	push with failing hook	push	pass
+t5571-pre-push-hook::no-verify-bypasses-hook	t5571-pre-push-hook	--no-verify bypasses hook	push	pass
+t5571-pre-push-hook::push-with-hook	t5571-pre-push-hook	push with hook	push	pass
+t5571-pre-push-hook::add-a-branch	t5571-pre-push-hook	add a branch	checkout	pass
+t5571-pre-push-hook::push-to-default	t5571-pre-push-hook	push to default	push	pass
+t5571-pre-push-hook::push-non-branches	t5571-pre-push-hook	push non-branches	push	pass
+t5571-pre-push-hook::push-delete	t5571-pre-push-hook	push delete	push	pass
+t5571-pre-push-hook::push-to-url	t5571-pre-push-hook	push to URL	push	pass
+t5571-pre-push-hook::set-up-many-ref-tests	t5571-pre-push-hook	set up many-ref tests	update-ref	pass
+t5571-pre-push-hook::sigpipe-does-not-cause-pre-push-hook-failure	t5571-pre-push-hook	sigpipe does not cause pre-push hook failure	push	pass
 t5572-pull-submodule::setup	t5572-pull-submodule	setup	pull	pass
 t5572-pull-submodule::pull-recurse-submodule-setup	t5572-pull-submodule	pull --recurse-submodule setup	pull	pass
 t5572-pull-submodule::recursive-pull-updates-working-tree	t5572-pull-submodule	recursive pull updates working tree	pull	pass
@@ -11095,14 +11095,14 @@ t5582-fetch-negative-refspec::push-prune-with-negative-refspec-apply-to-the-dest
 t5582-fetch-negative-refspec::fetch-prune-with-negative-refspec	t5582-fetch-negative-refspec	fetch --prune with negative refspec	fetch	pass
 t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec	t5582-fetch-negative-refspec	push with matching : and negative refspec	fetch	pass
 t5582-fetch-negative-refspec::push-with-matching-and-negative-refspec-2	t5582-fetch-negative-refspec	push with matching +: and negative refspec	fetch	pass
-t5583-push-branches::setup-bare-remote	t5583-push-branches	setup bare remote	push	partial
-t5583-push-branches::setup-different-types-of-references	t5583-push-branches	setup different types of references	push	partial
-t5583-push-branches::all-and-branches-have-the-same-behavior	t5583-push-branches	--all and --branches have the same behavior	push	partial
-t5583-push-branches::all-or-branches-can-not-be-combined-with-refspecs	t5583-push-branches	--all or --branches can not be combined with refspecs	push	partial
-t5583-push-branches::all-or-branches-can-not-be-combined-with-mirror	t5583-push-branches	--all or --branches can not be combined with --mirror	push	partial
-t5583-push-branches::all-or-branches-can-not-be-combined-with-tags	t5583-push-branches	--all or --branches can not be combined with --tags	push	partial
-t5583-push-branches::all-or-branches-can-not-be-combined-with-delete	t5583-push-branches	--all or --branches can not be combined with --delete	push	partial
-t5583-push-branches::all-or-branches-combines-with-follow-tags-have-same-behavior	t5583-push-branches	--all or --branches combines with --follow-tags have same behavior	push	partial
+t5583-push-branches::setup-bare-remote	t5583-push-branches	setup bare remote	push	pass
+t5583-push-branches::setup-different-types-of-references	t5583-push-branches	setup different types of references	push	pass
+t5583-push-branches::all-and-branches-have-the-same-behavior	t5583-push-branches	--all and --branches have the same behavior	push	pass
+t5583-push-branches::all-or-branches-can-not-be-combined-with-refspecs	t5583-push-branches	--all or --branches can not be combined with refspecs	push	pass
+t5583-push-branches::all-or-branches-can-not-be-combined-with-mirror	t5583-push-branches	--all or --branches can not be combined with --mirror	push	pass
+t5583-push-branches::all-or-branches-can-not-be-combined-with-tags	t5583-push-branches	--all or --branches can not be combined with --tags	push	pass
+t5583-push-branches::all-or-branches-can-not-be-combined-with-delete	t5583-push-branches	--all or --branches can not be combined with --delete	push	pass
+t5583-push-branches::all-or-branches-combines-with-follow-tags-have-same-behavior	t5583-push-branches	--all or --branches combines with --follow-tags have same behavior	push	pass
 t5600-clone-fail-cleanup::clone-of-non-existent-source-should-fail	t5600-clone-fail-cleanup	clone of non-existent source should fail	clone	pass
 t5600-clone-fail-cleanup::failed-clone-should-not-leave-a-directory	t5600-clone-fail-cleanup	failed clone should not leave a directory	clone	pass
 t5600-clone-fail-cleanup::create-a-repo-to-clone	t5600-clone-fail-cleanup	create a repo to clone	clone	pass
@@ -11242,29 +11242,29 @@ t5604-clone-reference::clone-a-repo-with-garbage-in-objects	t5604-clone-referenc
 t5604-clone-reference::setup-repo-with-manually-symlinked-or-unknown-files-at-objects	t5604-clone-reference	setup repo with manually symlinked or unknown files at objects/	clone	pass
 t5604-clone-reference::clone-repo-with-symlinked-or-unknown-files-at-objects	t5604-clone-reference	clone repo with symlinked or unknown files at objects/	clone	pass
 t5604-clone-reference::clone-repo-with-symlinked-objects-directory	t5604-clone-reference	clone repo with symlinked objects directory	clone	pass
-t5605-clone-local::preparing-origin-repository	t5605-clone-local	preparing origin repository	clone	partial
-t5605-clone-local::local-clone-without-git-suffix	t5605-clone-local	local clone without .git suffix	clone	partial
-t5605-clone-local::local-clone-with-git-suffix	t5605-clone-local	local clone with .git suffix	clone	partial
-t5605-clone-local::local-clone-from-x	t5605-clone-local	local clone from x	clone	partial
-t5605-clone-local::local-clone-from-x-git-that-does-not-exist	t5605-clone-local	local clone from x.git that does not exist	clone	partial
-t5605-clone-local::with-no-hardlinks-local-will-make-a-copy	t5605-clone-local	With -no-hardlinks, local will make a copy	clone	partial
-t5605-clone-local::even-without-l-local-will-make-a-hardlink	t5605-clone-local	Even without -l, local will make a hardlink	clone	partial
-t5605-clone-local::local-clone-of-repo-with-nonexistent-ref-in-head	t5605-clone-local	local clone of repo with nonexistent ref in HEAD	clone	partial
-t5605-clone-local::bundle-clone-without-bundle-suffix	t5605-clone-local	bundle clone without .bundle suffix	clone	partial
-t5605-clone-local::bundle-clone-with-bundle-suffix	t5605-clone-local	bundle clone with .bundle suffix	clone	partial
-t5605-clone-local::bundle-clone-from-b4	t5605-clone-local	bundle clone from b4	clone	partial
-t5605-clone-local::bundle-clone-from-b4-bundle-that-does-not-exist	t5605-clone-local	bundle clone from b4.bundle that does not exist	clone	partial
-t5605-clone-local::bundle-clone-with-nonexistent-head-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (match default)	clone	partial
-t5605-clone-local::bundle-clone-with-nonexistent-head-no-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (no match default)	clone	partial
-t5605-clone-local::clone-empty-repository	t5605-clone-local	clone empty repository	clone	partial
-t5605-clone-local::clone-empty-repository-and-then-push-should-not-segfault	t5605-clone-local	clone empty repository, and then push should not segfault.	clone	partial
-t5605-clone-local::cloning-non-existent-directory-fails	t5605-clone-local	cloning non-existent directory fails	clone	partial
-t5605-clone-local::cloning-non-git-directory-fails	t5605-clone-local	cloning non-git directory fails	clone	partial
-t5605-clone-local::cloning-file-does-not-hardlink	t5605-clone-local	cloning file:// does not hardlink	clone	partial
-t5605-clone-local::cloning-a-local-path-with-no-local-does-not-hardlink	t5605-clone-local	cloning a local path with --no-local does not hardlink	clone	partial
-t5605-clone-local::cloning-a-local-path-with-no-local-from-a-different-user-succeeds	t5605-clone-local	cloning a local path with --no-local from a different user succeeds	clone	partial
-t5605-clone-local::cloning-locally-respects-u-for-fetching-refs	t5605-clone-local	cloning locally respects "-u" for fetching refs	clone	partial
-t5605-clone-local::local-clone-from-repo-with-corrupt-refs-fails-gracefully	t5605-clone-local	local clone from repo with corrupt refs fails gracefully	clone	partial
+t5605-clone-local::preparing-origin-repository	t5605-clone-local	preparing origin repository	clone	pass
+t5605-clone-local::local-clone-without-git-suffix	t5605-clone-local	local clone without .git suffix	clone	pass
+t5605-clone-local::local-clone-with-git-suffix	t5605-clone-local	local clone with .git suffix	clone	pass
+t5605-clone-local::local-clone-from-x	t5605-clone-local	local clone from x	clone	pass
+t5605-clone-local::local-clone-from-x-git-that-does-not-exist	t5605-clone-local	local clone from x.git that does not exist	clone	pass
+t5605-clone-local::with-no-hardlinks-local-will-make-a-copy	t5605-clone-local	With -no-hardlinks, local will make a copy	clone	pass
+t5605-clone-local::even-without-l-local-will-make-a-hardlink	t5605-clone-local	Even without -l, local will make a hardlink	clone	pass
+t5605-clone-local::local-clone-of-repo-with-nonexistent-ref-in-head	t5605-clone-local	local clone of repo with nonexistent ref in HEAD	clone	pass
+t5605-clone-local::bundle-clone-without-bundle-suffix	t5605-clone-local	bundle clone without .bundle suffix	clone	pass
+t5605-clone-local::bundle-clone-with-bundle-suffix	t5605-clone-local	bundle clone with .bundle suffix	clone	pass
+t5605-clone-local::bundle-clone-from-b4	t5605-clone-local	bundle clone from b4	clone	pass
+t5605-clone-local::bundle-clone-from-b4-bundle-that-does-not-exist	t5605-clone-local	bundle clone from b4.bundle that does not exist	clone	pass
+t5605-clone-local::bundle-clone-with-nonexistent-head-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (match default)	clone	pass
+t5605-clone-local::bundle-clone-with-nonexistent-head-no-match-default	t5605-clone-local	bundle clone with nonexistent HEAD (no match default)	clone	pass
+t5605-clone-local::clone-empty-repository	t5605-clone-local	clone empty repository	clone	pass
+t5605-clone-local::clone-empty-repository-and-then-push-should-not-segfault	t5605-clone-local	clone empty repository, and then push should not segfault.	clone	pass
+t5605-clone-local::cloning-non-existent-directory-fails	t5605-clone-local	cloning non-existent directory fails	clone	pass
+t5605-clone-local::cloning-non-git-directory-fails	t5605-clone-local	cloning non-git directory fails	clone	pass
+t5605-clone-local::cloning-file-does-not-hardlink	t5605-clone-local	cloning file:// does not hardlink	clone	pass
+t5605-clone-local::cloning-a-local-path-with-no-local-does-not-hardlink	t5605-clone-local	cloning a local path with --no-local does not hardlink	clone	pass
+t5605-clone-local::cloning-a-local-path-with-no-local-from-a-different-user-succeeds	t5605-clone-local	cloning a local path with --no-local from a different user succeeds	clone	pass
+t5605-clone-local::cloning-locally-respects-u-for-fetching-refs	t5605-clone-local	cloning locally respects "-u" for fetching refs	clone	pass
+t5605-clone-local::local-clone-from-repo-with-corrupt-refs-fails-gracefully	t5605-clone-local	local clone from repo with corrupt refs fails gracefully	clone	pass
 t5606-clone-options::setup	t5606-clone-options	setup	clone	pass
 t5606-clone-options::submodule-stickyrecursiveclone-flag-manipulates-submodule-recurse-value	t5606-clone-options	submodule.stickyRecursiveClone flag manipulates submodule.recurse value	clone	pass
 t5606-clone-options::clone-o	t5606-clone-options	clone -o	clone	pass
@@ -11491,31 +11491,31 @@ t5700-protocol-v1::clone-with-http-using-protocol-v1-with-empty-sha-256-repo	t57
 t5700-protocol-v1::fetch-with-http-using-protocol-v1	t5700-protocol-v1	fetch with http:// using protocol v1	fetch	pass
 t5700-protocol-v1::pull-with-http-using-protocol-v1	t5700-protocol-v1	pull with http:// using protocol v1	fetch	pass
 t5700-protocol-v1::push-with-http-using-protocol-v1	t5700-protocol-v1	push with http:// using protocol v1	fetch	pass
-t5701-git-serve::setup-to-generate-files-with-expected-content	t5701-git-serve	setup to generate files with expected content	upload-pack	pass
-t5701-git-serve::test-capability-advertisement	t5701-git-serve	test capability advertisement	upload-pack	pass
-t5701-git-serve::stateless-rpc-flag-does-not-list-capabilities	t5701-git-serve	stateless-rpc flag does not list capabilities	upload-pack	pass
-t5701-git-serve::request-invalid-capability	t5701-git-serve	request invalid capability	upload-pack	pass
-t5701-git-serve::request-with-no-command	t5701-git-serve	request with no command	upload-pack	pass
-t5701-git-serve::request-invalid-command	t5701-git-serve	request invalid command	upload-pack	pass
-t5701-git-serve::request-capability-as-command	t5701-git-serve	request capability as command	upload-pack	pass
-t5701-git-serve::request-command-as-capability	t5701-git-serve	request command as capability	upload-pack	pass
-t5701-git-serve::requested-command-is-command-value	t5701-git-serve	requested command is command=value	upload-pack	pass
-t5701-git-serve::wrong-object-format	t5701-git-serve	wrong object-format	upload-pack	pass
-t5701-git-serve::setup-some-refs-and-tags	t5701-git-serve	setup some refs and tags	upload-pack	pass
-t5701-git-serve::basics-of-ls-refs	t5701-git-serve	basics of ls-refs	upload-pack	pass
-t5701-git-serve::ls-refs-complains-about-unknown-options	t5701-git-serve	ls-refs complains about unknown options	upload-pack	pass
-t5701-git-serve::basic-ref-prefixes	t5701-git-serve	basic ref-prefixes	upload-pack	pass
-t5701-git-serve::refs-heads-prefix	t5701-git-serve	refs/heads prefix	upload-pack	pass
-t5701-git-serve::ignore-very-large-set-of-prefixes	t5701-git-serve	ignore very large set of prefixes	upload-pack	pass
-t5701-git-serve::peel-parameter	t5701-git-serve	peel parameter	upload-pack	pass
-t5701-git-serve::symrefs-parameter	t5701-git-serve	symrefs parameter	upload-pack	pass
-t5701-git-serve::sending-server-options	t5701-git-serve	sending server-options	upload-pack	pass
-t5701-git-serve::unexpected-lines-are-not-allowed-in-fetch-request	t5701-git-serve	unexpected lines are not allowed in fetch request	upload-pack	pass
-t5701-git-serve::basics-of-object-info	t5701-git-serve	basics of object-info	upload-pack	pass
-t5701-git-serve::test-capability-advertisement-with-uploadpack-advertisebundleuris	t5701-git-serve	test capability advertisement with uploadpack.advertiseBundleURIs	upload-pack	pass
-t5701-git-serve::basics-of-bundle-uri-dies-if-not-enabled	t5701-git-serve	basics of bundle-uri: dies if not enabled	upload-pack	pass
-t5701-git-serve::object-info-missing-from-capabilities-when-disabled	t5701-git-serve	object-info missing from capabilities when disabled	upload-pack	pass
-t5701-git-serve::object-info-commands-rejected-when-disabled	t5701-git-serve	object-info commands rejected when disabled	upload-pack	pass
+t5701-git-serve::setup-to-generate-files-with-expected-content	t5701-git-serve	setup to generate files with expected content	upload-pack	partial
+t5701-git-serve::test-capability-advertisement	t5701-git-serve	test capability advertisement	upload-pack	partial
+t5701-git-serve::stateless-rpc-flag-does-not-list-capabilities	t5701-git-serve	stateless-rpc flag does not list capabilities	upload-pack	partial
+t5701-git-serve::request-invalid-capability	t5701-git-serve	request invalid capability	upload-pack	partial
+t5701-git-serve::request-with-no-command	t5701-git-serve	request with no command	upload-pack	partial
+t5701-git-serve::request-invalid-command	t5701-git-serve	request invalid command	upload-pack	partial
+t5701-git-serve::request-capability-as-command	t5701-git-serve	request capability as command	upload-pack	partial
+t5701-git-serve::request-command-as-capability	t5701-git-serve	request command as capability	upload-pack	partial
+t5701-git-serve::requested-command-is-command-value	t5701-git-serve	requested command is command=value	upload-pack	partial
+t5701-git-serve::wrong-object-format	t5701-git-serve	wrong object-format	upload-pack	partial
+t5701-git-serve::setup-some-refs-and-tags	t5701-git-serve	setup some refs and tags	upload-pack	partial
+t5701-git-serve::basics-of-ls-refs	t5701-git-serve	basics of ls-refs	upload-pack	partial
+t5701-git-serve::ls-refs-complains-about-unknown-options	t5701-git-serve	ls-refs complains about unknown options	upload-pack	partial
+t5701-git-serve::basic-ref-prefixes	t5701-git-serve	basic ref-prefixes	upload-pack	partial
+t5701-git-serve::refs-heads-prefix	t5701-git-serve	refs/heads prefix	upload-pack	partial
+t5701-git-serve::ignore-very-large-set-of-prefixes	t5701-git-serve	ignore very large set of prefixes	upload-pack	partial
+t5701-git-serve::peel-parameter	t5701-git-serve	peel parameter	upload-pack	partial
+t5701-git-serve::symrefs-parameter	t5701-git-serve	symrefs parameter	upload-pack	partial
+t5701-git-serve::sending-server-options	t5701-git-serve	sending server-options	upload-pack	partial
+t5701-git-serve::unexpected-lines-are-not-allowed-in-fetch-request	t5701-git-serve	unexpected lines are not allowed in fetch request	upload-pack	partial
+t5701-git-serve::basics-of-object-info	t5701-git-serve	basics of object-info	upload-pack	partial
+t5701-git-serve::test-capability-advertisement-with-uploadpack-advertisebundleuris	t5701-git-serve	test capability advertisement with uploadpack.advertiseBundleURIs	upload-pack	partial
+t5701-git-serve::basics-of-bundle-uri-dies-if-not-enabled	t5701-git-serve	basics of bundle-uri: dies if not enabled	upload-pack	partial
+t5701-git-serve::object-info-missing-from-capabilities-when-disabled	t5701-git-serve	object-info missing from capabilities when disabled	upload-pack	partial
+t5701-git-serve::object-info-commands-rejected-when-disabled	t5701-git-serve	object-info commands rejected when disabled	upload-pack	partial
 t5702-protocol-v2::create-repo-to-be-served-by-git-daemon	t5702-protocol-v2	create repo to be served by git-daemon	fetch	pass
 t5702-protocol-v2::list-refs-with-git-using-protocol-v2	t5702-protocol-v2	list refs with git:// using protocol v2	fetch	pass
 t5702-protocol-v2::ref-advertisement-is-filtered-with-ls-remote-using-protocol-v2	t5702-protocol-v2	ref advertisement is filtered with ls-remote using protocol v2	fetch	pass
@@ -11601,42 +11601,42 @@ t5702-protocol-v2::packfile-uri-path-not-redacted-in-trace-when-git-trace-redact
 t5702-protocol-v2::http-negotiate-only	t5702-protocol-v2	http:// --negotiate-only	fetch	pass
 t5702-protocol-v2::http-negotiate-only-without-wait-for-done-support	t5702-protocol-v2	http:// --negotiate-only without wait-for-done support	fetch	pass
 t5702-protocol-v2::http-negotiate-only-with-protocol-v0	t5702-protocol-v2	http:// --negotiate-only with protocol v0	fetch	pass
-t5703-upload-pack-ref-in-want::setup-repository	t5703-upload-pack-ref-in-want	setup repository	upload-pack	pass
-t5703-upload-pack-ref-in-want::config-controls-ref-in-want-advertisement	t5703-upload-pack-ref-in-want	config controls ref-in-want advertisement	upload-pack	pass
-t5703-upload-pack-ref-in-want::invalid-want-ref-line	t5703-upload-pack-ref-in-want	invalid want-ref line	upload-pack	pass
-t5703-upload-pack-ref-in-want::basic-want-ref	t5703-upload-pack-ref-in-want	basic want-ref	upload-pack	pass
-t5703-upload-pack-ref-in-want::multiple-want-ref-lines	t5703-upload-pack-ref-in-want	multiple want-ref lines	upload-pack	pass
-t5703-upload-pack-ref-in-want::mix-want-and-want-ref	t5703-upload-pack-ref-in-want	mix want and want-ref	upload-pack	pass
-t5703-upload-pack-ref-in-want::want-ref-with-ref-we-already-have-commit-for	t5703-upload-pack-ref-in-want	want-ref with ref we already have commit for	upload-pack	pass
-t5703-upload-pack-ref-in-want::setup-repos-for-fetching-with-ref-in-want-tests	t5703-upload-pack-ref-in-want	setup repos for fetching with ref-in-want tests	upload-pack	pass
-t5703-upload-pack-ref-in-want::fetching-with-exact-oid	t5703-upload-pack-ref-in-want	fetching with exact OID	upload-pack	pass
-t5703-upload-pack-ref-in-want::fetching-multiple-refs	t5703-upload-pack-ref-in-want	fetching multiple refs	upload-pack	pass
-t5703-upload-pack-ref-in-want::fetching-ref-and-exact-oid	t5703-upload-pack-ref-in-want	fetching ref and exact OID	upload-pack	pass
-t5703-upload-pack-ref-in-want::fetching-with-wildcard-that-does-not-match-any-refs	t5703-upload-pack-ref-in-want	fetching with wildcard that does not match any refs	upload-pack	pass
-t5703-upload-pack-ref-in-want::fetching-with-wildcard-that-matches-multiple-refs	t5703-upload-pack-ref-in-want	fetching with wildcard that matches multiple refs	upload-pack	pass
-t5703-upload-pack-ref-in-want::setup-namespaced-repo	t5703-upload-pack-ref-in-want	setup namespaced repo	upload-pack	pass
-t5703-upload-pack-ref-in-want::with-namespace-want-ref-is-considered-relative-to-namespace	t5703-upload-pack-ref-in-want	with namespace: want-ref is considered relative to namespace	upload-pack	pass
-t5703-upload-pack-ref-in-want::with-namespace-want-ref-outside-namespace-is-unknown	t5703-upload-pack-ref-in-want	with namespace: want-ref outside namespace is unknown	upload-pack	pass
-t5703-upload-pack-ref-in-want::without-namespace-want-ref-outside-namespace-succeeds	t5703-upload-pack-ref-in-want	without namespace: want-ref outside namespace succeeds	upload-pack	pass
-t5703-upload-pack-ref-in-want::with-namespace-hiderefs-is-matched-relative-to-namespace	t5703-upload-pack-ref-in-want	with namespace: hideRefs is matched, relative to namespace	upload-pack	pass
-t5703-upload-pack-ref-in-want::with-namespace-want-ref-succeeds-if-hiderefs-is-removed	t5703-upload-pack-ref-in-want	with namespace: want-ref succeeds if hideRefs is removed	upload-pack	pass
-t5703-upload-pack-ref-in-want::without-namespace-relative-hiderefs-does-not-match	t5703-upload-pack-ref-in-want	without namespace: relative hideRefs does not match	upload-pack	pass
-t5703-upload-pack-ref-in-want::setup-repos-for-change-while-negotiating-test	t5703-upload-pack-ref-in-want	setup repos for change-while-negotiating test	upload-pack	pass
-t5703-upload-pack-ref-in-want::server-is-initially-ahead-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially ahead - no ref in want	upload-pack	pass
-t5703-upload-pack-ref-in-want::server-is-initially-ahead-ref-in-want	t5703-upload-pack-ref-in-want	server is initially ahead - ref in want	upload-pack	pass
-t5703-upload-pack-ref-in-want::server-is-initially-behind-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - no ref in want	upload-pack	pass
-t5703-upload-pack-ref-in-want::server-is-initially-behind-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - ref in want	upload-pack	pass
-t5703-upload-pack-ref-in-want::server-loses-a-ref-ref-in-want	t5703-upload-pack-ref-in-want	server loses a ref - ref in want	upload-pack	pass
+t5703-upload-pack-ref-in-want::setup-repository	t5703-upload-pack-ref-in-want	setup repository	upload-pack	partial
+t5703-upload-pack-ref-in-want::config-controls-ref-in-want-advertisement	t5703-upload-pack-ref-in-want	config controls ref-in-want advertisement	upload-pack	partial
+t5703-upload-pack-ref-in-want::invalid-want-ref-line	t5703-upload-pack-ref-in-want	invalid want-ref line	upload-pack	partial
+t5703-upload-pack-ref-in-want::basic-want-ref	t5703-upload-pack-ref-in-want	basic want-ref	upload-pack	partial
+t5703-upload-pack-ref-in-want::multiple-want-ref-lines	t5703-upload-pack-ref-in-want	multiple want-ref lines	upload-pack	partial
+t5703-upload-pack-ref-in-want::mix-want-and-want-ref	t5703-upload-pack-ref-in-want	mix want and want-ref	upload-pack	partial
+t5703-upload-pack-ref-in-want::want-ref-with-ref-we-already-have-commit-for	t5703-upload-pack-ref-in-want	want-ref with ref we already have commit for	upload-pack	partial
+t5703-upload-pack-ref-in-want::setup-repos-for-fetching-with-ref-in-want-tests	t5703-upload-pack-ref-in-want	setup repos for fetching with ref-in-want tests	upload-pack	partial
+t5703-upload-pack-ref-in-want::fetching-with-exact-oid	t5703-upload-pack-ref-in-want	fetching with exact OID	upload-pack	partial
+t5703-upload-pack-ref-in-want::fetching-multiple-refs	t5703-upload-pack-ref-in-want	fetching multiple refs	upload-pack	partial
+t5703-upload-pack-ref-in-want::fetching-ref-and-exact-oid	t5703-upload-pack-ref-in-want	fetching ref and exact OID	upload-pack	partial
+t5703-upload-pack-ref-in-want::fetching-with-wildcard-that-does-not-match-any-refs	t5703-upload-pack-ref-in-want	fetching with wildcard that does not match any refs	upload-pack	partial
+t5703-upload-pack-ref-in-want::fetching-with-wildcard-that-matches-multiple-refs	t5703-upload-pack-ref-in-want	fetching with wildcard that matches multiple refs	upload-pack	partial
+t5703-upload-pack-ref-in-want::setup-namespaced-repo	t5703-upload-pack-ref-in-want	setup namespaced repo	upload-pack	partial
+t5703-upload-pack-ref-in-want::with-namespace-want-ref-is-considered-relative-to-namespace	t5703-upload-pack-ref-in-want	with namespace: want-ref is considered relative to namespace	upload-pack	partial
+t5703-upload-pack-ref-in-want::with-namespace-want-ref-outside-namespace-is-unknown	t5703-upload-pack-ref-in-want	with namespace: want-ref outside namespace is unknown	upload-pack	partial
+t5703-upload-pack-ref-in-want::without-namespace-want-ref-outside-namespace-succeeds	t5703-upload-pack-ref-in-want	without namespace: want-ref outside namespace succeeds	upload-pack	partial
+t5703-upload-pack-ref-in-want::with-namespace-hiderefs-is-matched-relative-to-namespace	t5703-upload-pack-ref-in-want	with namespace: hideRefs is matched, relative to namespace	upload-pack	partial
+t5703-upload-pack-ref-in-want::with-namespace-want-ref-succeeds-if-hiderefs-is-removed	t5703-upload-pack-ref-in-want	with namespace: want-ref succeeds if hideRefs is removed	upload-pack	partial
+t5703-upload-pack-ref-in-want::without-namespace-relative-hiderefs-does-not-match	t5703-upload-pack-ref-in-want	without namespace: relative hideRefs does not match	upload-pack	partial
+t5703-upload-pack-ref-in-want::setup-repos-for-change-while-negotiating-test	t5703-upload-pack-ref-in-want	setup repos for change-while-negotiating test	upload-pack	partial
+t5703-upload-pack-ref-in-want::server-is-initially-ahead-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially ahead - no ref in want	upload-pack	partial
+t5703-upload-pack-ref-in-want::server-is-initially-ahead-ref-in-want	t5703-upload-pack-ref-in-want	server is initially ahead - ref in want	upload-pack	partial
+t5703-upload-pack-ref-in-want::server-is-initially-behind-no-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - no ref in want	upload-pack	partial
+t5703-upload-pack-ref-in-want::server-is-initially-behind-ref-in-want	t5703-upload-pack-ref-in-want	server is initially behind - ref in want	upload-pack	partial
+t5703-upload-pack-ref-in-want::server-loses-a-ref-ref-in-want	t5703-upload-pack-ref-in-want	server loses a ref - ref in want	upload-pack	partial
 t5704-protocol-violations::extra-delim-packet-in-v2-ls-refs-args	t5704-protocol-violations	extra delim packet in v2 ls-refs args	upload-pack	pass
 t5704-protocol-violations::extra-delim-packet-in-v2-fetch-args	t5704-protocol-violations	extra delim packet in v2 fetch args	upload-pack	pass
 t5704-protocol-violations::bogus-symref-in-v0-capabilities	t5704-protocol-violations	bogus symref in v0 capabilities	ls-remote	pass
-t5705-session-id-in-capabilities::setup-repos-for-session-id-capability-tests	t5705-session-id-in-capabilities	setup repos for session ID capability tests	clone	pass
-t5705-session-id-in-capabilities::enable-sid-advertisement	t5705-session-id-in-capabilities	enable SID advertisement	config	pass
-t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-fetch-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (fetch v${PROTO})	fetch	pass
-t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-push-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (push v${PROTO})	pull	pass
-t5705-session-id-in-capabilities::session-ids-advertised-fetch-v-proto	t5705-session-id-in-capabilities	session IDs advertised (fetch v${PROTO})	fetch	pass
-t5705-session-id-in-capabilities::session-ids-advertised-push-v-proto	t5705-session-id-in-capabilities	session IDs advertised (push v${PROTO})	pull	pass
-t5705-session-id-in-capabilities::client-server-log-negotiated-version-v-proto	t5705-session-id-in-capabilities	client & server log negotiated version (v${PROTO})	fetch	pass
+t5705-session-id-in-capabilities::setup-repos-for-session-id-capability-tests	t5705-session-id-in-capabilities	setup repos for session ID capability tests	clone	partial
+t5705-session-id-in-capabilities::enable-sid-advertisement	t5705-session-id-in-capabilities	enable SID advertisement	config	partial
+t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-fetch-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (fetch v${PROTO})	fetch	partial
+t5705-session-id-in-capabilities::session-ids-not-advertised-by-default-push-v-proto	t5705-session-id-in-capabilities	session IDs not advertised by default (push v${PROTO})	pull	partial
+t5705-session-id-in-capabilities::session-ids-advertised-fetch-v-proto	t5705-session-id-in-capabilities	session IDs advertised (fetch v${PROTO})	fetch	partial
+t5705-session-id-in-capabilities::session-ids-advertised-push-v-proto	t5705-session-id-in-capabilities	session IDs advertised (push v${PROTO})	pull	partial
+t5705-session-id-in-capabilities::client-server-log-negotiated-version-v-proto	t5705-session-id-in-capabilities	client & server log negotiated version (v${PROTO})	fetch	partial
 t5710-promisor-remote-capability::setup-create-template-repository	t5710-promisor-remote-capability	setup: create "template" repository	add	pass
 t5710-promisor-remote-capability::setup-create-bare-server-repository	t5710-promisor-remote-capability	setup: create bare "server" repository	clone	pass
 t5710-promisor-remote-capability::setup-for-testing-promisor-remote-advertisement	t5710-promisor-remote-capability	setup for testing promisor remote advertisement	config	pass
@@ -11712,35 +11712,35 @@ t5802-connect-helper::update-backfilled-tag-without-primary-transfer	t5802-conne
 t5802-connect-helper::set-up-fake-git-daemon	t5802-connect-helper	set up fake git-daemon	daemon	pass
 t5802-connect-helper::ext-command-can-connect-to-git-daemon-no-vhost	t5802-connect-helper	ext command can connect to git daemon (no vhost)	clone	pass
 t5802-connect-helper::ext-command-can-connect-to-git-daemon-vhost	t5802-connect-helper	ext command can connect to git daemon (vhost)	clone	pass
-t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	partial
-t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	partial
-t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	partial
-t5810-proto-disable-local::full-paths-still-work	t5810-proto-disable-local	full paths still work	fetch	partial
-t5811-proto-disable-git::create-git-accessible-repo	t5811-proto-disable-git	create git-accessible repo	config	partial
-t5812-proto-disable-http::create-git-accessible-repo	t5812-proto-disable-http	create git-accessible repo	fetch	partial
-t5812-proto-disable-http::http-s-transport-respects-git-allow-protocol	t5812-proto-disable-http	http(s) transport respects GIT_ALLOW_PROTOCOL	fetch	partial
-t5812-proto-disable-http::curl-limits-redirects	t5812-proto-disable-http	curl limits redirects	fetch	partial
-t5812-proto-disable-http::http-can-be-limited-to-from-user	t5812-proto-disable-http	http can be limited to from-user	fetch	partial
-t5813-proto-disable-ssh::setup-repository-to-clone	t5813-proto-disable-ssh	setup repository to clone	init	partial
-t5813-proto-disable-ssh::hostnames-starting-with-dash-are-rejected	t5813-proto-disable-ssh	hostnames starting with dash are rejected	clone	partial
-t5813-proto-disable-ssh::setup-repo-with-dash	t5813-proto-disable-ssh	setup repo with dash	init	partial
-t5813-proto-disable-ssh::repo-names-starting-with-dash-are-rejected	t5813-proto-disable-ssh	repo names starting with dash are rejected	clone	partial
-t5813-proto-disable-ssh::full-paths-still-work	t5813-proto-disable-ssh	full paths still work	clone	partial
-t5814-proto-disable-ext::setup-repository-to-clone	t5814-proto-disable-ext	setup repository to clone	init	partial
-t5815-submodule-protos::setup-repository-with-submodules	t5815-submodule-protos	setup repository with submodules	submodule	partial
-t5815-submodule-protos::clone-with-recurse-submodules-fails	t5815-submodule-protos	clone with recurse-submodules fails	submodule	partial
-t5815-submodule-protos::setup-individual-updates	t5815-submodule-protos	setup individual updates	submodule	partial
-t5815-submodule-protos::update-of-ssh-allowed	t5815-submodule-protos	update of ssh allowed	submodule	partial
-t5815-submodule-protos::update-of-ext-not-allowed	t5815-submodule-protos	update of ext not allowed	submodule	partial
-t5815-submodule-protos::user-can-filter-protocols-with-git-allow-protocol	t5815-submodule-protos	user can filter protocols with GIT_ALLOW_PROTOCOL	submodule	partial
-t5900-repo-selection::find-git-dir-in-worktree	t5900-repo-selection	find .git dir in worktree	init	partial
-t5900-repo-selection::automagically-add-git-suffix	t5900-repo-selection	automagically add .git suffix	init	partial
-t5900-repo-selection::automagically-add-git-suffix-to-worktree	t5900-repo-selection	automagically add .git suffix to worktree	init	partial
-t5900-repo-selection::prefer-worktree-foo-over-bare-foo-git	t5900-repo-selection	prefer worktree foo over bare foo.git	init	partial
-t5900-repo-selection::prefer-bare-foo-over-bare-foo-git	t5900-repo-selection	prefer bare foo over bare foo.git	init	partial
-t5900-repo-selection::disambiguate-with-full-foo-git	t5900-repo-selection	disambiguate with full foo.git	init	partial
-t5900-repo-selection::we-are-not-fooled-by-non-git-foo-directory	t5900-repo-selection	we are not fooled by non-git foo directory	init	partial
-t5900-repo-selection::prefer-inner-git-over-outer-bare	t5900-repo-selection	prefer inner .git over outer bare	init	partial
+t5810-proto-disable-local::setup-repository-to-clone	t5810-proto-disable-local	setup repository to clone	fetch	pass
+t5810-proto-disable-local::setup-repo-with-dash	t5810-proto-disable-local	setup repo with dash	fetch	pass
+t5810-proto-disable-local::repo-names-starting-with-dash-are-rejected	t5810-proto-disable-local	repo names starting with dash are rejected	fetch	pass
+t5810-proto-disable-local::full-paths-still-work	t5810-proto-disable-local	full paths still work	fetch	pass
+t5811-proto-disable-git::create-git-accessible-repo	t5811-proto-disable-git	create git-accessible repo	config	pass
+t5812-proto-disable-http::create-git-accessible-repo	t5812-proto-disable-http	create git-accessible repo	fetch	pass
+t5812-proto-disable-http::http-s-transport-respects-git-allow-protocol	t5812-proto-disable-http	http(s) transport respects GIT_ALLOW_PROTOCOL	fetch	pass
+t5812-proto-disable-http::curl-limits-redirects	t5812-proto-disable-http	curl limits redirects	fetch	pass
+t5812-proto-disable-http::http-can-be-limited-to-from-user	t5812-proto-disable-http	http can be limited to from-user	fetch	pass
+t5813-proto-disable-ssh::setup-repository-to-clone	t5813-proto-disable-ssh	setup repository to clone	init	pass
+t5813-proto-disable-ssh::hostnames-starting-with-dash-are-rejected	t5813-proto-disable-ssh	hostnames starting with dash are rejected	clone	pass
+t5813-proto-disable-ssh::setup-repo-with-dash	t5813-proto-disable-ssh	setup repo with dash	init	pass
+t5813-proto-disable-ssh::repo-names-starting-with-dash-are-rejected	t5813-proto-disable-ssh	repo names starting with dash are rejected	clone	pass
+t5813-proto-disable-ssh::full-paths-still-work	t5813-proto-disable-ssh	full paths still work	clone	pass
+t5814-proto-disable-ext::setup-repository-to-clone	t5814-proto-disable-ext	setup repository to clone	init	pass
+t5815-submodule-protos::setup-repository-with-submodules	t5815-submodule-protos	setup repository with submodules	submodule	pass
+t5815-submodule-protos::clone-with-recurse-submodules-fails	t5815-submodule-protos	clone with recurse-submodules fails	submodule	pass
+t5815-submodule-protos::setup-individual-updates	t5815-submodule-protos	setup individual updates	submodule	pass
+t5815-submodule-protos::update-of-ssh-allowed	t5815-submodule-protos	update of ssh allowed	submodule	pass
+t5815-submodule-protos::update-of-ext-not-allowed	t5815-submodule-protos	update of ext not allowed	submodule	pass
+t5815-submodule-protos::user-can-filter-protocols-with-git-allow-protocol	t5815-submodule-protos	user can filter protocols with GIT_ALLOW_PROTOCOL	submodule	pass
+t5900-repo-selection::find-git-dir-in-worktree	t5900-repo-selection	find .git dir in worktree	init	pass
+t5900-repo-selection::automagically-add-git-suffix	t5900-repo-selection	automagically add .git suffix	init	pass
+t5900-repo-selection::automagically-add-git-suffix-to-worktree	t5900-repo-selection	automagically add .git suffix to worktree	init	pass
+t5900-repo-selection::prefer-worktree-foo-over-bare-foo-git	t5900-repo-selection	prefer worktree foo over bare foo.git	init	pass
+t5900-repo-selection::prefer-bare-foo-over-bare-foo-git	t5900-repo-selection	prefer bare foo over bare foo.git	init	pass
+t5900-repo-selection::disambiguate-with-full-foo-git	t5900-repo-selection	disambiguate with full foo.git	init	pass
+t5900-repo-selection::we-are-not-fooled-by-non-git-foo-directory	t5900-repo-selection	we are not fooled by non-git foo directory	init	pass
+t5900-repo-selection::prefer-inner-git-over-outer-bare	t5900-repo-selection	prefer inner .git over outer bare	init	pass
 t6000-rev-list-misc::rev-list-objects-heeds-pathspecs	t6000-rev-list-misc	rev-list --objects heeds pathspecs	rev-list	pass
 t6000-rev-list-misc::rev-list-objects-with-pathspecs-and-deeper-paths	t6000-rev-list-misc	rev-list --objects with pathspecs and deeper paths	rev-list	pass
 t6000-rev-list-misc::rev-list-objects-with-pathspecs-and-copied-files	t6000-rev-list-misc	rev-list --objects with pathspecs and copied files	rev-list	pass
@@ -16313,27 +16313,27 @@ t8020-last-modified::last-modified-merge-undoes-changes	t8020-last-modified	last
 t8020-last-modified::cannot-run-last-modified-on-two-commits	t8020-last-modified	cannot run last-modified on two commits	status	pass
 t8020-last-modified::last-modified-complains-about-unknown-arguments	t8020-last-modified	last-modified complains about unknown arguments	status	pass
 t8020-last-modified::last-modified-expects-commit-ish	t8020-last-modified	last-modified expects commit-ish	status	pass
-t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	partial
-t9002-column::setup	t9002-column	setup	column	partial
-t9002-column::never	t9002-column	never	column	partial
-t9002-column::always	t9002-column	always	column	partial
-t9002-column::nl	t9002-column	--nl	column	partial
-t9002-column::80-columns	t9002-column	80 columns	column	partial
-t9002-column::width-1	t9002-column	width = 1	column	partial
-t9002-column::20-columns	t9002-column	20 columns	column	partial
-t9002-column::20-columns-nodense	t9002-column	20 columns, nodense	column	partial
-t9002-column::20-columns-dense	t9002-column	20 columns, dense	column	partial
-t9002-column::20-columns-padding-2	t9002-column	20 columns, padding 2	column	partial
-t9002-column::20-columns-indented	t9002-column	20 columns, indented	column	partial
-t9002-column::20-columns-row-first	t9002-column	20 columns, row first	column	partial
-t9002-column::20-columns-row-first-nodense	t9002-column	20 columns, row first, nodense	column	partial
-t9002-column::20-columns-row-first-dense	t9002-column	20 columns, row first, dense	column	partial
-t9002-column::padding-must-be-non-negative	t9002-column	padding must be non-negative	column	partial
-t9003-help-autocorrect::setup	t9003-help-autocorrect	setup	help	partial
-t9003-help-autocorrect::autocorrect-showing-candidates	t9003-help-autocorrect	autocorrect showing candidates	help	partial
-t9003-help-autocorrect::autocorrect-running-commands	t9003-help-autocorrect	autocorrect running commands	help	partial
-t9003-help-autocorrect::autocorrect-can-be-declined-altogether	t9003-help-autocorrect	autocorrect can be declined altogether	help	partial
-t9003-help-autocorrect::autocorrect-works-in-work-tree-created-from-bare-repo	t9003-help-autocorrect	autocorrect works in work tree created from bare repo	help	partial
+t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	pass
+t9002-column::setup	t9002-column	setup	column	pass
+t9002-column::never	t9002-column	never	column	pass
+t9002-column::always	t9002-column	always	column	pass
+t9002-column::nl	t9002-column	--nl	column	pass
+t9002-column::80-columns	t9002-column	80 columns	column	pass
+t9002-column::width-1	t9002-column	width = 1	column	pass
+t9002-column::20-columns	t9002-column	20 columns	column	pass
+t9002-column::20-columns-nodense	t9002-column	20 columns, nodense	column	pass
+t9002-column::20-columns-dense	t9002-column	20 columns, dense	column	pass
+t9002-column::20-columns-padding-2	t9002-column	20 columns, padding 2	column	pass
+t9002-column::20-columns-indented	t9002-column	20 columns, indented	column	pass
+t9002-column::20-columns-row-first	t9002-column	20 columns, row first	column	pass
+t9002-column::20-columns-row-first-nodense	t9002-column	20 columns, row first, nodense	column	pass
+t9002-column::20-columns-row-first-dense	t9002-column	20 columns, row first, dense	column	pass
+t9002-column::padding-must-be-non-negative	t9002-column	padding must be non-negative	column	pass
+t9003-help-autocorrect::setup	t9003-help-autocorrect	setup	help	pass
+t9003-help-autocorrect::autocorrect-showing-candidates	t9003-help-autocorrect	autocorrect showing candidates	help	pass
+t9003-help-autocorrect::autocorrect-running-commands	t9003-help-autocorrect	autocorrect running commands	help	pass
+t9003-help-autocorrect::autocorrect-can-be-declined-altogether	t9003-help-autocorrect	autocorrect can be declined altogether	help	pass
+t9003-help-autocorrect::autocorrect-works-in-work-tree-created-from-bare-repo	t9003-help-autocorrect	autocorrect works in work tree created from bare repo	help	pass
 t9100-git-svn-basic::git-svn-version-works-anywhere	t9100-git-svn-basic	git svn --version works anywhere	svn	pass
 t9100-git-svn-basic::git-svn-help-works-anywhere	t9100-git-svn-basic	git svn help works anywhere	svn	pass
 t9100-git-svn-basic::import-an-svn-revision-into-git	t9100-git-svn-basic	import an SVN revision into git	svn	pass
@@ -16816,28 +16816,28 @@ t9200-git-cvsexportcommit::check-files-before-directories	t9200-git-cvsexportcom
 t9200-git-cvsexportcommit::re-commit-a-removed-filename-which-remains-in-cvs-attic	t9200-git-cvsexportcommit	re-commit a removed filename which remains in CVS attic	add	pass
 t9200-git-cvsexportcommit::commit-a-file-with-leading-spaces-in-the-name	t9200-git-cvsexportcommit	commit a file with leading spaces in the name	add	pass
 t9200-git-cvsexportcommit::use-the-same-checkout-for-git-and-cvs	t9200-git-cvsexportcommit	use the same checkout for Git and CVS	add	pass
-t9210-scalar::scalar-shows-a-usage	t9210-scalar	scalar shows a usage	scalar	partial
-t9210-scalar::scalar-invoked-on-enlistment-root	t9210-scalar	scalar invoked on enlistment root	scalar	partial
-t9210-scalar::scalar-invoked-on-enlistment-src-repo	t9210-scalar	scalar invoked on enlistment src repo	scalar	partial
-t9210-scalar::scalar-invoked-when-enlistment-root-and-repo-are-the-same	t9210-scalar	scalar invoked when enlistment root and repo are the same	scalar	partial
-t9210-scalar::scalar-repo-search-respects-git-ceiling-directories	t9210-scalar	scalar repo search respects GIT_CEILING_DIRECTORIES	scalar	partial
-t9210-scalar::scalar-enlistments-need-a-worktree	t9210-scalar	scalar enlistments need a worktree	scalar	partial
-t9210-scalar::scalar-register-starts-fsmon-daemon	t9210-scalar	scalar register starts fsmon daemon	scalar	partial
-t9210-scalar::scalar-register-warns-when-background-maintenance-fails	t9210-scalar	scalar register warns when background maintenance fails	scalar	partial
-t9210-scalar::scalar-unregister	t9210-scalar	scalar unregister	scalar	partial
-t9210-scalar::scalar-register-no-maintenance	t9210-scalar	scalar register --no-maintenance	scalar	partial
-t9210-scalar::set-up-repository-to-clone	t9210-scalar	set up repository to clone	scalar	partial
-t9210-scalar::scalar-clone	t9210-scalar	scalar clone	scalar	partial
-t9210-scalar::scalar-clone-no-opts	t9210-scalar	scalar clone --no-... opts	scalar	partial
-t9210-scalar::scalar-reconfigure	t9210-scalar	scalar reconfigure	scalar	partial
-t9210-scalar::scalar-reconfigure-all-with-includeif-onbranch	t9210-scalar	scalar reconfigure --all with includeIf.onbranch	scalar	partial
-t9210-scalar::scalar-reconfigure-all-with-detached-heads	t9210-scalar	scalar reconfigure --all with detached HEADs	scalar	partial
-t9210-scalar::reconfigure-a-removes-stale-config-entries	t9210-scalar	`reconfigure -a` removes stale config entries	scalar	partial
-t9210-scalar::scalar-delete-without-enlistment-shows-a-usage	t9210-scalar	scalar delete without enlistment shows a usage	scalar	partial
-t9210-scalar::scalar-delete-with-enlistment	t9210-scalar	scalar delete with enlistment	scalar	partial
-t9210-scalar::scalar-supports-c-c	t9210-scalar	scalar supports -c/-C	scalar	partial
-t9210-scalar::scalar-dir-errors-out-when-dir-is-missing	t9210-scalar	`scalar [...] <dir>` errors out when dir is missing	scalar	partial
-t9210-scalar::scalar-diagnose	t9210-scalar	scalar diagnose	scalar	partial
+t9210-scalar::scalar-shows-a-usage	t9210-scalar	scalar shows a usage	scalar	pass
+t9210-scalar::scalar-invoked-on-enlistment-root	t9210-scalar	scalar invoked on enlistment root	scalar	pass
+t9210-scalar::scalar-invoked-on-enlistment-src-repo	t9210-scalar	scalar invoked on enlistment src repo	scalar	pass
+t9210-scalar::scalar-invoked-when-enlistment-root-and-repo-are-the-same	t9210-scalar	scalar invoked when enlistment root and repo are the same	scalar	pass
+t9210-scalar::scalar-repo-search-respects-git-ceiling-directories	t9210-scalar	scalar repo search respects GIT_CEILING_DIRECTORIES	scalar	pass
+t9210-scalar::scalar-enlistments-need-a-worktree	t9210-scalar	scalar enlistments need a worktree	scalar	pass
+t9210-scalar::scalar-register-starts-fsmon-daemon	t9210-scalar	scalar register starts fsmon daemon	scalar	pass
+t9210-scalar::scalar-register-warns-when-background-maintenance-fails	t9210-scalar	scalar register warns when background maintenance fails	scalar	pass
+t9210-scalar::scalar-unregister	t9210-scalar	scalar unregister	scalar	pass
+t9210-scalar::scalar-register-no-maintenance	t9210-scalar	scalar register --no-maintenance	scalar	pass
+t9210-scalar::set-up-repository-to-clone	t9210-scalar	set up repository to clone	scalar	pass
+t9210-scalar::scalar-clone	t9210-scalar	scalar clone	scalar	pass
+t9210-scalar::scalar-clone-no-opts	t9210-scalar	scalar clone --no-... opts	scalar	pass
+t9210-scalar::scalar-reconfigure	t9210-scalar	scalar reconfigure	scalar	pass
+t9210-scalar::scalar-reconfigure-all-with-includeif-onbranch	t9210-scalar	scalar reconfigure --all with includeIf.onbranch	scalar	pass
+t9210-scalar::scalar-reconfigure-all-with-detached-heads	t9210-scalar	scalar reconfigure --all with detached HEADs	scalar	pass
+t9210-scalar::reconfigure-a-removes-stale-config-entries	t9210-scalar	`reconfigure -a` removes stale config entries	scalar	pass
+t9210-scalar::scalar-delete-without-enlistment-shows-a-usage	t9210-scalar	scalar delete without enlistment shows a usage	scalar	pass
+t9210-scalar::scalar-delete-with-enlistment	t9210-scalar	scalar delete with enlistment	scalar	pass
+t9210-scalar::scalar-supports-c-c	t9210-scalar	scalar supports -c/-C	scalar	pass
+t9210-scalar::scalar-dir-errors-out-when-dir-is-missing	t9210-scalar	`scalar [...] <dir>` errors out when dir is missing	scalar	pass
+t9210-scalar::scalar-diagnose	t9210-scalar	scalar diagnose	scalar	pass
 t9211-scalar-clone::set-up-repository-to-clone	t9211-scalar-clone	set up repository to clone	scalar	pass
 t9211-scalar-clone::creates-content-in-enlistment-root	t9211-scalar-clone	creates content in enlistment root	scalar	pass
 t9211-scalar-clone::with-spaces	t9211-scalar-clone	with spaces	scalar	pass
