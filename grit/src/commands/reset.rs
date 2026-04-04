@@ -80,9 +80,46 @@ pub struct Args {
     #[arg(short = 'q', long)]
     pub quiet: bool,
 
+    /// Record the fact that removed paths will be re-added later (intent-to-add).
+    #[arg(short = 'N', long = "intent-to-add")]
+    pub intent_to_add: bool,
+
+    /// Do not refresh the index after a mixed reset.
+    #[arg(long = "no-refresh")]
+    pub no_refresh: bool,
+
+    /// Refresh the index after a mixed reset (default).
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
+}
+
+/// Pre-validate raw arguments before clap parsing, catching Git-specific
+/// negated flags that clap doesn't know about.
+pub fn pre_validate_args(raw_args: &[String]) -> Result<()> {
+    for arg in raw_args {
+        // Check for negated reset mode flags
+        for mode in &["soft", "mixed", "hard", "merge", "keep"] {
+            if arg == &format!("--no-{mode}") {
+                bail!("unknown option `no-{mode}'");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Filter out `--end-of-options` from args (replace with `--`).
+pub fn filter_args(raw_args: &[String]) -> Vec<String> {
+    raw_args.iter().map(|a| {
+        if a == "--end-of-options" {
+            "--".to_owned()
+        } else {
+            a.clone()
+        }
+    }).collect()
 }
 
 /// Run `grit reset`.
@@ -99,7 +136,7 @@ pub fn run(args: Args) -> Result<()> {
         if mode != ResetMode::Mixed {
             bail!("Cannot do --{} reset with paths.", mode.name());
         }
-        return reset_paths(&repo, &commit_spec, &paths, args.quiet);
+        return reset_paths(&repo, &commit_spec, &paths, args.quiet, args.intent_to_add);
     }
 
     reset_commit(&repo, &commit_spec, mode, args.quiet)
@@ -129,8 +166,8 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
         return ("HEAD".to_owned(), vec![]);
     }
 
-    // Detect an explicit `--` separator.
-    if let Some(sep) = rest.iter().position(|a| a == "--") {
+    // Detect an explicit `--` or `--end-of-options` separator.
+    if let Some(sep) = rest.iter().position(|a| a == "--" || a == "--end-of-options") {
         // Everything before `--` is the optional commit; everything after is paths.
         let commit_spec = if sep == 0 {
             "HEAD".to_owned()
@@ -212,7 +249,7 @@ fn write_reset_reflog(
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
-fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: bool) -> Result<()> {
+fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: bool, intent_to_add: bool) -> Result<()> {
     let commit_oid = resolve_to_commit(repo, commit_spec)?;
     let tree_oid = commit_to_tree(repo, &commit_oid)?;
     let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
@@ -241,8 +278,30 @@ fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: b
         // Re-add from tree if present.
         if let Some(entry) = tree_map.get(&path_bytes) {
             index.add_or_replace(entry.clone());
+        } else if intent_to_add {
+            // With -N, keep removed paths as intent-to-add entries.
+            let empty_oid = ObjectId::from_hex("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+                .expect("empty blob oid is valid");
+            let mut ita_entry = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: 0o100644,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: empty_oid,
+                flags: path_bytes.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: path_bytes.clone(),
+            };
+            ita_entry.set_intent_to_add(true);
+            index.add_or_replace(ita_entry);
         }
-        // If not in tree, path is removed from index (staged deletion).
+        // If not in tree and no -N, path is removed from index (staged deletion).
     }
 
     index.write(&index_path).context("writing index")?;

@@ -114,6 +114,9 @@ PATH="$TEST_DIRECTORY:$PATH"
 			echo "warning: could not git init trash directory" >&2
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
 		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
+		# Exclude .bin/ wrapper directory from status/clean output
+		mkdir -p .git/info 2>/dev/null
+		echo '/.bin/' >>.git/info/exclude 2>/dev/null
 	fi
 }
 
@@ -252,6 +255,10 @@ test_config_global () {
 	test_when_finished "git config --global --unset '$key'"
 }
 
+test_unconfig () {
+	git config --unset-all "$@" 2>/dev/null
+	return 0
+}
 test_file_not_empty () {
 	if ! test -s "$1"
 	then
@@ -633,14 +640,17 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents=
+	local notick= signoff= indir= tag=yes message= file= contents= author=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
+		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
+		--append) shift ;; # accepted but ignored for compat
+		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
 	done
@@ -654,7 +664,7 @@ test_commit () {
 		if test -z "$notick"; then
 			test_tick
 		fi &&
-		git commit -q ${signoff:+$signoff} -m "$message" &&
+		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
 			git tag "$message"
 		fi
@@ -782,10 +792,12 @@ test_expect_success () {
 	local result=$_test_eval_result
 	# Ensure errexit is off at top level
 	set +e
-	# Run test_when_finished cleanup commands
-	if test -n "$_twf_cmd"; then
-		eval "$_twf_cmd" 2>&1 || true
-		_twf_cmd=""
+	# Run test_when_finished cleanups (like upstream's per-test subshell EXIT trap).
+	if test -n "${_twf_cmd+set}"
+	then
+		eval "$_twf_cmd" 2>/dev/null
+		_twf_cmd=
+		trap - EXIT
 	fi
 	cd "$_old_cwd" 2>/dev/null || true
 
@@ -1016,6 +1028,31 @@ test_remote_https_urls() {
 	grep -e '"event":"child_start".*"argv":\["git-remote-https",".*"\]' |
 		sed -e 's/{"event":"child_start".*"argv":\["git-remote-https","//g' \
 		    -e 's/"\]}//g'
+}
+
+# Convert Q to tab, Z to space.
+qz_to_tab_space () {
+	tr QZ '\011\040'
+}
+
+# Convert LF to NUL.
+lf_to_nul () {
+	tr '\012' '\000'
+}
+
+# Convert NUL to LF.
+nul_to_q () {
+	tr '\000' Q
+}
+
+# Append CR to each line.
+append_cr () {
+	sed -e 's/$/Q/' | tr Q '\015'
+}
+
+# Remove CR from each line.
+remove_cr () {
+	tr -d '\015'
 }
 
 test_done () {

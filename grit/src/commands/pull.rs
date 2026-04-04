@@ -150,6 +150,8 @@ pub fn run(args: Args) -> Result<()> {
             quiet: args.quiet,
             no_edit: true,
             edit: false,
+            signoff: false,
+            no_signoff: false,
         };
         super::merge::run(merge_args)
     }

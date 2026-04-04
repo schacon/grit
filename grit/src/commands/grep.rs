@@ -5,6 +5,7 @@ use clap::Args as ClapArgs;
 use regex::{Regex, RegexBuilder};
 use std::io::{self, Write};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
@@ -18,9 +19,21 @@ pub struct Args {
     #[arg(short = 'n', long = "line-number")]
     pub line_number: bool,
 
+    /// Suppress line numbers (overrides -n).
+    #[arg(long = "no-line-number", hide = true)]
+    pub no_line_number: bool,
+
     /// Show count of matching lines per file.
     #[arg(short = 'c', long = "count")]
     pub count: bool,
+
+    /// Suppress filename prefix on output.
+    #[arg(long = "no-filename")]
+    pub no_filename: bool,
+
+    /// Force filename prefix on output.
+    #[arg(short = 'H', long = "with-filename")]
+    pub with_filename: bool,
 
     /// Show only filenames with matches.
     #[arg(short = 'l', long = "files-with-matches")]
@@ -38,15 +51,23 @@ pub struct Args {
     #[arg(short = 'w', long = "word-regexp")]
     pub word_regexp: bool,
 
+    /// Process binary files as if they were text.
+    #[arg(short = 'a', long = "text")]
+    pub text_mode: bool,
+
+    /// Don't match patterns in binary files.
+    #[arg(short = 'I')]
+    pub ignore_binary: bool,
+
     /// Invert match (show non-matching lines).
     #[arg(short = 'v', long = "invert-match")]
     pub invert_match: bool,
 
     /// Explicit pattern (can be used multiple times).
-    #[arg(short = 'e', value_name = "PATTERN")]
+    #[arg(short = 'e', value_name = "PATTERN", allow_hyphen_values = true)]
     pub patterns: Vec<String>,
 
-    /// Use extended regular expressions (default).
+    /// Use extended regular expressions.
     #[arg(short = 'E', long = "extended-regexp")]
     pub extended_regexp: bool,
 
@@ -57,6 +78,14 @@ pub struct Args {
     /// Use fixed strings (literal matching, no regex).
     #[arg(short = 'F', long = "fixed-strings")]
     pub fixed_strings: bool,
+
+    /// Use basic regular expressions (default).
+    #[arg(short = 'G', long = "basic-regexp")]
+    pub basic_regexp: bool,
+
+    /// Search blobs registered in the index file instead of the work tree.
+    #[arg(long = "cached")]
+    pub cached: bool,
 
     /// Read patterns from file, one per line.
     #[arg(short = 'f', long = "file", value_name = "FILE")]
@@ -70,9 +99,9 @@ pub struct Args {
     #[arg(long = "or")]
     pub or: bool,
 
-    /// Negate the next pattern.
-    #[arg(long = "not")]
-    pub not: bool,
+    /// Negate the next pattern (can appear multiple times).
+    #[arg(long = "not", action = clap::ArgAction::Count)]
+    pub not: u8,
 
     /// Require all patterns to match (line-level AND).
     #[arg(long = "all-match")]
@@ -81,6 +110,14 @@ pub struct Args {
     /// Show the whole function as context.
     #[arg(short = 'W', long = "function-context")]
     pub function_context: bool,
+
+    /// Limit matches per file.
+    #[arg(short = 'm', long = "max-count", value_name = "NUM", allow_negative_numbers = true)]
+    pub max_count: Option<i64>,
+
+    /// Suppress output; exit with status 0 on match.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
 
     /// Number of threads to use (accepted but ignored).
     #[arg(long = "threads", value_name = "N")]
@@ -107,8 +144,28 @@ pub struct Args {
     pub only_matching: bool,
 
     /// Descend at most <depth> levels of directories.
-    #[arg(long = "max-depth", value_name = "DEPTH")]
-    pub max_depth: Option<usize>,
+    #[arg(long = "max-depth", value_name = "DEPTH", allow_negative_numbers = true)]
+    pub max_depth: Option<i64>,
+
+    /// Recurse into subdirectories (default, same as --max-depth=-1).
+    #[arg(long = "recursive", short = 'r')]
+    pub recursive: bool,
+
+    /// Do not recurse into subdirectories (same as --max-depth=0).
+    #[arg(long = "no-recursive")]
+    pub no_recursive: bool,
+
+    /// Show the full path of the file relative to the top-level directory.
+    #[arg(long = "full-name")]
+    pub full_name: bool,
+
+    /// Print an empty line between matches from different files.
+    #[arg(long = "break")]
+    pub file_break: bool,
+
+    /// Show the filename above matches from that file instead of prefixing each line.
+    #[arg(long = "heading")]
+    pub heading: bool,
 
     /// Use color in output: always, never, auto.
     #[arg(long = "color", value_name = "WHEN", default_value = "never")]
@@ -132,11 +189,80 @@ impl Args {
     fn has_context(&self) -> bool {
         self.before_ctx() > 0 || self.after_ctx() > 0
     }
+    fn show_line_number(&self) -> bool {
+        // effective_line_number is set in run() to account for config
+        self.line_number && !self.no_line_number
+    }
+    fn show_filename(&self) -> bool {
+        if self.no_filename { return false; }
+        true // default: show filename
+    }
+    /// Effective max depth: None means unlimited, Some(n) means limit to depth n.
+    fn effective_max_depth(&self) -> Option<usize> {
+        if self.no_recursive {
+            return Some(0);
+        }
+        match self.max_depth {
+            Some(d) if d < 0 => None, // -1 means unlimited
+            Some(d) => Some(d as usize),
+            None => None, // default: unlimited
+        }
+    }
 }
 
 /// Run `grit grep`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Apply grep config settings
+    {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        if let Some(ref c) = config {
+            // grep.linenumber: if user didn't explicitly pass -n or --no-line-number
+            if !args.line_number && !args.no_line_number {
+                if let Some(val) = c.get("grep.linenumber") {
+                    args.line_number = val == "true" || val == "1" || val == "yes";
+                }
+            }
+            // grep.patternType / grep.extendedRegexp: affect regex mode
+            // Only apply config if user didn't explicitly pass -E, -F, -P, or -G
+            let user_set_type = args.extended_regexp || args.fixed_strings || args.perl_regexp || args.basic_regexp;
+            if !user_set_type {
+                let mut pattern_type_set = false;
+                if let Some(pt) = c.get("grep.patterntype").or_else(|| c.get("grep.patternType")) {
+                    match pt.to_lowercase().as_str() {
+                        "extended" => { args.extended_regexp = true; pattern_type_set = true; }
+                        "fixed" => { args.fixed_strings = true; pattern_type_set = true; }
+                        "perl" => { args.perl_regexp = true; pattern_type_set = true; }
+                        "basic" => { pattern_type_set = true; /* BRE is default */ }
+                        "default" => { /* fall through to grep.extendedRegexp */ }
+                        _ => {}
+                    }
+                }
+                // grep.extendedRegexp is only consulted if grep.patternType is unset or "default"
+                if !pattern_type_set {
+                    if let Some(val) = c.get("grep.extendedregexp").or_else(|| c.get("grep.extendedRegexp")) {
+                        if val == "true" || val == "1" || val == "yes" {
+                            args.extended_regexp = true;
+                        }
+                    }
+                }
+            }
+            // Check grep.threads config
+            if let Some(val) = c.get("grep.threads") {
+                if val != "0" && val != "1" {
+                    eprintln!("warning: no threads support, ignoring grep.threads");
+                }
+            }
+        }
+    }
+
+    // Warn about unsupported threading
+    if let Some(n) = args.threads {
+        if n > 0 {
+            eprintln!("warning: no threads support, ignoring --threads");
+        }
+    }
 
     // Parse positional arguments: [pattern] [tree-ish] [-- pathspec...]
     let (mut patterns, tree_ish, pathspecs) = parse_positional(&args, &repo)?;
@@ -163,7 +289,9 @@ pub fn run(args: Args) -> Result<()> {
     let matchers = build_matchers(&patterns, &args)?;
 
     let stdout = io::stdout();
-    let mut out = stdout.lock();
+    let mut out_handle = stdout.lock();
+    let mut sink = io::sink();
+    let out: &mut dyn Write = if args.quiet { &mut sink } else { &mut out_handle };
     let mut found_any = false;
     // Tracks whether we need a "--" separator before the next context group
     let mut need_sep = false;
@@ -197,9 +325,58 @@ pub fn run(args: Args) -> Result<()> {
             &pathspecs,
             Some(tree_spec),
             &mut need_sep,
-            &mut out,
+            out,
             all_match,
         )?;
+    } else if args.cached {
+        // Search index blobs (--cached)
+        let index = Index::load(&repo.index_path()).context("loading index")?;
+        let mut seen = std::collections::HashSet::new();
+        for entry in &index.entries {
+            let path_str = String::from_utf8_lossy(&entry.path).to_string();
+            if !seen.insert(path_str.clone()) {
+                continue;
+            }
+            if !pathspecs.is_empty()
+                && !pathspecs.iter().any(|p| path_str == *p || path_str.starts_with(&format!("{p}/")))
+            {
+                continue;
+            }
+            if let Some(max_depth) = args.effective_max_depth() {
+                let depth = path_str.matches('/').count();
+                if depth > max_depth {
+                    continue;
+                }
+            }
+            let obj = match repo.odb.read(&entry.oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    if grep_content(&path_str, &content, &matchers, &args, None, &mut need_sep, out, all_match)? {
+                        found_any = true;
+                    }
+                } else {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", path_str)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content = String::from_utf8_lossy(&obj.data);
+                if grep_content(&path_str, &content, &matchers, &args, None, &mut need_sep, out, all_match)? {
+                    found_any = true;
+                }
+            }
+        }
     } else {
         // Search working tree (tracked files from index)
         let work_tree = repo
@@ -228,7 +405,7 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Apply max-depth filter
-            if let Some(max_depth) = args.max_depth {
+            if let Some(max_depth) = args.effective_max_depth() {
                 let depth = path_str.matches('/').count();
                 if depth > max_depth {
                     continue;
@@ -241,23 +418,51 @@ pub fn run(args: Args) -> Result<()> {
                 Err(_) => continue, // deleted but still in index
             };
 
-            // Skip binary files (contains null bytes in first 8000 bytes)
-            if content.iter().take(8000).any(|&b| b == 0) {
-                continue;
+            let is_binary = content.iter().take(8000).any(|&b| b == 0);
+
+            if is_binary && args.ignore_binary {
+                continue; // -I: skip binary files silently
             }
 
-            let content_str = String::from_utf8_lossy(&content);
-            if grep_content(
-                &path_str,
-                &content_str,
-                &matchers,
-                &args,
-                None,
-                &mut need_sep,
-                &mut out,
-                all_match,
-            )? {
-                found_any = true;
+            if is_binary && !args.text_mode {
+                // For -c, -l, -L, -q: process through grep_content so they work correctly
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content_str = String::from_utf8_lossy(&content);
+                    if grep_content(
+                        &path_str,
+                        &content_str,
+                        &matchers,
+                        &args,
+                        None,
+                        &mut need_sep,
+                        out,
+                        all_match,
+                    )? {
+                        found_any = true;
+                    }
+                } else {
+                    // Default: check for match but only print "Binary file X matches"
+                    let content_str = String::from_utf8_lossy(&content);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", path_str)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content_str = String::from_utf8_lossy(&content);
+                if grep_content(
+                    &path_str,
+                    &content_str,
+                    &matchers,
+                    &args,
+                    None,
+                    &mut need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
             }
         }
     }
@@ -324,11 +529,51 @@ fn parse_positional(
 }
 
 /// Build regex matchers from patterns.
+/// Convert a BRE (basic regular expression) pattern to an ERE-compatible pattern
+/// for the Rust regex crate. In BRE, +, ?, {, }, (, ), | are literal and their
+/// backslash-escaped forms are special. In ERE/Rust regex, they're special without backslash.
+/// Convert a BRE (basic regular expression) pattern to an ERE-compatible pattern
+/// for the Rust regex crate. In BRE, +, ?, {, }, (, ), | are literal and their
+/// backslash-escaped forms are special. In ERE/Rust regex, they're special without backslash.
+fn bre_to_ere(pat: &str) -> String {
+    let mut result = String::with_capacity(pat.len());
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '+' | '?' | '{' | '}' | '(' | ')' | '|' => {
+                    // \+ in BRE means special +; in ERE just use +
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+                _ => {
+                    result.push(chars[i]);
+                    result.push(chars[i + 1]);
+                    i += 2;
+                }
+            }
+        } else if matches!(chars[i], '+' | '?' | '{' | '}' | '(' | ')' | '|') {
+            // Literal in BRE — escape them for ERE
+            result.push('\\');
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
     let mut matchers = Vec::new();
+    let use_bre = !args.extended_regexp && !args.fixed_strings && !args.perl_regexp;
     for pat in patterns {
         let effective = if args.fixed_strings {
             regex::escape(pat)
+        } else if use_bre {
+            bre_to_ere(pat)
         } else {
             pat.clone()
         };
@@ -398,11 +643,24 @@ fn sep_char(ch: char, color: bool) -> String {
 }
 
 fn fmt_name(name: &str, color: bool) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
     if color {
         format!("{COLOR_FILENAME}{name}{COLOR_RESET}")
     } else {
         name.to_string()
     }
+}
+
+/// Build the filename prefix with separator. Returns empty pair when name is empty.
+fn name_prefix(name: &str, sep: char, color: bool) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    let mut s = fmt_name(name, color);
+    s.push_str(&sep_char(sep, color));
+    s
 }
 
 fn fmt_num(n: usize, color: bool) -> String {
@@ -442,7 +700,7 @@ fn grep_content(
     args: &Args,
     tree_prefix: Option<&str>,
     need_sep: &mut bool,
-    out: &mut impl Write,
+    out: &mut (impl Write + ?Sized),
     all_match: bool,
 ) -> Result<bool> {
     let color = args.use_color();
@@ -451,6 +709,9 @@ fn grep_content(
         Some(p) => format!("{p}:{filename}"),
         None => filename.to_string(),
     };
+    let show_name = args.show_filename();
+    // When suppressing filenames, use empty display_name so prefix is omitted
+    let display_name = if show_name { display_name } else { String::new() };
 
     let lines: Vec<&str> = content.lines().collect();
     let nlines = lines.len();
@@ -476,8 +737,23 @@ fn grep_content(
         }
     }
 
+    // Apply --max-count: truncate matches (negative means no limit)
+    if let Some(max) = args.max_count {
+        if max >= 0 {
+            match_indices.truncate(max as usize);
+        }
+    }
+
     let has_match = !match_indices.is_empty();
     let match_count = match_indices.len() as u64;
+
+    // For --heading mode, we print the filename once and then suppress it in line output
+    let display_name = if args.heading && has_match && show_name {
+        // Heading will be printed below; use empty display_name for per-line output
+        String::new()
+    } else {
+        display_name
+    };
 
     // Special modes: files-with-matches, files-without-match, count
     if args.files_with_matches {
@@ -499,9 +775,8 @@ fn grep_content(
         if match_count > 0 {
             writeln!(
                 out,
-                "{}{}{}",
-                fmt_name(&display_name, color),
-                sep_char(':', color),
+                "{}{}",
+                name_prefix(&display_name, ':', color),
                 match_count
             )?;
         }
@@ -512,17 +787,71 @@ fn grep_content(
         return Ok(false);
     }
 
+    // --break: print empty line between file groups
+    if args.file_break && *need_sep {
+        writeln!(out)?;
+    }
+
+    // --heading: print filename once above the matches
+    if args.heading && show_name {
+        let heading_name = match tree_prefix {
+            Some(p) => format!("{p}:{filename}"),
+            None => filename.to_string(),
+        };
+        writeln!(out, "{}", fmt_name(&heading_name, color))?;
+    }
+
     // --only-matching
     if args.only_matching {
         for &idx in &match_indices {
             let line = lines[idx];
+            // For each matcher, iterate over matches tracking column
+            // as git does: accumulate cno from initial col+1 then add rm_eo
+            // after each match (git grep.c show_line logic).
             for re in matchers {
-                for m in re.find_iter(line) {
-                    let matched_text = m.as_str();
-                    let col = m.start() + 1;
-                    let mut prefix_str = fmt_name(&display_name, color);
-                    prefix_str.push_str(&sep_char(':', color));
-                    if args.line_number {
+                // Find the first match to get the initial column.
+                let first_m = re.find(line);
+                if first_m.is_none() {
+                    continue;
+                }
+                let first_m = first_m.unwrap();
+                let mut cno = first_m.start() + 1; // 1-indexed initial column
+                let mut remaining = &line[first_m.start()..];
+
+                // Output first match
+                {
+                    let matched_text = first_m.as_str();
+                    let mut prefix_str = name_prefix(&display_name, ':', color);
+                    if args.show_line_number() {
+                        prefix_str.push_str(&fmt_num(idx + 1, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if args.column {
+                        prefix_str.push_str(&fmt_col(cno, color));
+                        prefix_str.push_str(&sep_char(':', color));
+                    }
+                    if color {
+                        writeln!(out, "{prefix_str}{COLOR_MATCH}{matched_text}{COLOR_RESET}")?;
+                    } else {
+                        writeln!(out, "{prefix_str}{matched_text}")?;
+                    }
+                }
+
+                // Advance past first match and find subsequent matches
+                let match_len = first_m.end() - first_m.start();
+                cno += match_len;
+                remaining = &remaining[match_len..];
+
+                loop {
+                    let next_m = re.find(remaining);
+                    if next_m.is_none() {
+                        break;
+                    }
+                    let next_m = next_m.unwrap();
+                    let matched_text = next_m.as_str();
+                    let col = cno + next_m.start();
+                    let mut prefix_str = name_prefix(&display_name, ':', color);
+                    if args.show_line_number() {
                         prefix_str.push_str(&fmt_num(idx + 1, color));
                         prefix_str.push_str(&sep_char(':', color));
                     }
@@ -535,6 +864,9 @@ fn grep_content(
                     } else {
                         writeln!(out, "{prefix_str}{matched_text}")?;
                     }
+                    let advance = next_m.end();
+                    cno += advance;
+                    remaining = &remaining[advance..];
                 }
             }
         }
@@ -570,9 +902,8 @@ fn grep_content(
             for i in start..=end {
                 let is_match_line = match_set.contains(&i);
                 let separator = if is_match_line { ':' } else { '-' };
-                let mut prefix_str = fmt_name(&display_name, color);
-                prefix_str.push_str(&sep_char(separator, color));
-                if args.line_number {
+                let mut prefix_str = name_prefix(&display_name, separator, color);
+                if args.show_line_number() {
                     prefix_str.push_str(&fmt_num(i + 1, color));
                     prefix_str.push_str(&sep_char(separator, color));
                 }
@@ -597,14 +928,18 @@ fn grep_content(
         // No context — just print matching lines
         for &idx in &match_indices {
             let line = lines[idx];
-            let mut prefix_str = fmt_name(&display_name, color);
-            prefix_str.push_str(&sep_char(':', color));
-            if args.line_number {
+            let mut prefix_str = name_prefix(&display_name, ':', color);
+            if args.show_line_number() {
                 prefix_str.push_str(&fmt_num(idx + 1, color));
                 prefix_str.push_str(&sep_char(':', color));
             }
             if args.column {
-                if let Some(col) = first_match_col(line, matchers) {
+                let col = if args.invert_match {
+                    Some(1) // non-matching lines default to column 1
+                } else {
+                    first_match_col(line, matchers)
+                };
+                if let Some(col) = col {
                     prefix_str.push_str(&fmt_col(col, color));
                     prefix_str.push_str(&sep_char(':', color));
                 }
@@ -621,6 +956,7 @@ fn grep_content(
         }
     }
 
+    *need_sep = true;
     Ok(true)
 }
 
@@ -635,7 +971,7 @@ fn grep_tree(
     pathspecs: &[String],
     tree_name: Option<&str>,
     need_sep: &mut bool,
-    out: &mut impl Write,
+    out: &mut (impl Write + ?Sized),
     all_match: bool,
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
@@ -664,7 +1000,7 @@ fn grep_tree(
         }
 
         if is_tree {
-            if let Some(max_depth) = args.max_depth {
+            if let Some(max_depth) = args.effective_max_depth() {
                 if depth >= max_depth {
                     continue;
                 }
@@ -686,7 +1022,7 @@ fn grep_tree(
                 found = true;
             }
         } else {
-            if let Some(max_depth) = args.max_depth {
+            if let Some(max_depth) = args.effective_max_depth() {
                 let file_depth = full_name.matches('/').count();
                 if file_depth > max_depth {
                     continue;
@@ -698,13 +1034,30 @@ fn grep_tree(
                 Err(_) => continue,
             };
 
-            if obj.data.iter().take(8000).any(|&b| b == 0) {
+            let is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+
+            if is_binary && args.ignore_binary {
                 continue;
             }
 
-            let content = String::from_utf8_lossy(&obj.data);
-            if grep_content(&full_name, &content, matchers, args, tree_name, need_sep, out, all_match)? {
-                found = true;
+            if is_binary && !args.text_mode {
+                let content = String::from_utf8_lossy(&obj.data);
+                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                if has_match {
+                    if !args.quiet {
+                        let display = match tree_name {
+                            Some(t) => format!("{t}:{full_name}"),
+                            None => full_name.clone(),
+                        };
+                        writeln!(out, "Binary file {} matches", display)?;
+                    }
+                    found = true;
+                }
+            } else {
+                let content = String::from_utf8_lossy(&obj.data);
+                if grep_content(&full_name, &content, matchers, args, tree_name, need_sep, out, all_match)? {
+                    found = true;
+                }
             }
         }
     }

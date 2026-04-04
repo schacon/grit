@@ -16,6 +16,7 @@ use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
+use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -76,6 +77,14 @@ pub struct Args {
     /// Open editor for the merge commit message (default for non-automated merges).
     #[arg(long = "edit", short = 'e')]
     pub edit: bool,
+
+    /// Add Signed-off-by trailer to the merge commit message.
+    #[arg(short = 'S', long = "signoff")]
+    pub signoff: bool,
+
+    /// Do not add Signed-off-by trailer.
+    #[arg(long = "no-signoff")]
+    pub no_signoff: bool,
 }
 
 /// Run the `merge` command.
@@ -323,7 +332,7 @@ fn do_real_merge(
             repo.git_dir.join("MERGE_HEAD"),
             format!("{}\n", merge_oid.to_hex()),
         )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
 
@@ -348,7 +357,7 @@ fn do_real_merge(
             repo.git_dir.join("MERGE_HEAD"),
             format!("{}\n", merge_oid.to_hex()),
         )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
 
@@ -360,12 +369,24 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
+
+    if args.signoff && !args.no_signoff {
+        let sob_name = std::env::var("GIT_COMMITTER_NAME")
+            .ok()
+            .or_else(|| config.get("user.name"))
+            .unwrap_or_else(|| "Unknown".to_owned());
+        let sob_email = std::env::var("GIT_COMMITTER_EMAIL")
+            .ok()
+            .or_else(|| config.get("user.email"))
+            .unwrap_or_default();
+        msg = append_signoff(&msg, &sob_name, &sob_email);
+    }
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -579,7 +600,7 @@ fn do_strategy_ours(
     )?;
 
     let tree_oid = commit_tree(repo, head_oid)?;
-    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -1118,11 +1139,29 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
 }
 
 /// Build the default merge commit message.
-fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>) -> String {
+/// Append Signed-off-by trailer to a message if not already present.
+fn append_signoff(msg: &str, name: &str, email: &str) -> String {
+    let trailer = format!("Signed-off-by: {} <{}>", name, email);
+    if msg.contains(&trailer) {
+        return msg.to_string();
+    }
+    let trimmed = msg.trim_end();
+    format!("{}\n\n{}\n", trimmed, trailer)
+}
+
+fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>, repo: &Repository) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
-    let base_msg = format!("Merge branch '{branch_name}'");
+    // Determine if the merge target is a tag, branch, or commit
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
+        "tag"
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
+        "remote-tracking branch"
+    } else {
+        "branch"
+    };
+    let base_msg = format!("Merge {kind} '{branch_name}'");
     // Append "into <branch>" if not merging into main/master
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {

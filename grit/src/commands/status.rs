@@ -25,9 +25,9 @@ pub struct Args {
     #[arg(short = 's', long = "short")]
     pub short: bool,
 
-    /// Give output in the porcelain v1 format.
-    #[arg(long = "porcelain")]
-    pub porcelain: bool,
+    /// Give output in the porcelain format (v1 or v2).
+    #[arg(long = "porcelain", value_name = "VERSION", num_args = 0..=1, default_missing_value = "v1")]
+    pub porcelain: Option<String>,
 
     /// Show the branch name.
     #[arg(short = 'b', long = "branch")]
@@ -52,10 +52,38 @@ pub struct Args {
     /// Suppress ahead/behind counts.
     #[arg(long = "no-ahead-behind")]
     pub no_ahead_behind: bool,
+
+    /// Display untracked files in columns (accepted, not fully implemented).
+    #[arg(long = "column", value_name = "STYLE", num_args = 0..=1, default_missing_value = "always")]
+    pub column: Option<String>,
+
+    /// Disable columnar output.
+    #[arg(long = "no-column")]
+    pub no_column: bool,
+
+    /// Use v2 porcelain format.
+    #[arg(long = "porcelain=v2", hide = true)]
+    pub _porcelain_v2_hidden: bool,
+
+    /// Renames detection mode.
+    #[arg(short = 'M', long = "find-renames", value_name = "N", num_args = 0..=1, default_missing_value = "true")]
+    pub find_renames: Option<String>,
+
+    /// Do not detect renames.
+    #[arg(long = "no-find-renames")]
+    pub no_find_renames: bool,
+
+    /// Suppress optional lock on the index.
+    #[arg(long = "no-optional-locks")]
+    pub no_optional_locks: bool,
 }
 
 /// Run the `status` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // In porcelain mode, always show the branch header.
+    if args.porcelain.is_some() {
+        args.branch = true;
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -105,7 +133,7 @@ pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    if args.short || args.porcelain {
+    if args.short || args.porcelain.is_some() {
         format_short(
             &mut out,
             &args,
@@ -211,7 +239,7 @@ fn format_short(
 ) -> Result<()> {
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
-    if args.branch || args.porcelain {
+    if args.branch {
         let branch = head.branch_name().unwrap_or("HEAD (no branch)");
         write!(out, "## {branch}")?;
         if !args.no_ahead_behind {
@@ -557,10 +585,18 @@ fn compute_ahead_behind(
     let remote = config.get(&remote_key).unwrap_or_else(|| "origin".to_string());
 
     let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
-    let upstream_display = format!("{remote}/{upstream_branch}");
+    let upstream_display = if remote == "." {
+        upstream_branch.to_string()
+    } else {
+        format!("{remote}/{upstream_branch}")
+    };
 
-    // Resolve upstream OID
-    let upstream_ref = format!("refs/remotes/{remote}/{upstream_branch}");
+    // Resolve upstream OID — for remote="." it's a local branch, otherwise a remote ref
+    let upstream_ref = if remote == "." {
+        format!("refs/heads/{upstream_branch}")
+    } else {
+        format!("refs/remotes/{remote}/{upstream_branch}")
+    };
     let upstream_oid = match resolve_ref_to_oid(&repo.git_dir, &upstream_ref) {
         Some(oid) => oid,
         None => return Ok(Some((upstream_display, 0, 0))), // gone
