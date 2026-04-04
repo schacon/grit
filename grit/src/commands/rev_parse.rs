@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
     abbreviate_object_id, discover_optional, is_inside_git_dir, is_inside_work_tree,
-    resolve_revision, show_prefix, symbolic_full_name, abbreviate_ref_name, to_relative_path,
+    resolve_revision, show_prefix, symbolic_full_name, abbreviate_ref_name,
 };
 use std::env;
 
@@ -316,9 +316,13 @@ pub fn run(args: Args) -> Result<()> {
                 };
                 if cwd == current.git_dir.as_path() {
                     println!(".");
+                } else if current.git_dir == cwd.join(".git") {
+                    // At worktree root: git prints ".git"
+                    println!(".git");
                 } else {
-                    // Git always prints a relative path when possible
-                    println!("{}", to_relative_path(&current.git_dir, &cwd));
+                    // From subdirectories or non-standard layouts,
+                    // git prints the absolute path
+                    println!("{}", current.git_dir.display());
                 }
             }
             Action::ShowAbsoluteGitDir => {
