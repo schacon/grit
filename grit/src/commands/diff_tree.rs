@@ -345,10 +345,8 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                         diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_entries(entries, opts);
                     has_diff = !filtered.is_empty();
-                    if !opts.quiet {
-                        if has_diff && !opts.no_commit_id {
-                            writeln!(out, "{oid}")?;
-                        }
+                    if !opts.quiet && (has_diff || opts.pretty) {
+                        write_commit_header(out, &oid, &obj.data, opts)?;
                         print_diff(out, &repo.odb, &filtered, opts, None)?;
                     }
                 }
@@ -362,10 +360,8 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 )?;
                 let filtered = filter_entries(entries, opts);
                 has_diff = !filtered.is_empty();
-                if !opts.quiet {
-                    if has_diff && !opts.no_commit_id {
-                        writeln!(out, "{oid}")?;
-                    }
+                if !opts.quiet && (has_diff || opts.pretty) {
+                    write_commit_header(out, &oid, &obj.data, opts)?;
                     print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
                 }
             }
@@ -1070,6 +1066,111 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
 }
 
 /// Retrieve the tree OID from a commit OID.
+/// Write a commit header line. If `pretty` is set, write a full "medium" format
+/// header; otherwise just write the OID.
+fn write_commit_header(
+    out: &mut impl Write,
+    oid: &ObjectId,
+    commit_data: &[u8],
+    opts: &Options,
+) -> Result<()> {
+    if opts.pretty {
+        let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
+        writeln!(out, "commit {oid}")?;
+        // Parse author line: "Name <email> timestamp tz"
+        let author = &commit.author;
+        if let Some(date_start) = author.rfind('>') {
+            let name_email = &author[..=date_start];
+            let timestamp_tz = author[date_start + 1..].trim();
+            writeln!(out, "Author: {name_email}")?;
+            // Format the date
+            if let Some((ts_str, tz_str)) = timestamp_tz.split_once(' ') {
+                if let Ok(ts) = ts_str.parse::<i64>() {
+                    let formatted = format_commit_date(ts, tz_str);
+                    writeln!(out, "Date:   {formatted}")?;
+                }
+            }
+        } else {
+            writeln!(out, "Author: {author}")?;
+        }
+        writeln!(out)?;
+        // Indent commit message
+        for line in commit.message.lines() {
+            writeln!(out, "    {line}")?;
+        }
+        writeln!(out)?;
+    } else if !opts.no_commit_id {
+        writeln!(out, "{oid}")?;
+    }
+    Ok(())
+}
+
+/// Format a Unix timestamp + tz offset into git's default date format.
+fn format_commit_date(timestamp: i64, tz: &str) -> String {
+    use time::OffsetDateTime;
+    let tz_offset_secs = parse_tz_offset_secs(tz);
+    if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_offset_secs) {
+        if let Ok(dt) = OffsetDateTime::from_unix_timestamp(timestamp) {
+            let dt = dt.to_offset(offset);
+            let weekday = match dt.weekday() {
+                time::Weekday::Monday => "Mon",
+                time::Weekday::Tuesday => "Tue",
+                time::Weekday::Wednesday => "Wed",
+                time::Weekday::Thursday => "Thu",
+                time::Weekday::Friday => "Fri",
+                time::Weekday::Saturday => "Sat",
+                time::Weekday::Sunday => "Sun",
+            };
+            let month = match dt.month() {
+                time::Month::January => "Jan",
+                time::Month::February => "Feb",
+                time::Month::March => "Mar",
+                time::Month::April => "Apr",
+                time::Month::May => "May",
+                time::Month::June => "Jun",
+                time::Month::July => "Jul",
+                time::Month::August => "Aug",
+                time::Month::September => "Sep",
+                time::Month::October => "Oct",
+                time::Month::November => "Nov",
+                time::Month::December => "Dec",
+            };
+            let sign = if tz_offset_secs < 0 { '-' } else { '+' };
+            let abs = tz_offset_secs.unsigned_abs();
+            let h = abs / 3600;
+            let m = (abs % 3600) / 60;
+            return format!(
+                "{} {} {:2} {:02}:{:02}:{:02} {:4} {}{:02}{:02}",
+                weekday,
+                month,
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+                dt.year(),
+                sign,
+                h,
+                m
+            );
+        }
+    }
+    format!("{timestamp} {tz}")
+}
+
+fn parse_tz_offset_secs(tz: &str) -> i32 {
+    if tz.len() < 4 { return 0; }
+    let (sign, rest) = if tz.starts_with('+') {
+        (1i32, &tz[1..])
+    } else if tz.starts_with('-') {
+        (-1i32, &tz[1..])
+    } else {
+        (1i32, tz)
+    };
+    let hours: i32 = rest.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mins: i32 = rest.get(2..4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    sign * (hours * 3600 + mins * 60)
+}
+
 fn commit_tree(odb: &Odb, commit_oid: &ObjectId) -> Result<ObjectId> {
     let obj = odb.read(commit_oid).context("reading parent commit")?;
     let commit = parse_commit(&obj.data).context("parsing parent commit")?;
