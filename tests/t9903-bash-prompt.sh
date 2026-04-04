@@ -191,7 +191,7 @@ test_expect_failure 'prompt - interactive rebase' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - rebase merge' '
+test_expect_success 'prompt - rebase merge' '
 	printf " (b2|REBASE 1/3)" >expected &&
 	git checkout b2 &&
 	test_when_finished "git checkout main" &&
@@ -201,7 +201,7 @@ test_expect_failure 'prompt - rebase merge' '
 	test_cmp expected "$actual"
 '
 
-test_expect_failure 'prompt - rebase am' '
+test_expect_success 'prompt - rebase am' '
 	printf " (b2|REBASE 1/3)" >expected &&
 	git checkout b2 &&
 	test_when_finished "git checkout main" &&

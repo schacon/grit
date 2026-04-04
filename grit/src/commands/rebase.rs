@@ -70,14 +70,12 @@ pub struct Args {
     pub apply: bool,
 
     /// Branch to rebase (checkout first, then rebase onto upstream).
-    /// Not exposed via CLI; used internally by pull --rebase.
-    #[arg(skip)]
-    #[allow(dead_code)]
+    #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
 }
 
 /// Run the `rebase` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     if args.abort {
         return do_abort();
     }
@@ -86,6 +84,21 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.skip {
         return do_skip();
+    }
+
+    // If a branch argument is given, checkout that branch first.
+    if let Some(ref branch) = args.branch {
+        let self_exe = std::env::current_exe().context("cannot determine own executable")?;
+        let status = std::process::Command::new(&self_exe)
+            .arg("checkout")
+            .arg(branch)
+            .status()
+            .context("failed to checkout branch")?;
+        if !status.success() {
+            bail!("checkout {} failed", branch);
+        }
+        // Clear the branch arg so do_rebase doesn't re-process it.
+        args.branch = None;
     }
 
     let upstream = args.upstream.as_deref().unwrap_or("HEAD");
@@ -179,6 +192,9 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
+    // Write the "rebasing" marker so git-prompt.sh detects this as a
+    // rebase (not an "am" or ambiguous "AM/REBASE").
+    fs::write(rb_dir.join("rebasing"), "")?;
 
     // Write todo list (oldest first)
     let todo: Vec<String> = commits.iter().map(|oid| oid.to_hex()).collect();
@@ -186,6 +202,9 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("todo"), todo.join("\n") + "\n")?;
     fs::write(rb_dir.join("end"), total.to_string())?;
     fs::write(rb_dir.join("msgnum"), "1")?;
+    // Also write "next" and "last" — aliases that git-prompt.sh reads.
+    fs::write(rb_dir.join("last"), total.to_string())?;
+    fs::write(rb_dir.join("next"), "1")?;
 
     // Save --exec command if given
     if let Some(ref exec_cmd) = args.exec {
@@ -264,6 +283,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
         // Update state
         fs::write(rb_dir.join("current"), commit_hex)?;
         fs::write(rb_dir.join("msgnum"), (i + 1).to_string())?;
+        fs::write(rb_dir.join("next"), (i + 1).to_string())?;
 
         match cherry_pick_for_rebase(repo, &commit_oid) {
             Ok(()) => {
