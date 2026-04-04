@@ -397,16 +397,26 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
         fs::write(rb_dir.join("msgnum"), (i + 1).to_string())?;
         fs::write(rb_dir.join("next"), (i + 1).to_string())?;
 
+        // Read HEAD before cherry-pick for reflog
+        let old_head = resolve_head(git_dir)?
+            .oid().cloned().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+
         match cherry_pick_for_rebase(repo, &commit_oid) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
-                let _new_oid = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+                let new_oid = *head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
                 let subject = commit.message.lines().next().unwrap_or("");
                 eprintln!(
                     "Applying: {}",
                     subject
+                );
+                // Add reflog entry for HEAD
+                let msg = format!("rebase: {}", subject);
+                let ident = "grit <grit> 0 +0000";
+                let _ = append_reflog(
+                    git_dir, "HEAD", &old_head, &new_oid, ident, &msg,
                 );
 
                 // Run --exec command if present
