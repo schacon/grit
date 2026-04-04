@@ -29,7 +29,7 @@ test_expect_success 'accepted objects work' '
 '
 
 # grit pre-receive hook support: the push should fail when hook rejects
-test_expect_failure 'rejected objects are not installed' '
+test_expect_success 'rejected objects are not installed' '
 	test_commit reject &&
 	commit=$(git rev-parse HEAD) &&
 	test_must_fail git push ./dest.git HEAD &&
@@ -57,7 +57,7 @@ test_expect_success 'push to repo path with path separator (colon)' '
 '
 
 # grit may not support quarantine + hook ref updates
-test_expect_failure 'updating a ref from quarantine is forbidden' '
+test_expect_success 'updating a ref from quarantine is forbidden' '
 	git init --bare update.git &&
 	test_hook -C update.git pre-receive <<-\EOF &&
 	read old new refname

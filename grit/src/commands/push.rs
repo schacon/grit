@@ -568,9 +568,10 @@ fn push_to_url(
             .context("writing push options")?;
     }
 
+    // Copy objects to remote, tracking what was added for rollback
+    let mut copied_objects: Vec<PathBuf> = Vec::new();
     if !args.dry_run {
-        // Copy objects from local → remote
-        copy_objects(&repo.git_dir, &remote_repo.git_dir)
+        copied_objects = copy_objects_tracked(&repo.git_dir, &remote_repo.git_dir)
             .context("copying objects to remote")?;
     }
 
@@ -658,6 +659,10 @@ fn push_to_url(
             colorize_remote_output(&output_str, color_remote);
         }
         if let HookResult::Failed(_code) = hook_result {
+            // Remove objects we copied (quarantine rollback)
+            for path in &copied_objects {
+                let _ = fs::remove_file(path);
+            }
             bail!("pre-receive hook declined the push");
         }
     }
@@ -1101,24 +1106,23 @@ fn set_upstream_config(git_dir: &Path, branch: &str, remote: &str) -> Result<()>
 }
 
 /// Copy all objects (loose + packs) from src to dst, skipping existing.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+/// Copy objects and return the list of newly created files (for rollback).
+fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<PathBuf>> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
+    let mut copied = Vec::new();
 
-    // Copy loose objects
     if src_objects.is_dir() {
         for entry in fs::read_dir(&src_objects)? {
             let entry = entry?;
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-
             if name_str == "info" || name_str == "pack" {
                 continue;
             }
             if !entry.file_type()?.is_dir() || name_str.len() != 2 {
                 continue;
             }
-
             let dst_dir = dst_objects.join(&*name);
             for inner in fs::read_dir(entry.path())? {
                 let inner = inner?;
@@ -1129,13 +1133,13 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
                         if fs::hard_link(inner.path(), &dst_file).is_err() {
                             fs::copy(inner.path(), &dst_file)?;
                         }
+                        copied.push(dst_file);
                     }
                 }
             }
         }
     }
 
-    // Copy pack files
     let src_pack = src_objects.join("pack");
     let dst_pack = dst_objects.join("pack");
     if src_pack.is_dir() {
@@ -1148,13 +1152,15 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
                     if fs::hard_link(entry.path(), &dst_file).is_err() {
                         fs::copy(entry.path(), &dst_file)?;
                     }
+                    copied.push(dst_file);
                 }
             }
         }
     }
 
-    Ok(())
+    Ok(copied)
 }
+
 
 /// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {

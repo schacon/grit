@@ -465,7 +465,13 @@ test_hook () {
 	local hook_dir
 	if test -n "$indir"
 	then
-		hook_dir="$indir/.git/hooks"
+		if test -d "$indir/.git"
+		then
+			hook_dir="$indir/.git/hooks"
+		else
+			# bare repo
+			hook_dir="$indir/hooks"
+		fi
 	else
 		hook_dir=".git/hooks"
 	fi
