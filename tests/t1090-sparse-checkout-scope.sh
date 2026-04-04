@@ -23,7 +23,7 @@ test_expect_success 'sparse-checkout init enables sparse checkout' '
 	grep "true" actual
 '
 
-test_expect_failure 'sparse-checkout set limits directories in working tree' '
+test_expect_success 'sparse-checkout set limits directories in working tree' '
 	git sparse-checkout set sub1 &&
 	test_path_is_file a &&
 	test_path_is_file sub1/file &&
