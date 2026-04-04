@@ -452,7 +452,12 @@ test_expect_failure GPGSSH 'round-trip SSH signed commit' '
 
 '
 
-test_expect_failure 'setup submodule' '
+# Note: this test modifies the repo state when it succeeds (adds submodule
+# commits to main). We save/restore the main ref to preserve state for later tests.
+SAVED_MAIN=$(git rev-parse main 2>/dev/null) || true
+SAVED_BRANCH=$(git symbolic-ref HEAD 2>/dev/null) || true
+
+test_expect_success 'setup submodule' '
 
 	test_config_global protocol.file.allow always &&
 	git checkout -f main &&
@@ -478,6 +483,18 @@ test_expect_failure 'setup submodule' '
 	git commit -m second
 
 '
+
+# Restore repo state if the submodule test succeeded and modified main
+if test -n "$SAVED_MAIN"; then
+	(
+		cd "$TRASH_DIRECTORY" &&
+		git checkout -f wer 2>/dev/null
+		git update-ref refs/heads/main "$SAVED_MAIN" 2>/dev/null
+		git rm -rf --cached sub 2>/dev/null
+		rm -rf sub .gitmodules 2>/dev/null
+		git checkout -f "${SAVED_BRANCH#refs/heads/}" 2>/dev/null
+	) 2>/dev/null
+fi
 
 test_expect_failure 'submodule fast-export | fast-import' '
 

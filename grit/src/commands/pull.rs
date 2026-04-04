@@ -37,6 +37,14 @@ pub struct Args {
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Recurse into submodules (accepted but not yet implemented).
+    #[arg(long = "recurse-submodules", num_args = 0..=1, default_missing_value = "yes", require_equals = true)]
+    pub recurse_submodules: Option<String>,
+
+    /// Do not recurse into submodules.
+    #[arg(long = "no-recurse-submodules", hide = true)]
+    pub no_recurse_submodules: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {

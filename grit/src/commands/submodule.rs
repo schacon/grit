@@ -591,33 +591,38 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     let sub_path = work_tree.join(&path);
 
-    if sub_path.exists() {
-        bail!("'{}' already exists", path);
+    let already_exists_as_repo = sub_path.exists()
+        && (sub_path.join(".git").exists() || sub_path.join("HEAD").exists());
+
+    if sub_path.exists() && !already_exists_as_repo {
+        bail!("'{}' already exists and is not a git repository", path);
     }
 
     let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
 
-    // Clone the submodule.
+    // Clone the submodule (skip if path already exists as a repo).
     let modules_dir = repo.git_dir.join("modules").join(&path);
-    // Only create the parent directory; git clone --separate-git-dir
-    // will create the modules_dir itself.
-    if let Some(parent) = modules_dir.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    if !already_exists_as_repo {
+        // Only create the parent directory; git clone --separate-git-dir
+        // will create the modules_dir itself.
+        if let Some(parent) = modules_dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
-    let status = Command::new(&git_bin)
-        .arg("clone")
-        .arg("--separate-git-dir")
-        .arg(&modules_dir)
-        .arg(&args.url)
-        .arg(&sub_path)
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_DIR")
-        .status()
-        .context("failed to clone submodule")?;
+        let status = Command::new(&git_bin)
+            .arg("clone")
+            .arg("--separate-git-dir")
+            .arg(&modules_dir)
+            .arg(&args.url)
+            .arg(&sub_path)
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_DIR")
+            .status()
+            .context("failed to clone submodule")?;
 
-    if !status.success() {
-        bail!("failed to clone submodule from '{}'", args.url);
+        if !status.success() {
+            bail!("failed to clone submodule from '{}'", args.url);
+        }
     }
 
     // Derive the submodule name (same as path for simplicity).

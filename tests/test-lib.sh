@@ -495,12 +495,35 @@ test_cmp_config () {
 }
 
 test_commit () {
+	local indir=
+	while test $# != 0
+	do
+		case "$1" in
+		-C)
+			indir="$2"
+			shift
+			;;
+		*)
+			break
+			;;
+		esac
+		shift
+	done
 	local file="$1.t"
-	printf '%s' "${2-$1}" >"$file"
-	git add "$file"
-	test_tick
-	git commit -q -m "$1"
-	git tag "$1"
+	if test -n "$indir"
+	then
+		printf '%s' "${2-$1}" >"$indir/$file"
+		git -C "$indir" add "$file"
+		test_tick
+		git -C "$indir" commit -q -m "$1"
+		git -C "$indir" tag "$1"
+	else
+		printf '%s' "${2-$1}" >"$file"
+		git add "$file"
+		test_tick
+		git commit -q -m "$1"
+		git tag "$1"
+	fi
 }
 
 # Evaluate $2 and check $1 == stdout.
