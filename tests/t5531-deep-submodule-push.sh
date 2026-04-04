@@ -48,7 +48,7 @@ test_expect_success 'push from repo with submodule' '
 	git push pub main
 '
 
-test_expect_failure 'push --recurse-submodules=check (not supported)' '
+test_expect_success 'push --recurse-submodules=check' '
 	cd super &&
 	git push --recurse-submodules=check pub main
 '

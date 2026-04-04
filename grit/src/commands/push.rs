@@ -70,6 +70,10 @@ pub struct Args {
     /// Suppress output.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Check, on-demand, or no recursion into submodules.
+    #[arg(long = "recurse-submodules")]
+    pub recurse_submodules: Option<String>,
 }
 
 /// A single ref update to perform on the remote.
