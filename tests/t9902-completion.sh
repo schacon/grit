@@ -1814,7 +1814,7 @@ test_expect_success 'sparse-checkout completes subcommands' '
 	EOF
 '
 
-test_expect_failure 'cone mode sparse-checkout completes directory names' '
+test_expect_success 'cone mode sparse-checkout completes directory names' '
 	# initialize sparse-checkout definitions
 	git -C sparse-checkout sparse-checkout set --cone folder1/0 folder3 &&
 
@@ -1916,7 +1916,7 @@ test_expect_success FUNNYNAMES,!CYGWIN 'cone mode sparse-checkout completes dire
 	)
 '
 
-test_expect_failure 'non-cone mode sparse-checkout gives rooted paths' '
+test_expect_success 'non-cone mode sparse-checkout gives rooted paths' '
 	# reset sparse-checkout repo to non-cone mode
 	git -C sparse-checkout sparse-checkout disable &&
 	git -C sparse-checkout sparse-checkout set --no-cone &&
@@ -2775,7 +2775,7 @@ test_expect_success 'symbolic-ref completes short ref names' '
 	EOF
 '
 
-test_expect_failure 'symbolic-ref completes full ref names' '
+test_expect_success 'symbolic-ref completes full ref names' '
 	test_completion "git symbolic-ref foo refs/" <<-\EOF
 	refs/heads/main Z
 	refs/heads/mybranch Z
@@ -2795,7 +2795,7 @@ test_expect_success PERL 'send-email' '
 	test_completion "git send-email ma" "main "
 '
 
-test_expect_failure 'complete files' '
+test_expect_success 'complete files' '
 	git init tmp && cd tmp &&
 	test_when_finished "cd .. && rm -rf tmp" &&
 
@@ -2940,7 +2940,7 @@ test_expect_success 'completion without explicit _git_xxx function' '
 	EOF
 '
 
-test_expect_failure 'complete with tilde expansion' '
+test_expect_success 'complete with tilde expansion' '
 	git init tmp && cd tmp &&
 	test_when_finished "cd .. && rm -rf tmp" &&
 
@@ -2970,7 +2970,7 @@ do
 		test_cmp expected out
 	'
 
-	test_expect_failure "__git_complete_remote_or_refspec - push other $flag" '
+	test_expect_success "__git_complete_remote_or_refspec - push other $flag" '
 		sed -e "s/Z$//" >expected <<-EOF &&
 		main-in-other Z
 		EOF
@@ -3059,7 +3059,7 @@ test_expect_success 'git config set - variable name - submodule and __git_comput
 	EOF
 '
 
-test_expect_failure 'git config set - variable name - __git_compute_second_level_config_vars_for_section' '
+test_expect_success 'git config set - variable name - __git_compute_second_level_config_vars_for_section' '
 	test_completion "git config set submodule.sub." <<-\EOF
 	submodule.sub.url Z
 	submodule.sub.update Z
