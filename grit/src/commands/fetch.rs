@@ -197,10 +197,41 @@ fn fetch_remote(
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
     if !cli_refspecs.is_empty() {
+        // Collect negative refspecs first (^pattern)
+        let negative_patterns: Vec<&str> = cli_refspecs
+            .iter()
+            .filter_map(|s| s.strip_prefix('^'))
+            .collect();
+
+        // Validate negative refspecs: they must be ref patterns, not OIDs
+        for pat in &negative_patterns {
+            let clean = pat.strip_prefix("refs/").unwrap_or(pat);
+            if clean.chars().all(|c| c.is_ascii_hexdigit()) && clean.len() >= 7 {
+                bail!("negative refspecs do not support object ids: ^{pat}");
+            }
+        }
+
+        // Helper closure to check if a ref is excluded by negative refspecs
+        let is_excluded = |refname: &str| -> bool {
+            for pat in &negative_patterns {
+                let full_pat = if pat.starts_with("refs/") {
+                    pat.to_string()
+                } else {
+                    format!("refs/heads/{pat}")
+                };
+                if match_glob_pattern(&full_pat, refname).is_some() || full_pat == refname {
+                    return true;
+                }
+            }
+            false
+        };
+
         // Process command-line refspecs directly.
-        // e.g. "main:refs/heads/from-one" means: fetch remote's refs/heads/main,
-        // store locally as refs/heads/from-one.
         for spec in cli_refspecs {
+            // Skip negative refspecs (already collected above)
+            if spec.starts_with('^') {
+                continue;
+            }
             // Check for force prefix '+'
             let (force, spec_clean) = if spec.starts_with('+') {
                 (true, &spec[1..])
@@ -217,6 +248,9 @@ fn fetch_remote(
             if src.contains('*') {
                 let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
                 for (refname, remote_oid) in &remote_all_refs {
+                    if is_excluded(refname) {
+                        continue;
+                    }
                     if let Some(matched) = match_glob_pattern(&src, refname) {
                         let local_ref = dst.replacen('*', matched, 1);
                         let old_oid = read_ref_oid(git_dir, &local_ref);
@@ -684,6 +718,8 @@ struct FetchRefspec {
     /// Whether this is a force refspec (leading '+').
     #[allow(dead_code)]
     force: bool,
+    /// Whether this is a negative (exclusion) refspec (leading '^').
+    negative: bool,
 }
 
 /// Collect all fetch refspecs from a config key (may be multi-valued).
@@ -693,6 +729,16 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
         if entry.key == key {
             if let Some(ref val) = entry.value {
                 let val = val.trim();
+                // Check for negative refspec (^pattern)
+                if let Some(pattern) = val.strip_prefix('^') {
+                    result.push(FetchRefspec {
+                        src: pattern.to_owned(),
+                        dst: String::new(),
+                        force: false,
+                        negative: true,
+                    });
+                    continue;
+                }
                 let (force, val) = if let Some(stripped) = val.strip_prefix('+') {
                     (true, stripped)
                 } else {
@@ -703,6 +749,7 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
                         src: val[..colon].to_owned(),
                         dst: val[colon + 1..].to_owned(),
                         force,
+                        negative: false,
                     });
                 }
             }
@@ -717,7 +764,20 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
 /// is `refs/heads/main`, the result is `refs/remotes/origin/main`.
 /// Returns None if no refspec matches.
 fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
+    // First check if any negative refspec excludes this ref
     for rs in refspecs {
+        if rs.negative {
+            // Match the pattern against the remote ref
+            if match_glob_pattern(&rs.src, remote_ref).is_some() || rs.src == remote_ref {
+                return None;
+            }
+        }
+    }
+    // Then find a positive match
+    for rs in refspecs {
+        if rs.negative {
+            continue;
+        }
         if let Some(mapped) = match_refspec_pattern(&rs.src, &rs.dst, remote_ref) {
             return Some(mapped);
         }
