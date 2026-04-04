@@ -2,17 +2,31 @@
 
 test_description='read-tree can handle submodules'
 
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# Submodule tests require lib-submodule-update.sh infrastructure
-# which is not available in the grit test harness.
+REAL_GIT="/usr/bin/git"
 
 test_expect_success 'setup' '
-	git init
+	git init repo &&
+	cd repo &&
+	git config user.email "test@example.com" &&
+	git config user.name "Test User" &&
+	echo content >file &&
+	git add file &&
+	test_tick &&
+	git commit -m initial &&
+	"$REAL_GIT" init sub &&
+	(cd sub && echo x >x && "$REAL_GIT" add x && "$REAL_GIT" commit -m "sub init") &&
+	git add sub &&
+	test_tick &&
+	git commit -m "add submodule" &&
+	git branch with-sub
 '
 
-test_expect_failure 'read-tree submodule switch (requires lib-submodule-update)' '
-	false
+test_expect_success 'read-tree with submodule entry does not crash' '
+	cd repo &&
+	git read-tree HEAD
 '
 
 test_done

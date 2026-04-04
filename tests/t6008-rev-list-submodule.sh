@@ -57,7 +57,7 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure "Ilari s test" '
+test_expect_success "Ilari s test" '
 	cd repo &&
 	git rev-list --objects super ^super^
 '

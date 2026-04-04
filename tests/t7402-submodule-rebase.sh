@@ -11,7 +11,7 @@ cd "$(dirname "$0")" || exit 1
 
 REAL_GIT="/usr/bin/git"
 
-test_expect_failure 'setup' '
+test_expect_success 'setup' '
 	"$REAL_GIT" config --global protocol.file.allow always &&
 	git init repo &&
 	cd repo &&
@@ -32,7 +32,7 @@ test_expect_failure 'setup' '
 	git branch added-submodule
 '
 
-test_expect_failure 'rebase with a dirty submodule' '
+test_expect_success 'rebase with a dirty submodule' '
 	cd repo &&
 	(cd submodule &&
 	 echo "3rd line" >>file &&

@@ -28,7 +28,7 @@ test_expect_success 'setup a submodule' '
 	"$REAL_GIT" submodule deinit --all
 '
 
-test_expect_failure 'error message for path inside submodule' '
+test_expect_success 'error message for path inside submodule' '
 	cd main-repo &&
 	echo a >sub/a &&
 	test_must_fail git add sub/a 2>actual &&
