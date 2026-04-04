@@ -790,6 +790,13 @@ fn stage_file(
         let raw = fs::read(abs_path)?;
         // Apply CRLF / clean-filter conversion
         let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+        // Apply working-tree-encoding conversion (e.g. UTF-16 → UTF-8)
+        let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
+            convert_from_working_tree_encoding(&raw, encoding)
+                .with_context(|| format!("failed to convert '{}' from encoding '{}'", rel_path, encoding))?
+        } else {
+            raw
+        };
         match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
             Ok(converted) => converted,
             Err(msg) => bail!("{msg}"),
@@ -912,5 +919,60 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
             combined.to_string_lossy().to_string()
         }
         _ => pathspec.to_owned(),
+    }
+}
+
+/// Convert file content from a working-tree encoding to UTF-8.
+fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec<u8>> {
+    let enc_upper = encoding.to_uppercase().replace('-', "");
+    match enc_upper.as_str() {
+        "UTF16" | "UTF16LE" | "UTF16BE" => {
+            // Detect BOM and decode accordingly
+            let text = if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+                // UTF-16 LE with BOM
+                let u16_data: Vec<u16> = data[2..].chunks(2)
+                    .filter(|c| c.len() == 2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&u16_data)
+                    .map_err(|e| anyhow::anyhow!("invalid UTF-16 LE: {e}"))?
+            } else if data.len() >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+                // UTF-16 BE with BOM
+                let u16_data: Vec<u16> = data[2..].chunks(2)
+                    .filter(|c| c.len() == 2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&u16_data)
+                    .map_err(|e| anyhow::anyhow!("invalid UTF-16 BE: {e}"))?
+            } else if enc_upper == "UTF16BE" {
+                let u16_data: Vec<u16> = data.chunks(2)
+                    .filter(|c| c.len() == 2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&u16_data)
+                    .map_err(|e| anyhow::anyhow!("invalid UTF-16 BE: {e}"))?
+            } else {
+                // Default: try LE
+                let u16_data: Vec<u16> = data.chunks(2)
+                    .filter(|c| c.len() == 2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                String::from_utf16(&u16_data)
+                    .map_err(|e| anyhow::anyhow!("invalid UTF-16 LE: {e}"))?
+            };
+            Ok(text.into_bytes())
+        }
+        "UTF8" | "UTF8BOM" => {
+            // Already UTF-8, just strip BOM if present
+            if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                Ok(data[3..].to_vec())
+            } else {
+                Ok(data.to_vec())
+            }
+        }
+        _ => {
+            // Unknown encoding — fail
+            anyhow::bail!("unsupported working-tree-encoding: {encoding}");
+        }
     }
 }
