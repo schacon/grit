@@ -1015,6 +1015,7 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &
         committer: committer_ident,
         encoding: None,
         message,
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);

@@ -144,9 +144,13 @@ pub struct Args {
     #[arg(long = "find-object")]
     pub find_object: Option<String>,
 
-    /// Abbreviation length for object IDs.
-    #[arg(long = "abbrev")]
-    pub abbrev: Option<usize>,
+    /// Abbreviate commit hashes to N characters.
+    #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
+    pub abbrev: Option<String>,
+
+    /// Suppress diff output for submodules.
+    #[arg(long = "no-ext-diff")]
+    pub no_ext_diff: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]
@@ -795,11 +799,12 @@ fn format_commit(
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
 ) -> Result<()> {
     let hex = oid.to_hex();
+    let abbrev_len = parse_abbrev(&args.abbrev);
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
         let dec = format_decoration(&hex, decorations);
-        writeln!(out, "{}{} {}", &hex[..7], dec, first_line)?;
+        writeln!(out, "{}{} {}", &hex[..abbrev_len.min(hex.len())], dec, first_line)?;
         return Ok(());
     }
 
@@ -814,7 +819,6 @@ fn format_commit(
             } else {
                 &fmt[8..]
             };
-            let abbrev_len = args.abbrev.unwrap_or(7);
             let formatted = apply_format_string(template, oid, info, decorations, date_format, abbrev_len);
             if is_tformat {
                 writeln!(out, "{formatted}")?;
@@ -870,7 +874,6 @@ fn format_commit(
         }
         Some(other) => {
             // Try as a format string directly
-            let abbrev_len = args.abbrev.unwrap_or(7);
             let formatted = apply_format_string(other, oid, info, decorations, date_format, abbrev_len);
             writeln!(out, "{formatted}")?;
         }
@@ -909,7 +912,8 @@ fn apply_format_string(
                 }
                 Some('t') => {
                     chars.next();
-                    result.push_str(&info.tree.to_hex()[..abbrev_len.min(40)]);
+                    let th = info.tree.to_hex();
+                    result.push_str(&th[..abbrev_len.min(th.len())]);
                 }
                 Some('P') => {
                     chars.next();
@@ -921,7 +925,10 @@ fn apply_format_string(
                     let parents: Vec<String> = info
                         .parents
                         .iter()
-                        .map(|p| p.to_hex()[..abbrev_len.min(40)].to_owned())
+                        .map(|p| {
+                            let ph = p.to_hex();
+                            ph[..abbrev_len.min(ph.len())].to_owned()
+                        })
                         .collect();
                     result.push_str(&parents.join(" "));
                 }
@@ -1924,4 +1931,12 @@ fn collect_named_refs_from_dir(
         }
     }
     Ok(())
+}
+
+/// Parse the --abbrev value into a hash abbreviation length.
+fn parse_abbrev(abbrev: &Option<String>) -> usize {
+    match abbrev {
+        Some(val) => val.parse::<usize>().unwrap_or(7),
+        None => 7,
+    }
 }

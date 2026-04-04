@@ -57,10 +57,6 @@ pub struct Args {
     #[arg(long)]
     pub single_branch: bool,
 
-    /// Clone all branches (opposite of --single-branch, this is the default).
-    #[arg(long, hide = true)]
-    pub no_single_branch: bool,
-
     /// Don't clone any tags.
     #[arg(long)]
     pub no_tags: bool,

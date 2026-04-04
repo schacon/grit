@@ -118,7 +118,7 @@ pub fn run(args: Args) -> Result<()> {
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
-                short_len = Some(7);
+                short_len = Some(0); // sentinel: resolve from core.abbrev later
             } else if arg == "--default" {
                 i += 1;
                 let value = args
@@ -213,6 +213,11 @@ pub fn run(args: Args) -> Result<()> {
         let Some(current) = repo.as_ref() else {
             return fail_verify(quiet);
         };
+        // Resolve --short sentinel (0) to core.abbrev or default 7
+        if short_len == Some(0) {
+            let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
+            short_len = Some(config.get("core.abbrev").and_then(|v| v.parse().ok()).unwrap_or(7));
+        }
         let oid = match resolve_revision(current, rev_list[0]) {
             Ok(oid) => oid,
             Err(_) => return fail_verify(quiet),
@@ -232,6 +237,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = discover_optional(None)?;
+
+    // Resolve --short sentinel (0) to core.abbrev or default 7
+    if short_len == Some(0) {
+        if let Some(ref r) = repo {
+            let config = grit_lib::config::ConfigSet::load(Some(&r.git_dir), true)?;
+            short_len = Some(config.get("core.abbrev").and_then(|v| v.parse().ok()).unwrap_or(7));
+        } else {
+            short_len = Some(7);
+        }
+    }
 
     // Process actions in order
     let mut saw_path_sep_output = false;

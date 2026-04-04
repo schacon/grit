@@ -79,22 +79,30 @@ pub struct Args {
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
 
-    /// Do not show forced updates in output.
+    /// Machine-readable porcelain output.
+    #[arg(long)]
+    pub porcelain: bool,
+
+    /// Do not show forced updates.
     #[arg(long = "no-show-forced-updates")]
     pub no_show_forced_updates: bool,
 
-    /// Show forced updates (default). Accepted for completeness.
-    #[arg(long = "show-forced-updates", hide = true)]
+    /// Show forced updates (default, overrides --no-show-forced-updates).
+    #[arg(long = "show-forced-updates")]
     pub show_forced_updates: bool,
-
-    /// Produce machine-readable (porcelain) output.
-    #[arg(long)]
-    pub porcelain: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
+
+    // Validate fetch.output config if set
+    if let Some(val) = config.get("fetch.output") {
+        match val.as_str() {
+            "full" | "compact" => {}
+            _ => bail!("invalid value for 'fetch.output': '{}'", val),
+        }
+    }
 
     if args.all {
         let remotes = collect_remote_names(&config);
@@ -189,10 +197,41 @@ fn fetch_remote(
     let mut fetch_head_entries: Vec<String> = Vec::new();
 
     if !cli_refspecs.is_empty() {
+        // Collect negative refspecs first (^pattern)
+        let negative_patterns: Vec<&str> = cli_refspecs
+            .iter()
+            .filter_map(|s| s.strip_prefix('^'))
+            .collect();
+
+        // Validate negative refspecs: they must be ref patterns, not OIDs
+        for pat in &negative_patterns {
+            let clean = pat.strip_prefix("refs/").unwrap_or(pat);
+            if clean.chars().all(|c| c.is_ascii_hexdigit()) && clean.len() >= 7 {
+                bail!("negative refspecs do not support object ids: ^{pat}");
+            }
+        }
+
+        // Helper closure to check if a ref is excluded by negative refspecs
+        let is_excluded = |refname: &str| -> bool {
+            for pat in &negative_patterns {
+                let full_pat = if pat.starts_with("refs/") {
+                    pat.to_string()
+                } else {
+                    format!("refs/heads/{pat}")
+                };
+                if match_glob_pattern(&full_pat, refname).is_some() || full_pat == refname {
+                    return true;
+                }
+            }
+            false
+        };
+
         // Process command-line refspecs directly.
-        // e.g. "main:refs/heads/from-one" means: fetch remote's refs/heads/main,
-        // store locally as refs/heads/from-one.
         for spec in cli_refspecs {
+            // Skip negative refspecs (already collected above)
+            if spec.starts_with('^') {
+                continue;
+            }
             // Check for force prefix '+'
             let (force, spec_clean) = if spec.starts_with('+') {
                 (true, &spec[1..])
@@ -204,6 +243,55 @@ fn fetch_remote(
             } else {
                 (spec_clean.to_owned(), String::new())
             };
+
+            // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
+            if src.contains('*') {
+                let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
+                for (refname, remote_oid) in &remote_all_refs {
+                    if is_excluded(refname) {
+                        continue;
+                    }
+                    if let Some(matched) = match_glob_pattern(&src, refname) {
+                        let local_ref = dst.replacen('*', matched, 1);
+                        let old_oid = read_ref_oid(git_dir, &local_ref);
+                        if old_oid.as_ref() == Some(remote_oid) {
+                            continue;
+                        }
+
+                        if !has_updates && !args.quiet {
+                            eprintln!("From {url}");
+                            has_updates = true;
+                        }
+
+                        refs::write_ref(git_dir, &local_ref, remote_oid)
+                            .with_context(|| format!("updating ref {local_ref}"))?;
+
+                        if !args.quiet {
+                            let short = local_ref.strip_prefix("refs/heads/")
+                                .or_else(|| local_ref.strip_prefix("refs/tags/"))
+                                .unwrap_or(&local_ref);
+                            let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                            match old_oid {
+                                None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
+                                Some(old) => eprintln!(
+                                    "   {}..{}  {branch:<17} -> {short}",
+                                    &old.to_string()[..7], &remote_oid.to_string()[..7],
+                                ),
+                            }
+                        }
+
+                        // Build FETCH_HEAD entry
+                        let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+                        fetch_head_entries.push(format!(
+                            "{}\tnot-for-merge\tbranch '{}' of {url}",
+                            remote_oid, branch,
+                        ));
+                    }
+                }
+                // Also copy symbolic refs for the matched pattern
+                copy_symrefs(&remote_repo.git_dir, git_dir, &src, &dst)?;
+                continue;
+            }
 
             // Normalize source: if it doesn't start with refs/, assume refs/heads/
             let remote_ref = if src.starts_with("refs/") {
@@ -316,9 +404,9 @@ fn fetch_remote(
 
             if args.porcelain {
                 let zero = "0".repeat(40);
-                let old_hex = old_oid.as_ref().map(|o| o.to_hex()).unwrap_or_else(|| zero.clone());
+                let old_hex = old_oid.as_ref().map(|o| o.to_string()).unwrap_or_else(|| zero.clone());
                 let flag = if old_oid.is_none() { "*" } else { " " };
-                println!("{flag} {old_hex} {} {local_ref}", remote_oid.to_hex());
+                println!("{flag} {old_hex} {remote_oid} {local_ref}");
             } else if !args.quiet {
                 print_update(&old_oid, remote_oid, branch, remote_name);
             }
@@ -630,6 +718,8 @@ struct FetchRefspec {
     /// Whether this is a force refspec (leading '+').
     #[allow(dead_code)]
     force: bool,
+    /// Whether this is a negative (exclusion) refspec (leading '^').
+    negative: bool,
 }
 
 /// Collect all fetch refspecs from a config key (may be multi-valued).
@@ -639,6 +729,16 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
         if entry.key == key {
             if let Some(ref val) = entry.value {
                 let val = val.trim();
+                // Check for negative refspec (^pattern)
+                if let Some(pattern) = val.strip_prefix('^') {
+                    result.push(FetchRefspec {
+                        src: pattern.to_owned(),
+                        dst: String::new(),
+                        force: false,
+                        negative: true,
+                    });
+                    continue;
+                }
                 let (force, val) = if let Some(stripped) = val.strip_prefix('+') {
                     (true, stripped)
                 } else {
@@ -649,6 +749,7 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
                         src: val[..colon].to_owned(),
                         dst: val[colon + 1..].to_owned(),
                         force,
+                        negative: false,
                     });
                 }
             }
@@ -663,7 +764,20 @@ fn collect_refspecs(config: &ConfigSet, key: &str) -> Vec<FetchRefspec> {
 /// is `refs/heads/main`, the result is `refs/remotes/origin/main`.
 /// Returns None if no refspec matches.
 fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
+    // First check if any negative refspec excludes this ref
     for rs in refspecs {
+        if rs.negative {
+            // Match the pattern against the remote ref
+            if match_glob_pattern(&rs.src, remote_ref).is_some() || rs.src == remote_ref {
+                return None;
+            }
+        }
+    }
+    // Then find a positive match
+    for rs in refspecs {
+        if rs.negative {
+            continue;
+        }
         if let Some(mapped) = match_refspec_pattern(&rs.src, &rs.dst, remote_ref) {
             return Some(mapped);
         }
@@ -686,6 +800,78 @@ fn match_refspec_pattern(src_pattern: &str, dst_pattern: &str, refname: &str) ->
         return Some(dst_pattern.to_owned());
     }
     None
+}
+
+/// Match a glob pattern against a ref name, returning the matched wildcard portion.
+fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix) && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
+}
+
+/// Copy symbolic refs that match a glob pattern from remote to local.
+fn copy_symrefs(
+    remote_git_dir: &Path,
+    local_git_dir: &Path,
+    src_pattern: &str,
+    dst_pattern: &str,
+) -> Result<()> {
+    // Walk the remote refs directory for symbolic refs
+    let refs_dir = remote_git_dir.join("refs");
+    if !refs_dir.is_dir() {
+        return Ok(());
+    }
+    for_each_ref_file(&refs_dir, "refs", &mut |refname, path| {
+        if let Some(matched) = match_glob_pattern(src_pattern, &refname) {
+            let content = fs::read_to_string(path)?;
+            let content = content.trim();
+            if let Some(target) = content.strip_prefix("ref: ") {
+                // It's a symbolic ref — write it locally
+                let local_ref = dst_pattern.replacen('*', matched, 1);
+                let local_path = local_git_dir.join(local_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
+                if let Some(parent) = local_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&local_path, format!("ref: {target}\n"))?;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn for_each_ref_file(
+    dir: &Path,
+    prefix: &str,
+    cb: &mut dyn FnMut(String, &Path) -> Result<()>,
+) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let refname = format!("{prefix}/{name_str}");
+        if entry.file_type()?.is_dir() {
+            for_each_ref_file(&entry.path(), &refname, cb)?;
+        } else {
+            cb(refname, &entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Collect all configured remote names.

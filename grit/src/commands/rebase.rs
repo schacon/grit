@@ -394,6 +394,7 @@ fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()
         committer: format_ident(&committer, now),
         encoding: commit.encoding.clone(),
         message: commit.message.clone(),
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -489,6 +490,7 @@ fn do_continue() -> Result<()> {
         committer: format_ident(&committer, now),
         encoding: original_commit.encoding.clone(),
         message,
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);

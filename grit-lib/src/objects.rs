@@ -328,6 +328,9 @@ pub struct CommitData {
     pub encoding: Option<String>,
     /// Commit message (everything after the blank line).
     pub message: String,
+    /// Optional raw message bytes for non-UTF-8 commit messages.
+    /// When set, `serialize_commit` uses these bytes instead of `message`.
+    pub raw_message: Option<Vec<u8>>,
 }
 
 /// Parse the raw data of a commit object.
@@ -336,8 +339,10 @@ pub struct CommitData {
 ///
 /// Returns [`Error::CorruptObject`] if required headers are missing.
 pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
-    let text = std::str::from_utf8(data)
-        .map_err(|_| Error::CorruptObject("commit is not valid UTF-8".to_owned()))?;
+    // Use lossy UTF-8 conversion so commits with non-UTF-8 encoded
+    // messages (e.g. iso-8859-7 with an `encoding` header) can still
+    // be parsed.  The header fields are always ASCII-safe.
+    let text = String::from_utf8_lossy(data);
 
     let mut tree = None;
     let mut parents = Vec::new();
@@ -384,6 +389,7 @@ pub fn parse_commit(data: &[u8]) -> Result<CommitData> {
             .ok_or_else(|| Error::CorruptObject("commit missing committer header".to_owned()))?,
         encoding,
         message,
+        raw_message: None,
     })
 }
 
@@ -482,20 +488,29 @@ pub fn serialize_tag(t: &TagData) -> Vec<u8> {
 /// `committer` string (including timestamp and timezone).
 #[must_use]
 pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
-    let mut out = String::new();
-    out.push_str(&format!("tree {}\n", c.tree));
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("tree {}\n", c.tree).as_bytes());
     for p in &c.parents {
-        out.push_str(&format!("parent {p}\n"));
+        out.extend_from_slice(format!("parent {p}\n").as_bytes());
     }
-    out.push_str(&format!("author {}\n", c.author));
-    out.push_str(&format!("committer {}\n", c.committer));
+    out.extend_from_slice(format!("author {}\n", c.author).as_bytes());
+    out.extend_from_slice(format!("committer {}\n", c.committer).as_bytes());
     if let Some(enc) = &c.encoding {
-        out.push_str(&format!("encoding {enc}\n"));
+        out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
     }
-    out.push('\n');
-    out.push_str(&c.message);
-    if !c.message.ends_with('\n') {
-        out.push('\n');
+    out.push(b'\n');
+    // Use raw_message bytes if available (for non-UTF-8 commit messages),
+    // otherwise fall back to the UTF-8 message field.
+    if let Some(raw) = &c.raw_message {
+        out.extend_from_slice(raw);
+        if !raw.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+    } else {
+        out.extend_from_slice(c.message.as_bytes());
+        if !c.message.ends_with('\n') {
+            out.push(b'\n');
+        }
     }
-    out.into_bytes()
+    out
 }

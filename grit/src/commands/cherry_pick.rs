@@ -659,6 +659,7 @@ fn create_cherry_pick_commit(
         committer,
         encoding: None,
         message: message.to_owned(),
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);

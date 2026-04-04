@@ -414,6 +414,7 @@ fn create_revert_commit(
         committer: format_ident(&committer, now),
         encoding: None,
         message: message.to_owned(),
+    raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
