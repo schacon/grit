@@ -41,7 +41,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
 
-    if !options.quiet {
+    if !options.quiet && !options.suppress_diff {
         match options.format {
             OutputFormat::Raw => {
                 for change in &changes {
@@ -112,6 +112,8 @@ struct Options {
     abbrev: Option<usize>,
     /// Chosen output format.
     format: OutputFormat,
+    /// Suppress diff output (-s / --no-patch).
+    suppress_diff: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -138,6 +140,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut exit_code = false;
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
+    let mut suppress_diff = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -158,6 +161,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-status" => format = OutputFormat::NameStatus,
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
+                "-s" | "--no-patch" => suppress_diff = true,
                 "-0" => stage = 0,
                 "-1" => stage = 1,
                 "-2" => stage = 2,
@@ -186,6 +190,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         exit_code,
         abbrev,
         format,
+        suppress_diff,
     })
 }
 

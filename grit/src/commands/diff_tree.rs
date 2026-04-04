@@ -92,6 +92,8 @@ struct Options {
     pretty: bool,
     /// Show combined stat+summary after diff.
     stat_too: bool,
+    /// Limit recursion depth for --name-only etc.
+    max_depth: Option<i32>,
 }
 
 impl Default for Options {
@@ -120,6 +122,7 @@ impl Default for Options {
             summary: false,
             pretty: false,
             stat_too: false,
+            max_depth: None,
         }
     }
 }
@@ -156,6 +159,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-status" => opts.format = OutputFormat::NameStatus,
                 "--summary" => opts.summary = true,
                 "--full-index" => opts.full_index = true,
+                _ if arg.starts_with("--max-depth=") => {
+                    let val = &arg["--max-depth=".len()..];
+                    opts.max_depth = Some(
+                        val.parse::<i32>()
+                            .with_context(|| format!("invalid --max-depth value: `{val}`"))?,
+                    );
+                }
                 "--patch-with-stat" => { opts.format = OutputFormat::Patch; opts.patch_with_stat = true; }
                 "--patch-with-raw" => { opts.format = OutputFormat::Patch; opts.patch_with_raw = true; }
                 "--pretty" | "--pretty=medium" => opts.pretty = true,
@@ -287,7 +297,7 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_maybe_recursive_opts(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
+    let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))
 }
@@ -306,7 +316,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries =
-                        diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
+                        diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
                     if !filtered.is_empty() && !opts.no_commit_id {
                         writeln!(out, "{oid}")?;
@@ -316,12 +326,11 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 // Without --root, root commits produce no output.
             } else {
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
-                let entries = diff_maybe_recursive_opts(
+                let entries = diff_with_opts(
                     &repo.odb,
                     Some(&parent_tree),
                     Some(&commit.tree),
-                    opts.recursive,
-                    opts.show_trees,
+                    opts,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
                 if !filtered.is_empty() && !opts.no_commit_id {
@@ -436,18 +445,17 @@ fn process_stdin_commit(
     if parent_oids.is_empty() {
         if opts.root {
             let entries =
-                diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
+                diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_pathspecs(entries, &opts.pathspecs);
             print_diff(out, &repo.odb, &filtered, opts, None)?;
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
-        let entries = diff_maybe_recursive_opts(
+        let entries = diff_with_opts(
             &repo.odb,
             Some(&parent_tree),
             Some(&commit.tree),
-            opts.recursive,
-            opts.show_trees,
+            opts,
         )?;
         let filtered = filter_pathspecs(entries, &opts.pathspecs);
         print_diff(out, &repo.odb, &filtered, opts, None)?;
@@ -475,7 +483,7 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let entries = diff_maybe_recursive_opts(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
+    let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
     print_diff(out, &repo.odb, &filtered, opts, None)
 }
@@ -483,15 +491,21 @@ fn process_stdin_two_trees(
 // ── Diff helpers ─────────────────────────────────────────────────────
 
 /// Compute the diff, recursing into sub-trees only when `recursive` is set.
-fn diff_maybe_recursive_opts(
+fn diff_with_opts(
     odb: &Odb,
     old_tree: Option<&ObjectId>,
     new_tree: Option<&ObjectId>,
-    recursive: bool,
-    show_trees: bool,
+    opts: &Options,
 ) -> Result<Vec<DiffEntry>> {
-    if recursive {
-        if show_trees {
+    if let Some(depth) = opts.max_depth {
+        if depth < 0 {
+            // -1 means unlimited recursion
+            return diff_trees(odb, old_tree, new_tree, "").map_err(Into::into);
+        }
+        return diff_trees_max_depth(odb, old_tree, new_tree, "", depth as usize);
+    }
+    if opts.recursive {
+        if opts.show_trees {
             diff_trees_show_tree_entries(odb, old_tree, new_tree, "").map_err(Into::into)
         } else {
             diff_trees(odb, old_tree, new_tree, "").map_err(Into::into)
@@ -499,6 +513,156 @@ fn diff_maybe_recursive_opts(
     } else {
         diff_trees_toplevel(odb, old_tree, new_tree)
     }
+}
+
+/// Depth-limited recursive tree diff.
+fn diff_trees_max_depth(
+    odb: &Odb,
+    old_tree_oid: Option<&ObjectId>,
+    new_tree_oid: Option<&ObjectId>,
+    prefix: &str,
+    remaining_depth: usize,
+) -> Result<Vec<DiffEntry>> {
+    let zero = grit_lib::diff::zero_oid();
+    let old_entries = match old_tree_oid {
+        Some(oid) => {
+            let obj = odb.read(oid)?;
+            parse_tree(&obj.data)?
+        }
+        None => Vec::new(),
+    };
+    let new_entries = match new_tree_oid {
+        Some(oid) => {
+            let obj = odb.read(oid)?;
+            parse_tree(&obj.data)?
+        }
+        None => Vec::new(),
+    };
+
+    let mut old_map: std::collections::BTreeMap<&[u8], &grit_lib::objects::TreeEntry> =
+        std::collections::BTreeMap::new();
+    for e in &old_entries {
+        old_map.insert(&e.name, e);
+    }
+    let mut new_map: std::collections::BTreeMap<&[u8], &grit_lib::objects::TreeEntry> =
+        std::collections::BTreeMap::new();
+    for e in &new_entries {
+        new_map.insert(&e.name, e);
+    }
+
+    let mut all_names: std::collections::BTreeSet<&[u8]> = std::collections::BTreeSet::new();
+    for e in &old_entries {
+        all_names.insert(&e.name);
+    }
+    for e in &new_entries {
+        all_names.insert(&e.name);
+    }
+
+    let mut result = Vec::new();
+    for name in all_names {
+        let name_str = String::from_utf8_lossy(name);
+        let path = if prefix.is_empty() {
+            name_str.to_string()
+        } else {
+            format!("{prefix}/{name_str}")
+        };
+
+        let old = old_map.get(name);
+        let new = new_map.get(name);
+
+        match (old, new) {
+            (Some(o), Some(n)) => {
+                if o.oid == n.oid && o.mode == n.mode {
+                    continue;
+                }
+                let o_is_tree = o.mode & 0o170000 == 0o040000;
+                let n_is_tree = n.mode & 0o170000 == 0o040000;
+                if o_is_tree && n_is_tree && remaining_depth > 0 {
+                    let sub = diff_trees_max_depth(
+                        odb,
+                        Some(&o.oid),
+                        Some(&n.oid),
+                        &path,
+                        remaining_depth - 1,
+                    )?;
+                    result.extend(sub);
+                } else if o_is_tree && n_is_tree {
+                    // At depth limit, show tree as single entry
+                    result.push(DiffEntry {
+                        old_mode: format!("{:06o}", o.mode),
+                        new_mode: format!("{:06o}", n.mode),
+                        old_oid: o.oid,
+                        new_oid: n.oid,
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path),
+                        score: None,
+                    });
+                } else {
+                    result.push(DiffEntry {
+                        old_mode: format!("{:06o}", o.mode),
+                        new_mode: format!("{:06o}", n.mode),
+                        old_oid: o.oid,
+                        new_oid: n.oid,
+                        status: DiffStatus::Modified,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path),
+                        score: None,
+                    });
+                }
+            }
+            (Some(o), None) => {
+                let o_is_tree = o.mode & 0o170000 == 0o040000;
+                if o_is_tree && remaining_depth > 0 {
+                    let sub = diff_trees_max_depth(
+                        odb,
+                        Some(&o.oid),
+                        None,
+                        &path,
+                        remaining_depth - 1,
+                    )?;
+                    result.extend(sub);
+                } else {
+                    result.push(DiffEntry {
+                        old_mode: format!("{:06o}", o.mode),
+                        new_mode: "000000".to_string(),
+                        old_oid: o.oid,
+                        new_oid: zero,
+                        status: DiffStatus::Deleted,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path),
+                        score: None,
+                    });
+                }
+            }
+            (None, Some(n)) => {
+                let n_is_tree = n.mode & 0o170000 == 0o040000;
+                if n_is_tree && remaining_depth > 0 {
+                    let sub = diff_trees_max_depth(
+                        odb,
+                        None,
+                        Some(&n.oid),
+                        &path,
+                        remaining_depth - 1,
+                    )?;
+                    result.extend(sub);
+                } else {
+                    result.push(DiffEntry {
+                        old_mode: "000000".to_string(),
+                        new_mode: format!("{:06o}", n.mode),
+                        old_oid: zero,
+                        new_oid: n.oid,
+                        status: DiffStatus::Added,
+                        old_path: Some(path.clone()),
+                        new_path: Some(path),
+                        score: None,
+                    });
+                }
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    Ok(result)
 }
 
 /// Non-recursive tree diff: only top-level entries.
