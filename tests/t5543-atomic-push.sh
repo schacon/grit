@@ -121,7 +121,7 @@ test_expect_success 'atomic push fails if one branch fails (explicit refs)' '
 '
 
 # grit does not run update hooks during atomic push
-test_expect_failure 'atomic push obeys update hook preventing a branch' '
+test_expect_success 'atomic push obeys update hook preventing a branch' '
 	mk_repo_pair &&
 	(
 		cd workbench &&
@@ -147,7 +147,7 @@ test_expect_failure 'atomic push obeys update hook preventing a branch' '
 '
 
 # grit receive.advertiseatomic config not supported
-test_expect_failure 'atomic push is not advertised if configured' '
+test_expect_success 'atomic push is not advertised if configured' '
 	mk_repo_pair &&
 	(
 		cd upstream &&

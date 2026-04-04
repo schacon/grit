@@ -92,6 +92,9 @@ pub fn run(args: Args) -> Result<()> {
         output: None,
         quiet: args.quiet,
         jobs: None,
+        porcelain: false,
+        no_show_forced_updates: false,
+        show_forced_updates: false,
     };
     super::fetch::run(fetch_args)?;
 

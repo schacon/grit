@@ -17,15 +17,15 @@ test_expect_success 'setup' '
 '
 
 # grit rejects --signed (unknown flag), which is fine
-test_expect_success 'push --signed fails gracefully' '
+test_expect_success 'push --signed accepted' '
 	git init --bare dst.git &&
 	git push ./dst.git main &&
 	test_commit second &&
-	test_must_fail git push --signed ./dst.git main 2>err
+	git push --signed ./dst.git main
 '
 
 # grit does not support push certificate verification
-test_expect_failure 'push --signed=if-asked push certificate' '
+test_expect_success 'push --signed=if-asked push certificate' '
 	git init --bare dst2.git &&
 	git push --signed=if-asked ./dst2.git main
 '

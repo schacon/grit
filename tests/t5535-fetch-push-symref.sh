@@ -21,7 +21,7 @@ test_expect_success 'setup' '
 '
 
 # grit does not yet support glob refspecs (refs/remotes/*:refs/remotes/*)
-test_expect_failure 'push' '
+test_expect_success 'push' '
 	(
 		cd src &&
 		git push ../dst1 "refs/remotes/*:refs/remotes/*"
@@ -35,7 +35,7 @@ test_expect_failure 'push' '
 '
 
 # grit does not yet support glob refspecs (refs/remotes/*:refs/remotes/*)
-test_expect_failure 'fetch' '
+test_expect_success 'fetch' '
 	(
 		cd dst2 &&
 		git fetch ../src "refs/remotes/*:refs/remotes/*"

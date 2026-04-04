@@ -40,7 +40,7 @@ test_expect_success 'clone and setup child repos' '
 '
 
 # grit does not support negative refspecs (^refs/...)
-test_expect_failure 'fetch with negative refspec in config' '
+test_expect_success 'fetch with negative refspec in config' '
 	(
 		cd two &&
 		test_must_fail git rev-parse --verify refs/remotes/one/alternate &&
@@ -51,7 +51,7 @@ test_expect_failure 'fetch with negative refspec in config' '
 '
 
 # grit does not support negative refspec on command line
-test_expect_failure 'fetch with negative refspec on commandline' '
+test_expect_success 'fetch with negative refspec on commandline' '
 	echo >file updated by origin again &&
 	git commit -a -m "updated by origin again" &&
 	(

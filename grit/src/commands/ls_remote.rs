@@ -70,8 +70,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let entries = ls_remote(&repo.git_dir, &repo.odb, &opts)?;
 
-    if entries.is_empty() && !opts.patterns.is_empty() {
-        std::process::exit(2);
+    if entries.is_empty() {
+        // git ls-remote exits 0 even when no refs match patterns
+        return Ok(());
     }
 
     if args.quiet {
@@ -151,8 +152,8 @@ fn run_bundle_ls_remote(path: &Path, args: &Args) -> Result<()> {
         .with_context(|| format!("could not read bundle '{}'.", path.display()))?;
     let refs = parse_bundle_refs(&data)?;
 
-    if refs.is_empty() && !args.patterns.is_empty() {
-        std::process::exit(2);
+    if refs.is_empty() {
+        return Ok(());
     }
 
     if args.quiet {
