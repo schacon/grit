@@ -941,6 +941,11 @@ fn collect_tree_objects_filtered(
     }
     let entries = parse_tree(&object.data)?;
     for entry in entries {
+        // Skip gitlink (submodule) entries — their OIDs reference commits
+        // in the submodule's object store, not the parent repo.
+        if entry.mode == 0o160000 {
+            continue;
+        }
         let name = String::from_utf8_lossy(&entry.name).to_string();
         let path = if prefix.is_empty() {
             name.clone()

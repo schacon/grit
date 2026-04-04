@@ -1708,6 +1708,16 @@ fn checkout_index_to_worktree(
             continue;
         }
 
+        // Skip gitlink (submodule) entries — their OIDs reference commits
+        // in the submodule's object store, not blobs in ours.
+        if entry.mode == 0o160000 {
+            // Ensure the submodule directory exists so that scripts can
+            // `cd` into it, but don't try to check out any content.
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
+            continue;
+        }
+
         // Skip unchanged entries (same OID and mode) — but only if file exists
         // and we're not in force mode.
         if !force_write_all {

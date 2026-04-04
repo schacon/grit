@@ -525,19 +525,60 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    let tracked: Vec<(Vec<u8>, String)> = index
+    let tracked: Vec<(Vec<u8>, String, u32)> = index
         .entries
         .iter()
         .map(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path).to_string();
-            (ie.path.clone(), path_str)
+            (ie.path.clone(), path_str, ie.mode)
         })
         .collect();
 
     let mut changed = false;
-    for (raw_path, path_str) in &tracked {
+    for (raw_path, path_str, idx_mode) in &tracked {
         let abs_path = work_tree.join(path_str);
         if abs_path.exists() {
+            // Gitlink (submodule) entries: read the embedded repo's HEAD to
+            // get the current commit OID instead of trying to read the
+            // directory as a file.
+            if *idx_mode == 0o160000 {
+                let head_path = abs_path.join(".git/HEAD");
+                if let Ok(head_content) = fs::read_to_string(&head_path) {
+                    let head_trimmed = head_content.trim();
+                    let oid_hex = if let Some(r) = head_trimmed.strip_prefix("ref: ") {
+                        let ref_path = abs_path.join(".git").join(r);
+                        match fs::read_to_string(&ref_path) {
+                            Ok(s) => s.trim().to_string(),
+                            Err(_) => continue,
+                        }
+                    } else {
+                        head_trimmed.to_string()
+                    };
+                    if let Ok(oid) = oid_hex.parse::<ObjectId>() {
+                        use std::os::unix::fs::MetadataExt;
+                        let meta = fs::symlink_metadata(&abs_path)?;
+                        let entry = grit_lib::index::IndexEntry {
+                            ctime_sec: meta.ctime() as u32,
+                            ctime_nsec: meta.ctime_nsec() as u32,
+                            mtime_sec: meta.mtime() as u32,
+                            mtime_nsec: meta.mtime_nsec() as u32,
+                            dev: meta.dev() as u32,
+                            ino: meta.ino() as u32,
+                            mode: 0o160000,
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            size: 0,
+                            oid,
+                            flags: path_str.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: raw_path.clone(),
+                        };
+                        index.add_or_replace(entry);
+                        changed = true;
+                    }
+                }
+                continue;
+            }
             use std::os::unix::fs::MetadataExt;
             let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {

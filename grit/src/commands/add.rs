@@ -535,6 +535,28 @@ fn add_path(
 ) -> std::result::Result<(), AddPathError> {
     let abs_path = work_tree.join(path);
 
+    // Refuse to add a path inside a registered submodule (gitlink).
+    // Only reject when a *proper* parent directory is a gitlink;
+    // adding the submodule entry itself (e.g. `git add embed`) is fine.
+    {
+        let components: Vec<&str> = path.split('/').collect();
+        let mut prefix = String::new();
+        for &component in &components[..components.len().saturating_sub(1)] {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            if let Some(ie) = index.get(prefix.as_bytes(), 0) {
+                if ie.mode == 0o160000 {
+                    return Err(AddPathError::Other(anyhow::anyhow!(
+                        "'{}' in submodule '{}'",
+                        path, prefix
+                    )));
+                }
+            }
+        }
+    }
+
     // Refuse to add a path that traverses through a symbolic link.
     if check_symlink_in_path(work_tree, Path::new(path)).is_some() {
         return Err(AddPathError::Other(anyhow::anyhow!(

@@ -873,7 +873,11 @@ fn checkout_merged_index(
             let path_str = String::from_utf8_lossy(&entry.path).into_owned();
             let abs_path = work_tree.join(&path_str);
             if abs_path.exists() || abs_path.is_symlink() {
-                let _ = fs::remove_file(&abs_path);
+                if abs_path.is_dir() {
+                    let _ = fs::remove_dir_all(&abs_path);
+                } else {
+                    let _ = fs::remove_file(&abs_path);
+                }
                 remove_empty_parent_dirs(work_tree, &abs_path);
             }
         }
@@ -913,6 +917,14 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
 fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
+    }
+
+    // Gitlink (submodule) entries: ensure the directory exists but don't
+    // try to check out content — the OID references a commit in the
+    // submodule's own object store.
+    if entry.mode == 0o160000 {
+        let _ = fs::create_dir_all(abs_path);
+        return Ok(());
     }
 
     let obj = repo

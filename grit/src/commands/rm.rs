@@ -210,7 +210,11 @@ pub fn run(args: Args) -> Result<()> {
         if !args.cached {
             let abs_path = work_tree.join(path_str);
             if abs_path.exists() || abs_path.symlink_metadata().is_ok() {
-                if let Err(e) = fs::remove_file(&abs_path) {
+                if abs_path.is_dir() {
+                    if let Err(e) = fs::remove_dir_all(&abs_path) {
+                        bail!("cannot remove '{path_str}': {e}");
+                    }
+                } else if let Err(e) = fs::remove_file(&abs_path) {
                     bail!("cannot remove '{path_str}': {e}");
                 }
                 remove_empty_parents(&abs_path, work_tree);
