@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
 
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 
@@ -53,19 +53,26 @@ pub fn run(args: Args) -> Result<()> {
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
     let obj = repo.odb.read(&oid)?;
 
-    // Dereference commits to their tree.
-    let (tree_oid, obj) = if obj.kind == ObjectKind::Commit {
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        let tree_obj = repo.odb.read(&commit.tree).context("reading tree")?;
-        (commit.tree, tree_obj)
-    } else {
-        (oid, obj)
-    };
-    let _ = tree_oid; // used implicitly through obj
-
-    if obj.kind != ObjectKind::Tree {
-        bail!("'{}' is not a tree object", args.tree_ish);
+    // Peel tags to their target, then commits to their tree.
+    let mut current_oid = oid;
+    let mut obj = obj;
+    loop {
+        match obj.kind {
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data).context("parsing tag")?;
+                current_oid = tag.object;
+                obj = repo.odb.read(&current_oid).context("reading tag target")?;
+            }
+            ObjectKind::Commit => {
+                let commit = parse_commit(&obj.data).context("parsing commit")?;
+                current_oid = commit.tree;
+                obj = repo.odb.read(&current_oid).context("reading tree")?;
+            }
+            ObjectKind::Tree => break,
+            _ => bail!("'{}' is not a tree object", args.tree_ish),
+        }
     }
+    let _ = current_oid;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -283,6 +290,10 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     }
     let as_branch = format!("refs/heads/{s}");
     if let Ok(oid) = resolve_ref(&repo.git_dir, &as_branch) {
+        return Ok(oid);
+    }
+    let as_tag = format!("refs/tags/{s}");
+    if let Ok(oid) = resolve_ref(&repo.git_dir, &as_tag) {
         return Ok(oid);
     }
     bail!("not a valid tree-ish: '{s}'")

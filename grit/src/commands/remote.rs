@@ -207,6 +207,44 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
     }
     config_file.write().context("writing config")?;
 
+    // Remove remote tracking refs (refs/remotes/<name>/*).
+    let remotes_dir = git_dir.join("refs").join("remotes").join(&args.name);
+    if remotes_dir.is_dir() {
+        std::fs::remove_dir_all(&remotes_dir)
+            .with_context(|| format!("removing refs/remotes/{}", args.name))?;
+    }
+
+    // Also remove from packed-refs if present.
+    let packed_refs_path = git_dir.join("packed-refs");
+    if packed_refs_path.is_file() {
+        let prefix = format!("refs/remotes/{}/", args.name);
+        let content = std::fs::read_to_string(&packed_refs_path)
+            .context("reading packed-refs")?;
+        let filtered: String = content
+            .lines()
+            .filter(|line| {
+                // Keep comment/header lines and lines that don't reference this remote
+                if line.starts_with('#') || line.starts_with('^') {
+                    return true;
+                }
+                // Each line is "<hash> <refname>" — check if refname matches
+                if let Some(refname) = line.split_whitespace().nth(1) {
+                    !refname.starts_with(&prefix)
+                } else {
+                    true
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let filtered = if filtered.is_empty() || filtered.ends_with('\n') {
+            filtered
+        } else {
+            format!("{filtered}\n")
+        };
+        std::fs::write(&packed_refs_path, filtered)
+            .context("writing packed-refs")?;
+    }
+
     Ok(())
 }
 
