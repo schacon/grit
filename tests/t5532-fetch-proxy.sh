@@ -26,7 +26,7 @@ test_expect_success 'setup remote repo' '
 '
 
 # grit does not support git:// protocol
-test_expect_failure 'fetch through proxy works' '
+test_expect_success 'fetch through proxy works' '
 	git remote add fake git://example.com/remote &&
 	git config core.gitproxy ./proxy &&
 	git fetch fake &&
