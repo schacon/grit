@@ -123,6 +123,85 @@ pub fn run_hook(
     }
 }
 
+/// Like `run_hook` but with additional environment variables and optional cwd override.
+pub fn run_hook_with_env(
+    repo: &Repository,
+    hook_name: &str,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    env_vars: &[(&str, &str)],
+) -> HookResult {
+    run_hook_with_env_cwd(repo, hook_name, args, stdin_data, env_vars, None)
+}
+
+/// Like `run_hook_with_env` but allows overriding the working directory.
+pub fn run_hook_with_env_cwd(
+    repo: &Repository,
+    hook_name: &str,
+    args: &[&str],
+    stdin_data: Option<&[u8]>,
+    env_vars: &[(&str, &str)],
+    cwd: Option<&std::path::Path>,
+) -> HookResult {
+    let hooks_dir = resolve_hooks_dir(repo);
+    let hook_path = hooks_dir.join(hook_name);
+
+    if !hook_path.exists() {
+        return HookResult::NotFound;
+    }
+
+    let meta = match fs::metadata(&hook_path) {
+        Ok(m) => m,
+        Err(_) => return HookResult::NotFound,
+    };
+    if meta.permissions().mode() & 0o111 == 0 {
+        return HookResult::NotFound;
+    }
+
+    let default_dir = repo
+        .work_tree
+        .as_deref()
+        .unwrap_or(&repo.git_dir);
+    let work_dir = cwd.unwrap_or(default_dir);
+
+    let mut cmd = Command::new(&hook_path);
+    cmd.args(args)
+        .current_dir(work_dir)
+        .env("GIT_DIR", &repo.git_dir);
+
+    for (key, value) in env_vars {
+        cmd.env(key, value);
+    }
+
+    if stdin_data.is_some() {
+        cmd.stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return HookResult::Failed(1),
+    };
+
+    if let Some(data) = stdin_data {
+        if let Some(ref mut stdin) = child.stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(data);
+        }
+        drop(child.stdin.take());
+    }
+
+    match child.wait() {
+        Ok(status) => {
+            if status.success() {
+                HookResult::Success
+            } else {
+                HookResult::Failed(status.code().unwrap_or(1))
+            }
+        }
+        Err(_) => HookResult::Failed(1),
+    }
+}
+
 /// Like `run_hook` but captures stdout and returns it alongside the result.
 pub fn run_hook_capture(
     repo: &Repository,

@@ -6,7 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::hooks::{run_hook, run_hook_capture, HookResult};
+use grit_lib::hooks::{run_hook, run_hook_capture, run_hook_with_env_cwd, HookResult};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
@@ -475,10 +475,54 @@ pub fn run(args: Args) -> Result<()> {
         println!("To {url}");
     }
 
+    // Build push-option env vars for hooks
+    let push_option_env: Vec<(String, String)> = if !args.push_option.is_empty() {
+        let mut env = vec![
+            ("GIT_PUSH_OPTION_COUNT".to_string(), args.push_option.len().to_string()),
+        ];
+        for (i, opt) in args.push_option.iter().enumerate() {
+            env.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
+        }
+        env
+    } else {
+        Vec::new()
+    };
+    let push_option_env_refs: Vec<(&str, &str)> = push_option_env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
     // Track results for atomic rollback on failure
     let mut applied_updates: Vec<(&RefUpdate, Option<ObjectId>)> = Vec::new();
     let mut rejected: Vec<(&RefUpdate, String)> = Vec::new();
     let zero_oid_str = "0".repeat(40);
+
+    // Run remote-side pre-receive hook
+    if !args.dry_run {
+        let mut pre_receive_lines = String::new();
+        for update in &updates {
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            pre_receive_lines.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
+        }
+        let result = run_hook_with_env_cwd(
+            &remote_repo,
+            "pre-receive",
+            &[],
+            Some(pre_receive_lines.as_bytes()),
+            &push_option_env_refs,
+            Some(&remote_repo.git_dir),
+        );
+        if let HookResult::Failed(code) = result {
+            bail!("pre-receive hook declined the push (exit code {code})");
+        }
+    }
 
     for update in &updates {
         // Run the remote's `update` hook: update <refname> <old-oid> <new-oid>
@@ -543,6 +587,29 @@ pub fn run(args: Args) -> Result<()> {
                 return Err(e);
             }
         }
+    }
+
+    // Run remote-side post-receive hook for successfully applied updates
+    if !args.dry_run && !applied_updates.is_empty() {
+        let mut post_receive_lines = String::new();
+        for (update, old_oid) in &applied_updates {
+            let old_hex = old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            post_receive_lines.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
+        }
+        let _ = run_hook_with_env_cwd(
+            &remote_repo,
+            "post-receive",
+            &[],
+            Some(post_receive_lines.as_bytes()),
+            &push_option_env_refs,
+            Some(&remote_repo.git_dir),
+        );
     }
 
     // Report rejected refs to stderr

@@ -67,7 +67,7 @@ test_expect_failure 'fetch porcelain output' '
 '
 
 # grit does not support --no-show-forced-updates
-test_expect_failure '--no-show-forced-updates' '
+test_expect_success '--no-show-forced-updates' '
 	mkdir forced-updates &&
 	(
 		cd forced-updates &&

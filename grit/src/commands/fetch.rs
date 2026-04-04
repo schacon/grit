@@ -78,6 +78,18 @@ pub struct Args {
     /// Number of parallel children for fetching (accepted but ignored).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Do not show forced updates in output.
+    #[arg(long = "no-show-forced-updates")]
+    pub no_show_forced_updates: bool,
+
+    /// Show forced updates (default). Accepted for completeness.
+    #[arg(long = "show-forced-updates", hide = true)]
+    pub show_forced_updates: bool,
+
+    /// Produce machine-readable (porcelain) output.
+    #[arg(long)]
+    pub porcelain: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
