@@ -226,10 +226,30 @@ test_write_lines () {
 	done
 }
 
+test_set_editor () {
+	FAKE_EDITOR="$1"
+	export FAKE_EDITOR
+	EDITOR='"$FAKE_EDITOR"'
+	export EDITOR
+}
+
+test_set_sequence_editor () {
+	FAKE_SEQUENCE_EDITOR="$1"
+	export FAKE_SEQUENCE_EDITOR
+	GIT_SEQUENCE_EDITOR='"$FAKE_SEQUENCE_EDITOR"'
+	export GIT_SEQUENCE_EDITOR
+}
+
 test_config () {
 	local key="$1" val="$2"
 	git config "$key" "$val" &&
 	test_when_finished "git config --unset '$key'"
+}
+
+test_config_global () {
+	local key="$1" val="$2"
+	git config --global "$key" "$val" &&
+	test_when_finished "git config --global --unset '$key'"
 }
 
 test_file_not_empty () {
@@ -618,6 +638,52 @@ test_commit () {
 			git tag "$message"
 		fi
 	)
+}
+
+test_merge () {
+	local message="${1:?test_merge}" && shift
+	test_tick &&
+	git merge -m "$message" "$@" &&
+	git tag "$message"
+}
+
+test_commit_bulk () {
+	local indir= ref=HEAD n=
+	while test $# != 0
+	do
+		case "$1" in
+		-C) indir="$2"; shift 2 ;;
+		--ref) ref="$2"; shift 2 ;;
+		*) n="$1"; shift; break ;;
+		esac
+	done
+	(
+		test -n "$indir" && cd "$indir"
+		local i=1
+		while test "$i" -le "$n"
+		do
+			local message="commit $i"
+			test_tick &&
+			echo "$message" >"bulk-$i.t" &&
+			git add "bulk-$i.t" &&
+			git commit -m "$message" || return 1
+			i=$((i + 1))
+		done
+	)
+}
+
+test_chmod () {
+	local mode="$1" file="$2"
+	if test "$mode" = "+x"
+	then
+		git update-index --chmod=+x "$file"
+	else
+		git update-index --chmod=-x "$file"
+	fi
+}
+
+debug () {
+	"$@"
 }
 
 # Evaluate $2 and check $1 == stdout.
