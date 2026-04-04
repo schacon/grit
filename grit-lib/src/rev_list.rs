@@ -478,25 +478,234 @@ pub fn render_commit(
             Ok(out)
         }
         OutputMode::Format(fmt) => {
+            let raw_fmt = if let Some(t) = fmt.strip_prefix("format:") {
+                t
+            } else if let Some(t) = fmt.strip_prefix("tformat:") {
+                t
+            } else {
+                fmt.as_str()
+            };
             let commit = load_commit(repo, oid)?;
             let subject = commit.message.lines().next().unwrap_or_default();
+            // Body: everything after the first line (skip blank separator line)
+            let body = {
+                let mut lines = commit.message.lines();
+                lines.next(); // skip subject
+                // Skip optional blank line after subject
+                if let Some(blank) = lines.next() {
+                    if blank.is_empty() {
+                        lines.collect::<Vec<_>>().join("\n")
+                    } else {
+                        std::iter::once(blank).chain(lines).collect::<Vec<_>>().join("\n")
+                    }
+                } else {
+                    String::new()
+                }
+            };
+            let tree_hex = commit.tree.to_hex();
+            let parent_hexes: Vec<String> = commit.parents.iter().map(|p| p.to_hex()).collect();
+            let parent_abbrevs: Vec<String> = commit.parents.iter().map(|p| {
+                let hex = p.to_hex();
+                let n = abbrev_len.clamp(4, 40).min(hex.len());
+                hex[..n].to_string()
+            }).collect();
+
+            // Extract name/email components from ident strings
+            fn extract_name(ident: &str) -> &str {
+                if let Some(bracket) = ident.find('<') {
+                    ident[..bracket].trim()
+                } else {
+                    ident.trim()
+                }
+            }
+            fn extract_email(ident: &str) -> &str {
+                if let Some(start) = ident.find('<') {
+                    if let Some(end) = ident.find('>') {
+                        return &ident[start + 1..end];
+                    }
+                }
+                ""
+            }
+            fn extract_timestamp(ident: &str) -> &str {
+                let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+                if parts.len() >= 2 { parts[1] } else { "" }
+            }
+            fn extract_date_default(ident: &str) -> String {
+                let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+                if parts.len() < 2 { return String::new(); }
+                let ts_str = parts[1];
+                let offset_str = parts[0];
+                let ts: i64 = match ts_str.parse() { Ok(v) => v, Err(_) => return format!("{ts_str} {offset_str}") };
+                let tz_bytes = offset_str.as_bytes();
+                let tz_secs: i64 = if tz_bytes.len() >= 5 {
+                    let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
+                    let h: i64 = offset_str[1..3].parse().unwrap_or(0);
+                    let m: i64 = offset_str[3..5].parse().unwrap_or(0);
+                    sign * (h * 3600 + m * 60)
+                } else { 0 };
+                let adjusted = ts + tz_secs;
+                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                let weekday = match dt.weekday() {
+                    time::Weekday::Monday => "Mon", time::Weekday::Tuesday => "Tue",
+                    time::Weekday::Wednesday => "Wed", time::Weekday::Thursday => "Thu",
+                    time::Weekday::Friday => "Fri", time::Weekday::Saturday => "Sat",
+                    time::Weekday::Sunday => "Sun",
+                };
+                let month = match dt.month() {
+                    time::Month::January => "Jan", time::Month::February => "Feb",
+                    time::Month::March => "Mar", time::Month::April => "Apr",
+                    time::Month::May => "May", time::Month::June => "Jun",
+                    time::Month::July => "Jul", time::Month::August => "Aug",
+                    time::Month::September => "Sep", time::Month::October => "Oct",
+                    time::Month::November => "Nov", time::Month::December => "Dec",
+                };
+                format!("{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                    weekday, month, dt.day(),
+                    dt.hour(), dt.minute(), dt.second(),
+                    dt.year(), offset_str)
+            }
+
             let mut rendered = String::new();
-            let mut chars = fmt.chars().peekable();
+            let mut chars = raw_fmt.chars().peekable();
             while let Some(ch) = chars.next() {
                 if ch != '%' {
                     rendered.push(ch);
                     continue;
                 }
-                match chars.next() {
-                    Some('%') => rendered.push('%'),
-                    Some('H') => rendered.push_str(&oid.to_hex()),
+                match chars.peek() {
+                    Some('%') => { chars.next(); rendered.push('%'); }
+                    Some('H') => { chars.next(); rendered.push_str(&oid.to_hex()); }
                     Some('h') => {
+                        chars.next();
                         let hex = oid.to_hex();
                         let n = abbrev_len.clamp(4, 40).min(hex.len());
                         rendered.push_str(&hex[..n]);
                     }
-                    Some('s') => rendered.push_str(subject),
-                    Some(other) => {
+                    Some('T') => { chars.next(); rendered.push_str(&tree_hex); }
+                    Some('t') => {
+                        chars.next();
+                        let n = abbrev_len.clamp(4, 40).min(tree_hex.len());
+                        rendered.push_str(&tree_hex[..n]);
+                    }
+                    Some('P') => { chars.next(); rendered.push_str(&parent_hexes.join(" ")); }
+                    Some('p') => { chars.next(); rendered.push_str(&parent_abbrevs.join(" ")); }
+                    Some('n') => { chars.next(); rendered.push('\n'); }
+                    Some('s') => { chars.next(); rendered.push_str(subject); }
+                    Some('b') => { chars.next(); rendered.push_str(&body); if !body.is_empty() { rendered.push('\n'); } }
+                    Some('B') => { chars.next(); rendered.push_str(&commit.message); }
+                    Some('a') => {
+                        chars.next();
+                        match chars.next() {
+                            Some('n') => rendered.push_str(extract_name(&commit.author)),
+                            Some('N') => rendered.push_str(extract_name(&commit.author)),
+                            Some('e') => rendered.push_str(extract_email(&commit.author)),
+                            Some('E') => rendered.push_str(extract_email(&commit.author)),
+                            Some('d') => rendered.push_str(&extract_date_default(&commit.author)),
+                            Some('D') => rendered.push_str(&extract_date_default(&commit.author)),
+                            Some('t') => rendered.push_str(extract_timestamp(&commit.author)),
+                            Some('i') => {
+                                // ISO date
+                                let parts: Vec<&str> = commit.author.rsplitn(3, ' ').collect();
+                                if parts.len() >= 2 {
+                                    let ts: i64 = parts[1].parse().unwrap_or(0);
+                                    let offset = parts[0];
+                                    let tz_bytes = offset.as_bytes();
+                                    let tz_secs: i64 = if tz_bytes.len() >= 5 {
+                                        let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
+                                        let h: i64 = offset[1..3].parse().unwrap_or(0);
+                                        let m: i64 = offset[3..5].parse().unwrap_or(0);
+                                        sign * (h * 3600 + m * 60)
+                                    } else { 0 };
+                                    let adjusted = ts + tz_secs;
+                                    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                                    rendered.push_str(&format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+                                        dt.year(), dt.month() as u8, dt.day(),
+                                        dt.hour(), dt.minute(), dt.second(), offset));
+                                }
+                            }
+                            Some(other) => { rendered.push('%'); rendered.push('a'); rendered.push(other); }
+                            None => { rendered.push('%'); rendered.push('a'); }
+                        }
+                    }
+                    Some('c') => {
+                        chars.next();
+                        match chars.next() {
+                            Some('n') => rendered.push_str(extract_name(&commit.committer)),
+                            Some('N') => rendered.push_str(extract_name(&commit.committer)),
+                            Some('e') => rendered.push_str(extract_email(&commit.committer)),
+                            Some('E') => rendered.push_str(extract_email(&commit.committer)),
+                            Some('d') => rendered.push_str(&extract_date_default(&commit.committer)),
+                            Some('D') => rendered.push_str(&extract_date_default(&commit.committer)),
+                            Some('t') => rendered.push_str(extract_timestamp(&commit.committer)),
+                            Some('i') => {
+                                let parts: Vec<&str> = commit.committer.rsplitn(3, ' ').collect();
+                                if parts.len() >= 2 {
+                                    let ts: i64 = parts[1].parse().unwrap_or(0);
+                                    let offset = parts[0];
+                                    let tz_bytes = offset.as_bytes();
+                                    let tz_secs: i64 = if tz_bytes.len() >= 5 {
+                                        let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
+                                        let h: i64 = offset[1..3].parse().unwrap_or(0);
+                                        let m: i64 = offset[3..5].parse().unwrap_or(0);
+                                        sign * (h * 3600 + m * 60)
+                                    } else { 0 };
+                                    let adjusted = ts + tz_secs;
+                                    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                                    rendered.push_str(&format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+                                        dt.year(), dt.month() as u8, dt.day(),
+                                        dt.hour(), dt.minute(), dt.second(), offset));
+                                }
+                            }
+                            Some(other) => { rendered.push('%'); rendered.push('c'); rendered.push(other); }
+                            None => { rendered.push('%'); rendered.push('c'); }
+                        }
+                    }
+                    Some('x') => {
+                        // Hex escape: %xNN
+                        chars.next();
+                        let mut hex = String::new();
+                        if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex.push(c1); chars.next(); } }
+                        if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex.push(c2); chars.next(); } }
+                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                            rendered.push(byte as char);
+                        }
+                    }
+                    Some('C') => {
+                        // Color codes: %Cred, %Creset, %C(...) — strip them (no color support)
+                        chars.next();
+                        if chars.peek() == Some(&'(') {
+                            // Skip until closing )
+                            chars.next();
+                            while let Some(c) = chars.next() {
+                                if c == ')' { break; }
+                            }
+                        } else {
+                            // Named colors: Cred, Cgreen, Cblue, Creset, Cbold
+                            let mut name = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c.is_alphanumeric() { name.push(c); chars.next(); }
+                                else { break; }
+                            }
+                            // Just strip it — no color output
+                        }
+                    }
+                    Some('d') => {
+                        // Decorations — output empty for now
+                        chars.next();
+                    }
+                    Some('D') => {
+                        // Decorations without parens — output empty for now
+                        chars.next();
+                    }
+                    Some('e') => {
+                        // Encoding
+                        chars.next();
+                    }
+                    Some(&other) => {
+                        chars.next();
                         rendered.push('%');
                         rendered.push(other);
                     }
