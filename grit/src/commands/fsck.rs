@@ -48,8 +48,8 @@ pub struct Args {
     #[arg(long = "no-progress")]
     pub no_progress: bool,
 
-    /// Show progress output (default).
-    #[arg(long = "progress", hide = true)]
+    /// Show progress output.
+    #[arg(long = "progress")]
     pub progress: bool,
 }
 
