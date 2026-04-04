@@ -25,10 +25,10 @@ test_expect_success 'setup' '
 	)
 '
 
-test_expect_failure 'keywords' '
+test_expect_success 'keywords' '
 	git --git-dir child/.git -c color.remote=always push -f origin HEAD:refs/heads/keywords 2>output &&
 	test_decode_color <output >decoded &&
-	grep "<BOLD;RED>error<RESET>: error" decoded
+	grep "<BOLD><RED>error<RESET>: error" decoded
 '
 
 test_done
