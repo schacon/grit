@@ -334,6 +334,13 @@ clear_netrc () {
 	rm -f "$TRASH_DIRECTORY/.netrc"
 }
 
+# CGIPassAuth is an Apache feature not supported by test-httpd
+enable_cgipassauth () {
+	# Our test-httpd doesn't support CGIPassAuth
+	# Set prereq so tests can check
+	:
+}
+
 expect_askpass () {
 	dest=$HTTPD_DEST${3+/$3}
 

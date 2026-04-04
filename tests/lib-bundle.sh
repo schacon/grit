@@ -11,8 +11,11 @@ convert_bundle_to_pack () {
 }
 
 # Check count of objects in a bundle file.
+<<<<<<< HEAD
 # We can use "--thin" option to check thin pack, which must be fixed by
 # command `git-index-pack --fix-thin --stdin`.
+=======
+>>>>>>> test/batch-GE
 test_bundle_object_count () {
 	thin=
 	if test "$1" = "--thin"

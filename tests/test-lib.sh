@@ -106,6 +106,15 @@ PATH="$TEST_DIRECTORY:$PATH"
 	export PATH="$TRASH_DIRECTORY/.bin:$PATH"
 	# cd into trash so each test starts with a clean cwd
 	cd "$TRASH_DIRECTORY" || exit 1
+
+	# Initialize a git repository in the trash directory (like upstream)
+	if test -z "$TEST_NO_CREATE_REPO"
+	then
+		"$GUST_BIN" init >/dev/null 2>&1 ||
+			echo "warning: could not git init trash directory" >&2
+		"$GUST_BIN" config user.name "Test User" 2>/dev/null
+		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
+	fi
 }
 
 setup_trash
@@ -290,6 +299,8 @@ test_oid () {
 	oid_version) echo "1" ;;
 	rawsz) echo "20" ;;
 	hexsz) echo "40" ;;
+	algo) echo "sha1" ;;
+	zero) echo "$ZERO_OID" ;;
 	*) echo "unknown-oid" ;;
 	esac
 }
@@ -429,6 +440,10 @@ test_have_prereq () {
 	MINGW)     return 1 ;;  # Not on Windows
 	CYGWIN)    return 1 ;;  # Not on Cygwin
 	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
+	PERL_TEST_HELPERS) command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
+	GZIP)      command -v gzip >/dev/null 2>&1 && return 0 ; return 1 ;;
+	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; return 1 ;;
+	CGIPASSAUTH) return 1 ;; # Not supported by test-httpd
 	*)
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"
@@ -445,6 +460,70 @@ test_set_prereq () {
 # TAR for tests that need it
 TAR=${TAR:-tar}
 export TAR
+
+PERL_PATH=${PERL_PATH:-$(command -v perl 2>/dev/null || echo /usr/bin/perl)}
+export PERL_PATH
+
+# test_set_port VAR — assign a random port (or use existing value)
+test_set_port () {
+	local _varname="$1"
+	eval "local _existing=\${${_varname}:-}"
+	if test -z "$_existing"
+	then
+		# Pick a random port in the ephemeral range
+		eval "${_varname}=$((10000 + (RANDOM % 50000)))"
+	fi
+}
+
+# test_skip_or_die VAR MSG — skip test or die based on env var
+test_skip_or_die () {
+	if test_bool_env "$1" false
+	then
+		error "$2"
+	fi
+	skip_all="$2"
+	test_done
+}
+
+# error MSG — print an error and exit
+error () {
+	echo "error: $*" >&2
+	exit 1
+}
+
+# test_env — run command with additional env vars
+# Usage: test_env VAR=VALUE ... command args
+# Works with both binaries and shell functions
+test_env () {
+	local _te_vars=""
+	while test $# -gt 0; do
+		case "$1" in
+		*=*)
+			export "$1"
+			_te_vars="$_te_vars $1"
+			shift
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+	"$@"
+	local _te_ret=$?
+	# Unset the exported variables
+	for _te_v in $_te_vars; do
+		unset "${_te_v%%=*}"
+	done
+	return $_te_ret
+}
+
+# test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
+test_lazy_prereq () {
+	if eval "$2" >/dev/null 2>&1
+	then
+		test_set_prereq "$1"
+	fi
+}
 
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
@@ -598,28 +677,24 @@ test_expect_success () {
 
 	# Run in a subshell so each test starts clean.
 	# Source any previously-exported variables so they persist across tests.
-	local _exports_file="$TRASH_DIRECTORY/.test-exports"
-	(
+	# Run test body in the current shell (like upstream) so that
+	# variables set in one test persist to subsequent tests.
+	# We save and restore 'set -e' state since eval doesn't
+	# propagate exit-on-error the way a subshell does.
+	local _old_cwd="$PWD"
+	cd "$TRASH_DIRECTORY" || return 1
+	# Run with errexit but capture result.
+	# Wrap in a function to localize set -e.
+	_test_eval_result=0
+	_test_eval_inner () {
 		set -e
-		cd "$TRASH_DIRECTORY" || exit 1
-		test -f "$_exports_file" && . "$_exports_file"
-		eval "$commands"
-	)
-	local result=$?
-	# Re-source exports in the parent so later tests inherit them.
-	test -f "$_exports_file" && . "$_exports_file"
-
-	# Sync test_tick state from file back to parent shell
-	if test -f "$_TICK_FILE"
-	then
-		test_tick=$(cat "$_TICK_FILE")
-		GIT_COMMITTER_DATE="$test_tick -0700"
-		GIT_AUTHOR_DATE="$test_tick -0700"
-		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
-	elif test -n "${test_tick+set}"
-	then
-		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
-	fi
+		eval "$1"
+	}
+	_test_eval_inner "$commands" 2>&1 || _test_eval_result=$?
+	local result=$_test_eval_result
+	# Ensure errexit is off at top level
+	set +e
+	cd "$_old_cwd" 2>/dev/null || true
 
 	if test $result -eq 0
 	then
@@ -736,7 +811,7 @@ test_export () {
 		# Quote the value with single quotes (escape existing ones).
 		local _escaped
 		_escaped=$(printf '%s' "$_val" | sed "s/'/'\\\\''/g")
-		printf "export %s='%s'\n" "$_var" "$_escaped" >>"$_ef"
+		printf "%s='%s'\n" "$_var" "$_escaped" >>"$_ef"
 	done
 }
 
@@ -811,6 +886,45 @@ test_line_count () {
 		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
 		return 1
 	fi
+}
+
+# Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.
+test_copy_bytes () {
+	dd ibs=1 count="$1" 2>/dev/null
+}
+
+# Pkt-line helpers
+packetize () {
+	if test $# -gt 0
+	then
+		packet="$*"
+		printf '%04x%s' "$((4 + ${#packet}))" "$packet"
+	else
+		test-tool pkt-line pack
+	fi
+}
+
+packetize_raw () {
+	test-tool pkt-line pack-raw-stdin
+}
+
+depacketize () {
+	test-tool pkt-line unpack
+}
+
+# Build option stub — return reasonable defaults
+build_option () {
+	case "$1" in
+	sizeof-size_t) echo 8 ;;
+	*) echo "" ;;
+	esac
+}
+
+# Extract remote HTTPS URLs from GIT_TRACE2_EVENT output
+test_remote_https_urls() {
+	grep -e '"event":"child_start".*"argv":\["git-remote-https",".*"\]' |
+		sed -e 's/{"event":"child_start".*"argv":\["git-remote-https","//g' \
+		    -e 's/"\]}//g'
 }
 
 test_done () {
