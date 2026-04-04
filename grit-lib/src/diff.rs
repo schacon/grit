@@ -1660,15 +1660,20 @@ pub fn format_stat_line_width(
     let plus = "+".repeat(insertions.min(50));
     let minus = "-".repeat(deletions.min(50));
     let cw = if count_width > 0 { count_width } else { format!("{}", total).len() };
-    format!(
-        " {:<width$} | {:>cw$} {}{}",
-        path,
-        total,
-        plus,
-        minus,
-        width = max_path_len,
-        cw = cw
-    )
+    let bar = format!("{}{}", plus, minus);
+    if bar.is_empty() {
+        format!(
+            " {:<width$} | {:>cw$}",
+            path, total,
+            width = max_path_len, cw = cw
+        )
+    } else {
+        format!(
+            " {:<width$} | {:>cw$} {}",
+            path, total, bar,
+            width = max_path_len, cw = cw
+        )
+    }
 }
 
 /// Count insertions and deletions between two strings.

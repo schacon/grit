@@ -1837,13 +1837,24 @@ fn format_stat_line_git(
     // Pad path to max_path_len display columns (not bytes)
     let path_display_width = UnicodeWidthStr::width(path);
     let padding = max_path_len.saturating_sub(path_display_width);
-    format!(
-        " {}{} | {:>cw$} {plus}{minus}",
-        path,
-        " ".repeat(padding),
-        total,
-        cw = count_width,
-    )
+    let bar = format!("{plus}{minus}");
+    if bar.is_empty() {
+        format!(
+            " {}{} | {:>cw$}",
+            path,
+            " ".repeat(padding),
+            total,
+            cw = count_width,
+        )
+    } else {
+        format!(
+            " {}{} | {:>cw$} {bar}",
+            path,
+            " ".repeat(padding),
+            total,
+            cw = count_width,
+        )
+    }
 }
 
 /// Write a stat summary for each entry, followed by a totals line.

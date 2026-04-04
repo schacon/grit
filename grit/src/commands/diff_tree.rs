@@ -866,8 +866,10 @@ fn print_diff(
 
     match opts.format {
         OutputFormat::Raw => {
-            // When --pretty is set, raw output is suppressed - only show summary/stat if requested.
-            if opts.pretty.is_none() {
+            // When --pretty is set AND --summary or --stat is also set, suppress raw output.
+            // Otherwise show raw output normally.
+            let suppress_raw = opts.pretty.is_some() && opts.summary;
+            if !suppress_raw {
                 for entry in entries {
                     if let Some(abbrev_len) = opts.abbrev {
                         writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
@@ -1184,7 +1186,12 @@ fn write_commit_header(
         for line in commit.message.lines() {
             writeln!(out, "    {line}")?;
         }
-        writeln!(out)?;
+        // Use "---" separator when --patch-with-stat is active, blank line otherwise
+        if opts.patch_with_stat {
+            writeln!(out, "---")?;
+        } else {
+            writeln!(out)?;
+        }
     } else if !opts.no_commit_id {
         writeln!(out, "{oid}")?;
     }
