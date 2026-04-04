@@ -1,21 +1,7 @@
 #!/bin/sh
-<<<<<<< HEAD
-# Ported from git/t/t5552-skipping-fetch-negotiator.sh
-# test skipping fetch negotiator
-
-test_description='test skipping fetch negotiator'
-
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
-
-test_expect_success 'setup: init repo' 'git init -q'
-
-test_expect_failure 'HTTP transport (requires httpd) — not yet ported' '
-=======
 #
 # Upstream: t5552-skipping-fetch-negotiator.sh
-# Requires GIT_TRACE_PACKET support — stubbed as test_expect_failure.
-# grit does not yet support fetch negotiation algorithm tracing.
+# Requires HTTP transport — ported as test_expect_failure stubs.
 #
 
 test_description='test skipping fetch negotiator'
@@ -26,7 +12,7 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-# --- GIT_TRACE_PACKET / fetch negotiation tracing not yet available in grit ---
+# --- HTTP transport not available in grit ---
 
 test_expect_failure 'fetch.negotiationalgorithm config' '
 	false
@@ -49,7 +35,6 @@ test_expect_failure 'handle clock skew' '
 '
 
 test_expect_failure 'do not send "have" with ancestors of commits that server ACKed' '
->>>>>>> test/batch-EN
 	false
 '
 

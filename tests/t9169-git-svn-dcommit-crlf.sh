@@ -1,15 +1,17 @@
 #!/bin/sh
-# Ported from git/t/t9169-git-svn-dcommit-crlf.sh
-# git svn dcommit CRLF
+#
+# Upstream: t9169-git-svn-dcommit-crlf.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn dcommit CRLF'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'setup commit repository' '
 	false
 '
 

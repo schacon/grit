@@ -1,32 +1,20 @@
 #!/bin/sh
-<<<<<<< HEAD
-# Ported from git/t/t5549-fetch-push-http.sh
-# fetch/push functionality using the HTTP protocol
-
-test_description='fetch/push functionality using the HTTP protocol'
-=======
 #
 # Upstream: t5549-fetch-push-http.sh
-# Requires HTTP server (lib-httpd.sh) — stubbed as test_expect_failure.
+# Requires HTTP transport — ported as test_expect_failure stubs.
 #
 
-test_description='fetch/push functionality using the HTTP protocol (HTTP STUB)'
+test_description='fetch/push functionality using the HTTP protocol'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
->>>>>>> test/batch-EN
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-<<<<<<< HEAD
-test_expect_success 'setup: init repo' 'git init -q'
+# --- HTTP transport not available in grit ---
 
-test_expect_failure 'HTTP transport (requires httpd) — not yet ported' '
-=======
-# --- HTTP transport not yet available in grit ---
-
-test_expect_failure 'push without negotiation' '
+test_expect_failure 'push without negotiation (for comparing object counts with the next test)' '
 	false
 '
 
@@ -35,7 +23,6 @@ test_expect_failure 'push with negotiation' '
 '
 
 test_expect_failure 'push with negotiation proceeds anyway even if negotiation fails' '
->>>>>>> test/batch-EN
 	false
 '
 

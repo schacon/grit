@@ -1,15 +1,25 @@
 #!/bin/sh
-# Ported from git/t/t9167-git-svn-cmd-branch-subproject.sh
-# git svn branch for subproject clones
+#
+# Upstream: t9167-git-svn-cmd-branch-subproject.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn branch for subproject clones'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'initialize svnrepo' '
+	false
+'
+
+test_expect_failure 'import into git' '
+	false
+'
+
+test_expect_failure 'git svn branch tests' '
 	false
 '
 

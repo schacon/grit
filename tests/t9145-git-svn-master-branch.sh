@@ -1,15 +1,21 @@
 #!/bin/sh
-# Ported from git/t/t9145-git-svn-master-branch.sh
-# git svn initial main branch is 
+#
+# Upstream: t9145-git-svn-master-branch.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
-test_description='git svn initial main branch is '
+test_description='git svn initial main branch is "trunk" if possible'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Subversion not available in grit ---
 
-test_expect_failure 'git-svn (requires Subversion) — not yet ported' '
+test_expect_failure 'setup test repository' '
+	false
+'
+
+test_expect_failure 'git svn clone --stdlayout sets up trunk as main' '
 	false
 '
 

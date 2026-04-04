@@ -1,21 +1,25 @@
 #!/bin/sh
-# Ported from git/t/t9102-git-svn-deep-rmdir.sh
-# All tests require Subversion and are marked test_expect_failure.
+#
+# Upstream: t9102-git-svn-deep-rmdir.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn rmdir'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_failure 'initialize repo (requires SVN)' '
+# --- Subversion not available in grit ---
+
+test_expect_failure 'initialize repo' '
 	false
 '
 
-test_expect_failure 'mirror via git svn (not ported - requires SVN infrastructure)' '
+test_expect_failure 'mirror via git svn' '
 	false
 '
 
-test_expect_failure 'Try a commit on rmdir (requires SVN)' '
+test_expect_failure 'Try a commit on rmdir' '
 	false
 '
 

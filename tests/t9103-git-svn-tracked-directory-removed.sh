@@ -1,21 +1,25 @@
 #!/bin/sh
-# Ported from git/t/t9103-git-svn-tracked-directory-removed.sh
-# All tests require Subversion and are marked test_expect_failure.
+#
+# Upstream: t9103-git-svn-tracked-directory-removed.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn tracking removed top-level path'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_failure 'make history for tracking (requires SVN)' '
+# --- Subversion not available in grit ---
+
+test_expect_failure 'make history for tracking' '
 	false
 '
 
-test_expect_failure 'clone repo with git (requires SVN)' '
+test_expect_failure 'clone repo with git' '
 	false
 '
 
-test_expect_failure 'make sure r2 still has old file (requires SVN)' '
+test_expect_failure 'make sure r2 still has old file' '
 	false
 '
 

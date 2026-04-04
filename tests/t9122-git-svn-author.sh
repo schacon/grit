@@ -1,17 +1,21 @@
 #!/bin/sh
-# Ported from git/t/t9122-git-svn-author.sh
-# All tests require Subversion and are marked test_expect_failure.
+#
+# Upstream: t9122-git-svn-author.sh
+# Requires Subversion — ported as test_expect_failure stubs.
+#
 
 test_description='git svn authorship'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_failure 'setup svn repository (not ported - requires SVN infrastructure)' '
+# --- Subversion not available in grit ---
+
+test_expect_failure 'setup svn repository' '
 	false
 '
 
-test_expect_failure 'interact with it via git svn (not ported - requires SVN infrastructure)' '
+test_expect_failure 'interact with it via git svn' '
 	false
 '
 

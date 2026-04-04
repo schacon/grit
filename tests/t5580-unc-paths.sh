@@ -1,35 +1,30 @@
 #!/bin/sh
-<<<<<<< HEAD
-# Ported from git/t/t5580-unc-paths.sh
-# various Windows-only path tests
+#
+# Upstream: t5580-unc-paths.sh
+# Requires UNC paths (Windows) — ported as test_expect_failure stubs.
+#
 
 test_description='various Windows-only path tests'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- UNC paths (Windows) not available in grit ---
 
-test_expect_failure 'HTTP transport (requires httpd) — not yet ported' '
+test_expect_failure 'clone without file://' '
 	false
 '
 
-=======
-#
-# Upstream: t5580-unc-paths.sh
-# Windows-only UNC path tests — skip on non-Windows.
-#
+test_expect_failure 'clone with backslashed path' '
+	false
+'
 
-test_description='various Windows-only path tests'
+test_expect_failure 'remote nick cannot contain backslashes' '
+	false
+'
 
-GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
-export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
+test_expect_failure 'unc alternates' '
+	false
+'
 
-cd "$(dirname "$0")" || exit 1
-. ./test-lib.sh
-
-# This test is Windows-only (requires CYGWIN or MINGW).
-# On Linux, skip all tests.
-skip_all='skipping Windows-only UNC path tests'
->>>>>>> test/batch-EN
 test_done

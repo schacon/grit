@@ -1,15 +1,33 @@
 #!/bin/sh
-# Ported from git/t/t9814-git-p4-rename.sh
-# git p4 rename
+#
+# Upstream: t9814-git-p4-rename.sh
+# Requires Perforce — ported as test_expect_failure stubs.
+#
 
 test_description='git p4 rename'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- Perforce not available in grit ---
 
-test_expect_failure 'git-p4 (requires Perforce) — not yet ported' '
+test_expect_failure 'start p4d' '
+	false
+'
+
+test_expect_failure '"p4 help unknown" errors out' '
+	false
+'
+
+test_expect_failure 'create files' '
+	false
+'
+
+test_expect_failure 'detect renames' '
+	false
+'
+
+test_expect_failure 'detect copies' '
 	false
 '
 
