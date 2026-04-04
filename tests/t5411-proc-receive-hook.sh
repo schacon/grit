@@ -18,7 +18,7 @@ test_expect_success 'setup' '
 '
 
 # grit does not support proc-receive hook
-test_expect_failure 'standard git push without proc-receive' '
+test_expect_success 'standard git push without proc-receive' '
 	git init --bare upstream.git &&
 	git push ./upstream.git main &&
 	git --git-dir=upstream.git rev-parse main >expect &&
