@@ -2,16 +2,17 @@
 
 ## Test Results
 
-**27,776 / 28,007 individual test cases passing (99.2%)**
+**28,435 / 28,726 individual test cases passing (99.0%)**
 
-- 1,375 test files (upstream ports + grit-specific)
-- 27,776 test_expect_success all passing (0 unexpected failures)
-- 231 test_expect_failure remaining (known gaps needing grit code fixes)
+- 1,604 test files (upstream ports + grit-specific)
+- 28,435 test_expect_success all passing (0 unexpected failures)
+- 291 test_expect_failure remaining (known gaps needing grit code fixes)
 - ~267 skipped (missing prereqs)
 
-*Last update: 2026-04-03 14:06 UTC*
+*Last update: 2026-04-04 03:30 UTC*
 
 ### Recent Changes
+- push/fetch: ported 9 test files (atomic push, push-cas, push-options, push-porcelain, push-multiple, pre-push-hook, fetch-output, negative-refspec, push-branches) — 105 tests added (18 pass, 87 expected failures)
 - am: hook execution + --continue rejects unchanged index — 10 tests flipped
 - diff: `--relative[=<path>]` path prefix stripping — 7 tests flipped
 - status: rename detection via deleted+added entries — 5 tests flipped
