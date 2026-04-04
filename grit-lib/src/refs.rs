@@ -238,6 +238,9 @@ fn remove_packed_ref(git_dir: &Path, refname: &str) -> Result<()> {
     let mut out = String::new();
     let mut skip_peeled = false;
     let mut changed = false;
+    // Write a fresh header (don't preserve old comment lines — real git
+    // regenerates the header on every rewrite).
+    let mut header_written = false;
 
     for line in content.lines() {
         if skip_peeled {
@@ -249,14 +252,19 @@ fn remove_packed_ref(git_dir: &Path, refname: &str) -> Result<()> {
         }
 
         if line.starts_with('#') {
-            out.push_str(line);
-            out.push('\n');
+            // Skip old header lines — we'll write a fresh one
             continue;
         }
         if line.starts_with('^') {
             out.push_str(line);
             out.push('\n');
             continue;
+        }
+
+        // Write fresh header before the first data line
+        if !header_written {
+            out.insert_str(0, "# pack-refs with: peeled fully-peeled sorted \n");
+            header_written = true;
         }
 
         // Check if this line matches the ref to remove
