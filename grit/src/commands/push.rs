@@ -88,6 +88,14 @@ pub struct Args {
     /// Check, on-demand, or no recursion into submodules.
     #[arg(long = "recurse-submodules")]
     pub recurse_submodules: Option<String>,
+
+    /// Sign the push (accepted but not implemented; value: true, false, if-asked).
+    #[arg(long = "signed", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub signed: Option<String>,
+
+    /// Do not sign the push.
+    #[arg(long = "no-signed")]
+    pub no_signed: bool,
 }
 
 /// A single ref update to perform on the remote.
