@@ -558,7 +558,8 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in a subshell so each test starts clean
+	# Run in a subshell so each test starts clean.
+	# Variables set in tests do NOT persist to later tests (by design).
 	(
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1

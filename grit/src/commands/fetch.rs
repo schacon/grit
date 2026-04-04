@@ -314,7 +314,12 @@ fn fetch_remote(
             refs::write_ref(git_dir, &local_ref, remote_oid)
                 .with_context(|| format!("updating ref {local_ref}"))?;
 
-            if !args.quiet {
+            if args.porcelain {
+                let zero = "0".repeat(40);
+                let old_hex = old_oid.as_ref().map(|o| o.to_hex()).unwrap_or_else(|| zero.clone());
+                let flag = if old_oid.is_none() { "*" } else { " " };
+                println!("{flag} {old_hex} {} {local_ref}", remote_oid.to_hex());
+            } else if !args.quiet {
                 print_update(&old_oid, remote_oid, branch, remote_name);
             }
         }

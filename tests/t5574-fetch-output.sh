@@ -56,7 +56,7 @@ test_expect_failure 'fetch with invalid output format configuration' '
 '
 
 # grit does not support --porcelain for fetch
-test_expect_failure 'fetch porcelain output' '
+test_expect_success 'fetch porcelain output' '
 	git clone . porcelain-clone &&
 	test_commit for-porcelain &&
 	(
