@@ -46,7 +46,7 @@ test_expect_success 'fetch shows new branches' '
 '
 
 # grit does not support fetch.output config
-test_expect_failure 'fetch with invalid output format configuration' '
+test_expect_success 'fetch with invalid output format configuration' '
 	git clone . clone-for-config &&
 	(
 		cd clone-for-config &&
@@ -56,7 +56,7 @@ test_expect_failure 'fetch with invalid output format configuration' '
 '
 
 # grit does not support --porcelain for fetch
-test_expect_failure 'fetch porcelain output' '
+test_expect_success 'fetch porcelain output' '
 	git clone . porcelain-clone &&
 	test_commit for-porcelain &&
 	(
@@ -67,7 +67,7 @@ test_expect_failure 'fetch porcelain output' '
 '
 
 # grit does not support --no-show-forced-updates
-test_expect_failure '--no-show-forced-updates' '
+test_expect_success '--no-show-forced-updates' '
 	mkdir forced-updates &&
 	(
 		cd forced-updates &&

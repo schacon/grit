@@ -78,11 +78,31 @@ pub struct Args {
     /// Number of parallel children for fetching (accepted but ignored).
     #[arg(short = 'j', long = "jobs", value_name = "N")]
     pub jobs: Option<usize>,
+
+    /// Machine-readable porcelain output.
+    #[arg(long)]
+    pub porcelain: bool,
+
+    /// Do not show forced updates.
+    #[arg(long = "no-show-forced-updates")]
+    pub no_show_forced_updates: bool,
+
+    /// Show forced updates (default, overrides --no-show-forced-updates).
+    #[arg(long = "show-forced-updates")]
+    pub show_forced_updates: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let git_dir = resolve_git_dir()?;
     let config = ConfigSet::load(Some(&git_dir), true)?;
+
+    // Validate fetch.output config if set
+    if let Some(val) = config.get("fetch.output") {
+        match val.as_str() {
+            "full" | "compact" => {}
+            _ => bail!("invalid value for 'fetch.output': '{}'", val),
+        }
+    }
 
     if args.all {
         let remotes = collect_remote_names(&config);
@@ -302,7 +322,12 @@ fn fetch_remote(
             refs::write_ref(git_dir, &local_ref, remote_oid)
                 .with_context(|| format!("updating ref {local_ref}"))?;
 
-            if !args.quiet {
+            if args.porcelain {
+                let zero = "0".repeat(40);
+                let old_hex = old_oid.as_ref().map(|o| o.to_string()).unwrap_or_else(|| zero.clone());
+                let flag = if old_oid.is_none() { "*" } else { " " };
+                println!("{flag} {old_hex} {remote_oid} {local_ref}");
+            } else if !args.quiet {
                 print_update(&old_oid, remote_oid, branch, remote_name);
             }
         }
