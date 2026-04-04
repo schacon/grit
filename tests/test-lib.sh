@@ -232,6 +232,17 @@ test_config () {
 	test_when_finished "git config --unset '$key'"
 }
 
+test_config_global () {
+	local key="$1" val="$2"
+	git config --global "$key" "$val" &&
+	test_when_finished "git config --global --unset '$key'"
+}
+
+test_unconfig () {
+	git config --unset-all "$@" 2>/dev/null
+	return 0
+}
+
 test_file_not_empty () {
 	if ! test -s "$1"
 	then
@@ -592,14 +603,17 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents=
+	local notick= signoff= indir= tag=yes message= file= contents= author=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
+		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
+		--append) shift ;; # accepted but ignored for compat
+		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
 	done
@@ -613,7 +627,7 @@ test_commit () {
 		if test -z "$notick"; then
 			test_tick
 		fi &&
-		git commit -q ${signoff:+$signoff} -m "$message" &&
+		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
 			git tag "$message"
 		fi
