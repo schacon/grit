@@ -490,29 +490,26 @@ fn print_stat(changes: &[Change], repo: &Repository, work_tree: &Path) -> Result
         println!("{}", format_stat_line(&change.path, ins, del, max_len));
     }
     let files = changes.len();
-    println!(
-        " {} file{} changed{}{}",
+    let mut summary = format!(
+        " {} file{} changed",
         files,
         if files == 1 { "" } else { "s" },
-        if total_ins > 0 {
-            format!(
-                ", {} insertion{}(+)",
-                total_ins,
-                if total_ins == 1 { "" } else { "s" }
-            )
-        } else {
-            String::new()
-        },
-        if total_del > 0 {
-            format!(
-                ", {} deletion{}(-)",
-                total_del,
-                if total_del == 1 { "" } else { "s" }
-            )
-        } else {
-            String::new()
-        },
     );
+    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
+    }
+    if total_del > 0 || (total_ins == 0 && total_del == 0) {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
+    }
+    println!("{summary}");
     Ok(())
 }
 

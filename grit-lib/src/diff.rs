@@ -1221,6 +1221,11 @@ pub fn format_raw(entry: &DiffEntry) -> String {
 
 /// Format a diff entry with abbreviated OIDs.
 pub fn format_raw_abbrev(entry: &DiffEntry, abbrev_len: usize) -> String {
+    let ellipsis = if std::env::var("GIT_PRINT_SHA1_ELLIPSIS").ok().as_deref() == Some("yes") {
+        "..."
+    } else {
+        ""
+    };
     let old_hex = format!("{}", entry.old_oid);
     let new_hex = format!("{}", entry.new_oid);
     let old_abbrev = &old_hex[..abbrev_len.min(old_hex.len())];
@@ -1229,11 +1234,13 @@ pub fn format_raw_abbrev(entry: &DiffEntry, abbrev_len: usize) -> String {
     let path = entry.path();
 
     format!(
-        ":{} {} {}... {}... {}\t{}",
+        ":{} {} {}{} {}{} {}\t{}",
         entry.old_mode,
         entry.new_mode,
         old_abbrev,
+        ellipsis,
         new_abbrev,
+        ellipsis,
         entry.status.letter(),
         path
     )

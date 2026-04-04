@@ -1718,23 +1718,29 @@ fn write_shortstat(
         files_changed,
         if files_changed == 1 { "" } else { "s" }
     );
-    if total_ins > 0 {
+    append_stat_counts(&mut summary, total_ins, total_del);
+    writeln!(out, "{summary}")?;
+
+    Ok(())
+}
+
+/// Append insertions/deletions counts to a summary string.
+/// When both are zero, still show `0 insertions(+), 0 deletions(-)`.
+fn append_stat_counts(summary: &mut String, total_ins: usize, total_del: usize) {
+    if total_ins > 0 || (total_ins == 0 && total_del == 0) {
         summary.push_str(&format!(
             ", {} insertion{}(+)",
             total_ins,
             if total_ins == 1 { "" } else { "s" }
         ));
     }
-    if total_del > 0 {
+    if total_del > 0 || (total_ins == 0 && total_del == 0) {
         summary.push_str(&format!(
             ", {} deletion{}(-)",
             total_del,
             if total_del == 1 { "" } else { "s" }
         ));
     }
-    writeln!(out, "{summary}")?;
-
-    Ok(())
 }
 
 /// Get the terminal width, defaulting to 80 if unavailable.
@@ -1939,20 +1945,7 @@ fn write_stat(
         files_changed,
         if files_changed == 1 { "" } else { "s" }
     );
-    if total_ins > 0 {
-        summary.push_str(&format!(
-            ", {} insertion{}(+)",
-            total_ins,
-            if total_ins == 1 { "" } else { "s" }
-        ));
-    }
-    if total_del > 0 {
-        summary.push_str(&format!(
-            ", {} deletion{}(-)",
-            total_del,
-            if total_del == 1 { "" } else { "s" }
-        ));
-    }
+    append_stat_counts(&mut summary, total_ins, total_del);
     writeln!(out, "{summary}")?;
 
     Ok(())
