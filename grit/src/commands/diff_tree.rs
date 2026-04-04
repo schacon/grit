@@ -273,6 +273,9 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     let entries =
                         diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
+                    if !filtered.is_empty() && !opts.no_commit_id {
+                        writeln!(out, "{oid}")?;
+                    }
                     print_diff(out, &repo.odb, &filtered, opts, None)?;
                 }
                 // Without --root, root commits produce no output.
@@ -286,6 +289,9 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     opts.show_trees,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
+                if !filtered.is_empty() && !opts.no_commit_id {
+                    writeln!(out, "{oid}")?;
+                }
                 print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
             }
         }
