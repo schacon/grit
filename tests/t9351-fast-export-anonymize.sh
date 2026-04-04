@@ -125,7 +125,7 @@ test_expect_success 'identical gitlinks got identical oid' '
 	test_line_count = 1 commits
 '
 
-test_expect_failure 'all tags point to branch tip' '
+test_expect_success 'all tags point to branch tip' '
 	git rev-parse $other_branch >expect &&
 	git for-each-ref --format="%(*objectname)" | grep . | uniq >actual &&
 	test_cmp expect actual
