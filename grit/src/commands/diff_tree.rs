@@ -298,7 +298,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
     let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
-    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+    let filtered = filter_entries(entries, opts);
     print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))
 }
 
@@ -317,7 +317,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 if opts.root {
                     let entries =
                         diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-                    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+                    let filtered = filter_entries(entries, opts);
                     if !filtered.is_empty() && !opts.no_commit_id {
                         writeln!(out, "{oid}")?;
                     }
@@ -332,7 +332,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     Some(&commit.tree),
                     opts,
                 )?;
-                let filtered = filter_pathspecs(entries, &opts.pathspecs);
+                let filtered = filter_entries(entries, opts);
                 if !filtered.is_empty() && !opts.no_commit_id {
                     writeln!(out, "{oid}")?;
                 }
@@ -446,7 +446,7 @@ fn process_stdin_commit(
         if opts.root {
             let entries =
                 diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-            let filtered = filter_pathspecs(entries, &opts.pathspecs);
+            let filtered = filter_entries(entries, opts);
             print_diff(out, &repo.odb, &filtered, opts, None)?;
         }
     } else {
@@ -457,7 +457,7 @@ fn process_stdin_commit(
             Some(&commit.tree),
             opts,
         )?;
-        let filtered = filter_pathspecs(entries, &opts.pathspecs);
+        let filtered = filter_entries(entries, opts);
         print_diff(out, &repo.odb, &filtered, opts, None)?;
     }
 
@@ -484,7 +484,7 @@ fn process_stdin_two_trees(
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
     let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
-    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+    let filtered = filter_entries(entries, opts);
     print_diff(out, &repo.odb, &filtered, opts, None)
 }
 
@@ -497,12 +497,10 @@ fn diff_with_opts(
     new_tree: Option<&ObjectId>,
     opts: &Options,
 ) -> Result<Vec<DiffEntry>> {
-    if let Some(depth) = opts.max_depth {
-        if depth < 0 {
-            // -1 means unlimited recursion
-            return diff_trees(odb, old_tree, new_tree, "").map_err(Into::into);
-        }
-        return diff_trees_max_depth(odb, old_tree, new_tree, "", depth as usize);
+    if opts.max_depth.is_some() {
+        // Always do full recursion; max_depth is applied as a post-filter
+        // after pathspec filtering (depth is relative to pathspec root).
+        return diff_trees(odb, old_tree, new_tree, "").map_err(Into::into);
     }
     if opts.recursive {
         if opts.show_trees {
@@ -515,154 +513,66 @@ fn diff_with_opts(
     }
 }
 
-/// Depth-limited recursive tree diff.
-fn diff_trees_max_depth(
-    odb: &Odb,
-    old_tree_oid: Option<&ObjectId>,
-    new_tree_oid: Option<&ObjectId>,
-    prefix: &str,
-    remaining_depth: usize,
-) -> Result<Vec<DiffEntry>> {
-    let zero = grit_lib::diff::zero_oid();
-    let old_entries = match old_tree_oid {
-        Some(oid) => {
-            let obj = odb.read(oid)?;
-            parse_tree(&obj.data)?
-        }
-        None => Vec::new(),
+/// Apply max-depth filtering: collapse entries deeper than `max_depth` levels
+/// relative to the deepest matching pathspec prefix.
+fn filter_max_depth(
+    entries: Vec<DiffEntry>,
+    max_depth: i32,
+    pathspecs: &[String],
+) -> Vec<DiffEntry> {
+    if max_depth < 0 {
+        return entries; // unlimited
+    }
+    let max_depth = max_depth as usize;
+
+    // For each entry, find the matching pathspec and compute relative depth.
+    // Depth 0 means the entry is directly in the pathspec root.
+    let prefix_depth = if pathspecs.is_empty() {
+        0usize
+    } else {
+        // Use the longest (most specific) matching prefix for each entry.
+        // For simplicity, use the minimum prefix depth across all pathspecs.
+        pathspecs
+            .iter()
+            .map(|p| {
+                let p = p.strip_suffix('/').unwrap_or(p);
+                if p.is_empty() {
+                    0
+                } else {
+                    p.split('/').count()
+                }
+            })
+            .min()
+            .unwrap_or(0)
     };
-    let new_entries = match new_tree_oid {
-        Some(oid) => {
-            let obj = odb.read(oid)?;
-            parse_tree(&obj.data)?
-        }
-        None => Vec::new(),
+
+    // Maximum number of path components allowed in output.
+    let allowed_components = if prefix_depth > 0 {
+        prefix_depth + max_depth
+    } else {
+        max_depth + 1
     };
 
-    let mut old_map: std::collections::BTreeMap<&[u8], &grit_lib::objects::TreeEntry> =
-        std::collections::BTreeMap::new();
-    for e in &old_entries {
-        old_map.insert(&e.name, e);
-    }
-    let mut new_map: std::collections::BTreeMap<&[u8], &grit_lib::objects::TreeEntry> =
-        std::collections::BTreeMap::new();
-    for e in &new_entries {
-        new_map.insert(&e.name, e);
-    }
-
-    let mut all_names: std::collections::BTreeSet<&[u8]> = std::collections::BTreeSet::new();
-    for e in &old_entries {
-        all_names.insert(&e.name);
-    }
-    for e in &new_entries {
-        all_names.insert(&e.name);
-    }
-
+    let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
-    for name in all_names {
-        let name_str = String::from_utf8_lossy(name);
-        let path = if prefix.is_empty() {
-            name_str.to_string()
+    for entry in entries {
+        let path = entry.path();
+        let components: Vec<&str> = path.split('/').collect();
+
+        if components.len() <= allowed_components {
+            result.push(entry);
         } else {
-            format!("{prefix}/{name_str}")
-        };
-
-        let old = old_map.get(name);
-        let new = new_map.get(name);
-
-        match (old, new) {
-            (Some(o), Some(n)) => {
-                if o.oid == n.oid && o.mode == n.mode {
-                    continue;
-                }
-                let o_is_tree = o.mode & 0o170000 == 0o040000;
-                let n_is_tree = n.mode & 0o170000 == 0o040000;
-                if o_is_tree && n_is_tree && remaining_depth > 0 {
-                    let sub = diff_trees_max_depth(
-                        odb,
-                        Some(&o.oid),
-                        Some(&n.oid),
-                        &path,
-                        remaining_depth - 1,
-                    )?;
-                    result.extend(sub);
-                } else if o_is_tree && n_is_tree {
-                    // At depth limit, show tree as single entry
-                    result.push(DiffEntry {
-                        old_mode: format!("{:06o}", o.mode),
-                        new_mode: format!("{:06o}", n.mode),
-                        old_oid: o.oid,
-                        new_oid: n.oid,
-                        status: DiffStatus::Modified,
-                        old_path: Some(path.clone()),
-                        new_path: Some(path),
-                        score: None,
-                    });
-                } else {
-                    result.push(DiffEntry {
-                        old_mode: format!("{:06o}", o.mode),
-                        new_mode: format!("{:06o}", n.mode),
-                        old_oid: o.oid,
-                        new_oid: n.oid,
-                        status: DiffStatus::Modified,
-                        old_path: Some(path.clone()),
-                        new_path: Some(path),
-                        score: None,
-                    });
-                }
+            // Truncate to allowed_components
+            let truncated: String = components[..allowed_components].join("/");
+            if seen.insert(truncated.clone()) {
+                let mut collapsed = entry;
+                collapsed.old_path = Some(truncated.clone());
+                collapsed.new_path = Some(truncated);
+                result.push(collapsed);
             }
-            (Some(o), None) => {
-                let o_is_tree = o.mode & 0o170000 == 0o040000;
-                if o_is_tree && remaining_depth > 0 {
-                    let sub = diff_trees_max_depth(
-                        odb,
-                        Some(&o.oid),
-                        None,
-                        &path,
-                        remaining_depth - 1,
-                    )?;
-                    result.extend(sub);
-                } else {
-                    result.push(DiffEntry {
-                        old_mode: format!("{:06o}", o.mode),
-                        new_mode: "000000".to_string(),
-                        old_oid: o.oid,
-                        new_oid: zero,
-                        status: DiffStatus::Deleted,
-                        old_path: Some(path.clone()),
-                        new_path: Some(path),
-                        score: None,
-                    });
-                }
-            }
-            (None, Some(n)) => {
-                let n_is_tree = n.mode & 0o170000 == 0o040000;
-                if n_is_tree && remaining_depth > 0 {
-                    let sub = diff_trees_max_depth(
-                        odb,
-                        None,
-                        Some(&n.oid),
-                        &path,
-                        remaining_depth - 1,
-                    )?;
-                    result.extend(sub);
-                } else {
-                    result.push(DiffEntry {
-                        old_mode: "000000".to_string(),
-                        new_mode: format!("{:06o}", n.mode),
-                        old_oid: zero,
-                        new_oid: n.oid,
-                        status: DiffStatus::Added,
-                        old_path: Some(path.clone()),
-                        new_path: Some(path),
-                        score: None,
-                    });
-                }
-            }
-            (None, None) => unreachable!(),
         }
     }
-    Ok(result)
+    result
 }
 
 /// Non-recursive tree diff: only top-level entries.
@@ -1160,7 +1070,16 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
-/// Filter diff entries to only those matching the given path-specs.
+/// Apply all post-diff filters: pathspecs and max-depth.
+fn filter_entries(entries: Vec<DiffEntry>, opts: &Options) -> Vec<DiffEntry> {
+    let filtered = filter_pathspecs(entries, &opts.pathspecs);
+    if let Some(depth) = opts.max_depth {
+        filter_max_depth(filtered, depth, &opts.pathspecs)
+    } else {
+        filtered
+    }
+}
+
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
     if pathspecs.is_empty() {
         return entries;
