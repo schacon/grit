@@ -5081,142 +5081,142 @@ t3403-rebase-skip::correct-advice-upon-multi-cherry-pick-picking-an-empty-commit
 t3403-rebase-skip::fixup-that-empties-commit-fails	t3403-rebase-skip	fixup that empties commit fails	rebase	partial
 t3403-rebase-skip::squash-that-empties-commit-fails	t3403-rebase-skip	squash that empties commit fails	rebase	partial
 t3403-rebase-skip::editor-and-friends-are-unchanged	t3403-rebase-skip	$EDITOR and friends are unchanged	rebase	partial
-t3404-rebase-interactive::setup	t3404-rebase-interactive	setup	rebase	partial
-t3404-rebase-interactive::rebase-keep-empty	t3404-rebase-interactive	rebase --keep-empty	rebase	partial
-t3404-rebase-interactive::rebase-i-with-empty-todo-list	t3404-rebase-interactive	rebase -i with empty todo list	rebase	partial
-t3404-rebase-interactive::rebase-i-with-the-exec-command	t3404-rebase-interactive	rebase -i with the exec command	rebase	partial
-t3404-rebase-interactive::rebase-i-with-the-exec-command-runs-from-tree-root	t3404-rebase-interactive	rebase -i with the exec command runs from tree root	rebase	partial
-t3404-rebase-interactive::rebase-i-with-exec-allows-git-commands-in-subdirs	t3404-rebase-interactive	rebase -i with exec allows git commands in subdirs	rebase	partial
-t3404-rebase-interactive::rebase-i-sets-work-tree-properly	t3404-rebase-interactive	rebase -i sets work tree properly	rebase	partial
-t3404-rebase-interactive::rebase-i-with-the-exec-command-checks-tree-cleanness	t3404-rebase-interactive	rebase -i with the exec command checks tree cleanness	rebase	partial
-t3404-rebase-interactive::cherry-pick-works-with-rebase-exec	t3404-rebase-interactive	cherry-pick works with rebase --exec	rebase	partial
-t3404-rebase-interactive::rebase-x-with-empty-command-fails	t3404-rebase-interactive	rebase -x with empty command fails	rebase	partial
-t3404-rebase-interactive::rebase-x-with-newline-in-command-fails	t3404-rebase-interactive	rebase -x with newline in command fails	rebase	partial
-t3404-rebase-interactive::rebase-i-with-exec-of-inexistent-command	t3404-rebase-interactive	rebase -i with exec of inexistent command	rebase	partial
-t3404-rebase-interactive::implicit-interactive-rebase-does-not-invoke-sequence-editor	t3404-rebase-interactive	implicit interactive rebase does not invoke sequence editor	rebase	partial
-t3404-rebase-interactive::no-changes-are-a-nop	t3404-rebase-interactive	no changes are a nop	rebase	partial
-t3404-rebase-interactive::test-the-branch-option	t3404-rebase-interactive	test the [branch] option	rebase	partial
-t3404-rebase-interactive::test-onto-branch	t3404-rebase-interactive	test --onto <branch>	rebase	partial
-t3404-rebase-interactive::rebase-on-top-of-a-non-conflicting-commit	t3404-rebase-interactive	rebase on top of a non-conflicting commit	rebase	partial
-t3404-rebase-interactive::reflog-for-the-branch-shows-state-before-rebase	t3404-rebase-interactive	reflog for the branch shows state before rebase	rebase	partial
-t3404-rebase-interactive::reflog-for-the-branch-shows-correct-finish-message	t3404-rebase-interactive	reflog for the branch shows correct finish message	rebase	partial
-t3404-rebase-interactive::exchange-two-commits	t3404-rebase-interactive	exchange two commits	rebase	partial
-t3404-rebase-interactive::stop-on-conflicting-pick	t3404-rebase-interactive	stop on conflicting pick	rebase	partial
-t3404-rebase-interactive::show-conflicted-patch	t3404-rebase-interactive	show conflicted patch	rebase	partial
-t3404-rebase-interactive::abort	t3404-rebase-interactive	abort	rebase	partial
-t3404-rebase-interactive::abort-with-error-when-new-base-cannot-be-checked-out	t3404-rebase-interactive	abort with error when new base cannot be checked out	rebase	partial
-t3404-rebase-interactive::retain-authorship	t3404-rebase-interactive	retain authorship	rebase	partial
-t3404-rebase-interactive::retain-authorship-w-conflicts	t3404-rebase-interactive	retain authorship w/ conflicts	rebase	partial
-t3404-rebase-interactive::squash	t3404-rebase-interactive	squash	rebase	partial
-t3404-rebase-interactive::retain-authorship-when-squashing	t3404-rebase-interactive	retain authorship when squashing	rebase	partial
-t3404-rebase-interactive::continue-tries-to-commit	t3404-rebase-interactive	--continue tries to commit	rebase	partial
-t3404-rebase-interactive::verbose-flag-is-heeded-even-after-continue	t3404-rebase-interactive	verbose flag is heeded, even after --continue	rebase	partial
-t3404-rebase-interactive::multi-squash-only-fires-up-editor-once	t3404-rebase-interactive	multi-squash only fires up editor once	rebase	partial
-t3404-rebase-interactive::multi-fixup-does-not-fire-up-editor	t3404-rebase-interactive	multi-fixup does not fire up editor	rebase	partial
-t3404-rebase-interactive::commit-message-used-after-conflict	t3404-rebase-interactive	commit message used after conflict	rebase	partial
-t3404-rebase-interactive::commit-message-retained-after-conflict	t3404-rebase-interactive	commit message retained after conflict	rebase	partial
-t3404-rebase-interactive::squash-and-fixup-generate-correct-log-messages	t3404-rebase-interactive	squash and fixup generate correct log messages	rebase	partial
-t3404-rebase-interactive::squash-ignores-comments	t3404-rebase-interactive	squash ignores comments	rebase	partial
-t3404-rebase-interactive::squash-ignores-blank-lines	t3404-rebase-interactive	squash ignores blank lines	rebase	partial
-t3404-rebase-interactive::squash-works-as-expected	t3404-rebase-interactive	squash works as expected	rebase	partial
-t3404-rebase-interactive::interrupted-squash-works-as-expected	t3404-rebase-interactive	interrupted squash works as expected	rebase	partial
-t3404-rebase-interactive::interrupted-squash-works-as-expected-case-2	t3404-rebase-interactive	interrupted squash works as expected (case 2)	rebase	partial
-t3404-rebase-interactive::continue-tries-to-commit-even-for-edit	t3404-rebase-interactive	--continue tries to commit, even for "edit"	rebase	partial
-t3404-rebase-interactive::aborted-continue-does-not-squash-commits-after-edit	t3404-rebase-interactive	aborted --continue does not squash commits after "edit"	rebase	partial
-t3404-rebase-interactive::auto-amend-only-edited-commits-after-edit	t3404-rebase-interactive	auto-amend only edited commits after "edit"	rebase	partial
-t3404-rebase-interactive::clean-error-after-failed-exec	t3404-rebase-interactive	clean error after failed "exec"	rebase	partial
-t3404-rebase-interactive::rebase-a-detached-head	t3404-rebase-interactive	rebase a detached HEAD	rebase	partial
-t3404-rebase-interactive::rebase-a-commit-violating-pre-commit	t3404-rebase-interactive	rebase a commit violating pre-commit	rebase	partial
-t3404-rebase-interactive::rebase-with-a-file-named-head-in-worktree	t3404-rebase-interactive	rebase with a file named HEAD in worktree	rebase	partial
-t3404-rebase-interactive::do-noop-when-there-is-nothing-to-cherry-pick	t3404-rebase-interactive	do "noop" when there is nothing to cherry-pick	rebase	partial
-t3404-rebase-interactive::submodule-rebase-setup	t3404-rebase-interactive	submodule rebase setup	rebase	partial
-t3404-rebase-interactive::submodule-rebase-i	t3404-rebase-interactive	submodule rebase -i	rebase	partial
-t3404-rebase-interactive::submodule-conflict-setup	t3404-rebase-interactive	submodule conflict setup	rebase	partial
-t3404-rebase-interactive::rebase-i-continue-with-only-submodule-staged	t3404-rebase-interactive	rebase -i continue with only submodule staged	rebase	partial
-t3404-rebase-interactive::rebase-i-continue-with-unstaged-submodule	t3404-rebase-interactive	rebase -i continue with unstaged submodule	rebase	partial
-t3404-rebase-interactive::avoid-unnecessary-reset	t3404-rebase-interactive	avoid unnecessary reset	rebase	partial
-t3404-rebase-interactive::reword	t3404-rebase-interactive	reword	rebase	partial
-t3404-rebase-interactive::reword-fast-forwarded-empty-commit	t3404-rebase-interactive	reword fast-forwarded empty commit	rebase	partial
-t3404-rebase-interactive::no-uncommitted-changes-when-rewording-and-the-todo-list-is-reloaded	t3404-rebase-interactive	no uncommitted changes when rewording and the todo list is reloaded	rebase	partial
-t3404-rebase-interactive::rebase-i-can-copy-notes	t3404-rebase-interactive	rebase -i can copy notes	rebase	partial
-t3404-rebase-interactive::rebase-i-can-copy-notes-over-a-fixup	t3404-rebase-interactive	rebase -i can copy notes over a fixup	rebase	partial
-t3404-rebase-interactive::rebase-while-detaching-head	t3404-rebase-interactive	rebase while detaching HEAD	rebase	partial
-t3404-rebase-interactive::always-cherry-pick-with-no-ff	t3404-rebase-interactive	always cherry-pick with --no-ff	rebase	partial
-t3404-rebase-interactive::set-up-commits-with-funny-messages	t3404-rebase-interactive	set up commits with funny messages	rebase	partial
-t3404-rebase-interactive::rebase-i-history-with-funny-messages	t3404-rebase-interactive	rebase-i history with funny messages	rebase	partial
-t3404-rebase-interactive::prepare-for-rebase-i-exec	t3404-rebase-interactive	prepare for rebase -i --exec	rebase	partial
-t3404-rebase-interactive::running-git-rebase-i-exec-git-show-head	t3404-rebase-interactive	running "git rebase -i --exec git show HEAD"	rebase	partial
-t3404-rebase-interactive::running-git-rebase-exec-git-show-head-i	t3404-rebase-interactive	running "git rebase --exec git show HEAD -i"	rebase	partial
-t3404-rebase-interactive::running-git-rebase-ix-git-show-head	t3404-rebase-interactive	running "git rebase -ix git show HEAD"	rebase	partial
-t3404-rebase-interactive::rebase-ix-with-several-cmd	t3404-rebase-interactive	rebase -ix with several <CMD>	rebase	partial
-t3404-rebase-interactive::rebase-ix-with-several-instances-of-exec	t3404-rebase-interactive	rebase -ix with several instances of --exec	rebase	partial
-t3404-rebase-interactive::rebase-ix-with-autosquash	t3404-rebase-interactive	rebase -ix with --autosquash	rebase	partial
-t3404-rebase-interactive::rebase-exec-works-without-i	t3404-rebase-interactive	rebase --exec works without -i	rebase	partial
-t3404-rebase-interactive::rebase-i-exec-without-cmd	t3404-rebase-interactive	rebase -i --exec without <CMD>	rebase	partial
-t3404-rebase-interactive::rebase-i-root-re-order-and-drop-commits	t3404-rebase-interactive	rebase -i --root re-order and drop commits	rebase	partial
-t3404-rebase-interactive::rebase-i-root-retain-root-commit-author-and-message	t3404-rebase-interactive	rebase -i --root retain root commit author and message	rebase	partial
-t3404-rebase-interactive::rebase-i-root-temporary-sentinel-commit	t3404-rebase-interactive	rebase -i --root temporary sentinel commit	rebase	partial
-t3404-rebase-interactive::rebase-i-root-fixup-root-commit	t3404-rebase-interactive	rebase -i --root fixup root commit	rebase	partial
-t3404-rebase-interactive::rebase-i-root-reword-original-root-commit	t3404-rebase-interactive	rebase -i --root reword original root commit	rebase	partial
-t3404-rebase-interactive::rebase-i-root-reword-new-root-commit	t3404-rebase-interactive	rebase -i --root reword new root commit	rebase	partial
-t3404-rebase-interactive::rebase-i-root-when-root-has-untracked-file-conflict	t3404-rebase-interactive	rebase -i --root when root has untracked file conflict	rebase	partial
-t3404-rebase-interactive::rebase-i-root-reword-root-when-root-has-untracked-file-conflict	t3404-rebase-interactive	rebase -i --root reword root when root has untracked file conflict	rebase	partial
-t3404-rebase-interactive::rebase-edit-todo-does-not-work-on-non-interactive-rebase	t3404-rebase-interactive	rebase --edit-todo does not work on non-interactive rebase	rebase	partial
-t3404-rebase-interactive::rebase-edit-todo-can-be-used-to-modify-todo	t3404-rebase-interactive	rebase --edit-todo can be used to modify todo	rebase	partial
-t3404-rebase-interactive::rebase-i-produces-readable-reflog	t3404-rebase-interactive	rebase -i produces readable reflog	rebase	partial
-t3404-rebase-interactive::rebase-i-respects-core-commentchar	t3404-rebase-interactive	rebase -i respects core.commentchar	rebase	partial
-t3404-rebase-interactive::rebase-i-respects-core-commentchar-auto	t3404-rebase-interactive	rebase -i respects core.commentchar=auto	rebase	partial
-t3404-rebase-interactive::rebase-i-with-onto-and-upstream-specified-as-quuxery	t3404-rebase-interactive	rebase -i, with <onto> and <upstream> specified as :/quuxery	rebase	partial
-t3404-rebase-interactive::rebase-i-with-strategy-and-x	t3404-rebase-interactive	rebase -i with --strategy and -X	rebase	partial
-t3404-rebase-interactive::interrupted-rebase-i-with-strategy-and-x	t3404-rebase-interactive	interrupted rebase -i with --strategy and -X	rebase	partial
-t3404-rebase-interactive::rebase-i-error-on-commits-with-in-message	t3404-rebase-interactive	rebase -i error on commits with \ in message	rebase	partial
-t3404-rebase-interactive::short-commit-id-setup	t3404-rebase-interactive	short commit ID setup	rebase	partial
-t3404-rebase-interactive::short-commit-id-collide	t3404-rebase-interactive	short commit ID collide	rebase	partial
-t3404-rebase-interactive::respect-core-abbrev	t3404-rebase-interactive	respect core.abbrev	rebase	partial
-t3404-rebase-interactive::todo-count	t3404-rebase-interactive	todo count	rebase	partial
-t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-pick	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (pick)	rebase	partial
-t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-squash	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (squash)	rebase	partial
-t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-no-ff	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (no ff)	rebase	partial
-t3404-rebase-interactive::rebase-continue-removes-cherry-pick-head	t3404-rebase-interactive	rebase --continue removes CHERRY_PICK_HEAD	rebase	partial
-t3404-rebase-interactive::drop	t3404-rebase-interactive	drop	rebase	partial
-t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-ignore	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = ignore	rebase	partial
-t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-warn	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = warn	rebase	partial
-t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-error	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = error	rebase	partial
-t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-ignore	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = ignore	rebase	partial
-t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-warn	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = warn	rebase	partial
-t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-error	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = error	rebase	partial
-t3404-rebase-interactive::rebase-missingcommitscheck-error-after-resolving-conflicts	t3404-rebase-interactive	rebase.missingCommitsCheck = error after resolving conflicts	rebase	partial
-t3404-rebase-interactive::rebase-missingcommitscheck-error-when-editing-for-a-second-time	t3404-rebase-interactive	rebase.missingCommitsCheck = error when editing for a second time	rebase	partial
-t3404-rebase-interactive::respects-rebase-abbreviatecommands-with-fixup-squash-and-exec	t3404-rebase-interactive	respects rebase.abbreviateCommands with fixup, squash and exec	rebase	partial
-t3404-rebase-interactive::static-check-of-bad-command	t3404-rebase-interactive	static check of bad command	rebase	partial
-t3404-rebase-interactive::the-first-command-cannot-be-a-fixup	t3404-rebase-interactive	the first command cannot be a fixup	rebase	partial
-t3404-rebase-interactive::tabs-and-spaces-are-accepted-in-the-todolist	t3404-rebase-interactive	tabs and spaces are accepted in the todolist	rebase	partial
-t3404-rebase-interactive::static-check-of-bad-sha-1	t3404-rebase-interactive	static check of bad SHA-1	rebase	partial
-t3404-rebase-interactive::editor-saves-as-cr-lf	t3404-rebase-interactive	editor saves as CR/LF	rebase	partial
-t3404-rebase-interactive::rebase-i-gpg-sign-key-id	t3404-rebase-interactive	rebase -i --gpg-sign=<key-id>	rebase	partial
-t3404-rebase-interactive::rebase-i-gpg-sign-key-id-overrides-commit-gpgsign	t3404-rebase-interactive	rebase -i --gpg-sign=<key-id> overrides commit.gpgSign	rebase	partial
-t3404-rebase-interactive::valid-author-header-after-root-swap	t3404-rebase-interactive	valid author header after --root swap	rebase	partial
-t3404-rebase-interactive::valid-author-header-when-author-contains-single-quote	t3404-rebase-interactive	valid author header when author contains single quote	rebase	partial
-t3404-rebase-interactive::post-commit-hook-is-called	t3404-rebase-interactive	post-commit hook is called	rebase	partial
-t3404-rebase-interactive::correct-error-message-for-partial-commit-after-empty-pick	t3404-rebase-interactive	correct error message for partial commit after empty pick	rebase	partial
-t3404-rebase-interactive::correct-error-message-for-commit-amend-after-empty-pick	t3404-rebase-interactive	correct error message for commit --amend after empty pick	rebase	partial
-t3404-rebase-interactive::todo-has-correct-onto-hash	t3404-rebase-interactive	todo has correct onto hash	rebase	partial
-t3404-rebase-interactive::orig-head-is-updated-correctly	t3404-rebase-interactive	ORIG_HEAD is updated correctly	rebase	partial
-t3404-rebase-interactive::update-refs-adds-label-and-update-ref-commands	t3404-rebase-interactive	--update-refs adds label and update-ref commands	rebase	partial
-t3404-rebase-interactive::update-refs-adds-commands-with-rebase-merges	t3404-rebase-interactive	--update-refs adds commands with --rebase-merges	rebase	partial
-t3404-rebase-interactive::update-refs-updates-refs-correctly	t3404-rebase-interactive	--update-refs updates refs correctly	rebase	partial
-t3404-rebase-interactive::respect-user-edits-to-update-ref-steps	t3404-rebase-interactive	respect user edits to update-ref steps	rebase	partial
-t3404-rebase-interactive::update-refs-all-update-ref-lines-removed	t3404-rebase-interactive	--update-refs: all update-ref lines removed	rebase	partial
-t3404-rebase-interactive::update-refs-all-update-ref-lines-removed-then-some-re-added	t3404-rebase-interactive	--update-refs: all update-ref lines removed, then some re-added	rebase	partial
-t3404-rebase-interactive::update-refs-edit-todo-with-no-update-ref-lines	t3404-rebase-interactive	--update-refs: --edit-todo with no update-ref lines	rebase	partial
-t3404-rebase-interactive::update-refs-check-failed-ref-update	t3404-rebase-interactive	--update-refs: check failed ref update	rebase	partial
-t3404-rebase-interactive::bad-labels-and-refs-rejected-when-parsing-todo-list	t3404-rebase-interactive	bad labels and refs rejected when parsing todo list	rebase	partial
-t3404-rebase-interactive::non-merge-commands-reject-merge-commits	t3404-rebase-interactive	non-merge commands reject merge commits	rebase	partial
-t3404-rebase-interactive::editor-and-friends-are-unchanged	t3404-rebase-interactive	$EDITOR and friends are unchanged	rebase	partial
-t3405-rebase-malformed::rebase-commit-with-multi-line-subject	t3405-rebase-malformed	rebase commit with multi-line subject	rebase	partial
-t3405-rebase-malformed::rebase-commit-with-diff-in-message	t3405-rebase-malformed	rebase commit with diff in message	rebase	partial
-t3405-rebase-malformed::rebase-m-commit-with-empty-message	t3405-rebase-malformed	rebase -m commit with empty message	rebase	partial
-t3405-rebase-malformed::rebase-i-commit-with-empty-message	t3405-rebase-malformed	rebase -i commit with empty message	rebase	partial
+t3404-rebase-interactive::setup	t3404-rebase-interactive	setup	rebase	not_ported
+t3404-rebase-interactive::rebase-keep-empty	t3404-rebase-interactive	rebase --keep-empty	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-empty-todo-list	t3404-rebase-interactive	rebase -i with empty todo list	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-the-exec-command	t3404-rebase-interactive	rebase -i with the exec command	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-the-exec-command-runs-from-tree-root	t3404-rebase-interactive	rebase -i with the exec command runs from tree root	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-exec-allows-git-commands-in-subdirs	t3404-rebase-interactive	rebase -i with exec allows git commands in subdirs	rebase	not_ported
+t3404-rebase-interactive::rebase-i-sets-work-tree-properly	t3404-rebase-interactive	rebase -i sets work tree properly	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-the-exec-command-checks-tree-cleanness	t3404-rebase-interactive	rebase -i with the exec command checks tree cleanness	rebase	not_ported
+t3404-rebase-interactive::cherry-pick-works-with-rebase-exec	t3404-rebase-interactive	cherry-pick works with rebase --exec	rebase	not_ported
+t3404-rebase-interactive::rebase-x-with-empty-command-fails	t3404-rebase-interactive	rebase -x with empty command fails	rebase	not_ported
+t3404-rebase-interactive::rebase-x-with-newline-in-command-fails	t3404-rebase-interactive	rebase -x with newline in command fails	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-exec-of-inexistent-command	t3404-rebase-interactive	rebase -i with exec of inexistent command	rebase	not_ported
+t3404-rebase-interactive::implicit-interactive-rebase-does-not-invoke-sequence-editor	t3404-rebase-interactive	implicit interactive rebase does not invoke sequence editor	rebase	not_ported
+t3404-rebase-interactive::no-changes-are-a-nop	t3404-rebase-interactive	no changes are a nop	rebase	not_ported
+t3404-rebase-interactive::test-the-branch-option	t3404-rebase-interactive	test the [branch] option	rebase	not_ported
+t3404-rebase-interactive::test-onto-branch	t3404-rebase-interactive	test --onto <branch>	rebase	not_ported
+t3404-rebase-interactive::rebase-on-top-of-a-non-conflicting-commit	t3404-rebase-interactive	rebase on top of a non-conflicting commit	rebase	not_ported
+t3404-rebase-interactive::reflog-for-the-branch-shows-state-before-rebase	t3404-rebase-interactive	reflog for the branch shows state before rebase	rebase	not_ported
+t3404-rebase-interactive::reflog-for-the-branch-shows-correct-finish-message	t3404-rebase-interactive	reflog for the branch shows correct finish message	rebase	not_ported
+t3404-rebase-interactive::exchange-two-commits	t3404-rebase-interactive	exchange two commits	rebase	not_ported
+t3404-rebase-interactive::stop-on-conflicting-pick	t3404-rebase-interactive	stop on conflicting pick	rebase	not_ported
+t3404-rebase-interactive::show-conflicted-patch	t3404-rebase-interactive	show conflicted patch	rebase	not_ported
+t3404-rebase-interactive::abort	t3404-rebase-interactive	abort	rebase	not_ported
+t3404-rebase-interactive::abort-with-error-when-new-base-cannot-be-checked-out	t3404-rebase-interactive	abort with error when new base cannot be checked out	rebase	not_ported
+t3404-rebase-interactive::retain-authorship	t3404-rebase-interactive	retain authorship	rebase	not_ported
+t3404-rebase-interactive::retain-authorship-w-conflicts	t3404-rebase-interactive	retain authorship w/ conflicts	rebase	not_ported
+t3404-rebase-interactive::squash	t3404-rebase-interactive	squash	rebase	not_ported
+t3404-rebase-interactive::retain-authorship-when-squashing	t3404-rebase-interactive	retain authorship when squashing	rebase	not_ported
+t3404-rebase-interactive::continue-tries-to-commit	t3404-rebase-interactive	--continue tries to commit	rebase	not_ported
+t3404-rebase-interactive::verbose-flag-is-heeded-even-after-continue	t3404-rebase-interactive	verbose flag is heeded, even after --continue	rebase	not_ported
+t3404-rebase-interactive::multi-squash-only-fires-up-editor-once	t3404-rebase-interactive	multi-squash only fires up editor once	rebase	not_ported
+t3404-rebase-interactive::multi-fixup-does-not-fire-up-editor	t3404-rebase-interactive	multi-fixup does not fire up editor	rebase	not_ported
+t3404-rebase-interactive::commit-message-used-after-conflict	t3404-rebase-interactive	commit message used after conflict	rebase	not_ported
+t3404-rebase-interactive::commit-message-retained-after-conflict	t3404-rebase-interactive	commit message retained after conflict	rebase	not_ported
+t3404-rebase-interactive::squash-and-fixup-generate-correct-log-messages	t3404-rebase-interactive	squash and fixup generate correct log messages	rebase	not_ported
+t3404-rebase-interactive::squash-ignores-comments	t3404-rebase-interactive	squash ignores comments	rebase	not_ported
+t3404-rebase-interactive::squash-ignores-blank-lines	t3404-rebase-interactive	squash ignores blank lines	rebase	not_ported
+t3404-rebase-interactive::squash-works-as-expected	t3404-rebase-interactive	squash works as expected	rebase	not_ported
+t3404-rebase-interactive::interrupted-squash-works-as-expected	t3404-rebase-interactive	interrupted squash works as expected	rebase	not_ported
+t3404-rebase-interactive::interrupted-squash-works-as-expected-case-2	t3404-rebase-interactive	interrupted squash works as expected (case 2)	rebase	not_ported
+t3404-rebase-interactive::continue-tries-to-commit-even-for-edit	t3404-rebase-interactive	--continue tries to commit, even for "edit"	rebase	not_ported
+t3404-rebase-interactive::aborted-continue-does-not-squash-commits-after-edit	t3404-rebase-interactive	aborted --continue does not squash commits after "edit"	rebase	not_ported
+t3404-rebase-interactive::auto-amend-only-edited-commits-after-edit	t3404-rebase-interactive	auto-amend only edited commits after "edit"	rebase	not_ported
+t3404-rebase-interactive::clean-error-after-failed-exec	t3404-rebase-interactive	clean error after failed "exec"	rebase	not_ported
+t3404-rebase-interactive::rebase-a-detached-head	t3404-rebase-interactive	rebase a detached HEAD	rebase	not_ported
+t3404-rebase-interactive::rebase-a-commit-violating-pre-commit	t3404-rebase-interactive	rebase a commit violating pre-commit	rebase	not_ported
+t3404-rebase-interactive::rebase-with-a-file-named-head-in-worktree	t3404-rebase-interactive	rebase with a file named HEAD in worktree	rebase	not_ported
+t3404-rebase-interactive::do-noop-when-there-is-nothing-to-cherry-pick	t3404-rebase-interactive	do "noop" when there is nothing to cherry-pick	rebase	not_ported
+t3404-rebase-interactive::submodule-rebase-setup	t3404-rebase-interactive	submodule rebase setup	rebase	not_ported
+t3404-rebase-interactive::submodule-rebase-i	t3404-rebase-interactive	submodule rebase -i	rebase	not_ported
+t3404-rebase-interactive::submodule-conflict-setup	t3404-rebase-interactive	submodule conflict setup	rebase	not_ported
+t3404-rebase-interactive::rebase-i-continue-with-only-submodule-staged	t3404-rebase-interactive	rebase -i continue with only submodule staged	rebase	not_ported
+t3404-rebase-interactive::rebase-i-continue-with-unstaged-submodule	t3404-rebase-interactive	rebase -i continue with unstaged submodule	rebase	not_ported
+t3404-rebase-interactive::avoid-unnecessary-reset	t3404-rebase-interactive	avoid unnecessary reset	rebase	not_ported
+t3404-rebase-interactive::reword	t3404-rebase-interactive	reword	rebase	not_ported
+t3404-rebase-interactive::reword-fast-forwarded-empty-commit	t3404-rebase-interactive	reword fast-forwarded empty commit	rebase	not_ported
+t3404-rebase-interactive::no-uncommitted-changes-when-rewording-and-the-todo-list-is-reloaded	t3404-rebase-interactive	no uncommitted changes when rewording and the todo list is reloaded	rebase	not_ported
+t3404-rebase-interactive::rebase-i-can-copy-notes	t3404-rebase-interactive	rebase -i can copy notes	rebase	not_ported
+t3404-rebase-interactive::rebase-i-can-copy-notes-over-a-fixup	t3404-rebase-interactive	rebase -i can copy notes over a fixup	rebase	not_ported
+t3404-rebase-interactive::rebase-while-detaching-head	t3404-rebase-interactive	rebase while detaching HEAD	rebase	not_ported
+t3404-rebase-interactive::always-cherry-pick-with-no-ff	t3404-rebase-interactive	always cherry-pick with --no-ff	rebase	not_ported
+t3404-rebase-interactive::set-up-commits-with-funny-messages	t3404-rebase-interactive	set up commits with funny messages	rebase	not_ported
+t3404-rebase-interactive::rebase-i-history-with-funny-messages	t3404-rebase-interactive	rebase-i history with funny messages	rebase	not_ported
+t3404-rebase-interactive::prepare-for-rebase-i-exec	t3404-rebase-interactive	prepare for rebase -i --exec	rebase	not_ported
+t3404-rebase-interactive::running-git-rebase-i-exec-git-show-head	t3404-rebase-interactive	running "git rebase -i --exec git show HEAD"	rebase	not_ported
+t3404-rebase-interactive::running-git-rebase-exec-git-show-head-i	t3404-rebase-interactive	running "git rebase --exec git show HEAD -i"	rebase	not_ported
+t3404-rebase-interactive::running-git-rebase-ix-git-show-head	t3404-rebase-interactive	running "git rebase -ix git show HEAD"	rebase	not_ported
+t3404-rebase-interactive::rebase-ix-with-several-cmd	t3404-rebase-interactive	rebase -ix with several <CMD>	rebase	not_ported
+t3404-rebase-interactive::rebase-ix-with-several-instances-of-exec	t3404-rebase-interactive	rebase -ix with several instances of --exec	rebase	not_ported
+t3404-rebase-interactive::rebase-ix-with-autosquash	t3404-rebase-interactive	rebase -ix with --autosquash	rebase	not_ported
+t3404-rebase-interactive::rebase-exec-works-without-i	t3404-rebase-interactive	rebase --exec works without -i	rebase	not_ported
+t3404-rebase-interactive::rebase-i-exec-without-cmd	t3404-rebase-interactive	rebase -i --exec without <CMD>	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-re-order-and-drop-commits	t3404-rebase-interactive	rebase -i --root re-order and drop commits	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-retain-root-commit-author-and-message	t3404-rebase-interactive	rebase -i --root retain root commit author and message	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-temporary-sentinel-commit	t3404-rebase-interactive	rebase -i --root temporary sentinel commit	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-fixup-root-commit	t3404-rebase-interactive	rebase -i --root fixup root commit	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-reword-original-root-commit	t3404-rebase-interactive	rebase -i --root reword original root commit	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-reword-new-root-commit	t3404-rebase-interactive	rebase -i --root reword new root commit	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-when-root-has-untracked-file-conflict	t3404-rebase-interactive	rebase -i --root when root has untracked file conflict	rebase	not_ported
+t3404-rebase-interactive::rebase-i-root-reword-root-when-root-has-untracked-file-conflict	t3404-rebase-interactive	rebase -i --root reword root when root has untracked file conflict	rebase	not_ported
+t3404-rebase-interactive::rebase-edit-todo-does-not-work-on-non-interactive-rebase	t3404-rebase-interactive	rebase --edit-todo does not work on non-interactive rebase	rebase	not_ported
+t3404-rebase-interactive::rebase-edit-todo-can-be-used-to-modify-todo	t3404-rebase-interactive	rebase --edit-todo can be used to modify todo	rebase	not_ported
+t3404-rebase-interactive::rebase-i-produces-readable-reflog	t3404-rebase-interactive	rebase -i produces readable reflog	rebase	not_ported
+t3404-rebase-interactive::rebase-i-respects-core-commentchar	t3404-rebase-interactive	rebase -i respects core.commentchar	rebase	not_ported
+t3404-rebase-interactive::rebase-i-respects-core-commentchar-auto	t3404-rebase-interactive	rebase -i respects core.commentchar=auto	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-onto-and-upstream-specified-as-quuxery	t3404-rebase-interactive	rebase -i, with <onto> and <upstream> specified as :/quuxery	rebase	not_ported
+t3404-rebase-interactive::rebase-i-with-strategy-and-x	t3404-rebase-interactive	rebase -i with --strategy and -X	rebase	not_ported
+t3404-rebase-interactive::interrupted-rebase-i-with-strategy-and-x	t3404-rebase-interactive	interrupted rebase -i with --strategy and -X	rebase	not_ported
+t3404-rebase-interactive::rebase-i-error-on-commits-with-in-message	t3404-rebase-interactive	rebase -i error on commits with \ in message	rebase	not_ported
+t3404-rebase-interactive::short-commit-id-setup	t3404-rebase-interactive	short commit ID setup	rebase	not_ported
+t3404-rebase-interactive::short-commit-id-collide	t3404-rebase-interactive	short commit ID collide	rebase	not_ported
+t3404-rebase-interactive::respect-core-abbrev	t3404-rebase-interactive	respect core.abbrev	rebase	not_ported
+t3404-rebase-interactive::todo-count	t3404-rebase-interactive	todo count	rebase	not_ported
+t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-pick	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (pick)	rebase	not_ported
+t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-squash	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (squash)	rebase	not_ported
+t3404-rebase-interactive::rebase-i-commits-that-overwrite-untracked-files-no-ff	t3404-rebase-interactive	rebase -i commits that overwrite untracked files (no ff)	rebase	not_ported
+t3404-rebase-interactive::rebase-continue-removes-cherry-pick-head	t3404-rebase-interactive	rebase --continue removes CHERRY_PICK_HEAD	rebase	not_ported
+t3404-rebase-interactive::drop	t3404-rebase-interactive	drop	rebase	not_ported
+t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-ignore	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = ignore	rebase	not_ported
+t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-warn	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = warn	rebase	not_ported
+t3404-rebase-interactive::rebase-i-respects-rebase-missingcommitscheck-error	t3404-rebase-interactive	rebase -i respects rebase.missingCommitsCheck = error	rebase	not_ported
+t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-ignore	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = ignore	rebase	not_ported
+t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-warn	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = warn	rebase	not_ported
+t3404-rebase-interactive::rebase-edit-todo-respects-rebase-missingcommitscheck-error	t3404-rebase-interactive	rebase --edit-todo respects rebase.missingCommitsCheck = error	rebase	not_ported
+t3404-rebase-interactive::rebase-missingcommitscheck-error-after-resolving-conflicts	t3404-rebase-interactive	rebase.missingCommitsCheck = error after resolving conflicts	rebase	not_ported
+t3404-rebase-interactive::rebase-missingcommitscheck-error-when-editing-for-a-second-time	t3404-rebase-interactive	rebase.missingCommitsCheck = error when editing for a second time	rebase	not_ported
+t3404-rebase-interactive::respects-rebase-abbreviatecommands-with-fixup-squash-and-exec	t3404-rebase-interactive	respects rebase.abbreviateCommands with fixup, squash and exec	rebase	not_ported
+t3404-rebase-interactive::static-check-of-bad-command	t3404-rebase-interactive	static check of bad command	rebase	not_ported
+t3404-rebase-interactive::the-first-command-cannot-be-a-fixup	t3404-rebase-interactive	the first command cannot be a fixup	rebase	not_ported
+t3404-rebase-interactive::tabs-and-spaces-are-accepted-in-the-todolist	t3404-rebase-interactive	tabs and spaces are accepted in the todolist	rebase	not_ported
+t3404-rebase-interactive::static-check-of-bad-sha-1	t3404-rebase-interactive	static check of bad SHA-1	rebase	not_ported
+t3404-rebase-interactive::editor-saves-as-cr-lf	t3404-rebase-interactive	editor saves as CR/LF	rebase	not_ported
+t3404-rebase-interactive::rebase-i-gpg-sign-key-id	t3404-rebase-interactive	rebase -i --gpg-sign=<key-id>	rebase	not_ported
+t3404-rebase-interactive::rebase-i-gpg-sign-key-id-overrides-commit-gpgsign	t3404-rebase-interactive	rebase -i --gpg-sign=<key-id> overrides commit.gpgSign	rebase	not_ported
+t3404-rebase-interactive::valid-author-header-after-root-swap	t3404-rebase-interactive	valid author header after --root swap	rebase	not_ported
+t3404-rebase-interactive::valid-author-header-when-author-contains-single-quote	t3404-rebase-interactive	valid author header when author contains single quote	rebase	not_ported
+t3404-rebase-interactive::post-commit-hook-is-called	t3404-rebase-interactive	post-commit hook is called	rebase	not_ported
+t3404-rebase-interactive::correct-error-message-for-partial-commit-after-empty-pick	t3404-rebase-interactive	correct error message for partial commit after empty pick	rebase	not_ported
+t3404-rebase-interactive::correct-error-message-for-commit-amend-after-empty-pick	t3404-rebase-interactive	correct error message for commit --amend after empty pick	rebase	not_ported
+t3404-rebase-interactive::todo-has-correct-onto-hash	t3404-rebase-interactive	todo has correct onto hash	rebase	not_ported
+t3404-rebase-interactive::orig-head-is-updated-correctly	t3404-rebase-interactive	ORIG_HEAD is updated correctly	rebase	not_ported
+t3404-rebase-interactive::update-refs-adds-label-and-update-ref-commands	t3404-rebase-interactive	--update-refs adds label and update-ref commands	rebase	not_ported
+t3404-rebase-interactive::update-refs-adds-commands-with-rebase-merges	t3404-rebase-interactive	--update-refs adds commands with --rebase-merges	rebase	not_ported
+t3404-rebase-interactive::update-refs-updates-refs-correctly	t3404-rebase-interactive	--update-refs updates refs correctly	rebase	not_ported
+t3404-rebase-interactive::respect-user-edits-to-update-ref-steps	t3404-rebase-interactive	respect user edits to update-ref steps	rebase	not_ported
+t3404-rebase-interactive::update-refs-all-update-ref-lines-removed	t3404-rebase-interactive	--update-refs: all update-ref lines removed	rebase	not_ported
+t3404-rebase-interactive::update-refs-all-update-ref-lines-removed-then-some-re-added	t3404-rebase-interactive	--update-refs: all update-ref lines removed, then some re-added	rebase	not_ported
+t3404-rebase-interactive::update-refs-edit-todo-with-no-update-ref-lines	t3404-rebase-interactive	--update-refs: --edit-todo with no update-ref lines	rebase	not_ported
+t3404-rebase-interactive::update-refs-check-failed-ref-update	t3404-rebase-interactive	--update-refs: check failed ref update	rebase	not_ported
+t3404-rebase-interactive::bad-labels-and-refs-rejected-when-parsing-todo-list	t3404-rebase-interactive	bad labels and refs rejected when parsing todo list	rebase	not_ported
+t3404-rebase-interactive::non-merge-commands-reject-merge-commits	t3404-rebase-interactive	non-merge commands reject merge commits	rebase	not_ported
+t3404-rebase-interactive::editor-and-friends-are-unchanged	t3404-rebase-interactive	$EDITOR and friends are unchanged	rebase	not_ported
+t3405-rebase-malformed::rebase-commit-with-multi-line-subject	t3405-rebase-malformed	rebase commit with multi-line subject	rebase	pass
+t3405-rebase-malformed::rebase-commit-with-diff-in-message	t3405-rebase-malformed	rebase commit with diff in message	rebase	pass
+t3405-rebase-malformed::rebase-m-commit-with-empty-message	t3405-rebase-malformed	rebase -m commit with empty message	rebase	pass
+t3405-rebase-malformed::rebase-i-commit-with-empty-message	t3405-rebase-malformed	rebase -i commit with empty message	rebase	pass
 t3406-rebase-message::setup	t3406-rebase-message	setup	rebase	partial
 t3406-rebase-message::rebase-m	t3406-rebase-message	rebase -m	rebase	partial
 t3406-rebase-message::rebase-against-main-twice	t3406-rebase-message	rebase against main twice	rebase	partial
@@ -12530,31 +12530,31 @@ t6135-pathspec-with-attrs::builtin-objectmode-attr-can-be-excluded	t6135-pathspe
 t6136-pathspec-in-bare::setup-a-bare-and-non-bare-repository	t6136-pathspec-in-bare	setup a bare and non-bare repository	clone	partial
 t6136-pathspec-in-bare::log-and-ls-files-in-a-bare-repository	t6136-pathspec-in-bare	log and ls-files in a bare repository	log	partial
 t6136-pathspec-in-bare::log-and-ls-files-in-git-directory	t6136-pathspec-in-bare	log and ls-files in .git directory	log	partial
-t6137-pathspec-wildcards-literal::add-wildcard	t6137-pathspec-wildcards-literal	add wildcard *	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal	t6137-pathspec-wildcards-literal	add literal \*	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-2	t6137-pathspec-wildcards-literal	add wildcard **	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-3	t6137-pathspec-wildcards-literal	add wildcard ?	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-abc	t6137-pathspec-wildcards-literal	add wildcard [abc]	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-f	t6137-pathspec-wildcards-literal	add wildcard f*	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal-f	t6137-pathspec-wildcards-literal	add literal f\*	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-f-2	t6137-pathspec-wildcards-literal	add wildcard f**	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal-f-2	t6137-pathspec-wildcards-literal	add literal f\*\*	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-f-z	t6137-pathspec-wildcards-literal	add wildcard f?z	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal-2	t6137-pathspec-wildcards-literal	add literal \?	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-foo-bar	t6137-pathspec-wildcards-literal	add wildcard foo*bar	add	not_ported
-t6137-pathspec-wildcards-literal::add-wildcard-hello-world	t6137-pathspec-wildcards-literal	add wildcard hello?world	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal-hello-world	t6137-pathspec-wildcards-literal	add literal hello\?world	add	not_ported
-t6137-pathspec-wildcards-literal::add-literal-abc	t6137-pathspec-wildcards-literal	add literal \[abc\]	add	not_ported
-t6137-pathspec-wildcards-literal::commit-wildcard	t6137-pathspec-wildcards-literal	commit: wildcard *	add	not_ported
-t6137-pathspec-wildcards-literal::commit-literal	t6137-pathspec-wildcards-literal	commit: literal \*	add	not_ported
-t6137-pathspec-wildcards-literal::commit-wildcard-f	t6137-pathspec-wildcards-literal	commit: wildcard f*	add	not_ported
-t6137-pathspec-wildcards-literal::commit-literal-f	t6137-pathspec-wildcards-literal	commit: literal f\*	add	not_ported
-t6137-pathspec-wildcards-literal::commit-wildcard-f-2	t6137-pathspec-wildcards-literal	commit: wildcard f**	add	not_ported
-t6137-pathspec-wildcards-literal::commit-literal-f-2	t6137-pathspec-wildcards-literal	commit: literal f\*\*	add	not_ported
-t6137-pathspec-wildcards-literal::commit-wildcard-2	t6137-pathspec-wildcards-literal	commit: wildcard ?	add	not_ported
-t6137-pathspec-wildcards-literal::commit-literal-2	t6137-pathspec-wildcards-literal	commit: literal \?	add	not_ported
-t6137-pathspec-wildcards-literal::commit-wildcard-hello-world	t6137-pathspec-wildcards-literal	commit: wildcard hello?world	add	not_ported
-t6137-pathspec-wildcards-literal::commit-literal-hello-world	t6137-pathspec-wildcards-literal	commit: literal hello\?world	add	not_ported
+t6137-pathspec-wildcards-literal::add-wildcard	t6137-pathspec-wildcards-literal	add wildcard *	add	partial
+t6137-pathspec-wildcards-literal::add-literal	t6137-pathspec-wildcards-literal	add literal \*	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-2	t6137-pathspec-wildcards-literal	add wildcard **	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-3	t6137-pathspec-wildcards-literal	add wildcard ?	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-abc	t6137-pathspec-wildcards-literal	add wildcard [abc]	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-f	t6137-pathspec-wildcards-literal	add wildcard f*	add	partial
+t6137-pathspec-wildcards-literal::add-literal-f	t6137-pathspec-wildcards-literal	add literal f\*	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-f-2	t6137-pathspec-wildcards-literal	add wildcard f**	add	partial
+t6137-pathspec-wildcards-literal::add-literal-f-2	t6137-pathspec-wildcards-literal	add literal f\*\*	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-f-z	t6137-pathspec-wildcards-literal	add wildcard f?z	add	partial
+t6137-pathspec-wildcards-literal::add-literal-2	t6137-pathspec-wildcards-literal	add literal \?	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-foo-bar	t6137-pathspec-wildcards-literal	add wildcard foo*bar	add	partial
+t6137-pathspec-wildcards-literal::add-wildcard-hello-world	t6137-pathspec-wildcards-literal	add wildcard hello?world	add	partial
+t6137-pathspec-wildcards-literal::add-literal-hello-world	t6137-pathspec-wildcards-literal	add literal hello\?world	add	partial
+t6137-pathspec-wildcards-literal::add-literal-abc	t6137-pathspec-wildcards-literal	add literal \[abc\]	add	partial
+t6137-pathspec-wildcards-literal::commit-wildcard	t6137-pathspec-wildcards-literal	commit: wildcard *	add	partial
+t6137-pathspec-wildcards-literal::commit-literal	t6137-pathspec-wildcards-literal	commit: literal \*	add	partial
+t6137-pathspec-wildcards-literal::commit-wildcard-f	t6137-pathspec-wildcards-literal	commit: wildcard f*	add	partial
+t6137-pathspec-wildcards-literal::commit-literal-f	t6137-pathspec-wildcards-literal	commit: literal f\*	add	partial
+t6137-pathspec-wildcards-literal::commit-wildcard-f-2	t6137-pathspec-wildcards-literal	commit: wildcard f**	add	partial
+t6137-pathspec-wildcards-literal::commit-literal-f-2	t6137-pathspec-wildcards-literal	commit: literal f\*\*	add	partial
+t6137-pathspec-wildcards-literal::commit-wildcard-2	t6137-pathspec-wildcards-literal	commit: wildcard ?	add	partial
+t6137-pathspec-wildcards-literal::commit-literal-2	t6137-pathspec-wildcards-literal	commit: literal \?	add	partial
+t6137-pathspec-wildcards-literal::commit-wildcard-hello-world	t6137-pathspec-wildcards-literal	commit: wildcard hello?world	add	partial
+t6137-pathspec-wildcards-literal::commit-literal-hello-world	t6137-pathspec-wildcards-literal	commit: literal hello\?world	add	partial
 t6200-fmt-merge-msg::set-up-a-signed-tag	t6200-fmt-merge-msg	set up a signed tag	fmt-merge-msg	partial
 t6200-fmt-merge-msg::created-ssh-signed-commit-and-tag	t6200-fmt-merge-msg	created ssh signed commit and tag	fmt-merge-msg	partial
 t6200-fmt-merge-msg::create-signed-tags-with-keys-having-defined-lifetimes	t6200-fmt-merge-msg	create signed tags with keys having defined lifetimes	fmt-merge-msg	partial
