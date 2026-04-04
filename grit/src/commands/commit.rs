@@ -760,6 +760,11 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         }
     }
 
+    // If --allow-empty-message, return empty message
+    if args.allow_empty_message {
+        return Ok(MessageResult { message: String::new(), raw_bytes: None });
+    }
+
     // TODO: Launch editor
     bail!("no commit message provided (use -m or -F)");
 }
