@@ -83,6 +83,10 @@ pub struct Args {
     #[arg(short = 'G', long = "basic-regexp")]
     pub basic_regexp: bool,
 
+    /// Search blobs registered in the index file instead of the work tree.
+    #[arg(long = "cached")]
+    pub cached: bool,
+
     /// Read patterns from file, one per line.
     #[arg(short = 'f', long = "file", value_name = "FILE")]
     pub pattern_file: Option<String>,
@@ -324,6 +328,55 @@ pub fn run(mut args: Args) -> Result<()> {
             out,
             all_match,
         )?;
+    } else if args.cached {
+        // Search index blobs (--cached)
+        let index = Index::load(&repo.index_path()).context("loading index")?;
+        let mut seen = std::collections::HashSet::new();
+        for entry in &index.entries {
+            let path_str = String::from_utf8_lossy(&entry.path).to_string();
+            if !seen.insert(path_str.clone()) {
+                continue;
+            }
+            if !pathspecs.is_empty()
+                && !pathspecs.iter().any(|p| path_str == *p || path_str.starts_with(&format!("{p}/")))
+            {
+                continue;
+            }
+            if let Some(max_depth) = args.effective_max_depth() {
+                let depth = path_str.matches('/').count();
+                if depth > max_depth {
+                    continue;
+                }
+            }
+            let obj = match repo.odb.read(&entry.oid) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    if grep_content(&path_str, &content, &matchers, &args, None, &mut need_sep, out, all_match)? {
+                        found_any = true;
+                    }
+                } else {
+                    let content = String::from_utf8_lossy(&obj.data);
+                    let has_match = matchers.iter().any(|re| re.is_match(&content));
+                    if has_match {
+                        writeln!(out, "Binary file {} matches", path_str)?;
+                        found_any = true;
+                    }
+                }
+            } else {
+                let content = String::from_utf8_lossy(&obj.data);
+                if grep_content(&path_str, &content, &matchers, &args, None, &mut need_sep, out, all_match)? {
+                    found_any = true;
+                }
+            }
+        }
     } else {
         // Search working tree (tracked files from index)
         let work_tree = repo
