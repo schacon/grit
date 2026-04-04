@@ -331,7 +331,8 @@ pub fn run(mut args: Args) -> Result<()> {
     // Collect ref decorations — manually determine last-wins for
     // --decorate / --no-decorate so that flag order is respected.
     let (show_decorations, decorate_full) = {
-        let mut show = true; // default: decorations on
+        // Default: decorations off (git only decorates for terminal/auto)
+        let mut show = false;
         let mut full = false;
         for arg in std::env::args() {
             if arg == "--no-decorate" {
@@ -346,8 +347,10 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             }
         }
-        // If user explicitly passed --no-decorate and nothing else, respect it
-        if args.no_decorate && args.decorate.is_none() {
+        if args.decorate.is_some() {
+            show = true;
+        }
+        if args.no_decorate {
             show = false;
         }
         (show, full)
@@ -945,6 +948,13 @@ fn format_commit(
         Some("short") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             let author_name = extract_name(&info.author);
             writeln!(out, "Author: {author_name}")?;
             writeln!(out)?;
@@ -956,6 +966,13 @@ fn format_commit(
         Some("medium") | None => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
             writeln!(out, "Date:   {}", format_date_with_mode(&info.author, date_format))?;
             writeln!(out)?;
@@ -967,6 +984,13 @@ fn format_commit(
         Some("full") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
             writeln!(out, "Commit: {}", format_ident_display(&info.committer))?;
             writeln!(out)?;
@@ -978,6 +1002,13 @@ fn format_commit(
         Some("fuller") => {
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
+            if info.parents.len() > 1 {
+                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
+                    let h = p.to_hex();
+                    h[..abbrev_len.min(h.len())].to_string()
+                }).collect();
+                writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
+            }
             writeln!(out, "Author:     {}", format_ident_display(&info.author))?;
             writeln!(out, "AuthorDate: {}", format_date_with_mode(&info.author, date_format))?;
             writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
