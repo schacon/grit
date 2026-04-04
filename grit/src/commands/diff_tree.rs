@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
-    format_stat_line, unified_diff, DiffEntry, DiffStatus,
+    format_raw_abbrev, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -80,6 +80,18 @@ struct Options {
     find_copies_harder: bool,
     /// Rename limit (max number of rename source candidates).
     rename_limit: Option<usize>,
+    /// Show full object IDs in patch headers (--full-index).
+    full_index: bool,
+    /// Also show raw format with patch (--patch-with-raw).
+    patch_with_raw: bool,
+    /// Also show stat with patch (--patch-with-stat).
+    patch_with_stat: bool,
+    /// Show summary (new/deleted/mode changes) after diff.
+    summary: bool,
+    /// Pretty-print commit header (--pretty).
+    pretty: bool,
+    /// Show combined stat+summary after diff.
+    stat_too: bool,
 }
 
 impl Default for Options {
@@ -102,6 +114,12 @@ impl Default for Options {
             find_copies: None,
             find_copies_harder: false,
             rename_limit: None,
+            full_index: false,
+            patch_with_raw: false,
+            patch_with_stat: false,
+            summary: false,
+            pretty: false,
+            stat_too: false,
         }
     }
 }
@@ -133,9 +151,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => opts.show_merges = true,
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
-                "--stat" => opts.format = OutputFormat::Stat,
+                "--stat" => { opts.format = OutputFormat::Stat; opts.stat_too = true; }
                 "--name-only" => opts.format = OutputFormat::NameOnly,
                 "--name-status" => opts.format = OutputFormat::NameStatus,
+                "--summary" => opts.summary = true,
+                "--full-index" => opts.full_index = true,
+                "--patch-with-stat" => { opts.format = OutputFormat::Patch; opts.patch_with_stat = true; }
+                "--patch-with-raw" => { opts.format = OutputFormat::Patch; opts.patch_with_raw = true; }
+                "--pretty" | "--pretty=medium" => opts.pretty = true,
+                _ if arg.starts_with("--pretty=") => opts.pretty = true,
                 "--abbrev" => opts.abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
                     let val = &arg["--abbrev=".len()..];
@@ -218,6 +242,17 @@ fn parse_options(argv: &[String]) -> Result<Options> {
             opts.objects.push(arg.clone());
         }
         i += 1;
+    }
+
+    // Patch, stat, summary, name-only, name-status all imply recursion.
+    match opts.format {
+        OutputFormat::Patch | OutputFormat::Stat | OutputFormat::NameOnly | OutputFormat::NameStatus => {
+            opts.recursive = true;
+        }
+        _ => {}
+    }
+    if opts.summary {
+        opts.recursive = true;
     }
 
     Ok(opts)
@@ -717,7 +752,11 @@ fn print_diff(
     match opts.format {
         OutputFormat::Raw => {
             for entry in entries {
-                writeln!(out, "{}", format_raw(entry))?;
+                if let Some(abbrev_len) = opts.abbrev {
+                    writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                } else {
+                    writeln!(out, "{}", format_raw(entry))?;
+                }
             }
         }
         OutputFormat::Patch => {
