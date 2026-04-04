@@ -808,7 +808,44 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "fsck" => commands::fsck::run(parse_cmd_args(subcmd, rest)),
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
-        "grep" => commands::grep::run(parse_cmd_args(subcmd, rest)),
+        "grep" => {
+            // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
+            // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
+            // Rewrite -h to --no-filename. Handle both standalone "-h" and
+            // combined flags like "-ah" (split into "-a" + "--no-filename").
+            let mut new_rest: Vec<String> = Vec::new();
+            for a in rest.iter() {
+                if a == "-h" {
+                    new_rest.push("--no-filename".to_string());
+                } else if a.starts_with('-') && !a.starts_with("--") && a.contains('h') && a.len() > 2 {
+                    // Combined short flags containing 'h'
+                    let without_h: String = a.chars().filter(|&c| c != 'h').collect();
+                    if without_h.len() > 1 { // still has flags besides '-'
+                        new_rest.push(without_h);
+                    }
+                    new_rest.push("--no-filename".to_string());
+                } else {
+                    new_rest.push(a.clone());
+                }
+            }
+            let mut rest = new_rest;
+            // Last-flag-wins: find the last pattern-type flag and remove earlier ones
+            let pattern_flags = ["-G", "-E", "-F", "-P",
+                "--basic-regexp", "--extended-regexp", "--fixed-strings", "--perl-regexp"];
+            let mut last_idx = None;
+            for (i, a) in rest.iter().enumerate() {
+                if pattern_flags.contains(&a.as_str()) {
+                    last_idx = Some(i);
+                }
+            }
+            if let Some(last) = last_idx {
+                let keep = rest[last].clone();
+                rest.retain(|a| !pattern_flags.contains(&a.as_str()));
+                // Insert the winning flag back (at beginning, before positionals)
+                rest.insert(0, keep);
+            }
+            commands::grep::run(parse_cmd_args(subcmd, &rest))
+        }
         "hash-object" => commands::hash_object::run(parse_cmd_args(subcmd, rest)),
         "help" => commands::help::run(parse_cmd_args(subcmd, rest)),
         "history" => commands::history::run(parse_cmd_args(subcmd, rest)),

@@ -79,7 +79,11 @@ pub struct Args {
 }
 
 /// Run the `status` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // In porcelain mode, always show the branch header.
+    if args.porcelain.is_some() {
+        args.branch = true;
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree

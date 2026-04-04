@@ -76,6 +76,14 @@ pub struct Args {
     /// Open editor for the merge commit message (default for non-automated merges).
     #[arg(long = "edit", short = 'e')]
     pub edit: bool,
+
+    /// Add Signed-off-by trailer to the merge commit message.
+    #[arg(short = 'S', long = "signoff")]
+    pub signoff: bool,
+
+    /// Do not add Signed-off-by trailer.
+    #[arg(long = "no-signoff")]
+    pub no_signoff: bool,
 }
 
 /// Run the `merge` command.
@@ -360,12 +368,24 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
+    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref());
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
+
+    if args.signoff && !args.no_signoff {
+        let sob_name = std::env::var("GIT_COMMITTER_NAME")
+            .ok()
+            .or_else(|| config.get("user.name"))
+            .unwrap_or_else(|| "Unknown".to_owned());
+        let sob_email = std::env::var("GIT_COMMITTER_EMAIL")
+            .ok()
+            .or_else(|| config.get("user.email"))
+            .unwrap_or_default();
+        msg = append_signoff(&msg, &sob_name, &sob_email);
+    }
 
     let commit_data = CommitData {
         tree: tree_oid,
@@ -1118,6 +1138,16 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
 }
 
 /// Build the default merge commit message.
+/// Append Signed-off-by trailer to a message if not already present.
+fn append_signoff(msg: &str, name: &str, email: &str) -> String {
+    let trailer = format!("Signed-off-by: {} <{}>", name, email);
+    if msg.contains(&trailer) {
+        return msg.to_string();
+    }
+    let trimmed = msg.trim_end();
+    format!("{}\n\n{}\n", trimmed, trailer)
+}
+
 fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);

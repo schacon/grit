@@ -19,13 +19,9 @@ use time::OffsetDateTime;
 #[derive(Debug, ClapArgs)]
 #[command(about = "Create, list, delete or verify a tag object signed with GPG")]
 pub struct Args {
-    /// Tag name to create, delete, or list.
-    #[arg()]
-    pub name: Option<String>,
-
-    /// The object the tag should reference (defaults to HEAD).
-    #[arg()]
-    pub commit: Option<String>,
+    /// Positional arguments: tag name(s), optional commit.
+    #[arg(trailing_var_arg = true)]
+    pub positional: Vec<String>,
 
     /// Create an annotated tag.
     #[arg(short = 'a', long = "annotate")]
@@ -44,8 +40,8 @@ pub struct Args {
     pub delete: bool,
 
     /// List tags matching the given pattern.
-    #[arg(short = 'l', long = "list")]
-    pub list: bool,
+    #[arg(short = 'l', long = "list", action = clap::ArgAction::Count)]
+    pub list: u8,
 
     /// Force creation (overwrite existing tag).
     #[arg(short = 'f', long = "force")]
@@ -81,29 +77,40 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Verify mode
+    // Extract name and commit from positional args
+    let name = args.positional.first().map(|s| s.as_str());
+    let commit = args.positional.get(1).map(|s| s.as_str());
+
     if args.verify {
-        let name = args
-            .name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("tag name required"))?;
+        let name = name.ok_or_else(|| anyhow::anyhow!("tag name required"))?;
         return verify_tag(&repo, name);
     }
 
     // Delete mode
     if args.delete {
-        let name = args
-            .name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("tag name required"))?;
-        return delete_tag(&repo, name);
+        if args.positional.is_empty() {
+            // git tag -d with no args succeeds and does nothing
+            return Ok(());
+        }
+        let mut had_error = false;
+        for tag_name in &args.positional {
+            if let Err(e) = delete_tag(&repo, tag_name) {
+                eprintln!("error: {e}");
+                had_error = true;
+            }
+        }
+        if had_error {
+            bail!("some tags could not be deleted");
+        }
+        return Ok(());
     }
 
     // If no name is given (or -l is given), list tags
-    if args.name.is_none() || args.list {
-        let pattern = args.name.as_deref();
+    if name.is_none() || args.list > 0 {
+        let patterns: Vec<&str> = args.positional.iter().map(|s| s.as_str()).collect();
         return list_tags(
             &repo,
-            pattern,
+            &patterns,
             args.lines,
             args.sort.as_deref(),
             args.ignore_case,
@@ -113,20 +120,40 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Create tag
-    let name = args
-        .name
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("tag name required"))?;
+    let name = name.ok_or_else(|| anyhow::anyhow!("tag name required"))?;
 
-    // HEAD is forbidden as a tag name
-    if name == "HEAD" {
-        bail!("'HEAD' is not a valid tag name.");
+    // Validate tag name (git check-ref-format rules)
+    if name.is_empty()
+        || name == "HEAD"
+        || name.starts_with('.')
+        || name.starts_with('-')
+        || name.ends_with('.')
+        || name.ends_with(".lock")
+        || name.contains("..")
+        || name.contains("/.")
+        || name.contains("@{")
+        || name.contains('\\')
+        || name.contains(' ')
+        || name.contains('~')
+        || name.contains('^')
+        || name.contains(':')
+        || name.contains('?')
+        || name.contains('*')
+        || name.contains('[')
+        || name.bytes().any(|b| b < 0x20 || b == 0x7f)
+    {
+        bail!("'{}' is not a valid tag name.", name);
     }
 
     // Resolve the target commit
-    let target_rev = args.commit.as_deref().unwrap_or("HEAD");
+    let target_rev = commit.unwrap_or("HEAD");
     let target_oid = resolve_revision(&repo, target_rev)
         .with_context(|| format!("Failed to resolve '{target_rev}'"))?;
+
+    // Reject using both -m and -F
+    if !args.message.is_empty() && args.file.is_some() {
+        bail!("only one of -m or -F can be given.");
+    }
 
     let annotated = args.annotate || !args.message.is_empty() || args.file.is_some();
 
@@ -255,7 +282,7 @@ fn verify_tag(repo: &Repository, name: &str) -> Result<()> {
 
 fn list_tags(
     repo: &Repository,
-    pattern: Option<&str>,
+    patterns: &[&str],
     lines: Option<u32>,
     sort: Option<&str>,
     ignore_case: bool,
@@ -293,8 +320,8 @@ fn list_tags(
     }
 
     // Filter by pattern
-    if let Some(pat) = pattern {
-        tags.retain(|(name, _)| glob_matches(pat, name));
+    if !patterns.is_empty() {
+        tags.retain(|(name, _)| patterns.iter().any(|pat| glob_matches(pat, name)));
     }
 
     // Sort
