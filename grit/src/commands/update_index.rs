@@ -78,6 +78,22 @@ pub struct Args {
     #[arg(long = "cacheinfo", value_name = "mode,object,path")]
     pub cacheinfo: Vec<String>,
 
+    /// Set the execute bit on tracked files (+x or -x).
+    #[arg(long = "chmod", value_name = "MODE")]
+    pub chmod: Option<String>,
+
+    /// Replace the entire index (used with --index-info).
+    #[arg(long = "replace")]
+    pub replace: bool,
+
+    /// Do not complain about unmerged entries.
+    #[arg(long = "unmerged")]
+    pub unmerged: bool,
+
+    /// Verbose mode.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -208,6 +224,21 @@ pub fn run(args: Args) -> Result<()> {
         if args.no_skip_worktree {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.set_skip_worktree(false);
+            }
+            continue;
+        }
+
+        // --chmod=+x or --chmod=-x: change the mode of an existing entry.
+        if let Some(ref chmod_val) = args.chmod {
+            let new_mode = match chmod_val.as_str() {
+                "+x" => 0o100755u32,
+                "-x" => 0o100644u32,
+                other => bail!("--chmod param '{}' must be either +x or -x", other),
+            };
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.mode = new_mode;
+            } else {
+                bail!("'{}' is not in the index", input_path.display());
             }
             continue;
         }

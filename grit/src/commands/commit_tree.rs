@@ -14,8 +14,8 @@ use time::format_description::well_known::Rfc3339;
 use time::{format_description, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
-use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 
 /// Arguments for `grit commit-tree`.
 #[derive(Debug, ClapArgs)]
@@ -214,15 +214,5 @@ fn local_tz_string() -> String {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
-    if let Ok(oid) = s.parse::<ObjectId>() {
-        return Ok(oid);
-    }
-    if let Ok(oid) = resolve_ref(&repo.git_dir, s) {
-        return Ok(oid);
-    }
-    let as_branch = format!("refs/heads/{s}");
-    if let Ok(oid) = resolve_ref(&repo.git_dir, &as_branch) {
-        return Ok(oid);
-    }
-    bail!("not a valid object name: '{s}'")
+    resolve_revision(repo, s).with_context(|| format!("not a valid object name: '{s}'"))
 }
