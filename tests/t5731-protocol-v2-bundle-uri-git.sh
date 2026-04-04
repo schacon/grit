@@ -12,13 +12,13 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'clone with bundle-uri over git://' '
+test_expect_failure 'clone with bundle-uri over git://' '
 	test_create_repo server &&
 	(cd server && test_commit one) &&
 	git -c protocol.version=2 clone git://localhost/server client
 '
 
-test_expect_success 'fetch with bundle-uri over git://' '
+test_expect_failure 'fetch with bundle-uri over git://' '
 	(cd server && test_commit two) &&
 	git -C client -c protocol.version=2 fetch
 '

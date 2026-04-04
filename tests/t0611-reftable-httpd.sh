@@ -8,7 +8,7 @@ cd "$(dirname "$0")" || exit 1
 # grit does not have httpd test infrastructure.
 # All httpd-dependent tests are skipped.
 
-test_expect_success 'serving ls-remote via HTTP with reftable' '
+test_expect_failure 'serving ls-remote via HTTP with reftable' '
 	false
 '
 

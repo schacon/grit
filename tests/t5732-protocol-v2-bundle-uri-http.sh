@@ -14,7 +14,7 @@ cd "$(dirname "$0")" || exit 1
 
 # --- HTTP transport/bundle-uri not available in grit ---
 
-test_expect_success 'HTTP transport/bundle-uri — t5732-protocol-v2-bundle-uri-http not yet ported' '
+test_expect_failure 'HTTP transport/bundle-uri — t5732-protocol-v2-bundle-uri-http not yet ported' '
 	false
 '
 

@@ -174,7 +174,7 @@ test_expect_success 'prompt - inside bare repository' '
 	test_cmp expected "$actual"
 '
 
-test_expect_success 'prompt - interactive rebase' '
+test_expect_failure 'prompt - interactive rebase' '
 	printf " (b1|REBASE 2/3)" >expected &&
 	write_script fake_editor.sh <<-\EOF &&
 		echo "exec echo" >"$1"

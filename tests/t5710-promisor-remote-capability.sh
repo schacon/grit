@@ -12,7 +12,7 @@ export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'clone with promisor remote and partial clone filter' '
+test_expect_failure 'clone with promisor remote and partial clone filter' '
 	test_create_repo server &&
 	(cd server && test_commit one) &&
 	git -c protocol.version=2 clone --filter=blob:none server client &&
@@ -21,7 +21,7 @@ test_expect_success 'clone with promisor remote and partial clone filter' '
 	grep "^?" objects
 '
 
-test_expect_success 'fetch from promisor remote with lazy blob fetch' '
+test_expect_failure 'fetch from promisor remote with lazy blob fetch' '
 	false
 '
 

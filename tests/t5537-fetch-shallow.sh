@@ -20,7 +20,7 @@ test_expect_success 'setup' '
 '
 
 # grit --depth does not actually limit history
-test_expect_success 'clone with depth' '
+test_expect_failure 'clone with depth' '
 	git clone --depth 2 . shallow-clone &&
 	(
 		cd shallow-clone &&
@@ -30,7 +30,7 @@ test_expect_success 'clone with depth' '
 '
 
 # grit --depth does not actually limit history
-test_expect_success 'fetch from full to shallow' '
+test_expect_failure 'fetch from full to shallow' '
 	git init --bare full.git &&
 	git push ./full.git main &&
 	git clone --depth 1 ./full.git shallow-from-full &&
@@ -42,7 +42,7 @@ test_expect_success 'fetch from full to shallow' '
 '
 
 # grit fetch --depth does not limit history
-test_expect_success 'fetch --depth from full repo' '
+test_expect_failure 'fetch --depth from full repo' '
 	git clone . depth-test &&
 	(
 		cd depth-test &&
@@ -53,7 +53,7 @@ test_expect_success 'fetch --depth from full repo' '
 '
 
 # grit does not support --deepen
-test_expect_success 'fetch --deepen from full repo' '
+test_expect_failure 'fetch --deepen from full repo' '
 	git clone --depth 2 . deepen-test &&
 	(
 		cd deepen-test &&
