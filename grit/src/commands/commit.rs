@@ -63,8 +63,12 @@ pub struct Args {
     pub signoff: bool,
 
     /// Take the commit message from an existing commit.
-    #[arg(long = "reuse-message", value_name = "COMMIT")]
+    #[arg(short = 'C', long = "reuse-message", value_name = "COMMIT")]
     pub reuse_message: Option<String>,
+
+    /// Like -C, but open editor to modify the message.
+    #[arg(short = 'c', long = "reedit-message", value_name = "COMMIT")]
+    pub reedit_message: Option<String>,
 
     /// Override the author.
     #[arg(long = "author")]
@@ -195,7 +199,7 @@ pub fn run(args: Args) -> Result<()> {
     let now = OffsetDateTime::now_utc();
 
     // When amending, preserve original author unless explicitly overridden
-    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() && args.date.is_none() {
+    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() && args.reedit_message.is_none() && args.date.is_none() {
         if let Some(head_oid) = head.oid() {
             let obj = repo.odb.read(head_oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
@@ -702,8 +706,9 @@ struct MessageResult {
 
 /// Build the commit message from --reuse-message, -m, -F, MERGE_MSG, or editor.
 fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
-    // --reuse-message: take message (and author) from an existing commit
-    if let Some(ref rev) = args.reuse_message {
+    // --reuse-message / --reedit-message: take message (and author) from an existing commit
+    let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
+    if let Some(rev) = reuse_rev {
         let oid = resolve_revision(repo, rev)?;
         let obj = repo.odb.read(&oid)?;
         let commit = grit_lib::objects::parse_commit(&obj.data)?;
@@ -766,8 +771,9 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
 /// Resolve the author identity from args, env, and config.
 fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
-    // --reuse-message: reuse the original commit's author
-    if let Some(ref rev) = args.reuse_message {
+    // --reuse-message / --reedit-message: reuse the original commit's author
+    let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
+    if let Some(rev) = reuse_rev {
         let repo = Repository::discover(None)?;
         let oid = resolve_revision(&repo, rev)?;
         let obj = repo.odb.read(&oid)?;

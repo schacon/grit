@@ -52,6 +52,30 @@ pub struct Args {
     /// Suppress ahead/behind counts.
     #[arg(long = "no-ahead-behind")]
     pub no_ahead_behind: bool,
+
+    /// Display untracked files in columns (accepted, not fully implemented).
+    #[arg(long = "column", value_name = "STYLE", num_args = 0..=1, default_missing_value = "always")]
+    pub column: Option<String>,
+
+    /// Disable columnar output.
+    #[arg(long = "no-column")]
+    pub no_column: bool,
+
+    /// Use v2 porcelain format.
+    #[arg(long = "porcelain=v2", hide = true)]
+    pub _porcelain_v2_hidden: bool,
+
+    /// Renames detection mode.
+    #[arg(short = 'M', long = "find-renames", value_name = "N", num_args = 0..=1, default_missing_value = "true")]
+    pub find_renames: Option<String>,
+
+    /// Do not detect renames.
+    #[arg(long = "no-find-renames")]
+    pub no_find_renames: bool,
+
+    /// Suppress optional lock on the index.
+    #[arg(long = "no-optional-locks")]
+    pub no_optional_locks: bool,
 }
 
 /// Run the `status` command.
@@ -557,10 +581,18 @@ fn compute_ahead_behind(
     let remote = config.get(&remote_key).unwrap_or_else(|| "origin".to_string());
 
     let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
-    let upstream_display = format!("{remote}/{upstream_branch}");
+    let upstream_display = if remote == "." {
+        upstream_branch.to_string()
+    } else {
+        format!("{remote}/{upstream_branch}")
+    };
 
-    // Resolve upstream OID
-    let upstream_ref = format!("refs/remotes/{remote}/{upstream_branch}");
+    // Resolve upstream OID — for remote="." it's a local branch, otherwise a remote ref
+    let upstream_ref = if remote == "." {
+        format!("refs/heads/{upstream_branch}")
+    } else {
+        format!("refs/remotes/{remote}/{upstream_branch}")
+    };
     let upstream_oid = match resolve_ref_to_oid(&repo.git_dir, &upstream_ref) {
         Some(oid) => oid,
         None => return Ok(Some((upstream_display, 0, 0))), // gone

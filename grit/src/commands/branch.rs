@@ -580,6 +580,12 @@ fn parse_upstream(repo: &Repository, upstream: &str) -> Result<(String, String)>
         }
     }
 
+    // Check if upstream is a local branch — use "." as the remote.
+    let local_ref = repo.git_dir.join("refs/heads").join(upstream);
+    if local_ref.exists() {
+        return Ok((".".to_string(), upstream.to_string()));
+    }
+
     // Fallback: split on first /
     if let Some(idx) = upstream.find('/') {
         let remote = &upstream[..idx];
