@@ -556,7 +556,7 @@ test_expect_success () {
 	# Run in main shell (like upstream git) so variables persist between tests.
 	_twf_cmd=""
 	cd "$TRASH_DIRECTORY" 2>/dev/null || true
-	eval "$commands" && true
+	eval "$commands"
 	local result=$?
 	if test -n "$_twf_cmd"; then
 		eval "$_twf_cmd" || true
@@ -642,7 +642,7 @@ test_expect_failure () {
 
 	_twf_cmd=""
 	cd "$TRASH_DIRECTORY" 2>/dev/null || true
-	eval "$commands" && true
+	eval "$commands"
 	local result=$?
 	if test -n "$_twf_cmd"; then
 		eval "$_twf_cmd" || true
@@ -689,16 +689,13 @@ test_must_be_empty () {
 }
 
 test_must_fail () {
-	set +e
 	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2
 	then
 		"$@" 2>/dev/null
 	else
 		"$@"
 	fi
-	status=$?
-	set -e
-	test $status -ne 0
+	test $? -ne 0
 }
 
 test_expect_code () {
