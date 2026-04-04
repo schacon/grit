@@ -77,6 +77,22 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// How to handle whitespace errors.
+    #[arg(long = "whitespace", value_name = "ACTION", default_value = "warn")]
+    pub whitespace: String,
+
+    /// Include context and removed lines in the output.
+    #[arg(long = "include")]
+    pub include: Option<String>,
+
+    /// Exclude paths from the patch.
+    #[arg(long = "exclude")]
+    pub exclude: Option<String>,
+
+    /// Do not trust the line counts in the hunk headers.
+    #[arg(long = "inaccurate-eof")]
+    pub inaccurate_eof: bool,
+
     /// Patch file(s). Reads from stdin if none given.
     #[arg(value_name = "PATCH")]
     pub patches: Vec<PathBuf>,
