@@ -343,6 +343,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
                 }
+                "--check" => { /* accepted for compatibility */ }
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;

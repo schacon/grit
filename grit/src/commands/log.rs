@@ -45,6 +45,10 @@ pub struct Args {
     #[arg(long = "first-parent")]
     pub first_parent: bool,
 
+    /// Show root commits with diffs against an empty tree.
+    #[arg(long = "root")]
+    pub root: bool,
+
     /// Show a graph of the commit history.
     #[arg(long = "graph")]
     pub graph: bool,
@@ -152,6 +156,42 @@ pub struct Args {
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
+
+    /// Show stat with patch.
+    #[arg(long = "patch-with-stat")]
+    pub patch_with_stat: bool,
+
+    /// Disable rename detection.
+    #[arg(long = "no-renames")]
+    pub no_renames: bool,
+
+    /// Detect renames.
+    #[arg(short = 'M', long = "find-renames", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub find_renames: Option<String>,
+
+    /// Detect copies.
+    #[arg(short = 'C', long = "find-copies", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub find_copies: Option<String>,
+
+    /// Control merge commit diff display.
+    #[arg(long = "diff-merges", default_missing_value = "on")]
+    pub diff_merges: Option<String>,
+
+    /// Suppress diff output for merge commits.
+    #[arg(long = "no-diff-merges")]
+    pub no_diff_merges: bool,
+
+    /// Abbreviate commit hashes in output.
+    #[arg(long = "abbrev-commit")]
+    pub abbrev_commit: bool,
+
+    /// Color output.
+    #[arg(long = "color", default_missing_value = "always", num_args = 0..=1, require_equals = true)]
+    pub color: Option<String>,
+
+    /// Disable color.
+    #[arg(long = "no-color")]
+    pub no_color: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]

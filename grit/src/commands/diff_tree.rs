@@ -242,7 +242,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 // Silently accept common diff options that we do not implement.
                 "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c"
-                | "--cc" => {}
+                | "--cc" | "--check" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
