@@ -501,10 +501,16 @@ fn print_list_cmds(categories: &str) {
         match cat {
             "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
             "list-complete" => result.extend_from_slice(&complete),
-            "list-all" | "builtins" => {
+            "list-all" | "builtins" | "main" => {
                 result.extend_from_slice(&mainporcelain);
                 result.extend_from_slice(&complete);
                 result.extend_from_slice(&plumbing);
+            }
+            "others" | "alias" | "nohelpers" => {
+                // others = non-builtin commands (we don't have these)
+                // alias = git aliases (handled by config, could list them)
+                // nohelpers = filter out helper programs
+                // For now, these are no-ops
             }
             "config" => {
                 // Check completion.commands config for additions/removals

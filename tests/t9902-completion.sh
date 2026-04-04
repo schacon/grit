@@ -3142,7 +3142,7 @@ test_expect_success 'options with value' '
 	EOF
 '
 
-test_expect_failure 'sourcing the completion script clears cached commands' '
+test_expect_success 'sourcing the completion script clears cached commands' '
 	(
 		__git_compute_all_commands &&
 		test -n "$__git_all_commands" &&
