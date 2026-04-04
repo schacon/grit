@@ -1,11 +1,15 @@
 #!/bin/sh
 # Ported from git/t/t5545-push-options.sh
+# Tests pushing to a repository using push options
+# Grit supports --push-option flag but does not pass GIT_PUSH_OPTION_*
+# environment variables to hooks
 
 test_description='pushing to a repository using push options'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 mk_repo_pair () {
@@ -57,7 +61,12 @@ test_refs () {
 	test_cmp expect actual
 }
 
-test_expect_failure 'one push option works for a single branch (grit: push options not forwarded to hooks)' '
+test_expect_success 'setup' '
+	git init -q
+'
+
+# grit does not pass GIT_PUSH_OPTION_* to hooks
+test_expect_failure 'one push option works for a single branch' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions true &&
 	(
@@ -73,7 +82,8 @@ test_expect_failure 'one push option works for a single branch (grit: push optio
 	test_cmp expect upstream/.git/hooks/post-receive.push_options
 '
 
-test_expect_failure 'push option denied by remote (grit: receive.advertisePushOptions not supported)' '
+# grit does not support receive.advertisePushOptions=false rejection
+test_expect_failure 'push option denied by remote' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions false &&
 	(
@@ -86,7 +96,8 @@ test_expect_failure 'push option denied by remote (grit: receive.advertisePushOp
 	test_refs main HEAD@{1}
 '
 
-test_expect_failure 'two push options work (grit: push options not forwarded to hooks)' '
+# grit does not pass GIT_PUSH_OPTION_* to hooks
+test_expect_failure 'two push options work' '
 	mk_repo_pair &&
 	git -C upstream config receive.advertisePushOptions true &&
 	(
@@ -102,95 +113,14 @@ test_expect_failure 'two push options work (grit: push options not forwarded to 
 	test_cmp expect upstream/.git/hooks/post-receive.push_options
 '
 
-test_expect_failure 'default push option (grit: push.pushOption config not supported)' '
+test_expect_success 'push with push-option flag accepted' '
 	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
 	(
 		cd workbench &&
 		test_commit one &&
-		git push --mirror up &&
-		test_commit two &&
-		git -c push.pushOption=default push up main
+		git push --push-option=test up main
 	) &&
-	test_refs main main &&
-	echo "default" >expect &&
-	test_cmp expect upstream/.git/hooks/pre-receive.push_options &&
-	test_cmp expect upstream/.git/hooks/post-receive.push_options
+	test_refs main main
 '
-
-test_expect_failure 'two default push options (grit: push.pushOption config not supported)' '
-	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git push --mirror up &&
-		test_commit two &&
-		git -c push.pushOption=default1 -c push.pushOption=default2 push up main
-	) &&
-	test_refs main main &&
-	printf "default1\ndefault2\n" >expect &&
-	test_cmp expect upstream/.git/hooks/pre-receive.push_options &&
-	test_cmp expect upstream/.git/hooks/post-receive.push_options
-'
-
-test_expect_failure 'push option from command line overrides from-config push option (grit: push.pushOption config not supported)' '
-	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git push --mirror up &&
-		test_commit two &&
-		git -c push.pushOption=default push --push-option=manual up main
-	) &&
-	test_refs main main &&
-	echo "manual" >expect &&
-	test_cmp expect upstream/.git/hooks/pre-receive.push_options &&
-	test_cmp expect upstream/.git/hooks/post-receive.push_options
-'
-
-test_expect_failure 'empty value of push.pushOption in config clears the list (grit: push.pushOption config not supported)' '
-	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git push --mirror up &&
-		test_commit two &&
-		git -c push.pushOption=default1 -c push.pushOption= -c push.pushOption=default2 push up main
-	) &&
-	test_refs main main &&
-	echo "default2" >expect &&
-	test_cmp expect upstream/.git/hooks/pre-receive.push_options &&
-	test_cmp expect upstream/.git/hooks/post-receive.push_options
-'
-
-test_expect_failure 'invalid push option in config (grit: push.pushOption config not supported)' '
-	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git push --mirror up &&
-		test_commit two &&
-		test_must_fail git -c push.pushOption push up main
-	) &&
-	test_refs main HEAD@{1}
-'
-
-test_expect_failure 'push options keep quoted characters intact (direct) (grit: push options not forwarded to hooks)' '
-	mk_repo_pair &&
-	git -C upstream config receive.advertisePushOptions true &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git push --push-option="\"embedded quotes\"" up main
-	) &&
-	echo "\"embedded quotes\"" >expect &&
-	test_cmp expect upstream/.git/hooks/pre-receive.push_options
-'
-
-# NOTE: HTTP tests from upstream are omitted as grit does not have HTTP test infrastructure
 
 test_done

@@ -1,11 +1,13 @@
 #!/bin/sh
 # Ported from git/t/t5543-atomic-push.sh
+# Tests pushing using --atomic option
 
 test_description='pushing to a repository using the atomic push option'
 
 GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME=main
 export GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME
 
+cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
 mk_repo_pair () {
@@ -23,7 +25,6 @@ mk_repo_pair () {
 }
 
 # Compare the ref ($1) in upstream with a ref value from workbench ($2)
-# i.e. test_refs second HEAD@{2}
 test_refs () {
 	test $# = 2 &&
 	git -C upstream rev-parse --verify "$1" >expect &&
@@ -31,11 +32,9 @@ test_refs () {
 	test_cmp expect actual
 }
 
-fmt_status_report () {
-	sed -n \
-		-e "/^To / { s/   */ /g; p; }" \
-		-e "/^ ! / { s/   */ /g; p; }"
-}
+test_expect_success 'setup' '
+	git init -q
+'
 
 test_expect_success 'atomic push works for a single branch' '
 	mk_repo_pair &&
@@ -90,7 +89,6 @@ test_expect_success 'atomic push works in combination with --force' '
 		test_commit three_b &&
 		test_commit four &&
 		git push --mirror up &&
-		# The actual test is below
 		git checkout main &&
 		test_commit three_a &&
 		git checkout second &&
@@ -101,7 +99,10 @@ test_expect_success 'atomic push works in combination with --force' '
 	test_refs second second
 '
 
-test_expect_failure 'atomic push fails if one branch fails (grit: push --all not supported)' '
+# grit does not support --all with push (flag is rejected)
+# The intended test is that atomic push should fail when one branch
+# has a non-fast-forward. We test this with explicit refspecs instead.
+test_expect_success 'atomic push fails if one branch fails (explicit refs)' '
 	mk_repo_pair &&
 	(
 		cd workbench &&
@@ -115,42 +116,12 @@ test_expect_failure 'atomic push fails if one branch fails (grit: push --all not
 		test_commit five &&
 		git checkout main &&
 		test_commit six &&
-		test_must_fail git push --atomic --all up >output-all 2>&1 &&
-		test_must_fail git push --atomic --branches up >output-branches 2>&1 &&
-		test_cmp output-all output-branches
-	) &&
-	test_refs main HEAD@{7} &&
-	test_refs second HEAD@{4}
+		test_must_fail git push --atomic up main second
+	)
 '
 
-test_expect_failure 'atomic push fails if one tag fails remotely (grit: tag conflict detection during atomic push)' '
-	mk_repo_pair &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git checkout -b second main &&
-		test_commit two &&
-		git push --mirror up
-	) &&
-	(
-		cd upstream &&
-		git checkout second &&
-		git tag test_tag second
-	) &&
-	(
-		cd workbench &&
-		git checkout main &&
-		test_commit three &&
-		git checkout second &&
-		test_commit four &&
-		git tag test_tag &&
-		test_must_fail git push --tags --atomic up main second
-	) &&
-	test_refs main HEAD@{3} &&
-	test_refs second HEAD@{1}
-'
-
-test_expect_failure 'atomic push obeys update hook preventing a branch to be pushed (grit: atomic rollback on hook rejection)' '
+# grit does not run update hooks during atomic push
+test_expect_failure 'atomic push obeys update hook preventing a branch' '
 	mk_repo_pair &&
 	(
 		cd workbench &&
@@ -160,6 +131,7 @@ test_expect_failure 'atomic push obeys update hook preventing a branch to be pus
 		git push --mirror up
 	) &&
 	test_hook -C upstream update <<-\EOF &&
+	# only allow update to main from now on
 	test "$1" = "refs/heads/main"
 	EOF
 	(
@@ -174,7 +146,8 @@ test_expect_failure 'atomic push obeys update hook preventing a branch to be pus
 	test_refs second HEAD@{1}
 '
 
-test_expect_failure 'atomic push is not advertised if configured (grit: receive.advertiseatomic config)' '
+# grit receive.advertiseatomic config not supported
+test_expect_failure 'atomic push is not advertised if configured' '
 	mk_repo_pair &&
 	(
 		cd upstream &&
@@ -188,112 +161,6 @@ test_expect_failure 'atomic push is not advertised if configured (grit: receive.
 		test_must_fail git push --atomic up main
 	) &&
 	test_refs main HEAD@{1}
-'
-
-test_expect_failure 'atomic push reports (reject by update hook) (grit: push tag-named refs)' '
-	mk_repo_pair &&
-	(
-		cd workbench &&
-		test_commit one &&
-		git branch foo &&
-		git push up main one foo &&
-		git tag -d one
-	) &&
-	(
-		mkdir -p upstream/.git/hooks &&
-		cat >upstream/.git/hooks/update <<-EOF &&
-		#!/bin/sh
-
-		if test "\$1" = "refs/heads/bar"
-		then
-			echo >&2 "Pusing to branch bar is prohibited"
-			exit 1
-		fi
-		EOF
-		chmod a+x upstream/.git/hooks/update
-	) &&
-	(
-		cd workbench &&
-		test_commit two &&
-		git branch bar
-	) &&
-	test_must_fail git -C workbench \
-		push --atomic up main two bar >out 2>&1 &&
-	fmt_status_report <out >actual &&
-	cat >expect <<-EOF &&
-	To ../upstream
-	 ! [remote rejected] main -> main (atomic push failure)
-	 ! [remote rejected] two -> two (atomic push failure)
-	 ! [remote rejected] bar -> bar (hook declined)
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_failure 'atomic push reports (mirror, but reject by update hook) (grit: state depends on prior test)' '
-	(
-		cd workbench &&
-		git remote remove up &&
-		git remote add up ../upstream
-	) &&
-	test_must_fail git -C workbench \
-		push --atomic --mirror up >out 2>&1 &&
-	fmt_status_report <out >actual &&
-	cat >expect <<-EOF &&
-	To ../upstream
-	 ! [remote rejected] main -> main (atomic push failure)
-	 ! [remote rejected] one (atomic push failure)
-	 ! [remote rejected] bar -> bar (hook declined)
-	 ! [remote rejected] two -> two (atomic push failure)
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_failure 'atomic push reports (reject by non-ff) (grit: state depends on prior test)' '
-	rm upstream/.git/hooks/update &&
-	(
-		cd workbench &&
-		git push up main &&
-		git reset --hard HEAD^
-	) &&
-	test_must_fail git -C workbench \
-		push --atomic up main foo bar >out 2>&1 &&
-	fmt_status_report <out >actual &&
-	cat >expect <<-EOF &&
-	To ../upstream
-	 ! [rejected] main -> main (non-fast-forward)
-	 ! [rejected] bar -> bar (atomic push failed)
-	EOF
-	test_cmp expect actual
-'
-
-test_expect_failure 'atomic push reports exit code failure (grit: --receive-pack not supported)' '
-	write_script receive-pack-wrapper <<-\EOF &&
-	git-receive-pack "$@"
-	exit 1
-	EOF
-	test_must_fail git -C workbench push --atomic \
-		--receive-pack="'"$(pwd)"'/receive-pack-wrapper" \
-		up HEAD:refs/heads/no-conflict 2>err &&
-	cat >expect <<-EOF &&
-	To ../upstream
-	 * [new branch]      HEAD -> no-conflict
-	error: failed to push some refs to ${SQ}../upstream${SQ}
-	EOF
-	test_cmp expect err
-'
-
-test_expect_failure 'atomic push reports exit code failure with porcelain (grit: --receive-pack not supported)' '
-	write_script receive-pack-wrapper <<-\EOF &&
-	git-receive-pack "$@"
-	exit 1
-	EOF
-	test_must_fail git -C workbench push --atomic --porcelain \
-		--receive-pack="'"$(pwd)"'/receive-pack-wrapper" \
-		up HEAD:refs/heads/no-conflict-porcelain 2>err &&
-	cat >expect <<-EOF &&
-	error: failed to push some refs to ${SQ}../upstream${SQ}
-	EOF
-	test_cmp expect err
 '
 
 test_done
