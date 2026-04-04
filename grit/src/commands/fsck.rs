@@ -51,6 +51,10 @@ pub struct Args {
     /// Show progress output.
     #[arg(long = "progress")]
     pub progress: bool,
+
+    /// Optional list of objects to check (currently ignored, for compat).
+    #[arg(value_name = "OBJECT")]
+    pub objects: Vec<String>,
 }
 
 /// A problem found during fsck.

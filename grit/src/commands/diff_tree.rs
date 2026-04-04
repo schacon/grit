@@ -74,6 +74,10 @@ struct Options {
     abbrev: Option<usize>,
     /// Rename detection threshold (None = disabled).
     find_renames: Option<u32>,
+    /// Copy detection threshold (None = disabled).
+    find_copies: Option<u32>,
+    /// Use all source files for copy detection, not just modified ones.
+    find_copies_harder: bool,
     /// Rename limit (max number of rename source candidates).
     rename_limit: Option<usize>,
 }
@@ -95,6 +99,8 @@ impl Default for Options {
             context_lines: 3,
             abbrev: None,
             find_renames: None,
+            find_copies: None,
+            find_copies_harder: false,
             rename_limit: None,
         }
     }
@@ -155,6 +161,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     }
                 }
                 "-M" | "--find-renames" => opts.find_renames = Some(50),
+                "-C" | "--find-copies" => {
+                    opts.find_copies = Some(50);
+                    // -C implies rename detection too.
+                    if opts.find_renames.is_none() {
+                        opts.find_renames = Some(50);
+                    }
+                }
+                "--find-copies-harder" => opts.find_copies_harder = true,
                 "--no-renames" => opts.find_renames = None,
                 _ if arg.starts_with("-M") => {
                     let val = &arg[2..];
@@ -240,7 +254,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
     let entries = diff_maybe_recursive_opts(&repo.odb, Some(&oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    print_diff(out, &repo.odb, &filtered, opts)
+    print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))
 }
 
 // ── Single-commit mode ───────────────────────────────────────────────
@@ -259,7 +273,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     let entries =
                         diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
                     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-                    print_diff(out, &repo.odb, &filtered, opts)?;
+                    print_diff(out, &repo.odb, &filtered, opts, None)?;
                 }
                 // Without --root, root commits produce no output.
             } else {
@@ -272,7 +286,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     opts.show_trees,
                 )?;
                 let filtered = filter_pathspecs(entries, &opts.pathspecs);
-                print_diff(out, &repo.odb, &filtered, opts)?;
+                print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
             }
         }
         _ => bail!("'{spec}' does not name a commit"),
@@ -383,7 +397,7 @@ fn process_stdin_commit(
             let entries =
                 diff_maybe_recursive_opts(&repo.odb, None, Some(&commit.tree), opts.recursive, opts.show_trees)?;
             let filtered = filter_pathspecs(entries, &opts.pathspecs);
-            print_diff(out, &repo.odb, &filtered, opts)?;
+            print_diff(out, &repo.odb, &filtered, opts, None)?;
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
@@ -395,7 +409,7 @@ fn process_stdin_commit(
             opts.show_trees,
         )?;
         let filtered = filter_pathspecs(entries, &opts.pathspecs);
-        print_diff(out, &repo.odb, &filtered, opts)?;
+        print_diff(out, &repo.odb, &filtered, opts, None)?;
     }
 
     Ok(())
@@ -422,7 +436,7 @@ fn process_stdin_two_trees(
 
     let entries = diff_maybe_recursive_opts(&repo.odb, Some(oid1), Some(&oid2), opts.recursive, opts.show_trees)?;
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    print_diff(out, &repo.odb, &filtered, opts)
+    print_diff(out, &repo.odb, &filtered, opts, None)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -567,17 +581,128 @@ fn diff_trees_toplevel(
 
 // ── Output ───────────────────────────────────────────────────────────
 
+/// Recursively collect all blob entries from a tree, returning (oid, path, mode).
+fn collect_tree_blobs_recursive(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+) -> Result<Vec<(ObjectId, String, String)>> {
+    let obj = odb.read(tree_oid)?;
+    let tree = parse_tree(&obj.data)?;
+    let mut result = Vec::new();
+    for entry in tree {
+        let name = String::from_utf8_lossy(&entry.name).into_owned();
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+        if entry.mode == 0o040000 {
+            // Subtree — recurse.
+            if let Ok(sub) = collect_tree_blobs_recursive(odb, &entry.oid, &path) {
+                result.extend(sub);
+            }
+        } else {
+            result.push((entry.oid, path, format!("{:06o}", entry.mode)));
+        }
+    }
+    Ok(result)
+}
+
+/// Detect copies among added entries by checking if their blob matches
+/// any existing (unchanged or modified) entry in the old tree.
+///
+/// `old_tree_entries` provides all blobs from the old tree for
+/// `--find-copies-harder`.  When `harder` is false, only entries in
+/// the diff itself are considered as sources.
+fn detect_copies(
+    _odb: &grit_lib::odb::Odb,
+    entries: Vec<DiffEntry>,
+    threshold: u32,
+    harder: bool,
+    old_tree_entries: &[(ObjectId, String, String)], // (oid, path, mode)
+) -> Vec<DiffEntry> {
+    use std::collections::HashMap;
+
+    // Build source map: blob OID → (path, mode).
+    let mut sources: HashMap<ObjectId, (String, String)> = HashMap::new();
+
+    if harder {
+        // Use all old-tree blobs as potential copy sources.
+        for (oid, path, mode) in old_tree_entries {
+            sources.entry(*oid).or_insert_with(|| (path.clone(), mode.clone()));
+        }
+    }
+
+    // Also add modified entries from the diff as sources.
+    for entry in &entries {
+        match entry.status {
+            DiffStatus::Added | DiffStatus::Deleted => {}
+            _ => {
+                if entry.old_oid.as_bytes() != &[0u8; 20] {
+                    if let Some(ref p) = entry.old_path {
+                        sources.entry(entry.old_oid).or_insert_with(|| {
+                            (p.clone(), entry.old_mode.clone())
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if entry.status == DiffStatus::Added {
+            if let Some((src_path, src_mode)) = sources.get(&entry.new_oid) {
+                // Exact OID match → 100% copy.
+                if 100 >= threshold {
+                    result.push(DiffEntry {
+                        old_path: Some(src_path.clone()),
+                        new_path: entry.new_path,
+                        old_oid: entry.new_oid,
+                        new_oid: entry.new_oid,
+                        old_mode: src_mode.clone(),
+                        new_mode: entry.new_mode,
+                        status: DiffStatus::Copied,
+                        score: Some(100),
+                    });
+                    continue;
+                }
+            }
+        }
+        result.push(entry);
+    }
+    result
+}
+
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
     odb: &Odb,
     entries: &[DiffEntry],
     opts: &Options,
+    old_tree_oid: Option<&ObjectId>,
 ) -> Result<()> {
     // Apply rename detection if requested.
     let owned_entries;
+    let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
+        if let Some(tree_oid) = old_tree_oid {
+            collect_tree_blobs_recursive(odb, tree_oid, "").unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     let entries = if let Some(threshold) = opts.find_renames {
-        owned_entries = detect_renames(odb, entries.to_vec(), threshold);
+        let mut result = detect_renames(odb, entries.to_vec(), threshold);
+        if let Some(copy_threshold) = opts.find_copies {
+            result = detect_copies(odb, result, copy_threshold, opts.find_copies_harder, &old_blobs);
+        }
+        owned_entries = result;
+        &owned_entries[..]
+    } else if let Some(copy_threshold) = opts.find_copies {
+        owned_entries = detect_copies(odb, entries.to_vec(), copy_threshold, opts.find_copies_harder, &old_blobs);
         &owned_entries[..]
     } else {
         entries
