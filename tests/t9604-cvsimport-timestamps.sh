@@ -1,15 +1,21 @@
 #!/bin/sh
-# Ported from git/t/t9604-cvsimport-timestamps.sh
-# git cvsimport timestamps
+#
+# Upstream: t9604-cvsimport-timestamps.sh
+# Requires CVS — ported as test_expect_failure stubs.
+#
 
 test_description='git cvsimport timestamps'
 
 cd "$(dirname "$0")" || exit 1
 . ./test-lib.sh
 
-test_expect_success 'setup: init repo' 'git init -q'
+# --- CVS not available in grit ---
 
-test_expect_failure 'cvsimport (requires CVS) — not yet ported' '
+test_expect_failure 'check timestamps are UTC' '
+	false
+'
+
+test_expect_failure 'check timestamps with author-specific timezones' '
 	false
 '
 
