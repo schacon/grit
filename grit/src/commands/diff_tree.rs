@@ -294,8 +294,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut out = stdout.lock();
 
     let has_diff = if opts.stdin_mode {
-        run_stdin_mode(&repo, &opts, &mut out)?;
-        false // stdin mode doesn't use exit code
+        run_stdin_mode(&repo, &opts, &mut out)?
     } else if opts.objects.len() == 2 {
         run_two_trees(&repo, &opts, &mut out)?
     } else if opts.objects.len() == 1 {
@@ -374,17 +373,20 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
 
 // ── --stdin mode ─────────────────────────────────────────────────────
 
-fn run_stdin_mode(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<()> {
+fn run_stdin_mode(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let stdin = io::stdin();
+    let mut has_diff = false;
     for line in stdin.lock().lines() {
         let line = line.context("reading stdin")?;
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
             continue;
         }
-        process_stdin_line(repo, opts, out, trimmed)?;
+        if process_stdin_line(repo, opts, out, trimmed)? {
+            has_diff = true;
+        }
     }
-    Ok(())
+    Ok(has_diff)
 }
 
 /// Process one line from stdin.
@@ -393,7 +395,7 @@ fn process_stdin_line(
     opts: &Options,
     out: &mut impl Write,
     line: &str,
-) -> Result<()> {
+) -> Result<bool> {
     // Split on the first space to get the leading OID and optional remainder.
     let (oid_str, rest) = line
         .split_once(' ')
@@ -405,7 +407,7 @@ fn process_stdin_line(
         Err(_) => {
             // Not a valid OID: pass through.
             writeln!(out, "{line}")?;
-            return Ok(());
+            return Ok(false);
         }
     };
 
@@ -413,7 +415,7 @@ fn process_stdin_line(
         Ok(o) => o,
         Err(_) => {
             writeln!(out, "{line}")?;
-            return Ok(());
+            return Ok(false);
         }
     };
 
@@ -422,7 +424,7 @@ fn process_stdin_line(
         ObjectKind::Tree => process_stdin_two_trees(repo, opts, out, &oid, rest),
         _ => {
             writeln!(out, "{line}")?;
-            Ok(())
+            Ok(false)
         }
     }
 }
@@ -435,7 +437,7 @@ fn process_stdin_commit(
     oid: &ObjectId,
     data: &[u8],
     rest: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let commit = parse_commit(data).context("parsing commit")?;
 
     // Print commit-id header (unless suppressed).
@@ -453,12 +455,12 @@ fn process_stdin_commit(
     }
 
     if opts.suppress_diff {
-        return Ok(());
+        return Ok(false);
     }
 
     // Skip merge commits unless -m.
     if commit.parents.len() > 1 && !opts.show_merges {
-        return Ok(());
+        return Ok(false);
     }
 
     // Override parents if the line contains extra OIDs.
@@ -469,12 +471,16 @@ fn process_stdin_commit(
         extra_parents
     };
 
-    if parent_oids.is_empty() {
+    let has_diff = if parent_oids.is_empty() {
         if opts.root {
             let entries =
                 diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_entries(entries, opts);
+            let hd = !filtered.is_empty();
             print_diff(out, &repo.odb, &filtered, opts, None)?;
+            hd
+        } else {
+            false
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
@@ -485,10 +491,12 @@ fn process_stdin_commit(
             opts,
         )?;
         let filtered = filter_entries(entries, opts);
+        let hd = !filtered.is_empty();
         print_diff(out, &repo.odb, &filtered, opts, None)?;
-    }
+        hd
+    };
 
-    Ok(())
+    Ok(has_diff)
 }
 
 /// Handle a two-tree line from stdin: `<tree1> <tree2>`.
@@ -498,7 +506,7 @@ fn process_stdin_two_trees(
     out: &mut impl Write,
     oid1: &ObjectId,
     rest: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let oid2_str = rest.trim();
     if oid2_str.is_empty() {
         bail!("stdin two-tree format requires a second OID after the first");
@@ -824,7 +832,7 @@ fn print_diff(
     entries: &[DiffEntry],
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
-) -> Result<()> {
+) -> Result<bool> {
     // Apply rename detection if requested.
     let owned_entries;
     let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
@@ -893,7 +901,7 @@ fn print_diff(
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Write a unified-diff block for one entry.
@@ -902,7 +910,7 @@ fn write_patch_entry(
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -1010,11 +1018,11 @@ fn write_patch_entry(
     );
     write!(out, "{patch}")?;
 
-    Ok(())
+    Ok(false)
 }
 
 /// Write a `--stat` summary.
-fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<()> {
+fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<bool> {
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
@@ -1043,7 +1051,7 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
         if total_del == 1 { "-" } else { "s(-)" },
     )?;
 
-    Ok(())
+    Ok(false)
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────
@@ -1073,7 +1081,7 @@ fn write_commit_header(
     oid: &ObjectId,
     commit_data: &[u8],
     opts: &Options,
-) -> Result<()> {
+) -> Result<bool> {
     if opts.pretty {
         let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
         writeln!(out, "commit {oid}")?;
@@ -1099,7 +1107,7 @@ fn write_commit_header(
     } else if !opts.no_commit_id {
         writeln!(out, "{oid}")?;
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Format a Unix timestamp + tz offset into git's default date format.
