@@ -380,3 +380,150 @@ fn compute_conflict_hash(content: &str) -> Option<String> {
 fn has_conflict_markers(content: &str) -> bool {
     content.lines().any(|l| l.starts_with("<<<<<<<"))
 }
+
+/// Public entry point for other commands (am, merge, rebase) to invoke
+/// rerere record/replay after a conflict.
+///
+/// Returns `Ok(true)` if rerere replayed a recorded resolution.
+#[allow(dead_code)]
+pub fn auto_rerere(repo: &Repository) -> Result<bool> {
+    if !is_rerere_enabled(repo) {
+        return Ok(false);
+    }
+    let rerere_dir = repo.git_dir.join("rr-cache");
+    let work_tree = match repo.work_tree.as_ref() {
+        Some(wt) => wt,
+        None => return Ok(false),
+    };
+    let conflicts = find_conflict_files(repo)?;
+    if conflicts.is_empty() {
+        return Ok(false);
+    }
+
+    fs::create_dir_all(&rerere_dir)?;
+    let mut replayed = false;
+
+    for path in &conflicts {
+        let file_path = work_tree.join(path);
+        if !file_path.exists() {
+            continue;
+        }
+        let content = fs::read_to_string(&file_path)?;
+        if let Some(conflict_id) = compute_conflict_hash(&content) {
+            let cache_dir = rerere_dir.join(&conflict_id);
+            let postimage = cache_dir.join("postimage");
+            if postimage.exists() {
+                let resolved = fs::read_to_string(&postimage)?;
+                fs::write(&file_path, &resolved)?;
+                eprintln!("Resolved '{}' using previous resolution.", path);
+                replayed = true;
+            } else {
+                fs::create_dir_all(&cache_dir)?;
+                fs::write(cache_dir.join("preimage"), &content)?;
+                // Store the path so we can find it later for postimage recording
+                fs::write(cache_dir.join("thisimage"), path.as_bytes())?;
+                eprintln!("Recorded preimage for '{}'", path);
+            }
+        }
+    }
+    Ok(replayed)
+}
+
+/// Public entry point to record a postimage (after a conflict is resolved
+/// by the user and `am --continue` / `merge --continue` is called).
+pub fn record_postimage(repo: &Repository) -> Result<()> {
+    if !is_rerere_enabled(repo) {
+        return Ok(());
+    }
+    let rerere_dir = repo.git_dir.join("rr-cache");
+    if !rerere_dir.is_dir() {
+        return Ok(());
+    }
+    let work_tree = match repo.work_tree.as_ref() {
+        Some(wt) => wt,
+        None => return Ok(()),
+    };
+
+    // Walk the rr-cache looking for dirs that have a preimage but no postimage.
+    for entry in fs::read_dir(&rerere_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let pre = entry.path().join("preimage");
+        let post = entry.path().join("postimage");
+        if pre.exists() && !post.exists() {
+            let thisimage_path = entry.path().join("thisimage");
+            if let Ok(path_str) = fs::read_to_string(&thisimage_path) {
+                let file_path = work_tree.join(path_str.trim());
+                if file_path.exists() {
+                    let content = fs::read_to_string(&file_path)?;
+                    if !has_conflict_markers(&content) {
+                        fs::write(&post, &content)?;
+                        eprintln!("Recorded resolution for '{}'.", path_str.trim());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Worktree-based rerere for commands that don't set up index conflict
+/// stages (e.g. `am`).  Scans tracked files for conflict markers instead
+/// of relying on index stage entries.
+///
+/// Returns `Ok(true)` if a recorded resolution was replayed.
+pub fn auto_rerere_worktree(repo: &Repository) -> Result<bool> {
+    if !is_rerere_enabled(repo) {
+        return Ok(false);
+    }
+    let rerere_dir = repo.git_dir.join("rr-cache");
+    let work_tree = match repo.work_tree.as_ref() {
+        Some(wt) => wt,
+        None => return Ok(false),
+    };
+
+    // Scan worktree for files with conflict markers
+    let index_path = repo.git_dir.join("index");
+    let index = if index_path.exists() {
+        grit_lib::index::Index::load(&index_path)?
+    } else {
+        return Ok(false);
+    };
+
+    fs::create_dir_all(&rerere_dir)?;
+    let mut replayed = false;
+
+    for entry in &index.entries {
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        let file_path = work_tree.join(&path);
+        if !file_path.exists() {
+            continue;
+        }
+        let content = match fs::read_to_string(&file_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if !has_conflict_markers(&content) {
+            continue;
+        }
+
+        if let Some(conflict_id) = compute_conflict_hash(&content) {
+            let cache_dir = rerere_dir.join(&conflict_id);
+            let postimage = cache_dir.join("postimage");
+            if postimage.exists() {
+                let resolved = fs::read_to_string(&postimage)?;
+                fs::write(&file_path, &resolved)?;
+                eprintln!("Resolved '{}' using previous resolution.", path);
+                replayed = true;
+            } else {
+                fs::create_dir_all(&cache_dir)?;
+                fs::write(cache_dir.join("preimage"), &content)?;
+                fs::write(cache_dir.join("thisimage"), path.as_bytes())?;
+                eprintln!("Recorded preimage for '{}'", path);
+            }
+        }
+    }
+    Ok(replayed)
+}
