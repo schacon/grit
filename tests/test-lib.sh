@@ -939,6 +939,18 @@ test_must_be_empty () {
 	fi
 }
 
+test_ref_exists () {
+	git rev-parse --verify -q "$1" >/dev/null 2>&1
+}
+
+test_ref_missing () {
+	! test_ref_exists "$1"
+}
+
+test_path_is_file_not_symlink () {
+	test -f "$1" && ! test -L "$1"
+}
+
 test_must_fail () {
 	set +e
 	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2

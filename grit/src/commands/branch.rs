@@ -111,6 +111,38 @@ pub struct Args {
     /// Custom format string (for-each-ref style atoms).
     #[arg(long = "format")]
     pub format: Option<String>,
+
+    /// Create the branch's reflog.
+    #[arg(long = "create-reflog")]
+    pub create_reflog: bool,
+
+    /// Force copy.
+    #[arg(short = 'C')]
+    pub force_copy: bool,
+
+    /// Display branches in columns.
+    #[arg(long = "column", value_name = "STYLE", num_args = 0..=1, default_missing_value = "always")]
+    pub column: Option<String>,
+
+    /// Disable columnar output.
+    #[arg(long = "no-column")]
+    pub no_column: bool,
+
+    /// Abbreviation length for object names.
+    #[arg(long = "abbrev", value_name = "N", num_args = 0..=1, default_missing_value = "7")]
+    pub abbrev: Option<String>,
+
+    /// Don't abbreviate.
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
+    /// Show branches that point at a given object.
+    #[arg(long = "points-at")]
+    pub points_at: Option<String>,
+
+    /// Editing mode.
+    #[arg(long = "edit-description")]
+    pub edit_description: bool,
 }
 
 /// Run the `branch` command.
@@ -123,7 +155,7 @@ pub fn run(args: Args) -> Result<()> {
         let mut modes = Vec::new();
         if args.delete || args.force_delete { modes.push("delete"); }
         if args.rename || args.force_rename { modes.push("rename"); }
-        if args.copy { modes.push("copy"); }
+        if args.copy || args.force_copy { modes.push("copy"); }
         if args.set_upstream_to.is_some() { modes.push("set-upstream-to"); }
         if args.unset_upstream { modes.push("unset-upstream"); }
         if args.show_current { modes.push("show-current"); }
@@ -159,7 +191,7 @@ pub fn run(args: Args) -> Result<()> {
         return rename_branch(&repo, &head, &args);
     }
 
-    if args.copy {
+    if args.copy || args.force_copy {
         return copy_branch(&repo, &head, &args);
     }
 
@@ -696,6 +728,19 @@ fn create_branch(
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+    // Create reflog if --create-reflog is specified
+    if args.create_reflog {
+        let reflog_path = repo.git_dir.join("logs").join(&refname);
+        if let Some(parent) = reflog_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let ident = get_reflog_identity();
+        let zero = "0000000000000000000000000000000000000000";
+        let entry = format!("{zero} {oid} {ident}\tbranch: Created from {}\n",
+            start_point.unwrap_or("HEAD"));
+        let _ = fs::write(&reflog_path, entry);
+    }
+
     // Set up tracking if --track was used or start_point is a remote tracking branch
     if args.track.is_some() || (!args.no_track && start_point.is_some()) {
         if let Some(sp) = start_point {
@@ -802,13 +847,20 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     } else if let Some(n) = args.name.as_deref() {
         old_name_owned = head
             .branch_name()
-            .ok_or_else(|| anyhow::anyhow!("no current branch to rename"))?
+            .ok_or_else(|| {
+                if matches!(head, HeadState::Detached { .. }) {
+                    anyhow::anyhow!("fatal: cannot rename the current branch while not on any")
+                } else {
+                    anyhow::anyhow!("no current branch to rename")
+                }
+            })?
             .to_owned();
         new_name_owned = n.to_owned();
         old_name = &old_name_owned;
         new_name = &new_name_owned;
     } else {
-        bail!("branch name required");
+        // No args at all: dump usage
+        bail!("usage: git branch (-m | -M) [<old-branch>] <new-branch>");
     };
 
     // Renaming a branch to itself is a no-op
@@ -816,22 +868,45 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         return Ok(());
     }
 
-    let old_path = repo.git_dir.join("refs/heads").join(old_name);
-    let new_path = repo.git_dir.join("refs/heads").join(new_name);
+    let old_ref = format!("refs/heads/{old_name}");
+    let new_ref = format!("refs/heads/{new_name}");
 
-    if !old_path.exists() {
-        bail!("branch '{old_name}' not found.");
-    }
-    if new_path.exists() && !args.force_rename {
-        bail!("A branch named '{new_name}' already exists.");
+    // Resolve old branch - check both loose and packed refs
+    let old_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &old_ref)
+        .map_err(|_| anyhow::anyhow!("branch '{old_name}' not found."))?;
+
+    // Check if new name already exists (unless force; -M or -m -f)
+    let force = args.force_rename || args.force;
+    if !force {
+        if grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
+            bail!("A branch named '{new_name}' already exists.");
+        }
     }
 
-    let content = fs::read_to_string(&old_path)?;
-    if let Some(parent) = new_path.parent() {
-        fs::create_dir_all(parent)?;
+    // Delete the old ref FIRST to avoid d/f conflicts
+    // (e.g., renaming m to m/m needs to remove refs/heads/m file before
+    // creating refs/heads/m/ directory, or n/n to n needs to remove refs/heads/n/
+    // directory before creating refs/heads/n file)
+    grit_lib::refs::delete_ref(&repo.git_dir, &old_ref)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Clean up empty parent directories for old ref
+    let old_path = repo.git_dir.join(&old_ref);
+    let heads_dir = repo.git_dir.join("refs/heads");
+    let mut parent = old_path.parent();
+    while let Some(p) = parent {
+        if p == heads_dir || !p.starts_with(&heads_dir) {
+            break;
+        }
+        if fs::remove_dir(p).is_err() {
+            break;
+        }
+        parent = p.parent();
     }
-    fs::write(&new_path, &content)?;
-    fs::remove_file(&old_path)?;
+
+    // Now write the new ref
+    grit_lib::refs::write_ref(&repo.git_dir, &new_ref, &old_oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Update HEAD if we renamed the current branch
     if head.branch_name() == Some(old_name) {
@@ -839,6 +914,111 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         fs::write(repo.git_dir.join("HEAD"), head_content)?;
     }
 
+    // Also update HEAD in worktrees that have the old branch checked out
+    update_worktree_heads(repo, old_name, new_name)?;
+
+    // Rename reflog: read old, remove old (with parent cleanup), write new
+    let reflog_dir = repo.git_dir.join("logs");
+    let old_log = reflog_dir.join(&old_ref);
+    let new_log = reflog_dir.join(&new_ref);
+    if old_log.is_file() {
+        let log_content = fs::read(&old_log).ok();
+        // Remove old reflog and clean up empty parent directories
+        let _ = fs::remove_file(&old_log);
+        let logs_heads_dir = reflog_dir.join("refs/heads");
+        let mut parent = old_log.parent();
+        while let Some(p) = parent {
+            if p == logs_heads_dir || !p.starts_with(&logs_heads_dir) {
+                break;
+            }
+            if fs::remove_dir(p).is_err() {
+                break;
+            }
+            parent = p.parent();
+        }
+        // Write new reflog
+        if let Some(content) = log_content {
+            if let Some(parent) = new_log.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let _ = fs::write(&new_log, content);
+        }
+    }
+
+    // Write HEAD reflog entry for branch rename
+    if head.branch_name() == Some(old_name) {
+        let head_log = reflog_dir.join("HEAD");
+        let ident = get_reflog_identity();
+        let entry = format!(
+            "{oid} {oid} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",
+            oid = old_oid
+        );
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&head_log)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(entry.as_bytes())
+            });
+    }
+
+    // Rename config sections
+    rename_branch_config(repo, old_name, new_name)?;
+
+    Ok(())
+}
+
+/// Update HEAD in linked worktrees after branch rename.
+fn update_worktree_heads(repo: &Repository, old_name: &str, new_name: &str) -> Result<()> {
+    let worktrees_dir = repo.git_dir.join("worktrees");
+    if let Ok(entries) = fs::read_dir(&worktrees_dir) {
+        for entry in entries.flatten() {
+            let head_path = entry.path().join("HEAD");
+            if let Ok(content) = fs::read_to_string(&head_path) {
+                let trimmed = content.trim();
+                let expected = format!("ref: refs/heads/{old_name}");
+                if trimmed == expected {
+                    let new_content = format!("ref: refs/heads/{new_name}\n");
+                    let _ = fs::write(&head_path, new_content);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Get reflog identity string.
+fn get_reflog_identity() -> String {
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .unwrap_or_else(|_| "Test User".to_string());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .unwrap_or_else(|_| "test@example.com".to_string());
+    let date = std::env::var("GIT_COMMITTER_DATE")
+        .unwrap_or_else(|_| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            format!("{now} +0000")
+        });
+    format!("{name} <{email}> {date}")
+}
+
+/// Rename branch config sections.
+fn rename_branch_config(repo: &Repository, old_name: &str, new_name: &str) -> Result<()> {
+    let config_path = repo.git_dir.join("config");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    let old_section = format!("[branch \"{old_name}\"]");
+    let new_section = format!("[branch \"{new_name}\"]");
+    if content.contains(&old_section) {
+        let updated = content.replace(&old_section, &new_section);
+        fs::write(&config_path, updated)?;
+    }
     Ok(())
 }
 
@@ -859,24 +1039,80 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
         src_name = &src_name_owned;
         dst_name = &dst_name_owned;
     } else {
-        bail!("branch name required");
+        bail!("usage: git branch (-c | -C) [<old-branch>] <new-branch>");
     };
 
-    let src_path = repo.git_dir.join("refs/heads").join(src_name);
-    let dst_path = repo.git_dir.join("refs/heads").join(dst_name);
+    let src_ref = format!("refs/heads/{src_name}");
+    let dst_ref = format!("refs/heads/{dst_name}");
 
-    if !src_path.exists() {
-        bail!("branch '{src_name}' not found.");
-    }
-    if dst_path.exists() {
-        bail!("A branch named '{dst_name}' already exists.");
+    let src_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &src_ref)
+        .map_err(|_| anyhow::anyhow!("branch '{src_name}' not found."))?;
+
+    // Check if dst already exists (unless force copy)
+    if !args.force_copy {
+        if grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
+            bail!("A branch named '{dst_name}' already exists.");
+        }
     }
 
-    let content = fs::read_to_string(&src_path)?;
-    if let Some(parent) = dst_path.parent() {
-        fs::create_dir_all(parent)?;
+    // Cannot copy onto itself if the result would be a d/f conflict
+    if src_name == dst_name {
+        return Ok(());
     }
-    fs::write(&dst_path, &content)?;
+
+    // Check for d/f conflict: new ref is prefix of existing refs
+    let heads_dir = repo.git_dir.join("refs/heads");
+    if heads_dir.join(dst_name).is_dir() {
+        bail!("'{dst_name}' exists; cannot create 'refs/heads/{dst_name}'");
+    }
+
+    grit_lib::refs::write_ref(&repo.git_dir, &dst_ref, &src_oid)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Copy reflog if exists
+    let reflog_dir = repo.git_dir.join("logs");
+    let src_log = reflog_dir.join(&src_ref);
+    let dst_log = reflog_dir.join(&dst_ref);
+    if src_log.exists() {
+        if let Some(parent) = dst_log.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::copy(&src_log, &dst_log);
+    }
+
+    // Copy config section
+    let config_path = repo.git_dir.join("config");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        let old_section = format!("[branch \"{src_name}\"]");
+        let new_section = format!("[branch \"{dst_name}\"]");
+        if content.contains(&old_section) {
+            // Extract the section and duplicate it
+            let mut result = content.clone();
+            let mut section_text = String::new();
+            let mut in_section = false;
+            for line in content.lines() {
+                if line.trim() == old_section.trim() {
+                    in_section = true;
+                    section_text.push_str(&new_section);
+                    section_text.push('\n');
+                    continue;
+                }
+                if in_section {
+                    if line.starts_with('[') {
+                        in_section = false;
+                    } else {
+                        section_text.push_str(line);
+                        section_text.push('\n');
+                    }
+                }
+            }
+            if !section_text.is_empty() {
+                result.push('\n');
+                result.push_str(&section_text);
+                let _ = fs::write(&config_path, result);
+            }
+        }
+    }
 
     Ok(())
 }
