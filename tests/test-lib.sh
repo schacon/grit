@@ -222,6 +222,11 @@ test_config () {
 	git config "$key" "$val"
 }
 
+test_config_global () {
+	local key="$1" val="$2"
+	git config --global "$key" "$val"
+}
+
 test_file_not_empty () {
 	if ! test -s "$1"
 	then
