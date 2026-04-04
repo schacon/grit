@@ -267,19 +267,23 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
-        // --chmod=+x or --chmod=-x: change the mode of an existing entry.
+        // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
         if let Some(ref chmod_val) = args.chmod {
-            let new_mode = match chmod_val.as_str() {
-                "+x" => 0o100755u32,
-                "-x" => 0o100644u32,
-                other => bail!("--chmod param '{}' must be either +x or -x", other),
-            };
-            if let Some(e) = index.get_mut(&rel_bytes, 0) {
-                e.mode = new_mode;
-            } else {
-                bail!("'{}' is not in the index", input_path.display());
+            if !args.add {
+                let new_mode = match chmod_val.as_str() {
+                    "+x" => 0o100755u32,
+                    "-x" => 0o100644u32,
+                    other => bail!("--chmod param '{}' must be either +x or -x", other),
+                };
+                if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                    e.mode = new_mode;
+                } else {
+                    bail!("'{}' is not in the index", input_path.display());
+                }
+                continue;
             }
-            continue;
+            // With --add --chmod, fall through to add/update the file first,
+            // then apply the chmod below.
         }
 
         // Stat the file
@@ -325,6 +329,18 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
 
         index.add_or_replace(entry);
+
+        // Apply --chmod after adding the entry.
+        if let Some(ref chmod_val) = args.chmod {
+            let new_mode = match chmod_val.as_str() {
+                "+x" => 0o100755u32,
+                "-x" => 0o100644u32,
+                other => bail!("--chmod param '{}' must be either +x or -x", other),
+            };
+            if let Some(e) = index.get_mut(&rel_bytes, 0) {
+                e.mode = new_mode;
+            }
+        }
     }
 
     if args.refresh || args.really_refresh || args.again {

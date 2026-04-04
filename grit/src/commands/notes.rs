@@ -6,6 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use std::process::Command;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{
@@ -16,7 +17,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use time::OffsetDateTime;
 
 /// Arguments for `grit notes`.
@@ -45,9 +46,17 @@ pub enum NotesSubcommand {
         #[arg(short = 'm', long = "message")]
         message: Option<String>,
 
+        /// Read note message from file ('-' for stdin).
+        #[arg(short = 'F', long = "file", value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
+
         /// Overwrite an existing note.
         #[arg(short = 'f', long = "force")]
         force: bool,
+
+        /// Allow empty note.
+        #[arg(long = "allow-empty")]
+        allow_empty: bool,
 
         /// Object to annotate (defaults to HEAD).
         #[arg()]
@@ -71,6 +80,10 @@ pub enum NotesSubcommand {
         #[arg(short = 'm', long = "message")]
         message: Option<String>,
 
+        /// Read message from file ('-' for stdin).
+        #[arg(short = 'F', long = "file", value_name = "FILE")]
+        file: Option<std::path::PathBuf>,
+
         /// Object to annotate (defaults to HEAD).
         #[arg()]
         object: Option<String>,
@@ -88,6 +101,12 @@ pub enum NotesSubcommand {
         /// Target object.
         #[arg()]
         to: String,
+    },
+    /// Edit an existing note (launches editor).
+    Edit {
+        /// Object whose note to edit (defaults to HEAD).
+        #[arg()]
+        object: Option<String>,
     },
     /// Merge notes refs (no-op placeholder).
     Merge {
@@ -115,7 +134,23 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let notes_ref = args
         .notes_ref
+        .or_else(|| std::env::var("GIT_NOTES_REF").ok())
         .unwrap_or_else(|| "refs/notes/commits".to_owned());
+
+    // Validate the notes ref — refuse refs outside refs/notes/.
+    if notes_ref.starts_with("refs/heads/") || notes_ref.starts_with("refs/remotes/") {
+        bail!("refusing to {} notes in {}", match &args.command {
+            Some(NotesSubcommand::Add { .. }) => "add",
+            Some(NotesSubcommand::Edit { .. }) => "edit",
+            Some(NotesSubcommand::Append { .. }) => "append",
+            Some(NotesSubcommand::Remove { .. }) => "remove",
+            Some(NotesSubcommand::Copy { .. }) => "copy",
+            _ => "use",
+        }, notes_ref);
+    }
+    if notes_ref == "/" {
+        bail!("refusing to use notes ref '/'");
+    }
 
     match args.command {
         None | Some(NotesSubcommand::List { object: None }) => list_all_notes(&repo, &notes_ref),
@@ -124,15 +159,20 @@ pub fn run(args: Args) -> Result<()> {
         }) => list_note_for_object(&repo, &notes_ref, &object),
         Some(NotesSubcommand::Add {
             message,
+            file,
             force,
+            allow_empty,
             object,
-        }) => add_note(&repo, &notes_ref, object.as_deref(), message, force),
+        }) => add_note(&repo, &notes_ref, object.as_deref(), message, file, force, allow_empty),
         Some(NotesSubcommand::Show { object }) => show_note(&repo, &notes_ref, object.as_deref()),
         Some(NotesSubcommand::Remove { object }) => {
             remove_note(&repo, &notes_ref, object.as_deref())
         }
-        Some(NotesSubcommand::Append { message, object }) => {
-            append_note(&repo, &notes_ref, object.as_deref(), message)
+        Some(NotesSubcommand::Append { message, file, object }) => {
+            append_note(&repo, &notes_ref, object.as_deref(), message, file)
+        }
+        Some(NotesSubcommand::Edit { object }) => {
+            edit_note(&repo, &notes_ref, object.as_deref())
         }
         Some(NotesSubcommand::Copy { force, from, to }) => {
             copy_note(&repo, &notes_ref, &from, &to, force)
@@ -216,7 +256,7 @@ fn write_notes_commit(
         author: ident.clone(),
         committer: ident,
         encoding: None,
-        message: message.to_owned(),
+        message: if message.ends_with('\n') { message.to_owned() } else { format!("{message}\n") },
     raw_message: None,
     };
 
@@ -281,31 +321,103 @@ fn list_note_for_object(repo: &Repository, notes_ref: &str, object: &str) -> Res
 }
 
 /// Add a note to an object.
+/// Resolve the editor to use for notes.
+fn resolve_editor(repo: &Repository) -> String {
+    if let Ok(e) = std::env::var("GIT_EDITOR") {
+        return e;
+    }
+    if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+        if let Some(e) = config.get("core.editor") {
+            return e;
+        }
+    }
+    if let Ok(e) = std::env::var("VISUAL") {
+        return e;
+    }
+    if let Ok(e) = std::env::var("EDITOR") {
+        return e;
+    }
+    "vi".to_owned()
+}
+
+/// Launch the editor on a temporary file and return its contents.
+fn launch_editor(repo: &Repository, initial: &str) -> Result<String> {
+    let editor = resolve_editor(repo);
+    let tmp_dir = repo.git_dir.join("tmp");
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let tmp_path = tmp_dir.join("NOTES_EDITMSG");
+    std::fs::write(&tmp_path, initial)?;
+
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{} \"$@\"", editor))
+        .arg("--")
+        .arg(tmp_path.to_string_lossy().as_ref())
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp_path);
+        bail!("editor exited with non-zero status");
+    }
+
+    let result = std::fs::read_to_string(&tmp_path)?;
+    let _ = std::fs::remove_file(&tmp_path);
+    Ok(result)
+}
+
 fn add_note(
     repo: &Repository,
     notes_ref: &str,
     object: Option<&str>,
     message: Option<String>,
+    file: Option<std::path::PathBuf>,
     force: bool,
+    allow_empty: bool,
 ) -> Result<()> {
     let oid = resolve_object(repo, object)?;
     let hex = oid.to_hex();
 
-    let msg = message.ok_or_else(|| anyhow::anyhow!("note message required (-m)"))?;
-
     let mut entries = read_notes_tree(repo, notes_ref)?;
+    let has_message_source = message.is_some() || file.is_some();
+
+    // Get existing note content (if any)
+    let existing_content = entries
+        .iter()
+        .find(|e| String::from_utf8_lossy(&e.name) == hex)
+        .and_then(|e| repo.odb.read(&e.oid).ok())
+        .map(|obj| String::from_utf8_lossy(&obj.data).to_string());
 
     // Check for existing note
-    if entries.iter().any(|e| String::from_utf8_lossy(&e.name) == hex) {
-        if !force {
-            bail!(
-                "Cannot add notes. Found existing notes for object {}. Use '-f' to overwrite existing notes",
-                hex
-            );
-        }
-        // Remove existing note (will re-add below)
-        entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    if existing_content.is_some() && has_message_source && !force {
+        bail!(
+            "Cannot add notes. Found existing notes for object {}. Use '-f' to overwrite existing notes",
+            hex
+        );
     }
+
+    let msg = if let Some(m) = message {
+        m
+    } else if let Some(f) = file {
+        if f.as_os_str() == "-" {
+            let mut buf = String::new();
+            io::stdin().read_to_string(&mut buf)?;
+            buf
+        } else {
+            std::fs::read_to_string(&f).with_context(|| format!("reading '{}'", f.display()))?
+        }
+    } else {
+        // Launch editor, pre-filling with existing note if present (morph into edit)
+        let initial = existing_content.as_deref().unwrap_or("");
+        let edited = launch_editor(repo, initial)?;
+        if edited.trim().is_empty() && !allow_empty {
+            bail!("Aborting due to empty note");
+        }
+        edited
+    };
+
+    // Remove existing note entry (will re-add below)
+    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
 
     // Write the note blob
     let note_oid = repo.odb.write(ObjectKind::Blob, msg.as_bytes())?;
@@ -322,6 +434,42 @@ fn add_note(
 
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes add'")?;
 
+    Ok(())
+}
+
+/// Edit an existing note (or create a new one) by launching the editor.
+fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result<()> {
+    let oid = resolve_object(repo, object)?;
+    let hex = oid.to_hex();
+    let mut entries = read_notes_tree(repo, notes_ref)?;
+
+    // Get existing note content if any
+    let existing = entries
+        .iter()
+        .find(|e| String::from_utf8_lossy(&e.name) == hex)
+        .and_then(|e| repo.odb.read(&e.oid).ok())
+        .map(|obj| String::from_utf8_lossy(&obj.data).to_string())
+        .unwrap_or_default();
+
+    let msg = launch_editor(repo, &existing)?;
+    if msg.trim().is_empty() {
+        // Remove the note if the editor content is empty
+        entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+        write_notes_commit(repo, notes_ref, &entries, "Notes removed by 'git notes edit'")?;
+        return Ok(());
+    }
+
+    // Remove existing and add new
+    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    let note_oid = repo.odb.write(ObjectKind::Blob, msg.as_bytes())?;
+    entries.push(TreeEntry {
+        mode: 0o100644,
+        name: hex.as_bytes().to_vec(),
+        oid: note_oid,
+    });
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes edit'")?;
     Ok(())
 }
 
@@ -382,11 +530,28 @@ fn append_note(
     notes_ref: &str,
     object: Option<&str>,
     message: Option<String>,
+    file: Option<std::path::PathBuf>,
 ) -> Result<()> {
     let oid = resolve_object(repo, object)?;
     let hex = oid.to_hex();
 
-    let msg = message.ok_or_else(|| anyhow::anyhow!("note message required (-m)"))?;
+    let msg = if let Some(m) = message {
+        m
+    } else if let Some(f) = file {
+        if f.as_os_str() == "-" {
+            let mut buf = String::new();
+            io::stdin().read_to_string(&mut buf)?;
+            buf
+        } else {
+            std::fs::read_to_string(&f).with_context(|| format!("reading '{}'", f.display()))?
+        }
+    } else {
+        let edited = launch_editor(repo, "")?;
+        if edited.trim().is_empty() {
+            bail!("Aborting due to empty note");
+        }
+        edited
+    };
 
     let mut entries = read_notes_tree(repo, notes_ref)?;
 

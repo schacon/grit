@@ -502,16 +502,12 @@ pub fn serialize_commit(c: &CommitData) -> Vec<u8> {
     out.push(b'\n');
     // Use raw_message bytes if available (for non-UTF-8 commit messages),
     // otherwise fall back to the UTF-8 message field.
+    // Callers are responsible for trailing newlines (commit-tree preserves
+    // stdin exactly; other callers use ensure_trailing_newline).
     if let Some(raw) = &c.raw_message {
         out.extend_from_slice(raw);
-        if !raw.ends_with(b"\n") {
-            out.push(b'\n');
-        }
     } else {
         out.extend_from_slice(c.message.as_bytes());
-        if !c.message.ends_with('\n') {
-            out.push(b'\n');
-        }
     }
     out
 }

@@ -148,6 +148,14 @@ test_tick () {
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
 }
 
+# Stub for git test infrastructure function (no-op unless TEST_DEBUG is set)
+test_debug () {
+	test -n "$TEST_DEBUG" && eval "$@" || true
+}
+
+# Default diff program
+DIFF="${DIFF:-diff}"
+
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
 XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
@@ -162,7 +170,10 @@ GIT_AUTHOR_NAME="A U Thor"
 GIT_AUTHOR_EMAIL="author@example.com"
 GIT_COMMITTER_NAME="C O Mitter"
 GIT_COMMITTER_EMAIL="committer@example.com"
+GIT_AUTHOR_DATE="1112354055 +0200"
+GIT_COMMITTER_DATE="1112354055 +0200"
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"

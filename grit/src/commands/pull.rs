@@ -152,6 +152,17 @@ pub fn run(args: Args) -> Result<()> {
             edit: false,
             signoff: false,
             no_signoff: false,
+            stat: false,
+            no_stat: false,
+            log: None,
+            no_log: false,
+            compact_summary: false,
+            summary: false,
+            ff: false,
+            commit: false,
+            no_squash: false,
+            quit: false,
+            autostash: false,
         };
         super::merge::run(merge_args)
     }
