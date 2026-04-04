@@ -273,8 +273,7 @@ test_decode_color () {
 		-e 's/\x1b\[[0-9;]*m//g'
 }
 
-# OID_REGEX: 40 hex-char pattern, BRE-compatible (like upstream git).
-OID_REGEX=$(echo $ZERO_OID | sed -e 's/0/[0-9a-f]/g')
+OID_REGEX='[0-9a-f]{40,}'
 export OID_REGEX
 
 # test_oid helpers — support SHA-1 only for now
@@ -553,15 +552,13 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in main shell (like upstream git) so variables persist between tests.
-	_twf_cmd=""
-	cd "$TRASH_DIRECTORY" 2>/dev/null || true
-	eval "$commands"
+	# Run in a subshell so each test starts clean
+	(
+		set -e
+		cd "$TRASH_DIRECTORY" || exit 1
+		eval "$commands"
+	)
 	local result=$?
-	if test -n "$_twf_cmd"; then
-		eval "$_twf_cmd" || true
-		_twf_cmd=""
-	fi
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -640,14 +637,12 @@ test_expect_failure () {
 		fi
 	fi
 
-	_twf_cmd=""
-	cd "$TRASH_DIRECTORY" 2>/dev/null || true
-	eval "$commands"
+	(
+		set -e
+		cd "$TRASH_DIRECTORY" || exit 1
+		eval "$commands"
+	)
 	local result=$?
-	if test -n "$_twf_cmd"; then
-		eval "$_twf_cmd" || true
-		_twf_cmd=""
-	fi
 
 	# Sync test_tick state from file back to parent shell
 	if test -f "$_TICK_FILE"
@@ -675,8 +670,11 @@ test_expect_failure () {
 }
 
 test_when_finished () {
-	# Accumulate cleanup commands; they are run after each test.
+	# Register a command to run when the current test's subshell exits.
+	# Since each test_expect_success body runs in its own subshell, an EXIT
+	# trap is the right hook.  Multiple calls accumulate.
 	_twf_cmd="${_twf_cmd:+${_twf_cmd}; }$*"
+	trap 'eval "$_twf_cmd"' EXIT
 }
 
 test_must_be_empty () {
@@ -689,13 +687,16 @@ test_must_be_empty () {
 }
 
 test_must_fail () {
+	set +e
 	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2
 	then
 		"$@" 2>/dev/null
 	else
 		"$@"
 	fi
-	test $? -ne 0
+	status=$?
+	set -e
+	test $status -ne 0
 }
 
 test_expect_code () {
