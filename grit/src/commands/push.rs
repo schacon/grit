@@ -125,11 +125,11 @@ pub fn run(args: Args) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
     let current_branch = head.branch_name().map(|s| s.to_owned());
 
-    // Determine remote name and URL.
+    // Determine remote name and URL(s).
     // If the remote argument looks like a path (contains '/' or starts with '.'),
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
-    let url: String;
+    let urls: Vec<String>;
     let _is_path_remote: bool;
 
     if let Some(ref r) = args.remote {
@@ -137,14 +137,21 @@ pub fn run(args: Args) -> Result<()> {
             // Path-based remote: use directly as URL
             _is_path_remote = true;
             remote_name_owned = r.clone();
-            url = r.clone();
+            urls = vec![r.clone()];
         } else {
             _is_path_remote = false;
             remote_name_owned = r.clone();
-            let url_key = format!("remote.{}.url", remote_name_owned);
-            url = config
-                .get(&url_key)
-                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+            // Check pushurl first (may be multi-valued), then url
+            let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
+            if !pushurls.is_empty() {
+                urls = pushurls;
+            } else {
+                let url_key = format!("remote.{}.url", remote_name_owned);
+                let u = config
+                    .get(&url_key)
+                    .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+                urls = vec![u];
+            }
         }
     } else {
         _is_path_remote = false;
@@ -155,12 +162,44 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             "origin".to_owned()
         };
-        let url_key = format!("remote.{}.url", remote_name_owned);
-        url = config
-            .get(&url_key)
-            .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+        let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
+        if !pushurls.is_empty() {
+            urls = pushurls;
+        } else {
+            let url_key = format!("remote.{}.url", remote_name_owned);
+            let u = config
+                .get(&url_key)
+                .with_context(|| format!("remote '{}' not found", remote_name_owned))?;
+            urls = vec![u];
+        }
     };
     let remote_name = remote_name_owned.as_str();
+
+    // Collect push refspecs from config if no CLI refspecs
+    let push_refspecs_from_config: Vec<String> = if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
+        config.get_all(&format!("remote.{remote_name}.push"))
+    } else {
+        Vec::new()
+    };
+
+    // Push to each URL
+    for url in &urls {
+        push_to_url(&repo, &config, &args, url, remote_name, current_branch.as_deref(), push_all, &push_refspecs_from_config)?;
+    }
+
+    Ok(())
+}
+
+fn push_to_url(
+    repo: &Repository,
+    _config: &ConfigSet,
+    args: &Args,
+    url: &str,
+    remote_name: &str,
+    current_branch: Option<&str>,
+    push_all: bool,
+    push_refspecs_from_config: &[String],
+) -> Result<()> {
 
     // Check protocol.file.allow before local push
     crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
@@ -168,7 +207,7 @@ pub fn run(args: Args) -> Result<()> {
     let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
         PathBuf::from(stripped)
     } else {
-        PathBuf::from(&url)
+        PathBuf::from(url)
     };
 
     // Open remote repo
@@ -316,10 +355,60 @@ pub fn run(args: Args) -> Result<()> {
                 expected_oid,
             });
         }
+    } else if !push_refspecs_from_config.is_empty() {
+        // Use push refspecs from remote.<name>.push config
+        for spec in push_refspecs_from_config {
+            let (force_flag, spec_clean) = if let Some(s) = spec.strip_prefix('+') {
+                (true, s)
+            } else {
+                (false, spec.as_str())
+            };
+            let (src_pat, dst_pat) = if let Some(idx) = spec_clean.find(':') {
+                (&spec_clean[..idx], &spec_clean[idx + 1..])
+            } else {
+                (spec_clean, spec_clean)
+            };
+            // Expand glob refspecs
+            if src_pat.contains('*') {
+                let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
+                for (refname, local_oid) in &local_refs {
+                    if let Some(matched) = match_glob(src_pat, refname) {
+                        let remote_ref = dst_pat.replacen('*', &matched, 1);
+                        let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+                        if old_oid.as_ref() == Some(local_oid) {
+                            continue;
+                        }
+                        updates.push(RefUpdate {
+                            local_ref: Some(refname.clone()),
+                            remote_ref,
+                            old_oid,
+                            new_oid: Some(*local_oid),
+                            expected_oid: None,
+                        });
+                    }
+                }
+            } else {
+                let local_ref = normalize_ref(src_pat);
+                let remote_ref = normalize_ref(dst_pat);
+                let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+                    .with_context(|| format!("src refspec '{}' does not match any", src_pat))?;
+                let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
+                if old_oid.as_ref() != Some(&local_oid) {
+                    updates.push(RefUpdate {
+                        local_ref: Some(local_ref),
+                        remote_ref,
+                        old_oid,
+                        new_oid: Some(local_oid),
+                        expected_oid: None,
+                    });
+                }
+            }
+            // If force prefix is set and not already forcing
+            let _ = force_flag; // handled by the refspec's +
+        }
     } else {
         // Default: push current branch
         let branch = current_branch
-            .as_deref()
             .context("not on a branch; specify a refspec to push")?;
 
         let local_ref = format!("refs/heads/{branch}");
@@ -425,7 +514,7 @@ pub fn run(args: Args) -> Result<()> {
         let result = run_hook(
             &repo,
             "pre-push",
-            &[remote_name, &url],
+            &[remote_name, url],
             Some(stdin_data.as_bytes()),
         );
         match result {
@@ -509,7 +598,7 @@ pub fn run(args: Args) -> Result<()> {
             &remote_repo,
             update,
             &args,
-            &url,
+            url,
         );
 
         match result {
@@ -571,7 +660,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Set upstream tracking if requested
     if args.set_upstream {
-        if let Some(ref branch) = current_branch {
+        if let Some(branch) = current_branch {
             let local_ref = format!("refs/heads/{branch}");
             if updates.iter().any(|u| u.local_ref.as_deref() == Some(local_ref.as_str())) {
                 set_upstream_config(&repo.git_dir, branch, remote_name)?;
@@ -699,6 +788,24 @@ fn apply_ref_update(
     }
 
     Ok(())
+}
+
+/// Match a glob pattern (e.g. "refs/heads/*") against a ref name.
+/// Returns the part matched by '*' if it matches, None otherwise.
+fn match_glob<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
+    if let Some(star_pos) = pattern.find('*') {
+        let prefix = &pattern[..star_pos];
+        let suffix = &pattern[star_pos + 1..];
+        if refname.starts_with(prefix) && refname.ends_with(suffix) && refname.len() >= prefix.len() + suffix.len() {
+            Some(&refname[prefix.len()..refname.len() - suffix.len()])
+        } else {
+            None
+        }
+    } else if pattern == refname {
+        Some(refname)
+    } else {
+        None
+    }
 }
 
 /// Parse a refspec like "src:dst" or just "name" (meaning "name:name").

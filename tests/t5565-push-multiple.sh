@@ -27,7 +27,7 @@ test_expect_success setup '
 '
 
 # grit does not yet support multi-pushurl remotes
-test_expect_failure 'push to group' '
+test_expect_success 'push to group' '
 	git push them &&
 	j= &&
 	for i in 1 2 3
