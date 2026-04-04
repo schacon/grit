@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "/home/hasi/grit/target/release/grit" "$@"

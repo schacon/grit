@@ -1605,13 +1605,13 @@ t1007-hash-object::hash-two-files-with-names-on-stdin-and-write-to-database-args
 t1008-read-tree-overlay::multi-read	t1008-read-tree-overlay	multi-read	read-tree	partial
 t1009-read-tree-new-index::non-existent-index-file	t1009-read-tree-new-index	non-existent index file	read-tree	pass
 t1009-read-tree-new-index::empty-index-file	t1009-read-tree-new-index	empty index file	read-tree	pass
-t1010-mktree::ls-tree-piped-to-mktree-1	t1010-mktree	ls-tree piped to mktree (1)	mktree	partial
-t1010-mktree::ls-tree-piped-to-mktree-2	t1010-mktree	ls-tree piped to mktree (2)	mktree	partial
-t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-1	t1010-mktree	ls-tree output in wrong order given to mktree (1)	mktree	partial
-t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-2	t1010-mktree	ls-tree output in wrong order given to mktree (2)	mktree	partial
-t1010-mktree::allow-missing-object-with-missing	t1010-mktree	allow missing object with --missing	mktree	partial
-t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-1	t1010-mktree	mktree refuses to read ls-tree -r output (1)	mktree	partial
-t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-2	t1010-mktree	mktree refuses to read ls-tree -r output (2)	mktree	partial
+t1010-mktree::ls-tree-piped-to-mktree-1	t1010-mktree	ls-tree piped to mktree (1)	mktree	pass
+t1010-mktree::ls-tree-piped-to-mktree-2	t1010-mktree	ls-tree piped to mktree (2)	mktree	pass
+t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-1	t1010-mktree	ls-tree output in wrong order given to mktree (1)	mktree	pass
+t1010-mktree::ls-tree-output-in-wrong-order-given-to-mktree-2	t1010-mktree	ls-tree output in wrong order given to mktree (2)	mktree	pass
+t1010-mktree::allow-missing-object-with-missing	t1010-mktree	allow missing object with --missing	mktree	pass
+t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-1	t1010-mktree	mktree refuses to read ls-tree -r output (1)	mktree	pass
+t1010-mktree::mktree-refuses-to-read-ls-tree-r-output-2	t1010-mktree	mktree refuses to read ls-tree -r output (2)	mktree	pass
 t1011-read-tree-sparse-checkout::setup	t1011-read-tree-sparse-checkout	setup	read-tree	partial
 t1011-read-tree-sparse-checkout::read-tree-without-git-info-sparse-checkout	t1011-read-tree-sparse-checkout	read-tree without .git/info/sparse-checkout	read-tree	partial
 t1011-read-tree-sparse-checkout::read-tree-with-git-info-sparse-checkout-but-disabled	t1011-read-tree-sparse-checkout	read-tree with .git/info/sparse-checkout but disabled	read-tree	partial
@@ -4171,12 +4171,12 @@ t3001-ls-files-others-exclude::pattern-matches-prefix-completely	t3001-ls-files-
 t3001-ls-files-others-exclude::ls-files-with-patterns	t3001-ls-files-others-exclude	ls-files with "**" patterns	ls-files	partial
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-directory	t3001-ls-files-others-exclude	ls-files with "**" patterns and --directory	ls-files	partial
 t3001-ls-files-others-exclude::ls-files-with-patterns-and-no-slashes	t3001-ls-files-others-exclude	ls-files with "**" patterns and no slashes	ls-files	partial
-t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	partial
-t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	partial
+t3002-ls-files-dashpath::setup	t3002-ls-files-dashpath	setup	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-without-path-restriction	t3002-ls-files-dashpath	git ls-files without path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction	t3002-ls-files-dashpath	git ls-files with path restriction.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with	t3002-ls-files-dashpath	git ls-files with path restriction with --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-path-restriction-with-2	t3002-ls-files-dashpath	git ls-files with path restriction with -- --.	ls-files	pass
+t3002-ls-files-dashpath::git-ls-files-with-no-path-restriction	t3002-ls-files-dashpath	git ls-files with no path restriction.	ls-files	pass
 t3003-ls-files-exclude::create-repo-with-file	t3003-ls-files-exclude	create repo with file	ls-files	partial
 t3003-ls-files-exclude::add-file-to-gitignore	t3003-ls-files-exclude	add file to gitignore	ls-files	partial
 t3003-ls-files-exclude::ls-files-i-c-lists-only-tracked-but-ignored-files	t3003-ls-files-exclude	ls-files -i -c lists only tracked-but-ignored files	ls-files	partial
@@ -10664,46 +10664,46 @@ t5540-http-push-webdav::mkcol-sends-directory-names-with-trailing-slashes	t5540-
 t5540-http-push-webdav::put-and-move-sends-object-to-urls-with-sha-1-hash-suffix	t5540-http-push-webdav	PUT and MOVE sends object to URLs with SHA-1 hash suffix	push	not_ported
 t5540-http-push-webdav::push-to-password-protected-repository-user-in-url	t5540-http-push-webdav	push to password-protected repository (user in URL)	push	not_ported
 t5540-http-push-webdav::push-to-password-protected-repository-netrc	t5540-http-push-webdav	push to password-protected repository (netrc)	push	not_ported
-t5541-http-push-smart::setup-remote-repository	t5541-http-push-smart	setup remote repository	push	pass
-t5541-http-push-smart::clone-remote-repository	t5541-http-push-smart	clone remote repository	push	pass
-t5541-http-push-smart::push-to-remote-repository-standard	t5541-http-push-smart	push to remote repository (standard)	push	pass
-t5541-http-push-smart::used-receive-pack-service	t5541-http-push-smart	used receive-pack service	push	pass
-t5541-http-push-smart::push-to-remote-repository-standard-with-sending-accept-language	t5541-http-push-smart	push to remote repository (standard) with sending Accept-Language	push	pass
-t5541-http-push-smart::push-already-up-to-date	t5541-http-push-smart	push already up-to-date	push	pass
-t5541-http-push-smart::create-and-delete-remote-branch	t5541-http-push-smart	create and delete remote branch	push	pass
-t5541-http-push-smart::setup-rejected-update-hook	t5541-http-push-smart	setup rejected update hook	push	pass
-t5541-http-push-smart::rejected-update-prints-status	t5541-http-push-smart	rejected update prints status	push	pass
-t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper	push	pass
-t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper-remote-output	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper: remote output	push	pass
-t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper-our-output	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper: our output	push	pass
-t5541-http-push-smart::push-chunked	t5541-http-push-smart	push (chunked)	push	pass
-t5541-http-push-smart::push-atomic-also-prevents-branch-creation-reports-collateral	t5541-http-push-smart	push --atomic also prevents branch creation, reports collateral	push	pass
-t5541-http-push-smart::push-atomic-fails-on-server-side-errors	t5541-http-push-smart	push --atomic fails on server-side errors	push	pass
-t5541-http-push-smart::push-all-can-push-to-empty-repo	t5541-http-push-smart	push --all can push to empty repo	push	pass
-t5541-http-push-smart::push-mirror-can-push-to-empty-repo	t5541-http-push-smart	push --mirror can push to empty repo	push	pass
-t5541-http-push-smart::push-all-to-repo-with-alternates	t5541-http-push-smart	push --all to repo with alternates	push	pass
-t5541-http-push-smart::push-mirror-to-repo-with-alternates	t5541-http-push-smart	push --mirror to repo with alternates	push	pass
-t5541-http-push-smart::push-shows-progress-when-stderr-is-a-tty	t5541-http-push-smart	push shows progress when stderr is a tty	push	pass
-t5541-http-push-smart::push-quiet-silences-status-and-progress	t5541-http-push-smart	push --quiet silences status and progress	push	pass
-t5541-http-push-smart::push-no-progress-silences-progress-but-not-status	t5541-http-push-smart	push --no-progress silences progress but not status	push	pass
-t5541-http-push-smart::push-progress-shows-progress-to-non-tty	t5541-http-push-smart	push --progress shows progress to non-tty	push	pass
-t5541-http-push-smart::http-push-gives-sane-defaults-to-reflog	t5541-http-push-smart	http push gives sane defaults to reflog	push	pass
-t5541-http-push-smart::http-push-respects-git-committer-in-reflog	t5541-http-push-smart	http push respects GIT_COMMITTER_* in reflog	push	pass
-t5541-http-push-smart::push-over-smart-http-with-auth	t5541-http-push-smart	push over smart http with auth	push	pass
-t5541-http-push-smart::push-to-auth-only-for-push-repo	t5541-http-push-smart	push to auth-only-for-push repo	push	pass
-t5541-http-push-smart::create-repo-without-http-receivepack-set	t5541-http-push-smart	create repo without http.receivepack set	push	pass
-t5541-http-push-smart::clone-via-half-auth-complete-does-not-need-password	t5541-http-push-smart	clone via half-auth-complete does not need password	push	pass
-t5541-http-push-smart::push-into-half-auth-complete-requires-password	t5541-http-push-smart	push into half-auth-complete requires password	push	pass
-t5541-http-push-smart::push-2000-tags-over-http	t5541-http-push-smart	push 2000 tags over http	push	pass
-t5541-http-push-smart::push-with-post-receive-to-inspect-certificate	t5541-http-push-smart	push with post-receive to inspect certificate	push	pass
-t5541-http-push-smart::push-status-output-scrubs-password	t5541-http-push-smart	push status output scrubs password	push	pass
-t5541-http-push-smart::clone-fetch-scrubs-password-from-reflogs	t5541-http-push-smart	clone/fetch scrubs password from reflogs	push	pass
-t5541-http-push-smart::non-ascii-branch-name-can-be-used-with-force-with-lease	t5541-http-push-smart	Non-ASCII branch name can be used with --force-with-lease	push	pass
-t5541-http-push-smart::colorize-errors-hints	t5541-http-push-smart	colorize errors/hints	push	pass
-t5541-http-push-smart::report-error-server-does-not-provide-ref-status	t5541-http-push-smart	report error server does not provide ref status	push	pass
-t5542-push-http-shallow::setup	t5542-push-http-shallow	setup	push	pass
-t5542-push-http-shallow::push-to-shallow-repo-via-http	t5542-push-http-shallow	push to shallow repo via http	push	pass
-t5542-push-http-shallow::push-from-shallow-repo-via-http	t5542-push-http-shallow	push from shallow repo via http	push	pass
+t5541-http-push-smart::setup-remote-repository	t5541-http-push-smart	setup remote repository	push	partial
+t5541-http-push-smart::clone-remote-repository	t5541-http-push-smart	clone remote repository	push	partial
+t5541-http-push-smart::push-to-remote-repository-standard	t5541-http-push-smart	push to remote repository (standard)	push	partial
+t5541-http-push-smart::used-receive-pack-service	t5541-http-push-smart	used receive-pack service	push	partial
+t5541-http-push-smart::push-to-remote-repository-standard-with-sending-accept-language	t5541-http-push-smart	push to remote repository (standard) with sending Accept-Language	push	partial
+t5541-http-push-smart::push-already-up-to-date	t5541-http-push-smart	push already up-to-date	push	partial
+t5541-http-push-smart::create-and-delete-remote-branch	t5541-http-push-smart	create and delete remote branch	push	partial
+t5541-http-push-smart::setup-rejected-update-hook	t5541-http-push-smart	setup rejected update hook	push	partial
+t5541-http-push-smart::rejected-update-prints-status	t5541-http-push-smart	rejected update prints status	push	partial
+t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper	push	partial
+t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper-remote-output	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper: remote output	push	partial
+t5541-http-push-smart::push-fails-for-non-fast-forward-refs-unmatched-by-remote-helper-our-output	t5541-http-push-smart	push fails for non-fast-forward refs unmatched by remote helper: our output	push	partial
+t5541-http-push-smart::push-chunked	t5541-http-push-smart	push (chunked)	push	partial
+t5541-http-push-smart::push-atomic-also-prevents-branch-creation-reports-collateral	t5541-http-push-smart	push --atomic also prevents branch creation, reports collateral	push	partial
+t5541-http-push-smart::push-atomic-fails-on-server-side-errors	t5541-http-push-smart	push --atomic fails on server-side errors	push	partial
+t5541-http-push-smart::push-all-can-push-to-empty-repo	t5541-http-push-smart	push --all can push to empty repo	push	partial
+t5541-http-push-smart::push-mirror-can-push-to-empty-repo	t5541-http-push-smart	push --mirror can push to empty repo	push	partial
+t5541-http-push-smart::push-all-to-repo-with-alternates	t5541-http-push-smart	push --all to repo with alternates	push	partial
+t5541-http-push-smart::push-mirror-to-repo-with-alternates	t5541-http-push-smart	push --mirror to repo with alternates	push	partial
+t5541-http-push-smart::push-shows-progress-when-stderr-is-a-tty	t5541-http-push-smart	push shows progress when stderr is a tty	push	partial
+t5541-http-push-smart::push-quiet-silences-status-and-progress	t5541-http-push-smart	push --quiet silences status and progress	push	partial
+t5541-http-push-smart::push-no-progress-silences-progress-but-not-status	t5541-http-push-smart	push --no-progress silences progress but not status	push	partial
+t5541-http-push-smart::push-progress-shows-progress-to-non-tty	t5541-http-push-smart	push --progress shows progress to non-tty	push	partial
+t5541-http-push-smart::http-push-gives-sane-defaults-to-reflog	t5541-http-push-smart	http push gives sane defaults to reflog	push	partial
+t5541-http-push-smart::http-push-respects-git-committer-in-reflog	t5541-http-push-smart	http push respects GIT_COMMITTER_* in reflog	push	partial
+t5541-http-push-smart::push-over-smart-http-with-auth	t5541-http-push-smart	push over smart http with auth	push	partial
+t5541-http-push-smart::push-to-auth-only-for-push-repo	t5541-http-push-smart	push to auth-only-for-push repo	push	partial
+t5541-http-push-smart::create-repo-without-http-receivepack-set	t5541-http-push-smart	create repo without http.receivepack set	push	partial
+t5541-http-push-smart::clone-via-half-auth-complete-does-not-need-password	t5541-http-push-smart	clone via half-auth-complete does not need password	push	partial
+t5541-http-push-smart::push-into-half-auth-complete-requires-password	t5541-http-push-smart	push into half-auth-complete requires password	push	partial
+t5541-http-push-smart::push-2000-tags-over-http	t5541-http-push-smart	push 2000 tags over http	push	partial
+t5541-http-push-smart::push-with-post-receive-to-inspect-certificate	t5541-http-push-smart	push with post-receive to inspect certificate	push	partial
+t5541-http-push-smart::push-status-output-scrubs-password	t5541-http-push-smart	push status output scrubs password	push	partial
+t5541-http-push-smart::clone-fetch-scrubs-password-from-reflogs	t5541-http-push-smart	clone/fetch scrubs password from reflogs	push	partial
+t5541-http-push-smart::non-ascii-branch-name-can-be-used-with-force-with-lease	t5541-http-push-smart	Non-ASCII branch name can be used with --force-with-lease	push	partial
+t5541-http-push-smart::colorize-errors-hints	t5541-http-push-smart	colorize errors/hints	push	partial
+t5541-http-push-smart::report-error-server-does-not-provide-ref-status	t5541-http-push-smart	report error server does not provide ref status	push	partial
+t5542-push-http-shallow::setup	t5542-push-http-shallow	setup	push	partial
+t5542-push-http-shallow::push-to-shallow-repo-via-http	t5542-push-http-shallow	push to shallow repo via http	push	partial
+t5542-push-http-shallow::push-from-shallow-repo-via-http	t5542-push-http-shallow	push from shallow repo via http	push	partial
 t5543-atomic-push::atomic-push-works-for-a-single-branch	t5543-atomic-push	atomic push works for a single branch	push	partial
 t5543-atomic-push::atomic-push-works-for-two-branches	t5543-atomic-push	atomic push works for two branches	branch	partial
 t5543-atomic-push::atomic-push-works-in-combination-with-mirror	t5543-atomic-push	atomic push works in combination with --mirror	checkout	partial
@@ -10763,9 +10763,9 @@ t5548-push-porcelain::git-push-porcelain-dry-run-protocol	t5548-push-porcelain	.
 t5548-push-porcelain::git-push-porcelain-dry-run-force-protocol	t5548-push-porcelain	.. git-push --porcelain --dry-run --force ($PROTOCOL)	push	partial
 t5548-push-porcelain::git-push-porcelain-dry-run-atomic-protocol	t5548-push-porcelain	.. git-push --porcelain --dry-run --atomic ($PROTOCOL)	push	partial
 t5548-push-porcelain::git-push-porcelain-dry-run-atomic-force-protocol	t5548-push-porcelain	.. git-push --porcelain --dry-run --atomic --force ($PROTOCOL)	push	partial
-t5549-fetch-push-http::push-without-negotiation-for-comparing-object-counts-with-the-next-test	t5549-fetch-push-http	push without negotiation (for comparing object counts with the next test)	fetch	pass
-t5549-fetch-push-http::push-with-negotiation	t5549-fetch-push-http	push with negotiation	fetch	pass
-t5549-fetch-push-http::push-with-negotiation-proceeds-anyway-even-if-negotiation-fails	t5549-fetch-push-http	push with negotiation proceeds anyway even if negotiation fails	fetch	pass
+t5549-fetch-push-http::push-without-negotiation-for-comparing-object-counts-with-the-next-test	t5549-fetch-push-http	push without negotiation (for comparing object counts with the next test)	fetch	partial
+t5549-fetch-push-http::push-with-negotiation	t5549-fetch-push-http	push with negotiation	fetch	partial
+t5549-fetch-push-http::push-with-negotiation-proceeds-anyway-even-if-negotiation-fails	t5549-fetch-push-http	push with negotiation proceeds anyway even if negotiation fails	fetch	partial
 t5550-http-fetch-dumb::setup-repository	t5550-http-fetch-dumb	setup repository	fetch	not_ported
 t5550-http-fetch-dumb::packfile-without-repository-does-not-crash	t5550-http-fetch-dumb	packfile without repository does not crash	fetch	not_ported
 t5550-http-fetch-dumb::create-http-accessible-bare-repository-with-loose-objects	t5550-http-fetch-dumb	create http-accessible bare repository with loose objects	fetch	not_ported
@@ -10823,59 +10823,59 @@ t5550-http-fetch-dumb::can-redirect-through-non-info-refs-service-git-upload-pac
 t5550-http-fetch-dumb::print-http-error-when-any-intermediate-redirect-throws-error	t5550-http-fetch-dumb	print HTTP error when any intermediate redirect throws error	fetch	not_ported
 t5550-http-fetch-dumb::fetching-via-http-alternates-works	t5550-http-fetch-dumb	fetching via http alternates works	fetch	not_ported
 t5550-http-fetch-dumb::dumb-http-can-fetch-index-v1	t5550-http-fetch-dumb	dumb http can fetch index v1	fetch	not_ported
-t5551-http-fetch-smart::setup-repository	t5551-http-fetch-smart	setup repository	fetch	pass
-t5551-http-fetch-smart::create-http-accessible-bare-repository	t5551-http-fetch-smart	create http-accessible bare repository	fetch	pass
-t5551-http-fetch-smart::clone-http-repository	t5551-http-fetch-smart	clone http repository	fetch	pass
-t5551-http-fetch-smart::fetch-changes-via-http	t5551-http-fetch-smart	fetch changes via http	fetch	pass
-t5551-http-fetch-smart::used-upload-pack-service	t5551-http-fetch-smart	used upload-pack service	fetch	pass
-t5551-http-fetch-smart::follow-redirects-301	t5551-http-fetch-smart	follow redirects (301)	fetch	pass
-t5551-http-fetch-smart::follow-redirects-302	t5551-http-fetch-smart	follow redirects (302)	fetch	pass
-t5551-http-fetch-smart::redirects-re-root-further-requests	t5551-http-fetch-smart	redirects re-root further requests	fetch	pass
-t5551-http-fetch-smart::re-rooting-dies-on-insane-schemes	t5551-http-fetch-smart	re-rooting dies on insane schemes	fetch	pass
-t5551-http-fetch-smart::clone-from-password-protected-repository	t5551-http-fetch-smart	clone from password-protected repository	fetch	pass
-t5551-http-fetch-smart::credential-interactive-false-skips-askpass	t5551-http-fetch-smart	credential.interactive=false skips askpass	fetch	pass
-t5551-http-fetch-smart::clone-from-auth-only-for-push-repository	t5551-http-fetch-smart	clone from auth-only-for-push repository	fetch	pass
-t5551-http-fetch-smart::clone-from-auth-only-for-objects-repository	t5551-http-fetch-smart	clone from auth-only-for-objects repository	fetch	pass
-t5551-http-fetch-smart::no-op-half-auth-fetch-does-not-require-a-password	t5551-http-fetch-smart	no-op half-auth fetch does not require a password	fetch	pass
-t5551-http-fetch-smart::redirects-send-auth-to-new-location	t5551-http-fetch-smart	redirects send auth to new location	fetch	pass
-t5551-http-fetch-smart::git-trace-curl-redacts-auth-details	t5551-http-fetch-smart	GIT_TRACE_CURL redacts auth details	fetch	pass
-t5551-http-fetch-smart::git-curl-verbose-redacts-auth-details	t5551-http-fetch-smart	GIT_CURL_VERBOSE redacts auth details	fetch	pass
-t5551-http-fetch-smart::git-trace-curl-does-not-redact-auth-details-if-git-trace-redact-0	t5551-http-fetch-smart	GIT_TRACE_CURL does not redact auth details if GIT_TRACE_REDACT=0	fetch	pass
-t5551-http-fetch-smart::disable-dumb-http-on-server	t5551-http-fetch-smart	disable dumb http on server	fetch	pass
-t5551-http-fetch-smart::git-smart-http-can-disable-smart-http	t5551-http-fetch-smart	GIT_SMART_HTTP can disable smart http	fetch	pass
-t5551-http-fetch-smart::invalid-content-type-rejected	t5551-http-fetch-smart	invalid Content-Type rejected	fetch	pass
-t5551-http-fetch-smart::create-namespaced-refs	t5551-http-fetch-smart	create namespaced refs	fetch	pass
-t5551-http-fetch-smart::smart-clone-respects-namespace	t5551-http-fetch-smart	smart clone respects namespace	fetch	pass
-t5551-http-fetch-smart::dumb-clone-via-http-backend-respects-namespace	t5551-http-fetch-smart	dumb clone via http-backend respects namespace	fetch	pass
-t5551-http-fetch-smart::cookies-stored-in-http-cookiefile-when-http-savecookies-set	t5551-http-fetch-smart	cookies stored in http.cookiefile when http.savecookies set	fetch	pass
-t5551-http-fetch-smart::transfer-hiderefs-works-over-smart-http	t5551-http-fetch-smart	transfer.hiderefs works over smart-http	fetch	pass
-t5551-http-fetch-smart::create-2-000-tags-in-the-repo	t5551-http-fetch-smart	create 2,000 tags in the repo	fetch	pass
-t5551-http-fetch-smart::large-fetch-pack-requests-can-be-sent-using-chunked-encoding	t5551-http-fetch-smart	large fetch-pack requests can be sent using chunked encoding	fetch	pass
-t5551-http-fetch-smart::test-allowreachablesha1inwant	t5551-http-fetch-smart	test allowreachablesha1inwant	fetch	pass
-t5551-http-fetch-smart::test-allowreachablesha1inwant-with-unreachable	t5551-http-fetch-smart	test allowreachablesha1inwant with unreachable	fetch	pass
-t5551-http-fetch-smart::test-allowanysha1inwant-with-unreachable	t5551-http-fetch-smart	test allowanysha1inwant with unreachable	fetch	pass
-t5551-http-fetch-smart::http-can-handle-enormous-ref-negotiation	t5551-http-fetch-smart	http can handle enormous ref negotiation	fetch	pass
-t5551-http-fetch-smart::custom-http-headers	t5551-http-fetch-smart	custom http headers	fetch	pass
-t5551-http-fetch-smart::using-fetch-command-in-remote-curl-updates-refs	t5551-http-fetch-smart	using fetch command in remote-curl updates refs	fetch	pass
-t5551-http-fetch-smart::fetch-by-sha-1-without-tag-following	t5551-http-fetch-smart	fetch by SHA-1 without tag following	fetch	pass
-t5551-http-fetch-smart::cookies-are-redacted-by-default	t5551-http-fetch-smart	cookies are redacted by default	fetch	pass
-t5551-http-fetch-smart::empty-values-of-cookies-are-also-redacted	t5551-http-fetch-smart	empty values of cookies are also redacted	fetch	pass
-t5551-http-fetch-smart::git-trace-redact-0-disables-cookie-redaction	t5551-http-fetch-smart	GIT_TRACE_REDACT=0 disables cookie redaction	fetch	pass
-t5551-http-fetch-smart::git-trace-curl-no-data-prevents-data-from-being-traced	t5551-http-fetch-smart	GIT_TRACE_CURL_NO_DATA prevents data from being traced	fetch	pass
-t5551-http-fetch-smart::server-side-error-detected	t5551-http-fetch-smart	server-side error detected	fetch	pass
-t5551-http-fetch-smart::http-auth-remembers-successful-credentials	t5551-http-fetch-smart	http auth remembers successful credentials	fetch	pass
-t5551-http-fetch-smart::http-auth-forgets-bogus-credentials	t5551-http-fetch-smart	http auth forgets bogus credentials	fetch	pass
-t5551-http-fetch-smart::client-falls-back-from-v2-to-v0-to-match-server	t5551-http-fetch-smart	client falls back from v2 to v0 to match server	fetch	pass
-t5551-http-fetch-smart::create-empty-http-accessible-sha-256-repository	t5551-http-fetch-smart	create empty http-accessible SHA-256 repository	fetch	pass
-t5551-http-fetch-smart::clone-empty-sha-256-repository-with-protocol-v2	t5551-http-fetch-smart	clone empty SHA-256 repository with protocol v2	fetch	pass
-t5551-http-fetch-smart::clone-empty-sha-256-repository-with-protocol-v0	t5551-http-fetch-smart	clone empty SHA-256 repository with protocol v0	fetch	pass
-t5551-http-fetch-smart::passing-hostname-resolution-information-works	t5551-http-fetch-smart	passing hostname resolution information works	fetch	pass
-t5551-http-fetch-smart::clone-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	clone warns or fails when using username:password	fetch	pass
-t5551-http-fetch-smart::clone-does-not-detect-username-password-when-it-is-https-username-domain-port	t5551-http-fetch-smart	clone does not detect username:password when it is https://username@domain:port/	fetch	pass
-t5551-http-fetch-smart::fetch-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	fetch warns or fails when using username:password	fetch	pass
-t5551-http-fetch-smart::push-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	push warns or fails when using username:password	fetch	pass
-t5551-http-fetch-smart::no-empty-path-components	t5551-http-fetch-smart	no empty path components	fetch	pass
-t5551-http-fetch-smart::tag-following-always-works-over-v0-http	t5551-http-fetch-smart	tag following always works over v0 http	fetch	pass
+t5551-http-fetch-smart::setup-repository	t5551-http-fetch-smart	setup repository	fetch	partial
+t5551-http-fetch-smart::create-http-accessible-bare-repository	t5551-http-fetch-smart	create http-accessible bare repository	fetch	partial
+t5551-http-fetch-smart::clone-http-repository	t5551-http-fetch-smart	clone http repository	fetch	partial
+t5551-http-fetch-smart::fetch-changes-via-http	t5551-http-fetch-smart	fetch changes via http	fetch	partial
+t5551-http-fetch-smart::used-upload-pack-service	t5551-http-fetch-smart	used upload-pack service	fetch	partial
+t5551-http-fetch-smart::follow-redirects-301	t5551-http-fetch-smart	follow redirects (301)	fetch	partial
+t5551-http-fetch-smart::follow-redirects-302	t5551-http-fetch-smart	follow redirects (302)	fetch	partial
+t5551-http-fetch-smart::redirects-re-root-further-requests	t5551-http-fetch-smart	redirects re-root further requests	fetch	partial
+t5551-http-fetch-smart::re-rooting-dies-on-insane-schemes	t5551-http-fetch-smart	re-rooting dies on insane schemes	fetch	partial
+t5551-http-fetch-smart::clone-from-password-protected-repository	t5551-http-fetch-smart	clone from password-protected repository	fetch	partial
+t5551-http-fetch-smart::credential-interactive-false-skips-askpass	t5551-http-fetch-smart	credential.interactive=false skips askpass	fetch	partial
+t5551-http-fetch-smart::clone-from-auth-only-for-push-repository	t5551-http-fetch-smart	clone from auth-only-for-push repository	fetch	partial
+t5551-http-fetch-smart::clone-from-auth-only-for-objects-repository	t5551-http-fetch-smart	clone from auth-only-for-objects repository	fetch	partial
+t5551-http-fetch-smart::no-op-half-auth-fetch-does-not-require-a-password	t5551-http-fetch-smart	no-op half-auth fetch does not require a password	fetch	partial
+t5551-http-fetch-smart::redirects-send-auth-to-new-location	t5551-http-fetch-smart	redirects send auth to new location	fetch	partial
+t5551-http-fetch-smart::git-trace-curl-redacts-auth-details	t5551-http-fetch-smart	GIT_TRACE_CURL redacts auth details	fetch	partial
+t5551-http-fetch-smart::git-curl-verbose-redacts-auth-details	t5551-http-fetch-smart	GIT_CURL_VERBOSE redacts auth details	fetch	partial
+t5551-http-fetch-smart::git-trace-curl-does-not-redact-auth-details-if-git-trace-redact-0	t5551-http-fetch-smart	GIT_TRACE_CURL does not redact auth details if GIT_TRACE_REDACT=0	fetch	partial
+t5551-http-fetch-smart::disable-dumb-http-on-server	t5551-http-fetch-smart	disable dumb http on server	fetch	partial
+t5551-http-fetch-smart::git-smart-http-can-disable-smart-http	t5551-http-fetch-smart	GIT_SMART_HTTP can disable smart http	fetch	partial
+t5551-http-fetch-smart::invalid-content-type-rejected	t5551-http-fetch-smart	invalid Content-Type rejected	fetch	partial
+t5551-http-fetch-smart::create-namespaced-refs	t5551-http-fetch-smart	create namespaced refs	fetch	partial
+t5551-http-fetch-smart::smart-clone-respects-namespace	t5551-http-fetch-smart	smart clone respects namespace	fetch	partial
+t5551-http-fetch-smart::dumb-clone-via-http-backend-respects-namespace	t5551-http-fetch-smart	dumb clone via http-backend respects namespace	fetch	partial
+t5551-http-fetch-smart::cookies-stored-in-http-cookiefile-when-http-savecookies-set	t5551-http-fetch-smart	cookies stored in http.cookiefile when http.savecookies set	fetch	partial
+t5551-http-fetch-smart::transfer-hiderefs-works-over-smart-http	t5551-http-fetch-smart	transfer.hiderefs works over smart-http	fetch	partial
+t5551-http-fetch-smart::create-2-000-tags-in-the-repo	t5551-http-fetch-smart	create 2,000 tags in the repo	fetch	partial
+t5551-http-fetch-smart::large-fetch-pack-requests-can-be-sent-using-chunked-encoding	t5551-http-fetch-smart	large fetch-pack requests can be sent using chunked encoding	fetch	partial
+t5551-http-fetch-smart::test-allowreachablesha1inwant	t5551-http-fetch-smart	test allowreachablesha1inwant	fetch	partial
+t5551-http-fetch-smart::test-allowreachablesha1inwant-with-unreachable	t5551-http-fetch-smart	test allowreachablesha1inwant with unreachable	fetch	partial
+t5551-http-fetch-smart::test-allowanysha1inwant-with-unreachable	t5551-http-fetch-smart	test allowanysha1inwant with unreachable	fetch	partial
+t5551-http-fetch-smart::http-can-handle-enormous-ref-negotiation	t5551-http-fetch-smart	http can handle enormous ref negotiation	fetch	partial
+t5551-http-fetch-smart::custom-http-headers	t5551-http-fetch-smart	custom http headers	fetch	partial
+t5551-http-fetch-smart::using-fetch-command-in-remote-curl-updates-refs	t5551-http-fetch-smart	using fetch command in remote-curl updates refs	fetch	partial
+t5551-http-fetch-smart::fetch-by-sha-1-without-tag-following	t5551-http-fetch-smart	fetch by SHA-1 without tag following	fetch	partial
+t5551-http-fetch-smart::cookies-are-redacted-by-default	t5551-http-fetch-smart	cookies are redacted by default	fetch	partial
+t5551-http-fetch-smart::empty-values-of-cookies-are-also-redacted	t5551-http-fetch-smart	empty values of cookies are also redacted	fetch	partial
+t5551-http-fetch-smart::git-trace-redact-0-disables-cookie-redaction	t5551-http-fetch-smart	GIT_TRACE_REDACT=0 disables cookie redaction	fetch	partial
+t5551-http-fetch-smart::git-trace-curl-no-data-prevents-data-from-being-traced	t5551-http-fetch-smart	GIT_TRACE_CURL_NO_DATA prevents data from being traced	fetch	partial
+t5551-http-fetch-smart::server-side-error-detected	t5551-http-fetch-smart	server-side error detected	fetch	partial
+t5551-http-fetch-smart::http-auth-remembers-successful-credentials	t5551-http-fetch-smart	http auth remembers successful credentials	fetch	partial
+t5551-http-fetch-smart::http-auth-forgets-bogus-credentials	t5551-http-fetch-smart	http auth forgets bogus credentials	fetch	partial
+t5551-http-fetch-smart::client-falls-back-from-v2-to-v0-to-match-server	t5551-http-fetch-smart	client falls back from v2 to v0 to match server	fetch	partial
+t5551-http-fetch-smart::create-empty-http-accessible-sha-256-repository	t5551-http-fetch-smart	create empty http-accessible SHA-256 repository	fetch	partial
+t5551-http-fetch-smart::clone-empty-sha-256-repository-with-protocol-v2	t5551-http-fetch-smart	clone empty SHA-256 repository with protocol v2	fetch	partial
+t5551-http-fetch-smart::clone-empty-sha-256-repository-with-protocol-v0	t5551-http-fetch-smart	clone empty SHA-256 repository with protocol v0	fetch	partial
+t5551-http-fetch-smart::passing-hostname-resolution-information-works	t5551-http-fetch-smart	passing hostname resolution information works	fetch	partial
+t5551-http-fetch-smart::clone-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	clone warns or fails when using username:password	fetch	partial
+t5551-http-fetch-smart::clone-does-not-detect-username-password-when-it-is-https-username-domain-port	t5551-http-fetch-smart	clone does not detect username:password when it is https://username@domain:port/	fetch	partial
+t5551-http-fetch-smart::fetch-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	fetch warns or fails when using username:password	fetch	partial
+t5551-http-fetch-smart::push-warns-or-fails-when-using-username-password	t5551-http-fetch-smart	push warns or fails when using username:password	fetch	partial
+t5551-http-fetch-smart::no-empty-path-components	t5551-http-fetch-smart	no empty path components	fetch	partial
+t5551-http-fetch-smart::tag-following-always-works-over-v0-http	t5551-http-fetch-smart	tag following always works over v0 http	fetch	partial
 t5552-skipping-fetch-negotiator::fetch-negotiationalgorithm-config	t5552-skipping-fetch-negotiator	fetch.negotiationalgorithm config	init	partial
 t5552-skipping-fetch-negotiator::commits-with-no-parents-are-sent-regardless-of-skip-distance	t5552-skipping-fetch-negotiator	commits with no parents are sent regardless of skip distance	init	partial
 t5552-skipping-fetch-negotiator::when-two-skips-collide-favor-the-larger-one	t5552-skipping-fetch-negotiator	when two skips collide, favor the larger one	checkout	partial
@@ -10914,8 +10914,8 @@ t5555-http-smart-common::git-upload-pack-advertise-refs-v1	t5555-http-smart-comm
 t5555-http-smart-common::git-receive-pack-advertise-refs-v1	t5555-http-smart-common	git receive-pack --advertise-refs: v1	fetch	not_ported
 t5555-http-smart-common::git-upload-pack-advertise-refs-v2	t5555-http-smart-common	git upload-pack --advertise-refs: v2	fetch	not_ported
 t5555-http-smart-common::git-receive-pack-advertise-refs-v2	t5555-http-smart-common	git receive-pack --advertise-refs: v2	fetch	not_ported
-t5557-http-get::get-by-url-404	t5557-http-get	get by URL: 404	fetch	pass
-t5557-http-get::get-by-url-200	t5557-http-get	get by URL: 200	fetch	pass
+t5557-http-get::get-by-url-404	t5557-http-get	get by URL: 404	fetch	partial
+t5557-http-get::get-by-url-200	t5557-http-get	get by URL: 200	fetch	partial
 t5558-clone-bundle-uri::fail-to-clone-from-non-existent-file	t5558-clone-bundle-uri	fail to clone from non-existent file	clone	not_ported
 t5558-clone-bundle-uri::fail-to-clone-from-non-bundle-file	t5558-clone-bundle-uri	fail to clone from non-bundle file	clone	not_ported
 t5558-clone-bundle-uri::create-bundle	t5558-clone-bundle-uri	create bundle	clone	not_ported
@@ -13975,8 +13975,8 @@ t7103-reset-bare::merge-reset-is-not-allowed-in-bare	t7103-reset-bare	"merge" re
 t7103-reset-bare::keep-reset-is-not-allowed-in-bare	t7103-reset-bare	"keep" reset is not allowed in bare	reset	partial
 t7103-reset-bare::mixed-reset-is-not-allowed-in-bare	t7103-reset-bare	"mixed" reset is not allowed in bare	reset	partial
 t7103-reset-bare::soft-reset-is-allowed-in-bare	t7103-reset-bare	"soft" reset is allowed in bare	reset	partial
-t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	partial
-t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	partial
+t7104-reset-hard::reset-hard-should-restore-unmerged-ones	t7104-reset-hard	reset --hard should restore unmerged ones	reset	pass
+t7104-reset-hard::reset-hard-did-not-corrupt-index-or-cache-tree	t7104-reset-hard	reset --hard did not corrupt index or cache-tree	reset	pass
 t7105-reset-patch::setup	t7105-reset-patch	setup	reset	partial
 t7105-reset-patch::saying-n-does-nothing	t7105-reset-patch	saying "n" does nothing	reset	partial
 t7105-reset-patch::git-reset-p-head	t7105-reset-patch	git reset -p HEAD^	reset	partial
