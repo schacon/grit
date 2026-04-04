@@ -6,6 +6,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
@@ -65,6 +66,42 @@ pub struct AddArgs {
     /// Create a new unborn/orphan branch in the worktree.
     #[arg(long)]
     pub orphan: bool,
+
+    /// Lock the worktree after creation.
+    #[arg(long)]
+    pub lock: bool,
+
+    /// Reason for locking.
+    #[arg(long)]
+    pub reason: Option<String>,
+
+    /// Checkout from a specific commit or branch.
+    #[arg(long)]
+    pub checkout: bool,
+
+    /// Don't checkout (bare-like).
+    #[arg(long)]
+    pub no_checkout: bool,
+
+    /// Quiet mode.
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
+
+    /// Track a remote branch.
+    #[arg(long)]
+    pub track: bool,
+
+    /// Guess remote branch.
+    #[arg(long)]
+    pub guess_remote: bool,
+
+    /// Don't guess remote branch.
+    #[arg(long)]
+    pub no_guess_remote: bool,
+
+    /// Create a new branch with -B (reset if exists).
+    #[arg(short = 'B')]
+    pub force_new_branch: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -328,11 +365,166 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let dotgit_content = format!("gitdir: {}\n", wt_admin.display());
     fs::write(wt_path.join(".git"), &dotgit_content)?;
 
+    // Lock the worktree if --lock was used
+    if args.lock {
+        let reason = args.reason.as_deref().unwrap_or("");
+        fs::write(wt_admin.join("locked"), format!("{reason}\n"))?;
+    }
+
     println!(
         "Preparing worktree (new branch '{}') at '{}'",
         branch_name,
         wt_path.display()
     );
+
+    // Populate the working tree by checking out the commit
+    if !args.no_checkout {
+        populate_worktree(&repo.odb, &common, &commit_oid, &wt_path, &wt_admin)?;
+    }
+
+    Ok(())
+}
+
+/// Populate a worktree directory with files from a commit.
+fn populate_worktree(
+    odb: &grit_lib::odb::Odb,
+    _common_dir: &Path,
+    commit_oid: &ObjectId,
+    wt_path: &Path,
+    admin_dir: &Path,
+) -> Result<()> {
+    use grit_lib::objects::parse_commit;
+    // Read the commit to get its tree
+    let obj = odb.read(commit_oid).context("reading commit")?;
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+    let tree_oid = commit.tree;
+
+    // Checkout files from the tree
+    checkout_worktree_tree(odb, &tree_oid, wt_path, "")?;
+
+    // Build and write the index for the new worktree
+    let index_path = admin_dir.join("index");
+    let mut index = Index::new();
+    add_worktree_tree_to_index(odb, &tree_oid, "", &mut index, Some(wt_path))?;
+    index.write(&index_path).context("writing worktree index")?;
+
+    Ok(())
+}
+
+/// Recursively check out tree entries to a working directory.
+fn checkout_worktree_tree(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: &ObjectId,
+    work_tree: &Path,
+    prefix: &str,
+) -> Result<()> {
+    use grit_lib::objects::parse_tree;
+
+    let obj = odb.read(tree_oid).context("reading tree")?;
+    let entries = parse_tree(&obj.data).context("parsing tree")?;
+
+    for entry in &entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let full_path = work_tree.join(&path);
+
+        let is_tree = (entry.mode & 0o170000) == 0o040000;
+        let is_gitlink = entry.mode == 0o160000;
+        if is_gitlink {
+            continue;
+        } else if is_tree {
+            fs::create_dir_all(&full_path)?;
+            checkout_worktree_tree(odb, &entry.oid, work_tree, &path)?;
+        } else {
+            if let Some(parent) = full_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let blob = odb.read(&entry.oid)
+                .with_context(|| format!("reading blob for {path}"))?;
+            fs::write(&full_path, &blob.data)?;
+
+            #[cfg(unix)]
+            if entry.mode == 0o100755 {
+                use std::os::unix::fs::PermissionsExt;
+                let perms = fs::Permissions::from_mode(0o755);
+                fs::set_permissions(&full_path, perms)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively add tree entries to an index.
+fn add_worktree_tree_to_index(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    index: &mut grit_lib::index::Index,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    use grit_lib::objects::parse_tree;
+
+    let obj = odb.read(tree_oid)?;
+    let entries = parse_tree(&obj.data)?;
+
+    for entry in &entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        let path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+
+        let is_tree = (entry.mode & 0o170000) == 0o040000;
+        let is_gitlink = entry.mode == 0o160000;
+        if is_tree {
+            add_worktree_tree_to_index(odb, &entry.oid, &path, index, work_tree)?;
+        } else if is_gitlink {
+            index.add_or_replace(IndexEntry {
+                ctime_sec: 0, ctime_nsec: 0,
+                mtime_sec: 0, mtime_nsec: 0,
+                dev: 0, ino: 0, mode: 0o160000, uid: 0, gid: 0,
+                size: 0,
+                oid: entry.oid,
+                flags: path.len().min(0xfff) as u16,
+                flags_extended: None,
+                path: path.into_bytes(),
+            });
+        } else {
+            // Stat the file from the work tree if available
+            let (mtime_sec, mtime_nsec, file_size) = if let Some(wt) = work_tree {
+                let p = wt.join(&path);
+                if let Ok(meta) = fs::metadata(&p) {
+                    use std::time::UNIX_EPOCH;
+                    let mtime = meta.modified().unwrap_or(UNIX_EPOCH);
+                    let dur = mtime.duration_since(UNIX_EPOCH).unwrap_or_default();
+                    (dur.as_secs() as u32, dur.subsec_nanos(), meta.len() as u32)
+                } else {
+                    (0, 0, 0)
+                }
+            } else {
+                (0, 0, 0)
+            };
+
+            index.add_or_replace(IndexEntry {
+                ctime_sec: mtime_sec, ctime_nsec: mtime_nsec,
+                mtime_sec, mtime_nsec,
+                dev: 0, ino: 0,
+                mode: entry.mode,
+                uid: 0, gid: 0,
+                size: file_size,
+                flags_extended: None,
+                oid: entry.oid,
+                flags: path.len().min(0xfff) as u16,
+                path: path.into_bytes(),
+            });
+        }
+    }
 
     Ok(())
 }
