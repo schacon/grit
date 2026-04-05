@@ -106,7 +106,7 @@ pub struct Args {
     pub date: Option<String>,
 
     /// Walk the reflog instead of the commit ancestry chain.
-    #[arg(short = 'g', long = "walk-reflogs")]
+    #[arg(short = 'g', long = "walk-reflogs", alias = "reflog")]
     pub walk_reflogs: bool,
 
     /// Show unified diff (patch) after each commit.
@@ -280,6 +280,22 @@ pub struct Args {
     /// Show shortstat.
     #[arg(long = "shortstat")]
     pub shortstat: bool,
+
+    /// Bisect mode (accepted for compatibility).
+    #[arg(long = "bisect")]
+    pub bisect: bool,
+
+    /// Order files according to the given orderfile.
+    #[arg(short = 'O', value_name = "orderfile")]
+    pub order_file: Option<String>,
+
+    /// Show full object hashes in diff output.
+    #[arg(long = "full-index")]
+    pub full_index: bool,
+
+    /// Show binary diffs in git-apply format.
+    #[arg(long = "binary")]
+    pub binary: bool,
 
     /// Pathspecs (after --).
     #[arg(last = true)]
@@ -716,24 +732,117 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
 
         let selector = format!("{}@{{{}}}", display_name, i);
 
+        // NUL separator between entries for multi-line formats
+        let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
+        if args.null_terminator && shown > 0 && !is_oneline_fmt {
+            write!(out, "\0")?;
+        }
+
         if let Some(ref fmt) = args.format {
-            let fmt_str = fmt.strip_prefix("tformat:").or_else(|| fmt.strip_prefix("format:")).unwrap_or(fmt);
-            if is_format_separator && shown > 0 {
-                writeln!(out)?;
+            match fmt.as_str() {
+                "oneline" => {
+                    let abbrev = &entry.new_oid.to_hex()[..7];
+                    let subject = commit_data.message.lines().next().unwrap_or("");
+                    if args.null_terminator {
+                        write!(out, "{} {}\0", abbrev, subject)?;
+                    } else {
+                        writeln!(out, "{} {}", abbrev, subject)?;
+                    }
+                }
+                "short" => {
+                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    let author_name = extract_name(&commit_data.author);
+                    writeln!(out, "Author: {author_name}")?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines().take(1) {
+                        writeln!(out, "    {line}")?;
+                    }
+                    writeln!(out)?;
+                }
+                "medium" => {
+                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+                    let date = format_date_for_header(&commit_data.author);
+                    writeln!(out, "Date:   {}", date)?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines() {
+                        writeln!(out, "    {}", line)?;
+                    }
+                    writeln!(out)?;
+                }
+                "full" => {
+                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+                    writeln!(out, "Commit: {}", format_ident_for_header(&commit_data.committer))?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines() {
+                        writeln!(out, "    {}", line)?;
+                    }
+                    writeln!(out)?;
+                }
+                "fuller" => {
+                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    writeln!(out, "Author:     {}", format_ident_for_header(&commit_data.author))?;
+                    writeln!(out, "AuthorDate: {}", format_date_for_header(&commit_data.author))?;
+                    writeln!(out, "Commit:     {}", format_ident_for_header(&commit_data.committer))?;
+                    writeln!(out, "CommitDate: {}", format_date_for_header(&commit_data.committer))?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines() {
+                        writeln!(out, "    {}", line)?;
+                    }
+                    writeln!(out)?;
+                }
+                "email" => {
+                    writeln!(out, "From {} Mon Sep 17 00:00:00 2001", entry.new_oid.to_hex())?;
+                    writeln!(out, "From: {}", format_ident_for_header(&commit_data.author))?;
+                    let date = format_date_for_header(&commit_data.author);
+                    writeln!(out, "Date: {}", date)?;
+                    let subject = commit_data.message.lines().next().unwrap_or("");
+                    writeln!(out, "Subject: [PATCH] {}", subject)?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines() {
+                        writeln!(out, "{}", line)?;
+                    }
+                    writeln!(out)?;
+                }
+                "raw" => {
+                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    // Write raw commit data
+                    writeln!(out, "tree {}", commit_data.tree.to_hex())?;
+                    for parent in &commit_data.parents {
+                        writeln!(out, "parent {}", parent.to_hex())?;
+                    }
+                    writeln!(out, "author {}", commit_data.author)?;
+                    writeln!(out, "committer {}", commit_data.committer)?;
+                    writeln!(out)?;
+                    for line in commit_data.message.lines() {
+                        writeln!(out, "    {}", line)?;
+                    }
+                    writeln!(out)?;
+                }
+                _ => {
+                    let fmt_str = fmt.strip_prefix("tformat:").or_else(|| fmt.strip_prefix("format:")).unwrap_or(fmt);
+                    if is_format_separator && shown > 0 {
+                        writeln!(out)?;
+                    }
+                    let line = apply_reflog_format_string(
+                        fmt_str,
+                        &entry.new_oid,
+                        &commit_data,
+                        &selector,
+                        &entry.message,
+                        &entry.identity,
+                    );
+                    writeln!(out, "{}", line)?;
+                }
             }
-            let line = apply_reflog_format_string(
-                fmt_str,
-                &entry.new_oid,
-                &commit_data,
-                &selector,
-                &entry.message,
-                &entry.identity,
-            );
-            writeln!(out, "{}", line)?;
         } else if args.oneline {
             let abbrev = &entry.new_oid.to_hex()[..7];
-            let _subject = commit_data.message.lines().next().unwrap_or("");
-            writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
+            if args.null_terminator {
+                write!(out, "{} {}@{{{}}}: {}\0", abbrev, display_name, i, entry.message)?;
+            } else {
+                writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
+            }
         } else {
             // Full format with Reflog headers
             writeln!(out, "commit {}", entry.new_oid.to_hex())?;
@@ -1833,7 +1942,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 time::Month::December => "Dec",
             };
             format!(
-                "{} {} {} {:02}:{:02}:{:02} {} {}",
+                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
                 weekday, month, dt.day(),
                 dt.hour(), dt.minute(), dt.second(),
                 dt.year(), offset_str
@@ -2000,9 +2109,14 @@ fn write_commit_diff(
     info: &CommitInfo,
     args: &Args,
 ) -> Result<()> {
-    let entries = compute_commit_diff(odb, info)?;
+    let mut entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
+    }
+
+    // Apply orderfile sorting if specified
+    if let Some(ref order_path) = args.order_file {
+        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
     }
 
     if args.raw {

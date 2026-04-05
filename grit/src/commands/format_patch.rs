@@ -183,6 +183,14 @@ pub struct Args {
     /// Quiet mode.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
+
+    /// Order files according to the given orderfile.
+    #[arg(short = 'O', value_name = "orderfile")]
+    pub order_file: Option<String>,
+
+    /// Show full object hashes in diff output.
+    #[arg(long = "full-index")]
+    pub full_index: bool,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
@@ -196,6 +204,7 @@ struct PatchOptions {
     inline: bool,
     keep_subject: bool,
     base_commit: Option<String>,
+    order_file: Option<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -287,6 +296,7 @@ pub fn run(args: Args) -> Result<()> {
         inline: args.inline,
         keep_subject: args.keep_subject,
         base_commit,
+        order_file: args.order_file.clone(),
     };
 
     // Ensure output directory exists
@@ -640,8 +650,13 @@ fn format_single_patch(
     });
     let parent_tree_oid: Option<ObjectId> = parent_tree.flatten();
 
-    let diff_entries = diff_trees(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "")
+    let diff_entries_raw = diff_trees(odb, parent_tree_oid.as_ref(), Some(&commit.tree), "")
         .context("computing diff")?;
+    let diff_entries = if let Some(ref order_path) = opts.order_file {
+        crate::commands::diff::apply_orderfile_entries(diff_entries_raw, order_path)
+    } else {
+        diff_entries_raw
+    };
 
     // Build stat + full diff into separate string
     let mut diff_text = String::new();

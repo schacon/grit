@@ -620,12 +620,9 @@ pub fn run(mut args: Args) -> Result<()> {
     let entries = if !args.no_relative {
         let prefix = match &args.relative {
             Some(Some(p)) if !p.is_empty() => {
-                // --relative=<path> — use the given prefix
-                let mut pfx = p.clone();
-                if !pfx.ends_with('/') {
-                    pfx.push('/');
-                }
-                Some(pfx)
+                // --relative=<path> — use the given prefix as a literal prefix.
+                // Git does NOT add a trailing '/' — `--relative=sub` matches `subdir/file`.
+                Some(p.clone())
             }
             Some(_) => {
                 // bare --relative — infer from CWD relative to work tree
@@ -689,15 +686,15 @@ pub fn run(mut args: Args) -> Result<()> {
                     if !old_match && !new_match {
                         return None;
                     }
-                    // Strip prefix from paths
+                    // Strip prefix from paths, then strip leading '/'
                     if let Some(ref mut p) = e.old_path {
                         if let Some(stripped) = p.strip_prefix(pfx.as_str()) {
-                            *p = stripped.to_owned();
+                            *p = stripped.trim_start_matches('/').to_owned();
                         }
                     }
                     if let Some(ref mut p) = e.new_path {
                         if let Some(stripped) = p.strip_prefix(pfx.as_str()) {
-                            *p = stripped.to_owned();
+                            *p = stripped.trim_start_matches('/').to_owned();
                         }
                     }
                     Some(e)
@@ -1039,6 +1036,11 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
 /// The orderfile contains one pattern per line. Files matching the first
 /// pattern come first, then files matching the second, etc. Files not
 /// matching any pattern come last in their original order.
+/// Apply an orderfile to sort diff entries (public for use by other commands like log).
+pub fn apply_orderfile_entries(entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
+    apply_orderfile(entries, order_path)
+}
+
 fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEntry> {
     let patterns: Vec<String> = match std::fs::read_to_string(order_path) {
         Ok(content) => content

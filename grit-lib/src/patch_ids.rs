@@ -69,6 +69,9 @@ pub fn compute_patch_ids_from_text(input: &[u8], mode: PatchIdMode) -> Vec<(Obje
     let mut pre_oid_str = String::new();
     let mut post_oid_str = String::new();
     let mut current_commit: Option<ObjectId> = None;
+    // When the input starts directly with a diff (no commit header),
+    // use the zero OID as the commit ID.
+    let mut implicit_commit = true;
 
     // Iterate lines; we keep the trailing '\n' so remove_space mirrors git's
     // behaviour (newline counts as whitespace and is stripped).
@@ -112,6 +115,7 @@ pub fn compute_patch_ids_from_text(input: &[u8], mode: PatchIdMode) -> Vec<(Obje
                 pre_oid_str.clear();
                 post_oid_str.clear();
                 current_commit = Some(oid);
+                implicit_commit = false;
                 continue;
             }
         }
@@ -128,6 +132,13 @@ pub fn compute_patch_ids_from_text(input: &[u8], mode: PatchIdMode) -> Vec<(Obje
         // Skip commit metadata before the first diff hunk.
         if patchlen == 0 && !line.starts_with("diff ") {
             continue;
+        }
+
+        // If we see a diff line without a preceding commit marker,
+        // treat it as a single patch with zero commit OID.
+        if implicit_commit && line.starts_with("diff ") && current_commit.is_none() {
+            current_commit = Some(ObjectId::from_bytes(&[0u8; 20]).unwrap());
+            implicit_commit = false;
         }
 
         // Parsing the per-file header (before == -1).

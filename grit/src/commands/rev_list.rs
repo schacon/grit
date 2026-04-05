@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
+use std::io::Write;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
     render_commit_with_color, rev_list,
@@ -249,6 +250,27 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
+                "--reflog" | "--walk-reflogs" | "-g" => {
+                    // Walk reflog: output all OIDs in the reflog
+                    let refname = if revision_specs.is_empty() {
+                        "HEAD".to_string()
+                    } else {
+                        let r = &revision_specs[0];
+                        if r == "HEAD" || r.starts_with("refs/") {
+                            r.clone()
+                        } else {
+                            format!("refs/heads/{r}")
+                        }
+                    };
+                    let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let stdout = std::io::stdout();
+                    let mut out = stdout.lock();
+                    for entry in entries.iter().rev() {
+                        writeln!(out, "{}", entry.new_oid.to_hex())?;
+                    }
+                    return Ok(());
+                }
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec)

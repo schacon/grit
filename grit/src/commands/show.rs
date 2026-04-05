@@ -242,15 +242,8 @@ fn show_commit(
             }
             writeln!(out)?;
         }
-        Some(other) if other.starts_with("format:") || other.starts_with("tformat:") => {
-            // Already handled above — unreachable
-        }
-        Some(other) => {
-            let formatted = apply_format_string(other, oid, &commit);
-            writeln!(out, "{formatted}")?;
-        }
-        None => {
-            // Default: medium format
+        Some("medium") | None => {
+            // Medium format (default)
             writeln!(out, "commit {hex}")?;
             writeln!(out, "Author: {}", format_ident_display(&commit.author))?;
             writeln!(out, "Date:   {}", format_date(&commit.author))?;
@@ -259,6 +252,39 @@ fn show_commit(
                 writeln!(out, "    {line}")?;
             }
             writeln!(out)?;
+        }
+        Some("email") => {
+            writeln!(out, "From {} Mon Sep 17 00:00:00 2001", hex)?;
+            writeln!(out, "From: {}", format_ident_display(&commit.author))?;
+            writeln!(out, "Date: {}", format_date(&commit.author))?;
+            let subject = commit.message.lines().next().unwrap_or("");
+            writeln!(out, "Subject: [PATCH] {}", subject)?;
+            writeln!(out)?;
+            for line in commit.message.lines() {
+                writeln!(out, "{line}")?;
+            }
+            writeln!(out)?;
+        }
+        Some("raw") => {
+            writeln!(out, "commit {hex}")?;
+            writeln!(out, "tree {}", commit.tree.to_hex())?;
+            for parent in &commit.parents {
+                writeln!(out, "parent {}", parent.to_hex())?;
+            }
+            writeln!(out, "author {}", commit.author)?;
+            writeln!(out, "committer {}", commit.committer)?;
+            writeln!(out)?;
+            for line in commit.message.lines() {
+                writeln!(out, "    {line}")?;
+            }
+            writeln!(out)?;
+        }
+        Some(other) if other.starts_with("format:") || other.starts_with("tformat:") => {
+            // Already handled above — unreachable
+        }
+        Some(other) => {
+            let formatted = apply_format_string(other, oid, &commit);
+            writeln!(out, "{formatted}")?;
         }
     }
 
