@@ -1,106 +1,76 @@
 //! `grit bugreport` — generate a bug report with system information.
-//!
-//! Collects system info (grit version, OS, shell, config) and writes
-//! it to a timestamped file in the current directory.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Arguments for `grit bugreport`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Generate a bug report")]
 pub struct Args {
-    /// Output file path (default: auto-generated timestamped name).
-    #[arg(short = 'o', long = "output-path")]
-    pub output_path: Option<String>,
+    /// Output directory path.
+    #[arg(short = 'o', long = "output-directory")]
+    pub output_directory: Option<String>,
+
+    /// Filename suffix (`git-bugreport-<suffix>.txt`).
+    #[arg(short = 's', long = "suffix")]
+    pub suffix: Option<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
+    const PREAMBLE: &str = "\
+Thank you for filling out a Git bug report!
+Please answer the following questions to help us understand your issue.
+
+What did you do before the bug happened? (Steps to reproduce your issue)
+
+What did you expect to happen? (Expected behavior)
+
+What happened instead? (Actual behavior)
+
+What's different between what you expected and what actually happened?
+
+Anything else you want to add:
+
+Please review the rest of the bug report below.
+You can delete any lines you don't wish to share.
+
+
+";
+
     let mut report = String::new();
+    report.push_str(PREAMBLE);
 
-    // Header
-    report.push_str("Thank you for filling out a grit bug report!\n");
-    report.push_str(
-        "Please answer the following questions and provide as much detail as possible.\n\n",
-    );
-
-    // Version info
+    // System info section
     report.push_str("[System Info]\n");
-    report.push_str("grit version: git version 2.47.0.grit\n");
-
-    // OS info
-    let os_info = collect_os_info();
-    report.push_str(&format!("os: {os_info}\n"));
-
-    // Shell
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
-    report.push_str(&format!("shell: {shell}\n"));
-
-    // CPU architecture
-    report.push_str(&format!("arch: {}\n", std::env::consts::ARCH));
-
-    // Compiler info
-    report.push_str(&format!(
-        "built with: rustc (target: {})\n",
-        std::env::consts::OS
-    ));
-
+    report.push_str("git version 2.47.0.grit\n");
+    let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    report.push_str(&format!("shell-path: {shell_path}\n"));
+    report.push_str(&format!("uname: {}\n", collect_uname()));
+    report.push_str("compiler info: rustc\n");
+    report.push_str("zlib: available\n");
     report.push('\n');
 
-    // Git config (repo-level if available)
-    report.push_str("[Git Config]\n");
+    // Enabled hooks section (known hooks only)
     match Repository::discover(None) {
         Ok(repo) => {
-            match ConfigSet::load(Some(&repo.git_dir), true) {
-                Ok(config) => {
-                    for entry in config.entries() {
-                        // Redact potentially sensitive values
-                        let key = &entry.key;
-                        let raw_value = entry.value.as_deref().unwrap_or("true");
-                        let value = if key.contains("password")
-                            || key.contains("token")
-                            || key.contains("secret")
-                            || key.contains("credential")
-                        {
-                            "***REDACTED***"
-                        } else {
-                            raw_value
-                        };
-                        report.push_str(&format!("  {key} = {value}\n"));
-                    }
-                }
-                Err(e) => {
-                    report.push_str(&format!("  (failed to load config: {e})\n"));
+            let hooks = list_enabled_hooks(&repo.git_dir.join("hooks"));
+            if !hooks.is_empty() {
+                report.push_str("[Enabled Hooks]\n");
+                for hook in hooks {
+                    report.push_str(&hook);
+                    report.push('\n');
                 }
             }
         }
-        Err(_) => {
-            report.push_str("  (not inside a git repository)\n");
-        }
+        Err(_) => {}
     }
 
-    report.push('\n');
-
-    // Placeholders for user to fill in
-    report.push_str("[What happened]\n");
-    report.push_str("(please describe what happened)\n\n");
-
-    report.push_str("[What did you expect to happen]\n");
-    report.push_str("(please describe what you expected)\n\n");
-
-    report.push_str("[Steps to reproduce]\n");
-    report.push_str("(please provide steps to reproduce the issue)\n\n");
-
-    report.push_str("[Anything else]\n");
-    report.push_str("(any additional context)\n");
-
-    // Determine output filename
-    let filename = if let Some(ref path) = args.output_path {
-        path.clone()
+    let filename = if let Some(suffix) = args.suffix {
+        format!("git-bugreport-{suffix}.txt")
     } else {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -109,34 +79,80 @@ pub fn run(args: Args) -> Result<()> {
         format!("git-bugreport-{now}.txt")
     };
 
-    let path = std::path::Path::new(&filename);
-    if path.exists() {
-        bail!("fatal: file '{}' already exists", filename);
+    let output_dir = args.output_directory.unwrap_or_else(|| ".".to_string());
+    let output_dir_path = PathBuf::from(output_dir);
+    fs::create_dir_all(&output_dir_path).with_context(|| {
+        format!(
+            "failed to create output directory '{}'",
+            output_dir_path.display()
+        )
+    })?;
+
+    let output_path = output_dir_path.join(filename);
+    if output_path.exists() {
+        bail!("fatal: file '{}' already exists", output_path.display());
     }
 
-    fs::write(&filename, &report)
-        .with_context(|| format!("failed to write bug report to {filename}"))?;
+    fs::write(&output_path, &report)
+        .with_context(|| format!("failed to write bug report to {}", output_path.display()))?;
 
-    println!("Created bug report at '{filename}'");
+    println!("Created bug report at '{}'", output_path.display());
     Ok(())
 }
 
-fn collect_os_info() -> String {
-    // Try to read /etc/os-release for Linux
-    if let Ok(content) = fs::read_to_string("/etc/os-release") {
-        for line in content.lines() {
-            if let Some(pretty) = line.strip_prefix("PRETTY_NAME=") {
-                return pretty.trim_matches('"').to_string();
-            }
-        }
-    }
-
-    // Fallback to uname
-    if let Ok(output) = Command::new("uname").arg("-srm").output() {
+fn collect_uname() -> String {
+    if let Ok(output) = Command::new("uname").arg("-a").output() {
         if output.status.success() {
             return String::from_utf8_lossy(&output.stdout).trim().to_string();
         }
     }
-
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn list_enabled_hooks(hooks_dir: &Path) -> Vec<String> {
+    const KNOWN_HOOKS: &[&str] = &[
+        "applypatch-msg",
+        "commit-msg",
+        "fsmonitor-watchman",
+        "post-applypatch",
+        "post-checkout",
+        "post-commit",
+        "post-merge",
+        "post-receive",
+        "post-rewrite",
+        "post-update",
+        "pre-applypatch",
+        "pre-auto-gc",
+        "pre-commit",
+        "pre-merge-commit",
+        "pre-push",
+        "pre-rebase",
+        "pre-receive",
+        "prepare-commit-msg",
+        "push-to-checkout",
+        "sendemail-validate",
+        "update",
+    ];
+
+    let mut enabled = Vec::new();
+    for hook in KNOWN_HOOKS {
+        let path = hooks_dir.join(hook);
+        if let Ok(meta) = fs::metadata(&path) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 != 0 {
+                    enabled.push((*hook).to_string());
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                if meta.is_file() {
+                    enabled.push((*hook).to_string());
+                }
+            }
+        }
+    }
+    enabled.sort();
+    enabled
 }
