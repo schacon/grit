@@ -9,6 +9,8 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path};
 
+use regex::Regex;
+
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::read_reflog;
@@ -780,6 +782,12 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
+    if s.trim_start().to_ascii_lowercase().starts_with("now") {
+        return std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs() as i64);
+    }
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
         // Scan for 4-digit year followed by -MM-DD
@@ -899,6 +907,15 @@ fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Res
 fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Result<ObjectId> {
     match peel {
         None | Some("object") => Ok(oid),
+        Some(search) if search.starts_with('/') => {
+            let pattern = &search[1..];
+            if pattern.is_empty() {
+                return Err(Error::InvalidRef(
+                    "empty commit message search pattern".to_owned(),
+                ));
+            }
+            resolve_commit_message_search_from(repo, oid, pattern)
+        }
         Some("") => {
             while let Ok(obj) = repo.odb.read(&oid) {
                 if obj.kind != ObjectKind::Tag {
@@ -963,6 +980,51 @@ fn parse_tag_target(data: &[u8]) -> Result<ObjectId> {
     };
     let oid_text = line.trim_start_matches("object ").trim();
     oid_text.parse::<ObjectId>()
+}
+
+/// Search commit messages reachable from `start` and return the first commit
+/// whose message contains `pattern`.
+fn resolve_commit_message_search_from(
+    repo: &Repository,
+    start: ObjectId,
+    pattern: &str,
+) -> Result<ObjectId> {
+    let regex = Regex::new(pattern).ok();
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(start);
+    visited.insert(start);
+
+    while let Some(oid) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let is_match = if let Some(re) = &regex {
+            re.is_match(&commit.message)
+        } else {
+            commit.message.contains(pattern)
+        };
+        if is_match {
+            return Ok(oid);
+        }
+
+        for parent in &commit.parents {
+            if visited.insert(*parent) {
+                queue.push_back(*parent);
+            }
+        }
+    }
+
+    Err(Error::ObjectNotFound(format!(":/{pattern}")))
 }
 
 fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
@@ -1061,6 +1123,7 @@ fn resolve_commit_message_search(
     repo: &crate::repo::Repository,
     pattern: &str,
 ) -> Result<ObjectId> {
+    let regex = Regex::new(pattern).ok();
     use crate::state::resolve_head;
     let head =
         resolve_head(&repo.git_dir).map_err(|_| Error::ObjectNotFound(format!(":/{pattern}")))?;
@@ -1088,8 +1151,13 @@ fn resolve_commit_message_search(
             Err(_) => continue,
         };
 
-        // Check if message contains pattern
-        if commit.message.contains(pattern) {
+        // Check if message matches pattern (regex, with literal fallback)
+        let is_match = if let Some(re) = &regex {
+            re.is_match(&commit.message)
+        } else {
+            commit.message.contains(pattern)
+        };
+        if is_match {
             return Ok(oid);
         }
 

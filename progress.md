@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    57 |
+| Completed   |    58 |
 | In progress |     1 |
-| Remaining   |   709 |
+| Remaining   |   708 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -44,7 +44,8 @@
 - `t1100-commit-tree-options` — 5/5 tests pass
 - `t1418-reflog-exists` — 6/6 tests pass
 - `t0101-at-syntax` — 8/8 tests pass (`@{...}` reflog syntax cases validated)
+- `t6133-pathspec-rev-dwim` — 6/6 tests pass (`log` now DWIMs wildcard and `:/*.t` tokens to pathspecs when revision resolution fails; `rev-parse` now supports `^{/regex}` commit-message peel and `@{now ...}` reflog date selectors via approxidate `now`)
 
 ## What Remains
 
-709 test files still pending. See `plan.md` for the full prioritized list.
+708 test files still pending. See `plan.md` for the full prioritized list.

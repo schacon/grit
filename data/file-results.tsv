@@ -485,7 +485,7 @@ t4204-patch-id	yes	26	26	0	ok	26	26	0
 t4205-log-pretty-formats	yes	125	67	58	ok	65	123	2
 t4206-log-follow-harder-copies	yes	7	3	4	ok	3	7	0
 t4207-log-decoration-colors	yes	4	0	4	ok	0	4	0
-t4208-log-magic-pathspec	yes	21	11	10	ok	11	21	0
+t4208-log-magic-pathspec	yes	21	12	9	ok	12	21	0
 t4209-log-pickaxe	yes	48	15	33	ok	15	48	0
 t4210-log-i18n	yes	0	0	0	ok	0	0	0
 t4211-line-log	yes	53	7	46	ok	7	53	0
@@ -709,7 +709,7 @@ t6120-describe	yes	105	27	78	ok	27	105	0
 t6130-pathspec-noglob	yes	21	4	17	ok	4	21	0
 t6131-pathspec-icase	yes	9	2	7	ok	2	9	0
 t6132-pathspec-exclude	yes	31	1	30	ok	1	31	0
-t6133-pathspec-rev-dwim	yes	6	2	4	ok	2	6	0
+t6133-pathspec-rev-dwim	yes	6	6	0	ok	6	6	0
 t6134-pathspec-in-submodule	yes	3	3	0	ok	3	3	0
 t6135-pathspec-with-attrs	yes	37	5	32	ok	5	37	0
 t6136-pathspec-in-bare	yes	3	3	0	ok	3	3	0

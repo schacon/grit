@@ -364,6 +364,7 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     validate_pathspec_scope(&repo, &args.pathspecs)?;
+    let mut implied_pathspecs: Vec<String> = Vec::new();
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -460,8 +461,13 @@ pub fn run(mut args: Args) -> Result<()> {
                 let oid = resolve_revision(&repo, stripped)?;
                 excludes.push(oid);
             } else {
-                let oid = resolve_revision(&repo, rev)?;
-                oids.push(oid);
+                match resolve_revision(&repo, rev) {
+                    Ok(oid) => oids.push(oid),
+                    Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
+                        implied_pathspecs.push(rev.clone());
+                    }
+                    Err(err) => return Err(err),
+                }
             }
         }
         // If only excludes are given with no positive refs, use HEAD
@@ -473,6 +479,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         (oids, excludes)
     };
+
+    if !implied_pathspecs.is_empty() {
+        validate_pathspec_scope(&repo, &implied_pathspecs)?;
+    }
 
     // Pre-compute the set of OIDs reachable from excluded refs.
     let excluded_set = if exclude_oids.is_empty() {
@@ -556,10 +566,13 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Walk commits
+    let mut combined_pathspecs = args.pathspecs.clone();
+    combined_pathspecs.extend(implied_pathspecs.iter().cloned());
+
     let effective_pathspecs = if args.follow {
         &[][..]
     } else {
-        &args.pathspecs[..]
+        &combined_pathspecs[..]
     };
     let commits = walk_commits(
         &repo.odb,
@@ -578,8 +591,8 @@ pub fn run(mut args: Args) -> Result<()> {
     )?;
 
     // Apply --follow: filter commits and track renames
-    let commits = if args.follow && !args.pathspecs.is_empty() {
-        follow_filter(&repo.odb, commits, &args.pathspecs[0], args.max_count)?
+    let commits = if args.follow && !combined_pathspecs.is_empty() {
+        follow_filter(&repo.odb, commits, &combined_pathspecs[0], args.max_count)?
     } else {
         commits
     };
@@ -2575,6 +2588,23 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
     // @{N}, @{now}, @{upstream}, peeling, parent navigation, etc.
     grit_lib::rev_parse::resolve_revision(repo, rev)
         .map_err(|e| anyhow::anyhow!("unknown revision '{}': {}", rev, e))
+}
+
+/// Heuristic used for rev/pathspec DWIM when no `--` separator is present.
+fn is_likely_pathspec_during_rev_parse(token: &str) -> bool {
+    if token.contains("^{") || token.contains("@{") || token.contains("..") {
+        return false;
+    }
+
+    if let Some(rest) = token.strip_prefix(":/") {
+        return rest.contains('*') || rest.contains('?') || rest.contains('[');
+    }
+
+    token.starts_with(":(")
+        || token.contains('*')
+        || token.contains('?')
+        || token.contains('[')
+        || token.contains(']')
 }
 
 /// Collect ref name → OID decorations from the repository.

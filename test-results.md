@@ -37,3 +37,6 @@
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6421-merge-partial-clone.sh`: 0/3 passing (direct reproduction confirms missing `fetch_count` trace events in tests 1-2 and unresolved rename/add conflicts in test 3).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (merge option parsing regression check).
 - `./scripts/run-tests.sh t8200-mv-rename.sh`: 30/30 passing (regression check after rev-list/merge argument support updates).
+- `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (fully passing after log rev/pathspec DWIM improvements and rev-parse support for `^{/pattern}` plus flexible `@{now ...}` reflog date selectors).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6133-pathspec-rev-dwim.sh`: 6/6 passing (direct validation of wildcard pathspec DWIM, peel-with-regex, reflog date selector, and `:/*.t` from subdir).
+- `./scripts/run-tests.sh t4208-log-magic-pathspec.sh`: 12/21 passing (targeted regression snapshot after log pathspec changes; no new full-pass claim for this suite).
