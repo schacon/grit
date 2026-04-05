@@ -86,6 +86,10 @@ pub struct Args {
     #[arg(long = "no-fork-point")]
     pub no_fork_point: bool,
 
+    /// Be verbose.
+    #[arg(short = 'v', long = "verbose")]
+    pub verbose: bool,
+
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
