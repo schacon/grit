@@ -96,7 +96,7 @@ pub struct Args {
     pub no_stat: bool,
 
     /// Show log messages from commits being merged.
-    #[arg(long = "log", value_name = "N", num_args = 0..=1, default_missing_value = "20")]
+    #[arg(long = "log", value_name = "N", num_args = 0..=1, default_missing_value = "20", require_equals = true)]
     pub log: Option<usize>,
 
     /// Do not include log messages.
@@ -132,8 +132,47 @@ pub struct Args {
     pub autostash: bool,
 }
 
+/// Apply branch.<name>.mergeoptions to the args.
+/// Only applies settings that weren't explicitly set on the command line.
+fn apply_mergeoptions(args: &mut Args, opts: &str) {
+    // Save CLI-set flags before applying config options
+    let cli_ff = args.ff;
+    let cli_no_ff = args.no_ff;
+    let cli_ff_only = args.ff_only;
+    let cli_squash = args.squash;
+    let cli_no_squash = args.no_squash;
+    let cli_commit = args.commit;
+    let cli_no_commit = args.no_commit;
+    let cli_stat = args.stat;
+    let cli_no_stat = args.no_stat;
+    let cli_summary = args.summary;
+
+    for token in opts.split_whitespace() {
+        match token {
+            "--ff" if !cli_no_ff && !cli_ff_only => args.ff = true,
+            "--no-ff" if !cli_ff && !cli_ff_only => args.no_ff = true,
+            "--ff-only" if !cli_ff && !cli_no_ff => args.ff_only = true,
+            "--squash" if !cli_no_squash => args.squash = true,
+            "--no-squash" if !cli_squash => args.no_squash = true,
+            "--commit" if !cli_no_commit => args.commit = true,
+            "--no-commit" if !cli_commit => args.no_commit = true,
+            "--stat" if !cli_no_stat => args.stat = true,
+            "--no-stat" | "-n" if !cli_stat && !cli_summary => args.no_stat = true,
+            "--log" => { if args.log.is_none() { args.log = Some(20); } }
+            "--no-log" => args.no_log = true,
+            "--signoff" | "-S" if !args.no_signoff => args.signoff = true,
+            "--no-signoff" if !args.signoff => args.no_signoff = true,
+            "--edit" | "-e" if !args.no_edit => args.edit = true,
+            "--no-edit" if !args.edit => args.no_edit = true,
+            "--quiet" | "-q" => args.quiet = true,
+            "--summary" if !cli_no_stat => args.summary = true,
+            _ => {} // ignore unknown options
+        }
+    }
+}
+
 /// Run the `merge` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     if args.abort {
         return merge_abort();
     }
@@ -148,11 +187,74 @@ pub fn run(args: Args) -> Result<()> {
         std::process::exit(1);
     }
 
+    if args.quit {
+        return merge_quit();
+    }
+
     if args.commits.is_empty() {
         bail!("nothing to merge — please specify a branch or commit");
     }
-    if args.ff_only && args.no_ff {
-        bail!("cannot combine --ff-only and --no-ff");
+
+    // Read merge.ff config and apply unless overridden by CLI flags.
+    // CLI flags (--ff, --no-ff, --ff-only) take precedence over config.
+    let repo = Repository::discover(None).context("not a git repository")?;
+    {
+        let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+
+        // Read branch.<name>.mergeoptions and apply them (CLI flags override these).
+        let head_state = resolve_head(&repo.git_dir)?;
+        if let Some(branch_name) = head_state.branch_name() {
+            let key = format!("branch.{branch_name}.mergeoptions");
+            if let Some(opts) = config.get(&key) {
+                apply_mergeoptions(&mut args, &opts);
+            }
+        }
+
+        if !args.ff && !args.no_ff && !args.ff_only {
+            if let Some(val) = config.get("merge.ff") {
+                match val.to_lowercase().as_str() {
+                    "false" | "no" => args.no_ff = true,
+                    "only" => args.ff_only = true,
+                    _ => {} // "true" or anything else = default (allow ff)
+                }
+            }
+        }
+        // Read merge.log config
+        if args.log.is_none() && !args.no_log {
+            if let Some(val) = config.get("merge.log") {
+                match val.to_lowercase().as_str() {
+                    "true" | "yes" => args.log = Some(20),
+                    "false" | "no" => {}
+                    _ => {
+                        if let Ok(n) = val.parse::<usize>() {
+                            if n > 0 {
+                                args.log = Some(n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Read merge.stat config
+        if !args.stat && !args.no_stat {
+            if let Some(val) = config.get("merge.stat") {
+                match val.to_lowercase().as_str() {
+                    "true" | "yes" => args.stat = true,
+                    "compact" => {
+                        args.stat = true;
+                        args.compact_summary = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if args.squash && args.no_ff {
+        bail!("fatal: You cannot combine --squash with --no-ff.");
+    }
+    if args.squash && args.commit {
+        bail!("fatal: You cannot combine --squash with --commit.");
     }
 
     // Validate --strategy: accept known names, warn on unsupported ones.
@@ -185,8 +287,6 @@ pub fn run(args: Args) -> Result<()> {
             other => bail!("unknown strategy option: -X {other}"),
         }
     }
-
-    let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
     let head_oid = match head.oid() {
         Some(oid) => *oid,
@@ -198,6 +298,25 @@ pub fn run(args: Args) -> Result<()> {
 
     // Octopus merge: if multiple commits, merge them sequentially
     if args.commits.len() > 1 {
+        // When --ff-only is set, check if all commits are already ancestors of HEAD.
+        // If so, report "Already up to date." rather than creating a merge commit.
+        if args.ff_only {
+            let mut all_merged = true;
+            for name in &args.commits {
+                let oid = resolve_merge_target(&repo, name)?;
+                if oid != head_oid && !is_ancestor(&repo, oid, head_oid)? {
+                    all_merged = false;
+                    break;
+                }
+            }
+            if all_merged {
+                if !args.quiet {
+                    eprintln!("Already up to date.");
+                }
+                return Ok(());
+            }
+            bail!("Not possible to fast-forward, aborting.");
+        }
         return do_octopus_merge(&repo, &head, head_oid, &args, favor);
     }
 
@@ -219,7 +338,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Check if head is ancestor of merge target → fast-forward
     if is_ancestor(&repo, head_oid, merge_oid)? {
-        if args.no_ff {
+        if args.no_ff && !args.ff_only {
             // Force a merge commit even though we could fast-forward
             return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor);
         }
@@ -318,7 +437,7 @@ fn do_fast_forward(
         let old_tree = commit_tree(repo, head_oid)?;
         let new_tree = commit_tree(repo, merge_oid)?;
         if let Ok(diff_entries) = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "") {
-            print_diffstat(repo, &diff_entries);
+            print_diffstat(repo, &diff_entries, args.compact_summary);
         }
     }
     Ok(())
@@ -398,7 +517,7 @@ fn do_real_merge(
     }
 
     if args.squash {
-        return do_squash_from_merge(repo, &merge_result.index, head, &args.commits[0], args);
+        return do_squash_from_merge(repo, &merge_result.index, head, head_oid, merge_oid, args);
     }
 
     if args.no_commit {
@@ -422,6 +541,19 @@ fn do_real_merge(
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
     let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+
+    // Append merge log if --log is set
+    if let Some(max_log) = args.log {
+        let log_entries = build_merge_log(repo, head_oid, merge_oid, &args.commits[0], max_log)?;
+        if !log_entries.is_empty() {
+            // Ensure there's a blank line before the log
+            if !msg.ends_with('\n') {
+                msg.push('\n');
+            }
+            msg.push('\n');
+            msg.push_str(&log_entries);
+        }
+    }
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -459,6 +591,16 @@ fn do_real_merge(
         let branch = head.branch_name().unwrap_or("HEAD");
         let first_line = commit_data.message.lines().next().unwrap_or("");
         eprintln!("[{branch} {short}] {first_line}");
+
+        // Show diffstat unless suppressed
+        let show_stat = args.stat || args.summary || !args.no_stat;
+        if show_stat {
+            let old_tree = commit_tree(repo, head_oid)?;
+            let new_tree = commit_tree(repo, merge_oid)?;
+            if let Ok(diff_entries) = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "") {
+                print_diffstat(repo, &diff_entries, args.compact_summary);
+            }
+        }
     }
 
     Ok(())
@@ -559,6 +701,15 @@ fn do_octopus_merge(
         checkout_entries(repo, wt, &final_index)?;
     }
 
+    if args.squash {
+        let msg = build_squash_msg(repo, head_oid, &merge_oids)?;
+        fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
+        if !args.quiet {
+            eprintln!("Squash commit -- not updating HEAD");
+        }
+        return Ok(());
+    }
+
     if args.no_commit {
         let merge_head_content: String = merge_oids
             .iter()
@@ -607,6 +758,65 @@ fn do_octopus_merge(
     }
 
     Ok(())
+}
+
+/// Build the merge log section (for --log option).
+/// Lists commits reachable from merge_oid but not from head_oid.
+fn build_merge_log(
+    repo: &Repository,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
+    branch_name: &str,
+    max_entries: usize,
+) -> Result<String> {
+    use grit_lib::merge_base::is_ancestor;
+
+    // Collect commits reachable from merge_oid but not from head_oid
+    let mut commits = Vec::new();
+    let mut queue = std::collections::VecDeque::new();
+    let mut visited = std::collections::HashSet::new();
+    queue.push_back(merge_oid);
+
+    while let Some(oid) = queue.pop_front() {
+        if !visited.insert(oid) {
+            continue;
+        }
+        if oid == head_oid || is_ancestor(repo, oid, head_oid).unwrap_or(false) {
+            continue;
+        }
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if let Ok(c) = parse_commit(&obj.data) {
+                let subject = c.message.lines().next().unwrap_or("").to_owned();
+                commits.push(subject);
+                for p in &c.parents {
+                    queue.push_back(*p);
+                }
+            }
+        }
+        if commits.len() >= max_entries {
+            break;
+        }
+    }
+
+    if commits.is_empty() {
+        return Ok(String::new());
+    }
+
+    // Determine the label: tag, branch, or commit
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
+        "tag"
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
+        "remote-tracking branch"
+    } else {
+        "branch"
+    };
+
+    let mut log = format!("* {kind} '{branch_name}':\n");
+    for subject in &commits {
+        log.push_str(&format!("  {subject}\n"));
+    }
+
+    Ok(log)
 }
 
 /// Build merge message for octopus merges.
@@ -683,6 +893,171 @@ fn do_strategy_ours(
     Ok(())
 }
 
+/// Build SQUASH_MSG by walking commits reachable from merge targets but not from HEAD.
+fn build_squash_msg(repo: &Repository, head_oid: ObjectId, merge_oids: &[ObjectId]) -> Result<String> {
+    let mut msg = String::from("Squashed commit of the following:\n");
+
+    // Collect all commits reachable from merge_oids but not from head_oid (no merges).
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+
+    // Mark head and its ancestors as visited (stop set)
+    {
+        let mut stop_queue = std::collections::VecDeque::new();
+        stop_queue.push_back(head_oid);
+        while let Some(oid) = stop_queue.pop_front() {
+            if !visited.insert(oid) {
+                continue;
+            }
+            if let Ok(obj) = repo.odb.read(&oid) {
+                if let Ok(c) = parse_commit(&obj.data) {
+                    for p in &c.parents {
+                        stop_queue.push_back(*p);
+                    }
+                }
+            }
+        }
+    }
+
+    // Now walk from merge_oids collecting non-merge commits
+    let mut commits_to_show = Vec::new();
+    for merge_oid in merge_oids {
+        queue.push_back(*merge_oid);
+    }
+    // Reset visited for the forward walk, but keep stop set
+    let stop_set = visited.clone();
+    let mut walk_visited = std::collections::HashSet::new();
+    while let Some(oid) = queue.pop_front() {
+        if !walk_visited.insert(oid) {
+            continue;
+        }
+        if stop_set.contains(&oid) {
+            continue;
+        }
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if let Ok(c) = parse_commit(&obj.data) {
+                // Skip merge commits (--no-merges)
+                if c.parents.len() <= 1 {
+                    commits_to_show.push((oid, c.clone()));
+                }
+                for p in &c.parents {
+                    queue.push_back(*p);
+                }
+            }
+        }
+    }
+
+    // Sort by commit date descending (most recent first)
+    // Parse the timestamp from author/committer line
+    commits_to_show.sort_by(|a, b| {
+        let ts_a = parse_timestamp_from_ident(&a.1.author);
+        let ts_b = parse_timestamp_from_ident(&b.1.author);
+        ts_b.cmp(&ts_a)
+    });
+
+    for (oid, commit) in &commits_to_show {
+        msg.push('\n');
+        msg.push_str(&format!("commit {}\n", oid.to_hex()));
+        msg.push_str(&format!("Author: {}\n", format_author_for_log(&commit.author)));
+        msg.push_str(&format!("Date:   {}\n", format_date_for_log(&commit.author)));
+        msg.push('\n');
+        for line in commit.message.trim_end().lines() {
+            msg.push_str(&format!("    {}\n", line));
+        }
+        msg.push('\n');
+    }
+
+    Ok(msg)
+}
+
+/// Extract timestamp (epoch seconds) from a git ident line like "Name <email> 1234567890 +0000"
+fn parse_timestamp_from_ident(ident: &str) -> i64 {
+    // Format: "Name <email> timestamp timezone"
+    if let Some(after_email) = ident.rfind('>') {
+        let rest = ident[after_email + 1..].trim();
+        if let Some(space) = rest.find(' ') {
+            rest[..space].parse().unwrap_or(0)
+        } else {
+            rest.parse().unwrap_or(0)
+        }
+    } else {
+        0
+    }
+}
+
+/// Format the author name/email portion from an ident line for display.
+fn format_author_for_log(ident: &str) -> String {
+    // "Name <email> timestamp tz" → "Name <email>"
+    if let Some(pos) = ident.rfind('>') {
+        ident[..=pos].to_string()
+    } else {
+        ident.to_string()
+    }
+}
+
+/// Format the date portion from an ident line for display.
+fn format_date_for_log(ident: &str) -> String {
+    if let Some(after_email) = ident.rfind('>') {
+        let rest = ident[after_email + 1..].trim();
+        // rest is "timestamp timezone"
+        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+        if parts.len() == 2 {
+            if let Ok(epoch) = parts[0].parse::<i64>() {
+                // Parse timezone offset
+                let tz_str = parts[1];
+                let tz_secs = parse_tz_offset(tz_str);
+                // Format as "Thu Apr  7 15:14:13 2005 -0700"
+                if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(epoch) {
+                    let offset = time::UtcOffset::from_whole_seconds(tz_secs)
+                        .unwrap_or(time::UtcOffset::UTC);
+                    let dt = dt.to_offset(offset);
+                    let weekday = match dt.weekday() {
+                        time::Weekday::Monday => "Mon",
+                        time::Weekday::Tuesday => "Tue",
+                        time::Weekday::Wednesday => "Wed",
+                        time::Weekday::Thursday => "Thu",
+                        time::Weekday::Friday => "Fri",
+                        time::Weekday::Saturday => "Sat",
+                        time::Weekday::Sunday => "Sun",
+                    };
+                    let month = match dt.month() {
+                        time::Month::January => "Jan",
+                        time::Month::February => "Feb",
+                        time::Month::March => "Mar",
+                        time::Month::April => "Apr",
+                        time::Month::May => "May",
+                        time::Month::June => "Jun",
+                        time::Month::July => "Jul",
+                        time::Month::August => "Aug",
+                        time::Month::September => "Sep",
+                        time::Month::October => "Oct",
+                        time::Month::November => "Nov",
+                        time::Month::December => "Dec",
+                    };
+                    let day = dt.day();
+                    let (h, m, s) = (dt.hour(), dt.minute(), dt.second());
+                    let year = dt.year();
+                    return format!(
+                        "{weekday} {month} {day:>2} {h:02}:{m:02}:{s:02} {year} {tz_str}"
+                    );
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+fn parse_tz_offset(tz: &str) -> i32 {
+    // "+0700" or "-0530"
+    if tz.len() < 5 {
+        return 0;
+    }
+    let sign = if tz.starts_with('-') { -1 } else { 1 };
+    let hours: i32 = tz[1..3].parse().unwrap_or(0);
+    let mins: i32 = tz[3..5].parse().unwrap_or(0);
+    sign * (hours * 3600 + mins * 60)
+}
+
 /// Squash merge: stage changes but don't commit.
 fn do_squash(
     repo: &Repository,
@@ -704,10 +1079,7 @@ fn do_squash(
     new_index.write(&repo.index_path())?;
 
     // Write SQUASH_MSG
-    let msg = format!(
-        "Squashed commit of the following:\n\ncommit {}\n",
-        merge_oid.to_hex()
-    );
+    let msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
     fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
 
     if !args.quiet {
@@ -726,15 +1098,13 @@ fn do_squash_from_merge(
     repo: &Repository,
     index: &Index,
     _head: &HeadState,
-    branch_name: &str,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
     args: &Args,
 ) -> Result<()> {
     index.write(&repo.index_path())?;
 
-    let msg = format!(
-        "Squashed commit of the following:\n\nMerge branch '{}'\n",
-        branch_name
-    );
+    let msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
     fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
 
     if !args.quiet {
@@ -780,6 +1150,21 @@ fn merge_abort() -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_HEAD"));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
     let _ = fs::remove_file(git_dir.join("MERGE_MODE"));
+
+    Ok(())
+}
+
+/// Quit the current merge: clean up merge state files but leave HEAD, index,
+/// and working tree untouched.
+fn merge_quit() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    // Clean up merge state files
+    let _ = fs::remove_file(git_dir.join("MERGE_HEAD"));
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+    let _ = fs::remove_file(git_dir.join("MERGE_MODE"));
+    let _ = fs::remove_file(git_dir.join("AUTO_MERGE"));
 
     Ok(())
 }
@@ -1130,7 +1515,7 @@ fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
 }
 
 /// Print a diffstat summary for merge output.
-fn print_diffstat(repo: &Repository, entries: &[DiffEntry]) {
+fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
     if entries.is_empty() {
         return;
     }
@@ -1186,15 +1571,31 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry]) {
         });
     }
 
-    let max_path_len = stats.iter().map(|s| s.path.len()).max().unwrap_or(0);
+    // Build display names with compact annotations
+    let display_names: Vec<String> = stats.iter().map(|s| {
+        if compact {
+            let mut name = s.path.clone();
+            if s.is_new {
+                name.push_str(" (new)");
+            } else if s.is_deleted {
+                name.push_str(" (gone)");
+            }
+            // Could also add mode changes here
+            name
+        } else {
+            s.path.clone()
+        }
+    }).collect();
+
+    let max_path_len = display_names.iter().map(|s| s.len()).max().unwrap_or(0);
     let max_change = stats.iter().map(|s| s.insertions + s.deletions).max().unwrap_or(0);
     let count_width = if max_change == 0 { 1 } else { format!("{}", max_change).len() };
 
-    for s in &stats {
+    for (i, s) in stats.iter().enumerate() {
         let total = s.insertions + s.deletions;
         let plus = "+".repeat(s.insertions.min(50));
         let minus = "-".repeat(s.deletions.min(50));
-        println!(" {:<width$} | {:>cw$} {}{}", s.path, total, plus, minus,
+        println!(" {:<width$} | {:>cw$} {}{}", display_names[i], total, plus, minus,
             width = max_path_len, cw = count_width);
     }
 
@@ -1210,15 +1611,17 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry]) {
     }
     println!(" {}", parts.join(", "));
 
-    // Show create/delete mode notices
-    for s in &stats {
-        if s.is_new {
-            if let Some(mode) = s.new_mode {
-                println!(" create mode {:06o} {}", mode, s.path);
+    // Show create/delete mode notices (not needed in compact mode)
+    if !compact {
+        for s in &stats {
+            if s.is_new {
+                if let Some(mode) = s.new_mode {
+                    println!(" create mode {:06o} {}", mode, s.path);
+                }
             }
-        }
-        if s.is_deleted {
-            println!(" delete mode 100644 {}", s.path);
+            if s.is_deleted {
+                println!(" delete mode 100644 {}", s.path);
+            }
         }
     }
 }

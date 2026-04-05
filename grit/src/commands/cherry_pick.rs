@@ -79,6 +79,10 @@ pub struct Args {
     #[arg(long = "allow-empty")]
     pub allow_empty: bool,
 
+    /// Merge strategy to use (e.g. recursive, ort, resolve).
+    #[arg(long = "strategy")]
+    pub strategy: Option<String>,
+
     /// Strategy option (e.g. "theirs", "ours", "patience").
     #[arg(short = 'X', long = "strategy-option")]
     pub strategy_option: Vec<String>,
@@ -86,6 +90,10 @@ pub struct Args {
     /// What to do with empty commits: stop, drop, or keep.
     #[arg(long = "empty", value_name = "ACTION")]
     pub empty: Option<String>,
+
+    /// Open an editor for the commit message.
+    #[arg(short = 'e', long = "edit")]
+    pub edit: bool,
 }
 
 /// Run the `cherry-pick` command.
@@ -114,8 +122,8 @@ fn do_cherry_pick(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    // Don't start a new cherry-pick if one is already in progress.
-    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+    // Don't start a new cherry-pick sequence if one is already in progress.
+    if git_dir.join("sequencer").join("todo").exists() {
         bail!(
             "error: a cherry-pick is already in progress\n\
              hint: use \"grit cherry-pick --continue\" to continue\n\
@@ -142,6 +150,13 @@ fn do_cherry_pick(args: Args) -> Result<()> {
 fn run_commit_sequence(repo: &Repository, oids: &[ObjectId], args: &Args) -> Result<()> {
     let git_dir = &repo.git_dir;
 
+    // Save original HEAD before starting
+    let head = resolve_head(git_dir)?;
+    let orig_head_oid = match head.oid() {
+        Some(oid) => *oid,
+        None => bail!("cannot cherry-pick: HEAD does not point to a commit"),
+    };
+
     for (i, commit_oid) in oids.iter().enumerate() {
         let remaining = &oids[i + 1..];
         match cherry_pick_one_commit(repo, *commit_oid, args) {
@@ -149,13 +164,18 @@ fn run_commit_sequence(repo: &Repository, oids: &[ObjectId], args: &Args) -> Res
             Err(e) => {
                 let err_msg = format!("{e}");
                 if err_msg.contains("CONFLICT_EXIT") {
-                    // Conflict occurred — save remaining commits in sequencer
-                    if !remaining.is_empty() {
-                        save_sequencer_state(git_dir, remaining, args)?;
+                    // Conflict occurred — save sequencer state if this is a multi-commit sequence
+                    if oids.len() > 1 {
+                        save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
                     }
                     std::process::exit(1);
                 }
-                return Err(e);
+                // Fatal error — save sequencer state and exit 128
+                if oids.len() > 1 {
+                    save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
+                }
+                eprintln!("error: {e:#}");
+                std::process::exit(128);
             }
         }
     }
@@ -226,17 +246,16 @@ fn cherry_pick_one_commit(
     let commit = parse_commit(&commit_obj.data)?;
 
     // Determine parent (base for the change).
-    let parent_oid = if commit.parents.len() > 1 {
-        let m = args.mainline.ok_or_else(|| {
-            anyhow::anyhow!(
-                "commit {} is a merge but no -m option was given",
-                commit_oid
-            )
-        })?;
+    let parent_oid = if let Some(m) = args.mainline {
         if m == 0 || m > commit.parents.len() {
             bail!("commit {} does not have parent {}", commit_oid, m);
         }
         commit.parents[m - 1]
+    } else if commit.parents.len() > 1 {
+        bail!(
+            "commit {} is a merge but no -m option was given",
+            commit_oid
+        );
     } else if commit.parents.is_empty() {
         bail!("cannot cherry-pick a root commit (no parent)");
     } else {
@@ -413,7 +432,8 @@ fn do_continue(mut args: Args) -> Result<()> {
     let sequencer_todo_exists = git_dir.join("sequencer").join("todo").exists();
 
     if !has_cherry_pick_head && !sequencer_todo_exists {
-        bail!("error: no cherry-pick in progress");
+        eprintln!("error: no cherry-pick or revert in progress");
+        std::process::exit(128);
     }
 
     // If CHERRY_PICK_HEAD is missing but the sequencer has remaining items,
@@ -491,7 +511,8 @@ fn do_abort() -> Result<()> {
     if !git_dir.join("CHERRY_PICK_HEAD").exists()
         && !git_dir.join("sequencer").join("todo").exists()
     {
-        bail!("error: no cherry-pick in progress");
+        eprintln!("error: no cherry-pick or revert in progress");
+        std::process::exit(128);
     }
 
     // Restore HEAD to ORIG_HEAD if available, otherwise use current HEAD tree
@@ -596,32 +617,38 @@ fn save_orig_head(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-fn save_sequencer_state(git_dir: &Path, remaining: &[ObjectId], args: &Args) -> Result<()> {
+fn save_sequencer_state(git_dir: &Path, head_oid: &ObjectId, remaining: &[ObjectId], args: &Args) -> Result<()> {
     let seq_dir = git_dir.join("sequencer");
     fs::create_dir_all(&seq_dir)?;
 
+    // Save original HEAD
+    fs::write(seq_dir.join("head"), format!("{}\n", head_oid.to_hex()))?;
+
+    // Save remaining commits as todo
     let mut todo = String::new();
     for oid in remaining {
         todo.push_str(&format!("pick {}\n", oid.to_hex()));
     }
     fs::write(seq_dir.join("todo"), &todo)?;
 
-    let mut opts = String::new();
-    if args.append_source {
-        opts.push_str("append_source\n");
-    }
-    if args.no_commit {
-        opts.push_str("no_commit\n");
-    }
+    // Save options in git-config format for compatibility with git
+    let mut opts = String::from("[options]\n");
     if args.signoff {
-        opts.push_str("signoff\n");
+        opts.push_str("\tsignoff = true\n");
     }
     if let Some(m) = args.mainline {
-        opts.push_str(&format!("mainline {m}\n"));
+        opts.push_str(&format!("\tmainline = {m}\n"));
     }
-    if !opts.is_empty() {
-        fs::write(seq_dir.join("opts"), &opts)?;
+    if let Some(ref strat) = args.strategy {
+        opts.push_str(&format!("\tstrategy = {strat}\n"));
     }
+    for xopt in &args.strategy_option {
+        opts.push_str(&format!("\tstrategy-option = {xopt}\n"));
+    }
+    if args.edit {
+        opts.push_str("\tedit = true\n");
+    }
+    fs::write(seq_dir.join("opts"), &opts)?;
 
     Ok(())
 }

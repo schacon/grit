@@ -49,6 +49,10 @@ pub struct Args {
     /// Disable rebase (use merge, the default).
     #[arg(long = "no-rebase")]
     pub no_rebase: bool,
+
+    /// Allow fast-forward (default).
+    #[arg(long = "ff")]
+    pub ff: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -87,6 +91,21 @@ pub fn run(args: Args) -> Result<()> {
         bail!("no tracking branch configured and no branch specified");
     };
 
+    // Check if remote is local (path-based: "." or contains "/")
+    let is_local = remote_name == "." || remote_name.contains('/');
+
+    if is_local {
+        // For local remotes, resolve the ref directly in the repo
+        let remote_oid = grit_lib::rev_parse::resolve_revision(&repo, &merge_branch)
+            .with_context(|| format!("bad revision '{merge_branch}'"))?;
+
+        // Write FETCH_HEAD for compatibility
+        let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
+        std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
+
+        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+    }
+
     // Step 1: Fetch
     let fetch_args = super::fetch::Args {
         remote: Some(remote_name.to_owned()),
@@ -116,10 +135,13 @@ pub fn run(args: Args) -> Result<()> {
     let remote_oid = refs::resolve_ref(&repo.git_dir, &tracking_ref)
         .with_context(|| format!("no tracking ref '{tracking_ref}' after fetch"))?;
 
-    // Step 3: Merge or rebase
+    do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref)
+}
+
+fn do_merge_or_rebase(args: &Args, config: &ConfigSet, oid_hex: String, ref_name: &str) -> Result<()> {
     if args.rebase.is_some() {
         let rebase_args = super::rebase::Args {
-            upstream: Some(tracking_ref),
+            upstream: Some(ref_name.to_owned()),
             branch: None,
             onto: None,
             interactive: false,
@@ -136,11 +158,24 @@ pub fn run(args: Args) -> Result<()> {
         };
         super::rebase::run(rebase_args)
     } else {
+        // Determine ff flags from pull.ff config, CLI overrides
+        let (mut ff, mut no_ff, mut ff_only) = (args.ff, args.no_ff, args.ff_only);
+        if !ff && !no_ff && !ff_only {
+            if let Some(val) = config.get("pull.ff") {
+                match val.to_lowercase().as_str() {
+                    "true" | "yes" => ff = true,
+                    "false" | "no" => no_ff = true,
+                    "only" => ff_only = true,
+                    _ => {}
+                }
+            }
+        }
+
         let merge_args = super::merge::Args {
-            commits: vec![remote_oid.to_hex()],
+            commits: vec![oid_hex],
             message: None,
-            ff_only: args.ff_only,
-            no_ff: args.no_ff,
+            ff_only,
+            no_ff,
             no_commit: false,
             squash: false,
             abort: false,
@@ -158,7 +193,7 @@ pub fn run(args: Args) -> Result<()> {
             no_log: false,
             compact_summary: false,
             summary: false,
-            ff: false,
+            ff,
             commit: false,
             no_squash: false,
             quit: false,
