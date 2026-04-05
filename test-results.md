@@ -36,3 +36,4 @@
 - `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.
 - `./scripts/run-tests.sh t2050-git-dir-relative.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t2015-checkout-unborn.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t2105-update-index-gitfile.sh`: 4/4 passing (re-run confirmed stable full pass).

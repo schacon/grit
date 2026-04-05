@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    56 |
+| Completed   |    57 |
 | In progress |     0 |
-| Remaining   |   711 |
+| Remaining   |   710 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2105-update-index-gitfile` — 4/4 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2015-checkout-unborn` — 6/6 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2050-git-dir-relative` — 4/4 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t1503-rev-parse-verify` — 12/12 tests pass (added `reflog delete --rewrite` compatibility and improved reflog approxidate fallback for date selectors like `1.year.ago`)
@@ -50,4 +51,4 @@
 
 ## What Remains
 
-711 test files still pending. See `plan.md` for the full prioritized list.
+710 test files still pending. See `plan.md` for the full prioritized list.
