@@ -28,7 +28,13 @@ use crate::repo::Repository;
 pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
     match Repository::discover(start) {
         Ok(repo) => Ok(Some(repo)),
-        Err(Error::NotARepository(_)) => Ok(None),
+        Err(Error::NotARepository(msg))
+            if !msg.contains("not a regular file")
+                && !msg.contains("invalid gitfile format")
+                && !msg.contains("gitfile does not contain 'gitdir:' line") =>
+        {
+            Ok(None)
+        }
         Err(err) => Err(err),
     }
 }

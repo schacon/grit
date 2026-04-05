@@ -8,7 +8,7 @@ t0005-signals	yes	5	5	0	ok	5	5	0
 t0006-date	yes	0	0	0	ok	0	0	0
 t0007-git-var	yes	27	24	3	ok	24	27	0
 t0008-ignores	yes	0	0	0	timeout	0	0	0
-t0009-git-dir-validation	yes	6	3	3	ok	3	6	0
+t0009-git-dir-validation	yes	6	6	0	ok	6	6	0
 t0010-racy-git	yes	10	10	0	ok	10	10	0
 t0012-help	yes	124	15	109	ok	15	124	0
 t0013-sha1dc	yes	0	0	0	ok	0	0	0

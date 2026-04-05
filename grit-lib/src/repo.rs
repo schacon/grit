@@ -270,18 +270,35 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             let ft = meta.file_type();
             if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
                 return Err(Error::NotARepository(format!(
-                    ".git exists but is not a valid file or directory: {}",
+                    ".git at '{}' is not a regular file",
                     dot_git.display()
                 )));
+            }
+            if ft.is_symlink() {
+                if let Ok(target_meta) = fs::metadata(&dot_git) {
+                    let tft = target_meta.file_type();
+                    if tft.is_fifo()
+                        || tft.is_socket()
+                        || tft.is_block_device()
+                        || tft.is_char_device()
+                    {
+                        return Err(Error::NotARepository(format!(
+                            ".git at '{}' is not a regular file",
+                            dot_git.display()
+                        )));
+                    }
+                }
             }
         }
     }
 
     if dot_git.is_file() {
         // gitfile indirection: file contains "gitdir: <path>"
-        let content =
-            fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
-        let git_dir = parse_gitfile(&content, dir)?;
+        let content = fs::read_to_string(&dot_git).map_err(|_| {
+            Error::NotARepository(format!("invalid gitfile format: {}", dot_git.display()))
+        })?;
+        let git_dir = parse_gitfile(&content, dir)
+            .map_err(|_| Error::NotARepository(format!("invalid gitfile format: {}", dot_git.display())))?;
         let repo = Repository::open(&git_dir, Some(dir))?;
         return Ok(Some(repo));
     }
@@ -292,7 +309,12 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         // (matches real git behavior: `rev-parse --git-dir` shows `.git`).
         let open_path = if dot_git.is_symlink() {
             // Resolve the symlink target for validation
-            dot_git.read_link().unwrap_or_else(|_| dot_git.clone())
+            let target = dot_git.read_link().unwrap_or_else(|_| dot_git.clone());
+            if target.is_absolute() {
+                target
+            } else {
+                dir.join(target)
+            }
         } else {
             dot_git.clone()
         };
