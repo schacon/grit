@@ -17,7 +17,7 @@ use crate::commands::git_passthrough;
 use crate::protocol;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
@@ -200,6 +200,9 @@ pub fn run(args: Args) -> Result<()> {
     // `checkout -m` conflict recreation/merge checkout semantics are complex.
     // Delegate merge-mode invocations to system Git for parity.
     if args.merge {
+        if !paths.is_empty() {
+            return checkout_merge_paths(&repo, &paths);
+        }
         let mut passthrough_args = vec!["-m".to_string()];
         if args.force {
             passthrough_args.push("--force".to_string());
@@ -498,6 +501,70 @@ fn switch_branch(
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
+}
+
+fn checkout_merge_paths(repo: &Repository, paths: &[String]) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+
+    let head_oid = resolve_head(&repo.git_dir)?
+        .oid()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("cannot use -m without a valid HEAD commit"))?;
+    let merge_head_raw = std::fs::read_to_string(repo.git_dir.join("MERGE_HEAD"))
+        .context("cannot read MERGE_HEAD for checkout -m")?;
+    let merge_oid: ObjectId = merge_head_raw
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("MERGE_HEAD is empty"))?
+        .trim()
+        .parse()
+        .context("invalid MERGE_HEAD oid")?;
+
+    let ours_tree = commit_to_tree(repo, &head_oid)?;
+    let theirs_tree = commit_to_tree(repo, &merge_oid)?;
+
+    for path_str in paths {
+        let rel = resolve_pathspec(path_str, work_tree, &cwd);
+        let ours = find_in_tree(repo, ours_tree, &rel)?;
+        let theirs = find_in_tree(repo, theirs_tree, &rel)?;
+
+        if ours.is_none() && theirs.is_none() {
+            bail!("error: pathspec '{}' did not match any file(s) known to git", path_str);
+        }
+
+        let ours_text = match ours {
+            Some((oid, _)) => blob_to_conflict_text(repo, &oid)?,
+            None => String::new(),
+        };
+        let theirs_text = match theirs {
+            Some((oid, _)) => blob_to_conflict_text(repo, &oid)?,
+            None => String::new(),
+        };
+
+        let conflict = format!("<<<<<<<\n{}=======\n{}>>>>>>>\n", ours_text, theirs_text);
+        write_to_worktree(work_tree, &rel, conflict.as_bytes(), MODE_REGULAR)?;
+    }
+
+    Ok(())
+}
+
+fn blob_to_conflict_text(repo: &Repository, oid: &ObjectId) -> Result<String> {
+    let obj = repo
+        .odb
+        .read(oid)
+        .with_context(|| format!("reading blob for conflict {}", oid))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("cannot checkout non-blob conflict entry");
+    }
+    let mut text = String::from_utf8_lossy(&obj.data).to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 /// Create a new branch and switch to it.
