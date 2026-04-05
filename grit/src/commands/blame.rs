@@ -540,8 +540,7 @@ pub fn run(args: Args) -> Result<()> {
 /// Read file content from index conflict stages (for blame during merge conflicts).
 fn read_from_index_conflict(repo: &Repository, odb: &Odb, file_path: &str) -> Result<String> {
     use grit_lib::index::Index;
-    let index = Index::load(&repo.index_path())
-        .context("loading index")?;
+    let index = Index::load(&repo.index_path()).context("loading index")?;
     let path_bytes = file_path.as_bytes();
     // Find the highest-stage entry for this path (prefer stage 3, then 2, then 1)
     let mut best: Option<&grit_lib::index::IndexEntry> = None;

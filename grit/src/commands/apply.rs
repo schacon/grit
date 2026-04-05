@@ -1101,10 +1101,20 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         if let Ok(cwd) = std::env::current_dir() {
             if let Ok(rel) = cwd.strip_prefix(wt) {
                 let s = rel.to_string_lossy().to_string();
-                if s.is_empty() { String::new() } else { format!("{s}/") }
-            } else { String::new() }
-        } else { String::new() }
-    } else { String::new() };
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!("{s}/")
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
 
     for fp in patches {
         let path_str = fp

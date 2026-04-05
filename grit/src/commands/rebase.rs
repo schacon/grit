@@ -131,9 +131,13 @@ pub fn run(mut args: Args) -> Result<()> {
                         let upstream_name = args.upstream.as_deref().unwrap_or("HEAD");
                         let new_line = format!(
                             "{}\trebase (start): checkout {}",
-                            &last[..tab_idx], upstream_name
+                            &last[..tab_idx],
+                            upstream_name
                         );
-                        let mut new_lines: Vec<String> = lines[..lines.len()-1].iter().map(|s| s.to_string()).collect();
+                        let mut new_lines: Vec<String> = lines[..lines.len() - 1]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
                         new_lines.push(new_line);
                         let _ = std::fs::write(&reflog_path, new_lines.join("\n") + "\n");
                     }
@@ -1028,7 +1032,7 @@ fn content_merge_or_conflict(
         favor: Default::default(),
         style: Default::default(),
         marker_size: 7,
-            diff_algorithm: None,
+        diff_algorithm: None,
     };
 
     let result = merge(&input)?;

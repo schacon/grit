@@ -214,7 +214,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // relative to the user's current directory (matching git behavior).
     let cwd = std::env::current_dir().unwrap_or_default();
     let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let wt_canon = work_tree.canonicalize().unwrap_or_else(|_| work_tree.to_path_buf());
+    let wt_canon = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
     let prefix = cwd_canon.strip_prefix(&wt_canon).ok().and_then(|p| {
         if p.as_os_str().is_empty() {
             None
@@ -751,7 +753,11 @@ fn format_long(
                 "nothing added to commit but untracked files present (use \"git add\" to track)",
             )?;
         } else {
-            cpw(out, cp, "nothing added to commit but untracked files present")?;
+            cpw(
+                out,
+                cp,
+                "nothing added to commit but untracked files present",
+            )?;
         }
     } else if staged.is_empty() {
         cpw(

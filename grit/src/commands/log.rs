@@ -376,8 +376,10 @@ pub fn run(mut args: Args) -> Result<()> {
             if let Some(val) = config.get("color.diff") {
                 match val.as_str() {
                     "always" | "true" => c = true,
-                    "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                        || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
+                    "auto" => {
+                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                    }
                     _ => {}
                 }
             }
@@ -385,8 +387,10 @@ pub fn run(mut args: Args) -> Result<()> {
                 if let Some(val) = config.get("color.ui") {
                     match val.as_str() {
                         "always" | "true" => c = true,
-                        "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                            || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
+                        "auto" => {
+                            c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                                || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                        }
                         _ => {}
                     }
                 }
@@ -623,20 +627,30 @@ pub fn run(mut args: Args) -> Result<()> {
         let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
         if let Some(s) = since_str {
             if let Some(threshold) = parse_date_to_epoch(s) {
-                commits.into_iter().filter(|(_oid, info)| {
-                    extract_epoch_from_ident(&info.committer) >= threshold
-                }).collect::<Vec<_>>()
-            } else { commits }
-        } else { commits }
+                commits
+                    .into_iter()
+                    .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) >= threshold)
+                    .collect::<Vec<_>>()
+            } else {
+                commits
+            }
+        } else {
+            commits
+        }
     };
     // Apply --until
     let commits = if let Some(ref s) = args.until {
         if let Some(threshold) = parse_date_to_epoch(s) {
-            commits.into_iter().filter(|(_oid, info)| {
-                extract_epoch_from_ident(&info.committer) <= threshold
-            }).collect::<Vec<_>>()
-        } else { commits }
-    } else { commits };
+            commits
+                .into_iter()
+                .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)
+                .collect::<Vec<_>>()
+        } else {
+            commits
+        }
+    } else {
+        commits
+    };
 
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()

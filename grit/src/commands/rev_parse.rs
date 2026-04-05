@@ -266,7 +266,7 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-        // Apply --default: if no Revision actions exist, inject the default
+    // Apply --default: if no Revision actions exist, inject the default
     if let Some(ref def) = default_rev {
         let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_)));
         if !has_revision {
@@ -279,8 +279,9 @@ pub fn run(args: Args) -> Result<()> {
     // and errors out for invalid or missing repositories.
     let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
     if !has_output_actions {
-        let _ = discover_optional(None)?
-            .ok_or_else(|| anyhow::anyhow!("not a git repository (or any of the parent directories)"))?;
+        let _ = discover_optional(None)?.ok_or_else(|| {
+            anyhow::anyhow!("not a git repository (or any of the parent directories)")
+        })?;
         return Ok(());
     }
 

@@ -522,8 +522,7 @@ fn walk_dir_iterator(
             path_display.display()
         );
 
-        if ft.is_dir() && walk_dir_iterator(root_abs, root_display, &child_rel, pedantic).is_err()
-        {
+        if ft.is_dir() && walk_dir_iterator(root_abs, root_display, &child_rel, pedantic).is_err() {
             return Err(());
         }
     }
@@ -557,7 +556,10 @@ fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
     let root_meta = match std::fs::symlink_metadata(&root_abs) {
         Ok(m) => m,
         Err(e) => {
-            println!("dir_iterator_begin failure: {}", dir_iterator_error_name(e.kind()));
+            println!(
+                "dir_iterator_begin failure: {}",
+                dir_iterator_error_name(e.kind())
+            );
             std::process::exit(1);
         }
     };
@@ -1593,10 +1595,7 @@ fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Res
         exit_with_status(status);
     }
 
-    let mut parts: Vec<String> = alias
-        .split_whitespace()
-        .map(|s| s.to_owned())
-        .collect();
+    let mut parts: Vec<String> = alias.split_whitespace().map(|s| s.to_owned()).collect();
     if parts.is_empty() {
         bail!("alias '{name}' expands to an empty command");
     }

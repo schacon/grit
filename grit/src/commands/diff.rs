@@ -504,7 +504,10 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.line_prefix =
                         Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
                 }
-                s if s == "-M" || s.starts_with("-M") && s[2..].bytes().all(|b| b.is_ascii_digit() || b == b'%') => {
+                s if s == "-M"
+                    || s.starts_with("-M")
+                        && s[2..].bytes().all(|b| b.is_ascii_digit() || b == b'%') =>
+                {
                     let val = if s.len() > 2 { &s[2..] } else { "50" };
                     args.find_renames = Some(val.to_owned());
                 }
@@ -2349,11 +2352,26 @@ fn quote_c_style(name: &str) -> String {
     let mut needs_quotes = false;
     for ch in name.chars() {
         match ch {
-            '"' => { out.push_str("\\\""); needs_quotes = true; }
-            '\\' => { out.push_str("\\\\"); needs_quotes = true; }
-            '\t' => { out.push_str("\\t"); needs_quotes = true; }
-            '\n' => { out.push_str("\\n"); needs_quotes = true; }
-            '\r' => { out.push_str("\\r"); needs_quotes = true; }
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
             c if c.is_control() => {
                 out.push_str(&format!("\\{:03o}", u32::from(c)));
                 needs_quotes = true;
@@ -2422,10 +2440,20 @@ fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()>
                 writeln!(out, " copy {display} ({sim}%)")?;
             }
             DiffStatus::Added => {
-                writeln!(out, " create mode {} {}", entry.new_mode, quote_c_style(entry.path()))?;
+                writeln!(
+                    out,
+                    " create mode {} {}",
+                    entry.new_mode,
+                    quote_c_style(entry.path())
+                )?;
             }
             DiffStatus::Deleted => {
-                writeln!(out, " delete mode {} {}", entry.old_mode, quote_c_style(entry.path()))?;
+                writeln!(
+                    out,
+                    " delete mode {} {}",
+                    entry.old_mode,
+                    quote_c_style(entry.path())
+                )?;
             }
             _ => {}
         }

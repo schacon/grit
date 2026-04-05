@@ -247,11 +247,15 @@ pub fn run(args: Args) -> Result<()> {
             let mut pathspec = pathspec;
             // Handle --pathspec-from-file / --pathspec-file-nul
             if pathspec_file_nul && pathspec_from_file.is_none() {
-                eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+                eprintln!(
+                    "fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'"
+                );
                 std::process::exit(128);
             }
             if pathspec_from_file.is_some() && patch {
-                eprintln!("fatal: options '--pathspec-from-file' and '--patch' cannot be used together");
+                eprintln!(
+                    "fatal: options '--pathspec-from-file' and '--patch' cannot be used together"
+                );
                 std::process::exit(128);
             }
             if patch {
@@ -272,9 +276,17 @@ pub fn run(args: Args) -> Result<()> {
                         .with_context(|| format!("could not read pathspec from '{psf}'"))?
                 };
                 let paths: Vec<String> = if pathspec_file_nul {
-                    content.split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
+                    content
+                        .split('\0')
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
                 } else {
-                    content.lines().filter(|s| !s.is_empty()).map(String::from).collect()
+                    content
+                        .lines()
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
                 };
                 pathspec = paths;
             }
@@ -582,9 +594,19 @@ fn do_push_pathspec(
         let mut wt_index = Index::new();
         for entry in &head_flat {
             wt_index.add_or_replace(IndexEntry {
-                ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
-                dev: 0, ino: 0, mode: entry.mode, uid: 0, gid: 0, size: 0,
-                oid: entry.oid, flags: 0, flags_extended: None,
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: entry.mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: entry.oid,
+                flags: 0,
+                flags_extended: None,
                 path: entry.path.as_bytes().to_vec(),
             });
         }
@@ -600,10 +622,20 @@ fn do_push_pathspec(
                     MODE_REGULAR
                 };
                 wt_index.add_or_replace(IndexEntry {
-                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
-                    dev: 0, ino: 0, mode, uid: 0, gid: 0,
-                    size: data.len() as u32, oid: blob_oid, flags: 0,
-                    flags_extended: None, path: path.as_bytes().to_vec(),
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: data.len() as u32,
+                    oid: blob_oid,
+                    flags: 0,
+                    flags_extended: None,
+                    path: path.as_bytes().to_vec(),
                 });
             } else {
                 wt_index.remove(path.as_bytes());
@@ -932,10 +964,16 @@ fn do_show(stash_ref: Option<String>, mode: ShowMode) -> Result<()> {
     Ok(())
 }
 
-fn show_stash_name_status(repo: &Repository, stash_oid: &ObjectId, with_status: bool) -> Result<()> {
+fn show_stash_name_status(
+    repo: &Repository,
+    stash_oid: &ObjectId,
+    with_status: bool,
+) -> Result<()> {
     let obj = repo.odb.read(stash_oid)?;
     let stash_commit = parse_commit(&obj.data)?;
-    let parent_oid = stash_commit.parents.first()
+    let parent_oid = stash_commit
+        .parents
+        .first()
         .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: no parents"))?;
     let parent_obj = repo.odb.read(parent_oid)?;
     let parent_commit = parse_commit(&parent_obj.data)?;
@@ -945,13 +983,21 @@ fn show_stash_name_status(repo: &Repository, stash_oid: &ObjectId, with_status: 
 
     use std::collections::BTreeMap;
     let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &old_entries { old_map.insert(&e.path, e); }
+    for e in &old_entries {
+        old_map.insert(&e.path, e);
+    }
     let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
-    for e in &new_entries { new_map.insert(&e.path, e); }
+    for e in &new_entries {
+        new_map.insert(&e.path, e);
+    }
 
     let mut all_paths: BTreeSet<&str> = BTreeSet::new();
-    for e in &old_entries { all_paths.insert(&e.path); }
-    for e in &new_entries { all_paths.insert(&e.path); }
+    for e in &old_entries {
+        all_paths.insert(&e.path);
+    }
+    for e in &new_entries {
+        all_paths.insert(&e.path);
+    }
 
     for path in &all_paths {
         let old = old_map.get(path);
@@ -1457,7 +1503,7 @@ fn apply_stash_impl(
                             favor: MergeFavor::None,
                             style: ConflictStyle::Merge,
                             marker_size: 7,
-            diff_algorithm: None,
+                            diff_algorithm: None,
                         };
                         let output = merge(&input)?;
                         fs::write(&file_path, &output.content)?;

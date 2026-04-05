@@ -35,10 +35,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let script_path = std::path::Path::new(&exec_path).join("git-filter-branch");
     if !script_path.exists() {
-        anyhow::bail!(
-            "cannot find git-filter-branch at {}",
-            script_path.display()
-        );
+        anyhow::bail!("cannot find git-filter-branch at {}", script_path.display());
     }
 
     // Prepend the exec path to PATH so that `git-sh-setup` and other

@@ -552,10 +552,8 @@ fn push_to_url(
                 .map(|v| matches!(v.to_lowercase().as_str(), "true" | "yes" | "1"))
                 .unwrap_or(false));
     if follow_tags {
-        let pushed_oids: std::collections::HashSet<ObjectId> = updates
-            .iter()
-            .filter_map(|u| u.new_oid)
-            .collect();
+        let pushed_oids: std::collections::HashSet<ObjectId> =
+            updates.iter().filter_map(|u| u.new_oid).collect();
         if !pushed_oids.is_empty() {
             if let Ok(local_tags) = refs::list_refs(&repo.git_dir, "refs/tags/") {
                 for (tag_name, tag_oid) in &local_tags {
@@ -614,7 +612,11 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force && !update.refspec_force && args.force_with_lease.is_none() && !is_ancestor(repo, *old, *new)? {
+            if !args.force
+                && !update.refspec_force
+                && args.force_with_lease.is_none()
+                && !is_ancestor(repo, *old, *new)?
+            {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\

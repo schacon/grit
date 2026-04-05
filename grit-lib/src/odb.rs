@@ -364,7 +364,10 @@ fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
             loop {
                 match chars.next() {
                     None => break,
-                    Some('"') => { properly_closed = true; break; }
+                    Some('"') => {
+                        properly_closed = true;
+                        break;
+                    }
                     Some('\\') => match chars.peek() {
                         Some(c) if c.is_ascii_digit() => {
                             let mut oct = String::new();

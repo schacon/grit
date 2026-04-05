@@ -575,8 +575,12 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local).ok();
                 cfg2.and_then(|c| {
                     let key = format!("submodule.{}.branch", m.name);
-                    c.entries.iter().find(|e| e.key == key).and_then(|e| e.value.clone())
-                }).unwrap_or_else(|| "master".to_string())
+                    c.entries
+                        .iter()
+                        .find(|e| e.key == key)
+                        .and_then(|e| e.value.clone())
+                })
+                .unwrap_or_else(|| "master".to_string())
             };
 
             // Resolve origin/<branch> to an OID.
@@ -586,7 +590,11 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 .output()
                 .context("failed to resolve remote tracking branch")?;
             if !output.status.success() {
-                bail!("failed to resolve origin/{} in submodule '{}'", branch, m.name);
+                bail!(
+                    "failed to resolve origin/{} in submodule '{}'",
+                    branch,
+                    m.name
+                );
             }
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         } else {

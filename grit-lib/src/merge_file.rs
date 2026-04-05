@@ -87,7 +87,9 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let ours_lines = split_lines(input.ours);
     let theirs_lines = split_lines(input.theirs);
 
-    let algo = input.diff_algorithm.as_deref()
+    let algo = input
+        .diff_algorithm
+        .as_deref()
         .map(|name| match name.to_lowercase().as_str() {
             "histogram" | "patience" => similar::Algorithm::Patience,
             _ => similar::Algorithm::Myers,

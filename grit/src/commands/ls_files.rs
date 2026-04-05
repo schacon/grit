@@ -813,7 +813,8 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
     if mtime_sec != entry.mtime_sec || (entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec) {
         // Stat differs — fall back to content hash comparison
         if let Ok(data) = std::fs::read(path) {
-            let hash = grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            let hash =
+                grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
             return hash != entry.oid;
         }
         return true;

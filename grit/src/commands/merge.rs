@@ -343,7 +343,14 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("Not possible to fast-forward, aborting.");
         }
-        return do_octopus_merge(&repo, &head, head_oid, &args, favor, diff_algorithm.as_deref());
+        return do_octopus_merge(
+            &repo,
+            &head,
+            head_oid,
+            &args,
+            favor,
+            diff_algorithm.as_deref(),
+        );
     }
 
     // Resolve merge target
@@ -384,7 +391,15 @@ pub fn run(mut args: Args) -> Result<()> {
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff && !args.ff_only {
             // Force a merge commit even though we could fast-forward
-            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref());
+            return do_real_merge(
+                &repo,
+                &head,
+                head_oid,
+                merge_oid,
+                &args,
+                favor,
+                diff_algorithm.as_deref(),
+            );
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
@@ -402,7 +417,15 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
-    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref())
+    do_real_merge(
+        &repo,
+        &head,
+        head_oid,
+        merge_oid,
+        &args,
+        favor,
+        diff_algorithm.as_deref(),
+    )
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -724,12 +747,19 @@ fn do_real_merge(
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
     let effective_custom_msg = if let Some(ref file_path) = args.file {
-        Some(fs::read_to_string(file_path)
-            .with_context(|| format!("could not read merge message file: {file_path}"))?)
+        Some(
+            fs::read_to_string(file_path)
+                .with_context(|| format!("could not read merge message file: {file_path}"))?,
+        )
     } else {
         args.message.clone()
     };
-    let mut msg = build_merge_message(head, &args.commits[0], effective_custom_msg.as_deref(), repo);
+    let mut msg = build_merge_message(
+        head,
+        &args.commits[0],
+        effective_custom_msg.as_deref(),
+        repo,
+    );
 
     // Append merge log if --log is set
     if let Some(max_log) = args.log {
@@ -1873,7 +1903,16 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                    match try_content_merge(
+                        repo,
+                        be,
+                        oe,
+                        te,
+                        ours_label,
+                        their_name,
+                        favor,
+                        diff_algorithm,
+                    )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
                             entry.oid = merged_oid;
@@ -2009,7 +2048,16 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                    match try_content_merge(
+                        repo,
+                        be,
+                        oe,
+                        te,
+                        ours_label,
+                        their_name,
+                        favor,
+                        diff_algorithm,
+                    )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
                             entry.oid = merged_oid;
@@ -2130,7 +2178,16 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                match try_content_merge(
+                    repo,
+                    be,
+                    oe,
+                    te,
+                    ours_label,
+                    their_name,
+                    favor,
+                    diff_algorithm,
+                )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2204,7 +2261,15 @@ fn merge_trees(
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                match try_content_merge_add_add(
+                    repo,
+                    oe,
+                    te,
+                    ours_label,
+                    their_name,
+                    favor,
+                    diff_algorithm,
+                )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2805,10 +2870,7 @@ fn cleanup_message(msg: &str, mode: &str) -> String {
         "whitespace" => {
             // Strip trailing whitespace from each line, leading and trailing blank lines
             let lines: Vec<&str> = msg.lines().collect();
-            let mut result: Vec<String> = lines
-                .iter()
-                .map(|l| l.trim_end().to_string())
-                .collect();
+            let mut result: Vec<String> = lines.iter().map(|l| l.trim_end().to_string()).collect();
             // Remove leading empty lines
             while result.first().is_some_and(|l| l.is_empty()) {
                 result.remove(0);

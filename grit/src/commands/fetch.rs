@@ -266,7 +266,8 @@ fn fetch_remote(
 
         // Pre-check: detect conflicting CLI refspec mappings
         {
-            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut dst_to_src: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
             for spec in cli_refspecs {
                 if spec.starts_with('^') {
@@ -274,7 +275,10 @@ fn fetch_remote(
                 }
                 let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
                 let (src, dst) = if let Some(idx) = spec_clean.find(':') {
-                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+                    (
+                        spec_clean[..idx].to_owned(),
+                        spec_clean[idx + 1..].to_owned(),
+                    )
                 } else {
                     continue;
                 };
@@ -290,7 +294,13 @@ fn fetch_remote(
                             let local_ref = dst.replacen('*', matched, 1);
                             if let Some(prev_src) = dst_to_src.get(&local_ref) {
                                 if prev_src != refname {
-                                    { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
+                                    {
+                                        eprintln!(
+                                            "fatal: Cannot fetch both {} and {} to {}",
+                                            prev_src, refname, local_ref
+                                        );
+                                        std::process::exit(128);
+                                    }
                                 }
                             } else {
                                 dst_to_src.insert(local_ref, refname.clone());
@@ -310,7 +320,13 @@ fn fetch_remote(
                     };
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != &remote_ref {
-                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, remote_ref, local_ref); std::process::exit(128); }
+                            {
+                                eprintln!(
+                                    "fatal: Cannot fetch both {} and {} to {}",
+                                    prev_src, remote_ref, local_ref
+                                );
+                                std::process::exit(128);
+                            }
                         }
                     } else {
                         dst_to_src.insert(local_ref, remote_ref);
@@ -470,7 +486,10 @@ fn fetch_remote(
                 }
                 let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
                 let (src, dst) = if let Some(idx) = spec_clean.find(':') {
-                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+                    (
+                        spec_clean[..idx].to_owned(),
+                        spec_clean[idx + 1..].to_owned(),
+                    )
                 } else {
                     continue;
                 };
@@ -501,12 +520,19 @@ fn fetch_remote(
     } else {
         // Pre-check: detect conflicting refspec mappings (multiple src → same dst)
         if !refspecs.is_empty() {
-            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut dst_to_src: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             for (refname, _) in &remote_heads {
                 if let Some(local_ref) = map_ref_through_refspecs(refname, &refspecs) {
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != refname {
-                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
+                            {
+                                eprintln!(
+                                    "fatal: Cannot fetch both {} and {} to {}",
+                                    prev_src, refname, local_ref
+                                );
+                                std::process::exit(128);
+                            }
                         }
                     } else {
                         dst_to_src.insert(local_ref, refname.clone());
@@ -793,10 +819,7 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
 
 /// Verify that all objects reachable from the given OIDs exist in the local ODB.
 /// This is used after copying objects from a remote to detect incomplete transfers.
-fn check_connectivity(
-    git_dir: &Path,
-    tip_oids: &[ObjectId],
-) -> Result<()> {
+fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
     use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
     use grit_lib::odb::Odb;
     use std::collections::HashSet;
@@ -809,9 +832,9 @@ fn check_connectivity(
         if !seen.insert(oid) {
             continue;
         }
-        let obj = odb.read(&oid).with_context(|| {
-            "remote did not send all necessary objects".to_string()
-        })?;
+        let obj = odb
+            .read(&oid)
+            .with_context(|| "remote did not send all necessary objects".to_string())?;
         match obj.kind {
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {

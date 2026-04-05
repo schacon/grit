@@ -424,7 +424,9 @@ fn add_note(
         let blob_oid = resolve_revision(repo, &reuse_obj)
             .with_context(|| format!("invalid object: '{reuse_obj}'"))?;
         // Verify the object exists
-        let _ = repo.odb.read(&blob_oid)
+        let _ = repo
+            .odb
+            .read(&blob_oid)
             .with_context(|| format!("reading object '{reuse_obj}'"))?;
         Some(blob_oid)
     } else {

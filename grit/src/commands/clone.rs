@@ -552,7 +552,11 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
 
         if !status.success() {
             eprintln!("warning: failed to clone submodule '{}'", path);
-            anyhow::bail!("clone of '{}' into submodule path '{}' failed", resolved_url, sub_dest.display());
+            anyhow::bail!(
+                "clone of '{}' into submodule path '{}' failed",
+                resolved_url,
+                sub_dest.display()
+            );
         }
     }
 

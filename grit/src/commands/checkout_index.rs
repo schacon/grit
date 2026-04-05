@@ -127,10 +127,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut has_errors = false;
     for path in selected_paths {
-        let entry = index
-            .get(&path, target_stage)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path)))?;
+        let entry = index.get(&path, target_stage).cloned().ok_or_else(|| {
+            anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path))
+        })?;
         match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
             Ok(outcome) => {
                 if let Some(updated) = outcome.updated_entry {
@@ -185,7 +184,9 @@ fn checkout_entry(
     if entry.mode == 0o160000 {
         if args.temp {
             eprintln!("cannot create temporary submodule {path_str}");
-            return Err(anyhow::anyhow!("cannot create temporary submodule {path_str}"));
+            return Err(anyhow::anyhow!(
+                "cannot create temporary submodule {path_str}"
+            ));
         }
         return Ok(outcome);
     }
@@ -194,7 +195,10 @@ fn checkout_entry(
         Ok(obj) => obj,
         Err(_) => {
             eprintln!("unable to read sha1 file of {path_str} ({})", entry.oid);
-            return Err(anyhow::anyhow!("unable to read sha1 file of {path_str} ({})", entry.oid));
+            return Err(anyhow::anyhow!(
+                "unable to read sha1 file of {path_str} ({})",
+                entry.oid
+            ));
         }
     };
     if obj.kind != ObjectKind::Blob {

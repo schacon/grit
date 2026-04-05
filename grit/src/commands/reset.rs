@@ -295,7 +295,11 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
     }
     // Also find paths deleted from index (in tree but not in index)
     for path in tree_map.keys() {
-        if !index.entries.iter().any(|e| e.path == *path && e.stage() == 0) {
+        if !index
+            .entries
+            .iter()
+            .any(|e| e.path == *path && e.stage() == 0)
+        {
             if !staged_paths.contains(path) {
                 staged_paths.push(path.clone());
             }
@@ -356,7 +360,11 @@ fn reset_paths(
             if head.oid().is_none() && commit_spec == "HEAD" {
                 Vec::new() // empty tree
             } else {
-                bail!("unknown revision: '{}': object not found: {}", commit_spec, commit_spec);
+                bail!(
+                    "unknown revision: '{}': object not found: {}",
+                    commit_spec,
+                    commit_spec
+                );
             }
         }
     };

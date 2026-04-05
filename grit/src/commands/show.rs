@@ -729,7 +729,13 @@ fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) ->
 }
 
 /// Show a tag object: tag header, then the tagged object.
-fn show_tag(out: &mut impl Write, odb: &Odb, data: &[u8], args: &Args, notes_map: &HashMap<ObjectId, Vec<u8>>) -> Result<()> {
+fn show_tag(
+    out: &mut impl Write,
+    odb: &Odb,
+    data: &[u8],
+    args: &Args,
+    notes_map: &HashMap<ObjectId, Vec<u8>>,
+) -> Result<()> {
     let tag = parse_tag(data).context("parsing tag")?;
 
     writeln!(out, "tag {}", tag.tag)?;

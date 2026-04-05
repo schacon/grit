@@ -3,8 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use std::io::Write as _;
+use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;

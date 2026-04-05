@@ -244,7 +244,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
-        let effective_prefix = if is_root_pathspec { None } else { prefix.as_deref() };
+        let effective_prefix = if is_root_pathspec {
+            None
+        } else {
+            prefix.as_deref()
+        };
         add_all(
             odb,
             &mut index,
@@ -1302,7 +1306,10 @@ fn pid_is_running(pid: u32) -> bool {
 }
 
 fn build_lock_held_error_message(lock_path: &Path, pid_lock_path: &Path) -> String {
-    let mut msg = format!("Unable to create '{}': File exists.\n\n", lock_path.display());
+    let mut msg = format!(
+        "Unable to create '{}': File exists.\n\n",
+        lock_path.display()
+    );
     if let Some(pid) = read_lock_pid(pid_lock_path) {
         if pid_is_running(pid) {
             msg.push_str(&format!(
@@ -1350,6 +1357,5 @@ impl Drop for PidFileGuard {
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied")
-        || err.to_string().contains("permission denied")
+    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
 }

@@ -15,21 +15,12 @@ commit → check it off → move on.
 ## 1. Basic/Setup (37 files)
 
 - [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
-<<<<<<< HEAD
 - [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
 - [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
 - [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
 - [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
 - [x] `t0007-git-var` ████████████████████ 27/27 (0 left) — basic sanity checks for git var
 - [x] `t0009-git-dir-validation` ████████████████████ 6/6 (0 left) — setup: validation of .git file/directory types
-=======
-- [ ] `t0062-revision-walking` ██████████░░░░░░░░░░ 1/2 (1 left) — Test revision walking api
-- [ ] `t0071-sort` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — verify sort functions
-- [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
-- [ ] `t0056-git-C` ████████████████░░░░ 9/11 (2 left) — 
-- [ ] `t0007-git-var` █████████████████░░░ 24/27 (3 left) — basic sanity checks for git var
-- [ ] `t0009-git-dir-validation` ██████████░░░░░░░░░░ 3/6 (3 left) — setup: validation of .git file/directory types
->>>>>>> dd487a50 (fix: pass t0080-unit-test-output (1/1))
 
 - [x] `t0081-find-pack` ████████████████████ 4/4 (0 left) — test `test-tool find-pack`
 - [x] `t0030-stripspace` ████████████████████ 30/30 (0 left) — git stripspace
@@ -88,10 +79,10 @@ commit → check it off → move on.
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
 - [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
-- [ ] `t1311-config-optional` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — :(optional) paths
+- [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
 - [ ] `t1408-packed-refs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — packed-refs entries are covered by loose refs
-- [ ] `t1401-symbolic-ref` █████████████████░░░ 22/25 (3 left) — basic symbolic-ref tests
-- [ ] `t1307-config-blob` ███████████████░░░░░ 10/13 (3 left) — support for reading config from a blob
+- [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
+- [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
 - [ ] `t1503-rev-parse-verify` ███████████████░░░░░ 9/12 (3 left) — test git rev-parse --verify
 - [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
 - [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api

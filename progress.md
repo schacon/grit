@@ -6,14 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    10 |
+| Completed   |    36 |
 | In progress |     0 |
-| Remaining   |   755 |
-| **Total**   |   765 |
+| Remaining   |   731 |
+| **Total**   |   767 |
 
 ## Recently completed
 
+- `t1311-config-optional` — 3/3 tests pass (`:(optional)` config-path handling was already implemented; upstream re-verification showed the plan entry was stale)
+- `t0009-git-dir-validation` — 6/6 tests pass (upstream verification on `main`; stale conflicted `plan.md` entry corrected)
 - `t1003-read-tree-prefix` — 3/3 tests pass (`read-tree --prefix` no longer writes a bogus v4 index under `GIT_INDEX_VERSION=4`)
+- `t1401-symbolic-ref` — 25/25 tests pass (upstream harness now exports `TAR`, so the setup/reset cases run correctly)
+- `t1307-config-blob` — 13/13 tests pass (`git config --blob` handling re-verified against upstream; stale plan entry corrected)
 - `t0213-trace2-ancestry` — 5/5 tests pass (`cmd_ancestry` trace2 coverage complete)
 - `t1310-config-default` — 5/5 tests pass (`git config --default` validation and typed fallback handling)
 - `t2060-switch` — 16/16 tests pass
@@ -26,4 +30,4 @@
 
 ## What Remains
 
-755 test files still pending. See `plan.md` for the full prioritized list.
+731 test files still pending. See `plan.md` for the full prioritized list.

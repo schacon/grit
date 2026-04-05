@@ -93,7 +93,7 @@ run_test() {
   fi
   (
     cd "$WORKDIR/t"
-    GIT_BUILD_DIR="$WORKDIR" TEST_NO_MALLOC_CHECK=1 \
+    GIT_BUILD_DIR="$WORKDIR" TEST_NO_MALLOC_CHECK=1 TAR="${TAR:-tar}" \
       "${runner[@]}" bash "./$f" > "$out" 2>&1
   ) || true
 }

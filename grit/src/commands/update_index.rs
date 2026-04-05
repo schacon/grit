@@ -340,11 +340,20 @@ pub fn run(args: Args) -> Result<()> {
                     head_content.parse().with_context(|| "invalid HEAD oid")?
                 };
                 let entry = IndexEntry {
-                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
-                    dev: 0, ino: 0, mode: grit_lib::index::MODE_GITLINK,
-                    uid: 0, gid: 0, size: 0, oid,
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: grit_lib::index::MODE_GITLINK,
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid,
                     flags: rel_bytes.len().min(0xFFF) as u16,
-                    flags_extended: None, path: rel_bytes.to_vec(),
+                    flags_extended: None,
+                    path: rel_bytes.to_vec(),
                 };
                 index.add_or_replace(entry);
             }
@@ -380,7 +389,10 @@ pub fn run(args: Args) -> Result<()> {
                     eprintln!(
                         "error: insufficient permission for adding an object to repository database .git/objects"
                     );
-                    eprintln!("error: {}: failed to insert into database", input_path.display());
+                    eprintln!(
+                        "error: {}: failed to insert into database",
+                        input_path.display()
+                    );
                     eprintln!("fatal: Unable to process path {}", input_path.display());
                     std::process::exit(128);
                 }
@@ -593,10 +605,13 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     let meta = std::fs::symlink_metadata(dot_git)?;
-    if meta.is_dir() { return Ok(dot_git.to_path_buf()); }
+    if meta.is_dir() {
+        return Ok(dot_git.to_path_buf());
+    }
     let content = std::fs::read_to_string(dot_git)?;
     let content = content.trim();
-    let target = content.strip_prefix("gitdir: ")
+    let target = content
+        .strip_prefix("gitdir: ")
         .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
     let target_path = Path::new(target);
     if target_path.is_absolute() {
@@ -607,8 +622,7 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied")
-        || err.to_string().contains("permission denied")
+    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
 }
 
 fn core_symlinks_enabled(repo: &Repository) -> bool {

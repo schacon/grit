@@ -287,9 +287,7 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid
-                        || wt_mode != idx_canonical
-                        || is_stat_smudged(idx_entry)
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
                     {
                         changes.insert(
                             path.clone(),

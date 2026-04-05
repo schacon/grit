@@ -208,7 +208,12 @@ pub fn run(args: Args) -> Result<()> {
         let result =
             force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track.as_deref())?;
+            maybe_setup_tracking(
+                &repo,
+                force_branch_name,
+                target.as_deref(),
+                args.track.as_deref(),
+            )?;
         }
         return result;
     }
@@ -235,7 +240,12 @@ pub fn run(args: Args) -> Result<()> {
         let result =
             create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, new_branch_name, effective_target, args.track.as_deref())?;
+            maybe_setup_tracking(
+                &repo,
+                new_branch_name,
+                effective_target,
+                args.track.as_deref(),
+            )?;
         }
         return result;
     }
@@ -365,7 +375,11 @@ pub fn run(args: Args) -> Result<()> {
 /// Clap strips the leading `--` when it is the first trailing arg, so we
 /// need this external signal to distinguish `checkout -- file` from
 /// `checkout file`.
-fn split_target_and_paths(rest: &[String], has_separator: bool, separator_at_end: bool) -> (Option<String>, Vec<String>) {
+fn split_target_and_paths(
+    rest: &[String],
+    has_separator: bool,
+    separator_at_end: bool,
+) -> (Option<String>, Vec<String>) {
     if rest.is_empty() {
         return (None, vec![]);
     }
@@ -1808,8 +1822,12 @@ fn maybe_setup_tracking(
     };
 
     if effective_mode == "inherit" {
-        let remote = config.get(&format!("branch.{start}.remote")).unwrap_or_default();
-        let merge_ref = config.get(&format!("branch.{start}.merge")).unwrap_or_default();
+        let remote = config
+            .get(&format!("branch.{start}.remote"))
+            .unwrap_or_default();
+        let merge_ref = config
+            .get(&format!("branch.{start}.merge"))
+            .unwrap_or_default();
         if !remote.is_empty() && !merge_ref.is_empty() {
             let config_path = repo.git_dir.join("config");
             let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();

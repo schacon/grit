@@ -331,7 +331,10 @@ impl Index {
             Ok(file) => file,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 let message = build_lock_exists_message(&tmp_path, &pid_path, &e);
-                return Err(Error::Io(io::Error::new(io::ErrorKind::AlreadyExists, message)));
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    message,
+                )));
             }
             Err(e) => return Err(Error::Io(e)),
         };
