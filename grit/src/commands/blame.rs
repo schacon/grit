@@ -64,6 +64,10 @@ pub struct Args {
     #[arg(short = 'f', long = "show-name")]
     pub show_name: bool,
 
+    /// Use N digits to display object names (default 8, min 4).
+    #[arg(long = "abbrev")]
+    pub abbrev: Option<usize>,
+
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
     pub args: Vec<String>,
@@ -682,16 +686,43 @@ fn write_default(
     args: &Args,
     file_path: &str,
 ) -> Result<()> {
-    let hash_len = if args.long_hash { 40 } else { 8 };
+    let hash_len = if args.long_hash {
+        40
+    } else if let Some(n) = args.abbrev {
+        n.max(4)
+    } else {
+        8
+    };
     let max_lineno = lines.iter().map(|b| b.final_lineno).max().unwrap_or(1);
     let lineno_width = format!("{max_lineno}").len();
     let use_color = args.color_lines || args.color_by_age;
 
     let mut prev_oid: Option<ObjectId> = None;
 
+    // Check if any blame line is a boundary (root commit)
+    let has_boundary = lines.iter().any(|l| {
+        commits
+            .get(&l.oid)
+            .map(|c| c.parents.is_empty())
+            .unwrap_or(false)
+    });
+
     for bl in lines {
         let hex = bl.oid.to_hex();
-        let short = &hex[..hash_len.min(hex.len())];
+        let is_boundary = commits
+            .get(&bl.oid)
+            .map(|c| c.parents.is_empty())
+            .unwrap_or(false);
+        let short = if has_boundary {
+            if is_boundary {
+                format!("^{}", &hex[..hash_len.min(hex.len())])
+            } else {
+                // Extra char width to align with ^ prefix lines
+                format!("{}", &hex[..(hash_len + 1).min(hex.len())])
+            }
+        } else {
+            hex[..hash_len.min(hex.len())].to_string()
+        };
 
         // Determine color prefix/suffix
         let (color_start, color_end) = if args.color_by_age {

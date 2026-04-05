@@ -866,7 +866,7 @@ t8004-blame-with-conflicts	yes	3	2	1	ok	2	3	0
 t8005-blame-i18n	yes	0	0	0	ok	0	0	0
 t8006-blame-textconv	yes	16	6	10	ok	6	16	0
 t8007-cat-file-textconv	yes	15	9	6	ok	9	15	0
-t8008-blame-formats	yes	5	4	1	ok	4	5	0
+t8008-blame-formats	yes	5	5	0	ok	5	5	0
 t8009-blame-vs-topicbranches	yes	2	1	1	ok	1	2	0
 t8010-cat-file-filters	yes	9	4	5	ok	4	9	0
 t8011-blame-split-file	yes	10	2	8	ok	2	10	0

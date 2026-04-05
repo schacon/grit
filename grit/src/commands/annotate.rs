@@ -43,6 +43,9 @@ pub struct Args {
     #[arg(short = 'f', long = "show-name")]
     pub show_name: bool,
 
+    #[arg(long = "abbrev")]
+    pub abbrev: Option<usize>,
+
     #[arg()]
     pub args: Vec<String>,
 }
@@ -62,6 +65,7 @@ pub fn run(args: Args) -> Result<()> {
         color_by_age: args.color_by_age,
         copy_detection: args.copy_detection,
         show_name: args.show_name,
+        abbrev: args.abbrev,
         args: args.args,
     })
 }
