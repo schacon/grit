@@ -315,6 +315,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-r" => {
                     // recursive - default behavior for diff-index
                 }
+                "--ignore-submodules" => {
+                    // accepted for compatibility
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    // accepted for compatibility
+                }
                 _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
                     context_lines = arg[2..].parse::<usize>().unwrap();
                 }

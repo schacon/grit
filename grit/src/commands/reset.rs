@@ -924,7 +924,14 @@ fn checkout_index_to_worktree(
             // Apply CRLF conversion if configured
             let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
-                grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, cv, &file_attrs, None)
+                let oid_hex = format!("{}", entry.oid);
+                grit_lib::crlf::convert_to_worktree(
+                    &obj.data,
+                    &path_str,
+                    cv,
+                    &file_attrs,
+                    Some(&oid_hex),
+                )
             } else {
                 obj.data.clone()
             };

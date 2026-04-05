@@ -315,6 +315,22 @@ pub fn run(args: Args) -> Result<()> {
     if !paths.is_empty() {
         if !has_separator {
             if let Some(ref t) = target {
+                // DWIM compatibility: when multiple positional arguments are
+                // given without `--` and the first argument is *not* a
+                // commit-ish, treat all arguments as pathspecs from the index.
+                //
+                // This supports forms like `git checkout A B`, where both A
+                // and B are file paths, not a tree-ish plus paths.
+                let is_commitish = resolve_to_commit(&repo, t).is_ok()
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok()
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/tags/{t}")).is_ok();
+                if !is_commitish {
+                    let mut all_paths = Vec::with_capacity(paths.len() + 1);
+                    all_paths.push(t.clone());
+                    all_paths.extend(paths.clone());
+                    return checkout_paths(&repo, None, &all_paths, args.no_overlay);
+                }
+
                 let is_rev = resolve_revision(&repo, t).is_ok()
                     || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
                 let cwd = std::env::current_dir().unwrap_or_default();

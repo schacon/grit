@@ -209,7 +209,7 @@ t2071-restore-patch	yes	15	2	13	ok	2	15	0
 t2072-restore-pathspec-file	yes	12	2	10	ok	2	12	0
 t2080-parallel-checkout-basics	yes	11	0	11	ok	0	11	0
 t2081-parallel-checkout-collisions	yes	6	6	0	ok	6	6	0
-t2082-parallel-checkout-attributes	yes	5	1	4	ok	1	5	0
+t2082-parallel-checkout-attributes	yes	5	5	0	ok	5	5	0
 t2100-update-cache-badpath	yes	5	5	0	ok	5	5	0
 t2101-update-index-reupdate	yes	0	0	0	timeout	0	0	0
 t2102-update-index-symlinks	yes	3	3	0	ok	3	3	0

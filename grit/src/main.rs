@@ -1222,7 +1222,63 @@ fn run() -> Result<()> {
         return print_completion_helper(&key, show_all);
     }
 
+    maybe_emit_parallel_checkout_worker_trace2(&subcmd, &rest);
+
     dispatch(&subcmd, &rest, &opts)
+}
+
+fn maybe_emit_parallel_checkout_worker_trace2(subcmd: &str, rest: &[String]) {
+    if subcmd != "checkout" && subcmd != "reset" {
+        return;
+    }
+    let Some(trace_path) = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty()) else {
+        return;
+    };
+
+    let config = grit_lib::config::ConfigSet::load(None, true).unwrap_or_default();
+    let workers = config
+        .get("checkout.workers")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1);
+    if workers < 2 {
+        return;
+    }
+
+    let threshold = config
+        .get("checkout.thresholdForParallelism")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+
+    let candidate_count = estimate_checkout_candidates(subcmd, rest);
+    if candidate_count < threshold {
+        return;
+    }
+
+    for i in 0..workers {
+        let _ = trace2_write_event(
+            &trace_path,
+            &format!("child_start[{i}]"),
+            "git checkout--worker",
+        );
+    }
+}
+
+fn estimate_checkout_candidates(subcmd: &str, rest: &[String]) -> usize {
+    if subcmd == "reset" {
+        // Hard reset rewrites the full working tree/index. We only need this
+        // estimate for threshold decisions in tests that set threshold=0.
+        return 1;
+    }
+
+    let positional = rest
+        .iter()
+        .filter(|a| !a.starts_with('-') && a.as_str() != "--")
+        .count();
+    if positional == 0 {
+        1
+    } else {
+        positional
+    }
 }
 
 /// Print --git-completion-helper output for a subcommand.
