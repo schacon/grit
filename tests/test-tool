@@ -4,17 +4,38 @@
 case "$1" in
   chmtime)
     shift
-    # Parse =<epoch> or +N/-N syntax
+    # Parse optional --get flag
+    get_mode=false
+    if test "$1" = "--get"; then
+      get_mode=true
+      shift
+    fi
+    # Parse =<epoch> or +N/-N syntax, or just filenames if --get only
     case "$1" in
-      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@" ;;
+      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@"
+        if $get_mode; then
+          for f in "$@"; do
+            stat -c %Y "$f"
+          done
+        fi ;;
       +*|-*) 
         offset="$1"; shift
         for f in "$@"; do
           cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
           new=$((cur + offset))
           touch -d "@$new" "$f"
+          if $get_mode; then
+            stat -c %Y "$f"
+          fi
         done ;;
-      *) echo "test-tool chmtime: unknown format: $1" >&2; exit 1 ;;
+      *)
+        if $get_mode; then
+          for f in "$@"; do
+            stat -c %Y "$f"
+          done
+        else
+          echo "test-tool chmtime: unknown format: $1" >&2; exit 1
+        fi ;;
     esac ;;
   sha1)
     sha1sum | cut -d' ' -f1 ;;
