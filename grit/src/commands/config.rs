@@ -50,15 +50,15 @@ pub struct Args {
 
     // ── Legacy action flags ──
     /// Get the value for a given key (legacy).
-    #[arg(long = "get", value_name = "KEY")]
+    #[arg(long = "get", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub get_key: Option<String>,
 
     /// Get all values for a multi-valued key (legacy).
-    #[arg(long = "get-all", value_name = "KEY")]
+    #[arg(long = "get-all", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub get_all_key: Option<String>,
 
     /// Get values matching a regex (legacy).
-    #[arg(long = "get-regexp", value_name = "PATTERN")]
+    #[arg(long = "get-regexp", value_name = "PATTERN", num_args = 0..=1, default_missing_value = "")]
     pub get_regexp: Option<String>,
 
     /// Remove a key (legacy).
@@ -331,10 +331,21 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_list(&args, git_dir.as_deref());
     }
 
-    if let Some(ref key) = args.get_key {
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+    if let Some(ref key_raw) = args.get_key {
+        // When --get is used without an inline value (e.g. `--get --path a.key`),
+        // the key comes from the first positional argument.
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let k = args.positional.first().cloned().unwrap_or_default();
+            let vp = args.positional.get(1).map(|s| s.as_str());
+            (k, vp)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
+        };
+        if key.is_empty() {
+            bail!("usage: git config --get <key>");
+        }
         let get_args = GetArgs {
-            key: key.clone(),
+            key,
             all: false,
             regexp: false,
             show_names: false,
@@ -346,10 +357,19 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
-    if let Some(ref key) = args.get_all_key {
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+    if let Some(ref key_raw) = args.get_all_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let k = args.positional.first().cloned().unwrap_or_default();
+            let vp = args.positional.get(1).map(|s| s.as_str());
+            (k, vp)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
+        };
+        if key.is_empty() {
+            bail!("usage: git config --get-all <key>");
+        }
         let get_args = GetArgs {
-            key: key.clone(),
+            key,
             all: true,
             regexp: false,
             show_names: false,
@@ -361,9 +381,17 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
-    if let Some(ref pattern) = args.get_regexp {
+    if let Some(ref pattern_raw) = args.get_regexp {
+        let pattern = if pattern_raw.is_empty() {
+            args.positional.first().cloned().unwrap_or_default()
+        } else {
+            pattern_raw.clone()
+        };
+        if pattern.is_empty() {
+            bail!("usage: git config --get-regexp <pattern>");
+        }
         let get_args = GetArgs {
-            key: pattern.clone(),
+            key: pattern,
             all: true,
             regexp: true,
             show_names: true,

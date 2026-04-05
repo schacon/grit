@@ -296,7 +296,7 @@ pub struct Args {
     pub unified: Option<usize>,
 
     /// Detect renames.
-    #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1)]
+    #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_renames: Option<String>,
 
     /// Suppress diff output for submodules.
@@ -344,6 +344,28 @@ pub struct Args {
     /// Disable rename detection (must not be abbreviated).
     #[arg(long = "no-renames")]
     pub no_renames: bool,
+
+    /// Detect copies (treat as rename detection for now).
+    #[arg(short = 'C', long = "find-copies", value_name = "N", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub find_copies: Option<String>,
+
+    /// Find copies harder (look at unmodified files as source).
+    #[arg(long = "find-copies-harder")]
+    pub find_copies_harder: bool,
+
+    /// Pickaxe: look for diffs that change the number of occurrences of the specified string.
+    /// Parsed manually from trailing args since -S<string> value is attached.
+    #[arg(skip)]
+    pub pickaxe_string: Option<String>,
+
+    /// Pickaxe: look for diffs whose patch text contains added/removed lines matching regex.
+    /// Parsed manually from trailing args since -G takes a space-separated value.
+    #[arg(skip)]
+    pub pickaxe_grep: Option<String>,
+
+    /// Treat the string given to -S as a POSIX extended regex.
+    #[arg(long = "pickaxe-regex")]
+    pub pickaxe_regex: bool,
 
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -481,6 +503,36 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.line_prefix =
                         Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
                 }
+                s if s == "-M" || s.starts_with("-M") && s[2..].bytes().all(|b| b.is_ascii_digit() || b == b'%') => {
+                    let val = if s.len() > 2 { &s[2..] } else { "50" };
+                    args.find_renames = Some(val.to_owned());
+                }
+                s if s.starts_with("--find-renames") => {
+                    if let Some(val) = s.strip_prefix("--find-renames=") {
+                        args.find_renames = Some(val.to_owned());
+                    } else {
+                        args.find_renames = Some("50".to_owned());
+                    }
+                }
+                s if s == "-C" || s == "-CC" || s.starts_with("--find-copies") => {
+                    args.find_copies = Some("50".to_owned());
+                }
+                "--find-copies-harder" => {
+                    args.find_copies_harder = true;
+                    args.find_copies = Some("50".to_owned());
+                }
+                s if s.starts_with("-S") && s.len() > 2 => {
+                    args.pickaxe_string = Some(s[2..].to_owned());
+                }
+                s if s.starts_with("-G") && s.len() > 2 => {
+                    args.pickaxe_grep = Some(s[2..].to_owned());
+                }
+                "--pickaxe-regex" => {
+                    args.pickaxe_regex = true;
+                }
+                "--pickaxe-all" => {
+                    // Accepted for compatibility
+                }
                 _ => {
                     extra_revs.push(r.clone());
                     continue;
@@ -603,6 +655,11 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
+    // -C implies -M (copy detection requires rename detection)
+    if args.find_copies.is_some() && args.find_renames.is_none() {
+        args.find_renames = Some("50".to_owned());
+    }
+
     // Apply rename detection if requested (explicit -M flag or diff.renames config).
     let rename_threshold: Option<u32> = if let Some(ref threshold_str) = args.find_renames {
         Some(threshold_str.parse().unwrap_or(50))
@@ -639,6 +696,62 @@ pub fn run(mut args: Args) -> Result<()> {
                 e.old_mode != "160000" && e.new_mode != "160000"
             })
             .collect()
+    } else {
+        entries
+    };
+
+    // Apply pickaxe filtering (-G <regex> or -S <string> [--pickaxe-regex]).
+    let entries = if let Some(ref pattern) = args.pickaxe_grep {
+        // -G: show only entries whose diff text has added/removed lines matching the regex
+        let re = regex::Regex::new(pattern)
+            .with_context(|| format!("invalid pickaxe regex: {pattern}"))?;
+        entries
+            .into_iter()
+            .filter(|e| {
+                let old = read_content(&repo.odb, &e.old_oid, None, e.path());
+                let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
+                // Check if any added or removed line matches
+                for line in new.lines() {
+                    if re.is_match(line) {
+                        return true;
+                    }
+                }
+                for line in old.lines() {
+                    if re.is_match(line) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .collect()
+    } else if let Some(ref needle) = args.pickaxe_string {
+        if args.pickaxe_regex {
+            // -S with --pickaxe-regex: treat needle as regex, filter by occurrence count change
+            let re = regex::Regex::new(needle)
+                .with_context(|| format!("invalid pickaxe regex: {needle}"))?;
+            entries
+                .into_iter()
+                .filter(|e| {
+                    let old = read_content(&repo.odb, &e.old_oid, None, e.path());
+                    let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
+                    let old_count = re.find_iter(&old).count();
+                    let new_count = re.find_iter(&new).count();
+                    old_count != new_count
+                })
+                .collect()
+        } else {
+            // -S without --pickaxe-regex: filter by string occurrence count change
+            entries
+                .into_iter()
+                .filter(|e| {
+                    let old = read_content(&repo.odb, &e.old_oid, None, e.path());
+                    let new = read_content(&repo.odb, &e.new_oid, wt_for_content, e.path());
+                    let old_count = old.matches(needle.as_str()).count();
+                    let new_count = new.matches(needle.as_str()).count();
+                    old_count != new_count
+                })
+                .collect()
+        }
     } else {
         entries
     };
