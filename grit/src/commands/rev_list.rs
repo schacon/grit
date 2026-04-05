@@ -5,8 +5,8 @@ use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
-    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, ObjectFilter,
-    OrderingMode, OutputMode, RevListOptions,
+    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, MissingAction,
+    ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 use std::io::Write;
 
@@ -62,6 +62,15 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                _ if arg.starts_with("--missing=") => {
+                    let value = arg.trim_start_matches("--missing=");
+                    options.missing_action = match value {
+                        "error" => MissingAction::Error,
+                        "print" => MissingAction::Print,
+                        "allow-any" | "allow-promisor" => MissingAction::Allow,
+                        _ => bail!("unsupported value for --missing: {value}"),
+                    };
+                }
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
                 "--boundary" => options.boundary = true,
@@ -496,6 +505,12 @@ pub fn run(args: Args) -> Result<()> {
     if options.filter_print_omitted {
         for oid in &result.omitted_objects {
             println!("~{oid}");
+        }
+    }
+
+    if options.missing_action == MissingAction::Print {
+        for oid in &result.missing_objects {
+            println!("?{oid}");
         }
     }
 

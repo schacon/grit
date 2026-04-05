@@ -71,6 +71,14 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Force progress reporting.
+    #[arg(long = "progress")]
+    pub progress: bool,
+
+    /// Suppress progress reporting.
+    #[arg(long = "no-progress")]
+    pub no_progress: bool,
+
     /// Suppress editor launch for the merge commit message.
     #[arg(long = "no-edit")]
     pub no_edit: bool,

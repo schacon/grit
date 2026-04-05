@@ -27,6 +27,17 @@ pub enum OutputMode {
     Format(String),
 }
 
+/// Behavior when reachable objects are missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingAction {
+    /// Fail traversal when a referenced object is missing.
+    Error,
+    /// Continue traversal and report each missing object.
+    Print,
+    /// Continue traversal and silently ignore missing objects.
+    Allow,
+}
+
 /// Object filter specification for `--filter=`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectFilter {
@@ -219,6 +230,8 @@ pub struct RevListOptions {
     pub in_commit_order: bool,
     /// Exclude objects in `.keep` pack files.
     pub no_kept_objects: bool,
+    /// Behavior when referenced objects are missing.
+    pub missing_action: MissingAction,
 }
 
 impl Default for RevListOptions {
@@ -255,6 +268,7 @@ impl Default for RevListOptions {
             filter_print_omitted: false,
             in_commit_order: false,
             no_kept_objects: false,
+            missing_action: MissingAction::Error,
         }
     }
 }
@@ -269,6 +283,8 @@ pub struct RevListResult {
     pub objects: Vec<(ObjectId, String)>,
     /// Objects omitted by `--filter` (for `--filter-print-omitted`).
     pub omitted_objects: Vec<ObjectId>,
+    /// Referenced objects missing from the object database.
+    pub missing_objects: Vec<ObjectId>,
     /// Boundary commits (excluded parents shown with `-` prefix).
     pub boundary_commits: Vec<ObjectId>,
     /// For `--left-right`: mapping commit OID -> true=left, false=right.
@@ -472,31 +488,38 @@ pub fn rev_list(
     }
 
     // Collect reachable objects if --objects
-    let (objects, omitted_objects, per_commit_object_counts) = if options.objects {
-        let (mut objs, omit, counts) = if options.in_commit_order {
+    let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
+        let (mut objs, omit, miss, counts) = if options.in_commit_order {
             collect_reachable_objects_in_commit_order(
                 repo,
                 &mut graph,
                 &ordered,
                 options.filter.as_ref(),
+                options.missing_action,
             )?
         } else {
-            let (objs, omit) =
-                collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?;
-            (objs, omit, Vec::new())
+            let (objs, omit, miss) = collect_reachable_objects(
+                repo,
+                &mut graph,
+                &ordered,
+                options.filter.as_ref(),
+                options.missing_action,
+            )?;
+            (objs, omit, miss, Vec::new())
         };
         if options.no_kept_objects {
             objs.retain(|(oid, _)| !kept_set.contains(oid));
         }
-        (objs, omit, counts)
+        (objs, omit, miss, counts)
     } else {
-        (Vec::new(), Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
     };
 
     Ok(RevListResult {
         commits: ordered,
         objects,
         omitted_objects,
+        missing_objects,
         boundary_commits,
         left_right_map,
         cherry_equivalent,
@@ -1959,12 +1982,24 @@ fn collect_reachable_objects(
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     filter: Option<&ObjectFilter>,
-) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>)> {
+    missing_action: MissingAction,
+) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
+    let mut missing = Vec::new();
+    let mut missing_seen = HashSet::new();
     for &commit_oid in commits {
-        let commit = load_commit(repo, commit_oid)?;
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_seen.insert(commit_oid) && missing_action == MissingAction::Print {
+                    missing.push(commit_oid);
+                }
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         collect_tree_objects_filtered(
             repo,
             commit.tree,
@@ -1973,10 +2008,13 @@ fn collect_reachable_objects(
             &mut seen,
             &mut result,
             &mut omitted,
+            &mut missing,
+            &mut missing_seen,
             filter,
+            missing_action,
         )?;
     }
-    Ok((result, omitted))
+    Ok((result, omitted, missing))
 }
 
 #[allow(dead_code)]
@@ -1988,9 +2026,25 @@ fn collect_tree_objects_filtered(
     seen: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
+    missing: &mut Vec<ObjectId>,
+    missing_seen: &mut HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
+    missing_action: MissingAction,
 ) -> Result<()> {
     if !seen.insert(tree_oid) {
+        return Ok(());
+    }
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(object) => object,
+        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+            if missing_action == MissingAction::Print && missing_seen.insert(tree_oid) {
+                missing.push(tree_oid);
+            }
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    if object.kind != ObjectKind::Tree {
         return Ok(());
     }
     // Check if this tree passes the filter
@@ -1999,10 +2053,6 @@ fn collect_tree_objects_filtered(
         result.push((tree_oid, prefix.to_owned()));
     } else {
         omitted.push(tree_oid);
-    }
-    let object = repo.odb.read(&tree_oid)?;
-    if object.kind != ObjectKind::Tree {
-        return Ok(());
     }
     let entries = parse_tree(&object.data)?;
     for entry in entries {
@@ -2020,7 +2070,16 @@ fn collect_tree_objects_filtered(
         if !seen.insert(entry.oid) {
             continue;
         }
-        let child_obj = repo.odb.read(&entry.oid)?;
+        let child_obj = match repo.odb.read(&entry.oid) {
+            Ok(object) => object,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(entry.oid) {
+                    missing.push(entry.oid);
+                }
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         match child_obj.kind {
             ObjectKind::Tree => {
                 // Recurse into subtrees; the filter check happens at the recursive call
@@ -2033,7 +2092,10 @@ fn collect_tree_objects_filtered(
                     seen,
                     result,
                     omitted,
+                    missing,
+                    missing_seen,
                     filter,
+                    missing_action,
                 )?;
             }
             _ => {
@@ -2059,13 +2121,31 @@ fn collect_reachable_objects_in_commit_order(
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     filter: Option<&ObjectFilter>,
-) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<usize>)> {
+    missing_action: MissingAction,
+) -> Result<(
+    Vec<(ObjectId, String)>,
+    Vec<ObjectId>,
+    Vec<ObjectId>,
+    Vec<usize>,
+)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
+    let mut missing = Vec::new();
+    let mut missing_seen = HashSet::new();
     let mut counts = Vec::with_capacity(commits.len());
     for &commit_oid in commits {
-        let commit = load_commit(repo, commit_oid)?;
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
+                    missing.push(commit_oid);
+                }
+                counts.push(0);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let before = result.len();
         collect_tree_objects_filtered(
             repo,
@@ -2075,11 +2155,14 @@ fn collect_reachable_objects_in_commit_order(
             &mut seen,
             &mut result,
             &mut omitted,
+            &mut missing,
+            &mut missing_seen,
             filter,
+            missing_action,
         )?;
         counts.push(result.len() - before);
     }
-    Ok((result, omitted, counts))
+    Ok((result, omitted, missing, counts))
 }
 
 /// Collect OIDs of all objects in packs that have a `.keep` file.

@@ -44,3 +44,46 @@ Date: 2026-04-05
 ### Current status
 - `t6421` remains in progress (`0/3`), but the setup blocker from `mv` is fixed.
 - Next work for full pass requires implementing missing `rev-list` and merge option support plus partial-clone object fetching semantics.
+
+### 2026-04-05 follow-up progress
+
+#### Additional fixes implemented
+- `grit-lib/src/rev_list.rs`
+  - added `MissingAction` enum and `RevListOptions.missing_action`.
+  - object collection now handles missing referenced objects according to mode:
+    - `Error`: fail immediately (existing behavior)
+    - `Print`: continue and collect missing OIDs for output
+    - `Allow`: continue silently
+  - added `RevListResult.missing_objects`.
+- `grit/src/commands/rev_list.rs`
+  - parses `--missing=<mode>` with support for:
+    - `--missing=error`
+    - `--missing=print`
+    - `--missing=allow-any`
+    - `--missing=allow-promisor`
+  - when mode is `print`, outputs missing objects as `?<oid>` lines.
+- `grit/src/commands/merge.rs`
+  - added compatibility parsing for:
+    - `--progress`
+    - `--no-progress`
+  - options are accepted as no-ops for now (sufficient for argument compatibility).
+- `grit/src/commands/pull.rs`
+  - wired new merge args (`progress`, `no_progress`) through `pull`’s merge invocation to keep build green.
+
+#### Validation run results
+- `cargo build --release -p grit-rs` ✅
+- `cargo clippy --fix --allow-dirty` ✅ (with unrelated edits reverted)
+- `cargo test -p grit-lib --lib` ✅ (96/96)
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh` ❌ still `0/3`
+  - current remaining failures are behavioral:
+    - expected trace2 `fetch_count` events are absent
+    - partial-clone lazy-fetch behavior not implemented
+    - third test still hits merge conflict behavior mismatch for this scenario
+- Regression checks:
+  - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh` ✅ 7/7
+  - `./scripts/run-tests.sh t8200-mv-rename.sh` ✅ 30/30
+
+#### Updated status
+- `t6421` remains in progress (`0/3`).
+- Option-parsing blockers (`--missing=print`, `--no-progress`) are resolved.
+- Remaining work is deeper partial-clone fetch/trace behavior and merge parity.

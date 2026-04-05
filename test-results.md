@@ -33,3 +33,7 @@
 - `./scripts/run-tests.sh t8200-mv-rename.sh`: 30/30 passing (regression check after `mv` index stat refresh removal for branch-switch safety).
 - `./scripts/run-tests.sh t12120-mv-verbose-dryrun.sh`: 33/33 passing (regression check after `mv` index stat refresh removal for branch-switch safety).
 - `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 0/3 passing (currently blocked by missing support for `rev-list --missing=print`, `merge --no-progress`, and partial-clone lazy-fetch/trace accounting).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 0/3 passing (still failing; `--missing=print` and `--no-progress` parsing now accepted, but merge partial-clone lazy-fetch/trace behavior and rename handling remain incomplete).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6421-merge-partial-clone.sh`: 0/3 passing (direct reproduction confirms missing `fetch_count` trace events in tests 1-2 and unresolved rename/add conflicts in test 3).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (merge option parsing regression check).
+- `./scripts/run-tests.sh t8200-mv-rename.sh`: 30/30 passing (regression check after rev-list/merge argument support updates).
