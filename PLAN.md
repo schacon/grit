@@ -78,7 +78,7 @@ commit → check it off → move on.
 - [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
 - [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
-- [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
+- [x] `t1901-repo-structure` ████████████████████ 4/4 (0 left) — test git repo structure
 - [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
 - [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
 - [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
