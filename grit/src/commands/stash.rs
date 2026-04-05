@@ -1581,10 +1581,9 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             return true;
         }
         // Glob pattern matching for patterns like "foo b*"
-        if spec.contains('*')
-            && glob_match(spec, path) {
-                return true;
-            }
+        if spec.contains('*') && glob_match(spec, path) {
+            return true;
+        }
     }
     false
 }

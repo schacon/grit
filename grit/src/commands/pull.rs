@@ -116,8 +116,12 @@ pub fn run(args: Args) -> Result<()> {
             r
         } else {
             let git_dir = remote_path.join(".git");
-            Repository::open(&git_dir, Some(&remote_path))
-                .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?
+            Repository::open(&git_dir, Some(&remote_path)).with_context(|| {
+                format!(
+                    "could not open remote repository at '{}'",
+                    remote_path.display()
+                )
+            })?
         };
 
         // Copy objects from remote to local
@@ -125,7 +129,9 @@ pub fn run(args: Args) -> Result<()> {
 
         // Determine which branch to merge: try the specified merge_branch on the remote,
         // falling back to the remote's HEAD
-        let remote_oid = if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, &format!("refs/heads/{merge_branch}")) {
+        let remote_oid = if let Ok(oid) =
+            refs::resolve_ref(&remote_repo.git_dir, &format!("refs/heads/{merge_branch}"))
+        {
             oid
         } else if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
             oid
@@ -181,7 +187,12 @@ pub fn run(args: Args) -> Result<()> {
     do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &tracking_ref)
 }
 
-fn do_merge_or_rebase(args: &Args, config: &ConfigSet, oid_hex: String, ref_name: &str) -> Result<()> {
+fn do_merge_or_rebase(
+    args: &Args,
+    config: &ConfigSet,
+    oid_hex: String,
+    ref_name: &str,
+) -> Result<()> {
     if args.rebase.is_some() {
         let rebase_args = super::rebase::Args {
             upstream: Some(ref_name.to_owned()),
@@ -234,7 +245,11 @@ fn do_merge_or_rebase(args: &Args, config: &ConfigSet, oid_hex: String, ref_name
             no_stat: false,
             log: args.log.as_ref().map(|v| {
                 let n = v.parse::<usize>().unwrap_or(0);
-                if n == 0 { 20 } else { n }
+                if n == 0 {
+                    20
+                } else {
+                    n
+                }
             }),
             no_log: args.no_log,
             compact_summary: false,

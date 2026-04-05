@@ -3,12 +3,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
-use std::io::Write;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
-    render_commit_with_color, rev_list,
-    split_symmetric_diff, tag_targets, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, ObjectFilter,
+    OrderingMode, OutputMode, RevListOptions,
 };
+use std::io::Write;
 
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
@@ -244,8 +244,12 @@ pub fn run(args: Args) -> Result<()> {
                 "--filter-print-omitted" => options.filter_print_omitted = true,
                 "--no-commit-header" => no_commit_header = true,
                 "--commit-header" => no_commit_header = false,
-                "--color" => { use_color = true; }
-                "--no-color" => { use_color = false; }
+                "--color" => {
+                    use_color = true;
+                }
+                "--no-color" => {
+                    use_color = false;
+                }
                 _ if arg.starts_with("--color=") => {
                     let val = arg.trim_start_matches("--color=");
                     use_color = val == "always" || val == "true";
@@ -275,8 +279,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
-                    let filter = ObjectFilter::parse(spec)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
                     options.filter = Some(filter);
                 }
                 _ => bail!("unsupported option: {arg}"),
@@ -292,11 +295,15 @@ pub fn run(args: Args) -> Result<()> {
     if !use_color {
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
             if let Some(val) = config.get("color.diff") {
-                if val == "always" || val == "true" { use_color = true; }
+                if val == "always" || val == "true" {
+                    use_color = true;
+                }
             }
             if !use_color {
                 if let Some(val) = config.get("color.ui") {
-                    if val == "always" || val == "true" { use_color = true; }
+                    if val == "always" || val == "true" {
+                        use_color = true;
+                    }
                 }
             }
         }
@@ -355,10 +362,14 @@ pub fn run(args: Args) -> Result<()> {
 
     if options.count {
         if options.left_right {
-            let left_count = result.commits.iter()
+            let left_count = result
+                .commits
+                .iter()
                 .filter(|oid| result.left_right_map.get(oid) == Some(&true))
                 .count();
-            let right_count = result.commits.iter()
+            let right_count = result
+                .commits
+                .iter()
                 .filter(|oid| result.left_right_map.get(oid) == Some(&false))
                 .count();
             let both_count = result.commits.len() - left_count - right_count;
@@ -409,11 +420,20 @@ pub fn run(args: Args) -> Result<()> {
             match &options.output_mode {
                 OutputMode::Format(fmt) => {
                     let is_oneline = fmt == "oneline";
-                    let is_named_format = matches!(fmt.as_str(), "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw");
+                    let is_named_format = matches!(
+                        fmt.as_str(),
+                        "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
+                    );
                     if !no_commit_header && !is_oneline {
                         println!("commit {prefix}{oid}");
                     }
-                    let rendered = render_commit_with_color(&repo, *oid, &options.output_mode, abbrev_len, use_color)?;
+                    let rendered = render_commit_with_color(
+                        &repo,
+                        *oid,
+                        &options.output_mode,
+                        abbrev_len,
+                        use_color,
+                    )?;
                     if is_named_format {
                         print!("{rendered}");
                         if !rendered.ends_with('\n') {
@@ -431,7 +451,11 @@ pub fn run(args: Args) -> Result<()> {
 
             // In --in-commit-order mode, emit this commit's objects right after it
             if !result.per_commit_object_counts.is_empty() {
-                let count = result.per_commit_object_counts.get(ci).copied().unwrap_or(0);
+                let count = result
+                    .per_commit_object_counts
+                    .get(ci)
+                    .copied()
+                    .unwrap_or(0);
                 for j in obj_offset..obj_offset + count {
                     if let Some((obj_oid, path)) = result.objects.get(j) {
                         print_object(obj_oid, path);

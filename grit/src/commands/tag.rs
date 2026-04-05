@@ -626,9 +626,7 @@ fn compare_version(a: &str, b: &str) -> std::cmp::Ordering {
 /// Split a version string into segments at `.` and `-` boundaries.
 fn version_segments(s: &str) -> Vec<&str> {
     // Split on `.` and `-` keeping non-empty pieces
-    s.split(['.', '-'])
-        .filter(|seg| !seg.is_empty())
-        .collect()
+    s.split(['.', '-']).filter(|seg| !seg.is_empty()).collect()
 }
 
 /// Build the tag message from CLI args.

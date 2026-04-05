@@ -234,11 +234,10 @@ fn do_rebase(args: Args) -> Result<()> {
     let head_oid = head_oid_early;
 
     // Check if already up to date (skip if --no-ff forces replay)
-    if !args.no_ff
-        && head_oid == onto_oid {
-            eprintln!("Current branch is up to date.");
-            return Ok(());
-        }
+    if !args.no_ff && head_oid == onto_oid {
+        eprintln!("Current branch is up to date.");
+        return Ok(());
+    }
 
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
     let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;

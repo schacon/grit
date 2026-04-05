@@ -1101,7 +1101,11 @@ pub fn detect_copies(
 
                 let is_rename = Some(ai) == rename_ai;
                 result_entries.push(DiffEntry {
-                    status: if is_rename { DiffStatus::Renamed } else { DiffStatus::Copied },
+                    status: if is_rename {
+                        DiffStatus::Renamed
+                    } else {
+                        DiffStatus::Copied
+                    },
                     old_path: Some(src_path.clone()),
                     new_path: add.new_path.clone(),
                     old_mode: src_mode,
@@ -1308,7 +1312,7 @@ fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
     // Git: score = copied * MAX_SCORE / max(src_size, dst_size)
     // We normalize to 0-100.
     let max_size = src_size.max(dst_size);
-    
+
     ((shared_bytes * 100) / max_size).min(100) as u32
 }
 
@@ -1388,7 +1392,15 @@ pub fn unified_diff(
     new_path: &str,
     context_lines: usize,
 ) -> String {
-    unified_diff_with_prefix(old_content, new_content, old_path, new_path, context_lines, "a/", "b/")
+    unified_diff_with_prefix(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        "a/",
+        "b/",
+    )
 }
 
 /// Same as `unified_diff` but with configurable source/destination prefixes.
