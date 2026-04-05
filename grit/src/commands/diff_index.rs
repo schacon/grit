@@ -250,7 +250,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut name_only = false;
     let mut stat = false;
     let mut numstat = false;
-    let mut context_lines: usize = 3;
+    let mut context_lines: usize = diff_context_from_env().unwrap_or(3);
     let mut nul_terminated = false;
     let mut relative = false;
 
@@ -394,6 +394,39 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         nul_terminated,
         relative,
     })
+}
+
+/// Read diff context lines from `GIT_DIFF_OPTS` when provided.
+///
+/// We currently honor `--unified=<n>`, `-U<n>`, and `-u<n>` forms.
+/// Non-context tokens are ignored.
+fn diff_context_from_env() -> Option<usize> {
+    let opts = std::env::var("GIT_DIFF_OPTS").ok()?;
+    let mut result = None;
+    for token in opts.split_whitespace() {
+        if let Some(v) = token.strip_prefix("--unified=") {
+            if let Ok(parsed) = v.parse::<usize>() {
+                result = Some(parsed);
+            }
+            continue;
+        }
+        if let Some(v) = token.strip_prefix("-U") {
+            if !v.is_empty() {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    result = Some(parsed);
+                }
+            }
+            continue;
+        }
+        if let Some(v) = token.strip_prefix("-u") {
+            if !v.is_empty() {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    result = Some(parsed);
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Resolve a revision to a tree OID without redundantly reading the tree object.

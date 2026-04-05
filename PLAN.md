@@ -408,11 +408,11 @@ commit → check it off → move on.
 - [x] `t4152-am-subjects` ████████████████████ 13/13 (0 left) — test subject preservation with format-patch | am
 - [x] `t4117-apply-reject` ████████████████████ 8/8 (0 left) — git apply with rejects
 
-- [~] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
+- [x] `t4003-diff-rename-1` ████████████████████ 7/7 (0 left) — More rename detection
 
 - [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 
-- [ ] `t4018-diff-funcname` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test custom diff function name patterns
+- [~] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
 - [ ] `t4039-diff-assume-unchanged` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff with assume-unchanged entries
 - [ ] `t4049-diff-stat-count` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff --stat-count
 - [ ] `t4133-apply-filenames` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — git apply filename consistency check

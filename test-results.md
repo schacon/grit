@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `diff-index` `GIT_DIFF_OPTS` context parsing support).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4003-diff-rename-1.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t4003-diff-rename-1.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- Regression checks:
+  - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing.
+  - `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 passing (known harness blocker unchanged).
+- `./scripts/run-tests.sh t4018-diff-funcname.sh`: 1/9 passing (baseline for next in-progress Diff target).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4018-diff-funcname.sh`: fails due missing `test-tool userdiff` support and downstream hunk-header expectations (8 failing tests).
+
 - `cargo build --release`: passes (rebuild after `git am` folded-subject continuation parsing fix).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4152-am-subjects.sh`: 13/13 passing.
 - `./scripts/run-tests.sh t4152-am-subjects.sh`: 13/13 passing; `data/file-results.tsv` refreshed.

@@ -362,7 +362,7 @@ t3920-crlf-messages	yes	18	3	15	ok	3	18	0
 t4000-diff-format	yes	41	17	24	ok	17	41	0
 t4001-diff-rename	yes	23	17	6	ok	17	23	0
 t4002-diff-basic	yes	63	44	19	ok	44	63	0
-t4003-diff-rename-1	yes	7	4	3	ok	4	7	0
+t4003-diff-rename-1	yes	7	7	0	ok	7	7	0
 t4004-diff-rename-symlink	yes	4	4	0	ok	4	4	0
 t4005-diff-rename-2	yes	4	4	0	ok	4	4	0
 t4006-diff-mode	yes	7	7	0	ok	7	7	0
@@ -376,7 +376,7 @@ t4014-format-patch	yes	215	47	168	ok	47	215	0
 t4015-diff-whitespace	yes	136	74	62	ok	74	136	0
 t4016-diff-quote	yes	5	5	0	ok	5	5	0
 t4017-diff-retval	yes	38	30	8	ok	30	38	0
-t4018-diff-funcname	yes	4	1	3	ok	1	4	0
+t4018-diff-funcname	yes	9	1	8	ok	1	9	0
 t4019-diff-wserror	yes	21	5	16	ok	5	21	0
 t4020-diff-external	yes	72	20	52	ok	20	72	0
 t4021-format-patch-numbered	yes	14	14	0	ok	14	14	0
