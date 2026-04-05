@@ -128,6 +128,9 @@ case "$1" in
   serve-v2)
     shift
     exec git serve-v2 "$@" ;;
+  revision-walking)
+    shift
+    exec git test-tool revision-walking "$@" ;;
   wildmatch)
     shift
     exec git test-tool wildmatch "$@" ;;

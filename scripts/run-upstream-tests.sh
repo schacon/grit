@@ -67,6 +67,10 @@ case "$1" in
     GRIT_BIN=${GRIT_BIN:?}
     exec "$GRIT_BIN" test-tool "$@"
     ;;
+  revision-walking)
+    GRIT_BIN=${GRIT_BIN:?}
+    exec "$GRIT_BIN" test-tool "$@"
+    ;;
   chmtime) shift; touch "$@" 2>/dev/null ;;
   *) exit 0 ;;
 esac
