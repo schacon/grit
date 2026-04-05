@@ -500,7 +500,7 @@ fn collect_new_lines(
 }
 
 /// Run Myers diff on two line slices.
-fn diff_ops(old: &[Vec<u8>], new: &[Vec<u8>]) -> Vec<DiffOp> {
+fn _diff_ops(old: &[Vec<u8>], new: &[Vec<u8>]) -> Vec<DiffOp> {
     similar::capture_diff_slices(Algorithm::Myers, old, new)
 }
 
