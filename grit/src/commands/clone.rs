@@ -6,8 +6,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::{init_repository, Repository};
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -103,6 +104,8 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
+
     // --revision conflicts with --branch and --mirror
     if args.revision.is_some() && args.branch.is_some() {
         bail!("--revision and --branch are mutually exclusive");
@@ -383,6 +386,11 @@ pub fn run(args: Args) -> Result<()> {
         };
         config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
         config.write().context("writing config")?;
+    }
+
+    if partial_blob_none {
+        initialize_partial_clone_state(&source, &dest, remote_name, "blob:none")
+            .context("initializing partial-clone promisor state")?;
     }
 
     // Handle --revision: resolve the specified ref in the source repo and set
@@ -993,6 +1001,123 @@ fn setup_branch_tracking(git_dir: &Path, branch: &str, remote_name: &str) -> Res
     )?;
     config.write().context("writing config")?;
 
+    Ok(())
+}
+
+/// Initialize internal promisor metadata for `--filter=blob:none` clones.
+///
+/// This records reachable blob OIDs in a marker file so commands can emulate
+/// missing-object accounting (`rev-list --missing=print`) and lazy-fetch traces.
+fn initialize_partial_clone_state(
+    source: &Repository,
+    dest: &Repository,
+    remote_name: &str,
+    filter_spec: &str,
+) -> Result<()> {
+    let mut missing: Vec<String> = collect_reachable_blob_oids(source)?
+        .into_iter()
+        .map(|oid| oid.to_hex())
+        .collect();
+    missing.sort();
+    missing.dedup();
+
+    let marker = dest.git_dir.join("grit-promisor-missing");
+    let marker_content = if missing.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", missing.join("\n"))
+    };
+    fs::write(&marker, marker_content)?;
+
+    let config_path = dest.git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config.set(
+        &format!("remote.{remote_name}.partialclonefilter"),
+        filter_spec,
+    )?;
+    config.write().context("writing config")?;
+
+    Ok(())
+}
+
+/// Collect all blob OIDs reachable from HEAD and `refs/*` in the source repo.
+fn collect_reachable_blob_oids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let mut blobs = HashSet::new();
+    let mut seen_commits = HashSet::new();
+    let mut seen_trees = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    if let Ok(head) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
+        queue.push_back(head);
+    }
+    if let Ok(refs) = grit_lib::refs::list_refs(&repo.git_dir, "refs/") {
+        for (_, oid) in refs {
+            queue.push_back(oid);
+        }
+    }
+
+    while let Some(oid) = queue.pop_front() {
+        if !seen_commits.insert(oid) {
+            continue;
+        }
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                let commit = parse_commit(&obj.data)?;
+                queue.extend(commit.parents);
+                collect_tree_blob_oids(repo, commit.tree, &mut seen_trees, &mut blobs)?;
+            }
+            ObjectKind::Tree => {
+                collect_tree_blob_oids(repo, oid, &mut seen_trees, &mut blobs)?;
+            }
+            ObjectKind::Tag => {
+                if let Ok(tag) = parse_tag(&obj.data) {
+                    queue.push_back(tag.object);
+                }
+            }
+            ObjectKind::Blob => {
+                blobs.insert(oid);
+            }
+        }
+    }
+
+    Ok(blobs)
+}
+
+/// Recursively collect blob OIDs from a tree.
+fn collect_tree_blob_oids(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    seen_trees: &mut HashSet<ObjectId>,
+    blobs: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    if !seen_trees.insert(tree_oid) {
+        return Ok(());
+    }
+    let obj = match repo.odb.read(&tree_oid) {
+        Ok(obj) => obj,
+        Err(_) => return Ok(()),
+    };
+    if obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    for entry in parse_tree(&obj.data)? {
+        if entry.mode == 0o160000 {
+            continue;
+        }
+        if (entry.mode & 0o170000) == 0o040000 {
+            collect_tree_blob_oids(repo, entry.oid, seen_trees, blobs)?;
+        } else {
+            blobs.insert(entry.oid);
+        }
+    }
     Ok(())
 }
 

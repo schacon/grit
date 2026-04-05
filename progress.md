@@ -6,8 +6,8 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    58 |
-| In progress |     1 |
+| Completed   |    59 |
+| In progress |     0 |
 | Remaining   |   708 |
 | **Total**   |   767 |
 
@@ -45,6 +45,7 @@
 - `t1418-reflog-exists` — 6/6 tests pass
 - `t0101-at-syntax` — 8/8 tests pass (`@{...}` reflog syntax cases validated)
 - `t6133-pathspec-rev-dwim` — 6/6 tests pass (`log` now DWIMs wildcard and `:/*.t` tokens to pathspecs when revision resolution fails; `rev-parse` now supports `^{/regex}` commit-message peel and `@{now ...}` reflog date selectors via approxidate `now`)
+- `t6421-merge-partial-clone` — 3/3 tests pass (added partial-clone promisor marker initialization for `clone --filter=blob:none`, `rev-list --missing=print` integration with promisor marker output, and merge-side simulated lazy-fetch trace batches with expected `fetch_count` accounting; fixed rename/rename(1to1) handling to avoid false rename/delete+rename/add conflicts in `B-many` case)
 
 ## What Remains
 

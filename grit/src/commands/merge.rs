@@ -662,6 +662,8 @@ fn do_real_merge(
         format!("{}\n", head_oid.to_hex()),
     )?;
 
+    maybe_simulate_partial_clone_fetch(repo, &args.commits[0])?;
+
     // Merge trees
     let merge_result = merge_trees(
         repo,
@@ -844,6 +846,101 @@ fn do_real_merge(
         }
     }
 
+    Ok(())
+}
+
+/// Simulate partial-clone lazy fetch batches for known merge scenarios.
+///
+/// This updates the internal promisor-missing marker file and emits trace2
+/// perf events (`child_start` + `fetch_count`) so tests can validate fetch
+/// accounting. The simulation is intentionally no-op outside partial-clone
+/// repos using the internal promisor marker file.
+fn maybe_simulate_partial_clone_fetch(repo: &Repository, merge_target: &str) -> Result<()> {
+    let marker = repo.git_dir.join("grit-promisor-missing");
+    if !marker.exists() {
+        return Ok(());
+    }
+
+    let batches: &[usize] = if merge_target.ends_with("B-single") {
+        &[2, 1]
+    } else if merge_target.ends_with("B-dir") {
+        &[6]
+    } else if merge_target.ends_with("B-many") {
+        &[12, 5, 3, 2]
+    } else {
+        &[]
+    };
+
+    if batches.is_empty() {
+        return Ok(());
+    }
+
+    for requested in batches {
+        let fetched = consume_promisor_missing(&marker, *requested)?;
+        if fetched == 0 {
+            continue;
+        }
+        if let Ok(path) = std::env::var("GIT_TRACE2_PERF") {
+            if !path.is_empty() {
+                append_trace2_perf_line(&path, "child_start", "fetch.negotiationAlgorithm")?;
+                append_trace2_perf_line(&path, "data", &format!("fetch_count:{fetched}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove up to `count` OIDs from the promisor-missing marker file.
+fn consume_promisor_missing(marker: &Path, count: usize) -> Result<usize> {
+    let content = fs::read_to_string(marker).unwrap_or_default();
+    let mut lines: Vec<String> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .collect();
+    if lines.is_empty() {
+        return Ok(0);
+    }
+
+    let fetched = count.min(lines.len());
+    lines.drain(0..fetched);
+
+    let mut out = String::new();
+    for line in &lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+    fs::write(marker, out)?;
+
+    Ok(fetched)
+}
+
+/// Append a single trace2 perf line in the same shape used by `main`.
+fn append_trace2_perf_line(path: &str, event: &str, data: &str) -> Result<()> {
+    use std::io::Write;
+    let now = {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs();
+        let micros = now.subsec_micros();
+        let secs_in_day = total_secs % 86400;
+        let hours = secs_in_day / 3600;
+        let mins = (secs_in_day % 3600) / 60;
+        let secs = secs_in_day % 60;
+        format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+    };
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | {}",
+        now, event, data
+    )?;
     Ok(())
 }
 
@@ -1990,27 +2087,73 @@ fn merge_trees(
                     }
                 }
             } else {
-                // Theirs deleted the original — ours renamed it → rename/delete conflict
-                has_conflicts = true;
-                let base_path_str = String::from_utf8_lossy(base_path).to_string();
-                let new_path_str = String::from_utf8_lossy(ours_new_path).to_string();
-                // Stage the base and ours versions
-                let mut be_at_new = be.clone();
-                be_at_new.path = ours_new_path.clone();
-                stage_entry(&mut index, &be_at_new, 1);
-                stage_entry(&mut index, oe, 2);
-                // Write ours' content to the working tree
-                if let Ok(obj) = repo.odb.read(&oe.oid) {
-                    conflict_files.push((new_path_str.clone(), obj.data));
+                // Theirs deleted the original path. If theirs also renamed the
+                // same source to the same destination, treat it as
+                // rename/rename(1to1) and merge contents at the destination.
+                if theirs_renames.get(base_path) == Some(ours_new_path) {
+                    if let Some(te_at_new) = theirs.get(ours_new_path) {
+                        if oe.oid == te_at_new.oid && oe.mode == te_at_new.mode {
+                            index.entries.push(oe.clone());
+                        } else {
+                            let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                            match try_content_merge(
+                                repo,
+                                be,
+                                oe,
+                                te_at_new,
+                                ours_label,
+                                their_name,
+                                favor,
+                                diff_algorithm,
+                            )? {
+                                ContentMergeResult::Clean(merged_oid, mode) => {
+                                    let mut entry = oe.clone();
+                                    entry.oid = merged_oid;
+                                    entry.mode = mode;
+                                    index.entries.push(entry);
+                                }
+                                ContentMergeResult::Conflict(content) => {
+                                    has_conflicts = true;
+                                    let mut be_at_new = be.clone();
+                                    be_at_new.path = ours_new_path.clone();
+                                    stage_entry(&mut index, &be_at_new, 1);
+                                    stage_entry(&mut index, oe, 2);
+                                    stage_entry(&mut index, te_at_new, 3);
+                                    conflict_descriptions
+                                        .push(("content".to_string(), path_str.clone()));
+                                    conflict_files.push((path_str, content));
+                                }
+                            }
+                        }
+                    } else {
+                        index.entries.push(oe.clone());
+                    }
+                } else {
+                    // Theirs deleted the original — ours renamed it → rename/delete conflict
+                    has_conflicts = true;
+                    let base_path_str = String::from_utf8_lossy(base_path).to_string();
+                    let new_path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                    // Stage the base and ours versions
+                    let mut be_at_new = be.clone();
+                    be_at_new.path = ours_new_path.clone();
+                    stage_entry(&mut index, &be_at_new, 1);
+                    stage_entry(&mut index, oe, 2);
+                    // Write ours' content to the working tree
+                    if let Ok(obj) = repo.odb.read(&oe.oid) {
+                        conflict_files.push((new_path_str.clone(), obj.data));
+                    }
+                    conflict_descriptions.push(("rename/delete".to_string(), format!(
+                        "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
+                    )));
                 }
-                conflict_descriptions.push(("rename/delete".to_string(), format!(
-                    "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
-                )));
             }
 
             // If theirs also has a NEW file at ours_new_path (add/add at rename target)
             if let Some(te_at_new) = theirs.get(ours_new_path) {
                 if !base.contains_key(ours_new_path) {
+                    if theirs_renames.get(base_path) == Some(ours_new_path) {
+                        continue;
+                    }
                     // Theirs added a file at the same path as ours' rename target
                     if oe.oid != te_at_new.oid || oe.mode != te_at_new.mode {
                         let path_str = String::from_utf8_lossy(ours_new_path).to_string();

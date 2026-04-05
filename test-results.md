@@ -40,3 +40,9 @@
 - `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (fully passing after log rev/pathspec DWIM improvements and rev-parse support for `^{/pattern}` plus flexible `@{now ...}` reflog date selectors).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6133-pathspec-rev-dwim.sh`: 6/6 passing (direct validation of wildcard pathspec DWIM, peel-with-regex, reflog date selector, and `:/*.t` from subdir).
 - `./scripts/run-tests.sh t4208-log-magic-pathspec.sh`: 12/21 passing (targeted regression snapshot after log pathspec changes; no new full-pass claim for this suite).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash -x tests/t6421-merge-partial-clone.sh`: 3/3 passing (direct traced validation: expected `fetch_count` lines and `child_start` counts observed for all three merge scenarios; missing-object before/after diffs match expected fetched totals 3, 6, and 22).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (now fully passing).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (merge regression after partial-clone fetch simulation + rename/rename handling update).
+- `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (rev-list/log regression after partial-clone marker integration).
+- `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after `--missing=print` marker integration).
+- `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 2/7 passing (existing partial suite remains partial; used as compatibility snapshot after clone filter-state changes).

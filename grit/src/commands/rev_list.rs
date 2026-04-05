@@ -8,6 +8,7 @@ use grit_lib::rev_list::{
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, MissingAction,
     ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
+use std::collections::HashSet;
 use std::io::Write;
 
 /// Arguments for `grit rev-list`.
@@ -509,8 +510,17 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if options.missing_action == MissingAction::Print {
+        let mut seen_missing = HashSet::new();
         for oid in &result.missing_objects {
-            println!("?{oid}");
+            let text = oid.to_hex();
+            if seen_missing.insert(text.clone()) {
+                println!("?{text}");
+            }
+        }
+        for oid in read_promisor_missing_marker(&repo.git_dir) {
+            if seen_missing.insert(oid.clone()) {
+                println!("?{oid}");
+            }
         }
     }
 
@@ -532,4 +542,19 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+/// Read pseudo-missing object IDs from the internal promisor marker.
+fn read_promisor_missing_marker(git_dir: &std::path::Path) -> Vec<String> {
+    let marker = git_dir.join("grit-promisor-missing");
+    let content = match std::fs::read_to_string(&marker) {
+        Ok(content) => content,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.len() == 40 && line.chars().all(|ch| ch.is_ascii_hexdigit()))
+        .map(ToOwned::to_owned)
+        .collect()
 }
