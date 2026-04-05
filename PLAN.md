@@ -373,33 +373,33 @@ commit → check it off → move on.
 
 ## 5. Diff (132 files)
 
-- [ ] `t4204-patch-id` ███████████████████░ 25/26 (1 left) — git patch-id
-- [ ] `t4021-format-patch-numbered` ██████████████████░░ 13/14 (1 left) — Format-patch numbering options
-- [ ] `t4065-diff-anchored` █████████████████░░░ 6/7 (1 left) — anchored diff algorithm
-- [ ] `t4036-format-patch-signer-mime` ████████████████░░░░ 4/5 (1 left) — format-patch -s should force MIME encoding as needed
-- [ ] `t4004-diff-rename-symlink` ███████████████░░░░░ 3/4 (1 left) — More rename detection tests.
+- [x] `t4204-patch-id` ████████████████████ 26/26 (0 left) — git patch-id
+- [x] `t4021-format-patch-numbered` ████████████████████ 14/14 (0 left) — Format-patch numbering options
+- [x] `t4065-diff-anchored` ████████████████████ 7/7 (0 left) — anchored diff algorithm
+- [x] `t4036-format-patch-signer-mime` ████████████████████ 5/5 (0 left) — format-patch -s should force MIME encoding as needed
+- [x] `t4004-diff-rename-symlink` ████████████████████ 4/4 (0 left) — More rename detection tests.
 
-- [ ] `t4005-diff-rename-2` ███████████████░░░░░ 3/4 (1 left) — Same rename detection as t4003 but testing diff-raw.
-- [ ] `t4043-diff-rename-binary` █████████████░░░░░░░ 2/3 (1 left) — Move a binary file
-- [ ] `t4113-apply-ending` █████████████░░░░░░░ 2/3 (1 left) — git apply trying to add an ending line.
+- [x] `t4005-diff-rename-2` ████████████████████ 4/4 (0 left) — Same rename detection as t4003 but testing diff-raw.
+- [x] `t4043-diff-rename-binary` ████████████████████ 3/3 (0 left) — Move a binary file
+- [x] `t4113-apply-ending` ████████████████████ 3/3 (0 left) — git apply trying to add an ending line.
 
-- [ ] `t4025-hunk-header` ██████████░░░░░░░░░░ 1/2 (1 left) — diff hunk header truncation
-- [ ] `t4066-diff-emit-delay` ██████████░░░░░░░░░░ 1/2 (1 left) — test combined/stat/moved interaction
-- [ ] `t4123-apply-shrink` ██████████░░░░░░░░░░ 1/2 (1 left) — apply a patch that is larger than the preimage
-- [ ] `t4134-apply-submodule` ██████████░░░░░░░░░░ 1/2 (1 left) — git apply submodule tests
-- [ ] `t4256-am-format-flowed` ██████████░░░░░░░░░░ 1/2 (1 left) — test format=flowed support of git am
-- [ ] `t4029-diff-trailing-space` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — diff honors config option, diff.suppressBlankEmpty
-- [ ] `t4110-apply-scan` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git apply test for patches which require scanning forwards and backwards.
+- [x] `t4025-hunk-header` ████████████████████ 2/2 (0 left) — diff hunk header truncation
+- [x] `t4066-diff-emit-delay` ████████████████████ 2/2 (0 left) — test combined/stat/moved interaction
+- [x] `t4123-apply-shrink` ████████████████████ 2/2 (0 left) — apply a patch that is larger than the preimage
+- [x] `t4134-apply-submodule` ████████████████████ 2/2 (0 left) — git apply submodule tests
+- [x] `t4256-am-format-flowed` ████████████████████ 2/2 (0 left) — test format=flowed support of git am
+- [x] `t4029-diff-trailing-space` ████████████████████ 1/1 (0 left) — diff honors config option, diff.suppressBlankEmpty
+- [x] `t4110-apply-scan` ████████████████████ 1/1 (0 left) — git apply test for patches which require scanning forwards and backwards.
 
 - [ ] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
 
-- [ ] `t4111-apply-subdir` ████████████████░░░░ 8/10 (2 left) — patching from inconvenient places
+- [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
 - [ ] `t4006-diff-mode` ██████████████░░░░░░ 5/7 (2 left) — Test mode change diffs.
 
-- [ ] `t4073-diff-stat-name-width` █████████████░░░░░░░ 4/6 (2 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
+- [~] `t4073-diff-stat-name-width` █████████████░░░░░░░ 4/6 (2 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
 - [ ] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
-- [ ] `t4028-format-patch-mime-headers` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — format-patch mime headers and extra headers do not conflict
-- [ ] `t4062-diff-pickaxe` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Pickaxe options
+- [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (0 left) — format-patch mime headers and extra headers do not conflict
+- [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (0 left) — Pickaxe options
 - [ ] `t4131-apply-fake-ancestor` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git apply --build-fake-ancestor handling.
 - [ ] `t4217-log-limit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git log with filter options limiting the output
 - [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
@@ -410,7 +410,7 @@ commit → check it off → move on.
 
 - [ ] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
 
-- [ ] `t4016-diff-quote` ████████░░░░░░░░░░░░ 2/5 (3 left) — Quoting paths in diff output.
+- [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 
 - [ ] `t4018-diff-funcname` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test custom diff function name patterns
 - [ ] `t4039-diff-assume-unchanged` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff with assume-unchanged entries

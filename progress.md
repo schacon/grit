@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    40 |
-| In progress |     0 |
-| Remaining   |   727 |
+| Completed   |    59 |
+| In progress |     1 |
+| Remaining   |   707 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -31,7 +31,26 @@
 - `t1100-commit-tree-options` — 5/5 tests pass
 - `t1418-reflog-exists` — 6/6 tests pass
 - `t0101-at-syntax` — 8/8 tests pass (`@{...}` reflog syntax cases validated)
+- `t4204-patch-id` — 26/26 tests pass (stale plan entry corrected)
+- `t4021-format-patch-numbered` — 14/14 tests pass (stale plan entry corrected)
+- `t4065-diff-anchored` — 7/7 tests pass (stale plan entry corrected)
+- `t4036-format-patch-signer-mime` — 5/5 tests pass (stale plan entry corrected)
+- `t4004-diff-rename-symlink` — 4/4 tests pass (stale plan entry corrected)
+- `t4005-diff-rename-2` — 4/4 tests pass (stale plan entry corrected)
+- `t4043-diff-rename-binary` — 3/3 tests pass (stale plan entry corrected)
+- `t4113-apply-ending` — 3/3 tests pass (stale plan entry corrected)
+- `t4025-hunk-header` — 2/2 tests pass (stale plan entry corrected)
+- `t4066-diff-emit-delay` — 2/2 tests pass (stale plan entry corrected)
+- `t4123-apply-shrink` — 2/2 tests pass (stale plan entry corrected)
+- `t4134-apply-submodule` — 2/2 tests pass (stale plan entry corrected)
+- `t4256-am-format-flowed` — 2/2 tests pass (stale plan entry corrected)
+- `t4029-diff-trailing-space` — 1/1 tests pass (stale plan entry corrected)
+- `t4110-apply-scan` — 1/1 tests pass (stale plan entry corrected)
+- `t4111-apply-subdir` — 10/10 tests pass (stale plan entry corrected)
+- `t4028-format-patch-mime-headers` — 3/3 tests pass (stale plan entry corrected)
+- `t4062-diff-pickaxe` — 3/3 tests pass (stale plan entry corrected)
+- `t4016-diff-quote` — 5/5 tests pass (stale plan entry corrected)
 
 ## What Remains
 
-727 test files still pending. See `plan.md` for the full prioritized list.
+1 test file currently in progress (`t4073-diff-stat-name-width`) and 707 still pending. See `plan.md` for the full prioritized list.
