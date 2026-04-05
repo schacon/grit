@@ -2,6 +2,21 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `diff --stat` summary/count adjustments and hard-reset permission restoration for mode-only stat fidelity).
+- `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 3/4 passing; remaining local miss is the mode-only case because this mirror's `test_chmod` helper applies `--chmod` to only one path.
+- `bash scripts/run-upstream-tests.sh t4049-diff-stat-count`: 4/4 passing in isolated upstream harness.
+- `GIT_BUILD_DIR="/tmp/grit-upstream-workdir" TEST_NO_MALLOC_CHECK=1 TAR="tar" GRIT_BIN="/workspace/target/release/grit" bash -x ./t4049-diff-stat-count.sh` (from `/tmp/grit-upstream-workdir/t`): 4/4 passing with full traced confirmation.
+- Focused local manual reproductions:
+  - mode-only stat-count scenario now reports `4 files changed, 2 insertions(+)` with `--stat-count=2`.
+  - unmerged stat-count scenario reports `...` and `3 files changed, 3 insertions(+)`.
+  - binary stat-count scenario reports `d | Bin` in full stat and excludes binary line counts from summary.
+- Regression checks:
+  - `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4046-diff-unmerged.sh`: 3/8 passing (matches existing baseline; no new regressions introduced by this task).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `git apply` reverse patch ordering and worktree preflight sequence validation updates for repeated same-file patch application).
 - `./scripts/run-tests.sh t4127-apply-same-fn.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4127-apply-same-fn.sh` (from `tests/`): 7/7 passing with expected non-zero `apply` failure in the negative test case and full suite success.

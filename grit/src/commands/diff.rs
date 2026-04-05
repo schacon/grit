@@ -2131,23 +2131,34 @@ fn write_shortstat(
 
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
-    let mut files_changed = 0usize;
+    let mut changed_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for entry in entries {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
-        total_ins += ins;
-        total_del += del;
-        files_changed += 1;
+        if entry.status == DiffStatus::Unmerged {
+            continue;
+        }
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let is_binary = is_binary(&old_raw) || is_binary(&new_raw);
+        if !is_binary {
+            let old_content = String::from_utf8_lossy(&old_raw);
+            let new_content = String::from_utf8_lossy(&new_raw);
+            let (ins, del) = count_changes(&old_content, &new_content);
+            total_ins += ins;
+            total_del += del;
+        }
+        changed_paths.insert(entry.path().to_owned());
     }
+    let files_changed = changed_paths.len();
 
     let mut summary = format!(
         " {} file{} changed",
         files_changed,
         if files_changed == 1 { "" } else { "s" }
     );
-    append_stat_counts(&mut summary, total_ins, total_del);
+    if files_changed > 0 {
+        append_stat_counts(&mut summary, total_ins, total_del);
+    }
     writeln!(out, "{summary}")?;
 
     Ok(())
@@ -2294,6 +2305,19 @@ fn format_stat_line_binary(path: &str, max_path_len: usize, count_width: usize) 
     )
 }
 
+/// Format a `--stat` line for unmerged paths.
+fn format_stat_line_unmerged(path: &str, max_path_len: usize, count_width: usize) -> String {
+    let path_display_width = UnicodeWidthStr::width(path);
+    let padding = max_path_len.saturating_sub(path_display_width);
+    format!(
+        " {}{} | {:>cw$}",
+        path,
+        " ".repeat(padding),
+        "Unmerged",
+        cw = count_width,
+    )
+}
+
 /// Write a stat summary for each entry, followed by a totals line.
 fn write_stat(
     out: &mut impl Write,
@@ -2328,35 +2352,51 @@ fn write_stat(
 
     // Collect per-file stats first so we can compute the count column width.
     // Track whether each path should be rendered as a binary stat line (`Bin`).
-    let mut file_stats: Vec<(&str, usize, usize, bool)> = Vec::new();
+    let mut file_stats: Vec<(&str, usize, usize, bool, bool)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
-    let mut files_changed = 0usize;
+    let mut changed_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for (i, entry) in entries.iter().enumerate() {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
+        if entry.status == DiffStatus::Unmerged {
+            file_stats.push((&display_paths[i], 0, 0, false, true));
+            continue;
+        }
         let old_raw = read_content_raw(odb, &entry.old_oid);
         let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
         let is_binary = is_binary(&old_raw) || is_binary(&new_raw);
-        file_stats.push((&display_paths[i], ins, del, is_binary));
+        let (ins, del) = if is_binary {
+            (0, 0)
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw);
+            let new_content = String::from_utf8_lossy(&new_raw);
+            count_changes(&old_content, &new_content)
+        };
+        file_stats.push((&display_paths[i], ins, del, is_binary, false));
         total_ins += ins;
         total_del += del;
-        files_changed += 1;
+        changed_paths.insert(entry.path().to_owned());
     }
+    let files_changed = changed_paths.len();
 
-    // Compute the width for the count column (like git does)
-    let max_count = file_stats
+    let display_len = if let Some(limit) = stat_count {
+        file_stats.len().min(limit)
+    } else {
+        file_stats.len()
+    };
+    let display_stats: &[(&str, usize, usize, bool, bool)] = &file_stats[..display_len];
+
+    // Compute the width for the count column from only the rows that will
+    // actually be rendered (important when --stat-count hides binary/unmerged rows).
+    let max_count = display_stats
         .iter()
-        .map(|(_, ins, del, _)| ins + del)
+        .map(|(_, ins, del, _, _)| ins + del)
         .max()
         .unwrap_or(0);
     let mut count_width = format!("{}", max_count).len();
-    if file_stats.iter().any(|(_, _, _, binary)| *binary) {
+    if display_stats.iter().any(|(_, _, _, binary, _)| *binary) {
         count_width = count_width.max(3); // width of "Bin"
     }
-
     // Compute layout widths from total width, like git.
     // Line format: " {name:<N} | {count:>C} {bar}"
     // Total chars = 1 + N + 3 + C + 1 + bar_len = N + C + 5 + bar_len
@@ -2378,16 +2418,7 @@ fn write_stat(
 
     let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
-    let display_stats: &[(&str, usize, usize, bool)] = if let Some(limit) = stat_count {
-        if file_stats.len() > limit {
-            &file_stats[..limit]
-        } else {
-            &file_stats
-        }
-    } else {
-        &file_stats
-    };
-    for (path, ins, del, binary) in display_stats {
+    for (path, ins, del, binary, unmerged) in display_stats {
         // Truncate path if its display width exceeds max_path_len
         let path_width = UnicodeWidthStr::width(*path);
         let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
@@ -2409,7 +2440,9 @@ fn write_stat(
         } else {
             std::borrow::Cow::Borrowed(*path)
         };
-        let line = if *binary {
+        let line = if *unmerged {
+            format_stat_line_unmerged(&display_path, max_path_len, count_width)
+        } else if *binary {
             format_stat_line_binary(&display_path, max_path_len, count_width)
         } else {
             format_stat_line_git(
@@ -2436,7 +2469,9 @@ fn write_stat(
         files_changed,
         if files_changed == 1 { "" } else { "s" }
     );
-    append_stat_counts(&mut summary, total_ins, total_del);
+    if files_changed > 0 {
+        append_stat_counts(&mut summary, total_ins, total_del);
+    }
     writeln!(out, "{summary}")?;
 
     Ok(())

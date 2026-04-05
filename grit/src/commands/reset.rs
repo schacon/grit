@@ -929,12 +929,14 @@ fn checkout_index_to_worktree(
                 obj.data.clone()
             };
             std::fs::write(&abs_path, &data)?;
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&abs_path)?.permissions();
             if entry.mode == MODE_EXECUTABLE {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&abs_path)?.permissions();
                 perms.set_mode(0o755);
-                std::fs::set_permissions(&abs_path, perms)?;
+            } else {
+                perms.set_mode(0o644);
             }
+            std::fs::set_permissions(&abs_path, perms)?;
         }
 
         // Refresh stat data in the index entry so that subsequent
