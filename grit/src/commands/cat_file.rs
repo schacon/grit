@@ -156,7 +156,18 @@ pub fn run(args: Args) -> Result<()> {
         (None, _) => return Err(anyhow::anyhow!("object required when not in batch mode")),
     };
 
-    let oid = resolve_object(&repo, obj_str)?;
+    let oid = match resolve_object(&repo, obj_str) {
+        Ok(oid) => oid,
+        Err(_) if args.exists => std::process::exit(1),
+        Err(_) => {
+            if args.show_type || args.size {
+                eprintln!("fatal: git cat-file: could not get object info");
+                std::process::exit(1);
+            }
+            eprintln!("fatal: Not a valid object name {obj_str}");
+            std::process::exit(128);
+        }
+    };
     let obj = repo.read_replaced(&oid)?;
 
     if args.exists {
@@ -326,15 +337,14 @@ fn validate_args(args: &Args) -> Result<()> {
     // (already handled above since --follow-symlinks requires batch mode)
 
     // --textconv/--filters require an object argument (unless in batch mode)
-    if (args.textconv || args.filters) && !is_batch
-        && args.type_or_object.is_none() {
-            let opt = if args.textconv {
-                "--textconv"
-            } else {
-                "--filters"
-            };
-            usage_error(&format!("fatal: <rev> required with '{}'", opt));
-        }
+    if (args.textconv || args.filters) && !is_batch && args.type_or_object.is_none() {
+        let opt = if args.textconv {
+            "--textconv"
+        } else {
+            "--filters"
+        };
+        usage_error(&format!("fatal: <rev> required with '{}'", opt));
+    }
 
     // -e, -p, -t, -s require an object argument
     if (args.exists || args.pretty || args.show_type || args.size) && !is_batch {
@@ -363,10 +373,9 @@ fn validate_args(args: &Args) -> Result<()> {
     }
 
     // Batch modes reject positional arguments
-    if is_batch
-        && args.type_or_object.is_some() {
-            usage_error("fatal: batch modes take no arguments");
-        }
+    if is_batch && args.type_or_object.is_some() {
+        usage_error("fatal: batch modes take no arguments");
+    }
 
     Ok(())
 }

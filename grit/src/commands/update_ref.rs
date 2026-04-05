@@ -354,11 +354,16 @@ fn verify_expected_old(repo: &Repository, refname: &str, expected: OldExpectatio
                 bail!("ref '{refname}' already exists");
             }
         }
-        OldExpectation::MustEqual(oid) => {
-            if current != Some(oid) {
-                bail!("ref '{refname}' does not point to expected value");
+        OldExpectation::MustEqual(oid) => match current {
+            None => {
+                eprintln!("fatal: unable to resolve reference: {refname}");
+                std::process::exit(1);
             }
-        }
+            Some(cur) if cur != oid => {
+                bail!("ref '{refname}' is at {cur} but expected {oid}");
+            }
+            _ => {}
+        },
     }
     Ok(())
 }
