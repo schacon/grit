@@ -6,14 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    52 |
+| Completed   |    53 |
 | In progress |     0 |
-| Remaining   |   715 |
+| Remaining   |   714 |
 | **Total**   |   767 |
 
 ## Recently completed
 
 - `t6431-merge-criscross` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
+- `t6412-merge-large-rename` — 10/10 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6428-merge-conflicts-sparse` — 2/2 tests pass (sparse-checkout no-cone glob semantics fixed; merge conflict stages now preserved in index and shown as modified in `ls-files -t`)
 - `t6413-merge-crlf` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6136-pathspec-in-bare` — 3/3 tests pass (`log` and `ls-files` now reject out-of-repo `..` pathspecs in bare/.git contexts with the expected "outside repository" diagnostics)
@@ -42,4 +43,4 @@
 
 ## What Remains
 
-715 test files still pending. See `plan.md` for the full prioritized list.
+714 test files still pending. See `plan.md` for the full prioritized list.

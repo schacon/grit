@@ -727,7 +727,7 @@ t6406-merge-attr	yes	13	2	11	ok	2	13	0
 t6408-merge-up-to-date	yes	7	7	0	ok	7	7	0
 t6409-merge-subtree	yes	12	3	9	ok	3	12	0
 t6411-merge-filemode	yes	19	1	18	ok	1	19	0
-t6412-merge-large-rename	yes	10	7	3	ok	7	10	0
+t6412-merge-large-rename	yes	10	10	0	ok	10	10	0
 t6413-merge-crlf	yes	3	3	0	ok	3	3	0
 t6414-merge-rename-nocruft	yes	3	3	0	ok	3	3	0
 t6415-merge-dir-to-symlink	yes	24	19	5	ok	18	23	1

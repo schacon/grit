@@ -15,3 +15,4 @@
 - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (fully passing after sparse-checkout non-cone matching and merge conflict index stage handling fixes).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge conflict index stage handling changes).
 - `./scripts/run-tests.sh t6431-merge-criscross.sh`: 2/2 passing (fully passing; stale plan entry corrected).
+- `./scripts/run-tests.sh t6412-merge-large-rename.sh`: 10/10 passing (fully passing; stale plan entry corrected).
