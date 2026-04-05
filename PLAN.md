@@ -86,7 +86,7 @@ commit → check it off → move on.
 - [x] `t1600-index` ████████████████████ 7/7 (0 left) — index file specific tests
 - [x] `t1407-worktree-ref-store` ████████████████████ 4/4 (0 left) — test worktree ref store api
 - [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
-- [ ] `t1512-rev-parse-disambiguation` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — object name disambiguation
+- [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
 
 - [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
 - [ ] `t1012-read-tree-df` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — read-tree D/F conflict corner cases
@@ -248,7 +248,7 @@ commit → check it off → move on.
 
 - [x] `t3009-ls-files-others-nonsubmodule` ████████████████████ 2/2 (0 left) — test git ls-files --others with non-submodule repositories
 
-- [ ] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
+- [~] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
 - [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
 - [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
 - [ ] `t3012-ls-files-dedup` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git ls-files --deduplicate test

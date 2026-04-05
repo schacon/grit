@@ -15,6 +15,7 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -141,6 +142,15 @@ pub struct Index {
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
+    /// Saved higher-stage entries used to recreate conflicts.
+    pub resolve_undo: BTreeMap<Vec<u8>, ResolveUndoEntry>,
+}
+
+/// Saved stage 1/2/3 entries for a resolved path.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ResolveUndoEntry {
+    /// Mode and object ID for stages 1..=3. `None` means the stage was absent.
+    pub stages: [Option<(u32, ObjectId)>; 3],
 }
 
 /// Default index version when `GIT_INDEX_VERSION` is unset or invalid.
@@ -183,6 +193,7 @@ impl Index {
         Self {
             version,
             entries: Vec::new(),
+            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -207,6 +218,7 @@ impl Index {
                     return Self {
                         version: v,
                         entries: Vec::new(),
+                        resolve_undo: BTreeMap::new(),
                     };
                 }
             }
@@ -218,6 +230,7 @@ impl Index {
             return Self {
                 version: INDEX_FORMAT_DEFAULT,
                 entries: Vec::new(),
+                resolve_undo: BTreeMap::new(),
             };
         }
         // feature.manyFiles implies version 4
@@ -228,12 +241,14 @@ impl Index {
                 return Self {
                     version: 4,
                     entries: Vec::new(),
+                    resolve_undo: BTreeMap::new(),
                 };
             }
         }
         Self {
             version: 2,
             entries: Vec::new(),
+            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -304,7 +319,33 @@ impl Index {
             pos += consumed;
         }
 
-        Ok(Self { version, entries })
+        let mut index = Self {
+            version,
+            entries,
+            resolve_undo: BTreeMap::new(),
+        };
+
+        while pos + 8 <= body.len() {
+            let signature = &body[pos..pos + 4];
+            pos += 4;
+            let size = u32::from_be_bytes(
+                body[pos..pos + 4]
+                    .try_into()
+                    .map_err(|_| Error::IndexError("cannot read extension size".to_owned()))?,
+            ) as usize;
+            pos += 4;
+            if pos + size > body.len() {
+                return Err(Error::IndexError("extension exceeds index size".to_owned()));
+            }
+            let extension = &body[pos..pos + size];
+            pos += size;
+
+            if signature == b"REUC" {
+                index.resolve_undo = parse_resolve_undo(extension)?;
+            }
+        }
+
+        Ok(index)
     }
 
     /// Write the index to a file, computing and appending the trailing SHA-1.
@@ -411,6 +452,13 @@ impl Index {
                 serialize_entry(entry, write_version, out);
             }
         }
+        if !self.resolve_undo.is_empty() {
+            let mut reuc = Vec::new();
+            serialize_resolve_undo(&self.resolve_undo, &mut reuc);
+            out.extend_from_slice(b"REUC");
+            out.extend_from_slice(&(reuc.len() as u32).to_be_bytes());
+            out.extend_from_slice(&reuc);
+        }
         Ok(())
     }
 
@@ -442,6 +490,21 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
+        let mut saved = ResolveUndoEntry::default();
+        let mut has_conflicts = false;
+        for existing in &self.entries {
+            if existing.path != path {
+                continue;
+            }
+            let stage = existing.stage();
+            if (1..=3).contains(&stage) {
+                saved.stages[(stage - 1) as usize] = Some((existing.mode, existing.oid));
+                has_conflicts = true;
+            }
+        }
+        if has_conflicts {
+            self.resolve_undo.insert(path.clone(), saved);
+        }
         // Remove conflict stages first
         self.entries.retain(|e| e.path != path || e.stage() == 0);
         // Then add/replace stage-0 entry
@@ -454,6 +517,7 @@ impl Index {
     pub fn remove(&mut self, path: &[u8]) -> bool {
         let before = self.entries.len();
         self.entries.retain(|e| e.path != path);
+        self.resolve_undo.remove(path);
         self.entries.len() < before
     }
 
@@ -476,6 +540,103 @@ impl Index {
         self.entries
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
+    }
+
+    /// Restore higher-stage entries for a previously resolved path.
+    #[must_use]
+    pub fn unresolve(&mut self, path: &[u8]) -> bool {
+        let Some(saved) = self.resolve_undo.remove(path) else {
+            return false;
+        };
+
+        self.entries.retain(|e| e.path != path);
+        for (index, stage) in saved.stages.iter().enumerate() {
+            let Some((mode, oid)) = stage else {
+                continue;
+            };
+            let stage_num = (index + 1) as u8;
+            self.entries.push(IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: *mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: *oid,
+                flags: (path.len().min(0xFFF) as u16) | ((stage_num as u16) << 12),
+                flags_extended: None,
+                path: path.to_vec(),
+            });
+        }
+        self.sort();
+        true
+    }
+}
+
+fn parse_resolve_undo(data: &[u8]) -> Result<BTreeMap<Vec<u8>, ResolveUndoEntry>> {
+    let mut pos = 0usize;
+    let mut entries = BTreeMap::new();
+
+    while pos < data.len() {
+        let path_end = data[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or_else(|| Error::IndexError("resolve-undo path missing NUL".to_owned()))?;
+        let path = data[pos..pos + path_end].to_vec();
+        pos += path_end + 1;
+
+        let mut modes = [0u32; 3];
+        for mode in &mut modes {
+            let mode_end = data[pos..]
+                .iter()
+                .position(|&b| b == 0)
+                .ok_or_else(|| Error::IndexError("resolve-undo mode missing NUL".to_owned()))?;
+            let raw = std::str::from_utf8(&data[pos..pos + mode_end])
+                .map_err(|_| Error::IndexError("resolve-undo mode is not UTF-8".to_owned()))?;
+            *mode = u32::from_str_radix(raw, 8)
+                .map_err(|_| Error::IndexError("invalid resolve-undo mode".to_owned()))?;
+            pos += mode_end + 1;
+        }
+
+        let mut entry = ResolveUndoEntry::default();
+        for (index, mode) in modes.into_iter().enumerate() {
+            if mode == 0 {
+                continue;
+            }
+            if pos + 20 > data.len() {
+                return Err(Error::IndexError(
+                    "resolve-undo object id exceeds extension size".to_owned(),
+                ));
+            }
+            let oid = ObjectId::from_bytes(&data[pos..pos + 20])?;
+            pos += 20;
+            entry.stages[index] = Some((mode, oid));
+        }
+
+        entries.insert(path, entry);
+    }
+
+    Ok(entries)
+}
+
+fn serialize_resolve_undo(entries: &BTreeMap<Vec<u8>, ResolveUndoEntry>, out: &mut Vec<u8>) {
+    for (path, entry) in entries {
+        out.extend_from_slice(path);
+        out.push(0);
+        for stage in &entry.stages {
+            let mode = stage.map(|(mode, _)| mode).unwrap_or(0);
+            out.extend_from_slice(format!("{mode:o}").as_bytes());
+            out.push(0);
+        }
+        for stage in &entry.stages {
+            if let Some((_, oid)) = stage {
+                out.extend_from_slice(oid.as_bytes());
+            }
+        }
     }
 }
 

@@ -3,6 +3,10 @@
 **Updated:** 2026-04-05
 
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3009 bash scripts/run-upstream-tests.sh t3009 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 bash scripts/run-upstream-tests.sh t1512 2>&1 | tail -40`: reran the requested upstream command after rebuilding `target/release/grit`; the aggregate runner still reports broader `t1512` gaps outside this scoped task, but the three tracked ambiguity cases were fixed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 cargo build --release -p grit-rs`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 cargo fmt --all 2>/dev/null; true`: completed.
+- `cp target/release/grit tests/grit && cd tests && EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="$(pwd)/grit" BASH_ENV=<temp env sourcing tests/test-lib-functions.sh with test_hash_algo=sha1> bash t1512-rev-parse-disambiguation.sh`: 3/3 passing for the tracked local slice.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3009 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.

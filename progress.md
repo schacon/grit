@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    60 |
+| Completed   |    61 |
 | In progress |     0 |
-| Remaining   |   706 |
+| Remaining   |   705 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t1512-rev-parse-disambiguation` — 3/3 tests pass (`rev-parse` now emits Git-style short-object ambiguity diagnostics for ambiguous blobs, invalid loose objects, and corrupt loose objects; the tracked 3-test slice was re-verified directly with the missing hash helpers loaded from `tests/test-lib-functions.sh`)
 - `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled nested non-submodule repositories correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t3502-cherry-pick-merge` — 12/12 tests pass (the requested upstream verification passed after clearing a stale `/tmp/grit-upstream-workdir`; the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t3302-notes-index-expensive` — 12/12 tests pass (re-ran the requested upstream verification on `main`; this checkout already had the fix, so the stale `PLAN.md` entry was corrected and no Rust code changes were required)
@@ -53,4 +54,4 @@
 
 ## What Remains
 
-706 test files still pending. See `PLAN.md` for the full prioritized list.
+705 test files still pending. See `PLAN.md` for the full prioritized list.
