@@ -8,7 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
@@ -438,7 +438,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
     // ancestors" — standard git revision range syntax.
     let (start_oids, exclude_oids) = if args.all {
-        (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
+        (collect_all_ref_oids(&repo)?, Vec::new())
     } else if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
@@ -3016,17 +3016,20 @@ fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> 
 }
 
 /// Collect all commit OIDs from all refs (branches, tags, etc.) for --all.
-fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
+fn collect_all_ref_oids(repo: &Repository) -> Result<Vec<ObjectId>> {
     use std::fs;
     let mut oids = Vec::new();
     let mut seen = HashSet::new();
+    let git_dir = &repo.git_dir;
 
     // Reftable backend
     if grit_lib::reftable::is_reftable_repo(git_dir) {
         if let Ok(refs) = grit_lib::reftable::reftable_list_refs(git_dir, "refs/") {
             for (_name, oid) in refs {
-                if seen.insert(oid) {
-                    oids.push(oid);
+                if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                    if seen.insert(commit_oid) {
+                        oids.push(commit_oid);
+                    }
                 }
             }
         }
@@ -3034,7 +3037,7 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
     }
 
     // Loose refs
-    collect_oids_from_dir(git_dir, &git_dir.join("refs"), &mut oids, &mut seen)?;
+    collect_oids_from_dir(repo, &git_dir.join("refs"), &mut oids, &mut seen)?;
 
     // Packed refs
     let packed_path = git_dir.join("packed-refs");
@@ -3045,8 +3048,10 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
             }
             if let Some(hex) = line.split_whitespace().next() {
                 if let Ok(oid) = hex.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
+                    if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                        if seen.insert(commit_oid) {
+                            oids.push(commit_oid);
+                        }
                     }
                 }
             }
@@ -3057,7 +3062,7 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
 }
 
 fn collect_oids_from_dir(
-    git_dir: &std::path::Path,
+    repo: &Repository,
     dir: &std::path::Path,
     oids: &mut Vec<ObjectId>,
     seen: &mut HashSet<ObjectId>,
@@ -3071,26 +3076,46 @@ fn collect_oids_from_dir(
         let entry = entry?;
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;
+            collect_oids_from_dir(repo, &entry.path(), oids, seen)?;
         } else if ft.is_file() {
             if let Ok(content) = fs::read_to_string(entry.path()) {
                 let raw = content.trim();
                 if let Some(target) = raw.strip_prefix("ref: ") {
                     // Symbolic ref — resolve it
-                    if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
-                        if seen.insert(oid) {
-                            oids.push(oid);
+                    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, target) {
+                        if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                            if seen.insert(commit_oid) {
+                                oids.push(commit_oid);
+                            }
                         }
                     }
                 } else if let Ok(oid) = raw.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
+                    if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                        if seen.insert(commit_oid) {
+                            oids.push(commit_oid);
+                        }
                     }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn peel_to_commit_oid(repo: &Repository, oid: ObjectId) -> Option<ObjectId> {
+    let mut current = oid;
+    for _ in 0..16 {
+        let obj = repo.odb.read(&current).ok()?;
+        match obj.kind {
+            ObjectKind::Commit => return Some(current),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data).ok()?;
+                current = tag.object;
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Check if a commit has any changes matching the specified diff-filter status letters.

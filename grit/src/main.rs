@@ -1492,6 +1492,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let rest = preprocess_log_args(rest);
+            if rest.iter().any(|a| a == "--left-right" || a == "--boundary") {
+                return commands::git_passthrough::run("log", &rest);
+            }
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),

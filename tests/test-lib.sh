@@ -796,14 +796,10 @@ test_expect_success () {
 		fi
 	fi
 
-	# Run in a subshell so each test starts clean.
-	# Source any previously-exported variables so they persist across tests.
 	# Run test body in the current shell (like upstream) so that
-	# variables set in one test persist to subsequent tests.
+	# variables and cwd changes persist to subsequent tests.
 	# We save and restore 'set -e' state since eval doesn't
 	# propagate exit-on-error the way a subshell does.
-	local _old_cwd="$PWD"
-	cd "$TRASH_DIRECTORY" || return 1
 	# Run with errexit but capture result.
 	# Wrap in a function to localize set -e.
 	_test_eval_result=0
@@ -823,7 +819,6 @@ test_expect_success () {
 		_twf_cmd=
 		trap - EXIT
 	fi
-	cd "$_old_cwd" 2>/dev/null || true
 
 	if test $result -eq 0
 	then
@@ -893,7 +888,6 @@ test_expect_failure () {
 	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
-		cd "$TRASH_DIRECTORY" || exit 1
 		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
