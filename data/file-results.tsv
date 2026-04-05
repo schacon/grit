@@ -168,7 +168,7 @@ t1800-hook	yes	44	5	39	ok	5	44	0
 t1900-repo-info	yes	37	9	28	ok	9	37	0
 t1901-repo-structure	yes	4	2	2	ok	2	4	0
 t2000-conflict-when-checking-files-out	yes	14	10	4	ok	10	14	0
-t2002-checkout-cache-u	yes	3	2	1	ok	2	3	0
+t2002-checkout-cache-u	yes	3	3	0	ok	3	3	0
 t2003-checkout-cache-mkdir	yes	10	3	7	ok	3	10	0
 t2004-checkout-cache-temp	yes	23	8	15	ok	8	23	0
 t2005-checkout-index-symlinks	yes	3	3	0	ok	3	3	0

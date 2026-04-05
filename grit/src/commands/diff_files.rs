@@ -285,6 +285,19 @@ fn collect_changes(
             let abs = work_tree.join(path);
             match read_worktree_info_fast(repo, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
+                WorktreeStatus::Smudged(wt_mode) => {
+                    let idx_canonical = canonicalize_mode(*idx_mode);
+                    changes.insert(
+                        path.clone(),
+                        Change {
+                            path: path.clone(),
+                            status: 'M',
+                            old_mode: idx_canonical,
+                            new_mode: wt_mode,
+                            old_oid: *idx_oid,
+                        },
+                    );
+                }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical {
@@ -377,6 +390,8 @@ fn collect_changes(
 enum WorktreeStatus {
     /// File is unchanged according to stat info — no need to hash.
     Unchanged,
+    /// Index entry has zeroed stat info and should appear modified.
+    Smudged(u32),
     /// File exists and may be modified (mode, oid from full hash).
     Modified(u32, ObjectId),
     /// File is missing from the working tree.
@@ -398,6 +413,23 @@ fn read_worktree_info_fast(
     };
 
     let _ = repo;
+
+    // Entries created by read-tree start with zeroed stat information.
+    // Until an explicit refresh (e.g. checkout-index -u / update-index
+    // --refresh), Git reports them as modified in diff-files.
+    if has_uninitialized_stat(index_entry) {
+        if meta.file_type().is_symlink() {
+            return Ok(WorktreeStatus::Smudged(MODE_SYMLINK));
+        }
+        if meta.file_type().is_file() {
+            let wt_mode = if meta.permissions().mode() & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            };
+            return Ok(WorktreeStatus::Smudged(wt_mode));
+        }
+    }
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
@@ -434,6 +466,18 @@ fn read_worktree_info_fast(
     }
 
     Ok(WorktreeStatus::Missing)
+}
+
+fn has_uninitialized_stat(entry: &IndexEntry) -> bool {
+    entry.ctime_sec == 0
+        && entry.ctime_nsec == 0
+        && entry.mtime_sec == 0
+        && entry.mtime_nsec == 0
+        && entry.dev == 0
+        && entry.ino == 0
+        && entry.uid == 0
+        && entry.gid == 0
+        && entry.size == 0
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.
