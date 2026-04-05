@@ -657,7 +657,7 @@ t5811-proto-disable-git	yes	0	0	0	ok	0	0	0
 t5812-proto-disable-http	yes	29	11	18	ok	11	29	0
 t5813-proto-disable-ssh	yes	81	30	51	ok	30	81	0
 t5814-proto-disable-ext	yes	27	11	16	ok	11	27	0
-t5815-submodule-protos	yes	8	7	1	ok	7	8	0
+t5815-submodule-protos	yes	8	8	0	ok	8	8	0
 t5900-repo-selection	yes	8	0	8	ok	0	8	0
 t6000-rev-list-misc	yes	23	6	17	ok	6	23	0
 t6001-rev-list-graft	yes	14	3	11	ok	3	14	0
