@@ -196,8 +196,9 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     // Attempt to resolve first arg as a commit-ish.
     // Must actually resolve to a commit (not just any object like a blob).
     let first_is_commit = resolve_revision(repo, first)
-        .and_then(|oid| peel_to_commit(repo, oid))
-        .is_ok();
+        .ok()
+        .and_then(|oid| peel_to_commit(repo, oid).ok())
+        .is_some();
 
     if first_is_commit {
         // First arg is the commit; remaining args are paths (may be empty).

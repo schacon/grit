@@ -32,8 +32,15 @@ enum RmErrorKind {
 #[command(about = "Remove files from the working tree and from the index")]
 pub struct Args {
     /// Files to remove.
-    #[arg(required = true)]
     pub pathspec: Vec<String>,
+
+    /// Read pathspec from file (use "-" for stdin).
+    #[arg(long = "pathspec-from-file", value_name = "FILE")]
+    pub pathspec_from_file: Option<String>,
+
+    /// NUL-terminated pathspec input (requires --pathspec-from-file).
+    #[arg(long = "pathspec-file-nul")]
+    pub pathspec_file_nul: bool,
 
     /// Only remove from the index; keep the working tree file.
     #[arg(long = "cached")]

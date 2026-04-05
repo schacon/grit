@@ -28,8 +28,16 @@ pub struct Args {
     pub long: bool,
 
     /// Show only names.
-    #[arg(long = "name-only", alias = "name-status")]
+    #[arg(long = "name-only")]
     pub name_only: bool,
+
+    /// Show only names (same as --name-only).
+    #[arg(long = "name-status")]
+    pub name_status: bool,
+
+    /// Show only object names (hashes).
+    #[arg(long = "object-only")]
+    pub object_only: bool,
 
     /// \0 line termination on output.
     #[arg(short = 'z')]
@@ -48,6 +56,42 @@ pub struct Args {
 
 /// Run `grit ls-tree`.
 pub fn run(mut args: Args) -> Result<()> {
+    // Validate incompatible display-mode options
+    {
+        let mut display_modes: Vec<&str> = Vec::new();
+        if args.long {
+            display_modes.push("--long");
+        }
+        if args.name_only {
+            display_modes.push("--name-only");
+        }
+        if args.name_status {
+            display_modes.push("--name-status");
+        }
+        if args.object_only {
+            display_modes.push("--object-only");
+        }
+        if display_modes.len() > 1 {
+            eprintln!(
+                "error: {} and {} cannot be used together",
+                display_modes[0], display_modes[1]
+            );
+            std::process::exit(129);
+        }
+        if args.format.is_some() && !display_modes.is_empty() {
+            eprintln!(
+                "error: {} and --format cannot be used together",
+                display_modes[0]
+            );
+            std::process::exit(129);
+        }
+    }
+
+    // --name-status is an alias for --name-only
+    if args.name_status {
+        args.name_only = true;
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Resolve pathspecs relative to cwd within the work tree, then express
@@ -249,6 +293,8 @@ fn print_entry(
         } else {
             write!(out, "{}", quote_path_name(name))?;
         }
+    } else if args.object_only {
+        write!(out, "{}", entry.oid)?;
     } else if args.long {
         let size_str = if kind_str == "blob" {
             match repo.odb.read(&entry.oid) {
