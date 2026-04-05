@@ -858,7 +858,7 @@ test_expect_success () {
 		eval "$1"
 	}
 	_twf_cmd=""
-	_test_eval_inner "$commands" 2>&1 || _test_eval_result=$?
+	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
 	local result=$_test_eval_result
 	# Ensure errexit is off at top level
 	set +e
@@ -944,7 +944,7 @@ test_expect_failure () {
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
 		test -f "$_exports_file" && . "$_exports_file"
-		eval "$commands"
+		eval "$commands" </dev/null
 	)
 	local result=$?
 	test -f "$_exports_file" && . "$_exports_file"
