@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    59 |
+| Completed   |    60 |
 | In progress |     1 |
-| Remaining   |   707 |
+| Remaining   |   706 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -50,7 +50,8 @@
 - `t4028-format-patch-mime-headers` — 3/3 tests pass (stale plan entry corrected)
 - `t4062-diff-pickaxe` — 3/3 tests pass (stale plan entry corrected)
 - `t4016-diff-quote` — 5/5 tests pass (stale plan entry corrected)
+- `t4073-diff-stat-name-width` — 6/6 tests pass (fixed trailing `--stat-*` option parsing after revisions in `grit diff`)
 
 ## What Remains
 
-1 test file currently in progress (`t4073-diff-stat-name-width`) and 707 still pending. See `plan.md` for the full prioritized list.
+1 test file currently in progress (`t4006-diff-mode`) and 706 still pending. See `plan.md` for the full prioritized list.

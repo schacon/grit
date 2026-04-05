@@ -20,3 +20,27 @@
   - `--stat-count=<n>`
   - `--stat-graph-width=<n>`
 - Rebuild and rerun `t4073`.
+
+### Implementation
+- Updated `grit/src/commands/diff.rs` trailing-option re-apply matcher to parse:
+  - `--stat-width=<n>`
+  - `--stat-name-width=<n>`
+  - `--stat-count=<n>`
+  - `--stat-graph-width=<n>`
+- Each parsed option now sets the corresponding `args.*` field and flips `stat_enabled = true`.
+- This ensures stat-width flags work when they appear after revision arguments.
+
+### Validation
+- `cargo build --release` ✅
+- `bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width` ✅
+  - Tests: 6, pass: 6, fail: 0
+- `./scripts/run-tests.sh t4073-diff-stat-name-width.sh` ✅
+  - 6/6 passing, cache updated in `data/file-results.tsv`
+- Hygiene gates:
+  - `cargo fmt` ✅
+  - `cargo clippy --fix --allow-dirty` ✅ (reverted unrelated auto-fixes before commit)
+  - `cargo test -p grit-lib --lib` ✅
+
+### Completion
+- `PLAN.md`: marked `t4073-diff-stat-name-width` as `[x]` with `6/6 (0 left)`.
+- `progress.md` and `test-results.md` updated.

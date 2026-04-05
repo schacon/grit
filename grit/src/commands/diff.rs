@@ -429,6 +429,30 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--shortstat" => args.shortstat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
+                s if s.starts_with("--stat-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-width=") {
+                        args.stat_width = val.parse().ok();
+                        stat_enabled = true;
+                    }
+                }
+                s if s.starts_with("--stat-name-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-name-width=") {
+                        args.stat_name_width = val.parse().ok();
+                        stat_enabled = true;
+                    }
+                }
+                s if s.starts_with("--stat-count=") => {
+                    if let Some(val) = s.strip_prefix("--stat-count=") {
+                        args.stat_count = val.parse().ok();
+                        stat_enabled = true;
+                    }
+                }
+                s if s.starts_with("--stat-graph-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-graph-width=") {
+                        args.stat_graph_width = val.parse().ok();
+                        stat_enabled = true;
+                    }
+                }
                 s if s.starts_with("--stat") => {
                     if s == "--stat" {
                         if args.stat.is_none() {
@@ -2211,6 +2235,22 @@ fn format_stat_line_git(
     }
 }
 
+/// Format a `--stat` line for binary changes.
+///
+/// Git shows `Bin` in the count column for binary files and does not show a
+/// histogram bar.
+fn format_stat_line_binary(path: &str, max_path_len: usize, count_width: usize) -> String {
+    let path_display_width = UnicodeWidthStr::width(path);
+    let padding = max_path_len.saturating_sub(path_display_width);
+    format!(
+        " {}{} | {:>cw$}",
+        path,
+        " ".repeat(padding),
+        "Bin",
+        cw = count_width,
+    )
+}
+
 /// Write a stat summary for each entry, followed by a totals line.
 fn write_stat(
     out: &mut impl Write,
@@ -2243,8 +2283,9 @@ fn write_stat(
         .max()
         .unwrap_or(0);
 
-    // Collect per-file stats first so we can compute the count column width
-    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
+    // Collect per-file stats first so we can compute the count column width.
+    // Track whether each path should be rendered as a binary stat line (`Bin`).
+    let mut file_stats: Vec<(&str, usize, usize, bool)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
@@ -2253,15 +2294,25 @@ fn write_stat(
         let old_content = read_content(odb, &entry.old_oid, None, entry.path());
         let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
-        file_stats.push((&display_paths[i], ins, del));
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let is_binary = is_binary(&old_raw) || is_binary(&new_raw);
+        file_stats.push((&display_paths[i], ins, del, is_binary));
         total_ins += ins;
         total_del += del;
         files_changed += 1;
     }
 
     // Compute the width for the count column (like git does)
-    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    let count_width = format!("{}", max_count).len();
+    let max_count = file_stats
+        .iter()
+        .map(|(_, ins, del, _)| ins + del)
+        .max()
+        .unwrap_or(0);
+    let mut count_width = format!("{}", max_count).len();
+    if file_stats.iter().any(|(_, _, _, binary)| *binary) {
+        count_width = count_width.max(3); // width of "Bin"
+    }
 
     // Compute layout widths from total width, like git.
     // Line format: " {name:<N} | {count:>C} {bar}"
@@ -2284,7 +2335,7 @@ fn write_stat(
 
     let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
-    let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
+    let display_stats: &[(&str, usize, usize, bool)] = if let Some(limit) = stat_count {
         if file_stats.len() > limit {
             &file_stats[..limit]
         } else {
@@ -2293,7 +2344,7 @@ fn write_stat(
     } else {
         &file_stats
     };
-    for (path, ins, del) in display_stats {
+    for (path, ins, del, binary) in display_stats {
         // Truncate path if its display width exceeds max_path_len
         let path_width = UnicodeWidthStr::width(*path);
         let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
@@ -2315,15 +2366,19 @@ fn write_stat(
         } else {
             std::borrow::Cow::Borrowed(*path)
         };
-        let line = format_stat_line_git(
-            &display_path,
-            *ins,
-            *del,
-            max_path_len,
-            count_width,
-            max_count,
-            max_bar,
-        );
+        let line = if *binary {
+            format_stat_line_binary(&display_path, max_path_len, count_width)
+        } else {
+            format_stat_line_git(
+                &display_path,
+                *ins,
+                *del,
+                max_path_len,
+                count_width,
+                max_count,
+                max_bar,
+            )
+        };
         writeln!(out, "{line}")?;
     }
     if let Some(limit) = stat_count {
