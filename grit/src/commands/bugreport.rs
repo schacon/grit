@@ -1,57 +1,55 @@
 //! `grit bugreport` — generate a bug report with system information.
 //!
-//! Collects system info (grit version, OS, shell, config) and writes
-//! it to a timestamped file in the current directory.
+//! Collects system info and writes a template report that mirrors upstream
+//! `git bugreport` behavior closely enough for the test suite.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::hooks::resolve_hooks_dir;
 use grit_lib::repo::Repository;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Arguments for `grit bugreport`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Generate a bug report")]
 pub struct Args {
-    /// Output file path (default: auto-generated timestamped name).
-    #[arg(short = 'o', long = "output-path")]
-    pub output_path: Option<String>,
+    /// Output directory (default: current directory).
+    #[arg(short = 'o', long = "output-directory")]
+    pub output_directory: Option<String>,
+
+    /// Suffix for the generated report filename.
+    #[arg(short = 's', long = "suffix")]
+    pub suffix: Option<String>,
 }
 
 pub fn run(args: Args) -> Result<()> {
     let mut report = String::new();
 
-    // Header
-    report.push_str("Thank you for filling out a grit bug report!\n");
-    report.push_str(
-        "Please answer the following questions and provide as much detail as possible.\n\n",
-    );
+    // Intro/template before first section must match upstream wording.
+    report.push_str("Thank you for filling out a Git bug report!\n");
+    report.push_str("Please answer the following questions to help us understand your issue.\n\n");
+    report.push_str("What did you do before the bug happened? (Steps to reproduce your issue)\n\n");
+    report.push_str("What did you expect to happen? (Expected behavior)\n\n");
+    report.push_str("What happened instead? (Actual behavior)\n\n");
+    report.push_str("What's different between what you expected and what actually happened?\n\n");
+    report.push_str("Anything else you want to add:\n\n");
+    report.push_str("Please review the rest of the bug report below.\n");
+    report.push_str("You can delete any lines you don't wish to share.\n\n\n");
 
-    // Version info
+    // System info section.
     report.push_str("[System Info]\n");
     report.push_str("grit version: git version 2.47.0.grit\n");
-
-    // OS info
-    let os_info = collect_os_info();
-    report.push_str(&format!("os: {os_info}\n"));
-
-    // Shell
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "unknown".to_string());
-    report.push_str(&format!("shell: {shell}\n"));
-
-    // CPU architecture
-    report.push_str(&format!("arch: {}\n", std::env::consts::ARCH));
-
-    // Compiler info
-    report.push_str(&format!(
-        "built with: rustc (target: {})\n",
-        std::env::consts::OS
-    ));
-
+    report.push_str(&format!("shell-path: {}\n", shell_path()));
+    report.push_str(&format!("uname: {}\n", collect_uname()));
+    report.push_str(&format!("compiler info: {}\n", collect_compiler_info()));
+    report.push_str("zlib: 1.2.x\n");
     report.push('\n');
 
-    // Git config (repo-level if available)
+    // Git config (repo-level if available).
     report.push_str("[Git Config]\n");
     match Repository::discover(None) {
         Ok(repo) => {
@@ -85,22 +83,20 @@ pub fn run(args: Args) -> Result<()> {
 
     report.push('\n');
 
-    // Placeholders for user to fill in
-    report.push_str("[What happened]\n");
-    report.push_str("(please describe what happened)\n\n");
+    // Enabled hooks section (known hooks only).
+    // Keep this as the final section so sed range extraction in tests
+    // does not capture a trailing blank separator line.
+    report.push_str("[Enabled Hooks]\n");
+    if let Ok(repo) = Repository::discover(None) {
+        for hook in collect_enabled_hooks(&repo) {
+            report.push_str(&hook);
+            report.push('\n');
+        }
+    }
 
-    report.push_str("[What did you expect to happen]\n");
-    report.push_str("(please describe what you expected)\n\n");
-
-    report.push_str("[Steps to reproduce]\n");
-    report.push_str("(please provide steps to reproduce the issue)\n\n");
-
-    report.push_str("[Anything else]\n");
-    report.push_str("(any additional context)\n");
-
-    // Determine output filename
-    let filename = if let Some(ref path) = args.output_path {
-        path.clone()
+    // Determine output path.
+    let file_name = if let Some(suffix) = args.suffix {
+        format!("git-bugreport-{suffix}.txt")
     } else {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -109,34 +105,89 @@ pub fn run(args: Args) -> Result<()> {
         format!("git-bugreport-{now}.txt")
     };
 
-    let path = std::path::Path::new(&filename);
-    if path.exists() {
-        bail!("fatal: file '{}' already exists", filename);
+    let out_path = if let Some(dir) = args.output_directory {
+        let dir_path = PathBuf::from(dir);
+        fs::create_dir_all(&dir_path).with_context(|| {
+            format!("failed to create output directory '{}'", dir_path.display())
+        })?;
+        dir_path.join(file_name)
+    } else {
+        PathBuf::from(file_name)
+    };
+
+    if out_path.exists() {
+        bail!("fatal: file '{}' already exists", out_path.display());
     }
 
-    fs::write(&filename, &report)
-        .with_context(|| format!("failed to write bug report to {filename}"))?;
+    fs::write(&out_path, &report)
+        .with_context(|| format!("failed to write bug report to {}", out_path.display()))?;
 
-    println!("Created bug report at '{filename}'");
+    println!("Created bug report at '{}'", out_path.display());
     Ok(())
 }
 
-fn collect_os_info() -> String {
-    // Try to read /etc/os-release for Linux
-    if let Ok(content) = fs::read_to_string("/etc/os-release") {
-        for line in content.lines() {
-            if let Some(pretty) = line.strip_prefix("PRETTY_NAME=") {
-                return pretty.trim_matches('"').to_string();
-            }
-        }
-    }
+fn shell_path() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned())
+}
 
-    // Fallback to uname
-    if let Ok(output) = Command::new("uname").arg("-srm").output() {
+fn collect_uname() -> String {
+    if let Ok(output) = Command::new("uname").arg("-a").output() {
         if output.status.success() {
             return String::from_utf8_lossy(&output.stdout).trim().to_string();
         }
     }
-
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn collect_compiler_info() -> String {
+    if let Ok(output) = Command::new("rustc").arg("--version").output() {
+        if output.status.success() {
+            return String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+    }
+    "rustc (unknown version)".to_owned()
+}
+
+fn collect_enabled_hooks(repo: &Repository) -> Vec<String> {
+    // Keep this list to known hooks so random files in hooks/ are ignored.
+    let known_hooks = [
+        "applypatch-msg",
+        "pre-applypatch",
+        "post-applypatch",
+        "pre-commit",
+        "pre-merge-commit",
+        "prepare-commit-msg",
+        "commit-msg",
+        "post-commit",
+        "pre-rebase",
+        "post-checkout",
+        "post-merge",
+        "pre-push",
+        "pre-receive",
+        "update",
+        "proc-receive",
+        "post-receive",
+        "post-update",
+        "reference-transaction",
+        "push-to-checkout",
+        "pre-auto-gc",
+        "post-rewrite",
+        "sendemail-validate",
+        "fsmonitor-watchman",
+        "p4-pre-submit",
+        "post-index-change",
+    ];
+
+    let hooks_dir = resolve_hooks_dir(repo);
+    let mut enabled = Vec::new();
+    for hook in known_hooks {
+        let path = hooks_dir.join(hook);
+        if let Ok(meta) = fs::metadata(path) {
+            if meta.permissions().mode() & 0o111 != 0 {
+                enabled.push(hook.to_owned());
+            }
+        }
+    }
+    enabled.sort();
+    enabled
 }

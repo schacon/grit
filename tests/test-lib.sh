@@ -764,6 +764,10 @@ test_expect_success () {
 		echo >&2 "BUG: test_expect_success requires 2 or 3 arguments, got $#"
 		return 1
 	fi
+	if test "$commands" = "-"
+	then
+		commands="$(cat)"
+	fi
 	test_count=$(($test_count + 1))
 
 	# Check prerequisites (comma-separated)
@@ -857,6 +861,10 @@ test_expect_failure () {
 	else
 		echo >&2 "BUG: test_expect_failure requires 2 or 3 arguments, got $#"
 		return 1
+	fi
+	if test "$commands" = "-"
+	then
+		commands="$(cat)"
 	fi
 	test_count=$(($test_count + 1))
 
@@ -1000,6 +1008,13 @@ test_expect_code () {
 	fi
 }
 
+test_match_signal () {
+	local sig="$1"
+	local code="$2"
+	local expected=$((128 + sig))
+	test "$code" = "$expected"
+}
+
 test_must_be_empty () {
 	if test -s "$1"
 	then
@@ -1024,6 +1039,31 @@ test_line_count () {
 		echo >&2 "test_line_count: expected $count lines ($op), got $actual in '$file'"
 		return 1
 	fi
+}
+
+# test_stdout_line_count OP N CMD...
+# Run CMD and assert wc -l on its stdout.
+test_stdout_line_count () {
+	local op="$1"
+	local count="$2"
+	shift 2
+	local tmp="${TRASH_DIRECTORY}/.stdout.$$"
+	"$@" >"$tmp" &&
+	test_line_count "$op" "$count" "$tmp"
+	local rc=$?
+	rm -f "$tmp"
+	return $rc
+}
+
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
+	then
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
+	fi
+	return 1
 }
 
 # Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.

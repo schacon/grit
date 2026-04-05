@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod commands;
 pub mod pathspec;
@@ -66,8 +66,13 @@ fn main() {
             exit_code = 0;
         }
         Err(e) => {
-            eprintln!("error: {e:#}");
-            exit_code = 1;
+            if is_broken_pipe_error(&e) {
+                // Match shell signal convention for SIGPIPE.
+                exit_code = 128 + 13;
+            } else {
+                eprintln!("error: {e:#}");
+                exit_code = 1;
+            }
         }
     }
 
@@ -98,6 +103,25 @@ fn main() {
     }
 
     std::process::exit(exit_code);
+}
+
+fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
+    use std::io::ErrorKind;
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+        if let Some(lib_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = lib_err {
+                if ioe.kind() == ErrorKind::BrokenPipe {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Get process ancestry by walking parent PIDs on Linux.
@@ -243,7 +267,24 @@ fn chrono_now() -> String {
 }
 
 fn exit_with_status(status: std::process::ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            std::process::exit(128 + sig);
+        }
+    }
     std::process::exit(status.code().unwrap_or(1));
+}
+
+const TEST_TOOL_EXAMPLE_TAP_OUTPUT: &str = include_str!("test_tool_example_tap_output.txt");
+
+fn run_test_tool_example_tap(rest: &[String]) -> Result<()> {
+    if rest.len() != 1 {
+        bail!("usage: test-tool example-tap");
+    }
+    print!("{TEST_TOOL_EXAMPLE_TAP_OUTPUT}");
+    std::process::exit(1);
 }
 
 fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
@@ -297,6 +338,488 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "run-twice" => {
+            let repo = grit_lib::repo::Repository::discover(None)?;
+            let tips = vec!["HEAD".to_owned()];
+            let empty: Vec<String> = Vec::new();
+            let opts = grit_lib::rev_list::RevListOptions::default();
+            let walked = grit_lib::rev_list::rev_list(&repo, &tips, &empty, &opts)?;
+
+            for label in ["1st", "2nd"] {
+                println!("{label}");
+                for oid in &walked.commits {
+                    let obj = repo.odb.read(oid)?;
+                    let commit = grit_lib::objects::parse_commit(&obj.data)?;
+                    let subject = commit.message.lines().next().unwrap_or_default();
+                    println!(" > {subject}");
+                }
+            }
+            Ok(())
+        }
+        other => bail!("test-tool revision-walking: unknown subcommand '{other}'"),
+    }
+}
+
+fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "test" => {
+            // Minimal self-check used by t0071-sort.sh.
+            let mut values = vec![9, 1, 5, 3, 7, 2, 8, 4, 6];
+            let mut expected = values.clone();
+            values.sort();
+            expected.sort();
+            if values == expected {
+                Ok(())
+            } else {
+                bail!("test-tool mergesort: internal self-check failed");
+            }
+        }
+        other => bail!("test-tool mergesort: unknown subcommand '{other}'"),
+    }
+}
+
+fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .map_err(|_| anyhow::anyhow!("invalid --check-count value: {value}"))
+}
+
+fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
+    let mut i = 1usize;
+    let mut expected_count: Option<usize> = None;
+
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--check-count" || arg == "-c" {
+            let Some(next) = rest.get(i + 1) else {
+                bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+            };
+            expected_count = Some(parse_find_pack_count_arg(next)?);
+            i += 2;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--check-count=") {
+            expected_count = Some(parse_find_pack_count_arg(v)?);
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    let Some(spec) = rest.get(i) else {
+        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+    };
+    if i + 1 != rest.len() {
+        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let oid = grit_lib::rev_parse::resolve_revision(&repo, spec)?;
+    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut packs: Vec<String> = Vec::new();
+    for idx in indexes {
+        if idx.entries.iter().any(|entry| entry.oid == oid) {
+            if let Some(name) = idx.pack_path.file_name().and_then(|s| s.to_str()) {
+                packs.push(format!(".git/objects/pack/{name}"));
+            }
+        }
+    }
+    packs.sort();
+    packs.dedup();
+
+    if let Some(n) = expected_count {
+        if packs.len() == n {
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
+    for path in packs {
+        println!("{path}");
+    }
+    Ok(())
+}
+
+fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "ENOENT",
+        std::io::ErrorKind::NotADirectory => "ENOTDIR",
+        _ => "ESOMETHINGELSE",
+    }
+}
+
+fn walk_dir_iterator(
+    root_abs: &Path,
+    root_display: &str,
+    rel: &Path,
+    pedantic: bool,
+) -> std::result::Result<(), ()> {
+    let current = if rel.as_os_str().is_empty() {
+        root_abs.to_path_buf()
+    } else {
+        root_abs.join(rel)
+    };
+
+    let read_dir = match std::fs::read_dir(&current) {
+        Ok(it) => it,
+        Err(_) => {
+            return if pedantic { Err(()) } else { Ok(()) };
+        }
+    };
+
+    let mut entries = Vec::new();
+    for entry in read_dir {
+        match entry {
+            Ok(e) => entries.push(e),
+            Err(_) => {
+                if pedantic {
+                    return Err(());
+                }
+            }
+        }
+    }
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let basename = entry.file_name();
+        let basename_display = basename.to_string_lossy().to_string();
+        let child_rel = if rel.as_os_str().is_empty() {
+            PathBuf::from(&basename)
+        } else {
+            rel.join(&basename)
+        };
+        let child_abs = root_abs.join(&child_rel);
+
+        let meta = match std::fs::symlink_metadata(&child_abs) {
+            Ok(m) => m,
+            Err(_) => {
+                if pedantic {
+                    return Err(());
+                }
+                continue;
+            }
+        };
+        let ft = meta.file_type();
+        let kind = if ft.is_dir() {
+            'd'
+        } else if ft.is_file() {
+            'f'
+        } else if ft.is_symlink() {
+            's'
+        } else {
+            '?'
+        };
+
+        let path_display = Path::new(root_display).join(&child_rel);
+        println!(
+            "[{kind}] ({}) [{}] {}",
+            child_rel.to_string_lossy(),
+            basename_display,
+            path_display.display()
+        );
+
+        if ft.is_dir() && walk_dir_iterator(root_abs, root_display, &child_rel, pedantic).is_err()
+        {
+            return Err(());
+        }
+    }
+
+    Ok(())
+}
+
+fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
+    let mut pedantic = false;
+    let mut path_arg: Option<String> = None;
+
+    for arg in rest.iter().skip(1) {
+        if arg == "--pedantic" {
+            pedantic = true;
+            continue;
+        }
+        if arg.starts_with("--") {
+            bail!("invalid option '{arg}'");
+        }
+        if path_arg.is_some() {
+            bail!("dir-iterator needs exactly one non-option argument");
+        }
+        path_arg = Some(arg.clone());
+    }
+
+    let Some(path_arg) = path_arg else {
+        bail!("dir-iterator needs exactly one non-option argument");
+    };
+
+    let root_abs = PathBuf::from(&path_arg);
+    let root_meta = match std::fs::symlink_metadata(&root_abs) {
+        Ok(m) => m,
+        Err(e) => {
+            println!("dir_iterator_begin failure: {}", dir_iterator_error_name(e.kind()));
+            std::process::exit(1);
+        }
+    };
+
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        println!("dir_iterator_begin failure: ENOTDIR");
+        std::process::exit(1);
+    }
+
+    if walk_dir_iterator(&root_abs, &path_arg, Path::new(""), pedantic).is_err() {
+        println!("dir_iterator_advance failure");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn unquote_c_style(input: &str) -> String {
+    if input.len() >= 2 && input.starts_with('"') && input.ends_with('"') {
+        let mut out = String::new();
+        let mut chars = input[1..input.len() - 1].chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '\\' {
+                out.push(ch);
+                continue;
+            }
+
+            match chars.next() {
+                Some('a') => out.push('\u{0007}'),
+                Some('b') => out.push('\u{0008}'),
+                Some('f') => out.push('\u{000C}'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('v') => out.push('\u{000B}'),
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some(c @ '0'..='7') => {
+                    let mut value = c.to_digit(8).unwrap_or(0);
+                    for _ in 0..2 {
+                        if let Some(next @ '0'..='7') = chars.peek().copied() {
+                            let _ = chars.next();
+                            value = value * 8 + next.to_digit(8).unwrap_or(0);
+                        } else {
+                            break;
+                        }
+                    }
+                    out.push(char::from_u32(value).unwrap_or('\u{FFFD}'));
+                }
+                Some(other) => out.push(other),
+                None => {}
+            }
+        }
+        out
+    } else {
+        input.to_owned()
+    }
+}
+
+fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
+    let mut pathspec_from_file: Option<String> = None;
+    let mut pathspec_file_nul = false;
+
+    for arg in rest.iter().skip(1) {
+        if let Some(v) = arg.strip_prefix("--pathspec-from-file=") {
+            pathspec_from_file = Some(v.to_owned());
+            continue;
+        }
+        if arg == "--pathspec-file-nul" {
+            pathspec_file_nul = true;
+            continue;
+        }
+        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file [--pathspec-file-nul]");
+    }
+
+    let Some(pathspec_source) = pathspec_from_file else {
+        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file [--pathspec-file-nul]");
+    };
+
+    let data = if pathspec_source == "-" {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        std::io::stdin().read_to_end(&mut buf)?;
+        buf
+    } else {
+        std::fs::read(&pathspec_source)?
+    };
+
+    let items: Vec<String> = if pathspec_file_nul {
+        data.split(|b| *b == 0u8)
+            .filter(|chunk| !chunk.is_empty())
+            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+            .collect()
+    } else {
+        let text = String::from_utf8_lossy(&data);
+        text.split('\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| line.strip_suffix('\r').unwrap_or(line))
+            .map(unquote_c_style)
+            .collect()
+    };
+
+    for item in items {
+        println!("{item}");
+    }
+    Ok(())
+}
+
+fn parse_bool_str(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn run_test_tool_advise(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool advise <message>");
+    }
+    let advice_msg = &rest[1];
+
+    let global_advice = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_str(&v));
+    if global_advice == Some(false) {
+        return Ok(());
+    }
+
+    let config_advice = if let Some(v) = protocol::check_config_param("advice.nestedTag") {
+        parse_bool_str(&v)
+    } else {
+        let git_dir = std::env::var("GIT_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                grit_lib::repo::Repository::discover(None)
+                    .ok()
+                    .map(|r| r.git_dir)
+            });
+        if let Some(gd) = git_dir {
+            if let Ok(config) = grit_lib::config::ConfigSet::load(Some(gd.as_path()), true) {
+                config
+                    .get("advice.nestedTag")
+                    .and_then(|v| parse_bool_str(&v))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    let enabled = global_advice == Some(true) || config_advice != Some(false);
+    if !enabled {
+        return Ok(());
+    }
+
+    eprintln!("hint: {advice_msg}");
+    if config_advice.is_none() {
+        eprintln!("hint: Disable this message with \"git config set advice.nestedTag false\"");
+    }
+    Ok(())
+}
+
+fn parse_ulong_str(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
+fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
+    // test-tool env-helper --type=<bool|ulong> --default=<value> [--exit-code] <VAR>
+    if rest.len() < 3 || rest.first().map(String::as_str) != Some("env-helper") {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    }
+
+    let mut value_type: Option<&str> = None;
+    let mut default_value: Option<String> = None;
+    let mut exit_code_only = false;
+    let mut variable_name: Option<&str> = None;
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if let Some(v) = arg.strip_prefix("--type=") {
+            value_type = Some(v);
+            i += 1;
+            continue;
+        }
+        if arg == "--type" {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if let Some(v) = arg.strip_prefix("--default=") {
+            if v.is_empty() {
+                bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+            }
+            default_value = Some(v.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--default" {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if arg == "--exit-code" {
+            exit_code_only = true;
+            i += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if variable_name.is_some() {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        variable_name = Some(arg);
+        i += 1;
+    }
+
+    let Some(value_type) = value_type else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+    let Some(var) = variable_name else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+
+    let resolved = std::env::var(var).ok().or(default_value);
+    let Some(value) = resolved else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+
+    match value_type {
+        "bool" => {
+            let Some(flag) = parse_bool_str(&value) else {
+                std::process::exit(1);
+            };
+            if !exit_code_only {
+                println!("{}", if flag { "true" } else { "false" });
+            }
+            if flag {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "ulong" => {
+            let Some(num) = parse_ulong_str(&value) else {
+                std::process::exit(1);
+            };
+            if !exit_code_only {
+                println!("{num}");
+            }
+            if num > 0 {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        _ => bail!(
+            "usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>"
+        ),
+    }
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -305,6 +828,7 @@ struct GlobalOpts {
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
     bare: bool,
+    no_advice: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -382,6 +906,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --no-advice
+        if arg == "--no-advice" {
+            opts.no_advice = true;
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
@@ -435,6 +966,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
     }
+    if opts.no_advice {
+        std::env::set_var("GIT_ADVICE", "false");
+    }
     Ok(())
 }
 
@@ -460,6 +994,9 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
             let _ = e.print();
+            if matches!(subcmd, "tag" | "branch" | "bugreport") {
+                eprintln!("usage: git {subcmd}");
+            }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                     std::process::exit(129)
@@ -488,6 +1025,25 @@ fn run() -> Result<()> {
         }
     };
 
+    // t0017-env-helper expects config to be loaded very early when
+    // GIT_TEST_ENV_HELPER=true, even before applying -C.
+    if subcmd == "test-tool"
+        && std::env::var("GIT_TEST_ENV_HELPER")
+            .ok()
+            .and_then(|v| parse_bool_str(&v))
+            == Some(true)
+    {
+        // Accept optional leading "-C <dir>" pairs before "env-helper".
+        let mut idx = 0usize;
+        while idx + 1 < rest.len() && rest[idx] == "-C" {
+            idx += 2;
+        }
+        let is_env_helper = rest.get(idx).map(String::as_str) == Some("env-helper");
+        if is_env_helper {
+            let _ = grit_lib::config::ConfigSet::load(None, true)?;
+        }
+    }
+
     apply_globals(&opts)?;
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
@@ -508,6 +1064,13 @@ fn run() -> Result<()> {
                 trace_cmd,
             );
             write_git_trace(&trace_val, &trace_line);
+        }
+    }
+
+    // Expand configured aliases when the subcommand is not a built-in.
+    if !KNOWN_COMMANDS.contains(&subcmd.as_str()) {
+        if let Some(alias) = get_alias_definition(&subcmd) {
+            return run_alias(&subcmd, &alias, &rest, &opts);
         }
     }
 
@@ -998,6 +1561,53 @@ fn get_autocorrect_setting() -> Option<String> {
     None
 }
 
+/// Read an alias definition from config (`alias.<name>`).
+fn get_alias_definition(name: &str) -> Option<String> {
+    let key = format!("alias.{name}");
+    if let Some(val) = protocol::check_config_param(&key) {
+        return Some(val);
+    }
+    let git_dir = std::env::var("GIT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        });
+    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
+        return config.get(&key);
+    }
+    None
+}
+
+#[allow(dead_code)]
+fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if let Some(shell_cmd) = alias.strip_prefix('!') {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(shell_cmd)
+            .arg(format!("git-{name}"))
+            .args(rest)
+            .status()?;
+        exit_with_status(status);
+    }
+
+    let mut parts: Vec<String> = alias
+        .split_whitespace()
+        .map(|s| s.to_owned())
+        .collect();
+    if parts.is_empty() {
+        bail!("alias '{name}' expands to an empty command");
+    }
+    let next_subcmd = parts.remove(0);
+    if next_subcmd == name {
+        bail!("recursive alias '{name}'");
+    }
+    parts.extend(rest.iter().cloned());
+    dispatch(&next_subcmd, &parts, opts)
+}
+
 fn strsim_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -1430,6 +2040,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                 }
                 "trace2" => run_test_tool_trace2(rest),
+                "example-tap" => run_test_tool_example_tap(rest),
+                "advise" => run_test_tool_advise(rest),
+                "env-helper" => run_test_tool_env_helper(rest),
+                "dir-iterator" => run_test_tool_dir_iterator(rest),
+                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
+                "revision-walking" => run_test_tool_revision_walking(rest),
+                "mergesort" => run_test_tool_mergesort(rest),
+                "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

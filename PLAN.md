@@ -15,28 +15,28 @@ commit → check it off → move on.
 ## 1. Basic/Setup (37 files)
 
 - [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
-- [ ] `t0062-revision-walking` ██████████░░░░░░░░░░ 1/2 (1 left) — Test revision walking api
-- [ ] `t0071-sort` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — verify sort functions
-- [ ] `t0080-unit-test-output` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the output of the unit test framework
-- [ ] `t0056-git-C` ████████████████░░░░ 9/11 (2 left) — 
-- [ ] `t0007-git-var` █████████████████░░░ 24/27 (3 left) — basic sanity checks for git var
-- [ ] `t0009-git-dir-validation` ██████████░░░░░░░░░░ 3/6 (3 left) — setup: validation of .git file/directory types
+- [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
+- [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
+- [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
+- [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
+- [x] `t0007-git-var` ████████████████████ 27/27 (0 left) — basic sanity checks for git var
+- [x] `t0009-git-dir-validation` ████████████████████ 6/6 (0 left) — setup: validation of .git file/directory types
 
-- [ ] `t0081-find-pack` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test `test-tool find-pack`
-- [ ] `t0030-stripspace` █████████████████░░░ 26/30 (4 left) — git stripspace
-- [ ] `t0041-usage` ███████████████░░░░░ 12/16 (4 left) — Test commands behavior when given invalid argument value
-- [ ] `t0004-unwritable` ███████████░░░░░░░░░ 5/9 (4 left) — detect unwritable repository and fail correctly
-- [ ] `t0031-lockfile-pid` ████████░░░░░░░░░░░░ 3/7 (4 left) — lock file PID info tests
+- [x] `t0081-find-pack` ████████████████████ 4/4 (0 left) — test `test-tool find-pack`
+- [x] `t0030-stripspace` ████████████████████ 30/30 (0 left) — git stripspace
+- [x] `t0041-usage` ████████████████████ 16/16 (0 left) — Test commands behavior when given invalid argument value
+- [x] `t0004-unwritable` ████████████████████ 9/9 (0 left) — detect unwritable repository and fail correctly
+- [x] `t0031-lockfile-pid` ████████████████████ 7/7 (0 left) — lock file PID info tests
 
-- [ ] `t0005-signals` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — signals work as we expect
-- [ ] `t0068-for-each-repo` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git for-each-repo builtin
-- [ ] `t0018-advice` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — Test advise_if_enabled functionality
-- [ ] `t0017-env-helper` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — test test-tool env-helper
-- [ ] `t0002-gitfile` ███████████░░░░░░░░░ 8/14 (6 left) — .git file
+- [x] `t0005-signals` ████████████████████ 5/5 (0 left) — signals work as we expect
+- [x] `t0068-for-each-repo` ████████████████████ 5/5 (0 left) — git for-each-repo builtin
+- [x] `t0018-advice` ████████████████████ 6/6 (0 left) — Test advise_if_enabled functionality
+- [x] `t0017-env-helper` ████████████████████ 5/5 (0 left) — test test-tool env-helper
+- [x] `t0002-gitfile` ████████████████████ 14/14 (0 left) — .git file
 
-- [ ] `t0091-bugreport` ███████░░░░░░░░░░░░░ 5/13 (8 left) — git bugreport
-- [ ] `t0066-dir-iterator` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — Test the dir-iterator functionality
-- [ ] `t0067-parse_pathspec_file` ░░░░░░░░░░░░░░░░░░░░ 0/8 (8 left) — Test parse_pathspec_file()
+- [x] `t0091-bugreport` ████████████████████ 13/13 (0 left) — git bugreport
+- [x] `t0066-dir-iterator` ████████████████████ 10/10 (0 left) — Test the dir-iterator functionality
+- [x] `t0067-parse_pathspec_file` ████████████████████ 8/8 (0 left) — Test parse_pathspec_file()
 - [ ] `t0070-fundamental` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — check that the most basic functions work
 
 - [ ] `t0095-bloom` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — Testing the various Bloom filter computations in bloom.c

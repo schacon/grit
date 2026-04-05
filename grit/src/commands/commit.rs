@@ -229,7 +229,19 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Write tree from index
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
+        Ok(oid) => oid,
+        Err(err) => {
+            if is_permission_denied_error(&err) {
+                eprintln!(
+                    "error: insufficient permission for adding an object to repository database .git/objects"
+                );
+                eprintln!("error: Error building trees");
+                std::process::exit(128);
+            }
+            return Err(err.into());
+        }
+    };
 
     // Resolve HEAD for parent(s)
     let head = resolve_head(&repo.git_dir)?;
@@ -1161,4 +1173,9 @@ fn ensure_trailing_newline(s: &str) -> String {
     } else {
         format!("{s}\n")
     }
+}
+
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
 }

@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::objects::{ObjectId, ObjectKind};
@@ -86,9 +86,19 @@ pub fn ls_remote(git_dir: &Path, odb: &Odb, opts: &Options) -> Result<Vec<RefEnt
         }
     }
 
+    // Linked worktrees store user-visible refs in the common git directory.
+    // Enumerate refs from that common directory when present; otherwise use
+    // the provided git_dir directly.
+    let refs_dir_root = resolve_common_git_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+
     let mut all_refs: BTreeMap<String, ObjectId> = BTreeMap::new();
-    collect_loose_refs(git_dir, &git_dir.join("refs"), "refs", &mut all_refs)?;
-    for (name, oid) in read_packed_refs(git_dir)? {
+    collect_loose_refs(
+        &refs_dir_root,
+        &refs_dir_root.join("refs"),
+        "refs",
+        &mut all_refs,
+    )?;
+    for (name, oid) in read_packed_refs(&refs_dir_root)? {
         all_refs.entry(name).or_insert(oid);
     }
 
@@ -121,6 +131,23 @@ pub fn ls_remote(git_dir: &Path, odb: &Odb, opts: &Options) -> Result<Vec<RefEnt
     }
 
     Ok(entries)
+}
+
+/// Resolve the common git directory for linked worktrees.
+///
+/// Returns `None` when `git_dir/commondir` is absent or invalid.
+fn resolve_common_git_dir(git_dir: &Path) -> Option<PathBuf> {
+    let raw = fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return None;
+    }
+    let candidate = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    candidate.canonicalize().ok()
 }
 
 /// Returns `true` when `refname` matches one of `patterns`, or when `patterns`

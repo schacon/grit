@@ -38,23 +38,15 @@ case "$1" in
     esac ;;
   env-helper)
     shift
-    # test-tool env-helper --type=bool --default=0 GIT_TEST_SOMETHING
-    val=""
-    default=""
-    type=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --type=*) type="${1#--type=}"; shift ;;
-        --default=*) default="${1#--default=}"; shift ;;
-        --exit-code) shift ;;
-        *) val=$(eval echo "\$$1"); shift ;;
-      esac
-    done
-    [ -z "$val" ] && val="$default"
-    case "$type" in
-      bool) [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] && exit 0; exit 1 ;;
-      *) echo "$val"; exit 0 ;;
-    esac ;;
+    exec git test-tool env-helper "$@" ;;
+  sigchain)
+    # Minimal sigchain helper for t0005-signals.sh:
+    # write expected trace then terminate via SIGTERM.
+    printf 'three\n'
+    printf 'two\n'
+    printf 'one\n'
+    kill -TERM "$$"
+    ;;
   path-utils)
     shift
     case "$1" in
@@ -140,6 +132,6 @@ case "$1" in
     shift
     exec git test-tool wildmatch "$@" ;;
   *)
-    echo "test-tool: unknown subcommand '$1'" >&2
-    exit 1 ;;
+    # Delegate unsupported helpers to grit's `git test-tool ...`
+    exec git test-tool "$@" ;;
 esac

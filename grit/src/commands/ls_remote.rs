@@ -33,6 +33,12 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Path to git-upload-pack on the remote side.
+    ///
+    /// Accepted for compatibility; local-path transport ignores this.
+    #[arg(long = "upload-pack")]
+    pub upload_pack: Option<String>,
+
     /// Path to the local repository (bare or non-bare).
     #[arg(value_name = "REPOSITORY")]
     pub repository: PathBuf,
@@ -108,6 +114,24 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
         }
     };
     let path = &effective_path;
+    if !path.exists() {
+        anyhow::bail!(
+            "'{}' does not appear to be a git repository: {}",
+            path.display(),
+            "not a git repository (or any of the parent directories)"
+        );
+    }
+
+    // Discover supports all relevant local layouts:
+    // - bare repositories
+    // - non-bare repositories with .git directory
+    // - gitfile indirection (`.git` file)
+    // - linked worktrees and explicit `<repo>/.git` paths
+    if let Ok(repo) = Repository::discover(Some(path)) {
+        return Ok(repo);
+    }
+
+    // Fallback: explicit open attempts (kept for compatibility with existing behavior).
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }

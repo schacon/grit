@@ -135,12 +135,26 @@ pub fn run(mut args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let lockfile_pid_enabled = config
+        .get_bool("core.lockfilepid")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
     let core_filemode = config
         .get_bool("core.filemode")
         .and_then(|r| r.ok())
         .unwrap_or(true);
 
     let index_path = repo.index_path();
+    let index_lock_path = lock_path_for_index(&index_path);
+    let pid_lock_path = pid_lock_path_for_lock(&index_lock_path);
+    if index_lock_path.exists() {
+        bail!(build_lock_held_error_message(
+            &index_lock_path,
+            &pid_lock_path
+        ));
+    }
+    let _pid_guard = PidFileGuard::new(pid_lock_path, lockfile_pid_enabled);
+
     let idx_exists = index_path.exists();
     let _cfg_ver = config.get("index.version");
     let _cfg_many = config.get("feature.manyFiles");
@@ -938,7 +952,21 @@ fn stage_file(
         }
     };
 
-    let oid = odb.write(ObjectKind::Blob, &data)?;
+    let oid = match odb.write(ObjectKind::Blob, &data) {
+        Ok(oid) => oid,
+        Err(err) => {
+            if is_permission_denied_error(&err) {
+                eprintln!(
+                    "error: insufficient permission for adding an object to repository database .git/objects"
+                );
+                eprintln!("error: {rel_path}: failed to insert into database");
+                eprintln!("error: unable to index file '{}'", rel_path);
+                eprintln!("fatal: updating files failed");
+                std::process::exit(128);
+            }
+            return Err(err.into());
+        }
+    };
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
                              // Use stage_file which also clears conflict stages (1, 2, 3) for the same
@@ -1239,4 +1267,89 @@ fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec
             anyhow::bail!("unsupported working-tree-encoding: {encoding}");
         }
     }
+}
+
+fn lock_path_for_index(index_path: &Path) -> PathBuf {
+    index_path.with_extension("lock")
+}
+
+fn pid_lock_path_for_lock(lock_path: &Path) -> PathBuf {
+    let parent = lock_path.parent().unwrap_or_else(|| Path::new("."));
+    let file = lock_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("index.lock");
+    let pid_name = if let Some(base) = file.strip_suffix(".lock") {
+        format!("{base}~pid.lock")
+    } else {
+        format!("{file}~pid.lock")
+    };
+    parent.join(pid_name)
+}
+
+fn read_lock_pid(pid_lock_path: &Path) -> Option<u32> {
+    let content = fs::read_to_string(pid_lock_path).ok()?;
+    let mut parts = content.split_whitespace();
+    let first = parts.next()?;
+    if first != "pid" {
+        return None;
+    }
+    parts.next()?.parse::<u32>().ok()
+}
+
+fn pid_is_running(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
+fn build_lock_held_error_message(lock_path: &Path, pid_lock_path: &Path) -> String {
+    let mut msg = format!("Unable to create '{}': File exists.\n\n", lock_path.display());
+    if let Some(pid) = read_lock_pid(pid_lock_path) {
+        if pid_is_running(pid) {
+            msg.push_str(&format!(
+                "Lock is held by process {pid}; if no git process is running, the lock file may be stale"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "Lock was held by process {pid}, which is no longer running; the lock file appears to be stale"
+            ));
+        }
+    } else {
+        msg.push_str(
+            "Another git process seems to be running in this repository, or the lock file may be stale",
+        );
+    }
+    msg
+}
+
+struct PidFileGuard {
+    path: PathBuf,
+    active: bool,
+}
+
+impl PidFileGuard {
+    fn new(path: PathBuf, enabled: bool) -> Self {
+        if enabled {
+            let content = format!("pid {}", std::process::id());
+            let active = fs::write(&path, content).is_ok();
+            Self { path, active }
+        } else {
+            Self {
+                path,
+                active: false,
+            }
+        }
+    }
+}
+
+impl Drop for PidFileGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
 }

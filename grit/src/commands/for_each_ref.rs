@@ -30,7 +30,15 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let opts = parse_args(args.args)?;
+    let opts = match parse_args(args.args) {
+        Ok(opts) => opts,
+        Err(err) => {
+            eprintln!(
+                "usage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]"
+            );
+            return Err(err);
+        }
+    };
 
     let mut patterns = opts.patterns.clone();
     if opts.stdin {
