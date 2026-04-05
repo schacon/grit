@@ -28,6 +28,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut read_stdin = false;
     let mut end_of_options = false;
     let mut path_mode = false;
+    let mut default_rev: Option<String> = None;
     let mut no_commit_header = false;
     let mut use_color = false;
 
@@ -282,6 +283,17 @@ pub fn run(args: Args) -> Result<()> {
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
                     options.filter = Some(filter);
                 }
+                _ if arg.starts_with("--default") => {
+                    // --default REV: use REV as default if no revisions given
+                    if let Some(val) = arg.strip_prefix("--default=") {
+                        default_rev = Some(val.to_string());
+                    } else {
+                        i += 1;
+                        if let Some(val) = args.args.get(i) {
+                            default_rev = Some(val.to_string());
+                        }
+                    }
+                }
                 _ => bail!("unsupported option: {arg}"),
             }
             i += 1;
@@ -314,6 +326,13 @@ pub fn run(args: Args) -> Result<()> {
         let decorated = tag_targets(&repo.git_dir).context("failed to list tag refs")?;
         if decorated.is_empty() {
             options.simplify_by_decoration = false;
+        }
+    }
+
+    // Apply --default when no revision specs given
+    if revision_specs.is_empty() {
+        if let Some(def) = default_rev {
+            revision_specs.push(def);
         }
     }
 

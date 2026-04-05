@@ -754,7 +754,7 @@ t7004-tag	yes	231	139	92	ok	139	231	0
 t7005-editor	yes	11	0	11	ok	0	11	0
 t7006-pager	yes	109	108	1	ok	107	108	1
 t7007-show	yes	18	8	10	ok	8	18	0
-t7008-filter-branch-null-sha1	yes	6	5	1	ok	5	6	0
+t7008-filter-branch-null-sha1	yes	6	6	0	ok	6	6	0
 t7010-setup	yes	16	5	11	ok	5	16	0
 t7011-skip-worktree-reading	yes	15	8	7	ok	8	15	0
 t7012-skip-worktree-writing	yes	11	7	4	ok	7	11	0

@@ -21,6 +21,10 @@ pub struct Args {
     #[arg(short = 'm')]
     pub merge: bool,
 
+    /// Perform index-only operation (don't check working tree).
+    #[arg(short = 'i')]
+    pub index_only: bool,
+
     /// Update working tree after reading.
     #[arg(short = 'u')]
     pub update: bool,

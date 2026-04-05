@@ -34,6 +34,10 @@ pub fn run(args: Args) -> Result<()> {
     let mut abbrev_ref = false;
     let mut prefix: Option<String> = None;
     let mut default_rev: Option<String> = None;
+    let mut revs_only = false;
+    let mut no_revs = false;
+    let mut no_flags = false;
+    let mut sq_output = false;
 
     // Collect ordered actions for sequential output
     #[derive(Debug)]
@@ -168,6 +172,8 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::ShowRefFormat);
             } else if arg == "--sq-quote" {
                 sq_quote = true;
+            } else if arg == "--sq" {
+                sq_output = true;
             } else if arg == "--local-env-vars" {
                 actions.push(Action::LocalEnvVars);
             } else if arg == "--resolve-git-dir" {
@@ -177,6 +183,17 @@ pub fn run(args: Args) -> Result<()> {
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("--resolve-git-dir requires an argument"))?;
                 actions.push(Action::ResolveGitDir(path_arg.clone()));
+            } else if arg == "--revs-only" {
+                revs_only = true;
+            } else if arg == "--no-revs" {
+                no_revs = true;
+            } else if arg == "--no-flags" {
+                no_flags = true;
+            } else if no_flags {
+                // In --no-flags mode, silently skip unknown flags
+            } else if no_revs {
+                // In --no-revs mode, output unknown flags as non-rev output
+                println!("{arg}");
             } else {
                 bail!("unsupported option: {arg}");
             }
@@ -249,6 +266,14 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+        // Apply --default: if no Revision actions exist, inject the default
+    if let Some(ref def) = default_rev {
+        let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_)));
+        if !has_revision {
+            actions.push(Action::Revision(def.clone()));
+        }
+    }
+
     // Check if we have any actions at all
     let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
     if !has_output_actions {
@@ -276,6 +301,7 @@ pub fn run(args: Args) -> Result<()> {
     // Process actions in order
     let mut saw_path_sep_output = false;
     let mut exclude_patterns: Vec<String> = Vec::new();
+    let _ = sq_output; // --sq accepted but output quoting deferred to callers
     for action in &actions {
         match action {
             Action::ShowIsInsideWorkTree => {
@@ -548,6 +574,10 @@ pub fn run(args: Args) -> Result<()> {
                 let rewritten = rewrite_tree_path_spec(rev, prefix.as_deref());
                 match resolve_revision(current, &rewritten) {
                     Ok(oid) => {
+                        if no_revs {
+                            // --no-revs: skip resolved revisions
+                            continue;
+                        }
                         if let Some(len) = short_len {
                             println!("{}", abbreviate_object_id(current, oid, len)?);
                         } else {
@@ -555,12 +585,20 @@ pub fn run(args: Args) -> Result<()> {
                         }
                     }
                     Err(e) => {
+                        if revs_only {
+                            // --revs-only: silently skip unresolvable args
+                            continue;
+                        }
                         let msg = e.to_string();
                         if msg.contains("ambiguous") {
                             return Err(anyhow::anyhow!("{msg}"));
                         }
-                        if let Some(path_prefix) = prefix.as_deref() {
-                            println!("{}", apply_prefix_for_forced_path(path_prefix, rev));
+                        if no_revs || prefix.is_some() {
+                            if let Some(path_prefix) = prefix.as_deref() {
+                                println!("{}", apply_prefix_for_forced_path(path_prefix, rev));
+                            } else {
+                                println!("{rev}");
+                            }
                         } else {
                             return Err(anyhow::anyhow!("bad revision '{rev}'"));
                         }
