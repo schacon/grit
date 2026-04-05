@@ -499,8 +499,8 @@ t4253-am-keep-cr-dos	yes	7	1	6	ok	1	7	0
 t4254-am-corrupt	yes	0	0	0	ok	0	0	0
 t4255-am-submodule	yes	33	5	28	ok	5	33	0
 t4256-am-format-flowed	yes	2	2	0	ok	2	2	0
-t4257-am-interactive	yes	4	1	3	ok	1	4	0
-t4258-am-quoted-cr	yes	4	1	3	ok	1	4	0
+t4257-am-interactive	yes	4	2	2	ok	2	4	0
+t4258-am-quoted-cr	yes	4	4	0	ok	4	4	0
 t4300-merge-tree	yes	22	5	17	ok	5	22	0
 t4301-merge-tree-write-tree	yes	33	1	32	ok	1	33	0
 t5000-tar-tree	yes	90	36	54	ok	36	90	0

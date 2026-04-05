@@ -2,6 +2,26 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `grit am` interactive selection, `--quoted-cr` handling, CRLF-aware patch parsing, and state round-trip fixes).
+- `bash scripts/run-upstream-tests.sh t4257-am-interactive`: 4/4 passing.
+- `bash scripts/run-upstream-tests.sh t4258-am-quoted-cr`: 4/4 passing.
+- `./scripts/run-tests.sh t4257-am-interactive.sh`: 2/4 passing in local mirror (known harness mismatch around `test_commit` semantics and reset helper behavior).
+- `./scripts/run-tests.sh t4258-am-quoted-cr.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- Focused local command validation for the `t4257` behaviors:
+  - non-interactive `grit am mbox` now stops on second patch conflict (`file already exists in index`) and leaves session state for `--resolved`.
+  - `grit am -i mbox` accepts stdin choices (`y/n`) and applies only selected patches.
+  - `grit am -i --resolved` prompts and accepts resolved patch continuation.
+- Focused local command validation for `t4258`:
+  - default `grit am` warns `quoted CRLF detected` and fails without applying.
+  - `grit am --quoted-cr=strip` strips CR bytes from decoded payload and applies cleanly.
+  - config `mailinfo.quotedCr=strip` is honored equivalently.
+- Regression checks:
+  - `./scripts/run-tests.sh t4152-am-subjects.sh`: 13/13 passing.
+  - `./scripts/run-tests.sh t4256-am-format-flowed.sh`: 2/2 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `./scripts/run-tests.sh t4136-apply-check.sh`: 6/6 passing; `data/file-results.tsv` refreshed.
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash -x t4136-apply-check.sh`: 3/6 in local mirror; mismatches come from harness/environment behavior (`getcwd` failure in test 3 and `test_must_fail` wrapper semantics), not from command behavior itself.
 

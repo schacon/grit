@@ -12,7 +12,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
@@ -58,6 +58,10 @@ pub struct Args {
     /// Read patches from stdin (default if no files given).
     #[arg(long = "stdin")]
     pub stdin: bool,
+
+    /// Interactively choose whether to apply each patch.
+    #[arg(short = 'i', long = "interactive")]
+    pub interactive: bool,
 
     /// Add Signed-off-by trailer.
     #[arg(short = 's', long = "signoff")]
@@ -114,6 +118,10 @@ pub struct Args {
     /// Use the current timestamp as author date instead of the patch's date.
     #[arg(long = "ignore-date")]
     pub ignore_date: bool,
+
+    /// How to handle quoted CRLF in patch payloads.
+    #[arg(long = "quoted-cr", value_name = "ACTION")]
+    pub quoted_cr: Option<String>,
 }
 
 /// A parsed patch from an mbox message.
@@ -145,6 +153,13 @@ struct AmOptions {
     allow_empty: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuotedCrAction {
+    Warn,
+    Strip,
+    Nowarn,
+}
+
 pub fn run(args: Args) -> Result<()> {
     if let Some(ref mode) = args.show_current_patch {
         return do_show_current_patch(mode);
@@ -156,7 +171,7 @@ pub fn run(args: Args) -> Result<()> {
         return do_skip();
     }
     if args.r#continue {
-        return do_continue(args.quiet);
+        return do_continue(args.quiet, args.interactive);
     }
 
     if args.mbox.is_empty() && !args.stdin {
@@ -188,6 +203,48 @@ fn is_am_in_progress(git_dir: &Path) -> bool {
     dir.exists() && dir.join("applying").exists()
 }
 
+fn parse_quoted_cr_action(value: &str) -> QuotedCrAction {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "strip" => QuotedCrAction::Strip,
+        "nowarn" => QuotedCrAction::Nowarn,
+        "warn" => QuotedCrAction::Warn,
+        _ => QuotedCrAction::Warn,
+    }
+}
+
+fn resolve_quoted_cr_action(cli_value: Option<&str>, config: &ConfigSet) -> QuotedCrAction {
+    if let Some(value) = cli_value {
+        return parse_quoted_cr_action(value);
+    }
+    if let Some(value) = config
+        .get("mailinfo.quotedCr")
+        .or_else(|| config.get("mailinfo.quotedcr"))
+    {
+        return parse_quoted_cr_action(&value);
+    }
+    QuotedCrAction::Warn
+}
+
+fn prompt_yes_no(prompt: &str) -> Result<bool> {
+    eprint!("{prompt}");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let normalized = answer.trim().to_ascii_lowercase();
+    Ok(matches!(normalized.as_str(), "y" | "yes"))
+}
+
+fn select_patches_interactively(patches: Vec<MboxPatch>) -> Result<Vec<MboxPatch>> {
+    let mut selected = Vec::new();
+    for patch in patches {
+        let subject = patch.message.lines().next().unwrap_or("(no subject)");
+        if prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
+            selected.push(patch);
+        }
+    }
+    Ok(selected)
+}
+
 // ── Main flow ───────────────────────────────────────────────────────
 
 fn do_am(args: Args) -> Result<()> {
@@ -206,6 +263,8 @@ fn do_am(args: Args) -> Result<()> {
     let keep_non_patch = args.keep_non_patch;
     let scissors = args.scissors;
     let no_scissors = args.no_scissors;
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
 
     // Read and parse all mbox/patch files
     let mut all_patches = Vec::new();
@@ -225,6 +284,7 @@ fn do_am(args: Args) -> Result<()> {
                 keep_non_patch,
                 scissors,
                 no_scissors,
+                quoted_cr_action,
             )?;
             all_patches.append(&mut patches);
         }
@@ -241,6 +301,13 @@ fn do_am(args: Args) -> Result<()> {
             println!("Patch {}/{}: {}", i + 1, all_patches.len(), subject);
         }
         return Ok(());
+    }
+
+    if args.interactive {
+        all_patches = select_patches_interactively(all_patches)?;
+        if all_patches.is_empty() {
+            return Ok(());
+        }
     }
 
     // Save state
@@ -265,7 +332,6 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    let config = ConfigSet::load(Some(git_dir), true)?;
     let three_way = if args.no_three_way {
         false
     } else if args.three_way {
@@ -317,13 +383,17 @@ fn do_am_stdin(args: Args) -> Result<()> {
         );
     }
 
-    let all_patches = parse_patches(
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
+
+    let mut all_patches = parse_patches(
         &input,
         args.patch_format.as_deref(),
         args.keep,
         args.keep_non_patch,
         args.scissors,
         args.no_scissors,
+        quoted_cr_action,
     )?;
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed.");
@@ -336,6 +406,13 @@ fn do_am_stdin(args: Args) -> Result<()> {
             println!("Patch {}/{}: {}", i + 1, all_patches.len(), subject);
         }
         return Ok(());
+    }
+
+    if args.interactive {
+        all_patches = select_patches_interactively(all_patches)?;
+        if all_patches.is_empty() {
+            return Ok(());
+        }
     }
 
     let state_dir = am_dir(git_dir);
@@ -356,7 +433,6 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    let config = ConfigSet::load(Some(git_dir), true)?;
     let three_way = if args.no_three_way {
         false
     } else if args.three_way {
@@ -899,6 +975,9 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
         }
 
         if fp.is_new {
+            if path.exists() || path.is_symlink() {
+                bail!("{rel_path}: already exists in index");
+            }
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     fs::create_dir_all(parent)?;
@@ -1214,7 +1293,7 @@ fn do_skip() -> Result<()> {
     Ok(())
 }
 
-fn do_continue(quiet: bool) -> Result<()> {
+fn do_continue(quiet: bool, interactive: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -1261,6 +1340,17 @@ fn do_continue(quiet: bool) -> Result<()> {
     };
 
     let patched = MboxPatch { message, ..patch };
+    let subject = patched.message.lines().next().unwrap_or("");
+
+    if interactive && !prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
+        let mut opts = load_am_options(&state_dir);
+        opts.quiet = quiet;
+        let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
+        fs::write(state_dir.join("next"), (next + 1).to_string())?;
+        let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+        apply_remaining(&repo, &opts)?;
+        return Ok(());
+    }
 
     // Load saved options
     let mut opts = load_am_options(&state_dir);
@@ -1271,7 +1361,6 @@ fn do_continue(quiet: bool) -> Result<()> {
 
     create_am_commit(&repo, &index, &patched, &opts)?;
 
-    let subject = patched.message.lines().next().unwrap_or("");
     if !quiet {
         eprintln!("Applying: {}", subject);
     }
@@ -1726,12 +1815,20 @@ fn parse_patches(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     let fmt = format.unwrap_or_else(|| detect_patch_format(input));
     match fmt {
         "stgit" => parse_stgit_patch(input),
         "hg" => parse_hg_patch(input),
-        _ => parse_mbox_with_opts(input, keep, keep_non_patch, scissors, no_scissors),
+        _ => parse_mbox_with_opts(
+            input,
+            keep,
+            keep_non_patch,
+            scissors,
+            no_scissors,
+            quoted_cr_action,
+        ),
     }
 }
 
@@ -1813,6 +1910,102 @@ fn unquote_mboxrd(input: &str) -> String {
     result
 }
 
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+
+    for &byte in input.as_bytes() {
+        if byte == b'=' {
+            break;
+        }
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        let val = TABLE
+            .iter()
+            .position(|&c| c == byte)
+            .ok_or_else(|| anyhow::anyhow!("invalid base64 payload in mbox"))?;
+        buf = (buf << 6) | val as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+
+    Ok(output)
+}
+
+fn decode_transfer_payload(
+    payload: &str,
+    transfer_encoding: &str,
+    quoted_cr_action: QuotedCrAction,
+) -> Result<String> {
+    if transfer_encoding != "base64" {
+        return Ok(payload.to_string());
+    }
+
+    let decoded = base64_decode(payload)?;
+    let mut text = String::from_utf8_lossy(&decoded).into_owned();
+    if text.contains('\r') {
+        match quoted_cr_action {
+            QuotedCrAction::Strip => {
+                text = text.replace('\r', "");
+            }
+            QuotedCrAction::Warn => {
+                eprintln!("warning: quoted CRLF detected");
+            }
+            QuotedCrAction::Nowarn => {}
+        }
+    }
+    Ok(text)
+}
+
+fn split_message_body_and_diff(payload_lines: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut body_lines = Vec::new();
+    let mut diff_lines = Vec::new();
+    let mut i = 0usize;
+    let mut in_diff = false;
+
+    while i < payload_lines.len() {
+        let line = payload_lines[i].as_str();
+        let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+        if !in_diff {
+            if line_no_cr == "---" {
+                i += 1;
+                while i < payload_lines.len() {
+                    let stat_line = payload_lines[i].as_str();
+                    let stat_line_no_cr = stat_line.strip_suffix('\r').unwrap_or(stat_line);
+                    if stat_line_no_cr.starts_with("diff --git ") {
+                        in_diff = true;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            if line_no_cr.starts_with("diff --git ") {
+                in_diff = true;
+            } else {
+                body_lines.push(payload_lines[i].clone());
+                i += 1;
+                continue;
+            }
+        }
+
+        if line_no_cr == "-- " {
+            break;
+        }
+        diff_lines.push(payload_lines[i].clone());
+        i += 1;
+    }
+
+    (body_lines, diff_lines)
+}
+
 /// Parse an mbox file into individual patches with options.
 fn parse_mbox_with_opts(
     input: &str,
@@ -1820,6 +2013,7 @@ fn parse_mbox_with_opts(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     // Handle mboxrd: unquote >From lines
     let input = unquote_mboxrd(input);
@@ -1871,6 +2065,7 @@ fn parse_mbox_with_opts(
         _in_headers = true;
         let mut last_header = String::new();
         let mut is_format_flowed = false;
+        let mut content_transfer_encoding = String::new();
 
         while let Some(&line) = lines.peek() {
             if line.is_empty() {
@@ -1920,70 +2115,36 @@ fn parse_mbox_with_opts(
                     is_format_flowed = true;
                 }
                 last_header = "content-type".to_string();
+            } else if let Some(value) = line
+                .strip_prefix("Content-Transfer-Encoding: ")
+                .or_else(|| line.strip_prefix("Content-transfer-encoding: "))
+            {
+                content_transfer_encoding = value.trim().to_ascii_lowercase();
+                last_header = "content-transfer-encoding".to_string();
             } else {
                 last_header = String::new();
             }
             lines.next();
         }
 
-        // Parse body (everything until "---" separator or diff start)
-        let mut in_diff = false;
-        let mut body_lines = Vec::new();
-        let mut diff_lines = Vec::new();
-
+        let mut raw_payload_lines = Vec::new();
         while let Some(&line) = lines.peek() {
-            // Check for next mbox message
-            if line.starts_with("From ") && line.len() > 5 && !diff_lines.is_empty() {
+            if line.starts_with("From ") && line.len() > 5 {
                 break;
             }
-
-            if !in_diff {
-                if line == "---" {
-                    // Separator between message body and diffstat/diff
-                    lines.next();
-                    // Now skip diffstat lines until we hit "diff --git"
-                    while let Some(&l) = lines.peek() {
-                        if l.starts_with("diff --git ") {
-                            in_diff = true;
-                            break;
-                        }
-                        if l.starts_with("From ") && l.len() > 5 {
-                            break;
-                        }
-                        lines.next();
-                    }
-                    continue;
-                }
-                if line.starts_with("diff --git ") {
-                    in_diff = true;
-                    // Don't consume — fall through to diff section
-                } else {
-                    body_lines.push(line);
-                    lines.next();
-                    continue;
-                }
-            }
-
-            if in_diff {
-                // Collect diff lines until "-- " (signature separator) or next message
-                if line == "-- " || line == "-- \n" {
-                    lines.next();
-                    // Skip remaining signature lines
-                    while let Some(&l) = lines.peek() {
-                        if l.starts_with("From ") && l.len() > 5 {
-                            break;
-                        }
-                        lines.next();
-                    }
-                    break;
-                }
-                if line.starts_with("From ") && line.len() > 5 {
-                    break;
-                }
-                diff_lines.push(line);
-                lines.next();
-            }
+            raw_payload_lines.push(line.to_string());
+            lines.next();
         }
+
+        let raw_payload = raw_payload_lines.join("\n");
+        let decoded_payload =
+            decode_transfer_payload(&raw_payload, &content_transfer_encoding, quoted_cr_action)?;
+        let mut payload_lines: Vec<String> =
+            decoded_payload.split('\n').map(|l| l.to_string()).collect();
+        if payload_lines.last().is_some_and(String::is_empty) {
+            payload_lines.pop();
+        }
+        let (body_lines, diff_lines) = split_message_body_and_diff(&payload_lines);
 
         // Build message from subject + body. Subject continuation lines in
         // mailbox headers are folded in two ways:
@@ -1993,9 +2154,10 @@ fn parse_mbox_with_opts(
         // `Subject:` continuation lines are captured in `body_lines` by this
         // parser, so normalize here before constructing the final message.
         let mut effective_body_lines: Vec<String> = if is_format_flowed {
-            unflow_format_flowed(&body_lines)
+            let body_refs: Vec<&str> = body_lines.iter().map(String::as_str).collect();
+            unflow_format_flowed(&body_refs)
         } else {
-            body_lines.iter().map(|l| l.to_string()).collect()
+            body_lines.clone()
         };
         let mut body_str = effective_body_lines.join("\n").trim().to_string();
         if !body_str.is_empty() && !subject.is_empty() {
@@ -2040,9 +2202,10 @@ fn parse_mbox_with_opts(
             eprintln!(
                 "warning: Patch sent with format=flowed; space at the end of lines might be lost."
             );
-            unflow_format_flowed(&diff_lines)
+            let diff_refs: Vec<&str> = diff_lines.iter().map(String::as_str).collect();
+            unflow_format_flowed(&diff_refs)
         } else {
-            diff_lines.iter().map(|l| l.to_string()).collect()
+            diff_lines.clone()
         };
 
         let mut diff_section = effective_diff_lines.join("\n");
@@ -2324,11 +2487,16 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
     let mut msg_len = 0usize;
     let mut diff_len = 0usize;
 
-    let mut lines = data.lines();
-    for line in &mut lines {
-        if line.is_empty() {
-            break;
-        }
+    let split_at = data.find("\n\n").unwrap_or(data.len());
+    let header = &data[..split_at];
+    let remaining = if split_at < data.len() {
+        &data[split_at + 2..]
+    } else {
+        ""
+    };
+
+    for line in header.split('\n') {
+        let line = line.trim_end_matches('\r');
         if let Some(v) = line.strip_prefix("Author: ") {
             author = v.to_string();
         } else if let Some(v) = line.strip_prefix("Date: ") {
@@ -2342,22 +2510,13 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
         }
     }
 
-    // Remaining content is message + diff
-    let remaining: String = lines.collect::<Vec<&str>>().join("\n");
-    // Add back the newline that .lines() stripped
-    let remaining = if data.ends_with('\n') && !remaining.ends_with('\n') {
-        format!("{remaining}\n")
-    } else {
-        remaining
-    };
-
     let message = if msg_len > 0 && msg_len <= remaining.len() {
         remaining[..msg_len].to_string()
     } else {
-        remaining.clone()
+        remaining.to_string()
     };
 
-    let diff = if diff_len > 0 && msg_len + diff_len <= remaining.len() {
+    let diff = if diff_len > 0 && msg_len.saturating_add(diff_len) <= remaining.len() {
         remaining[msg_len..msg_len + diff_len].to_string()
     } else if msg_len < remaining.len() {
         remaining[msg_len..].to_string()
@@ -2429,7 +2588,14 @@ enum HunkLine {
 }
 
 fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
-    let lines: Vec<&str> = input.lines().collect();
+    let mut lines: Vec<&str> = if input.is_empty() {
+        Vec::new()
+    } else {
+        input.split('\n').collect()
+    };
+    if lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
     let mut patches = Vec::new();
     let mut i = 0;
 
