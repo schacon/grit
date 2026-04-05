@@ -4,13 +4,15 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use regex::{Regex, RegexBuilder};
 use std::io::{self, Write};
+use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::wildmatch::wildmatch;
 
 /// Arguments for `grit grep`.
 #[derive(Debug, ClapArgs)]
@@ -195,6 +197,30 @@ pub struct Args {
     #[arg(long = "color", value_name = "WHEN", default_value = "never")]
     pub color: String,
 
+    /// Recurse into submodules.
+    #[arg(long = "recurse-submodules")]
+    pub recurse_submodules: bool,
+
+    /// Do not recurse into submodules (overrides config).
+    #[arg(long = "no-recurse-submodules")]
+    pub no_recurse_submodules: bool,
+
+    /// Search also in untracked files.
+    #[arg(long = "untracked")]
+    pub untracked: bool,
+
+    /// Search files not managed by Git (implies --untracked).
+    #[arg(long = "no-index")]
+    pub no_index: bool,
+
+    /// Use textconv filter (accepted but not yet implemented).
+    #[arg(long = "textconv")]
+    pub textconv: bool,
+
+    /// Do not use textconv filter.
+    #[arg(long = "no-textconv")]
+    pub no_textconv: bool,
+
     /// Positional arguments: [pattern] [<tree>] [-- pathspec...]
     #[arg(trailing_var_arg = true)]
     pub positional: Vec<String>,
@@ -298,7 +324,32 @@ pub fn run(mut args: Args) -> Result<()> {
                     eprintln!("warning: no threads support, ignoring grep.threads");
                 }
             }
+            // submodule.recurse config: enable --recurse-submodules if not explicitly set
+            if !args.recurse_submodules && !args.no_recurse_submodules {
+                if let Some(val) = c
+                    .get("submodule.recurse")
+                {
+                    if val == "true" || val == "1" || val == "yes" {
+                        args.recurse_submodules = true;
+                    }
+                }
+            }
         }
+    }
+
+    // --no-recurse-submodules overrides config
+    if args.no_recurse_submodules {
+        args.recurse_submodules = false;
+    }
+
+    // --no-index: ignore --recurse-submodules silently
+    if args.no_index {
+        args.recurse_submodules = false;
+    }
+
+    // Incompatibility checks
+    if args.recurse_submodules && args.untracked {
+        bail!("option --untracked not supported with --recurse-submodules");
     }
 
     // Warn about unsupported threading
@@ -340,12 +391,25 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         &mut out_handle
     };
-    let mut found_any = false;
     // Tracks whether we need a "--" separator before the next context group
     let mut need_sep = false;
     let all_match = all_match; // shadow to pass into closures
 
-    if let Some(tree_spec) = &tree_ish {
+    let found_any;
+    if args.no_index {
+        // --no-index: walk the filesystem instead of using the index
+        let start_dir = std::env::current_dir().context("cannot get current directory")?;
+        found_any = grep_filesystem(
+            &start_dir,
+            "",
+            &matchers,
+            &args,
+            &pathspecs,
+            &mut need_sep,
+            out,
+            all_match,
+        )?;
+    } else if let Some(tree_spec) = &tree_ish {
         // Search a tree object
         let oid = resolve_revision(&repo, tree_spec)
             .or_else(|_| resolve_ref(&repo.git_dir, tree_spec))
@@ -363,6 +427,17 @@ pub fn run(mut args: Args) -> Result<()> {
         };
 
         let tree_obj = repo.odb.read(&tree_oid)?;
+        // Load diff attrs: try working tree, then index
+        let diff_attrs = if let Some(ref wt) = repo.work_tree {
+            let wt_attrs = load_diff_attrs(wt);
+            if wt_attrs.is_empty() {
+                load_diff_attrs_from_index(&repo)
+            } else {
+                wt_attrs
+            }
+        } else {
+            load_diff_attrs_from_index(&repo)
+        };
         found_any = grep_tree(
             &repo,
             &tree_obj.data,
@@ -375,164 +450,32 @@ pub fn run(mut args: Args) -> Result<()> {
             &mut need_sep,
             out,
             all_match,
+            &diff_attrs,
         )?;
     } else if args.cached {
         // Search index blobs (--cached)
-        let index = Index::load(&repo.index_path()).context("loading index")?;
-        let mut seen = std::collections::HashSet::new();
-        for entry in &index.entries {
-            let path_str = String::from_utf8_lossy(&entry.path).to_string();
-            if !seen.insert(path_str.clone()) {
-                continue;
-            }
-            if !pathspecs.is_empty()
-                && !pathspecs
-                    .iter()
-                    .any(|p| path_str == *p || path_str.starts_with(&format!("{p}/")))
-            {
-                continue;
-            }
-            if let Some(max_depth) = args.effective_max_depth() {
-                let depth = path_str.matches('/').count();
-                if depth > max_depth {
-                    continue;
-                }
-            }
-            let obj = match repo.odb.read(&entry.oid) {
-                Ok(o) => o,
-                Err(_) => continue,
-            };
-            let is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
-            if is_binary && args.ignore_binary {
-                continue;
-            }
-            if is_binary && !args.text_mode {
-                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                    let content = String::from_utf8_lossy(&obj.data);
-                    if grep_content(
-                        &path_str,
-                        &content,
-                        &matchers,
-                        &args,
-                        None,
-                        &mut need_sep,
-                        out,
-                        all_match,
-                    )? {
-                        found_any = true;
-                    }
-                } else {
-                    let content = String::from_utf8_lossy(&obj.data);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content));
-                    if has_match {
-                        writeln!(out, "Binary file {} matches", path_str)?;
-                        found_any = true;
-                    }
-                }
-            } else {
-                let content = String::from_utf8_lossy(&obj.data);
-                if grep_content(
-                    &path_str,
-                    &content,
-                    &matchers,
-                    &args,
-                    None,
-                    &mut need_sep,
-                    out,
-                    all_match,
-                )? {
-                    found_any = true;
-                }
-            }
-        }
+        found_any = grep_cached(
+            &repo,
+            "",
+            &matchers,
+            &args,
+            &pathspecs,
+            &mut need_sep,
+            out,
+            all_match,
+        )?;
     } else {
         // Search working tree (tracked files from index)
-        let work_tree = repo
-            .work_tree
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("cannot grep in bare repository"))?;
-
-        let index = Index::load(&repo.index_path()).context("loading index")?;
-
-        // Deduplicate paths (index may have multiple stages for conflicts)
-        let mut seen = std::collections::HashSet::new();
-        for entry in &index.entries {
-            let path_str = String::from_utf8_lossy(&entry.path).to_string();
-
-            if !seen.insert(path_str.clone()) {
-                continue;
-            }
-
-            // Apply pathspec filter
-            if !pathspecs.is_empty()
-                && !pathspecs
-                    .iter()
-                    .any(|p| path_str == *p || path_str.starts_with(&format!("{p}/")))
-            {
-                continue;
-            }
-
-            // Apply max-depth filter
-            if let Some(max_depth) = args.effective_max_depth() {
-                let depth = path_str.matches('/').count();
-                if depth > max_depth {
-                    continue;
-                }
-            }
-
-            let full_path = work_tree.join(&path_str);
-            let content = match std::fs::read(&full_path) {
-                Ok(c) => c,
-                Err(_) => continue, // deleted but still in index
-            };
-
-            let is_binary = content.iter().take(8000).any(|&b| b == 0);
-
-            if is_binary && args.ignore_binary {
-                continue; // -I: skip binary files silently
-            }
-
-            if is_binary && !args.text_mode {
-                // For -c, -l, -L, -q: process through grep_content so they work correctly
-                if args.count || args.files_with_matches || args.files_without_match || args.quiet {
-                    let content_str = String::from_utf8_lossy(&content);
-                    if grep_content(
-                        &path_str,
-                        &content_str,
-                        &matchers,
-                        &args,
-                        None,
-                        &mut need_sep,
-                        out,
-                        all_match,
-                    )? {
-                        found_any = true;
-                    }
-                } else {
-                    // Default: check for match but only print "Binary file X matches"
-                    let content_str = String::from_utf8_lossy(&content);
-                    let has_match = matchers.iter().any(|re| re.is_match(&content_str));
-                    if has_match {
-                        writeln!(out, "Binary file {} matches", path_str)?;
-                        found_any = true;
-                    }
-                }
-            } else {
-                let content_str = String::from_utf8_lossy(&content);
-                if grep_content(
-                    &path_str,
-                    &content_str,
-                    &matchers,
-                    &args,
-                    None,
-                    &mut need_sep,
-                    out,
-                    all_match,
-                )? {
-                    found_any = true;
-                }
-            }
-        }
+        found_any = grep_worktree(
+            &repo,
+            "",
+            &matchers,
+            &args,
+            &pathspecs,
+            &mut need_sep,
+            out,
+            all_match,
+        )?;
     }
 
     if found_any {
@@ -542,11 +485,586 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 }
 
+/// Grep the index (--cached mode), optionally recursing into submodules.
+/// `path_prefix` is prepended to filenames for submodule display (e.g. "submodule/").
+fn grep_cached(
+    repo: &Repository,
+    path_prefix: &str,
+    matchers: &[Regex],
+    args: &Args,
+    pathspecs: &[String],
+    need_sep: &mut bool,
+    out: &mut (impl Write + ?Sized),
+    all_match: bool,
+) -> Result<bool> {
+    let index = Index::load(&repo.index_path()).context("loading index")?;
+    // Load diff attrs from index (for --cached, use index attrs) or worktree
+    let diff_attrs = if let Some(ref wt) = repo.work_tree {
+        // Try worktree first, fallback to index
+        let wt_attrs = load_diff_attrs(wt);
+        if wt_attrs.is_empty() {
+            load_diff_attrs_from_index(repo)
+        } else {
+            wt_attrs
+        }
+    } else {
+        load_diff_attrs_from_index(repo)
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut found_any = false;
+
+    for entry in &index.entries {
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        if !seen.insert(path_str.clone()) {
+            continue;
+        }
+
+        let display_path = format!("{path_prefix}{path_str}");
+
+        // Pathspec filtering is relative to the superproject
+        let is_submodule = entry.mode == MODE_GITLINK;
+        if !pathspecs.is_empty()
+            && !any_pathspec_matches(&display_path, pathspecs, is_submodule)
+        {
+            continue;
+        }
+
+        // Submodule entry (gitlink)
+        if is_submodule {
+            if args.recurse_submodules {
+                if let Some(work_tree) = &repo.work_tree {
+                    let sub_path = work_tree.join(&path_str);
+                    if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
+                        if grep_cached(
+                            &sub_repo,
+                            &format!("{display_path}/"),
+                            matchers,
+                            args,
+                            pathspecs,
+                            need_sep,
+                            out,
+                            all_match,
+                        )? {
+                            found_any = true;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Some(max_depth) = args.effective_max_depth() {
+            let depth = display_path.matches('/').count();
+            if depth > max_depth {
+                continue;
+            }
+        }
+        let obj = match repo.odb.read(&entry.oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+        let binary_override = check_binary_override(&diff_attrs, &path_str);
+        let is_binary = match binary_override {
+            BinaryOverride::ForceBinary => true,
+            BinaryOverride::ForceText => false,
+            BinaryOverride::None => content_is_binary,
+        };
+        if is_binary && args.ignore_binary {
+            continue;
+        }
+        if is_binary && !args.text_mode {
+            if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                let content = String::from_utf8_lossy(&obj.data);
+                if grep_content(
+                    &display_path,
+                    &content,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            } else {
+                let content = String::from_utf8_lossy(&obj.data);
+                let has_match = matchers.iter().any(|re| re.is_match(&content));
+                if has_match {
+                    writeln!(out, "Binary file {} matches", display_path)?;
+                    found_any = true;
+                }
+            }
+        } else {
+            let content = String::from_utf8_lossy(&obj.data);
+            if grep_content(
+                &display_path,
+                &content,
+                matchers,
+                args,
+                None,
+                need_sep,
+                out,
+                all_match,
+            )? {
+                found_any = true;
+            }
+        }
+    }
+    Ok(found_any)
+}
+
+/// Grep the working tree, optionally recursing into submodules.
+/// `path_prefix` is prepended to filenames for submodule display.
+fn grep_worktree(
+    repo: &Repository,
+    path_prefix: &str,
+    matchers: &[Regex],
+    args: &Args,
+    pathspecs: &[String],
+    need_sep: &mut bool,
+    out: &mut (impl Write + ?Sized),
+    all_match: bool,
+) -> Result<bool> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("cannot grep in bare repository"))?;
+
+    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let diff_attrs = load_diff_attrs(work_tree);
+    let mut seen = std::collections::HashSet::new();
+    let mut found_any = false;
+
+    for entry in &index.entries {
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        if !seen.insert(path_str.clone()) {
+            continue;
+        }
+
+        let display_path = format!("{path_prefix}{path_str}");
+
+        // Pathspec filtering is relative to the superproject
+        let is_submodule = entry.mode == MODE_GITLINK;
+        if !pathspecs.is_empty()
+            && !any_pathspec_matches(&display_path, pathspecs, is_submodule)
+        {
+            continue;
+        }
+
+        // Submodule entry (gitlink)
+        if is_submodule {
+            if args.recurse_submodules {
+                let sub_path = work_tree.join(&path_str);
+                if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
+                    if grep_worktree(
+                        &sub_repo,
+                        &format!("{display_path}/"),
+                        matchers,
+                        args,
+                        pathspecs,
+                        need_sep,
+                        out,
+                        all_match,
+                    )? {
+                        found_any = true;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Apply max-depth filter
+        if let Some(max_depth) = args.effective_max_depth() {
+            let depth = display_path.matches('/').count();
+            if depth > max_depth {
+                continue;
+            }
+        }
+
+        let full_path = work_tree.join(&path_str);
+        let content = match std::fs::read(&full_path) {
+            Ok(c) => c,
+            Err(_) => continue, // deleted but still in index
+        };
+
+        let content_is_binary = content.iter().take(8000).any(|&b| b == 0);
+        // Apply diff attribute override
+        let binary_override = check_binary_override(&diff_attrs, &path_str);
+        let is_binary = match binary_override {
+            BinaryOverride::ForceBinary => true,
+            BinaryOverride::ForceText => false,
+            BinaryOverride::None => content_is_binary,
+        };
+
+        if is_binary && args.ignore_binary {
+            continue;
+        }
+
+        if is_binary && !args.text_mode {
+            if args.count || args.files_with_matches || args.files_without_match || args.quiet {
+                let content_str = String::from_utf8_lossy(&content);
+                if grep_content(
+                    &display_path,
+                    &content_str,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            } else {
+                let content_str = String::from_utf8_lossy(&content);
+                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                if has_match {
+                    writeln!(out, "Binary file {} matches", display_path)?;
+                    found_any = true;
+                }
+            }
+        } else {
+            let content_str = String::from_utf8_lossy(&content);
+            if grep_content(
+                &display_path,
+                &content_str,
+                matchers,
+                args,
+                None,
+                need_sep,
+                out,
+                all_match,
+            )? {
+                found_any = true;
+            }
+        }
+    }
+    Ok(found_any)
+}
+
+/// Check if a pathspec contains glob special characters.
+fn has_glob_chars(s: &str) -> bool {
+    s.bytes().any(|b| matches!(b, b'*' | b'?' | b'[' | b'\\'))
+}
+
+/// Check if a path matches a pathspec. Handles both plain prefix matching
+/// and glob/wildmatch patterns.
+fn matches_pathspec(path: &str, pathspec: &str, is_dir: bool) -> bool {
+    if has_glob_chars(pathspec) {
+        // Use wildmatch for glob patterns.
+        // Git pathspec wildcards: `*` matches `/` (no WM_PATHNAME),
+        if wildmatch(pathspec.as_bytes(), path.as_bytes(), 0) {
+            return true;
+        }
+        if is_dir {
+            // Check if the pathspec could match children of this dir.
+            // For glob pathspecs, if `path/` is a prefix that the pattern
+            // could match through, we should descend.
+            // Strategy: check if pathspec matches path + "/<anything>" by
+            // testing if the pattern matches a synthetic child.
+            // Use a simple check: see if pathspec starts with the dir
+            // path literally (before any glob chars).
+            let literal_prefix = pathspec
+                .find(|c: char| matches!(c, '*' | '?' | '[' | '\\'))
+                .map(|pos| &pathspec[..pos])
+                .unwrap_or(pathspec);
+            // If the literal prefix starts with path/ then this dir is needed
+            if literal_prefix.starts_with(&format!("{path}/")) {
+                return true;
+            }
+            // If path starts with the literal prefix (stripped of trailing /),
+            // and the next char in pathspec is a glob, descend.
+            let lp_trimmed = literal_prefix.trim_end_matches('/');
+            if !lp_trimmed.is_empty() && path.starts_with(lp_trimmed) {
+                return true;
+            }
+            // Also try: if pathspec has directory separators, match dir parts
+            // against path parts. E.g. "submodul?/a" should match dir "submodule".
+            for (i, _) in pathspec.match_indices('/') {
+                let ps_dir = &pathspec[..i];
+                if wildmatch(ps_dir.as_bytes(), path.as_bytes(), 0) {
+                    return true;
+                }
+            }
+        }
+        false
+    } else {
+        // Plain prefix matching
+        path == pathspec
+            || path.starts_with(&format!("{pathspec}/"))
+            || (is_dir && pathspec.starts_with(&format!("{path}/")))
+    }
+}
+
+/// Check if any pathspec matches a path.
+fn any_pathspec_matches(path: &str, pathspecs: &[String], is_dir: bool) -> bool {
+    pathspecs.iter().any(|p| matches_pathspec(path, p, is_dir))
+}
+
+/// Binary override from .gitattributes diff attribute.
+/// `ForceBinary` means the file has `-diff` (treat as binary).
+/// `ForceText` means the file has `diff` set (treat as text).
+/// `None` means no override.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BinaryOverride {
+    ForceBinary,
+    ForceText,
+    None,
+}
+
+/// A parsed gitattributes rule for the diff attribute.
+struct DiffAttrRule {
+    pattern: String,
+    is_negated: bool, // "-diff" → treat as binary
+    // If not negated, treat as text
+}
+
+/// Load diff attribute rules from .gitattributes files.
+fn load_diff_attrs(work_tree: &Path) -> Vec<DiffAttrRule> {
+    let mut rules = Vec::new();
+    // Load root .gitattributes
+    let root = work_tree.join(".gitattributes");
+    if root.exists() {
+        if let Ok(content) = std::fs::read_to_string(&root) {
+            parse_diff_attrs(&content, &mut rules);
+        }
+    }
+    // Load .git/info/attributes
+    let info = work_tree.join(".git/info/attributes");
+    if info.exists() {
+        if let Ok(content) = std::fs::read_to_string(&info) {
+            parse_diff_attrs(&content, &mut rules);
+        }
+    }
+    rules
+}
+
+/// Load diff attribute rules from .gitattributes in the index.
+fn load_diff_attrs_from_index(repo: &Repository) -> Vec<DiffAttrRule> {
+    let mut rules = Vec::new();
+    if let Ok(index) = Index::load(&repo.index_path()) {
+        if let Some(entry) = index.entries.iter().find(|e| e.path == b".gitattributes") {
+            if let Ok(obj) = repo.odb.read(&entry.oid) {
+                if let Ok(content) = String::from_utf8(obj.data) {
+                    parse_diff_attrs(&content, &mut rules);
+                }
+            }
+        }
+    }
+    // Also check .git/info/attributes
+    if let Some(ref wt) = repo.work_tree {
+        let info = wt.join(".git/info/attributes");
+        if info.exists() {
+            if let Ok(content) = std::fs::read_to_string(&info) {
+                parse_diff_attrs(&content, &mut rules);
+            }
+        }
+    }
+    // Also try git_dir/info/attributes
+    let info2 = repo.git_dir.join("info/attributes");
+    if info2.exists() {
+        if let Ok(content) = std::fs::read_to_string(&info2) {
+            parse_diff_attrs(&content, &mut rules);
+        }
+    }
+    rules
+}
+
+fn parse_diff_attrs(content: &str, rules: &mut Vec<DiffAttrRule>) {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let pattern = match parts.next() {
+            Some(p) => p.to_owned(),
+            None => continue,
+        };
+        for part in parts {
+            if part == "-diff" {
+                rules.push(DiffAttrRule {
+                    pattern,
+                    is_negated: true,
+                });
+                break;
+            } else if part == "diff" {
+                rules.push(DiffAttrRule {
+                    pattern,
+                    is_negated: false,
+                });
+                break;
+            } else if part.starts_with("diff=") {
+                // diff=<driver> — treat as text
+                rules.push(DiffAttrRule {
+                    pattern,
+                    is_negated: false,
+                });
+                break;
+            }
+        }
+    }
+}
+
+/// Check the diff attribute for a file path.
+fn check_binary_override(rules: &[DiffAttrRule], path: &str) -> BinaryOverride {
+    let mut result = BinaryOverride::None;
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    for rule in rules {
+        // If pattern has no slash, match against basename
+        let matches = if rule.pattern.contains('/') {
+            wildmatch(rule.pattern.as_bytes(), path.as_bytes(), 0)
+        } else {
+            wildmatch(rule.pattern.as_bytes(), basename.as_bytes(), 0)
+        };
+        if matches {
+            result = if rule.is_negated {
+                BinaryOverride::ForceBinary
+            } else {
+                BinaryOverride::ForceText
+            };
+        }
+    }
+    result
+}
+
+/// Grep the filesystem recursively (--no-index mode).
+fn grep_filesystem(
+    dir: &Path,
+    prefix: &str,
+    matchers: &[Regex],
+    args: &Args,
+    pathspecs: &[String],
+    need_sep: &mut bool,
+    out: &mut (impl Write + ?Sized),
+    all_match: bool,
+) -> Result<bool> {
+    let mut found_any = false;
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return Ok(false),
+    };
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Skip .git directories
+        if name_str == ".git" {
+            continue;
+        }
+        let display_path = if prefix.is_empty() {
+            name_str.to_string()
+        } else {
+            format!("{prefix}/{name_str}")
+        };
+
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+
+        if ft.is_dir() {
+            if grep_filesystem(
+                &entry.path(),
+                &display_path,
+                matchers,
+                args,
+                pathspecs,
+                need_sep,
+                out,
+                all_match,
+            )? {
+                found_any = true;
+            }
+        } else if ft.is_file() {
+            // Apply pathspec filter
+            if !pathspecs.is_empty()
+                && !any_pathspec_matches(&display_path, pathspecs, false)
+            {
+                continue;
+            }
+
+            let content = match std::fs::read(&entry.path()) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let is_binary = content.iter().take(8000).any(|&b| b == 0);
+            if is_binary && args.ignore_binary {
+                continue;
+            }
+            if is_binary && !args.text_mode {
+                let content_str = String::from_utf8_lossy(&content);
+                let has_match = matchers.iter().any(|re| re.is_match(&content_str));
+                if has_match {
+                    writeln!(out, "Binary file {} matches", display_path)?;
+                    found_any = true;
+                }
+            } else {
+                let content_str = String::from_utf8_lossy(&content);
+                if grep_content(
+                    &display_path,
+                    &content_str,
+                    matchers,
+                    args,
+                    None,
+                    need_sep,
+                    out,
+                    all_match,
+                )? {
+                    found_any = true;
+                }
+            }
+        }
+    }
+    Ok(found_any)
+}
+
+/// Open a submodule repository from its working directory path.
+fn open_submodule_repo(sub_path: &Path) -> Result<Repository> {
+    let git_path = sub_path.join(".git");
+    if git_path.is_dir() {
+        // Regular .git directory
+        Repository::open(&git_path, Some(sub_path))
+            .map_err(|e| anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e))
+    } else if git_path.is_file() {
+        // gitdir: file pointing to the actual git directory
+        let content = std::fs::read_to_string(&git_path)
+            .with_context(|| format!("failed to read {}", git_path.display()))?;
+        let gitdir = content.trim().strip_prefix("gitdir: ")
+            .ok_or_else(|| anyhow::anyhow!("invalid .git file in {}", sub_path.display()))?;
+        let gitdir_path = if Path::new(gitdir).is_absolute() {
+            std::path::PathBuf::from(gitdir)
+        } else {
+            sub_path.join(gitdir)
+        };
+        let gitdir_path = gitdir_path.canonicalize()
+            .with_context(|| format!("failed to resolve gitdir {}", gitdir_path.display()))?;
+        Repository::open(&gitdir_path, Some(sub_path))
+            .map_err(|e| anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e))
+    } else {
+        anyhow::bail!("no .git directory in {}", sub_path.display())
+    }
+}
+
 /// Try to resolve a string as a revision (commit/tree).
 fn is_revision(repo: &Repository, spec: &str) -> bool {
-    resolve_revision(repo, spec).is_ok()
-        || resolve_ref(&repo.git_dir, spec).is_ok()
-        || resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")).is_ok()
+    let oid = resolve_revision(repo, spec)
+        .or_else(|_| resolve_ref(&repo.git_dir, spec))
+        .or_else(|_| resolve_ref(&repo.git_dir, &format!("refs/heads/{spec}")));
+    match oid {
+        Ok(oid) => {
+            // Verify the OID is readable and is a commit or tree (not a blob)
+            match repo.odb.read(&oid) {
+                Ok(obj) => matches!(obj.kind, ObjectKind::Commit | ObjectKind::Tree),
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
 }
 
 /// Parse positional arguments into (patterns, tree_ish, pathspecs).
@@ -607,8 +1125,47 @@ fn bre_to_ere(pat: &str) -> String {
     let mut result = String::with_capacity(pat.len());
     let chars: Vec<char> = pat.chars().collect();
     let mut i = 0;
+    let mut in_bracket = false;
     while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
+        if in_bracket {
+            // Inside [...], most things are literal
+            if chars[i] == ']' && i > 0 {
+                result.push(']');
+                in_bracket = false;
+                i += 1;
+            } else if chars[i] == '\\' && i + 1 < chars.len() {
+                // In BRE char class, \ is literal. But Rust regex treats
+                // \d, \w, \s etc. as shorthand classes inside [...].
+                // Emit both chars as literals: \\\\ + next char
+                let next = chars[i + 1];
+                if next.is_ascii_alphabetic() {
+                    // Escape the backslash so Rust regex sees it as literal
+                    result.push('\\');
+                    result.push('\\');
+                    result.push(next);
+                } else {
+                    result.push('\\');
+                    result.push(next);
+                }
+                i += 2;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        } else if chars[i] == '[' {
+            result.push('[');
+            in_bracket = true;
+            i += 1;
+            // Handle [^ or [! negation, and ] as first char
+            if i < chars.len() && (chars[i] == '^' || chars[i] == '!') {
+                result.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == ']' {
+                result.push(']');
+                i += 1;
+            }
+        } else if chars[i] == '\\' && i + 1 < chars.len() {
             match chars[i + 1] {
                 '+' | '?' | '{' | '}' | '(' | ')' | '|' => {
                     // \+ in BRE means special +; in ERE just use +
@@ -634,6 +1191,63 @@ fn bre_to_ere(pat: &str) -> String {
     result
 }
 
+/// Fix character classes for Rust regex compatibility.
+/// In POSIX (both BRE and ERE), `\d` inside `[...]` means literal `\` and `d`.
+/// In Rust regex, `\d` inside `[...]` means digit shorthand.
+/// This function escapes backslashes inside character classes.
+fn fix_charclass_escapes(pat: &str) -> String {
+    let mut result = String::with_capacity(pat.len());
+    let chars: Vec<char> = pat.chars().collect();
+    let mut i = 0;
+    let mut in_bracket = false;
+    while i < chars.len() {
+        if in_bracket {
+            if chars[i] == ']' {
+                result.push(']');
+                in_bracket = false;
+                i += 1;
+            } else if chars[i] == '\\' && i + 1 < chars.len() {
+                let next = chars[i + 1];
+                if next.is_ascii_alphabetic() {
+                    // Escape the backslash so Rust regex sees it as literal
+                    result.push('\\');
+                    result.push('\\');
+                    result.push(next);
+                } else {
+                    result.push('\\');
+                    result.push(next);
+                }
+                i += 2;
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        } else if chars[i] == '[' {
+            result.push('[');
+            in_bracket = true;
+            i += 1;
+            // Handle [^ or [! negation, and ] as first char
+            if i < chars.len() && (chars[i] == '^' || chars[i] == '!') {
+                result.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() && chars[i] == ']' {
+                result.push(']');
+                i += 1;
+            }
+        } else if chars[i] == '\\' && i + 1 < chars.len() {
+            // Outside brackets, pass through
+            result.push(chars[i]);
+            result.push(chars[i + 1]);
+            i += 2;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
     let mut matchers = Vec::new();
     let use_bre = !args.extended_regexp && !args.fixed_strings && !args.perl_regexp;
@@ -642,8 +1256,12 @@ fn build_matchers(patterns: &[String], args: &Args) -> Result<Vec<Regex>> {
             regex::escape(pat)
         } else if use_bre {
             bre_to_ere(pat)
-        } else {
+        } else if args.perl_regexp {
+            // Perl regex: pass through as-is (Rust regex handles most PCRE)
             pat.clone()
+        } else {
+            // ERE: fix character class escapes for Rust regex compatibility
+            fix_charclass_escapes(pat)
         };
         let effective = if args.word_regexp {
             format!(r"\b{effective}\b")
@@ -1036,6 +1654,7 @@ fn grep_tree(
     need_sep: &mut bool,
     out: &mut (impl Write + ?Sized),
     all_match: bool,
+    diff_attrs: &[DiffAttrRule],
 ) -> Result<bool> {
     let entries = parse_tree(tree_data)?;
     let mut found = false;
@@ -1049,17 +1668,66 @@ fn grep_tree(
         };
 
         let is_tree = entry.mode == 0o040000;
+        let is_gitlink = entry.mode == 0o160000;
 
         // Apply pathspec filter
         if !pathspecs.is_empty() {
-            let matches_pathspec = pathspecs.iter().any(|p| {
-                full_name == *p
-                    || full_name.starts_with(&format!("{p}/"))
-                    || p.starts_with(&format!("{full_name}/"))
-            });
-            if !matches_pathspec {
+            if !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink) {
                 continue;
             }
+        }
+
+        // Submodule (gitlink) in tree: recurse if --recurse-submodules
+        if is_gitlink {
+            if args.recurse_submodules {
+                if let Some(work_tree) = &repo.work_tree {
+                    // Use just the entry name relative to this tree level, not full_name
+                    let local_name = name.to_string();
+                    let sub_path = work_tree.join(&local_name);
+                    if let Ok(sub_repo) = open_submodule_repo(&sub_path) {
+                        // The entry.oid is the commit SHA of the submodule
+                        let sub_obj = match sub_repo.odb.read(&entry.oid) {
+                            Ok(o) => o,
+                            Err(_) => continue,
+                        };
+                        let sub_tree_oid = if sub_obj.kind == ObjectKind::Commit {
+                            match parse_commit(&sub_obj.data) {
+                                Ok(c) => c.tree,
+                                Err(_) => continue,
+                            }
+                        } else {
+                            continue;
+                        };
+                        let sub_tree_obj = match sub_repo.odb.read(&sub_tree_oid) {
+                            Ok(o) => o,
+                            Err(_) => continue,
+                        };
+                        // Load diff attrs for the submodule
+                        let sub_diff_attrs = if let Some(ref swt) = sub_repo.work_tree {
+                            load_diff_attrs(swt)
+                        } else {
+                            vec![]
+                        };
+                        if grep_tree(
+                            &sub_repo,
+                            &sub_tree_obj.data,
+                            &full_name,
+                            0,
+                            matchers,
+                            args,
+                            pathspecs,
+                            tree_name,
+                            need_sep,
+                            out,
+                            all_match,
+                            &sub_diff_attrs,
+                        )? {
+                            found = true;
+                        }
+                    }
+                }
+            }
+            continue;
         }
 
         if is_tree {
@@ -1081,6 +1749,7 @@ fn grep_tree(
                 need_sep,
                 out,
                 all_match,
+                diff_attrs,
             )? {
                 found = true;
             }
@@ -1097,7 +1766,13 @@ fn grep_tree(
                 Err(_) => continue,
             };
 
-            let is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            let content_is_binary = obj.data.iter().take(8000).any(|&b| b == 0);
+            let binary_override = check_binary_override(diff_attrs, &full_name);
+            let is_binary = match binary_override {
+                BinaryOverride::ForceBinary => true,
+                BinaryOverride::ForceText => false,
+                BinaryOverride::None => content_is_binary,
+            };
 
             if is_binary && args.ignore_binary {
                 continue;
