@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |     3 |
+| Completed   |     4 |
 | In progress |     0 |
-| Remaining   |   762 |
+| Remaining   |   761 |
 | **Total**   |   765 |
 
 ## Recently completed
@@ -16,7 +16,8 @@
 - `t1402-check-ref-format` — 99/99 tests passing (was 97/99)
 - `t1505-rev-parse-last` — 7/7 tests pass (@{-N} syntax fully working)
 - `t1100-commit-tree-options` — 5/5 tests pass
+- `t1418-reflog-exists` — 6/6 tests pass
 
 ## What Remains
 
-762 test files still pending. See `plan.md` for the full prioritized list.
+761 test files still pending. See `plan.md` for the full prioritized list.
