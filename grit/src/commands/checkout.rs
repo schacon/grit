@@ -176,6 +176,16 @@ pub fn run(args: Args) -> Result<()> {
     OVERWRITE_IGNORE.with(|o| o.set(!args.no_overwrite_ignore || args.overwrite_ignore));
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
+        bail!("the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+    }
+    if args.pathspec_from_file.is_some() && args.patch {
+        bail!("options '--pathspec-from-file' and '--patch' cannot be used together");
+    }
+    if args.pathspec_from_file.is_some() && args.detach {
+        bail!("options '--pathspec-from-file' and '--detach' cannot be used together");
+    }
+
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
     let raw_args: Vec<String> = std::env::args().collect();
@@ -202,7 +212,14 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Parse rest into (target, paths) handling `--` separator
-    let (target, paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
+    let (target, mut paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
+
+    if let Some(pathspec_source) = args.pathspec_from_file.as_deref() {
+        if !paths.is_empty() {
+            bail!("'--pathspec-from-file' and pathspec arguments cannot be used together");
+        }
+        paths = read_pathspecs(pathspec_source, args.pathspec_file_nul)?;
+    }
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
@@ -535,6 +552,87 @@ fn split_target_and_paths(rest: &[String], has_separator: bool, separator_at_end
     } else {
         (Some(rest[0].clone()), rest[1..].to_vec())
     }
+}
+
+fn read_pathspecs(source: &str, nul_terminated: bool) -> Result<Vec<String>> {
+    let content = if source == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("reading pathspecs from stdin")?;
+        buf
+    } else {
+        std::fs::read_to_string(source)
+            .with_context(|| format!("could not read pathspec from '{source}'"))?
+    };
+
+    if nul_terminated {
+        return Ok(content
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned)
+            .collect());
+    }
+
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_end_matches('\r');
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+            out.push(unquote_c_style_pathspec(trimmed)?);
+        } else {
+            out.push(trimmed.to_string());
+        }
+    }
+    Ok(out)
+}
+
+fn unquote_c_style_pathspec(s: &str) -> Result<String> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'"') || bytes.last() != Some(&b'"') || bytes.len() < 2 {
+        bail!("invalid C-style quoting: {s}");
+    }
+    let inner = &bytes[1..bytes.len() - 1];
+    let mut out = Vec::with_capacity(inner.len());
+    let mut i = 0usize;
+    while i < inner.len() {
+        if inner[i] != b'\\' {
+            out.push(inner[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= inner.len() {
+            bail!("invalid escape at end of string");
+        }
+        match inner[i] {
+            b'\\' => out.push(b'\\'),
+            b'"' => out.push(b'"'),
+            b'a' => out.push(7),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
+            b'v' => out.push(11),
+            c if c.is_ascii_digit() => {
+                if i + 2 >= inner.len() {
+                    bail!("truncated octal escape");
+                }
+                let oct =
+                    std::str::from_utf8(&inner[i..i + 3]).context("invalid octal escape bytes")?;
+                let val = u8::from_str_radix(oct, 8).context("invalid octal escape value")?;
+                out.push(val);
+                i += 2;
+            }
+            other => bail!("invalid escape sequence \\{}", char::from(other)),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).context("pathspec contains invalid UTF-8")
 }
 
 // ---------------------------------------------------------------------------
