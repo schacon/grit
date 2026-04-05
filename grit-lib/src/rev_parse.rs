@@ -522,10 +522,22 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         }
     }
 
-    // Handle `:path` — look up path in the index (stage 0)
-    if let Some(path) = spec.strip_prefix(':') {
-        if !path.is_empty() && !path.starts_with('/') {
-            return resolve_index_path(repo, path);
+    // Handle `:N:path` — look up path in the index at stage N
+    // Also handle `:path` — look up path in the index (stage 0)
+    if let Some(rest) = spec.strip_prefix(':') {
+        if !rest.is_empty() && !rest.starts_with('/') {
+            // Check for :N:path pattern (N is a single digit 0-3)
+            if rest.len() >= 3 && rest.as_bytes()[1] == b':' {
+                if let Some(stage_char) = rest.chars().next() {
+                    if let Some(stage) = stage_char.to_digit(10) {
+                        if stage <= 3 {
+                            let path = &rest[2..];
+                            return resolve_index_path_at_stage(repo, path, stage as u8);
+                        }
+                    }
+                }
+            }
+            return resolve_index_path(repo, rest);
         }
     }
 
@@ -562,6 +574,15 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         format!("refs/remotes/{spec}"),
     ] {
         if let Ok(oid) = refs::resolve_ref(&repo.git_dir, candidate) {
+            return Ok(oid);
+        }
+    }
+
+    // As a last resort, try resolving as HEAD:<spec> (index path lookup)
+    // This allows `git rev-parse b` to resolve to the blob for file `b`
+    // in the current HEAD tree, matching Git's behavior for path arguments.
+    if !spec.contains(':') && !spec.starts_with('-') {
+        if let Ok(oid) = resolve_index_path(repo, spec) {
             return Ok(oid);
         }
     }
@@ -695,12 +716,17 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
 /// Look up a path in the index (stage 0) and return its OID.
 
 fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
+    resolve_index_path_at_stage(repo, path, 0)
+}
+
+/// Look up a path in the index at a given stage and return its OID.
+fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Result<ObjectId> {
     use crate::index::Index;
     let index_path = repo.index_path();
-    let index = Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{path}")))?;
-    match index.get(path.as_bytes(), 0) {
+    let index = Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
+    match index.get(path.as_bytes(), stage) {
         Some(entry) => Ok(entry.oid),
-        None => Err(Error::ObjectNotFound(format!(":{path}"))),
+        None => Err(Error::ObjectNotFound(format!(":{stage}:{path}"))),
     }
 }
 

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::diff::{count_changes, diff_trees, DiffEntry};
+use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
@@ -1333,6 +1333,191 @@ struct MergeResult {
     conflict_descriptions: Vec<(String, String)>,
 }
 
+/// Build rename maps from base to each side.
+///
+/// Detects renames by looking for base blobs that appear at different paths
+/// in a side (exact OID match), plus similarity-based rename detection for
+/// cases where the renamed file was also modified.
+///
+/// Returns (ours_renames, theirs_renames) where each map goes from
+/// old_path (in base) → new_path (in that side).
+fn detect_merge_renames(
+    repo: &Repository,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> (HashMap<Vec<u8>, Vec<u8>>, HashMap<Vec<u8>, Vec<u8>>) {
+    let threshold = 50u32;
+    let zero_oid = ObjectId::from_bytes(&[0u8; 20]).unwrap();
+
+    // Build diff entries from base to side, handling the "add-source" pattern:
+    // If base has path P with OID X, and side has path P with a DIFFERENT OID Y,
+    // but side also has path Q with OID X (exact match), then:
+    //   - P was renamed to Q (Deleted P + Added Q)
+    //   - A new file was added at P (the Modified becomes an Add)
+    let build_diff = |side: &HashMap<Vec<u8>, IndexEntry>| -> Vec<DiffEntry> {
+        // First, build an OID → paths map for the side to detect where base blobs moved
+        let mut side_oid_to_paths: HashMap<ObjectId, Vec<Vec<u8>>> = HashMap::new();
+        for (path, entry) in side {
+            side_oid_to_paths
+                .entry(entry.oid)
+                .or_default()
+                .push(path.clone());
+        }
+
+        // Find base entries whose OID appears at a different path in the side
+        let mut exact_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        for (base_path, base_entry) in base {
+            if let Some(side_paths) = side_oid_to_paths.get(&base_entry.oid) {
+                for sp in side_paths {
+                    if sp != base_path && !base.contains_key(sp) {
+                        // base_path's content appeared at a new path sp in side
+                        exact_renames.insert(base_path.clone(), sp.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut entries = Vec::new();
+        let mut all_paths = BTreeSet::new();
+        all_paths.extend(base.keys());
+        all_paths.extend(side.keys());
+
+        // Track which paths are rename targets (don't emit them as plain Added)
+        let rename_targets: BTreeSet<Vec<u8>> = exact_renames.values().cloned().collect();
+        // Track which paths are rename sources (emit as Deleted)
+        let rename_sources: BTreeSet<Vec<u8>> = exact_renames.keys().cloned().collect();
+
+        for path in all_paths {
+            let b = base.get(path);
+            let s = side.get(path);
+            let path_str = String::from_utf8_lossy(path).to_string();
+            match (b, s) {
+                (Some(be), None) => {
+                    // Deleted in side
+                    if !rename_sources.contains(path) {
+                        entries.push(DiffEntry {
+                            status: DiffStatus::Deleted,
+                            old_path: Some(path_str),
+                            new_path: None,
+                            old_mode: format!("{:06o}", be.mode),
+                            new_mode: String::new(),
+                            old_oid: be.oid,
+                            new_oid: zero_oid,
+                            score: None,
+                        });
+                    }
+                    // If it's a rename source, we handle it via the exact_renames map
+                }
+                (None, Some(se)) => {
+                    // Added in side
+                    if !rename_targets.contains(path) {
+                        entries.push(DiffEntry {
+                            status: DiffStatus::Added,
+                            old_path: None,
+                            new_path: Some(path_str),
+                            old_mode: String::new(),
+                            new_mode: format!("{:06o}", se.mode),
+                            old_oid: zero_oid,
+                            new_oid: se.oid,
+                            score: None,
+                        });
+                    }
+                }
+                (Some(be), Some(se)) => {
+                    // If this is a rename source (content moved elsewhere) and
+                    // the content at this path changed, treat the old content as
+                    // "deleted" (it moved) and the new content as "added" (new file).
+                    if rename_sources.contains(path) && be.oid != se.oid {
+                        // The old content moved away → emit Deleted for rename detection
+                        entries.push(DiffEntry {
+                            status: DiffStatus::Deleted,
+                            old_path: Some(path_str.clone()),
+                            new_path: None,
+                            old_mode: format!("{:06o}", be.mode),
+                            new_mode: String::new(),
+                            old_oid: be.oid,
+                            new_oid: zero_oid,
+                            score: None,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        entries
+    };
+
+    let extract_renames = |side: &HashMap<Vec<u8>, IndexEntry>| -> HashMap<Vec<u8>, Vec<u8>> {
+        // First, exact OID-based renames
+        let mut side_oid_to_paths: HashMap<ObjectId, Vec<Vec<u8>>> = HashMap::new();
+        for (path, entry) in side {
+            side_oid_to_paths
+                .entry(entry.oid)
+                .or_default()
+                .push(path.clone());
+        }
+
+        let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let mut matched_targets: BTreeSet<Vec<u8>> = BTreeSet::new();
+
+        for (base_path, base_entry) in base {
+            if side.contains_key(base_path) {
+                // Path still exists in side — check if it's an add-source pattern
+                let side_entry = &side[base_path];
+                if side_entry.oid == base_entry.oid {
+                    continue; // Same content, not renamed
+                }
+                // Content at base_path changed. Check if original content moved.
+                if let Some(side_paths) = side_oid_to_paths.get(&base_entry.oid) {
+                    for sp in side_paths {
+                        if sp != base_path && !base.contains_key(sp) && !matched_targets.contains(sp) {
+                            map.insert(base_path.clone(), sp.clone());
+                            matched_targets.insert(sp.clone());
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Path doesn't exist in side — look for exact OID match at new path
+                if let Some(side_paths) = side_oid_to_paths.get(&base_entry.oid) {
+                    for sp in side_paths {
+                        if !base.contains_key(sp) && !matched_targets.contains(sp) {
+                            map.insert(base_path.clone(), sp.clone());
+                            matched_targets.insert(sp.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now do similarity-based rename detection for remaining unmatched deletions
+        let diff_entries = build_diff(side);
+        let detected = detect_renames(&repo.odb, diff_entries, threshold);
+        for e in detected {
+            if matches!(e.status, DiffStatus::Renamed) {
+                if let (Some(old), Some(new)) = (&e.old_path, &e.new_path) {
+                    let old_bytes = old.as_bytes().to_vec();
+                    let new_bytes = new.as_bytes().to_vec();
+                    if !map.contains_key(&old_bytes) && !matched_targets.contains(&new_bytes) {
+                        map.insert(old_bytes, new_bytes.clone());
+                        matched_targets.insert(new_bytes);
+                    }
+                }
+            }
+        }
+
+        map
+    };
+
+    let ours_renames = extract_renames(ours);
+    let theirs_renames = extract_renames(theirs);
+
+    (ours_renames, theirs_renames)
+}
+
 /// Perform tree-level three-way merge.
 fn merge_trees(
     repo: &Repository,
@@ -1343,6 +1528,13 @@ fn merge_trees(
     their_name: &str,
     favor: MergeFavor,
 ) -> Result<MergeResult> {
+    // Detect renames on each side
+    let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
+
+
+    // Track which paths are handled via rename logic so we don't double-process
+    let mut handled_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
     all_paths.extend(ours.keys().cloned());
@@ -1355,10 +1547,216 @@ fn merge_trees(
 
     let ours_label = head.branch_name().unwrap_or("HEAD");
 
+    // First pass: handle rename cases
+    // Case 1: ours renamed base_path → ours_new_path; theirs may have modified base_path
+    for (base_path, ours_new_path) in &ours_renames {
+        handled_paths.insert(base_path.clone());
+        // The new path on ours side is handled here too (don't treat as add/add)
+        handled_paths.insert(ours_new_path.clone());
+
+        let be = base.get(base_path);
+        let oe = ours.get(ours_new_path); // The renamed file in ours
+        let te = theirs.get(base_path);   // Theirs' version at original path
+
+        if let (Some(be), Some(oe)) = (be, oe) {
+            if let Some(te) = te {
+                // Theirs also has the file at the old path — merge content at new path
+                if be.oid == te.oid && be.mode == te.mode {
+                    // Theirs didn't modify — just use ours (renamed version)
+                    index.entries.push(oe.clone());
+                } else if oe.oid == te.oid {
+                    // Both made same change
+                    index.entries.push(oe.clone());
+                } else {
+                    // Both modified — try content merge at new path
+                    let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                        ContentMergeResult::Clean(merged_oid, mode) => {
+                            let mut entry = oe.clone();
+                            entry.oid = merged_oid;
+                            entry.mode = mode;
+                            index.entries.push(entry);
+                        }
+                        ContentMergeResult::Conflict(content) => {
+                            has_conflicts = true;
+                            let mut be_at_new = be.clone();
+                            be_at_new.path = ours_new_path.clone();
+                            stage_entry(&mut index, &be_at_new, 1);
+                            stage_entry(&mut index, oe, 2);
+                            let mut te_at_new = te.clone();
+                            te_at_new.path = ours_new_path.clone();
+                            stage_entry(&mut index, &te_at_new, 3);
+                            conflict_descriptions.push(("content".to_string(), path_str.clone()));
+                            conflict_files.push((path_str, content));
+                        }
+                    }
+                }
+            } else {
+                // Theirs deleted the original — ours renamed it, so keep ours' rename
+                index.entries.push(oe.clone());
+            }
+
+            // If theirs also has a NEW file at ours_new_path (add/add at rename target)
+            if let Some(te_at_new) = theirs.get(ours_new_path) {
+                if !base.contains_key(ours_new_path) {
+                    // Theirs added a file at the same path as ours' rename target
+                    if oe.oid != te_at_new.oid || oe.mode != te_at_new.mode {
+                        let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                        // This is a rename/add conflict
+                        has_conflicts = true;
+                        stage_entry(&mut index, oe, 2);
+                        stage_entry(&mut index, te_at_new, 3);
+                        conflict_descriptions.push(("rename/add".to_string(), path_str));
+                    }
+                }
+            }
+        }
+
+        // Handle "add-source": if theirs has a different file at base_path
+        // (the original was renamed away, and a new file was added), include it.
+        // And since ours' version at base_path was used for the merge at the
+        // rename target, ours doesn't also get a file at base_path.
+        if let Some(te_at_base) = theirs.get(base_path) {
+            if be.map_or(true, |b| te_at_base.oid != b.oid) {
+                // Theirs has a new/different file at the old path (add-source)
+                if let Some(oe_at_base) = ours.get(base_path) {
+                    // Ours also has something at this path — but ours' version
+                    // represents their modification of the original (used in
+                    // rename merge above). So this is an add (theirs' new file)
+                    // vs nothing from ours at this path.
+                    // But wait — if ours' file at base_path is different from the
+                    // base AND different from what we'd expect from just modifying
+                    // the original, it might be a genuine ours addition too.
+                    // For now, include theirs' add-source.
+                    let _ = oe_at_base; // ours' changes already merged into rename target
+                    index.entries.push(te_at_base.clone());
+                } else {
+                    index.entries.push(te_at_base.clone());
+                }
+            }
+        }
+    }
+
+    // Case 2: theirs renamed base_path → theirs_new_path; ours may have modified base_path
+    for (base_path, theirs_new_path) in &theirs_renames {
+        if handled_paths.contains(base_path) {
+            // Already handled by ours rename of same path (rename/rename case)
+            // Still need to handle theirs_new_path
+            if !handled_paths.contains(theirs_new_path) {
+                handled_paths.insert(theirs_new_path.clone());
+                // If both sides renamed the same file to different names: rename/rename conflict
+                if let Some(ours_target) = ours_renames.get(base_path) {
+                    if ours_target != theirs_new_path {
+                        // rename/rename(1to2) conflict
+                        if let Some(te) = theirs.get(theirs_new_path) {
+                            let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                            has_conflicts = true;
+                            if let Some(be) = base.get(base_path) {
+                                let mut be_at_new = be.clone();
+                                be_at_new.path = theirs_new_path.clone();
+                                stage_entry(&mut index, &be_at_new, 1);
+                            }
+                            stage_entry(&mut index, te, 3);
+                            conflict_descriptions.push(("rename/rename".to_string(), path_str));
+                            // Also add the theirs version to the working tree
+                            if let Ok(obj) = repo.odb.read(&te.oid) {
+                                conflict_files.push((String::from_utf8_lossy(theirs_new_path).to_string(), obj.data));
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        handled_paths.insert(base_path.clone());
+        handled_paths.insert(theirs_new_path.clone());
+
+        let be = base.get(base_path);
+        let te = theirs.get(theirs_new_path); // The renamed file in theirs
+        let oe = ours.get(base_path);          // Ours' version at original path
+
+        if let (Some(be), Some(te)) = (be, te) {
+            if let Some(oe) = oe {
+                // Ours also has the file at the old path — merge content at theirs' new path
+                if be.oid == oe.oid && be.mode == oe.mode {
+                    // Ours didn't modify — just use theirs (renamed version)
+                    index.entries.push(te.clone());
+                } else if oe.oid == te.oid {
+                    // Both made same change
+                    let mut entry = te.clone();
+                    entry.path = theirs_new_path.clone();
+                    index.entries.push(entry);
+                } else {
+                    // Both modified — try content merge at new path
+                    let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                        ContentMergeResult::Clean(merged_oid, mode) => {
+                            let mut entry = te.clone();
+                            entry.oid = merged_oid;
+                            entry.mode = mode;
+                            index.entries.push(entry);
+                        }
+                        ContentMergeResult::Conflict(content) => {
+                            has_conflicts = true;
+                            let mut be_at_new = be.clone();
+                            be_at_new.path = theirs_new_path.clone();
+                            stage_entry(&mut index, &be_at_new, 1);
+                            let mut oe_at_new = oe.clone();
+                            oe_at_new.path = theirs_new_path.clone();
+                            stage_entry(&mut index, &oe_at_new, 2);
+                            stage_entry(&mut index, te, 3);
+                            conflict_descriptions.push(("content".to_string(), path_str.clone()));
+                            conflict_files.push((path_str, content));
+                        }
+                    }
+                }
+            } else {
+                // Ours deleted the original — theirs renamed it, so keep theirs' rename
+                index.entries.push(te.clone());
+            }
+
+            // If ours also has a NEW file at theirs_new_path (add/add at rename target)
+            if let Some(oe_at_new) = ours.get(theirs_new_path) {
+                if !base.contains_key(theirs_new_path) {
+                    if te.oid != oe_at_new.oid || te.mode != oe_at_new.mode {
+                        let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                        has_conflicts = true;
+                        stage_entry(&mut index, oe_at_new, 2);
+                        stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push(("rename/add".to_string(), path_str));
+                    }
+                }
+            }
+
+            // Handle "add-source": theirs renamed base_path away, but theirs may also
+            // have a NEW file at base_path (add-source pattern: rename + add at source).
+            // Also handle ours' file at base_path: ours' modification of the original
+            // was used for the merge at the rename target, so we should not also keep
+            // it at base_path. But theirs' add-source at base_path should be included.
+            if let Some(te_at_base) = theirs.get(base_path) {
+                if te_at_base.oid != be.oid {
+                    // Theirs has a genuinely new file at the old path (add-source)
+                    index.entries.push(te_at_base.clone());
+                }
+            }
+        }
+    }
+
+    // Second pass: handle non-rename paths
     for path in &all_paths {
+        if handled_paths.contains(path) {
+            continue;
+        }
+
         let b = base.get(path);
         let o = ours.get(path);
         let t = theirs.get(path);
+
+        // Skip paths that are the "add-source" of a rename on the other side.
+        // e.g., if ours renamed old→new, and theirs added a completely new file at old,
+        // that new file at old is theirs' addition and should be included as-is.
+        // But if this path was the source of a rename and the other side didn't touch it,
+        // we already handled it above.
 
         match (b, o, t) {
             // Both sides identical
@@ -1387,7 +1785,13 @@ fn merge_trees(
             }
             // Deleted by both
             (Some(_), None, None) => {
-                // Skip — removed from both sides
+                // Check if both sides renamed to the same target
+                let ours_target = ours_renames.get(path);
+                let theirs_target = theirs_renames.get(path);
+                if ours_target.is_none() && theirs_target.is_none() {
+                    // Truly deleted by both — skip
+                }
+                // Otherwise already handled above
             }
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
@@ -1412,7 +1816,10 @@ fn merge_trees(
             }
             // Delete/modify — conflict only if the surviving side changed
             (Some(be), None, Some(te)) => {
-                if be.oid == te.oid && be.mode == te.mode {
+                // Check if ours renamed this file — if so, it's handled above
+                if ours_renames.contains_key(path) {
+                    // Already handled in rename pass
+                } else if be.oid == te.oid && be.mode == te.mode {
                     // Theirs didn't change it, ours deleted → clean delete
                 } else {
                     match favor {
@@ -1435,7 +1842,10 @@ fn merge_trees(
                 }
             }
             (Some(be), Some(oe), None) => {
-                if be.oid == oe.oid && be.mode == oe.mode {
+                // Check if theirs renamed this file — if so, it's handled above
+                if theirs_renames.contains_key(path) {
+                    // Already handled in rename pass
+                } else if be.oid == oe.oid && be.mode == oe.mode {
                     // Ours didn't change it, theirs deleted → clean delete
                 } else {
                     match favor {
