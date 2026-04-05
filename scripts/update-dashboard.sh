@@ -15,6 +15,9 @@ python3 "$SCRIPT_DIR/subscripts/generate-progress-html.py"
 echo "==> Generating progress badge SVG..."
 python3 "$SCRIPT_DIR/subscripts/generate-progress-svg.py"
 
+echo "==> Generating test files HTML..."
+python3 "$SCRIPT_DIR/generate-testfiles-html.py"
+
 echo "==> Generating development timeline..."
 bash "$SCRIPT_DIR/timeline.sh"
 

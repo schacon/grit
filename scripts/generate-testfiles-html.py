@@ -8,6 +8,7 @@ Run after scripts/run-tests.sh to update results.
 import csv
 import os
 import re
+import subprocess
 from datetime import datetime, timezone
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -190,7 +191,16 @@ def generate():
             if r["fail"] == 0:
                 cat_stats[cp]["pass_files"] += 1
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(timezone.utc)
+    gen_timestamp = int(now.timestamp())
+    gen_time_str = now.strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        commit_sha = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True
+        ).strip()
+    except Exception:
+        commit_sha = 'unknown'
+    commit_sha_short = commit_sha[:7]
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -265,7 +275,8 @@ tr:hover td {{ background: #161b22; }}
   <a href="index.html">&larr; Dashboard</a> &middot;
   <a href="tests.html">All Test Cases</a> &middot;
   <a href="timeline.html">Timeline</a>
-  &nbsp;&mdash;&nbsp; Generated {now}
+  &nbsp;&mdash;&nbsp; <span id="gen-time" data-ts="{gen_timestamp}">{gen_time_str}</span>
+  &middot; <a href="https://github.com/schacon/grit/commit/{commit_sha}" style="color:#484f58">{commit_sha_short}</a>
 </p>
 
 <div class="summary-cards">
@@ -405,6 +416,21 @@ function applyFilters() {
 }
 
 applyFilters();
+</script>
+<script>
+(function() {
+  var el = document.getElementById('gen-time');
+  if (!el) return;
+  var ts = parseInt(el.dataset.ts, 10);
+  var now = Date.now() / 1000;
+  var diff = Math.floor(now - ts);
+  var text;
+  if (diff < 60) text = 'just now';
+  else if (diff < 3600) text = Math.floor(diff/60) + 'm ago';
+  else if (diff < 86400) text = Math.floor(diff/3600) + 'h ago';
+  else text = Math.floor(diff/86400) + 'd ago';
+  el.textContent = text;
+})();
 </script>
 </body>
 </html>
