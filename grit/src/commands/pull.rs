@@ -261,6 +261,8 @@ fn do_merge_or_rebase(
             no_squash: false,
             quit: false,
             autostash: false,
+            cleanup: None,
+            file: None,
         };
         super::merge::run(merge_args)
     }

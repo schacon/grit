@@ -71,7 +71,7 @@ pub struct Args {
 pub fn run(mut args: Args) -> Result<()> {
     // Handle --pathspec-from-file / --pathspec-file-nul
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
-        eprintln!("fatal: the option 'pathspec-file-nul' requires 'pathspec-from-file'");
+        eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
         std::process::exit(128);
     }
     if let Some(ref psf) = args.pathspec_from_file {

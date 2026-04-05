@@ -699,7 +699,13 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+    let effective_custom_msg = if let Some(ref file_path) = args.file {
+        Some(fs::read_to_string(file_path)
+            .with_context(|| format!("could not read merge message file: {file_path}"))?)
+    } else {
+        args.message.clone()
+    };
+    let mut msg = build_merge_message(head, &args.commits[0], effective_custom_msg.as_deref(), repo);
 
     // Append merge log if --log is set
     if let Some(max_log) = args.log {
@@ -729,6 +735,11 @@ fn do_real_merge(
             .or_else(|| config.get("user.email"))
             .unwrap_or_default();
         msg = append_signoff(&msg, &sob_name, &sob_email);
+    }
+
+    // Apply cleanup mode if specified
+    if let Some(ref mode) = args.cleanup {
+        msg = cleanup_message(&msg, mode);
     }
 
     let commit_data = CommitData {
@@ -2763,6 +2774,92 @@ fn parse_date_to_git_ts(date_str: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Apply cleanup mode to a commit message.
+fn cleanup_message(msg: &str, mode: &str) -> String {
+    match mode {
+        "verbatim" => {
+            // Keep message exactly as-is
+            msg.to_string()
+        }
+        "whitespace" => {
+            // Strip trailing whitespace from each line, leading and trailing blank lines
+            let lines: Vec<&str> = msg.lines().collect();
+            let mut result: Vec<String> = lines
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        "strip" | "default" => {
+            // Strip comments (lines starting with #) and trailing whitespace
+            let lines: Vec<&str> = msg.lines().collect();
+            let mut result: Vec<String> = lines
+                .iter()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        "scissors" => {
+            // Strip everything from the scissors line onward.
+            // A scissors line starts at column 0 (not indented).
+            let mut result_lines: Vec<&str> = Vec::new();
+            for line in msg.lines() {
+                if line.starts_with("# ------------------------ >8 ------------------------") {
+                    break;
+                }
+                result_lines.push(line);
+            }
+            // Strip trailing whitespace from lines, leading and trailing blank lines
+            let mut result: Vec<String> = result_lines
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        _ => {
+            // Unknown mode: treat as default
+            cleanup_message(msg, "strip")
+        }
+    }
 }
 
 fn ensure_trailing_newline(s: &str) -> String {

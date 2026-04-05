@@ -210,7 +210,9 @@ pub fn run(args: Args) -> Result<()> {
 
         // --deleted / --modified: show entries that are deleted or modified.
         // When both are set, show if EITHER condition is true.
-        if (args.deleted || args.modified) && !show_cached {
+        // Unmerged entries (stage != 0) always pass through — they represent
+        // conflict states that git treats as "modified".
+        if (args.deleted || args.modified) && !show_cached && entry.stage() == 0 {
             if entry.skip_worktree() {
                 continue;
             }
@@ -230,7 +232,19 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         let tag = if args.show_tag {
-            Some(status_tag(entry))
+            // For -d/-m flags, override the tag based on worktree state
+            if (args.deleted || args.modified) && entry.stage() == 0 {
+                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                if !full.exists() {
+                    Some('R') // removed from worktree
+                } else if is_modified(entry, &full) {
+                    Some('C') // changed in worktree
+                } else {
+                    Some(status_tag(entry))
+                }
+            } else {
+                Some(status_tag(entry))
+            }
         } else {
             None
         };
@@ -301,8 +315,11 @@ pub fn run(args: Args) -> Result<()> {
             )?;
             out.write_all(&[term])?;
         } else if show_cached || args.deleted || args.modified {
-            // Deduplicate: skip if same path as last printed
-            if args.deduplicate {
+            // Deduplicate: skip if same path as last printed.
+            // With -t flag, don't deduplicate unmerged entries (stage != 0)
+            // since they have distinct stage info that should be visible.
+            // Without -t, deduplicate all entries including unmerged.
+            if args.deduplicate && !(args.show_tag && entry.stage() != 0) {
                 if let Some(ref last) = last_dedup_path {
                     if last == &entry.path {
                         continue;

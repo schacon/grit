@@ -1048,6 +1048,19 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
         return prefix.unwrap_or("").to_owned();
     }
 
+    // Magic pathspecs starting with ":" should not have prefix prepended.
+    // ":/<pattern>" means match from the root of the working tree.
+    // ":(magic)pattern" means use magic signature parsing.
+    if pathspec.starts_with(':') {
+        // ":/<pattern>" — top-level pathspec from repo root
+        if let Some(rest) = pathspec.strip_prefix(":/") {
+            // Treat the pattern as a path from the repo root
+            return rest.to_owned();
+        }
+        // ":(icase)" or other magic signatures — return as-is, don't prefix
+        return pathspec.to_owned();
+    }
+
     match prefix {
         Some(p) if !p.is_empty() => {
             let combined = PathBuf::from(p).join(pathspec);

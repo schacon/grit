@@ -97,6 +97,12 @@ pub enum StashCommand {
         /// Quiet mode.
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
+        /// Read pathspec from file (use "-" for stdin).
+        #[arg(long = "pathspec-from-file", value_name = "FILE")]
+        pathspec_from_file: Option<String>,
+        /// NUL-terminated pathspec input (requires --pathspec-from-file).
+        #[arg(long = "pathspec-file-nul")]
+        pathspec_file_nul: bool,
         /// Pathspec arguments.
         #[arg(trailing_var_arg = true)]
         pathspec: Vec<String>,
@@ -228,10 +234,43 @@ pub fn run(args: Args) -> Result<()> {
             staged,
             patch,
             quiet,
+            pathspec_from_file,
+            pathspec_file_nul,
             pathspec,
         }) => {
+            let mut pathspec = pathspec;
+            // Handle --pathspec-from-file / --pathspec-file-nul
+            if pathspec_file_nul && pathspec_from_file.is_none() {
+                eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+                std::process::exit(128);
+            }
+            if pathspec_from_file.is_some() && patch {
+                eprintln!("fatal: options '--pathspec-from-file' and '--patch' cannot be used together");
+                std::process::exit(128);
+            }
             if patch {
                 bail!("interactive patch mode (stash push -p) is not yet implemented");
+            }
+            if let Some(ref psf) = pathspec_from_file {
+                if !pathspec.is_empty() {
+                    eprintln!("fatal: '--pathspec-from-file' and pathspec arguments cannot be used together");
+                    std::process::exit(128);
+                }
+                let content = if psf == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(psf)
+                        .with_context(|| format!("could not read pathspec from '{psf}'"))?
+                };
+                let paths: Vec<String> = if pathspec_file_nul {
+                    content.split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
+                } else {
+                    content.lines().filter(|s| !s.is_empty()).map(String::from).collect()
+                };
+                pathspec = paths;
             }
             let msg = message.or(args.message);
             let ki = keep_index || args.keep_index;
