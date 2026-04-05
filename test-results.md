@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3423 bash scripts/run-upstream-tests.sh t3423 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after adding scoped interactive rebase `pick`/`reword` support, preserving `reword` across conflict resolution, and wiring `checkout --theirs <path>` for unmerged index entries.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3423 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit bash scripts/run-upstream-tests.sh t3702-add-edit 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after implementing `git add -e` patch editing and editor-failure handling.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo test -p grit-lib --lib`: 97/97 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012 2>&1 | tail -40`: the requested tail-only run only surfaced stale `/tmp/grit-upstream-workdir` cleanup noise; the full rerun of `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012` confirmed 3/3 passing against `target/release/grit`, so the `PLAN.md` entry was stale and no Rust code changes were required for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3012 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.

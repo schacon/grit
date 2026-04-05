@@ -287,6 +287,27 @@ pub fn run(args: Args) -> Result<()> {
         );
     }
 
+    // `checkout --ours/--theirs/--merge <path>` is always path mode, even
+    // without an explicit `--` separator.
+    if let Some(ref target_path) = target {
+        if args.merge || args.ours || args.theirs {
+            return checkout_paths(
+                &repo,
+                None,
+                std::slice::from_ref(target_path),
+                false,
+                args.merge,
+                if args.ours {
+                    Some(2)
+                } else if args.theirs {
+                    Some(3)
+                } else {
+                    None
+                },
+            );
+        }
+    }
+
     // Case: checkout -f (no args) — force reset working tree to HEAD
     if args.force && target.is_none() && paths.is_empty() {
         return force_reset_to_head(&repo);

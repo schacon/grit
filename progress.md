@@ -6,13 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    65 |
+| Completed   |    66 |
 | In progress |     0 |
-| Remaining   |   701 |
+| Remaining   |   700 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t3423-rebase-reword` — 3/3 tests pass (`rebase -i` now supports the scoped `pick`/`reword` todo flow, reworded commits reopen the commit-message editor after conflicts on `rebase --continue`, and `checkout --theirs <path>` now restores stage 3 content during conflict resolution)
+- `t3702-add-edit` — 3/3 tests pass (`git add -e` now opens the index-vs-worktree patch in the configured shell-style editor, applies the edited result back to the index with hunk recounting, preserves the working tree, and fails cleanly when the editor exits non-zero)
 - `t3012-ls-files-dedup` — 3/3 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled `git ls-files --deduplicate` correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t3008-ls-files-lazy-init-name-hash` — 1/1 tests pass (the source tree already had the required `test-tool online-cpus` and `test-tool lazy-init-name-hash` support; rerunning upstream verification against the current `target/release/grit` confirmed this was a stale `PLAN.md` entry rather than a remaining Rust code gap)
 - `t2023-checkout-m` — 5/5 tests pass (`checkout` now persists resolve-undo data in the index, `checkout -m -- <path>` recreates conflicted files from saved stages, and `checkout -m <branch>` restores conflict stages when a branch switch hits local content conflicts)
@@ -58,4 +60,4 @@
 
 ## What Remains
 
-701 test files still pending. See `PLAN.md` for the full prioritized list.
+700 test files still pending. See `PLAN.md` for the full prioritized list.
