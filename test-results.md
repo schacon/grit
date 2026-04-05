@@ -56,6 +56,9 @@
 - `cargo fmt && cargo build --release -p grit-rs`: success (after implementing `git repo structure` table/progress compatibility fixes).
 - `./scripts/run-tests.sh t1901-repo-structure.sh`: 4/4 passing.
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1901-repo-structure.sh`: 4/4 passing (with 2 SHA1-gated cases skipped by harness prereq).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding `test-tool ref-store` support for worktree ref-store API tests).
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing.
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1407-worktree-ref-store.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
 - `cargo fmt && cargo build --release -p grit-rs`: success (after implementing checkout `-m` branch/path conflict restoration behavior and stage ordering fixes).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2023-checkout-m.sh`: 5/5 passing.

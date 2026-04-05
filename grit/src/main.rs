@@ -609,6 +609,64 @@ fn run_test_tool_hexdump(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn test_tool_ref_store_usage() -> &'static str {
+    "usage: test-tool ref-store worktree:<id> <resolve-ref <ref> <flags>|create-symref <name> <target> <logmsg>>"
+}
+
+fn resolve_test_tool_worktree_git_dir(spec: &str) -> Result<PathBuf> {
+    let Some(worktree_id) = spec.strip_prefix("worktree:") else {
+        bail!("{}", test_tool_ref_store_usage());
+    };
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    if worktree_id == "main" {
+        return Ok(repo.git_dir);
+    }
+    let worktree_git_dir = repo.git_dir.join("worktrees").join(worktree_id);
+    if !worktree_git_dir.exists() {
+        bail!("test-tool ref-store: unknown worktree '{worktree_id}'");
+    }
+    Ok(worktree_git_dir)
+}
+
+fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
+    if rest.len() < 3 {
+        bail!("{}", test_tool_ref_store_usage());
+    }
+    let git_dir = resolve_test_tool_worktree_git_dir(&rest[1])?;
+    match rest[2].as_str() {
+        "resolve-ref" => {
+            if rest.len() != 5 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let refname = &rest[3];
+            if refname == "HEAD" {
+                let resolved = grit_lib::refs::read_symbolic_ref(&git_dir, "HEAD")?
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                let oid = grit_lib::refs::resolve_ref(&git_dir, &resolved)?;
+                println!("{oid} {resolved} 0x1");
+            } else {
+                let oid = grit_lib::refs::resolve_ref(&git_dir, refname)?;
+                println!("{oid} {refname} 0x0");
+            }
+            Ok(())
+        }
+        "create-symref" => {
+            if rest.len() != 6 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let name = &rest[3];
+            let target = &rest[4];
+            let path = git_dir.join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, format!("ref: {target}\n"))?;
+            Ok(())
+        }
+        other => bail!("test-tool ref-store: unknown subcommand '{other}'"),
+    }
+}
+
 enum TestPktLinePacket {
     Eof,
     Flush,
@@ -2539,6 +2597,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mktemp" => run_test_tool_mktemp(rest),
                 "regex" => run_test_tool_regex(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
+                "ref-store" => run_test_tool_ref_store(rest),
                 "pkt-line" => run_test_tool_pkt_line(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }

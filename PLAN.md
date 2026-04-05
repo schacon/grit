@@ -85,7 +85,7 @@ commit → check it off → move on.
 - [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
 - [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
 - [x] `t1600-index` ████████████████████ 7/7 (0 left) — index file specific tests
-- [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api
+- [x] `t1407-worktree-ref-store` ████████████████████ 4/4 (0 left) — test worktree ref store api
 - [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again
 - [ ] `t1512-rev-parse-disambiguation` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — object name disambiguation
 

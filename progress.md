@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    66 |
+| Completed   |    67 |
 | In progress |     0 |
-| Remaining   |   701 |
+| Remaining   |   700 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1407-worktree-ref-store` — 4/4 tests pass (implemented `test-tool ref-store` worktree backend for `resolve-ref` and `create-symref` operations used by upstream API coverage)
 - `t1901-repo-structure` — 4/4 tests pass (implemented `git repo structure` output/progress compatibility for empty repositories and progress-meter behavior used by upstream tests)
 - `t2018-checkout-branch` — 25/25 tests pass (fixed checkout compatibility for `@{-1}` branch names, clone `--no-checkout` population behavior, sparse-checkout branch creation, and canonical branch/path argument errors)
 - `t2202-add-addremove` — 3/3 tests pass (added global `--literal-pathspecs` handling so `git add --all` setup and no-op semantics match upstream tests)
@@ -60,4 +61,4 @@
 
 ## What Remains
 
-701 test files still pending. See `plan.md` for the full prioritized list.
+700 test files still pending. See `plan.md` for the full prioritized list.
