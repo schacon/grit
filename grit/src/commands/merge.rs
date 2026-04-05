@@ -898,38 +898,23 @@ fn do_octopus_merge(
         )?;
 
         if merge_result.has_conflicts {
-            // Write the conflict state to disk
-            merge_result.index.write(&repo.index_path())?;
+            // Octopus strategy cannot handle conflicts - restore original state
+            let orig_tree = commit_tree(repo, head_oid)?;
+            let orig_entries = tree_to_index_entries(repo, &orig_tree, "")?;
+            let mut orig_index = Index::new();
+            orig_index.entries = orig_entries;
+            orig_index.sort();
+            orig_index.write(&repo.index_path())?;
             if let Some(ref wt) = repo.work_tree {
-                checkout_entries(repo, wt, &merge_result.index)?;
-                for (path, content) in &merge_result.conflict_files {
-                    let abs = wt.join(path);
-                    if let Some(parent) = abs.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::write(&abs, content)?;
-                }
+                checkout_entries(repo, wt, &orig_index)?;
             }
-            // Write MERGE_HEAD with all remaining merge OIDs
-            let merge_head_content: String = merge_oids
-                .iter()
-                .map(|oid| format!("{}\n", oid.to_hex()))
-                .collect();
-            fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
-            let msg =
-                build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
-            fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
-            fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
-            for (ctype, cpath) in &merge_result.conflict_descriptions {
-                if ctype == "rename/delete" || ctype == "modify/delete" {
-                    println!("CONFLICT ({ctype}): {cpath}");
-                } else {
-                    println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
-                }
-            }
-            println!("Automatic merge failed; fix conflicts and then commit the result.");
-            eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
-            std::process::exit(1);
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+            eprintln!("Merge with strategy octopus failed.");
+            println!("Should not be doing an octopus.");
+            eprintln!("fatal: merge program failed");
+            std::process::exit(2);
         }
 
         // Advance current_tree_entries to the merged result
