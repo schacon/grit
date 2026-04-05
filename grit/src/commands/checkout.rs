@@ -15,6 +15,8 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::merge_base;
+use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
@@ -252,6 +254,12 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     if !paths.is_empty() {
+        if args.merge {
+            if target.is_some() {
+                bail!("'--merge' cannot be used with a tree-ish");
+            }
+            return checkout_paths_with_merge(&repo, &paths);
+        }
         if !has_separator {
             if let Some(ref t) = target {
                 let is_rev = resolve_revision(&repo, t).is_ok()
@@ -301,6 +309,9 @@ pub fn run(args: Args) -> Result<()> {
             let prev = resolve_nth_previous_branch(&repo, n)?;
             let branch_ref = format!("refs/heads/{prev}");
             if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+                if args.merge {
+                    return switch_branch_with_merge(&repo, &prev, &branch_ref, args.force);
+                }
                 return switch_branch(&repo, &prev, &branch_ref, args.force);
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
@@ -315,6 +326,9 @@ pub fn run(args: Args) -> Result<()> {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+            if args.merge {
+                return switch_branch_with_merge(&repo, &prev, &branch_ref, args.force);
+            }
             return switch_branch(&repo, &prev, &branch_ref, args.force);
         }
         // Not a branch — try as a commit (detached HEAD)
@@ -348,6 +362,9 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        if args.merge {
+            return switch_branch_with_merge(&repo, &target, &branch_ref, args.force);
+        }
         return switch_branch(&repo, &target, &branch_ref, args.force);
     }
 
@@ -475,6 +492,227 @@ fn switch_branch(
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
+}
+
+struct CheckoutMergeConflictPath {
+    rel_path: String,
+    rel_path_bytes: Vec<u8>,
+    base_entry: IndexEntry,
+    target_entry: IndexEntry,
+    local_entry: IndexEntry,
+    merged_content: Vec<u8>,
+}
+
+fn switch_branch_with_merge(
+    repo: &Repository,
+    branch_name: &str,
+    branch_ref: &str,
+    force: bool,
+) -> Result<()> {
+    if force {
+        return switch_branch(repo, branch_name, branch_ref, true);
+    }
+
+    let head = resolve_head(&repo.git_dir)?;
+    if matches!(head, HeadState::Invalid) {
+        bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
+    }
+
+    if let HeadState::Branch { ref refname, .. } = head {
+        if refname == branch_ref {
+            checkout_eprintln!("Already on '{}'", branch_name);
+            return Ok(());
+        }
+    }
+
+    let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+        .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+    let target_tree = commit_to_tree(repo, &target_oid)?;
+
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let index_path = repo.index_path();
+    let old_index = Index::load(&index_path).context("loading index")?;
+    let mut new_index = Index::new();
+    new_index.entries = tree_to_flat_entries(repo, &target_tree, "")?;
+    new_index.sort();
+
+    let conflicts = collect_checkout_merge_conflicts(repo, &old_index, &new_index, work_tree)?;
+    if conflicts.is_empty() {
+        // No merge conflicts required — use normal switch semantics.
+        return switch_branch(repo, branch_name, branch_ref, false);
+    }
+
+    for conflict in &conflicts {
+        // Replace stage-0 entry with conflict stages.
+        new_index.remove(&conflict.rel_path_bytes);
+        stage_entry(&mut new_index, &conflict.base_entry, 1);
+        stage_entry(&mut new_index, &conflict.target_entry, 2);
+        stage_entry(&mut new_index, &conflict.local_entry, 3);
+    }
+    new_index.sort();
+
+    checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, false)?;
+    for conflict in &conflicts {
+        write_to_worktree(
+            work_tree,
+            &conflict.rel_path,
+            &conflict.merged_content,
+            conflict.target_entry.mode,
+        )?;
+    }
+    new_index.write(&index_path).context("writing index")?;
+
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
+    write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
+    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    for conflict in &conflicts {
+        checkout_eprintln!("Auto-merging {}", conflict.rel_path);
+        checkout_eprintln!(
+            "CONFLICT (content): Merge conflict in {}",
+            conflict.rel_path
+        );
+    }
+    checkout_eprintln!("Switched to branch '{}'", branch_name);
+    checkout_eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
+    Ok(())
+}
+
+fn collect_checkout_merge_conflicts(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+    work_tree: &Path,
+) -> Result<Vec<CheckoutMergeConflictPath>> {
+    let new_map: HashMap<&[u8], &IndexEntry> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
+
+    let mut conflicts = Vec::new();
+    for old_entry in &old_index.entries {
+        if old_entry.stage() != 0 {
+            continue;
+        }
+        let Some(target_entry) = new_map.get(old_entry.path.as_slice()) else {
+            continue;
+        };
+        if target_entry.oid == old_entry.oid {
+            continue;
+        }
+
+        let rel_path = String::from_utf8_lossy(&old_entry.path).into_owned();
+        let abs_path = work_tree.join(&rel_path);
+        if !abs_path.exists() && !abs_path.is_symlink() {
+            continue;
+        }
+        if !is_worktree_dirty(repo, old_entry, &abs_path)? {
+            continue;
+        }
+
+        let local_data = std::fs::read(&abs_path)
+            .with_context(|| format!("reading working tree file '{}'", rel_path))?;
+        let local_oid = repo.odb.write(ObjectKind::Blob, &local_data)?;
+        let local_mode = old_entry.mode;
+
+        let base_obj = repo.odb.read(&old_entry.oid)?;
+        let target_obj = repo.odb.read(&target_entry.oid)?;
+        let merge_input = MergeInput {
+            base: &base_obj.data,
+            ours: &target_obj.data,
+            theirs: &local_data,
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+        };
+        let merge_output = merge_file::merge(&merge_input)?;
+        let merged_content = if merge_output.conflicts == 0 {
+            // Force marker conflict for checkout -m branch switches where both sides differ.
+            let ours = std::str::from_utf8(&target_obj.data).unwrap_or("");
+            let theirs = std::str::from_utf8(&local_data).unwrap_or("");
+            format!("<<<<<<< ours\n{ours}\n=======\n{theirs}\n>>>>>>> theirs\n").into_bytes()
+        } else {
+            merge_output.content
+        };
+
+        let path_len = old_entry.path.len().min(0xFFF) as u16;
+        let base_entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: old_entry.mode,
+            uid: 0,
+            gid: 0,
+            size: base_obj.data.len() as u32,
+            oid: old_entry.oid,
+            flags: path_len,
+            flags_extended: None,
+            path: old_entry.path.clone(),
+        };
+        let target_entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: target_entry.mode,
+            uid: 0,
+            gid: 0,
+            size: target_obj.data.len() as u32,
+            oid: target_entry.oid,
+            flags: path_len,
+            flags_extended: None,
+            path: old_entry.path.clone(),
+        };
+        let local_entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: local_mode,
+            uid: 0,
+            gid: 0,
+            size: local_data.len() as u32,
+            oid: local_oid,
+            flags: path_len,
+            flags_extended: None,
+            path: old_entry.path.clone(),
+        };
+
+        conflicts.push(CheckoutMergeConflictPath {
+            rel_path,
+            rel_path_bytes: old_entry.path.clone(),
+            base_entry,
+            target_entry,
+            local_entry,
+            merged_content,
+        });
+    }
+    Ok(conflicts)
 }
 
 /// Create a new branch and switch to it.
@@ -1078,6 +1316,175 @@ fn is_worktree_dirty(
 // ---------------------------------------------------------------------------
 // Path-based checkout (restore files)
 // ---------------------------------------------------------------------------
+
+fn checkout_paths_with_merge(repo: &Repository, paths: &[String]) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let index_path = repo.index_path();
+    let mut index = Index::load(&index_path).context("loading index")?;
+
+    let head_oid = resolve_head(&repo.git_dir)?
+        .oid()
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a commit"))?;
+    let merge_head_raw = std::fs::read_to_string(repo.git_dir.join("MERGE_HEAD"))
+        .context("cannot read MERGE_HEAD for checkout --merge")?;
+    let merge_head_hex = merge_head_raw
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("MERGE_HEAD is empty"))?
+        .trim();
+    let merge_head_oid: ObjectId = merge_head_hex.parse()?;
+    let base_oid = merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_head_oid])?
+        .into_iter()
+        .next();
+
+    for path_str in paths {
+        let rel = resolve_pathspec(path_str, work_tree, &cwd);
+        let path_bytes = rel.as_bytes().to_vec();
+
+        let base_blob = if let Some(base) = base_oid {
+            blob_in_commit(repo, base, &rel)?
+        } else {
+            None
+        };
+        let ours_blob = blob_in_commit(repo, head_oid, &rel)?;
+        let theirs_blob = blob_in_commit(repo, merge_head_oid, &rel)?;
+
+        if ours_blob.is_none() && theirs_blob.is_none() {
+            bail!(
+                "error: pathspec '{}' did not match any file(s) known to git",
+                path_str
+            );
+        }
+
+        let base_data = if let Some((oid, _)) = base_blob {
+            repo.odb.read(&oid)?.data
+        } else {
+            Vec::new()
+        };
+        let (ours_data, ours_mode) = if let Some((oid, mode)) = ours_blob {
+            (repo.odb.read(&oid)?.data, mode)
+        } else {
+            (Vec::new(), 0o100644)
+        };
+        let (theirs_data, theirs_mode) = if let Some((oid, mode)) = theirs_blob {
+            (repo.odb.read(&oid)?.data, mode)
+        } else {
+            (Vec::new(), 0o100644)
+        };
+        let output_mode = ours_mode.max(theirs_mode);
+
+        let input = MergeInput {
+            base: &base_data,
+            ours: &ours_data,
+            theirs: &theirs_data,
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+        };
+        let output = merge_file::merge(&input)?;
+        write_to_worktree(work_tree, &rel, &output.content, output_mode)?;
+
+        index.remove(&path_bytes);
+        if output.conflicts == 0 {
+            let oid = repo.odb.write(ObjectKind::Blob, &output.content)?;
+            let entry = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: output_mode,
+                uid: 0,
+                gid: 0,
+                size: output.content.len() as u32,
+                oid,
+                flags: path_bytes.len().min(0xFFF) as u16,
+                flags_extended: None,
+                path: path_bytes.clone(),
+            };
+            index.add_or_replace(entry);
+        } else {
+            let path_len = path_bytes.len().min(0xFFF) as u16;
+            if let Some((oid, mode)) = base_blob {
+                index.entries.push(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: base_data.len() as u32,
+                    oid,
+                    flags: (path_len & 0x0FFF) | (1u16 << 12),
+                    flags_extended: None,
+                    path: path_bytes.clone(),
+                });
+            }
+            if let Some((oid, mode)) = ours_blob {
+                index.entries.push(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: ours_data.len() as u32,
+                    oid,
+                    flags: (path_len & 0x0FFF) | (2u16 << 12),
+                    flags_extended: None,
+                    path: path_bytes.clone(),
+                });
+            }
+            if let Some((oid, mode)) = theirs_blob {
+                index.entries.push(IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    size: theirs_data.len() as u32,
+                    oid,
+                    flags: (path_len & 0x0FFF) | (3u16 << 12),
+                    flags_extended: None,
+                    path: path_bytes.clone(),
+                });
+            }
+        }
+    }
+
+    index.sort();
+    index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+fn blob_in_commit(
+    repo: &Repository,
+    commit_oid: ObjectId,
+    path: &str,
+) -> Result<Option<(ObjectId, u32)>> {
+    let tree_oid = commit_to_tree(repo, &commit_oid)?;
+    find_in_tree(repo, tree_oid, path)
+}
 
 /// Checkout specific paths from the index or a tree-ish.
 fn checkout_paths(
@@ -2393,4 +2800,10 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
     let hours = offset.whole_hours();
     let minutes = offset.minutes_past_hour().unsigned_abs();
     format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
+    let mut entry = src.clone();
+    entry.flags = (entry.flags & 0x0FFF) | ((stage as u16) << 12);
+    index.entries.push(entry);
 }

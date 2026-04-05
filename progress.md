@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    61 |
+| Completed   |    62 |
 | In progress |     0 |
-| Remaining   |   706 |
+| Remaining   |   705 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2023-checkout-m` — 5/5 tests pass (implemented checkout `-m` conflict restoration for both path mode and branch-switch mode, including correct stage-2/stage-3 ordering)
 - `t2104-update-index-skip-worktree` — 7/7 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2010-checkout-ambiguous` — 10/10 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t1600-index` — 7/7 tests pass (implemented index v4 write/read support with path compression + `index.skipHash`/`feature.manyFiles` trailing-hash behavior, and added missing `test_trailing_hash` helper command in `tests/`)
@@ -55,4 +56,4 @@
 
 ## What Remains
 
-706 test files still pending. See `plan.md` for the full prioritized list.
+705 test files still pending. See `plan.md` for the full prioritized list.

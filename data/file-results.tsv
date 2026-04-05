@@ -189,7 +189,7 @@ t2019-checkout-ambiguous-ref	yes	9	7	2	ok	7	9	0
 t2020-checkout-detach	yes	26	16	10	ok	16	26	0
 t2021-checkout-overwrite	yes	9	6	3	ok	6	9	0
 t2022-checkout-paths	yes	5	4	1	ok	4	5	0
-t2023-checkout-m	yes	5	2	3	ok	2	5	0
+t2023-checkout-m	yes	5	5	0	ok	5	5	0
 t2024-checkout-dwim	yes	23	10	13	ok	10	23	0
 t2025-checkout-no-overlay	yes	6	1	5	ok	1	6	0
 t2026-checkout-pathspec-file	yes	11	1	10	ok	1	11	0

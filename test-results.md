@@ -43,3 +43,8 @@
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1600-index.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t1600-index.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing checkout `-m` branch/path conflict restoration behavior and stage ordering fixes).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2023-checkout-m.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t2023-checkout-m.sh`: 5/5 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after checkout changes; reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.

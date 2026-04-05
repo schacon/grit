@@ -179,7 +179,7 @@ commit → check it off → move on.
 - [x] `t2012-checkout-last` ████████████████████ 22/22 (0 left) — checkout can switch to last branch and merge base
 - [x] `t2010-checkout-ambiguous` ████████████████████ 10/10 (0 left) — checkout and pathspecs/refspecs ambiguities
 - [x] `t2104-update-index-skip-worktree` ████████████████████ 7/7 (0 left) — skip-worktree bit test
-- [ ] `t2023-checkout-m` ████████░░░░░░░░░░░░ 2/5 (3 left) — checkout -m -- <conflicted path>
+- [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
 
 - [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
 - [ ] `t2202-add-addremove` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git add --all
