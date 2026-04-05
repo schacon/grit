@@ -91,6 +91,10 @@ pub struct Args {
     #[arg(long = "refresh")]
     pub refresh: bool,
 
+    /// Interactive patch mode.
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
     /// Remaining positional arguments: `[<commit>] [--] [<path>…]`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub rest: Vec<String>,
@@ -129,6 +133,11 @@ pub fn run(args: Args) -> Result<()> {
     let mode = parse_mode(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Handle -p (patch mode) by delegating to `git checkout-index`-like interactive unstaging
+    if args.patch {
+        return reset_patch(&repo, &args.rest);
+    }
 
     // Split positional args into (commit_spec, paths).
     let (commit_spec, paths) = split_commit_and_paths(&repo, &args.rest);
@@ -185,7 +194,10 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
 
     let first = &rest[0];
     // Attempt to resolve first arg as a commit-ish.
-    let first_is_commit = resolve_revision(repo, first).is_ok();
+    // Must actually resolve to a commit (not just any object like a blob).
+    let first_is_commit = resolve_revision(repo, first)
+        .and_then(|oid| peel_to_commit(repo, oid))
+        .is_ok();
 
     if first_is_commit {
         // First arg is the commit; remaining args are paths (may be empty).
@@ -244,6 +256,83 @@ fn write_reset_reflog(
     }
 }
 
+/// Interactive patch-mode reset: present each staged hunk and ask whether
+/// to unstage it. This is the `git reset -p` flow.
+fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
+    use std::io::{self, BufRead, Write};
+
+    let head = resolve_head(&repo.git_dir)?;
+    let index_path = repo.index_path();
+    let mut index = Index::load(&index_path).context("loading index")?;
+
+    // Get HEAD tree entries (empty if unborn)
+    let tree_entries = if let Some(oid) = head.oid() {
+        let tree_oid = commit_to_tree(repo, oid)?;
+        tree_to_flat_entries(repo, &tree_oid, "")?
+    } else {
+        Vec::new()
+    };
+    let tree_map: HashMap<Vec<u8>, IndexEntry> = tree_entries
+        .into_iter()
+        .map(|e| (e.path.clone(), e))
+        .collect();
+
+    // Find staged entries that differ from HEAD
+    let mut staged_paths: Vec<Vec<u8>> = Vec::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let in_tree = tree_map.get(&entry.path);
+        let differs = match in_tree {
+            Some(te) => te.oid != entry.oid || te.mode != entry.mode,
+            None => true, // new file
+        };
+        if differs {
+            staged_paths.push(entry.path.clone());
+        }
+    }
+    // Also find paths deleted from index (in tree but not in index)
+    for path in tree_map.keys() {
+        if !index.entries.iter().any(|e| e.path == *path && e.stage() == 0) {
+            if !staged_paths.contains(path) {
+                staged_paths.push(path.clone());
+            }
+        }
+    }
+
+    if staged_paths.is_empty() {
+        return Ok(());
+    }
+
+    let stdin = io::stdin();
+    let mut reader = stdin.lock();
+
+    for path in &staged_paths {
+        let path_str = String::from_utf8_lossy(path);
+        let action = if tree_map.contains_key(path) {
+            "Unstage"
+        } else {
+            "Unstage addition of"
+        };
+        print!("{}  {}? ([y]es/[n]o) ", action, path_str);
+        io::stdout().flush()?;
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let answer = line.trim().to_lowercase();
+        if answer == "y" || answer == "yes" {
+            // Reset this path to tree version
+            index.remove(path);
+            if let Some(te) = tree_map.get(path) {
+                index.add_or_replace(te.clone());
+            }
+        }
+    }
+
+    index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
@@ -254,9 +343,22 @@ fn reset_paths(
     _quiet: bool,
     intent_to_add: bool,
 ) -> Result<()> {
-    let commit_oid = resolve_to_commit(repo, commit_spec)?;
-    let tree_oid = commit_to_tree(repo, &commit_oid)?;
-    let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+    // On an unborn branch, the tree is empty (no commit exists yet).
+    let tree_entries = match resolve_to_commit(repo, commit_spec) {
+        Ok(commit_oid) => {
+            let tree_oid = commit_to_tree(repo, &commit_oid)?;
+            tree_to_flat_entries(repo, &tree_oid, "")?
+        }
+        Err(_) => {
+            // Check if HEAD is unborn
+            let head = resolve_head(&repo.git_dir)?;
+            if head.oid().is_none() && commit_spec == "HEAD" {
+                Vec::new() // empty tree
+            } else {
+                bail!("unknown revision: '{}': object not found: {}", commit_spec, commit_spec);
+            }
+        }
+    };
 
     // Build a lookup table: path bytes → IndexEntry.
     let mut tree_map: HashMap<Vec<u8>, IndexEntry> = HashMap::new();
@@ -336,19 +438,38 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
 
     let target_oid = match resolve_to_commit(repo, commit_spec) {
         Ok(oid) => oid,
-        Err(_) if (mode == ResetMode::Hard || mode == ResetMode::Merge) && head.oid().is_none() => {
-            // Unborn branch: reset --hard just clears the index and working tree
-            let index_path = repo.index_path();
-            let old_index = match Index::load(&index_path) {
-                Ok(idx) => idx,
-                Err(_) => Index::new(),
-            };
-            let new_index = Index::new();
-            if let Some(_wt) = &repo.work_tree {
-                checkout_index_to_worktree(repo, &old_index, &mut new_index.clone())?;
+        Err(_) if head.oid().is_none() => {
+            // Unborn branch handling
+            match mode {
+                ResetMode::Soft => {
+                    // --soft on unborn: no-op (nothing to move)
+                    return Ok(());
+                }
+                ResetMode::Mixed => {
+                    // Mixed on unborn: clear the index
+                    let index_path = repo.index_path();
+                    let new_index = Index::new();
+                    new_index.write(&index_path).context("writing index")?;
+                    return Ok(());
+                }
+                ResetMode::Hard | ResetMode::Merge => {
+                    // Unborn branch: reset --hard just clears the index and working tree
+                    let index_path = repo.index_path();
+                    let old_index = match Index::load(&index_path) {
+                        Ok(idx) => idx,
+                        Err(_) => Index::new(),
+                    };
+                    let new_index = Index::new();
+                    if let Some(_wt) = &repo.work_tree {
+                        checkout_index_to_worktree(repo, &old_index, &mut new_index.clone())?;
+                    }
+                    new_index.write(&index_path).context("writing index")?;
+                    return Ok(());
+                }
+                ResetMode::Keep => {
+                    return Ok(());
+                }
             }
-            new_index.write(&index_path).context("writing index")?;
-            return Ok(());
         }
         Err(e) => return Err(e),
     };

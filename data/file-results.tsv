@@ -430,7 +430,7 @@ t4106-apply-stdin	yes	3	3	0	ok	3	3	0
 t4107-apply-ignore-whitespace	yes	11	7	4	ok	7	11	0
 t4108-apply-threeway	yes	18	4	14	ok	4	18	0
 t4109-apply-multifrag	yes	3	3	0	ok	3	3	0
-t4110-apply-scan	yes	1	0	1	ok	0	1	0
+t4110-apply-scan	yes	1	1	0	ok	1	1	0
 t4111-apply-subdir	yes	10	8	2	ok	8	10	0
 t4112-apply-renames	yes	2	0	2	ok	0	2	0
 t4113-apply-ending	yes	3	3	0	ok	3	3	0

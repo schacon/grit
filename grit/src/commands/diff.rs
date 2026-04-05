@@ -418,7 +418,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // trailing_var_arg may capture flags like --name-only into args.
     // Move them back into the flags struct so they take effect.
     let mut extra_revs = Vec::new();
-    for r in &revs {
+    let mut rev_idx = 0;
+    while rev_idx < revs.len() {
+        let r = &revs[rev_idx];
         if r.starts_with("--") || r.starts_with("-") && r.len() > 1 {
             // Re-apply trailing flags
             match r.as_str() {
@@ -521,11 +523,21 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.find_copies_harder = true;
                     args.find_copies = Some("50".to_owned());
                 }
-                s if s.starts_with("-S") && s.len() > 2 => {
-                    args.pickaxe_string = Some(s[2..].to_owned());
+                s if s.starts_with("-S") => {
+                    if s.len() > 2 {
+                        args.pickaxe_string = Some(s[2..].to_owned());
+                    } else if rev_idx + 1 < revs.len() {
+                        rev_idx += 1;
+                        args.pickaxe_string = Some(revs[rev_idx].clone());
+                    }
                 }
-                s if s.starts_with("-G") && s.len() > 2 => {
-                    args.pickaxe_grep = Some(s[2..].to_owned());
+                s if s.starts_with("-G") => {
+                    if s.len() > 2 {
+                        args.pickaxe_grep = Some(s[2..].to_owned());
+                    } else if rev_idx + 1 < revs.len() {
+                        rev_idx += 1;
+                        args.pickaxe_grep = Some(revs[rev_idx].clone());
+                    }
                 }
                 "--pickaxe-regex" => {
                     args.pickaxe_regex = true;
@@ -535,12 +547,14 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 _ => {
                     extra_revs.push(r.clone());
+                    rev_idx += 1;
                     continue;
                 }
             }
         } else {
             extra_revs.push(r.clone());
         }
+        rev_idx += 1;
     }
     revs = extra_revs;
 
@@ -2209,16 +2223,16 @@ fn write_stat(
         return Ok(());
     }
 
-    // Build display paths (compact rename format for renames).
+    // Build display paths (compact rename format for renames, with C-style quoting).
     let display_paths: Vec<String> = entries
         .iter()
         .map(|e| match e.status {
             DiffStatus::Renamed | DiffStatus::Copied => {
                 let old = e.old_path.as_deref().unwrap_or("");
                 let new = e.new_path.as_deref().unwrap_or("");
-                grit_lib::diff::format_rename_path(old, new)
+                format_rename_display(old, new)
             }
-            _ => e.path().to_owned(),
+            _ => quote_c_style(e.path()),
         })
         .collect();
     let max_path_len = display_paths
@@ -2328,6 +2342,41 @@ fn write_stat(
     Ok(())
 }
 
+/// C-style quote a path if it contains special characters (tab, newline, etc.).
+/// Returns the quoted string (with surrounding double-quotes) if quoting is needed,
+/// otherwise returns the original string.
+fn quote_c_style(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 2);
+    let mut needs_quotes = false;
+    for ch in name.chars() {
+        match ch {
+            '"' => { out.push_str("\\\""); needs_quotes = true; }
+            '\\' => { out.push_str("\\\\"); needs_quotes = true; }
+            '\t' => { out.push_str("\\t"); needs_quotes = true; }
+            '\n' => { out.push_str("\\n"); needs_quotes = true; }
+            '\r' => { out.push_str("\\r"); needs_quotes = true; }
+            c if c.is_control() => {
+                out.push_str(&format!("\\{:03o}", u32::from(c)));
+                needs_quotes = true;
+            }
+            c => out.push(c),
+        }
+    }
+    if needs_quotes {
+        format!("\"{out}\"")
+    } else {
+        out
+    }
+}
+
+/// Format a rename/copy path for numstat: `{old_quoted}\t{new_quoted}` or
+/// `{old_quoted} => {new_quoted}` depending on format.
+fn format_rename_display(old: &str, new: &str) -> String {
+    let old_q = quote_c_style(old);
+    let new_q = quote_c_style(new);
+    format!("{old_q} => {new_q}")
+}
+
 /// Write machine-readable numstat output: `{insertions}\t{deletions}\t{path}`.
 fn write_numstat(
     out: &mut impl Write,
@@ -2339,7 +2388,17 @@ fn write_numstat(
         let old_content = read_content(odb, &entry.old_oid, None, entry.path());
         let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
         let (ins, del) = count_changes(&old_content, &new_content);
-        writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
+        match entry.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or("");
+                let display = format_rename_display(old, new);
+                writeln!(out, "{ins}\t{del}\t{display}")?;
+            }
+            _ => {
+                writeln!(out, "{ins}\t{del}\t{}", entry.path())?;
+            }
+        }
     }
     Ok(())
 }
@@ -2347,28 +2406,27 @@ fn write_numstat(
 /// Write only the names of changed files.
 /// Write `--summary` output for rename/copy/mode-change entries.
 fn write_diff_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
-    use grit_lib::diff::format_rename_path;
     for entry in entries {
         match entry.status {
             DiffStatus::Renamed => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
-                let compact = format_rename_path(old, new);
+                let display = format_rename_display(old, new);
                 let sim = entry.score.unwrap_or(100);
-                writeln!(out, " rename {compact} ({sim}%)")?;
+                writeln!(out, " rename {display} ({sim}%)")?;
             }
             DiffStatus::Copied => {
                 let old = entry.old_path.as_deref().unwrap_or("");
                 let new = entry.new_path.as_deref().unwrap_or("");
-                let compact = format_rename_path(old, new);
+                let display = format_rename_display(old, new);
                 let sim = entry.score.unwrap_or(100);
-                writeln!(out, " copy {compact} ({sim}%)")?;
+                writeln!(out, " copy {display} ({sim}%)")?;
             }
             DiffStatus::Added => {
-                writeln!(out, " create mode {} {}", entry.new_mode, entry.path())?;
+                writeln!(out, " create mode {} {}", entry.new_mode, quote_c_style(entry.path()))?;
             }
             DiffStatus::Deleted => {
-                writeln!(out, " delete mode {} {}", entry.old_mode, entry.path())?;
+                writeln!(out, " delete mode {} {}", entry.old_mode, quote_c_style(entry.path()))?;
             }
             _ => {}
         }
