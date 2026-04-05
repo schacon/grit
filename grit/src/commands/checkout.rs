@@ -12,6 +12,7 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::protocol;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
@@ -339,6 +340,19 @@ pub fn run(args: Args) -> Result<()> {
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
         return switch_branch(&repo, &target, &branch_ref, args.force);
+    }
+
+    // DWIM: checkout/switch remote-tracking branches when the name is
+    // unambiguous (or guided by checkout.defaultRemote), and emit Git-like
+    // hints when ambiguous.
+    if !args.detach && !args.no_guess {
+        if let Some(dwim) = resolve_dwim_remote_branch(&repo, &target)? {
+            let result = create_and_switch_branch(&repo, &target, Some(&dwim.start_point), args.force);
+            if result.is_ok() {
+                maybe_setup_tracking(&repo, &target, Some(&dwim.start_point), Some("direct"))?;
+            }
+            return result;
+        }
     }
 
     // Try as a commit (detached HEAD)
@@ -1843,6 +1857,104 @@ fn maybe_setup_tracking(
     }
 
     Ok(())
+}
+
+struct DwimRemoteBranch {
+    start_point: String,
+}
+
+fn resolve_dwim_remote_branch(repo: &Repository, name: &str) -> Result<Option<DwimRemoteBranch>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+
+    let mut candidates = list_remote_tracking_candidates(repo, name)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    candidates.sort();
+    candidates.dedup();
+
+    if let Some(default_remote) = protocol::check_config_param("checkout.defaultRemote")
+        .or_else(|| config.get("checkout.defaultRemote"))
+    {
+        let wanted_prefix = format!("refs/remotes/{default_remote}/");
+        let mut filtered: Vec<String> = candidates
+            .iter()
+            .filter(|r| r.starts_with(&wanted_prefix))
+            .cloned()
+            .collect();
+        filtered.sort();
+        filtered.dedup();
+        if filtered.len() == 1 {
+            return Ok(Some(DwimRemoteBranch {
+                start_point: short_remote_ref(&filtered[0]).to_string(),
+            }));
+        }
+    }
+
+    if candidates.len() == 1 {
+        return Ok(Some(DwimRemoteBranch {
+            start_point: short_remote_ref(&candidates[0]).to_string(),
+        }));
+    }
+
+    let show_advice = protocol::check_config_param("advice.checkoutAmbiguousRemoteBranchName")
+        .and_then(|v| parse_bool_like(&v))
+        .or_else(|| config.get_bool("advice.checkoutAmbiguousRemoteBranchName").and_then(|r| r.ok()))
+        .unwrap_or(true);
+    if show_advice {
+        checkout_eprintln!(
+            "hint: If you meant to check out a remote tracking branch on, e.g. 'origin',"
+        );
+        checkout_eprintln!(
+            "hint: you can do so by fully qualifying the name with the --track option:"
+        );
+        checkout_eprintln!("hint: ");
+        checkout_eprintln!("hint:     git checkout --track origin/<name>");
+        checkout_eprintln!("hint: ");
+        checkout_eprintln!(
+            "hint: If you'd like to always have checkouts of an ambiguous <name> prefer"
+        );
+        checkout_eprintln!("hint: one remote, e.g. the 'origin' remote, consider setting");
+        checkout_eprintln!("hint: checkout.defaultRemote=origin in your config.");
+    }
+
+    bail!(
+        "'{}' matched multiple ({}) remote tracking branches",
+        name,
+        candidates.len()
+    );
+}
+
+fn list_remote_tracking_candidates(repo: &Repository, name: &str) -> Result<Vec<String>> {
+    let all_refs = refs::list_refs(&repo.git_dir, "refs/remotes/")?;
+    let mut out = Vec::new();
+    for (refname, _oid) in all_refs {
+        if !refname.starts_with("refs/remotes/") {
+            continue;
+        }
+        let short = short_remote_ref(&refname);
+        if let Some((remote, branch)) = short.split_once('/') {
+            if remote == "HEAD" {
+                continue;
+            }
+            if branch == name {
+                out.push(refname);
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn short_remote_ref(full_ref: &str) -> &str {
+    full_ref.strip_prefix("refs/remotes/").unwrap_or(full_ref)
+}
+
+fn parse_bool_like(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
