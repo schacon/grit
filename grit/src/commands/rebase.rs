@@ -104,17 +104,38 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // If a branch argument is given, checkout that branch first.
+    // Fix up the reflog so @{-N} isn't polluted by the internal checkout.
     if let Some(ref branch) = args.branch {
         let self_exe = std::env::current_exe().context("cannot determine own executable")?;
         let status = std::process::Command::new(&self_exe)
             .arg("checkout")
+            .arg("--quiet")
             .arg(branch)
             .status()
             .context("failed to checkout branch")?;
         if !status.success() {
             bail!("checkout {} failed", branch);
         }
-        // Clear the branch arg so do_rebase doesn't re-process it.
+        // Replace the checkout reflog entry with a rebase message
+        let repo = Repository::discover(None).context("not a git repository")?;
+        let reflog_path = repo.git_dir.join("logs/HEAD");
+        if let Ok(content) = std::fs::read_to_string(&reflog_path) {
+            let lines: Vec<&str> = content.lines().collect();
+            if let Some(last) = lines.last() {
+                if last.contains("checkout: moving from ") {
+                    if let Some(tab_idx) = last.rfind('\t') {
+                        let upstream_name = args.upstream.as_deref().unwrap_or("HEAD");
+                        let new_line = format!(
+                            "{}\trebase (start): checkout {}",
+                            &last[..tab_idx], upstream_name
+                        );
+                        let mut new_lines: Vec<String> = lines[..lines.len()-1].iter().map(|s| s.to_string()).collect();
+                        new_lines.push(new_line);
+                        let _ = std::fs::write(&reflog_path, new_lines.join("\n") + "\n");
+                    }
+                }
+            }
+        }
         args.branch = None;
     }
 

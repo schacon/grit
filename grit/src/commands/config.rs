@@ -539,7 +539,7 @@ fn cmd_get(
             grit_lib::config::get_urlmatch_entries(config.entries(), section, variable, url);
         if entries.is_empty() {
             if let Some(ref default) = get_args.default {
-                let val = format_typed_value(args, default)?;
+                let val = format_default_value(args, default)?;
                 print!("{val}{terminator}");
                 return Ok(());
             }
@@ -586,7 +586,7 @@ fn cmd_get(
         }
         if values.is_empty() {
             if let Some(ref default) = get_args.default {
-                let val = format_typed_value(args, default)?;
+                let val = format_default_value(args, default)?;
                 print!("{val}{terminator}");
                 return Ok(());
             }
@@ -609,7 +609,7 @@ fn cmd_get(
             return Ok(());
         }
         if let Some(ref default) = get_args.default {
-            let d = format_typed_value(args, default)?;
+            let d = format_default_value(args, default)?;
             print!("{d}{terminator}");
             return Ok(());
         }
@@ -624,7 +624,7 @@ fn cmd_get(
         }
         None => {
             if let Some(ref default) = get_args.default {
-                let val = format_typed_value(args, default)?;
+                let val = format_default_value(args, default)?;
                 print!("{val}{terminator}");
                 return Ok(());
             }
@@ -909,8 +909,10 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
         );
     }
     let content = String::from_utf8(obj.data).context("blob is not valid UTF-8")?;
-    let blob_path = std::path::Path::new("<blob>");
-    let config_file = ConfigFile::parse(blob_path, &content, ConfigScope::Command)?;
+    let blob_path_str = blob_spec.to_string();
+    let blob_path = std::path::Path::new(&blob_path_str);
+    let config_file = ConfigFile::parse(blob_path, &content, ConfigScope::Command)
+        .with_context(|| format!("bad config in blob '{}'", blob_spec))?;
     let mut config = ConfigSet::new();
     config.merge(&config_file);
 
@@ -1254,6 +1256,11 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 }
 
 /// Format a value according to the type flags.
+/// Format a default value, wrapping errors with a descriptive message.
+fn format_default_value(args: &Args, val: &str) -> Result<String> {
+    format_typed_value(args, val).context("failed to format default config value")
+}
+
 fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
 
@@ -1302,5 +1309,41 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
         }
     }
 
+    if type_name == Some("expiry-date") {
+        match parse_expiry_date(val) {
+            Ok(ts) => return Ok(ts.to_string()),
+            Err(e) => bail!("{}", e),
+        }
+    }
+
     Ok(val.to_owned())
+}
+
+/// Parse an expiry date string into a Unix timestamp.
+///
+/// Accepts:
+/// - "now" → current time
+/// - "never" → 0
+/// - Pure numeric string → epoch timestamp
+/// - Git-format dates: "<epoch> <tz>" (e.g. "1112912053 -0700")
+/// - ISO 8601 dates: "2024-01-15T10:30:00+02:00" or "2024-01-15 10:30:00"
+fn parse_expiry_date(val: &str) -> Result<i64> {
+    let trimmed = val.trim();
+    if trimmed.eq_ignore_ascii_case("now") {
+        return Ok(time::OffsetDateTime::now_utc().unix_timestamp());
+    }
+    if trimmed.eq_ignore_ascii_case("never") {
+        return Ok(0);
+    }
+    // Pure epoch timestamp
+    if let Ok(ts) = trimmed.parse::<i64>() {
+        return Ok(ts);
+    }
+    // Git internal format: "<epoch> <tz>"
+    if let Some((epoch_str, _tz)) = trimmed.split_once(' ') {
+        if let Ok(ts) = epoch_str.parse::<i64>() {
+            return Ok(ts);
+        }
+    }
+    bail!("invalid expiry date: '{}'", val)
 }

@@ -104,6 +104,9 @@ impl IndexEntry {
             *fe |= 0x4000;
         } else {
             *fe &= !0x4000;
+            if *fe == 0 {
+                self.flags_extended = None;
+            }
         }
     }
 
@@ -122,6 +125,9 @@ impl IndexEntry {
             *fe |= 0x2000;
         } else {
             *fe &= !0x2000;
+            if *fe == 0 {
+                self.flags_extended = None;
+            }
         }
     }
 }
@@ -272,8 +278,8 @@ impl Index {
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         // Always write v2 or v3 (we don't implement v4 serialization)
-        let write_version = if self.version == 4 {
-            // Check if any entry needs v3 (extended flags)
+        let write_version = if self.version >= 3 {
+            // If version >= 3, check if entries need extended flags; downgrade to v2 if not.
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {

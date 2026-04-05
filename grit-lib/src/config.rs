@@ -505,7 +505,10 @@ impl ConfigFile {
     ///
     /// Returns [`Error::ConfigError`] on malformed input.
     pub fn parse(path: &Path, content: &str, scope: ConfigScope) -> Result<Self> {
-        let raw_lines: Vec<String> = content.lines().map(String::from).collect();
+        let raw_lines: Vec<String> = content.lines()
+            .map(|l| l.strip_suffix('\r').unwrap_or(l))
+            .map(String::from)
+            .collect();
         let mut entries = Vec::new();
         let mut parser = Parser::new();
 

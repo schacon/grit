@@ -78,6 +78,10 @@ pub struct Args {
     #[arg(long = "unresolve")]
     pub unresolve: bool,
 
+    /// Show the index format version.
+    #[arg(long = "show-index-version")]
+    pub show_index_version: bool,
+
     /// Add `<mode>,<object>,<path>` entry directly.
     /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
@@ -114,6 +118,11 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
     let cwd = std::env::current_dir().context("resolving current directory")?;
+
+    if args.show_index_version {
+        println!("{}", index.version);
+        return Ok(());
+    }
 
     if args.index_info {
         return run_index_info(&mut index, &index_path, &repo.odb);
@@ -299,20 +308,6 @@ pub fn run(args: Args) -> Result<()> {
             }
         };
 
-        let mode = {
-            use std::os::unix::fs::MetadataExt;
-            normalize_mode(meta.mode())
-        };
-
-        // Read file content and hash it
-        let data = if meta.file_type().is_symlink() {
-            let target = std::fs::read_link(&abs_path)?;
-            target.to_string_lossy().into_owned().into_bytes()
-        } else {
-            std::fs::read(&abs_path)
-                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
-        };
-
         // Without --add, reject files not yet in the index.
         if !args.add && index.get(&rel_bytes, 0).is_none() {
             if args.ignore_missing {
@@ -320,6 +315,48 @@ pub fn run(args: Args) -> Result<()> {
             }
             bail!("'{}' is not in the index", input_path.display());
         }
+
+        // Handle gitlink (submodule directory with .git)
+        if meta.is_dir() {
+            let dot_git = abs_path.join(".git");
+            if dot_git.exists() {
+                let sub_git_dir = resolve_gitdir(&dot_git)?;
+                let head_path = sub_git_dir.join("HEAD");
+                let head_content = std::fs::read_to_string(&head_path)
+                    .with_context(|| format!("reading HEAD of submodule"))?;
+                let head_content = head_content.trim();
+                let oid: ObjectId = if let Some(refname) = head_content.strip_prefix("ref: ") {
+                    let ref_path = sub_git_dir.join(refname);
+                    let ref_content = std::fs::read_to_string(&ref_path)
+                        .with_context(|| format!("reading ref in submodule"))?;
+                    ref_content.trim().parse().with_context(|| "invalid oid")?
+                } else {
+                    head_content.parse().with_context(|| "invalid HEAD oid")?
+                };
+                let entry = IndexEntry {
+                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
+                    dev: 0, ino: 0, mode: grit_lib::index::MODE_GITLINK,
+                    uid: 0, gid: 0, size: 0, oid,
+                    flags: rel_bytes.len().min(0xFFF) as u16,
+                    flags_extended: None, path: rel_bytes.to_vec(),
+                };
+                index.add_or_replace(entry);
+            }
+            continue;
+        }
+
+        let mode = {
+            use std::os::unix::fs::MetadataExt;
+            normalize_mode(meta.mode())
+        };
+
+        let data = if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&abs_path)?;
+            target.to_string_lossy().into_owned().into_bytes()
+        } else {
+            std::fs::read(&abs_path)
+                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
+        };
 
         let oid = repo
             .odb
@@ -527,4 +564,19 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
+    let meta = std::fs::symlink_metadata(dot_git)?;
+    if meta.is_dir() { return Ok(dot_git.to_path_buf()); }
+    let content = std::fs::read_to_string(dot_git)?;
+    let content = content.trim();
+    let target = content.strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        Ok(target_path.to_path_buf())
+    } else {
+        Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
+    }
 }

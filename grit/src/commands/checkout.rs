@@ -50,8 +50,10 @@ pub struct Args {
     pub detach: bool,
 
     /// Set up tracking (upstream) configuration for the new branch.
-    #[arg(long = "track", short = 't', action = clap::ArgAction::SetTrue)]
-    pub track: bool,
+    /// Accepts optional value: direct (default), inherit.
+    #[arg(long = "track", short = 't', value_name = "MODE", num_args = 0..=1,
+          default_missing_value = "direct", require_equals = true)]
+    pub track: Option<String>,
 
     /// Do not set up tracking configuration.
     #[arg(long = "no-track", hide = true)]
@@ -160,9 +162,29 @@ pub fn run(args: Args) -> Result<()> {
     // leading `--` from trailing_var_arg, so we check the raw args.
     let raw_args: Vec<String> = std::env::args().collect();
     let has_separator = raw_args.iter().any(|a| a == "--");
+    // Determine if `--` is at the end of raw_args (after all positional args).
+    let separator_at_end = has_separator && raw_args.last().map(|s| s.as_str()) == Some("--");
+
+    // When `--` is present, count how many args appear before it.
+    // If there are 2+ refs before `--`, that's an error.
+    if has_separator {
+        let args_before_sep = if let Some(sep) = args.rest.iter().position(|a| a == "--") {
+            sep
+        } else if separator_at_end {
+            args.rest.len()
+        } else {
+            0
+        };
+        if args_before_sep > 1 {
+            bail!(
+                "fatal: only one reference expected, {} given.",
+                args_before_sep
+            );
+        }
+    }
 
     // Parse rest into (target, paths) handling `--` separator
-    let (target, paths) = split_target_and_paths(&args.rest, has_separator);
+    let (target, paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
 
     // Resolve @{-N} in start point if present
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
@@ -186,7 +208,7 @@ pub fn run(args: Args) -> Result<()> {
         let result =
             force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track)?;
+            maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track.as_deref())?;
         }
         return result;
     }
@@ -195,10 +217,13 @@ pub fn run(args: Args) -> Result<()> {
     if let Some(ref new_branch_name) = args.new_branch {
         // -b takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
+            if args.track.is_some() {
+                bail!("'--track' cannot be used with updating paths");
+            }
             bail!("too many arguments for -b");
         }
         // Capture the current HEAD branch before checkout (for tracking setup)
-        let pre_head_branch = if target.is_none() && args.track {
+        let pre_head_branch = if target.is_none() && args.track.is_some() {
             match resolve_head(&repo.git_dir) {
                 Ok(HeadState::Branch { short_name, .. }) => Some(short_name),
                 _ => None,
@@ -210,13 +235,27 @@ pub fn run(args: Args) -> Result<()> {
         let result =
             create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, new_branch_name, effective_target, args.track)?;
+            maybe_setup_tracking(&repo, new_branch_name, effective_target, args.track.as_deref())?;
         }
         return result;
     }
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     if !paths.is_empty() {
+        if !has_separator {
+            if let Some(ref t) = target {
+                let is_rev = resolve_revision(&repo, t).is_ok()
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let is_path = cwd.join(t).exists();
+                if is_rev && is_path {
+                    bail!(
+                        "fatal: ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
+                        t
+                    );
+                }
+            }
+        }
         return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
     }
 
@@ -326,7 +365,7 @@ pub fn run(args: Args) -> Result<()> {
 /// Clap strips the leading `--` when it is the first trailing arg, so we
 /// need this external signal to distinguish `checkout -- file` from
 /// `checkout file`.
-fn split_target_and_paths(rest: &[String], has_separator: bool) -> (Option<String>, Vec<String>) {
+fn split_target_and_paths(rest: &[String], has_separator: bool, separator_at_end: bool) -> (Option<String>, Vec<String>) {
     if rest.is_empty() {
         return (None, vec![]);
     }
@@ -339,14 +378,22 @@ fn split_target_and_paths(rest: &[String], has_separator: bool) -> (Option<Strin
         return (target, paths);
     }
 
-    // Clap stripped `--`: if we know it was present, all remaining args
-    // are paths (no target).
+    // Clap stripped `--`.
     if has_separator {
+        if rest.is_empty() {
+            return (None, vec![]);
+        }
+        if separator_at_end {
+            return (Some(rest[0].clone()), vec![]);
+        }
         return (None, rest.to_vec());
     }
 
-    // No `--`: first arg is the target, no paths
-    (Some(rest[0].clone()), vec![])
+    if rest.len() == 1 {
+        (Some(rest[0].clone()), vec![])
+    } else {
+        (Some(rest[0].clone()), rest[1..].to_vec())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1733,34 +1780,53 @@ fn maybe_setup_tracking(
     repo: &Repository,
     branch_name: &str,
     start_point: Option<&str>,
-    explicit_track: bool,
+    track_mode: Option<&str>,
 ) -> Result<()> {
     let start = match start_point {
         Some(s) => s,
-        None => return Ok(()), // no start point → nothing to track
+        None => return Ok(()),
     };
 
-    // Check if auto-setup is enabled
-    if !explicit_track {
-        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let explicit_track = track_mode.is_some();
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let effective_mode = if let Some(mode) = track_mode {
+        mode.to_string()
+    } else {
         let auto = config.get("branch.autoSetupMerge").unwrap_or_default();
         match auto.as_str() {
-            "always" => {} // proceed
+            "always" => "direct".to_string(),
+            "inherit" => "inherit".to_string(),
             "false" | "never" => return Ok(()),
             _ => {
-                // Default ("true"): only auto-track remote branches
-                // For local branches, only track if --track was explicit
-                // Since we don't have remote tracking branches yet, this
-                // means we only track local branches with explicit --track
-                return Ok(());
+                if !explicit_track {
+                    return Ok(());
+                }
+                "direct".to_string()
             }
         }
+    };
+
+    if effective_mode == "inherit" {
+        let remote = config.get(&format!("branch.{start}.remote")).unwrap_or_default();
+        let merge_ref = config.get(&format!("branch.{start}.merge")).unwrap_or_default();
+        if !remote.is_empty() && !merge_ref.is_empty() {
+            let config_path = repo.git_dir.join("config");
+            let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+            let section = format!(
+                "\n[branch \"{}\"]\
+                \n\tremote = {}\
+                \n\tmerge = {}\n",
+                branch_name, remote, merge_ref
+            );
+            config_content.push_str(&section);
+            std::fs::write(&config_path, config_content)?;
+        }
+        return Ok(());
     }
 
-    // Check if start_point is a local branch
     let start_ref = format!("refs/heads/{start}");
     if refs::resolve_ref(&repo.git_dir, &start_ref).is_ok() {
-        // Set up tracking for a local branch
         let config_path = repo.git_dir.join("config");
         let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
 

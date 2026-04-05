@@ -99,6 +99,7 @@ pub struct Args {
 }
 
 /// A single ref update to perform on the remote.
+#[allow(dead_code)]
 struct RefUpdate {
     /// Local ref (None for delete).
     local_ref: Option<String>,
@@ -110,6 +111,8 @@ struct RefUpdate {
     new_oid: Option<ObjectId>,
     /// Expected old OID for force-with-lease (None = use actual old).
     expected_oid: Option<ObjectId>,
+    /// Per-refspec force flag (from '+' prefix).
+    refspec_force: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -259,6 +262,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(*local_oid),
                 expected_oid: None,
+                refspec_force: false,
             });
         }
         // Delete remote refs that don't exist locally
@@ -275,6 +279,7 @@ fn push_to_url(
                     old_oid,
                     new_oid: None,
                     expected_oid: None,
+                    refspec_force: false,
                 });
             }
         }
@@ -292,6 +297,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(*local_oid),
                 expected_oid: None,
+                refspec_force: false,
             });
         }
     } else if args.delete {
@@ -317,12 +323,19 @@ fn push_to_url(
                 old_oid,
                 new_oid: None,
                 expected_oid,
+                refspec_force: false,
             });
         }
     } else if !args.refspecs.is_empty() {
         // Explicit refspecs
         for spec in &args.refspecs {
-            let (src, dst) = parse_refspec(spec);
+            // Strip leading '+' force prefix
+            let (per_refspec_force, spec_clean) = if let Some(s) = spec.strip_prefix('+') {
+                (true, s)
+            } else {
+                (false, spec.as_str())
+            };
+            let (src, dst) = parse_refspec(spec_clean);
 
             // Empty src (e.g. ":branch") means delete
             if src.is_empty() {
@@ -343,21 +356,16 @@ fn push_to_url(
                     old_oid,
                     new_oid: None,
                     expected_oid,
+                    refspec_force: per_refspec_force,
                 });
                 continue;
             }
 
             // Handle glob refspecs (e.g. refs/remotes/*:refs/remotes/*)
             if src.contains('*') {
-                let (force_flag, src_clean) = if spec.starts_with('+') {
-                    (true, &src[..]) // '+' already stripped by parse_refspec? no.
-                } else {
-                    (false, src.as_str())
-                };
-                let _ = force_flag;
                 let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
                 for (refname, local_oid) in &local_refs {
-                    if let Some(matched) = match_glob(src_clean, refname) {
+                    if let Some(matched) = match_glob(&src, refname) {
                         // Check if this is a symbolic ref
                         if let Ok(Some(_target)) = refs::read_symbolic_ref(&repo.git_dir, refname) {
                             // Skip symbolic refs from normal updates; handle below
@@ -374,6 +382,7 @@ fn push_to_url(
                             old_oid,
                             new_oid: Some(*local_oid),
                             expected_oid: None,
+                            refspec_force: per_refspec_force,
                         });
                     }
                 }
@@ -395,10 +404,9 @@ fn push_to_url(
             } else {
                 src.clone()
             };
-            let local_ref = normalize_ref(&resolved_src);
             let remote_ref = normalize_ref(&dst);
 
-            let local_oid = refs::resolve_ref(&repo.git_dir, &local_ref)
+            let (local_ref, local_oid) = resolve_push_src(&repo.git_dir, &resolved_src)
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
@@ -415,6 +423,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(local_oid),
                 expected_oid,
+                refspec_force: per_refspec_force,
             });
         }
     } else if !push_refspecs_from_config.is_empty() {
@@ -446,6 +455,7 @@ fn push_to_url(
                             old_oid,
                             new_oid: Some(*local_oid),
                             expected_oid: None,
+                            refspec_force: force_flag,
                         });
                     }
                 }
@@ -462,6 +472,7 @@ fn push_to_url(
                         old_oid,
                         new_oid: Some(local_oid),
                         expected_oid: None,
+                        refspec_force: force_flag,
                     });
                 }
             }
@@ -492,6 +503,7 @@ fn push_to_url(
             old_oid,
             new_oid: Some(local_oid),
             expected_oid,
+            refspec_force: false,
         });
     }
 
@@ -509,6 +521,7 @@ fn push_to_url(
                 old_oid,
                 new_oid: Some(*local_oid),
                 expected_oid: None,
+                refspec_force: false,
             });
         }
     }
@@ -539,7 +552,7 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force && args.force_with_lease.is_none() && !is_ancestor(repo, *old, *new)? {
+            if !args.force && !update.refspec_force && args.force_with_lease.is_none() && !is_ancestor(repo, *old, *new)? {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\
@@ -1115,6 +1128,25 @@ fn normalize_ref(name: &str) -> String {
     } else {
         format!("refs/heads/{name}")
     }
+}
+
+fn resolve_push_src(git_dir: &Path, src: &str) -> Result<(String, ObjectId)> {
+    if src.starts_with("refs/") {
+        let oid = refs::resolve_ref(git_dir, src)?;
+        return Ok((src.to_owned(), oid));
+    }
+    if src.len() == 40 {
+        if let Ok(oid) = src.parse::<ObjectId>() {
+            return Ok((src.to_owned(), oid));
+        }
+    }
+    for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        let full = format!("{prefix}{src}");
+        if let Ok(oid) = refs::resolve_ref(git_dir, &full) {
+            return Ok((full, oid));
+        }
+    }
+    bail!("ref not found: {}", src)
 }
 
 /// Write branch tracking config.

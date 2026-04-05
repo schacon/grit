@@ -147,6 +147,14 @@ pub struct Args {
     /// Editing mode.
     #[arg(long = "edit-description")]
     pub edit_description: bool,
+
+    /// Use color in output.
+    #[arg(long = "color", value_name = "WHEN", num_args = 0..=1, default_missing_value = "always")]
+    pub color: Option<String>,
+
+    /// Disable color output.
+    #[arg(long = "no-color")]
+    pub no_color: bool,
 }
 
 /// Run the `branch` command.
@@ -364,31 +372,43 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         return Ok(());
     }
 
+    let use_color = if args.no_color { false } else if let Some(ref when) = args.color { when != "never" } else { false };
+    let (color_current, color_local, color_remote, color_reset) = if use_color {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        let get_color = |key: &str, default: &str| -> String {
+            let val = cfg.as_ref().and_then(|c| c.get(key));
+            let cs = val.as_deref().unwrap_or(default);
+            grit_lib::config::parse_color(cs).unwrap_or_else(|_| String::new())
+        };
+        (get_color("color.branch.current", "green"), get_color("color.branch.local", "normal"),
+         get_color("color.branch.remote", "red"), "[m".to_string())
+    } else { (String::new(), String::new(), String::new(), String::new()) };
+    let max_name_len = if args.verbose > 0 { branches.iter().map(|b| b.name.len()).max().unwrap_or(0) } else { 0 };
+
     for b in &branches {
         let is_current = !b.is_remote && b.name == current_branch;
         let prefix = if is_current { "* " } else { "  " };
+        let color = if use_color { if is_current { &color_current } else if b.is_remote { &color_remote } else { &color_local } } else { &color_local };
+        let reset = if use_color { &color_reset } else { &color_local };
 
         if args.verbose > 0 {
             let short_oid = &b.oid.to_hex()[..7];
             let subject = commit_subject(&repo.odb, &b.oid).unwrap_or_default();
+            let padded_name = format!("{:<width$}", b.name, width = max_name_len);
 
             if args.verbose >= 2 && !b.is_remote {
                 // -vv: show tracking info
                 let tracking = get_tracking_info(repo, &b.name)?;
                 if let Some(ref track_str) = tracking {
-                    writeln!(
-                        out,
-                        "{prefix}{} {short_oid} [{track_str}] {subject}",
-                        b.name
-                    )?;
+                    writeln!(out, "{prefix}{color}{padded_name}{reset} {short_oid} [{track_str}] {subject}")?;
                 } else {
-                    writeln!(out, "{prefix}{} {short_oid} {subject}", b.name)?;
+                    writeln!(out, "{prefix}{color}{padded_name}{reset} {short_oid} {subject}")?;
                 }
             } else {
-                writeln!(out, "{prefix}{} {short_oid} {subject}", b.name)?;
+                writeln!(out, "{prefix}{color}{padded_name}{reset} {short_oid} {subject}")?;
             }
         } else {
-            writeln!(out, "{prefix}{}", b.name)?;
+            writeln!(out, "{prefix}{color}{}{reset}", b.name)?;
         }
     }
 
