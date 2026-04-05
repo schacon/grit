@@ -4,4 +4,6 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303`: 11/11 passing after rebuilding `target/release/grit`.
+- `./scripts/run-tests.sh t6414-merge-rename-nocruft.sh`: 3/3 passing (now fully passing).
+- `./scripts/run-tests.sh t6408-merge-up-to-date.sh`: 7/7 passing (fully passing).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 6/7 passing (still partial; no regression from this change).

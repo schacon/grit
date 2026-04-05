@@ -1968,25 +1968,15 @@ fn merge_trees(
             }
         }
 
-        // Handle "add-source": if theirs has a different file at base_path
-        // (the original was renamed away, and a new file was added), include it.
-        // And since ours' version at base_path was used for the merge at the
-        // rename target, ours doesn't also get a file at base_path.
-        if let Some(te_at_base) = theirs.get(base_path) {
-            if be.is_none_or(|b| te_at_base.oid != b.oid) {
-                // Theirs has a new/different file at the old path (add-source)
-                if let Some(oe_at_base) = ours.get(base_path) {
-                    // Ours also has something at this path — but ours' version
-                    // represents their modification of the original (used in
-                    // rename merge above). So this is an add (theirs' new file)
-                    // vs nothing from ours at this path.
-                    // But wait — if ours' file at base_path is different from the
-                    // base AND different from what we'd expect from just modifying
-                    // the original, it might be a genuine ours addition too.
-                    // For now, include theirs' add-source.
-                    let _ = oe_at_base; // ours' changes already merged into rename target
-                    index.entries.push(te_at_base.clone());
-                } else {
+        // Handle "add-source" only when theirs also renamed this source path away.
+        // If theirs did not rename away (i.e. it only modified the original path),
+        // we must not keep a tracked entry at base_path here, or we'd clobber an
+        // untracked working-tree file at that path in scenarios like t6414.
+        if theirs_renames.contains_key(base_path) {
+            if let Some(te_at_base) = theirs.get(base_path) {
+                if be.is_none_or(|b| te_at_base.oid != b.oid) {
+                    // Theirs has a new/different file at the old path (add-source)
+                    // while also renaming the original away from this path.
                     index.entries.push(te_at_base.clone());
                 }
             }
