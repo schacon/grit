@@ -403,6 +403,7 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        warn_if_ambiguous_branch_or_tag(&repo, &target);
         if args.merge {
             return switch_branch_with_merge(&repo, &target, &branch_ref, args.force);
         }
@@ -460,6 +461,17 @@ fn remote_tracking_matches(repo: &Repository, target: &str) -> Vec<String> {
     matches.sort();
     matches.dedup();
     matches
+}
+
+/// Emit a warning when a short name resolves to both a local branch and a tag.
+fn warn_if_ambiguous_branch_or_tag(repo: &Repository, target: &str) {
+    let branch_ref = format!("refs/heads/{target}");
+    let tag_ref = format!("refs/tags/{target}");
+    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok()
+        && refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok()
+    {
+        checkout_eprintln!("warning: refname '{}' is ambiguous.", target);
+    }
 }
 
 /// Print checkout guidance when a short branch name matches multiple
