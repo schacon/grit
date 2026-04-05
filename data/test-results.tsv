@@ -17377,9 +17377,9 @@ t9602-cvsimport-branches-tags::test-branch-b-split	t9602-cvsimport-branches-tags
 t9602-cvsimport-branches-tags::test-tag-t-all-initial-files	t9602-cvsimport-branches-tags	test tag T_ALL_INITIAL_FILES	cvsimport	not_ported
 t9604-cvsimport-timestamps::check-timestamps-are-utc	t9604-cvsimport-timestamps	check timestamps are UTC	cvsimport	not_ported
 t9604-cvsimport-timestamps::check-timestamps-with-author-specific-timezones	t9604-cvsimport-timestamps	check timestamps with author-specific timezones	cvsimport	not_ported
-t9700-perl-git::set-up-test-repository	t9700-perl-git	set up test repository	init	partial
-t9700-perl-git::set-up-bare-repository	t9700-perl-git	set up bare repository	init	partial
-t9700-perl-git::use-t9700-test-pl-to-test-git-pm	t9700-perl-git	use t9700/test.pl to test Git.pm	init	partial
+t9700-perl-git::set-up-test-repository	t9700-perl-git	set up test repository	init	not_ported
+t9700-perl-git::set-up-bare-repository	t9700-perl-git	set up bare repository	init	not_ported
+t9700-perl-git::use-t9700-test-pl-to-test-git-pm	t9700-perl-git	use t9700/test.pl to test Git.pm	init	not_ported
 t9800-git-p4-basic::start-p4d	t9800-git-p4-basic	start p4d	p4	not_ported
 t9800-git-p4-basic::add-p4-files	t9800-git-p4-basic	add p4 files	p4	not_ported
 t9800-git-p4-basic::basic-git-p4-clone	t9800-git-p4-basic	basic git p4 clone	p4	not_ported
