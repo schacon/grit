@@ -75,7 +75,7 @@ commit → check it off → move on.
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
-- [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
+- [x] `t1015-read-index-unmerged` ████████████████████ 6/6 (0 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
 - [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
 - [x] `t1901-repo-structure` ████████████████████ 4/4 (0 left) — test git repo structure
@@ -84,9 +84,9 @@ commit → check it off → move on.
 - [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
 - [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
 - [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
-- [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
-- [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api
-- [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again
+- [x] `t1600-index` ████████████████████ 7/7 (0 left) — index file specific tests
+- [x] `t1407-worktree-ref-store` ████████████████████ 4/4 (0 left) — test worktree ref store api
+- [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
 - [ ] `t1512-rev-parse-disambiguation` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — object name disambiguation
 
 - [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
@@ -171,10 +171,10 @@ commit → check it off → move on.
 ## 3. Index/Checkout (50 files)
 
 - [x] `t2060-switch` ████████████████████ 16/16 — switch basic functionality
-- [ ] `t2050-git-dir-relative` ███████████████░░░░░ 3/4 (1 left) — check problems with relative GIT_DIR
+- [x] `t2050-git-dir-relative` ████████████████████ 4/4 (0 left) — check problems with relative GIT_DIR
 
-- [ ] `t2015-checkout-unborn` █████████████░░░░░░░ 4/6 (2 left) — checkout from unborn branch
-- [ ] `t2105-update-index-gitfile` ██████████░░░░░░░░░░ 2/4 (2 left) — git update-index for gitlink to .git file.
+- [x] `t2015-checkout-unborn` ████████████████████ 6/6 (0 left) — checkout from unborn branch
+- [x] `t2105-update-index-gitfile` ████████████████████ 4/4 (0 left) — git update-index for gitlink to .git file.
 
 - [ ] `t2012-checkout-last` █████████████████░░░ 19/22 (3 left) — checkout can switch to last branch and merge base
 - [ ] `t2010-checkout-ambiguous` ██████████████░░░░░░ 7/10 (3 left) — checkout and pathspecs/refspecs ambiguities

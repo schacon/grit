@@ -60,21 +60,18 @@ GIT_TEST_INDEX_VERSION=4
 EOF
 
 # Fake test-tool
-cat > "$WORKDIR/t/helper/test-tool" <<'TOOL'
+cat > "$WORKDIR/t/helper/test-tool" <<TOOL
 #!/bin/sh
-case "$1" in
+case "\$1" in
   trace2)
-    GRIT_BIN=${GRIT_BIN:?}
-    exec "$GRIT_BIN" test-tool "$@"
+    exec "$GRIT_BIN" test-tool "\$@"
     ;;
   revision-walking)
-    GRIT_BIN=${GRIT_BIN:?}
-    exec "$GRIT_BIN" test-tool "$@"
+    exec "$GRIT_BIN" test-tool "\$@"
     ;;
-  chmtime) shift; touch "$@" 2>/dev/null ;;
+  chmtime) shift; touch "\$@" 2>/dev/null ;;
   *)
-    GRIT_BIN=${GRIT_BIN:?}
-    exec "$GRIT_BIN" test-tool "$@"
+    exec "$GRIT_BIN" test-tool "\$@"
     ;;
 esac
 TOOL

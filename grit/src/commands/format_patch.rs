@@ -217,6 +217,8 @@ pub fn run(args: Args) -> Result<()> {
     let revision = args.revision.as_deref().unwrap_or("-1");
     let commits = if args.root {
         collect_root_commits(&repo, revision)?
+    } else if args.last_one {
+        collect_single_requested_commit(&repo, args.revision.as_deref())?
     } else {
         collect_commits(&repo, revision)?
     };
@@ -421,6 +423,24 @@ fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, C
     // Reverse so oldest is first (patch order)
     commits.reverse();
     Ok(commits)
+}
+
+fn collect_single_requested_commit(
+    repo: &Repository,
+    revision: Option<&str>,
+) -> Result<Vec<(ObjectId, CommitData)>> {
+    let revision = revision.unwrap_or("HEAD");
+
+    if revision.contains("..") {
+        let mut commits = collect_commits(repo, revision)?;
+        return Ok(commits.pop().map(|commit| vec![commit]).unwrap_or_default());
+    }
+
+    let oid = resolve_revision(repo, revision)
+        .with_context(|| format!("unknown revision '{revision}'"))?;
+    let obj = repo.odb.read(&oid).context("reading commit")?;
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+    Ok(vec![(oid, commit)])
 }
 
 /// Collect commits in the range A..B (commits reachable from B but not from A).

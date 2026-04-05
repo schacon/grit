@@ -6,13 +6,20 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    46 |
+| Completed   |    54 |
 | In progress |     0 |
-| Remaining   |   721 |
+| Remaining   |   713 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2050-git-dir-relative` — 4/4 tests pass (upstream re-verification on `main`; the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t1015-read-index-unmerged` — 6/6 tests pass (`merge --abort` and `am --skip` now survive directory/file conflicts, and `format-patch -1 <rev>` now formats the requested single commit)
+- `t2105-update-index-gitfile` — 4/4 tests pass (upstream re-verification on `main`; `update-index` already resolves `.git` directories and gitfiles to stage a `160000` gitlink, so the stale `PLAN.md` entry was corrected)
+- `t2015-checkout-unborn` — 6/6 tests pass (upstream re-verification on rebuilt `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t1412-reflog-loop` — 3/3 tests pass (`checkout -b` now writes the new branch's creation reflog entry, so `git log -g topic` includes `topic@{4} branch: Created from HEAD`)
+- `t1600-index` — 7/7 tests pass (index writes now honor `index.skipHash`, `feature.manyFiles`, and on-disk v4 serialization; `test-tool hexdump` support was added for upstream helper usage)
+- `t1407-worktree-ref-store` — 4/4 tests pass (`test-tool ref-store` now supports worktree stores for `resolve-ref` and `create-symref`, and the upstream runner's fake `test-tool` wrapper now preserves its argv)
 - `t1601-index-bogus` — 4/4 tests pass (upstream re-verification on `main`; the `plan.md` entry was stale and no Rust code changes were required)
 - `t1503-rev-parse-verify` — 12/12 tests pass (`reflog delete --rewrite` is accepted and date-based reflog verification now resolves selectors like `1.year.ago`)
 - `t1408-packed-refs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected after rebuilding `target/release/grit`)
@@ -40,4 +47,4 @@
 
 ## What Remains
 
-721 test files still pending. See `PLAN.md` for the full prioritized list.
+713 test files still pending. See `PLAN.md` for the full prioritized list.

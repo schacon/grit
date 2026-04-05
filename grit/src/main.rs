@@ -445,6 +445,23 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_hexdump() -> Result<()> {
+    use std::io::{Read, Write};
+
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    if input.is_empty() {
+        return Ok(());
+    }
+
+    let mut stdout = std::io::stdout().lock();
+    for byte in input {
+        write!(stdout, "{byte:02x} ")?;
+    }
+    writeln!(stdout)?;
+    Ok(())
+}
+
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::NotFound => "ENOENT",
@@ -2048,6 +2065,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "hexdump" => run_test_tool_hexdump(),
+                "ref-store" => commands::test_tool_ref_store::run(&rest[1..]),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

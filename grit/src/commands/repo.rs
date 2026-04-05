@@ -729,7 +729,11 @@ fn humanize_count(value: usize) -> (Option<String>, Option<String>) {
     if value >= 1_000_000_000 {
         let x = value + 5_000_000;
         return (
-            Some(format!("{}.{:02}", x / 1_000_000_000, (x % 1_000_000_000) / 10_000_000)),
+            Some(format!(
+                "{}.{:02}",
+                x / 1_000_000_000,
+                (x % 1_000_000_000) / 10_000_000
+            )),
             Some("G".to_owned()),
         );
     }

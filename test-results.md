@@ -2,6 +2,40 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2105 bash scripts/run-upstream-tests.sh t2105`: 4/4 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2105 cargo fmt --all`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1015 bash scripts/run-upstream-tests.sh t1015`: 6/6 passing against `target/release/grit`.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which the upstream runner actually executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1015 cargo fmt --all`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2015 bash scripts/run-upstream-tests.sh t2015`: 6/6 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2015 cargo fmt --all`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 bash scripts/run-upstream-tests.sh t1412`: 3/3 passing against `target/release/grit`.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` for the upstream harness after the reflog fix.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 cargo fmt --all`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 cargo test -p grit-lib --lib`: 97/97 passing.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 bash scripts/run-upstream-tests.sh t1407`: 4/4 passing against `target/release/grit`.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` before the `t1407` upstream rerun and direct worktree ref-store checks.
+- `cargo fmt`: completed for the `t1407` changes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 cargo test -p grit-lib --lib`: 96/96 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1600 bash scripts/run-upstream-tests.sh t1600`: 7/7 passing against `target/release/grit`.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` for the upstream runner after the index and `test-tool` changes.
+- `cargo fmt`: completed for the `t1600` changes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1600 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `cargo test -p grit-lib --lib`: 97/97 passing.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1601 bash scripts/run-upstream-tests.sh t1601`: 4/4 passing against `target/release/grit`; the `plan.md` entry was stale.
 - `cargo fmt`: completed for the `t1601` verification pass.
 - `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).

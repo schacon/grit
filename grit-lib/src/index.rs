@@ -137,14 +137,14 @@ impl IndexEntry {
 /// The in-memory representation of the Git index file.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
-    /// Index format version (2 or 3).
+    /// Index format version (2, 3, or 4).
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
 }
 
 /// Default index version when `GIT_INDEX_VERSION` is unset or invalid.
-const INDEX_FORMAT_DEFAULT: u32 = 3;
+const INDEX_FORMAT_DEFAULT: u32 = 2;
 /// Minimum supported index version.
 const INDEX_FORMAT_LB: u32 = 2;
 /// Maximum supported index version (version 4 requests are accepted and
@@ -264,10 +264,11 @@ impl Index {
 
         // Verify trailing SHA-1 checksum
         let (body, checksum) = data.split_at(data.len() - 20);
+        let checksum_is_zero = checksum.iter().all(|byte| *byte == 0);
         let mut hasher = Sha1::new();
         hasher.update(body);
         let computed = hasher.finalize();
-        if computed.as_slice() != checksum {
+        if !checksum_is_zero && computed.as_slice() != checksum {
             return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
         }
 
@@ -315,9 +316,13 @@ impl Index {
         let mut body = Vec::new();
         self.serialize_into(&mut body)?;
 
-        let mut hasher = Sha1::new();
-        hasher.update(&body);
-        let checksum = hasher.finalize();
+        let checksum = if index_skip_hash_enabled(path) {
+            [0u8; 20].to_vec()
+        } else {
+            let mut hasher = Sha1::new();
+            hasher.update(&body);
+            hasher.finalize().to_vec()
+        };
 
         let tmp_path = path.with_extension("lock");
         let pid_path = pid_path_for_lock(&tmp_path);
@@ -381,7 +386,9 @@ impl Index {
         // Determine which version to write.
         // Version 4 requires path compression, which we do not implement yet.
         // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
+        let write_version = if self.version == 4 {
+            4
+        } else if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
@@ -395,8 +402,14 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
+        let mut prev_path: &[u8] = &[];
         for entry in &self.entries {
-            serialize_entry(entry, write_version, out);
+            if write_version == 4 {
+                serialize_entry_v4(entry, prev_path, out);
+                prev_path = &entry.path;
+            } else {
+                serialize_entry(entry, write_version, out);
+            }
         }
         Ok(())
     }
@@ -475,6 +488,27 @@ fn lockfile_pid_enabled(index_path: &Path) -> bool {
     ConfigSet::load(Some(git_dir), true)
         .ok()
         .and_then(|cfg| cfg.get_bool("core.lockfilepid"))
+        .and_then(|res| res.ok())
+        .unwrap_or(false)
+}
+
+fn index_skip_hash_enabled(index_path: &Path) -> bool {
+    let git_dir = match index_path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    let config = match ConfigSet::load(Some(git_dir), true) {
+        Ok(config) => config,
+        Err(_) => return false,
+    };
+
+    if let Some(value) = config.get_bool("index.skipHash").and_then(|res| res.ok()) {
+        return value;
+    }
+
+    config
+        .get_bool("feature.manyFiles")
         .and_then(|res| res.ok())
         .unwrap_or(false)
 }
@@ -728,6 +762,60 @@ fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
     }
 }
 
+fn serialize_entry_v4(entry: &IndexEntry, prev_path: &[u8], out: &mut Vec<u8>) {
+    let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
+
+    write_u32(out, entry.ctime_sec);
+    write_u32(out, entry.ctime_nsec);
+    write_u32(out, entry.mtime_sec);
+    write_u32(out, entry.mtime_nsec);
+    write_u32(out, entry.dev);
+    write_u32(out, entry.ino);
+    write_u32(out, entry.mode);
+    write_u32(out, entry.uid);
+    write_u32(out, entry.gid);
+    write_u32(out, entry.size);
+    out.extend_from_slice(entry.oid.as_bytes());
+
+    let mut flags = entry.flags;
+    if entry.flags_extended.is_some() {
+        flags |= 0x4000;
+    } else {
+        flags &= !0x4000;
+    }
+    let path_len = entry.path.len().min(0xFFF) as u16;
+    flags = (flags & 0xF000) | path_len;
+    out.extend_from_slice(&flags.to_be_bytes());
+
+    if let Some(fe) = entry.flags_extended {
+        out.extend_from_slice(&fe.to_be_bytes());
+    }
+
+    let shared_prefix_len = prev_path
+        .iter()
+        .zip(entry.path.iter())
+        .take_while(|(lhs, rhs)| lhs == rhs)
+        .count();
+    let strip_len = prev_path.len().saturating_sub(shared_prefix_len);
+    write_varint(strip_len, out);
+    out.extend_from_slice(&entry.path[shared_prefix_len..]);
+    out.push(0);
+}
+
+fn write_varint(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
 /// Build an [`IndexEntry`] by stat-ing a file on disk.
 ///
 /// # Parameters
@@ -882,10 +970,28 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+        assert_eq!(&data[4..8], &4u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
         assert_eq!(loaded.entries[0].path, b"one");
         assert_eq!(loaded.entries[1].path, b"two/one");
+    }
+
+    #[test]
+    fn loads_index_with_zeroed_trailing_hash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("foo"));
+        idx.write(&path).unwrap();
+
+        let mut data = fs::read(&path).unwrap();
+        let len = data.len();
+        data[len - 20..].fill(0);
+        fs::write(&path, data).unwrap();
+
+        let loaded = Index::load(&path).unwrap();
+        assert_eq!(loaded.entries[0].path, b"foo");
     }
 }

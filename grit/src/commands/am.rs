@@ -2790,18 +2790,15 @@ fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
-        if let Some(parent) = abs_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        ensure_checkout_parent_dirs(work_tree, &abs_path)?;
 
         let obj = repo.odb.read(&entry.oid)?;
+
+        remove_existing_path(&abs_path)?;
 
         if entry.mode == MODE_SYMLINK {
             let target =
                 String::from_utf8(obj.data).map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
-            if abs_path.exists() || abs_path.is_symlink() {
-                let _ = fs::remove_file(&abs_path);
-            }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
             fs::write(&abs_path, &obj.data)?;
@@ -2814,5 +2811,36 @@ fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index
         }
     }
 
+    Ok(())
+}
+
+fn ensure_checkout_parent_dirs(work_tree: &Path, abs_path: &Path) -> Result<()> {
+    let Some(parent) = abs_path.parent() else {
+        return Ok(());
+    };
+
+    let relative_parent = parent.strip_prefix(work_tree).unwrap_or(parent);
+    let mut current = work_tree.to_path_buf();
+    for component in relative_parent.components() {
+        current.push(component);
+        if let Ok(metadata) = fs::symlink_metadata(&current) {
+            if !metadata.is_dir() {
+                fs::remove_file(&current)?;
+            }
+        }
+    }
+
+    fs::create_dir_all(parent)?;
+    Ok(())
+}
+
+fn remove_existing_path(abs_path: &Path) -> Result<()> {
+    if let Ok(metadata) = fs::symlink_metadata(abs_path) {
+        if metadata.is_dir() {
+            fs::remove_dir_all(abs_path)?;
+        } else {
+            fs::remove_file(abs_path)?;
+        }
+    }
     Ok(())
 }

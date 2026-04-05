@@ -21,6 +21,10 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use grit_lib::state::{resolve_head, HeadState};
 
+fn zero_oid() -> ObjectId {
+    ObjectId::from_bytes(&[0u8; 20]).unwrap()
+}
+
 /// Arguments for `grit checkout`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Switch branches or restore working tree files")]
@@ -458,10 +462,7 @@ fn switch_branch(
     }
 
     // Write reflog entries before updating HEAD
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -529,6 +530,8 @@ fn create_and_switch_branch(
     };
     let msg = format!("checkout: moving from {} to {}", from_desc, name);
     write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
+    let creation_from = start.unwrap_or("HEAD");
+    write_branch_creation_reflog(repo, &branch_ref, &start_oid, creation_from);
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
@@ -571,10 +574,7 @@ fn force_create_and_switch_branch(
     }
 
     // Write reflog before updating refs
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -704,10 +704,7 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     }
 
     // Write reflog entries
-    let old_oid = head
-        .oid()
-        .copied()
-        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -2372,6 +2369,25 @@ fn write_checkout_reflog(
     if let HeadState::Branch { refname, .. } = head {
         let _ = append_reflog(&repo.git_dir, refname, old_oid, new_oid, &identity, message);
     }
+}
+
+fn write_branch_creation_reflog(
+    repo: &Repository,
+    branch_ref: &str,
+    new_oid: &ObjectId,
+    from: &str,
+) {
+    let identity = resolve_checkout_identity(repo);
+    let message = format!("branch: Created from {from}");
+    let old_oid = zero_oid();
+    let _ = append_reflog(
+        &repo.git_dir,
+        branch_ref,
+        &old_oid,
+        new_oid,
+        &identity,
+        &message,
+    );
 }
 
 /// Resolve the committer identity for reflog entries.
