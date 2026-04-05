@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Generate docs/testfiles.html — per-file test results dashboard."""
+"""Generate docs/testfiles.html from data/file-results.tsv.
+
+Same data source as index.html — both read from data/.
+Run after scripts/run-tests.sh to update results.
+"""
 
 import csv
 import os
@@ -7,10 +11,10 @@ import re
 from datetime import datetime, timezone
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(REPO, "data")
+FILE_RESULTS = os.path.join(DATA_DIR, "file-results.tsv")
+TEST_RESULTS = os.path.join(DATA_DIR, "test-results.tsv")
 TESTS_DIR = os.path.join(REPO, "tests")
-RESULTS_CSV = "/tmp/grit-testfile-results.csv"
-INFO_TSV = "/tmp/grit-testfile-info.tsv"
-DATA_TSV = os.path.join(REPO, "data", "test-results.tsv")
 OUT = os.path.join(REPO, "docs", "testfiles.html")
 
 CATEGORIES = [
@@ -26,56 +30,75 @@ CATEGORIES = [
     ("t9", "Contrib / Completion"),
 ]
 
+
 def get_category(filename):
     for prefix, name in CATEGORIES:
         if filename.startswith(prefix):
             return prefix, name
     return "t?", "Other"
 
-def load_info():
-    """Load static info: file, test_count, description."""
-    info = {}
-    if os.path.exists(INFO_TSV):
-        with open(INFO_TSV) as f:
+
+def get_description(fname):
+    """Extract test_description from a test file."""
+    fpath = os.path.join(TESTS_DIR, fname + ".sh")
+    if not os.path.exists(fpath):
+        fpath = os.path.join(TESTS_DIR, fname)
+    try:
+        with open(fpath) as f:
             for line in f:
-                parts = line.strip().split('\t', 2)
-                if len(parts) >= 2:
-                    fname = parts[0]
-                    count = int(parts[1]) if parts[1].isdigit() else 0
-                    desc = parts[2] if len(parts) > 2 else ""
-                    info[fname] = {"static_count": count, "desc": desc}
-    return info
+                m = re.search(r"test_description=['\"]([^'\"]*)", line)
+                if m:
+                    return m.group(1)[:100]
+    except Exception:
+        pass
+    return ""
+
+
+def load_file_results():
+    """Load per-file results from data/file-results.tsv."""
+    results = {}
+    if not os.path.exists(FILE_RESULTS):
+        return results
+    with open(FILE_RESULTS) as f:
+        reader = csv.DictReader(f, delimiter='\t')
+        for row in reader:
+            fname = row.get("file", "")
+            if not fname:
+                continue
+            total = int(row.get("total_tests") or row.get("total") or 0)
+            passing = int(row.get("passing") or row.get("pass") or 0)
+            failing = int(row.get("failing") or row.get("fail") or 0)
+            results[fname] = {
+                "total": total,
+                "pass": passing,
+                "fail": failing,
+                "skip": 0,
+                "status": row.get("status", "unknown"),
+                "ported": row.get("ported", "yes") == "yes",
+                "real_pass": int(row.get("real_pass", 0)),
+                "real_total": int(row.get("real_total", 0)),
+                "expect_failure": int(row.get("expect_failure", 0)),
+            }
+    return results
+
 
 def load_canonical_counts():
-    """Load per-file test counts from data/test-results.tsv (canonical 18,097 set)."""
+    """Load per-file test counts from data/test-results.tsv (upstream 18,097)."""
     counts = {}
-    if os.path.exists(DATA_TSV):
-        with open(DATA_TSV) as f:
-            f.readline()  # skip header
-            for line in f:
-                parts = line.strip().split('\t')
-                if len(parts) >= 2:
-                    fname = parts[1]  # e.g. 't0000-basic'
-                    counts[fname] = counts.get(fname, 0) + 1
+    if not os.path.exists(TEST_RESULTS):
+        return counts
+    with open(TEST_RESULTS) as f:
+        f.readline()  # skip header
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 2:
+                counts[parts[1]] = counts.get(parts[1], 0) + 1
     return counts
 
-def load_results():
-    """Load live run results: file, total, pass, fail, skip."""
-    results = {}
-    if os.path.exists(RESULTS_CSV):
-        with open(RESULTS_CSV) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                results[row["file"]] = {
-                    "total": int(row["total"]),
-                    "pass": int(row["pass"]),
-                    "fail": int(row["fail"]),
-                    "skip": int(row["skip"]),
-                }
-    return results
 
 def pct(n, d):
     return round(100 * n / d, 1) if d > 0 else 0
+
 
 def bar_color(p):
     if p >= 100: return "#3fb950"
@@ -83,6 +106,7 @@ def bar_color(p):
     if p >= 50: return "#d29922"
     if p >= 25: return "#db6d28"
     return "#f85149"
+
 
 def status_badge(p, total):
     if total == 0: return '<span style="color:#7d8590">—</span>'
@@ -92,63 +116,67 @@ def status_badge(p, total):
     if p > 0: return f'<span style="color:#db6d28">{p:.0f}%</span>'
     return '<span style="color:#f85149">0%</span>'
 
+
 def generate():
-    info = load_info()
-    results = load_results()
-    
+    results = load_file_results()
     canonical = load_canonical_counts()
     
-    # Merge: get all test files
-    all_files = sorted(set(list(info.keys()) + list(results.keys())))
+    # Get all files: from results + canonical + test dir
+    all_bases = set(results.keys()) | set(canonical.keys())
+    for f in os.listdir(TESTS_DIR):
+        if re.match(r't\d+.*\.sh$', f):
+            all_bases.add(f.replace('.sh', ''))
     
-    # Build rows
     rows = []
-    for fname in all_files:
-        if not re.match(r't\d+', fname):
+    for base in sorted(all_bases):
+        if not re.match(r't\d+', base):
             continue
-        i = info.get(fname, {})
-        r = results.get(fname, {})
-        cat_prefix, cat_name = get_category(fname)
         
-        # Use runtime results directly (ground truth)
+        cat_prefix, cat_name = get_category(base)
+        r = results.get(base, {})
+        desc = get_description(base)
+        is_canonical = base in canonical
+        canon_count = canonical.get(base, 0)
+        
         total = r.get("total", 0)
         passing = r.get("pass", 0)
         failing = r.get("fail", 0)
         skip = r.get("skip", 0)
-        desc = i.get("desc", "")
-        
-        # Track if this is a canonical upstream test
-        basename = fname.replace('.sh', '')
-        is_canonical = basename in canonical
+        status = r.get("status", "unknown")
+        timestamp = r.get("timestamp", "")
         
         p = pct(passing, total) if total > 0 else -1
         
         rows.append({
-            "file": fname,
+            "file": base,
             "cat_prefix": cat_prefix,
             "cat_name": cat_name,
             "desc": desc,
-            "static_count": i.get("static_count", total),
             "is_canonical": is_canonical,
+            "canon_count": canon_count,
             "total": total,
             "pass": passing,
             "fail": failing,
             "skip": skip,
+            "status": status,
+            "timestamp": timestamp,
             "pct": p,
         })
 
-    # Summary stats from runtime results
-    total_tests = sum(r["total"] for r in rows)
-    total_pass = sum(r["pass"] for r in rows)
-    total_fail = sum(r["fail"] for r in rows)
-    total_files = len([r for r in rows if r["total"] > 0])
-    pass_files = len([r for r in rows if r["total"] > 0 and r["fail"] == 0])
-    has_results = total_tests > 0
+    # Summary stats — from file-results.tsv (same source as index.html)
+    files_with_results = [r for r in rows if r["total"] > 0]
+    total_files = len(files_with_results)
+    pass_files = len([r for r in files_with_results if r["fail"] == 0])
+    total_pass = sum(r["pass"] for r in files_with_results)
+    total_tests = sum(r["total"] for r in files_with_results)
     
-    # Canonical upstream stats for comparison
-    canon_files = len(canonical)
-    canon_total = sum(canonical.values())  # 18,097
-    
+    # Upstream-only stats
+    canon_rows = [r for r in files_with_results if r["is_canonical"]]
+    canon_total_files = len(canon_rows)
+    canon_pass_files = len([r for r in canon_rows if r["fail"] == 0])
+    canon_pass_tests = sum(r["pass"] for r in canon_rows)
+    canon_total_tests = sum(r["total"] for r in canon_rows)
+
     # Category stats
     cat_stats = {}
     for r in rows:
@@ -227,6 +255,8 @@ tr:hover td {{ background: #161b22; }}
 .bar-fg {{ height: 100%; border-radius: 3px; transition: width 0.3s; }}
 .right {{ text-align: right; }}
 .desc {{ color: #7d8590; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+.canonical {{ }}
+.grit-only {{ opacity: 0.5; }}
 </style>
 </head>
 <body>
@@ -239,16 +269,15 @@ tr:hover td {{ background: #161b22; }}
 </p>
 
 <div class="summary-cards">
-  <div class="card"><div class="num">{total_files:,}</div><div class="label">Test Files Run</div></div>
+  <div class="card"><div class="num">{total_files:,}</div><div class="label">Test Files</div></div>
   <div class="card"><div class="num" style="color:#3fb950">{pass_files:,}</div><div class="label">Fully Passing</div></div>
-  <div class="card"><div class="num">{total_pass:,}</div><div class="label">Tests Passing</div></div>
-  <div class="card"><div class="num">{total_tests:,}</div><div class="label">Total Tests Run</div></div>
-  <div class="card"><div class="num" style="color:{'#3fb950' if total_tests else '#7d8590'}">{pct(total_pass, total_tests):.1f}%</div><div class="label">Pass Rate</div></div>
+  <div class="card"><div class="num">{canon_pass_tests:,}</div><div class="label">Tests Passing</div></div>
+  <div class="card"><div class="num">{sum(canonical.values()):,}</div><div class="label">Upstream Tests</div></div>
+  <div class="card"><div class="num" style="color:{'#3fb950' if total_tests else '#7d8590'}">{pct(canon_pass_tests, sum(canonical.values())):.1f}%</div><div class="label">Pass Rate</div></div>
 </div>
-<p style="color:#7d8590;font-size:0.82rem;margin-bottom:1.5rem;">Counts are from actually running each test file. The <a href="index.html" style="color:#58a6ff">dashboard</a> uses static counts ({canon_total:,} upstream test cases across {canon_files} files).</p>
 """
 
-    # Category summary
+    # Category buttons
     html += '<div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem;">\n'
     for cp in sorted(cat_stats.keys()):
         cs = cat_stats[cp]
@@ -266,6 +295,11 @@ tr:hover td {{ background: #161b22; }}
     <option value="partial">Partial</option>
     <option value="fail">Failing (0%)</option>
     <option value="norun">No results</option>
+  </select>
+  <select id="sourceFilter" onchange="applyFilters()">
+    <option value="">All sources</option>
+    <option value="upstream">Upstream only</option>
+    <option value="grit">Grit-specific only</option>
   </select>
   <span class="count" id="rowCount"></span>
 </div>
@@ -291,12 +325,13 @@ tr:hover td {{ background: #161b22; }}
         color = bar_color(p) if p >= 0 else "#21262d"
         width = max(p, 0)
         badge = status_badge(p, r["total"]) if r["total"] > 0 else '<span style="color:#7d8590">—</span>'
-        total_display = r["total"] if r["total"] > 0 else f'<span style="color:#484f58">{r["static_count"]}</span>'
+        row_class = "canonical" if r["is_canonical"] else "grit-only"
+        source = "upstream" if r["is_canonical"] else "grit"
 
-        html += f'''<tr data-cat="{r['cat_prefix']}" data-pct="{p}" data-total="{r['total']}">
+        html += f'''<tr class="{row_class}" data-cat="{r['cat_prefix']}" data-pct="{p}" data-total="{r['total']}" data-source="{source}">
   <td class="mono">{r['file']}</td>
   <td class="desc" title="{r['desc']}">{r['desc']}</td>
-  <td class="right mono">{total_display}</td>
+  <td class="right mono">{r['total'] if r['total'] > 0 else ''}</td>
   <td class="right mono" style="color:#3fb950">{r['pass'] if r['total'] > 0 else ''}</td>
   <td class="right mono" style="color:#f85149">{r['fail'] if r['fail'] > 0 else ''}</td>
   <td class="right mono" style="color:#7d8590">{r['skip'] if r['skip'] > 0 else ''}</td>
@@ -342,6 +377,7 @@ function filterCat(cat) {
 function applyFilters() {
   const search = document.getElementById('search').value.toLowerCase();
   const status = document.getElementById('statusFilter').value;
+  const source = document.getElementById('sourceFilter').value;
   const rows = document.querySelectorAll('#mainTable tbody tr');
   let visible = 0;
   
@@ -349,6 +385,7 @@ function applyFilters() {
     const cat = row.dataset.cat;
     const pct = parseFloat(row.dataset.pct);
     const total = parseInt(row.dataset.total);
+    const rowSource = row.dataset.source;
     const text = (row.cells[0].textContent + ' ' + row.cells[1].textContent).toLowerCase();
     
     let show = true;
@@ -358,6 +395,7 @@ function applyFilters() {
     if (status === 'partial' && (pct <= 0 || pct >= 100 || total === 0)) show = false;
     if (status === 'fail' && (pct !== 0 || total === 0)) show = false;
     if (status === 'norun' && total > 0) show = false;
+    if (source && rowSource !== source) show = false;
     
     row.style.display = show ? '' : 'none';
     if (show) visible++;
@@ -375,7 +413,11 @@ applyFilters();
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, 'w') as f:
         f.write(html)
-    print(f"Wrote {OUT} ({len(rows)} files, {total_pass}/{total_tests} tests passing)")
+    
+    print(f"Wrote {OUT}")
+    print(f"  {total_pass:,}/{total_tests:,} tests passing ({pct(total_pass, total_tests):.1f}%)")
+    print(f"  {pass_files} / {total_files} files fully passing")
+
 
 if __name__ == "__main__":
     generate()
