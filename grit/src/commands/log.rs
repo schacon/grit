@@ -836,7 +836,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         "HEAD".to_string()
     } else {
         let r = &args.revisions[0];
-        if r == "HEAD" || r.starts_with("refs/") {
+        if let Some(expanded) = grit_lib::rev_parse::expand_at_minus_to_branch_name(repo, r)? {
+            format!("refs/heads/{expanded}")
+        } else if r == "HEAD" || r.starts_with("refs/") {
             r.clone()
         } else {
             let candidate = format!("refs/heads/{r}");

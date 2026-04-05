@@ -841,10 +841,16 @@ fn create_branch(
 
 /// Delete a branch.
 fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let name = args
+    let raw_name = args
         .name
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("branch name required"))?;
+    let name_owned = match grit_lib::rev_parse::expand_at_minus_to_branch_name(repo, raw_name) {
+        Ok(Some(expanded)) => expanded,
+        Ok(None) => raw_name.to_owned(),
+        Err(_) => raw_name.to_owned(),
+    };
+    let name = name_owned.as_str();
 
     let current = head.branch_name().unwrap_or("");
     if name == current {

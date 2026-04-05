@@ -126,28 +126,10 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     }
 
     // Handle @{-N} syntax: return symbolic ref of Nth previously checked out branch
-    if spec.starts_with("@{-") && spec.ends_with('}') {
-        let inner = &spec[3..spec.len() - 1];
-        if let Ok(n) = inner.parse::<usize>() {
-            if n >= 1 {
-                let entries = read_reflog(&repo.git_dir, "HEAD").ok()?;
-                let mut count = 0usize;
-                for entry in entries.iter().rev() {
-                    let msg = &entry.message;
-                    if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
-                        count += 1;
-                        if count == n {
-                            if let Some(to_pos) = rest.find(" to ") {
-                                let from_branch = &rest[..to_pos];
-                                let ref_name = format!("refs/heads/{from_branch}");
-                                if refs::resolve_ref(&repo.git_dir, &ref_name).is_ok() {
-                                    return Some(ref_name);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    if let Ok(Some(branch)) = expand_at_minus_to_branch_name(repo, spec) {
+        let ref_name = format!("refs/heads/{branch}");
+        if refs::resolve_ref(&repo.git_dir, &ref_name).is_ok() {
+            return Some(ref_name);
         }
         return None;
     }
@@ -173,6 +155,32 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Expand an `@{-N}` token to the corresponding previous branch name.
+///
+/// Returns:
+/// - `Ok(Some(branch_name))` when `spec` is an `@{-N}` token and resolves
+///   to a branch name.
+/// - `Ok(None)` when `spec` is not an `@{-N}` token.
+/// - `Err(...)` when `spec` matches `@{-N}` syntax but cannot be resolved.
+pub fn expand_at_minus_to_branch_name(repo: &Repository, spec: &str) -> Result<Option<String>> {
+    if !spec.starts_with("@{-") || !spec.ends_with('}') {
+        return Ok(None);
+    }
+    let inner = &spec[3..spec.len() - 1];
+    let n: usize = inner
+        .parse()
+        .map_err(|_| Error::InvalidRef(format!("invalid N in @{{-N}} for '{spec}'")))?;
+    if n < 1 {
+        return Ok(None);
+    }
+    resolve_at_minus_to_branch(repo, n).map(Some)
+}
+
+/// Resolve `@{-N}` to the commit OID it points to.
+pub fn resolve_at_minus_to_oid(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    try_resolve_at_minus(repo, spec)
 }
 
 /// Abbreviate a full ref name to its shortest unambiguous form.
