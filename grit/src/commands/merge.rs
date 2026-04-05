@@ -498,14 +498,25 @@ fn do_real_merge(
     }
 
     if merge_result.has_conflicts {
-        // Write MERGE_HEAD and MERGE_MSG for conflict resolution
-        fs::write(
-            repo.git_dir.join("MERGE_HEAD"),
-            format!("{}\n", merge_oid.to_hex()),
-        )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
-        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
-        fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+        if args.squash {
+            // For squash + conflict: write SQUASH_MSG with conflict info, no MERGE_HEAD
+            let mut msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
+            // Append conflict info
+            msg.push_str("# Conflicts:\n");
+            for (_ctype, cpath) in &merge_result.conflict_descriptions {
+                msg.push_str(&format!("#\t{cpath}\n"));
+            }
+            fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
+        } else {
+            // Write MERGE_HEAD and MERGE_MSG for conflict resolution
+            fs::write(
+                repo.git_dir.join("MERGE_HEAD"),
+                format!("{}\n", merge_oid.to_hex()),
+            )?;
+            let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+            fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+            fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
+        }
 
         // Print per-file conflict messages
         for (ctype, cpath) in &merge_result.conflict_descriptions {

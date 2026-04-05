@@ -864,6 +864,14 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
     }
 
+    // Check for SQUASH_MSG
+    let squash_msg_path = repo.git_dir.join("SQUASH_MSG");
+    if let Ok(msg) = std::fs::read_to_string(&squash_msg_path) {
+        if !msg.is_empty() {
+            return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
+        }
+    }
+
     // If amend, use the previous commit message as default
     if args.amend {
         let head = resolve_head(&repo.git_dir)?;
