@@ -226,7 +226,7 @@ t2203-add-intent	yes	19	4	15	ok	4	19	0
 t2204-add-ignored	yes	47	37	10	ok	37	47	0
 t2205-add-worktree-config	yes	13	3	10	ok	3	13	0
 t2206-add-submodule-ignored	yes	8	8	0	ok	8	8	0
-t2300-cd-to-toplevel	yes	5	0	5	ok	0	5	0
+t2300-cd-to-toplevel	yes	5	5	0	ok	5	5	0
 t2400-worktree-add	yes	232	37	195	ok	37	232	0
 t2401-worktree-prune	yes	13	5	8	ok	5	13	0
 t2402-worktree-list	yes	27	9	18	ok	9	27	0

@@ -5,7 +5,7 @@
 //! --work-tree, -c) are extracted from argv by hand, then only the specific
 //! subcommand's clap `Args` struct is parsed.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use std::path::{Path, PathBuf};
 
@@ -1004,6 +1004,20 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --exec-path[=<path>]
+        //
+        // - `--exec-path` prints the exec path and exits.
+        // - `--exec-path=<path>` sets GIT_EXEC_PATH for this invocation.
+        if let Some(val) = arg.strip_prefix("--exec-path=") {
+            opts.env_overrides
+                .push(("GIT_EXEC_PATH".to_owned(), val.to_owned()));
+            i += 1;
+            continue;
+        }
+        if arg == "--exec-path" {
+            return Ok((opts, Some("__exec_path".to_owned()), Vec::new()));
+        }
+
         // Pathspec global modes
         if arg == "--literal-pathspecs" {
             opts.env_overrides
@@ -1099,6 +1113,94 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
         std::env::set_var(k, v);
     }
     Ok(())
+}
+
+fn candidate_exec_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Ok(exec_path) = std::env::var("GIT_EXEC_PATH") {
+        if !exec_path.is_empty() {
+            paths.push(PathBuf::from(exec_path));
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let parent = parent.to_path_buf();
+            if !paths.iter().any(|p| p == &parent) {
+                paths.push(parent);
+            }
+        }
+    }
+
+    let fallback = PathBuf::from("/usr/lib/git-core");
+    if !paths.iter().any(|p| p == &fallback) {
+        paths.push(fallback);
+    }
+
+    let temp = std::env::temp_dir().join("grit-exec-path");
+    if !paths.iter().any(|p| p == &temp) {
+        paths.push(temp);
+    }
+
+    paths
+}
+
+fn ensure_exec_helpers(exec_path: &Path) -> Result<()> {
+    let sh_setup = exec_path.join("git-sh-setup");
+    if sh_setup.exists() {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(exec_path).with_context(|| {
+        format!(
+            "failed to create git exec-path directory {}",
+            exec_path.display()
+        )
+    })?;
+
+    let helper = r#"#!/bin/sh
+eval "$(grit sh-setup "$@")"
+"#;
+    std::fs::write(&sh_setup, helper).with_context(|| {
+        format!(
+            "failed to write git-sh-setup helper at {}",
+            sh_setup.display()
+        )
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o755);
+        std::fs::set_permissions(&sh_setup, perms).with_context(|| {
+            format!(
+                "failed to set executable bit on helper {}",
+                sh_setup.display()
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+fn resolve_exec_path_for_query() -> Result<PathBuf> {
+    let mut first_err: Option<anyhow::Error> = None;
+    for exec_path in candidate_exec_paths() {
+        if let Err(err) = ensure_exec_helpers(&exec_path) {
+            if first_err.is_none() {
+                first_err = Some(err);
+            }
+            continue;
+        }
+        return Ok(exec_path);
+    }
+
+    if let Some(err) = first_err {
+        return Err(err);
+    }
+
+    bail!("unable to resolve exec-path")
 }
 
 /// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
@@ -2239,6 +2341,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "__list_cmds" => {
             let categories = rest.first().map(|s| s.as_str()).unwrap_or("");
             print_list_cmds(categories);
+            Ok(())
+        }
+        "__exec_path" => {
+            let exec_path = resolve_exec_path_for_query()?;
+            println!("{}", exec_path.display());
             Ok(())
         }
         _ => {

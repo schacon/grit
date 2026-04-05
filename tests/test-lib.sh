@@ -806,7 +806,12 @@ test_expect_success () {
 	# We save and restore 'set -e' state since eval doesn't
 	# propagate exit-on-error the way a subshell does.
 	local _old_cwd="$PWD"
-	cd "$TRASH_DIRECTORY" || return 1
+	local _run_cwd="$TRASH_DIRECTORY"
+	if test -n "$SUBDIRECTORY_OK"
+	then
+		_run_cwd="$_old_cwd"
+	fi
+	cd "$_run_cwd" || return 1
 	# Run with errexit but capture result.
 	# Wrap in a function to localize set -e.
 	_test_eval_result=0
