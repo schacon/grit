@@ -501,6 +501,103 @@ fn run_test_tool_advise(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn parse_ulong_str(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
+fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
+    // test-tool env-helper --type=<bool|ulong> --default=<value> [--exit-code] <VAR>
+    if rest.len() < 3 || rest.first().map(String::as_str) != Some("env-helper") {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    }
+
+    let mut value_type: Option<&str> = None;
+    let mut default_value: Option<String> = None;
+    let mut exit_code_only = false;
+    let mut variable_name: Option<&str> = None;
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if let Some(v) = arg.strip_prefix("--type=") {
+            value_type = Some(v);
+            i += 1;
+            continue;
+        }
+        if arg == "--type" {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if let Some(v) = arg.strip_prefix("--default=") {
+            if v.is_empty() {
+                bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+            }
+            default_value = Some(v.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--default" {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if arg == "--exit-code" {
+            exit_code_only = true;
+            i += 1;
+            continue;
+        }
+        if arg.starts_with('-') {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        if variable_name.is_some() {
+            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        }
+        variable_name = Some(arg);
+        i += 1;
+    }
+
+    let Some(value_type) = value_type else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+    let Some(var) = variable_name else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+
+    let resolved = std::env::var(var).ok().or(default_value);
+    let Some(value) = resolved else {
+        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+    };
+
+    match value_type {
+        "bool" => {
+            let Some(flag) = parse_bool_str(&value) else {
+                std::process::exit(1);
+            };
+            if !exit_code_only {
+                println!("{}", if flag { "true" } else { "false" });
+            }
+            if flag {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "ulong" => {
+            let Some(num) = parse_ulong_str(&value) else {
+                std::process::exit(1);
+            };
+            if !exit_code_only {
+                println!("{num}");
+            }
+            if num > 0 {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        _ => bail!(
+            "usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>"
+        ),
+    }
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -705,6 +802,25 @@ fn run() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    // t0017-env-helper expects config to be loaded very early when
+    // GIT_TEST_ENV_HELPER=true, even before applying -C.
+    if subcmd == "test-tool"
+        && std::env::var("GIT_TEST_ENV_HELPER")
+            .ok()
+            .and_then(|v| parse_bool_str(&v))
+            == Some(true)
+    {
+        // Accept optional leading "-C <dir>" pairs before "env-helper".
+        let mut idx = 0usize;
+        while idx + 1 < rest.len() && rest[idx] == "-C" {
+            idx += 2;
+        }
+        let is_env_helper = rest.get(idx).map(String::as_str) == Some("env-helper");
+        if is_env_helper {
+            let _ = grit_lib::config::ConfigSet::load(None, true)?;
+        }
+    }
 
     apply_globals(&opts)?;
 
@@ -1704,6 +1820,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "trace2" => run_test_tool_trace2(rest),
                 "example-tap" => run_test_tool_example_tap(rest),
                 "advise" => run_test_tool_advise(rest),
+                "env-helper" => run_test_tool_env_helper(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
