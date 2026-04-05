@@ -183,6 +183,41 @@ impl Index {
         }
     }
 
+    /// Create a new empty index, respecting config values for version.
+    ///
+    /// Priority: GIT_INDEX_VERSION env > index.version config > feature.manyFiles config > default (2).
+    pub fn new_with_config(
+        config_index_version: Option<&str>,
+        config_many_files: Option<&str>,
+    ) -> Self {
+        // Env var takes highest priority
+        if let Some(v) = get_index_format_from_env() {
+            return Self { version: v, entries: Vec::new() };
+        }
+        // Config index.version
+        if let Some(val) = config_index_version {
+            if let Ok(v) = val.parse::<u32>() {
+                if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) {
+                    return Self { version: v, entries: Vec::new() };
+                }
+            }
+            // Invalid config value
+            eprintln!(
+                "warning: index.version set, but the value is invalid.\n\
+                 Using version {INDEX_FORMAT_DEFAULT}"
+            );
+            return Self { version: INDEX_FORMAT_DEFAULT, entries: Vec::new() };
+        }
+        // feature.manyFiles implies version 4
+        if let Some(val) = config_many_files {
+            let enabled = matches!(val.to_lowercase().as_str(), "true" | "yes" | "1" | "on");
+            if enabled {
+                return Self { version: 4, entries: Vec::new() };
+            }
+        }
+        Self { version: 2, entries: Vec::new() }
+    }
+
     /// Load an index from the given file path.
     ///
     /// Returns an empty index if the file does not exist.

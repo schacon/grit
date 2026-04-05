@@ -143,7 +143,12 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let mut index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            Index::new_with_config(
+                config.get("index.version").as_deref(),
+                config.get("feature.manyFiles").as_deref(),
+            )
+        }
         Err(e) => return Err(e.into()),
     };
 

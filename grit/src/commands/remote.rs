@@ -56,6 +56,9 @@ pub struct AddArgs {
     pub name: String,
     /// URL of the remote.
     pub url: String,
+    /// Fetch immediately after adding.
+    #[arg(short = 'f')]
+    pub fetch: bool,
 }
 
 /// Arguments for `grit remote remove` / `grit remote rm`.
@@ -185,6 +188,19 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     config_file.set(&format!("remote.{}.url", args.name), &args.url)?;
     config_file.set(&format!("remote.{}.fetch", args.name), &fetch_refspec)?;
     config_file.write().context("writing config")?;
+
+    // If -f was given, fetch immediately.
+    if args.fetch {
+        let self_exe = std::env::current_exe().context("cannot determine own executable")?;
+        let status = std::process::Command::new(&self_exe)
+            .arg("fetch")
+            .arg(&args.name)
+            .status()
+            .context("failed to fetch")?;
+        if !status.success() {
+            bail!("fetch from {} failed", args.name);
+        }
+    }
 
     Ok(())
 }

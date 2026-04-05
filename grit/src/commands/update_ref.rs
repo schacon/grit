@@ -104,8 +104,9 @@ pub fn run(args: Args) -> Result<()> {
 
     write_ref(&repo.git_dir, &target_refname, &new_oid).context("writing ref")?;
 
-    // Reflog
-    if let Some(msg) = &args.log_message {
+    // Reflog — write when -m is given or when --create-reflog is set
+    let msg = args.log_message.as_deref().unwrap_or("");
+    if !msg.is_empty() || args.create_reflog {
         let identity = "grit <grit> 0 +0000";
         let _ = append_reflog(
             &repo.git_dir,
