@@ -927,7 +927,7 @@ commit → check it off → move on.
 ## 10. Contrib/Other (15 files)
 
 - [x] `t9304-fast-import-marks` ████████████████████ 8/8 (0 left) — test exotic situations with marks
-- [ ] `t9850-shell` ████████░░░░░░░░░░░░ 2/5 (3 left) — git shell tests
+- [x] `t9850-shell` ████████████████████ 5/5 (0 left) — git shell tests
 - [ ] `t9305-fast-import-signatures` ████████████████░░░░ 17/21 (4 left) — git fast-import --signed-commits=<mode>
 - [ ] `t9306-fast-import-signed-tags` ████████████░░░░░░░░ 6/10 (4 left) — git fast-import --signed-tags=<mode>
 - [ ] `t9351-fast-export-anonymize` ██████████████░░░░░░ 12/17 (5 left) — basic tests for fast-export --anonymize

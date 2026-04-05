@@ -300,6 +300,52 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_genzeros(rest: &[String]) -> Result<()> {
+    if rest.len() > 3 {
+        bail!("usage: test-tool genzeros [<count>]");
+    }
+
+    let count = if let Some(raw) = rest.get(2) {
+        Some(
+            raw.parse::<u64>()
+                .map_err(|_| anyhow::anyhow!("usage: test-tool genzeros [<count>]"))?,
+        )
+    } else {
+        None
+    };
+
+    use std::io::{self, Write};
+    const CHUNK_SIZE: usize = 256 * 1024;
+    let zeros = [0u8; CHUNK_SIZE];
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    match count {
+        Some(mut remaining) => {
+            while remaining > 0 {
+                let write_len = remaining.min(CHUNK_SIZE as u64) as usize;
+                if let Err(e) = out.write_all(&zeros[..write_len]) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e.into());
+                }
+                remaining -= write_len as u64;
+            }
+        }
+        None => loop {
+            if let Err(e) = out.write_all(&zeros) {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(e.into());
+            }
+        },
+    }
+
+    Ok(())
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -1573,6 +1619,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                 }
                 "trace2" => run_test_tool_trace2(rest),
+                "genzeros" => run_test_tool_genzeros(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
