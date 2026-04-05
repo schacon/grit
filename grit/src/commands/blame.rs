@@ -16,8 +16,8 @@ use std::io::{self, Write};
 #[command(about = "Show what revision and author last modified each line of a file")]
 pub struct Args {
     /// Limit output to the given line range (e.g. -L 10,20).
-    #[arg(short = 'L')]
-    pub line_range: Option<String>,
+    #[arg(short = 'L', action = clap::ArgAction::Append)]
+    pub line_range: Vec<String>,
 
     /// Show long (full) commit hashes.
     #[arg(short = 'l')]
@@ -55,10 +55,26 @@ pub struct Args {
     #[arg(long = "color-by-age")]
     pub color_by_age: bool,
 
-    /// Detect lines moved/copied from other files.
-    /// Can be given up to 3 times (-C -C -C) for deeper detection.
-    #[arg(short = 'C', action = clap::ArgAction::Count)]
-    pub copy_detection: u8,
+    /// Detect copies from other files (`-C[<score>]`).
+    /// May be repeated (`-C -C -C`) for deeper copy search.
+    #[arg(
+        short = 'C',
+        value_name = "score",
+        num_args = 0..=1,
+        default_missing_value = "",
+        action = clap::ArgAction::Append
+    )]
+    pub copy_detection: Vec<String>,
+
+    /// Detect moved lines within a file (`-M[<score>]`).
+    #[arg(
+        short = 'M',
+        value_name = "score",
+        num_args = 0..=1,
+        default_missing_value = "",
+        action = clap::ArgAction::Append
+    )]
+    pub move_detection: Vec<String>,
 
     /// Show the filename in the output.
     #[arg(short = 'f', long = "show-name")]
@@ -67,6 +83,38 @@ pub struct Args {
     /// Use N digits to display object names (default 8, min 4).
     #[arg(long = "abbrev")]
     pub abbrev: Option<usize>,
+
+    /// Show full object names (same as --abbrev=40).
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
+    /// Treat root commits as normal commits (not boundaries).
+    #[arg(long = "root")]
+    pub root: bool,
+
+    /// Walk history from older to newer (expects a revision range).
+    #[arg(long = "reverse")]
+    pub reverse: bool,
+
+    /// Follow only first parents when walking merges.
+    #[arg(long = "first-parent")]
+    pub first_parent: bool,
+
+    /// Choose diff algorithm.
+    #[arg(long = "diff-algorithm")]
+    pub diff_algorithm: Option<String>,
+
+    /// Spend extra cycles to find better matches.
+    #[arg(long = "minimal")]
+    pub minimal: bool,
+
+    /// Blame transformed (textconv) content.
+    #[arg(long = "textconv")]
+    pub textconv: bool,
+
+    /// Disable textconv.
+    #[arg(long = "no-textconv")]
+    pub no_textconv: bool,
 
     /// Revision to blame from (and optional file after `--`).
     #[arg()]
@@ -489,11 +537,19 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    // Apply line range filter
-    if let Some(ref range) = args.line_range {
-        let line_contents: Vec<&str> = blame_lines.iter().map(|b| b.content.as_str()).collect();
-        let (start, end) = parse_line_range(range, &blame_lines, &line_contents)?;
-        blame_lines.retain(|b| b.final_lineno >= start && b.final_lineno <= end);
+    // Apply line range filters (`-L` can be repeated).
+    if !args.line_range.is_empty() {
+        let mut keep = HashSet::new();
+        for range in &args.line_range {
+            let (mut start, mut end) = parse_line_range(range, &blame_lines)?;
+            if end < start {
+                std::mem::swap(&mut start, &mut end);
+            }
+            for lineno in start..=end {
+                keep.insert(lineno);
+            }
+        }
+        blame_lines.retain(|b| keep.contains(&b.final_lineno));
     }
 
     let stdout = io::stdout();
@@ -571,25 +627,29 @@ fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
 fn parse_line_range(
     range: &str,
     blame_lines: &[BlameLine],
-    _line_contents: &[&str],
 ) -> Result<(usize, usize)> {
-    let total = blame_lines.len();
-    // Find the max final_lineno for $ handling
     let max_lineno = blame_lines
         .iter()
         .map(|b| b.final_lineno)
         .max()
-        .unwrap_or(total);
+        .unwrap_or(0);
 
-    let parts: Vec<&str> = range.splitn(2, ',').collect();
-    if parts.len() != 2 {
-        bail!("invalid line range: expected start,end");
+    let (start_spec, end_spec) = match range.split_once(',') {
+        Some((start, end)) => (start, Some(end)),
+        None => (range, None),
+    };
+
+    let start = parse_line_spec(start_spec, blame_lines, None)?;
+    if start > max_lineno {
+        bail!("file has only {max_lineno} lines");
     }
 
-    let start = parse_line_spec(parts[0], blame_lines, None)?;
-    let end = parse_line_spec(parts[1], blame_lines, Some(start))?;
+    let end = match end_spec {
+        Some(spec) => parse_line_spec(spec, blame_lines, Some(start))?,
+        None => start,
+    };
 
-    Ok((start, end.min(max_lineno)))
+    Ok((start, end.min(max_lineno.max(1))))
 }
 
 /// Parse a single line-range endpoint.
@@ -754,7 +814,7 @@ fn write_default(
     args: &Args,
     file_path: &str,
 ) -> Result<()> {
-    let hash_len = if args.long_hash {
+    let hash_len = if args.no_abbrev || args.long_hash {
         40
     } else if let Some(n) = args.abbrev {
         n.max(4)
@@ -768,7 +828,7 @@ fn write_default(
     let mut prev_oid: Option<ObjectId> = None;
 
     // Check if any blame line is a boundary (root commit)
-    let has_boundary = lines.iter().any(|l| {
+    let has_boundary = !args.root && lines.iter().any(|l| {
         commits
             .get(&l.oid)
             .map(|c| c.parents.is_empty())
@@ -777,7 +837,8 @@ fn write_default(
 
     for bl in lines {
         let hex = bl.oid.to_hex();
-        let is_boundary = commits
+        let is_boundary = !args.root
+            && commits
             .get(&bl.oid)
             .map(|c| c.parents.is_empty())
             .unwrap_or(false);

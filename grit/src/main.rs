@@ -913,6 +913,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // Pager controls accepted as global options.
+        // We currently don't page output, so both are no-ops.
+        if arg == "--no-pager" || arg == "--paginate" {
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
