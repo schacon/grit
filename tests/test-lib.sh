@@ -129,16 +129,26 @@ PATH="$TEST_DIRECTORY:$PATH"
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store inside .git/ so the file is never tracked by git.
-_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+# Store in trash root so it works even when .git is a gitfile.
+_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
 
 test_tick () {
+	local _tick_file="$_TICK_FILE"
+	if ! test -d "$(dirname "$_tick_file")"
+	then
+		local _gitdir
+		_gitdir="$(git rev-parse --git-dir 2>/dev/null || true)"
+		if test -n "$_gitdir"
+		then
+			_tick_file="${_gitdir%/}/.test_tick"
+		fi
+	fi
 	if test -z "${test_tick+set}"
 	then
 		# Try to load from file (survives subshell boundaries)
-		if test -f "$_TICK_FILE"
+		if test -f "$_tick_file"
 		then
-			test_tick=$(cat "$_TICK_FILE")
+			test_tick=$(cat "$_tick_file")
 			test_tick=$(($test_tick + 60))
 		else
 			test_tick=1112911993
@@ -146,7 +156,7 @@ test_tick () {
 	else
 		test_tick=$(($test_tick + 60))
 	fi
-	echo "$test_tick" >"$_TICK_FILE"
+	echo "$test_tick" >"$_tick_file"
 	GIT_COMMITTER_DATE="$test_tick -0700"
 	GIT_AUTHOR_DATE="$test_tick -0700"
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE

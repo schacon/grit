@@ -87,9 +87,41 @@ pub fn ls_remote(git_dir: &Path, odb: &Odb, opts: &Options) -> Result<Vec<RefEnt
     }
 
     let mut all_refs: BTreeMap<String, ObjectId> = BTreeMap::new();
-    collect_loose_refs(git_dir, &git_dir.join("refs"), "refs", &mut all_refs)?;
+    let refs_root = if git_dir.join("refs").is_dir() {
+        git_dir.join("refs")
+    } else if let Ok(common) = std::fs::read_to_string(git_dir.join("commondir")) {
+        let rel = common.trim();
+        let common_dir = if Path::new(rel).is_absolute() {
+            std::path::PathBuf::from(rel)
+        } else {
+            git_dir.join(rel)
+        };
+        common_dir
+            .canonicalize()
+            .unwrap_or(common_dir)
+            .join("refs")
+    } else {
+        git_dir.join("refs")
+    };
+    collect_loose_refs(git_dir, &refs_root, "refs", &mut all_refs)?;
     for (name, oid) in read_packed_refs(git_dir)? {
         all_refs.entry(name).or_insert(oid);
+    }
+
+    // Worktree HEAD can point at a synthetic branch name (e.g.
+    // refs/heads/refs/tags/<tag>) when created from a tag. In that case,
+    // expose only the underlying tag ref if it exists and avoid listing the
+    // synthetic branch ref.
+    if let Ok(Some(head_target)) = crate::refs::read_symbolic_ref(git_dir, "HEAD") {
+        if let Some(tag_ref) = head_target.strip_prefix("refs/heads/refs/tags/") {
+            let canonical_tag_ref = format!("refs/tags/{tag_ref}");
+            all_refs.remove(&head_target);
+            if !all_refs.contains_key(&canonical_tag_ref) {
+                if let Ok(tag_oid) = crate::refs::resolve_ref(git_dir, &canonical_tag_ref) {
+                    all_refs.insert(canonical_tag_ref, tag_oid);
+                }
+            }
+        }
     }
 
     for (name, oid) in &all_refs {

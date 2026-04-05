@@ -28,11 +28,31 @@ use crate::repo::Repository;
 pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
     match Repository::discover(start) {
         Ok(repo) => Ok(Some(repo)),
-        Err(Error::NotARepository(msg))
-            if !msg.contains("not a regular file")
-                && !msg.contains("invalid gitfile format")
-                && !msg.contains("gitfile does not contain 'gitdir:' line") =>
-        {
+        Err(Error::NotARepository(msg)) => {
+            // Repository not found while walking parents is optional, but
+            // structural `.git` problems at the starting directory should be
+            // surfaced so callers can show diagnostics (e.g. t0002/t0009).
+            if msg.contains("invalid gitfile format")
+                || msg.contains("gitfile does not contain 'gitdir:' line")
+                || msg.contains("not a regular file")
+            {
+                return Err(Error::NotARepository(msg));
+            }
+
+            if let Some(start) = start {
+                let start = if start.is_absolute() {
+                    start.to_path_buf()
+                } else if let Ok(cwd) = std::env::current_dir() {
+                    cwd.join(start)
+                } else {
+                    start.to_path_buf()
+                };
+                let dot_git = start.join(".git");
+                if dot_git.is_file() || dot_git.is_symlink() {
+                    return Err(Error::NotARepository(msg));
+                }
+            }
+
             Ok(None)
         }
         Err(err) => Err(err),

@@ -29,6 +29,10 @@ pub struct Args {
     #[arg(long = "symref")]
     pub symref: bool,
 
+    /// Path to upload-pack on the remote side (accepted for compatibility).
+    #[arg(long = "upload-pack")]
+    pub upload_pack: Option<String>,
+
     /// Quiet: suppress output, only set the exit status.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -108,6 +112,33 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
         }
     };
     let path = &effective_path;
+
+    // Worktree path with gitfile indirection (`<repo>/.git` is a file).
+    if path.join(".git").exists() {
+        if let Ok(repo) = Repository::discover(Some(path)) {
+            return Ok(repo);
+        }
+    }
+
+    // Explicit gitfile path argument (`.../.git`).
+    if path
+        .file_name()
+        .is_some_and(|n| n == std::ffi::OsStr::new(".git"))
+    {
+        if path.is_file() {
+            if let Some(parent) = path.parent() {
+                if let Ok(repo) = Repository::discover(Some(parent)) {
+                    return Ok(repo);
+                }
+            }
+        } else if path.is_dir() {
+            // Path already points at the git dir.
+            if let Ok(repo) = Repository::open(path, path.parent()) {
+                return Ok(repo);
+            }
+        }
+    }
+
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }

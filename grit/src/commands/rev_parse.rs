@@ -277,6 +277,10 @@ pub fn run(args: Args) -> Result<()> {
     // Check if we have any actions at all
     let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
     if !has_output_actions {
+        // `git rev-parse` with no args should still verify repository context.
+        if discover_optional(None)?.is_none() {
+            bail!("not a git repository (or any of the parent directories)");
+        }
         return Ok(());
     }
 
