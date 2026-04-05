@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    50 |
+| Completed   |    51 |
 | In progress |     0 |
-| Remaining   |   717 |
+| Remaining   |   716 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0070-fundamental` — 11/11 tests pass (implemented missing `test-tool` helpers in `grit` and fixed `tests/test-tool` pkt-line delegation)
 - `t3307-notes-man` — 3/3 tests pass (restored missing upstream binary fixtures `test-binary-1.png` and `test-binary-2.png` in `tests/`)
 - `t1601-index-bogus` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3012-ls-files-dedup` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -44,4 +45,4 @@
 
 ## What Remains
 
-717 test files still pending. See `plan.md` for the full prioritized list.
+716 test files still pending. See `plan.md` for the full prioritized list.

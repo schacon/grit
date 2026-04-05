@@ -462,6 +462,358 @@ fn parse_usize_opt(value: &str, opt: &str) -> Result<usize> {
         .map_err(|_| anyhow::anyhow!("invalid value for {opt}: {value}"))
 }
 
+fn create_temp_file_from_template(template: &str) -> std::io::Result<()> {
+    use std::fs::OpenOptions;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    if let Some(pos) = template.rfind("XXXXXX") {
+        let before = &template[..pos];
+        let after = &template[pos + 6..];
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+            ^ u64::from(std::process::id());
+
+        for offset in 0..1024u64 {
+            let unique = format!("{:06x}", (seed.wrapping_add(offset)) % 0x0100_0000);
+            let candidate = format!("{before}{unique}{after}");
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&candidate)
+            {
+                Ok(_file) => return Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create unique temporary file",
+        ));
+    }
+
+    let _file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(template)?;
+    Ok(())
+}
+
+fn run_test_tool_mktemp(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool mktemp <template>");
+    }
+
+    let template = &rest[1];
+    if let Err(e) = create_temp_file_from_template(template) {
+        eprintln!("mktemp: {template}: {e}");
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn run_test_tool_regex(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!(
+            "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
+        );
+    }
+
+    if rest[1] == "--bug" {
+        if rest.len() != 2 {
+            bail!(
+                "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
+            );
+        }
+        return Ok(());
+    }
+
+    let mut idx = 1usize;
+    let mut silent = false;
+    if rest.get(idx).map(String::as_str) == Some("--silent") {
+        silent = true;
+        idx += 1;
+    }
+
+    let Some(pattern) = rest.get(idx) else {
+        bail!(
+            "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
+        );
+    };
+    idx += 1;
+
+    let subject = rest.get(idx).cloned();
+    if subject.is_some() {
+        idx += 1;
+    }
+
+    let mut case_insensitive = false;
+    let mut multiline = false;
+    for flag in rest.iter().skip(idx) {
+        match flag.as_str() {
+            "EXTENDED" | "NOTBOL" | "NOTEOL" | "STARTEND" => {}
+            "ICASE" => case_insensitive = true,
+            "NEWLINE" => multiline = true,
+            _ => bail!("do not recognize flag {flag}"),
+        }
+    }
+
+    let mut builder = regex::RegexBuilder::new(pattern);
+    builder
+        .case_insensitive(case_insensitive)
+        .multi_line(multiline);
+
+    let regex = match builder.build() {
+        Ok(re) => re,
+        Err(err) => {
+            if silent {
+                std::process::exit(1);
+            }
+            bail!("failed regcomp() for pattern '{pattern}' ({err})");
+        }
+    };
+
+    if let Some(subject) = subject {
+        if regex.is_match(&subject) {
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+enum TestPktLinePacket {
+    Eof,
+    Flush,
+    Delim,
+    ResponseEnd,
+    Data(Vec<u8>),
+}
+
+fn read_test_pkt_line_packet(r: &mut impl std::io::Read) -> std::io::Result<TestPktLinePacket> {
+    let mut len_buf = [0u8; 4];
+    let mut read = 0usize;
+    while read < len_buf.len() {
+        match r.read(&mut len_buf[read..]) {
+            Ok(0) => {
+                if read == 0 {
+                    return Ok(TestPktLinePacket::Eof);
+                }
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "unexpected disconnect",
+                ));
+            }
+            Ok(n) => read += n,
+            Err(e) => return Err(e),
+        }
+    }
+
+    let len_str = std::str::from_utf8(&len_buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let len = usize::from_str_radix(len_str, 16)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    match len {
+        0 => Ok(TestPktLinePacket::Flush),
+        1 => Ok(TestPktLinePacket::Delim),
+        2 => Ok(TestPktLinePacket::ResponseEnd),
+        n if n < 4 => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid pkt-line length",
+        )),
+        n => {
+            let mut payload = vec![0u8; n - 4];
+            r.read_exact(&mut payload)?;
+            Ok(TestPktLinePacket::Data(payload))
+        }
+    }
+}
+
+fn write_test_pkt_line_packet(w: &mut impl std::io::Write, payload: &[u8]) -> std::io::Result<()> {
+    let len = payload.len() + 4;
+    write!(w, "{len:04x}")?;
+    w.write_all(payload)
+}
+
+fn chomp_trailing_newline(mut data: Vec<u8>) -> Vec<u8> {
+    if data.last().copied() == Some(b'\n') {
+        let _ = data.pop();
+    }
+    data
+}
+
+fn run_test_tool_pkt_line_pack_raw_stdin() -> Result<()> {
+    use std::io::{Read, Write};
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+
+    let mut out = std::io::stdout().lock();
+    write_test_pkt_line_packet(&mut out, &input)?;
+    out.flush()?;
+    Ok(())
+}
+
+fn run_test_tool_pkt_line_send_split_sideband() -> Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+
+    write_test_pkt_line_packet(&mut out, b"\x02Foo.\n")?;
+    write_test_pkt_line_packet(&mut out, b"\x02Bar.\n")?;
+    write_test_pkt_line_packet(&mut out, b"\x02Hello,")?;
+    write_test_pkt_line_packet(&mut out, b"\x01primary: regular output\n")?;
+    write_test_pkt_line_packet(&mut out, b"\x02 world!\n")?;
+    out.write_all(b"0002")?;
+    out.write_all(b"0000")?;
+    out.flush()?;
+    Ok(())
+}
+
+fn run_test_tool_pkt_line_receive_sideband() -> Result<()> {
+    use std::io::Write;
+
+    let mut input = std::io::stdin().lock();
+    let mut err = std::io::stderr().lock();
+
+    loop {
+        match read_test_pkt_line_packet(&mut input) {
+            Ok(TestPktLinePacket::Eof | TestPktLinePacket::Flush) => break,
+            Ok(TestPktLinePacket::Delim | TestPktLinePacket::ResponseEnd) => continue,
+            Ok(TestPktLinePacket::Data(payload)) => {
+                let Some((&band, body)) = payload.split_first() else {
+                    writeln!(err, "missing sideband designator")?;
+                    continue;
+                };
+
+                if band == 2 {
+                    err.write_all(body)?;
+                } else if !(1..=3).contains(&band) {
+                    writeln!(err, "missing sideband designator")?;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                writeln!(err, "unexpected disconnect")?;
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    err.flush()?;
+    Ok(())
+}
+
+fn run_test_tool_pkt_line_unpack_sideband(args: &[String]) -> Result<()> {
+    use std::io::Write;
+
+    let mut reader_use_sideband = false;
+    let mut chomp_newline = true;
+
+    for arg in args {
+        match arg.as_str() {
+            "--reader-use-sideband" => reader_use_sideband = true,
+            "--chomp-newline" => chomp_newline = true,
+            "--no-chomp-newline" => chomp_newline = false,
+            _ => bail!(
+                "usage: test-tool pkt-line unpack-sideband [--reader-use-sideband] [--chomp-newline|--no-chomp-newline]"
+            ),
+        }
+    }
+
+    let mut input = std::io::stdin().lock();
+    let mut out = std::io::stdout().lock();
+    let mut err = std::io::stderr().lock();
+    let mut pending_remote = Vec::<u8>::new();
+
+    loop {
+        match read_test_pkt_line_packet(&mut input) {
+            Ok(TestPktLinePacket::Eof | TestPktLinePacket::Flush) => break,
+            Ok(TestPktLinePacket::Delim | TestPktLinePacket::ResponseEnd) => continue,
+            Ok(TestPktLinePacket::Data(payload)) => {
+                let Some((&band, body)) = payload.split_first() else {
+                    writeln!(err, "missing sideband designator")?;
+                    continue;
+                };
+
+                if reader_use_sideband {
+                    match band {
+                        1 => {
+                            let body = if chomp_newline {
+                                chomp_trailing_newline(body.to_vec())
+                            } else {
+                                body.to_vec()
+                            };
+                            out.write_all(&body)?;
+                        }
+                        2 => {
+                            pending_remote.extend_from_slice(body);
+                            while let Some(pos) = pending_remote.iter().position(|b| *b == b'\n') {
+                                let line = pending_remote[..pos].to_vec();
+                                pending_remote.drain(..=pos);
+                                err.write_all(b"remote: ")?;
+                                err.write_all(&line)?;
+                                err.write_all(b"        \n")?;
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                if band == 1 {
+                    let body = if chomp_newline {
+                        chomp_trailing_newline(body.to_vec())
+                    } else {
+                        body.to_vec()
+                    };
+                    out.write_all(&body)?;
+                } else if band == 2 {
+                    let body = if chomp_newline {
+                        chomp_trailing_newline(body.to_vec())
+                    } else {
+                        body.to_vec()
+                    };
+                    err.write_all(&body)?;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                writeln!(err, "unexpected disconnect")?;
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    out.flush()?;
+    err.flush()?;
+    Ok(())
+}
+
+fn run_test_tool_pkt_line(rest: &[String]) -> Result<()> {
+    let Some(sub) = rest.get(1).map(String::as_str) else {
+        bail!(
+            "usage: test-tool pkt-line <pack|pack-raw-stdin|unpack|send-split-sideband|receive-sideband|unpack-sideband>"
+        );
+    };
+
+    match sub {
+        "pack" => pkt_line::cmd_pack().map_err(Into::into),
+        "pack-raw-stdin" => run_test_tool_pkt_line_pack_raw_stdin(),
+        "unpack" => pkt_line::cmd_unpack().map_err(Into::into),
+        "send-split-sideband" => run_test_tool_pkt_line_send_split_sideband(),
+        "receive-sideband" => run_test_tool_pkt_line_receive_sideband(),
+        "unpack-sideband" => run_test_tool_pkt_line_unpack_sideband(&rest[2..]),
+        other => bail!("test-tool pkt-line: unknown subcommand '{other}'"),
+    }
+}
+
 fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
     const USAGE: &str = "usage: test-tool lazy-init-name-hash [--single|-s] [--multi|-m] [--count|-c <n>] [--dump|-d] [--perf|-p] [--analyze|-a <n>] [--step <n>]";
 
@@ -2153,6 +2505,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "find-pack" => run_test_tool_find_pack(rest),
                 "online-cpus" => run_test_tool_online_cpus(rest),
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
+                "mktemp" => run_test_tool_mktemp(rest),
+                "regex" => run_test_tool_regex(rest),
+                "pkt-line" => run_test_tool_pkt_line(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

@@ -18,3 +18,11 @@
 - `./scripts/run-tests.sh t3012-ls-files-dedup.sh`: 3/3 passing.
 - `GUST_BIN=/workspace/tests/grit bash tests/t3307-notes-man.sh`: 3/3 passing after adding missing fixture files.
 - `./scripts/run-tests.sh t3307-notes-man.sh`: 3/3 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success.
+- `cargo build --release -p grit-rs`: success (rebuilt after adding test-tool mktemp/regex/pkt-line helpers).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 11/11 passing after implementing test-tool mktemp/regex/pkt-line helpers and delegating pkt-line subcommands through `tests/test-tool`.
+- `./scripts/run-tests.sh t0070-fundamental.sh`: 11/11 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after adding `test-tool mktemp`, `test-tool regex`, and extended `test-tool pkt-line` helpers in `grit/src/main.rs`; reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t0070-fundamental.sh`: 4/11 passing (improved from 1/11 after implementing missing `test-tool` subcommands in grit).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 4/11 passing, with remaining failures in `send-split-sideband`/`receive-sideband`/`unpack-sideband` execution via the local `tests/test-tool` wrapper.
+- Direct validation using `/workspace/tests/grit test-tool pkt-line ...`: sideband helper flows match expected output (`receive-sideband`, EOF/missing-sideband diagnostics, and both `unpack-sideband` modes with/without `--reader-use-sideband` and chomp toggles).
