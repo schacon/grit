@@ -127,6 +127,30 @@ fn get_process_ancestry() -> Vec<String> {
 }
 
 /// Write a trace2 normal-format event to the trace file.
+/// Write a GIT_TRACE line to the specified destination.
+///
+/// The destination can be:
+/// - "1" or "true" → stderr
+/// - "2" → stderr
+/// - A file path → append to that file
+fn write_git_trace(dest: &str, line: &str) {
+    use std::io::Write;
+    match dest {
+        "1" | "true" | "2" => {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        }
+        path => {
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+    }
+}
+
 fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
     use std::io::Write;
     let now = chrono_now();
@@ -381,6 +405,27 @@ fn run() -> Result<()> {
     };
 
     apply_globals(&opts)?;
+
+    // GIT_TRACE: write built-in trace line (after global options are processed)
+    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+        if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
+            let mut trace_cmd = format!("git {subcmd}");
+            for arg in &rest {
+                trace_cmd.push(' ');
+                trace_cmd.push_str(arg);
+            }
+            let now = time::OffsetDateTime::now_utc();
+            let trace_line = format!(
+                "{:02}:{:02}:{:02}.{:06} grit:0               trace: built-in: {}\n",
+                now.hour(),
+                now.minute(),
+                now.second(),
+                now.microsecond(),
+                trace_cmd,
+            );
+            write_git_trace(&trace_val, &trace_line);
+        }
+    }
 
     // Handle --git-completion-helper / --git-completion-helper-all
     if rest
