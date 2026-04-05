@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    54 |
+| Completed   |    55 |
 | In progress |     0 |
-| Remaining   |   713 |
+| Remaining   |   712 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6301-for-each-ref-errors` — 6/6 tests pass (added `test-tool ref-store main update-ref ... REF_SKIP_OID_VERIFICATION` support; `for-each-ref` now preserves and reports non-hex direct ref payloads as missing objects for simplified test harness compatibility)
 - `t6400-merge-df` — 7/7 tests pass (fixed modify/delete directory-file conflict handling to place conflict stages at side paths like `letters~modify`/`letters~HEAD`; `ls-files -o` now ignores transient `.stdout.*`/`.stderr.*` harness capture files)
 - `t6431-merge-criscross` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6412-merge-large-rename` — 10/10 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -44,4 +45,4 @@
 
 ## What Remains
 
-713 test files still pending. See `plan.md` for the full prioritized list.
+712 test files still pending. See `plan.md` for the full prioritized list.

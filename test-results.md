@@ -20,3 +20,7 @@
 - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (regression check after merge/ls-files updates for `t6400`).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge/ls-files updates for `t6400`).
 - `./scripts/run-tests.sh t6412-merge-large-rename.sh`: 10/10 passing (regression check after merge/ls-files updates for `t6400`).
+- `./scripts/run-tests.sh t6301-for-each-ref-errors.sh`: 6/6 passing (fully passing after adding `test-tool ref-store main update-ref` support and preserving unresolved loose-ref object strings for missing-object diagnostics).
+- `./scripts/run-tests.sh t6400-merge-df.sh`: 7/7 passing (regression check after `test-tool ref-store` and `for-each-ref` updates).
+- `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (regression check after `test-tool ref-store` and `for-each-ref` updates).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after `test-tool ref-store` and `for-each-ref` updates).

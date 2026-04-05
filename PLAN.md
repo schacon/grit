@@ -707,7 +707,7 @@ commit → check it off → move on.
 - [x] `t6431-merge-criscross` ████████████████████ 2/2 (0 left) — merge-recursive backend test
 - [x] `t6412-merge-large-rename` ████████████████████ 10/10 (0 left) — merging with large rename matrix
 - [x] `t6400-merge-df` ████████████████████ 7/7 (0 left) — Test merge with directory/file conflicts
-- [ ] `t6301-for-each-ref-errors` ██████████░░░░░░░░░░ 3/6 (3 left) — for-each-ref errors for broken refs
+- [x] `t6301-for-each-ref-errors` ████████████████████ 6/6 (0 left) — for-each-ref errors for broken refs
 - [ ] `t6435-merge-sparse` ██████████░░░░░░░░░░ 3/6 (3 left) — merge with sparse files
 - [ ] `t6401-merge-criss-cross` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test criss-cross merge
 - [ ] `t6421-merge-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — limiting blob downloads when merging with partial clones
