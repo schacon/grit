@@ -13,3 +13,5 @@
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303`: 11/11 passing after rebuilding `target/release/grit`.
+- `bash scripts/run-upstream-tests.sh t4006-diff-mode`: 7/7 passing (verified after mode/stat fixes).
+- `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
