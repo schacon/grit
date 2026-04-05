@@ -5,11 +5,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::{init_repository, Repository};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
@@ -142,50 +143,6 @@ pub fn run(args: Args) -> Result<()> {
     // Detect bundle file
     if is_bundle_file(&args.repository) {
         return run_bundle_clone(args);
-    }
-
-    // --no-local with custom upload-pack: use transport instead of direct copy
-    if args.no_local {
-        if let Some(ref upload_pack) = args.upload_pack {
-            let source_path = PathBuf::from(&args.repository);
-            let target_name = args.directory.clone().unwrap_or_else(|| {
-                let base = source_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                base.strip_suffix(".git")
-                    .unwrap_or(&base)
-                    .trim_end_matches('/')
-                    .to_string()
-            });
-            let target_path = PathBuf::from(&target_name);
-            if target_path.exists() {
-                bail!(
-                    "destination path '{}' already exists and is not an empty directory",
-                    target_path.display()
-                );
-            }
-            if !args.quiet {
-                eprintln!("Cloning into '{}'...", target_name);
-            }
-            fs::create_dir_all(&target_path)?;
-            let repo_path_arg = source_path.to_string_lossy().to_string();
-            let status = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("{} '{}'", upload_pack, repo_path_arg))
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    eprintln!("done.");
-                    return Ok(());
-                }
-                _ => {
-                    let _ = fs::remove_dir_all(&target_path);
-                    bail!("clone failed: upload-pack command failed");
-                }
-            }
-        }
     }
 
     // Check protocol.file.allow before local clone
@@ -358,6 +315,12 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Configure partial-clone metadata and drop local blobs for blob:none.
+    if args.filter.as_deref() == Some("blob:none") {
+        configure_partial_clone(&dest.git_dir, remote_name, "blob:none")?;
+        strip_loose_blobs(&dest)?;
+    }
+
     // Handle shallow depth — write .git/shallow with boundary commits
     if let Some(depth) = args.depth {
         if depth > 0 {
@@ -390,9 +353,20 @@ pub fn run(args: Args) -> Result<()> {
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
     }
 
-    // Checkout working tree unless --bare or --no-checkout
+    // Checkout working tree unless --bare or --no-checkout.
+    // For promisor remotes, lazy fetching is disabled by default during clone.
     if !args.bare && !args.no_checkout {
-        checkout_head(&dest).context("checking out HEAD")?;
+        if let Err(err) = checkout_head(&dest) {
+            if source_uses_promisor_remote(&source.git_dir) {
+                if std::env::var("GIT_NO_LAZY_FETCH").ok().as_deref() == Some("0") {
+                    run_promisor_upload_pack(&source.git_dir)
+                        .context("running promisor upload-pack")?;
+                } else {
+                    bail!("lazy fetching disabled");
+                }
+            }
+            return Err(err).context("checking out HEAD");
+        }
     }
 
     if !args.quiet {
@@ -653,6 +627,94 @@ fn write_alternates(src_git_dir: &Path, dst_git_dir: &Path, references: &[String
     let content = lines.join("\n") + "\n";
     fs::write(dst_info.join("alternates"), content)?;
 
+    Ok(())
+}
+
+/// Configure a cloned repository as a promisor/partial clone.
+fn configure_partial_clone(git_dir: &Path, remote_name: &str, filter_spec: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set("extensions.partialClone", remote_name)?;
+    config.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config.set(
+        &format!("remote.{remote_name}.partialclonefilter"),
+        filter_spec,
+    )?;
+    config.write().context("writing partial clone config")?;
+    Ok(())
+}
+
+/// Remove loose blob objects from the repository to simulate blob-less partial clones.
+fn strip_loose_blobs(repo: &Repository) -> Result<()> {
+    let objects_dir = repo.git_dir.join("objects");
+    for prefix in 0..=255u8 {
+        let dir = objects_dir.join(format!("{prefix:02x}"));
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.len() != 38 || !name.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let full_hex = format!("{prefix:02x}{name}");
+            let Ok(oid) = ObjectId::from_hex(&full_hex) else {
+                continue;
+            };
+            if let Ok(obj) = repo.odb.read(&oid) {
+                if obj.kind == grit_lib::objects::ObjectKind::Blob {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Determine whether the source repository is configured with a promisor remote.
+fn source_uses_promisor_remote(git_dir: &Path) -> bool {
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return false;
+    };
+    if config
+        .get("remote.origin.promisor")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    config.get("extensions.partialClone").is_some()
+}
+
+/// Run the source repository's upload-pack command to attempt lazy fetch.
+fn run_promisor_upload_pack(git_dir: &Path) -> Result<()> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let upload_pack = config
+        .get("remote.origin.uploadpack")
+        .unwrap_or_else(|| "git-upload-pack".to_owned());
+    let remote_url = config
+        .get("remote.origin.url")
+        .ok_or_else(|| anyhow::anyhow!("missing remote.origin.url"))?;
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{upload_pack} '{remote_url}'"))
+        .current_dir(git_dir.parent().unwrap_or(git_dir))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("failed to execute upload-pack")?;
+    if !status.success() {
+        bail!("lazy fetch failed");
+    }
     Ok(())
 }
 

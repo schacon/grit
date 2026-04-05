@@ -68,7 +68,7 @@ t0301-credential-cache	yes	52	6	46	ok	6	52	0
 t0302-credential-store	yes	65	5	60	ok	5	65	0
 t0303-credential-external	yes	23	23	0	ok	23	23	0
 t0410-partial-clone	yes	38	9	29	ok	9	38	0
-t0411-clone-from-partial	yes	7	2	5	ok	2	7	0
+t0411-clone-from-partial	yes	7	7	0	ok	7	7	0
 t0450-txt-doc-vs-help	yes	554	401	153	ok	401	554	0
 t0500-progress-display	yes	16	0	16	ok	0	16	0
 t0600-reffiles-backend	yes	33	9	24	ok	9	33	0

@@ -88,3 +88,6 @@
 - `cargo fmt && cargo build --release -p grit-rs`: success (after preserving unmerged index stage entries during `read-tree -m -u` checkout updates).
 - `GUST_BIN=/workspace/tests/grit bash tests/t1012-read-tree-df.sh`: 5/5 passing.
 - `./scripts/run-tests.sh t1012-read-tree-df.sh`: 5/5 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing partial-clone/lazy-fetch behavior for clone and pack-objects paths used by promisor tests).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0411-clone-from-partial.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 7/7 passing.
