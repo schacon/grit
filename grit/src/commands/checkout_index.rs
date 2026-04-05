@@ -215,8 +215,15 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
+        let preserve_prefix_components = prefix_preserve_components(prefix);
         if args.mkdir || args.force || args.all {
-            ensure_parent_dirs(parent, args.force, &rel_path)?;
+            ensure_parent_dirs(
+                parent,
+                work_tree,
+                args.force,
+                &rel_path,
+                preserve_prefix_components,
+            )?;
         } else if !parent.exists() {
             bail!("'{rel_path}': leading directories do not exist");
         } else if !std::fs::symlink_metadata(parent)?.file_type().is_dir() {
@@ -239,7 +246,7 @@ fn checkout_entry(
         let data = {
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let attrs = crlf::load_gitattributes(work_tree);
+            let attrs = crlf::load_gitattributes_for_path(work_tree, &path_str);
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
@@ -262,13 +269,33 @@ fn checkout_entry(
     Ok(outcome)
 }
 
-fn ensure_parent_dirs(parent: &Path, force: bool, rel_path: &str) -> Result<()> {
-    let mut current = PathBuf::new();
-    for component in parent.components() {
+fn ensure_parent_dirs(
+    parent: &Path,
+    work_tree: &Path,
+    force: bool,
+    rel_path: &str,
+    preserve_prefix_components: usize,
+) -> Result<()> {
+    let rel_parent = parent.strip_prefix(work_tree).unwrap_or(parent);
+    let mut current = work_tree.to_path_buf();
+    let mut rel_depth = 0usize;
+
+    for component in rel_parent.components() {
         current.push(component.as_os_str());
+        if matches!(component, Component::Normal(_)) {
+            rel_depth += 1;
+        }
         match std::fs::symlink_metadata(&current) {
             Ok(meta) => {
                 if meta.file_type().is_dir() {
+                    continue;
+                }
+                let preserve_symlink = meta.file_type().is_symlink()
+                    && rel_depth <= preserve_prefix_components
+                    && std::fs::metadata(&current)
+                        .map(|m| m.file_type().is_dir())
+                        .unwrap_or(false);
+                if preserve_symlink {
                     continue;
                 }
                 if !force {
@@ -291,6 +318,23 @@ fn ensure_parent_dirs(parent: &Path, force: bool, rel_path: &str) -> Result<()> 
         }
     }
     Ok(())
+}
+
+fn prefix_preserve_components(prefix: &str) -> usize {
+    let trimmed = prefix.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return 0;
+    }
+    let prefix_path = Path::new(trimmed);
+    let preserve_path = if prefix.ends_with('/') {
+        prefix_path
+    } else {
+        prefix_path.parent().unwrap_or_else(|| Path::new(""))
+    };
+    preserve_path
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .count()
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {

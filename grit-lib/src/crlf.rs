@@ -160,6 +160,48 @@ pub fn load_gitattributes(work_tree: &Path) -> Vec<AttrRule> {
     rules
 }
 
+/// Load .gitattributes relevant to a specific repository-relative path.
+///
+/// Includes:
+/// - top-level `.gitattributes`
+/// - nested `<dir>/.gitattributes` files for each parent directory of `rel_path`
+/// - `.git/info/attributes`
+///
+/// Rules are returned in precedence order such that later entries override
+/// earlier ones when consumed by [`get_file_attrs`] ("last match wins").
+pub fn load_gitattributes_for_path(work_tree: &Path, rel_path: &str) -> Vec<AttrRule> {
+    let mut rules = Vec::new();
+
+    // Root-level attributes.
+    let root_attrs = work_tree.join(".gitattributes");
+    if let Ok(content) = std::fs::read_to_string(&root_attrs) {
+        parse_gitattributes(&content, &mut rules);
+    }
+
+    // Directory-local attributes from shallow to deep (parents of rel_path).
+    let rel = Path::new(rel_path);
+    let mut current = std::path::PathBuf::new();
+    if let Some(parent) = rel.parent() {
+        for component in parent.components() {
+            if let std::path::Component::Normal(name) = component {
+                current.push(name);
+                let attrs_path = work_tree.join(&current).join(".gitattributes");
+                if let Ok(content) = std::fs::read_to_string(&attrs_path) {
+                    parse_gitattributes(&content, &mut rules);
+                }
+            }
+        }
+    }
+
+    // Highest precedence.
+    let info_attrs = work_tree.join(".git/info/attributes");
+    if let Ok(content) = std::fs::read_to_string(&info_attrs) {
+        parse_gitattributes(&content, &mut rules);
+    }
+
+    rules
+}
+
 /// Load .gitattributes from the index (for use during checkout when
 /// the worktree file may not yet exist).
 pub fn load_gitattributes_from_index(
