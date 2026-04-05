@@ -862,7 +862,7 @@ t7900-maintenance	yes	72	7	65	ok	7	72	0
 t8001-annotate	yes	0	0	0	ok	0	0	0
 t8002-blame	yes	0	0	0	ok	0	0	0
 t8003-blame-corner-cases	yes	30	12	18	ok	12	30	0
-t8004-blame-with-conflicts	yes	3	2	1	ok	2	3	0
+t8004-blame-with-conflicts	yes	3	3	0	ok	3	3	0
 t8005-blame-i18n	yes	0	0	0	ok	0	0	0
 t8006-blame-textconv	yes	16	6	10	ok	6	16	0
 t8007-cat-file-textconv	yes	15	9	6	ok	9	15	0

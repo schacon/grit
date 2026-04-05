@@ -453,7 +453,41 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let mut blame_lines = compute_blame(&odb, start_oid, &file_path, &ignore_revs)?;
+    let mut blame_lines = match compute_blame(&odb, start_oid, &file_path, &ignore_revs) {
+        Ok(lines) => lines,
+        Err(e) if rev.is_none() => {
+            // When no explicit revision is given and the file is not in HEAD's
+            // tree (e.g. during a conflicted merge), fall back to reading the
+            // working tree file and attributing all lines to the zero OID.
+            // Try working tree first, then fall back to index conflict stages
+            let content = if let Some(work_tree) = repo.work_tree.as_deref() {
+                let abs_path = work_tree.join(&file_path);
+                if abs_path.exists() {
+                    std::fs::read_to_string(&abs_path)
+                        .with_context(|| format!("file '{file_path}' not found"))?
+                } else {
+                    // File not in worktree; try reading from highest conflict stage in index
+                    read_from_index_conflict(&repo, &odb, &file_path)
+                        .with_context(|| format!("file '{file_path}' not found in revision"))?
+                }
+            } else {
+                return Err(e);
+            };
+            let zero = grit_lib::diff::zero_oid();
+            content_lines(&content)
+                .iter()
+                .enumerate()
+                .map(|(i, line)| BlameLine {
+                    oid: zero,
+                    final_lineno: i + 1,
+                    orig_lineno: i + 1,
+                    content: line.to_string(),
+                    source_file: None,
+                })
+                .collect()
+        }
+        Err(e) => return Err(e),
+    };
 
     // Apply line range filter
     if let Some(ref range) = args.line_range {
@@ -466,11 +500,25 @@ pub fn run(args: Args) -> Result<()> {
     let mut out = stdout.lock();
 
     // Preload commits for display
+    let zero = grit_lib::diff::zero_oid();
     let mut commits: HashMap<ObjectId, CommitData> = HashMap::new();
     for bl in &blame_lines {
         if let std::collections::hash_map::Entry::Vacant(e) = commits.entry(bl.oid) {
-            let obj = odb.read(&bl.oid)?;
-            e.insert(parse_commit(&obj.data)?);
+            if bl.oid == zero {
+                // Fake commit for uncommitted/conflicted content
+                e.insert(CommitData {
+                    tree: zero,
+                    parents: vec![],
+                    author: "Not Committed Yet <not.committed.yet> 0 +0000".to_string(),
+                    committer: "Not Committed Yet <not.committed.yet> 0 +0000".to_string(),
+                    encoding: None,
+                    message: String::new(),
+                    raw_message: None,
+                });
+            } else {
+                let obj = odb.read(&bl.oid)?;
+                e.insert(parse_commit(&obj.data)?);
+            }
         }
     }
 
@@ -487,6 +535,26 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Read file content from index conflict stages (for blame during merge conflicts).
+fn read_from_index_conflict(repo: &Repository, odb: &Odb, file_path: &str) -> Result<String> {
+    use grit_lib::index::Index;
+    let index = Index::load(&repo.index_path())
+        .context("loading index")?;
+    let path_bytes = file_path.as_bytes();
+    // Find the highest-stage entry for this path (prefer stage 3, then 2, then 1)
+    let mut best: Option<&grit_lib::index::IndexEntry> = None;
+    for entry in &index.entries {
+        if entry.path == path_bytes && entry.stage() > 0 {
+            if best.is_none() || entry.stage() > best.unwrap().stage() {
+                best = Some(entry);
+            }
+        }
+    }
+    let entry = best.ok_or_else(|| anyhow::anyhow!("file not in index"))?;
+    let obj = odb.read(&entry.oid)?;
+    String::from_utf8(obj.data).context("blob is not valid UTF-8")
 }
 
 fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
