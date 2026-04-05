@@ -37,6 +37,10 @@ pub struct Args {
     #[arg(long = "aggressive")]
     pub aggressive: bool,
 
+    /// Dry-run: perform checks but do not actually update the index.
+    #[arg(short = 'n', long = "dry-run")]
+    pub dry_run: bool,
+
     /// Empty the index.
     #[arg(long = "empty")]
     pub empty: bool,
@@ -108,13 +112,16 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = effective_index_path(&repo)?;
     let prot = PathProtection::load(&repo.git_dir);
+    let dry_run = args.dry_run;
 
     // Handle --empty: clear the index
     if args.empty {
-        let empty_index = Index::new();
-        empty_index
-            .write(&index_path)
-            .context("writing empty index")?;
+        if !dry_run {
+            let empty_index = Index::new();
+            empty_index
+                .write(&index_path)
+                .context("writing empty index")?;
+        }
         return Ok(());
     }
 
@@ -135,7 +142,7 @@ pub fn run(args: Args) -> Result<()> {
         if prefix.starts_with('/') {
             bail!("--prefix must be relative to repository root");
         }
-        if !prefix.ends_with('/') {
+        if !prefix.is_empty() && !prefix.ends_with('/') {
             bail!("--prefix requires a trailing '/'");
         }
         if args.merge || args.update || args.reset || tree_oids.len() != 1 {
@@ -150,10 +157,12 @@ pub fn run(args: Args) -> Result<()> {
         new_index.entries =
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
-        if args.update {
+        if !dry_run && args.update {
             checkout_index_entries(&repo, &old_index, &new_index)?;
         }
-        new_index.write(&index_path).context("writing index")?;
+        if !dry_run {
+            new_index.write(&index_path).context("writing index")?;
+        }
         return Ok(());
     }
 
@@ -203,10 +212,12 @@ pub fn run(args: Args) -> Result<()> {
     // Apply sparse checkout: set skip-worktree on entries not matching patterns
     apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
 
-    if args.update {
+    if !dry_run && args.update {
         checkout_index_entries(&repo, &old_index, &new_index)?;
     }
-    new_index.write(&index_path).context("writing index")?;
+    if !dry_run {
+        new_index.write(&index_path).context("writing index")?;
+    }
 
     Ok(())
 }

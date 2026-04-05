@@ -20,6 +20,10 @@ pub struct Args {
     #[arg(long)]
     pub all: bool,
 
+    /// Prune loose refs after packing (default).
+    #[arg(long = "prune")]
+    pub prune: bool,
+
     /// Don't remove loose refs after packing.
     #[arg(long = "no-prune")]
     pub no_prune: bool,

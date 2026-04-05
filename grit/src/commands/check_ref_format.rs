@@ -66,17 +66,32 @@ pub fn run(args: Args) -> Result<()> {
 /// Handle `--branch`: validate that the argument is a valid branch shorthand.
 ///
 /// Git's `--branch` mode resolves `@{-N}` against the reflog and prints the
-/// resolved branch name.  We implement the simpler subset: validate that the
-/// argument could be a valid branch name and print it as-is.  `@{-N}` syntax
-/// (which requires a live repo) prints an error and exits 1.
+/// resolved branch name (or a full SHA if the previous checkout was detached).
+/// For non-`@{` arguments, it validates as a branch name and prints it.
 fn run_branch_mode(arg: &str) -> Result<()> {
     // Reject branch names starting with '-' (git does the same).
     if arg.starts_with('-') {
         std::process::exit(1);
     }
 
-    // @{-N} syntax requires reflog lookup — we can't resolve it without a
-    // live repo.  Reject it for now.
+    // @{-N} syntax requires reflog lookup
+    if arg.starts_with("@{-") && arg.ends_with('}') {
+        let inner = &arg[3..arg.len() - 1];
+        if let Ok(n) = inner.parse::<usize>() {
+            if n >= 1 {
+                match resolve_at_minus_for_branch(n) {
+                    Some(name) => {
+                        println!("{name}");
+                        return Ok(());
+                    }
+                    None => std::process::exit(1),
+                }
+            }
+        }
+        std::process::exit(1);
+    }
+
+    // Reject other @{ forms without a repo
     if arg.contains("@{") {
         std::process::exit(1);
     }
@@ -98,4 +113,39 @@ fn run_branch_mode(arg: &str) -> Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Resolve `@{-N}` for `--branch` mode: return the branch name or detached SHA.
+fn resolve_at_minus_for_branch(n: usize) -> Option<String> {
+    use grit_lib::reflog::read_reflog;
+    use grit_lib::repo::Repository;
+
+    let repo = Repository::discover(None).ok()?;
+    let entries = read_reflog(&repo.git_dir, "HEAD").ok()?;
+    let mut count = 0usize;
+    for entry in entries.iter().rev() {
+        let msg = &entry.message;
+        if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
+            count += 1;
+            if count == n {
+                if let Some(to_pos) = rest.find(" to ") {
+                    let from_branch = &rest[..to_pos];
+                    // If the "from" branch is a valid ref, return just the short name
+                    let ref_name = format!("refs/heads/{from_branch}");
+                    if grit_lib::refs::resolve_ref(&repo.git_dir, &ref_name).is_ok() {
+                        return Some(from_branch.to_string());
+                    }
+                    // Try to expand abbreviated SHA to full SHA
+                    if from_branch.len() >= 4 && from_branch.chars().all(|c| c.is_ascii_hexdigit()) {
+                        if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, from_branch) {
+                            return Some(oid.to_hex());
+                        }
+                    }
+                    // Otherwise return as-is
+                    return Some(from_branch.to_string());
+                }
+            }
+        }
+    }
+    None
 }

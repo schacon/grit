@@ -118,6 +118,10 @@ pub struct DeleteArgs {
 /// Arguments for `reflog exists`.
 #[derive(Debug, ClapArgs)]
 pub struct ExistsArgs {
+    /// End of options delimiter.
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
+
     /// Reference name.
     #[arg(required = true)]
     pub refname: String,

@@ -100,10 +100,41 @@ impl Repository {
     pub fn discover(start: Option<&Path>) -> Result<Self> {
         // GIT_DIR override
         if let Ok(dir) = env::var("GIT_DIR") {
-            let git_dir = PathBuf::from(dir);
+            let git_dir = PathBuf::from(&dir);
             let work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
-            return Self::open(&git_dir, work_tree.as_deref());
+            if work_tree.is_some() {
+                return Self::open(&git_dir, work_tree.as_deref());
+            }
+            // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
+            // from the parent of the git directory (standard layout).
+            let mut repo = Self::open(&git_dir, None)?;
+            if repo.work_tree.is_none() {
+                let canonical = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
+                // Check core.bare config
+                let config_path = canonical.join("config");
+                let is_bare = if config_path.exists() {
+                    fs::read_to_string(&config_path)
+                        .ok()
+                        .and_then(|c| {
+                            c.lines().find(|l| {
+                                let trimmed = l.trim();
+                                trimmed.starts_with("bare") && trimmed.contains("true")
+                            }).map(|_| true)
+                        })
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                if !is_bare {
+                    repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
+                }
+            }
+            return Ok(repo);
         }
+
+        // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it
+        // after discovery.
+        let env_work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
 
         let cwd = env::current_dir()?;
         let start = start.unwrap_or(&cwd);
@@ -128,7 +159,14 @@ impl Repository {
             }
             first = false;
 
-            if let Some(repo) = try_open_at(current)? {
+            if let Some(mut repo) = try_open_at(current)? {
+                // Override work_tree with GIT_WORK_TREE env if set
+                if let Some(ref wt) = env_work_tree {
+                    repo.work_tree = Some(
+                        wt.canonicalize()
+                            .unwrap_or_else(|_| wt.clone()),
+                    );
+                }
                 return Ok(repo);
             }
             match current.parent() {

@@ -506,8 +506,29 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     // Handle @{-N} syntax: Nth previously checked out branch
-    if let Some(oid) = try_resolve_at_minus(repo, spec)? {
-        return Ok(oid);
+    // Also handle @{-N}@{M} compound form: resolve branch, then reflog
+    if spec.starts_with("@{-") {
+        // Find the closing } for the @{-N} part
+        if let Some(close) = spec[3..].find('}') {
+            let n_str = &spec[3..3 + close];
+            if let Ok(n) = n_str.parse::<usize>() {
+                if n >= 1 {
+                    let suffix = &spec[3 + close + 1..]; // after the first }
+                    if suffix.is_empty() {
+                        // Plain @{-N}
+                        if let Some(oid) = try_resolve_at_minus(repo, spec)? {
+                            return Ok(oid);
+                        }
+                    } else {
+                        // @{-N}@{M} or @{-N}@{...} compound form
+                        // Resolve @{-N} to branch name, then re-resolve as branch+suffix
+                        let branch = resolve_at_minus_to_branch(repo, n)?;
+                        let new_spec = format!("{branch}{suffix}");
+                        return resolve_base(repo, &new_spec);
+                    }
+                }
+            }
+        }
     }
 
     // Handle @{N} reflog syntax: ref@{N} or @{N} (meaning HEAD@{N})
@@ -590,6 +611,26 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     Err(Error::ObjectNotFound(spec.to_owned()))
 }
 
+/// Resolve `@{-N}` to the branch name (e.g. "side"), not to an OID.
+fn resolve_at_minus_to_branch(repo: &Repository, n: usize) -> Result<String> {
+    let entries = read_reflog(&repo.git_dir, "HEAD")?;
+    let mut count = 0usize;
+    for entry in entries.iter().rev() {
+        let msg = &entry.message;
+        if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
+            count += 1;
+            if count == n {
+                if let Some(to_pos) = rest.find(" to ") {
+                    return Ok(rest[..to_pos].to_string());
+                }
+            }
+        }
+    }
+    Err(Error::InvalidRef(format!(
+        "@{{-{n}}}: only {count} checkout(s) in reflog"
+    )))
+}
+
 /// Try to resolve `@{-N}` syntax — the Nth previously checked out branch.
 /// Returns the resolved OID if matching, or None if not matching.
 fn try_resolve_at_minus(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
@@ -651,14 +692,14 @@ fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<Obje
     }
     let inner = &spec[at_pos + 2..spec.len() - 1];
     // Handle @{now} — equivalent to @{0} (most recent reflog entry)
-    let index: usize = if inner.eq_ignore_ascii_case("now") {
-        0
+    let index_or_date: ReflogSelector = if inner.eq_ignore_ascii_case("now") {
+        ReflogSelector::Index(0)
+    } else if let Ok(n) = inner.parse::<usize>() {
+        ReflogSelector::Index(n)
+    } else if let Some(ts) = approxidate(inner) {
+        ReflogSelector::Date(ts)
     } else {
-        // Only handle numeric indices here (not upstream/push/etc)
-        match inner.parse() {
-            Ok(n) => n,
-            Err(_) => return Ok(None),
-        }
+        return Ok(None);
     };
     let refname_raw = &spec[..at_pos];
     let refname = if refname_raw.is_empty() {
@@ -681,15 +722,84 @@ fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<Obje
             refname_raw
         )));
     }
-    // Reflog entries are oldest-first in file; @{0} is the newest (last)
-    let reversed_idx = entries.len().checked_sub(1 + index).ok_or_else(|| {
-        Error::InvalidRef(format!(
-            "log for '{}' only has {} entries",
-            refname_raw,
-            entries.len()
-        ))
-    })?;
-    Ok(Some(entries[reversed_idx].new_oid))
+    match index_or_date {
+        ReflogSelector::Index(index) => {
+            // Reflog entries are oldest-first in file; @{0} is the newest (last)
+            let reversed_idx = entries.len().checked_sub(1 + index).ok_or_else(|| {
+                Error::InvalidRef(format!(
+                    "log for '{}' only has {} entries",
+                    refname_raw,
+                    entries.len()
+                ))
+            })?;
+            Ok(Some(entries[reversed_idx].new_oid))
+        }
+        ReflogSelector::Date(target_ts) => {
+            // Find the reflog entry whose timestamp is closest to but >= target_ts.
+            // Entries are oldest-first; scan newest-first to find the first
+            // entry at or before the target date.
+            for entry in entries.iter().rev() {
+                let ts = parse_reflog_entry_timestamp(entry);
+                if let Some(t) = ts {
+                    if t <= target_ts {
+                        return Ok(Some(entry.new_oid));
+                    }
+                }
+            }
+            // If all entries are after target date, return the oldest entry
+            Ok(Some(entries[0].new_oid))
+        }
+    }
+}
+
+enum ReflogSelector {
+    Index(usize),
+    Date(i64),
+}
+
+/// Parse a timestamp from a reflog entry's identity string.
+fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i64> {
+    // Identity looks like: "Name <email> 1234567890 +0000"
+    let parts: Vec<&str> = entry.identity.rsplitn(3, ' ').collect();
+    if parts.len() >= 2 {
+        parts[1].parse::<i64>().ok()
+    } else {
+        None
+    }
+}
+
+/// Simple approximate date parser for reflog date lookups.
+/// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
+fn approxidate(s: &str) -> Option<i64> {
+    // Try to extract a YYYY-MM-DD pattern from the string
+    let re_like = |input: &str| -> Option<i64> {
+        // Scan for 4-digit year followed by -MM-DD
+        for (i, _) in input.char_indices() {
+            let rest = &input[i..];
+            if rest.len() >= 10 {
+                let bytes = rest.as_bytes();
+                if bytes[4] == b'-' && bytes[7] == b'-'
+                    && bytes[0..4].iter().all(|b| b.is_ascii_digit())
+                    && bytes[5..7].iter().all(|b| b.is_ascii_digit())
+                    && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+                {
+                    let year: i32 = rest[0..4].parse().ok()?;
+                    let month: u8 = rest[5..7].parse().ok()?;
+                    let day: u8 = rest[8..10].parse().ok()?;
+                    let date = time::Date::from_calendar_date(
+                        year,
+                        time::Month::try_from(month).ok()?,
+                        day,
+                    ).ok()?;
+                    let dt = date.with_hms(0, 0, 0).ok()?;
+                    let odt = dt.assume_utc();
+                    return Some(odt.unix_timestamp());
+                }
+            }
+        }
+        None
+    };
+    re_like(s)
 }
 
 /// Try to resolve `@{upstream}`, `@{u}`, `@{push}` style suffixes.

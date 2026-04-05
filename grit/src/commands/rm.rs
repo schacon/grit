@@ -123,7 +123,12 @@ pub fn run(args: Args) -> Result<()> {
             .iter()
             .filter(|e| {
                 let p = String::from_utf8_lossy(&e.path);
-                p == rel || p.starts_with(&format!("{rel}/"))
+                if rel.is_empty() {
+                    // Empty rel means match everything (pathspec ".")
+                    true
+                } else {
+                    p == rel || p.starts_with(&format!("{rel}/"))
+                }
             })
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
             .collect();
@@ -432,10 +437,18 @@ fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
         .unwrap_or_else(|_| work_tree.to_path_buf());
 
     if let Ok(rel) = abs.strip_prefix(&wt_canon) {
-        return Ok(rel.to_string_lossy().into_owned());
+        let s = rel.to_string_lossy().into_owned();
+        // "." or empty means "everything in worktree root"
+        if s == "." || s.is_empty() {
+            return Ok(String::new());
+        }
+        return Ok(s);
     }
 
     // Fallback: already relative to worktree root.
+    if pathspec_clean == "." {
+        return Ok(String::new());
+    }
     Ok(pathspec_clean.to_owned())
 }
 

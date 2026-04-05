@@ -55,7 +55,8 @@ pub fn run(args: Args) -> Result<()> {
             bail!("usage: grit symbolic-ref --delete [-q] <name>");
         }
         if !is_symbolic_ref(&repo.git_dir, name)? {
-            bail!("Cannot delete {name}, not a symbolic ref");
+            eprintln!("fatal: Cannot delete {name}, not a symbolic ref");
+            std::process::exit(128);
         }
         if name == "HEAD" {
             bail!("deleting '{name}' is not allowed");
@@ -87,6 +88,11 @@ pub fn run(args: Args) -> Result<()> {
             }
             if !is_valid_refname(target, true) {
                 bail!("Refusing to set '{name}' to invalid ref '{target}'");
+            }
+            // Check for d/f conflicts: verify no existing ref is a prefix of
+            // the new ref name (or vice versa).
+            if name.starts_with("refs/") {
+                check_ref_df_conflict(&repo, name)?;
             }
             let old_oid = resolve_for_reflog(&repo, name);
             write_symbolic_ref(&repo.git_dir, name, target)?;
@@ -165,6 +171,29 @@ fn is_symbolic_ref(git_dir: &Path, name: &str) -> Result<bool> {
         Err(grit_lib::error::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err.into()),
     }
+}
+
+/// Check for directory/file conflicts with existing refs.
+/// E.g., creating `refs/heads/foo/bar` when `refs/heads/foo` exists (or vice versa).
+fn check_ref_df_conflict(repo: &Repository, name: &str) -> Result<()> {
+    // Check if any prefix of `name` is an existing ref
+    let components: Vec<&str> = name.split('/').collect();
+    for i in 1..components.len() {
+        let prefix = components[..i].join("/");
+        if prefix.starts_with("refs/") && grit_lib::refs::resolve_ref(&repo.git_dir, &prefix).is_ok() {
+            bail!("'{prefix}' exists; cannot create '{name}'");
+        }
+    }
+    // Check if any existing ref has `name` as a prefix
+    let prefix_with_slash = format!("{name}/");
+    let all_refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")
+        .unwrap_or_default();
+    for (refname, _) in &all_refs {
+        if refname.starts_with(&prefix_with_slash) {
+            bail!("'{name}' exists as a directory; cannot create it");
+        }
+    }
+    Ok(())
 }
 
 fn write_symbolic_ref(git_dir: &Path, name: &str, target: &str) -> Result<()> {

@@ -215,20 +215,59 @@ impl Parser {
         if !trimmed.starts_with('[') {
             return false;
         }
-        let end = match trimmed.find(']') {
-            Some(i) => i,
-            None => return false,
+        // Find the closing `]` — but for subsection headers like
+        // [section "sub\"escaped"], we need to skip escaped chars
+        // inside quotes.
+        let end = {
+            let bytes = trimmed.as_bytes();
+            let mut i = 1; // skip opening '['
+            let mut in_quotes = false;
+            let mut found = None;
+            while i < bytes.len() {
+                if in_quotes {
+                    if bytes[i] == b'\\' {
+                        i += 2; // skip escaped char
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        in_quotes = false;
+                    }
+                } else {
+                    if bytes[i] == b'"' {
+                        in_quotes = true;
+                    }
+                    if bytes[i] == b']' {
+                        found = Some(i);
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            match found {
+                Some(i) => i,
+                None => return false,
+            }
         };
         let inside = &trimmed[1..end];
         // Check for subsection: [section "subsection"]
         if let Some(quote_start) = inside.find('"') {
             self.section = inside[..quote_start].trim().to_owned();
             let rest = &inside[quote_start + 1..];
-            if let Some(quote_end) = rest.find('"') {
-                self.subsection = Some(rest[..quote_end].to_owned());
-            } else {
-                self.subsection = Some(rest.to_owned());
+            // Find unescaped closing quote
+            let mut sub = String::new();
+            let mut chars = rest.chars();
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    if let Some(escaped) = chars.next() {
+                        sub.push(escaped);
+                    }
+                } else if ch == '"' {
+                    break;
+                } else {
+                    sub.push(ch);
+                }
             }
+            self.subsection = Some(sub);
         } else {
             self.section = inside.trim().to_owned();
             self.subsection = None;
@@ -385,6 +424,20 @@ fn unescape_value(s: &str) -> String {
 ///
 /// Wraps in double quotes if the value contains leading/trailing whitespace,
 /// internal quotes, backslashes, or special characters.
+/// Escape a subsection name for writing in a config section header.
+/// In subsection names, `"` and `\` must be escaped.
+fn escape_subsection(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn escape_value(s: &str) -> String {
     let needs_quoting = s.starts_with(' ')
         || s.starts_with('\t')
@@ -1083,7 +1136,10 @@ impl ConfigFile {
 
         // Create new section at end of file
         let header = match subsection {
-            Some(sub) => format!("[{} \"{}\"]", section, sub),
+            Some(sub) => {
+                let escaped = escape_subsection(sub);
+                format!("[{} \"{}\"]", section, escaped)
+            }
             None => format!("[{}]", section),
         };
         self.raw_lines.push(header);
@@ -1113,7 +1169,10 @@ impl ConfigFile {
 
         // Create new section at end of file, using original case
         let header = match raw_subsection {
-            Some(sub) => format!("[{} \"{}\"]", raw_section, sub),
+            Some(sub) => {
+                let escaped = escape_subsection(sub);
+                format!("[{} \"{}\"]", raw_section, escaped)
+            }
             None => format!("[{}]", raw_section),
         };
         self.raw_lines.push(header);
@@ -1196,7 +1255,7 @@ impl ConfigSet {
         self.entries
             .iter()
             .filter(|e| e.key == canon)
-            .map(|e| e.value.clone().unwrap_or_else(|| "true".to_owned()))
+            .map(|e| e.value.clone().unwrap_or_default())
             .collect()
     }
 
