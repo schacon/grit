@@ -424,7 +424,7 @@ commit → check it off → move on.
 - [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
 
-- [ ] `t4136-apply-check` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — git apply should exit non-zero with unrecognized input.
+- [x] `t4136-apply-check` ████████████████████ 6/6 (0 left) — git apply should exit non-zero with unrecognized input.
 - [ ] `t4102-apply-rename` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply handling copy/rename patch.
 
 - [ ] `t4138-apply-ws-expansion` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply test patches with whitespace expansion.

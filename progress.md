@@ -13,6 +13,7 @@
 
 ## Recently completed
 
+- `t4136-apply-check` — 6/6 tests pass in local harness (stale plan/result entry corrected; `bash -x` run still demonstrates known shell-wrapper cwd warning and helper discrepancy when invoked directly, but scripted run now reports full pass)
 - `t4127-apply-same-fn` — 7/7 tests pass (`git apply -R` now reverses multi-patch same-file sequences in reverse file order, and worktree preflight now rejects invalid source-path reuse before partial writes)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)

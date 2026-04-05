@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-05
 
+- `./scripts/run-tests.sh t4136-apply-check.sh`: 6/6 passing; `data/file-results.tsv` refreshed.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash -x t4136-apply-check.sh`: 3/6 in local mirror; mismatches come from harness/environment behavior (`getcwd` failure in test 3 and `test_must_fail` wrapper semantics), not from command behavior itself.
+
 - `cargo build --release`: passes (rebuild after `diff --stat` summary/count adjustments and hard-reset permission restoration for mode-only stat fidelity).
 - `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 3/4 passing; remaining local miss is the mode-only case because this mirror's `test_chmod` helper applies `--chmod` to only one path.
 - `bash scripts/run-upstream-tests.sh t4049-diff-stat-count`: 4/4 passing in isolated upstream harness.
