@@ -19,7 +19,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree};
 use grit_lib::error::Error;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, serialize_tree, CommitData, ObjectId, ObjectKind,
     TreeEntry,
@@ -97,6 +97,12 @@ pub enum StashCommand {
         /// Quiet mode.
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
+        /// Read pathspec from file (use "-" for stdin).
+        #[arg(long = "pathspec-from-file", value_name = "FILE")]
+        pathspec_from_file: Option<String>,
+        /// NUL-terminated pathspec input (requires --pathspec-from-file).
+        #[arg(long = "pathspec-file-nul")]
+        pathspec_file_nul: bool,
         /// Pathspec arguments.
         #[arg(trailing_var_arg = true)]
         pathspec: Vec<String>,
@@ -133,6 +139,12 @@ pub enum StashCommand {
         /// Show stat (default).
         #[arg(long = "stat")]
         stat: bool,
+        /// Show name and status only.
+        #[arg(long = "name-status")]
+        name_status: bool,
+        /// Show name only.
+        #[arg(long = "name-only")]
+        name_only: bool,
         /// Patience diff algorithm.
         #[arg(long = "patience")]
         patience: bool,
@@ -228,10 +240,43 @@ pub fn run(args: Args) -> Result<()> {
             staged,
             patch,
             quiet,
+            pathspec_from_file,
+            pathspec_file_nul,
             pathspec,
         }) => {
+            let mut pathspec = pathspec;
+            // Handle --pathspec-from-file / --pathspec-file-nul
+            if pathspec_file_nul && pathspec_from_file.is_none() {
+                eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+                std::process::exit(128);
+            }
+            if pathspec_from_file.is_some() && patch {
+                eprintln!("fatal: options '--pathspec-from-file' and '--patch' cannot be used together");
+                std::process::exit(128);
+            }
             if patch {
                 bail!("interactive patch mode (stash push -p) is not yet implemented");
+            }
+            if let Some(ref psf) = pathspec_from_file {
+                if !pathspec.is_empty() {
+                    eprintln!("fatal: '--pathspec-from-file' and pathspec arguments cannot be used together");
+                    std::process::exit(128);
+                }
+                let content = if psf == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin().read_to_string(&mut buf)?;
+                    buf
+                } else {
+                    std::fs::read_to_string(psf)
+                        .with_context(|| format!("could not read pathspec from '{psf}'"))?
+                };
+                let paths: Vec<String> = if pathspec_file_nul {
+                    content.split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
+                } else {
+                    content.lines().filter(|s| !s.is_empty()).map(String::from).collect()
+                };
+                pathspec = paths;
             }
             let msg = message.or(args.message);
             let ki = keep_index || args.keep_index;
@@ -279,12 +324,23 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::Show {
             patch,
             stat: _,
+            name_status,
+            name_only,
             patience: _,
             args: show_args,
         }) => {
             // Parse stash ref from trailing args (non-flag args)
             let stash_ref = show_args.iter().find(|a| !a.starts_with('-')).cloned();
-            do_show(stash_ref, patch)
+            let mode = if name_status {
+                ShowMode::NameStatus
+            } else if name_only {
+                ShowMode::NameOnly
+            } else if patch {
+                ShowMode::Patch
+            } else {
+                ShowMode::Stat
+            };
+            do_show(stash_ref, mode)
         }
         Some(StashCommand::Pop {
             index,
@@ -489,6 +545,19 @@ fn do_push_pathspec(
         return Ok(());
     }
 
+    // Collect matched paths early for selective tree creation
+    let mut matched_paths: BTreeSet<String> = BTreeSet::new();
+    for e in &matching_staged {
+        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
+            matched_paths.insert(p.clone());
+        }
+    }
+    for e in &matching_unstaged {
+        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
+            matched_paths.insert(p.clone());
+        }
+    }
+
     let now = OffsetDateTime::now_utc();
     let identity = resolve_identity(repo, now)?;
 
@@ -506,8 +575,42 @@ fn do_push_pathspec(
     let index_commit_bytes = serialize_commit(&index_commit_data);
     let index_commit_oid = repo.odb.write(ObjectKind::Commit, &index_commit_bytes)?;
 
-    // 2. Create working-tree state commit
-    let wt_tree_oid = create_worktree_tree(&repo.odb, index, work_tree)?;
+    // 2. Create working-tree state commit (only pathspec-matched changes)
+    let wt_tree_oid = {
+        use std::os::unix::fs::PermissionsExt;
+        let head_flat = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
+        let mut wt_index = Index::new();
+        for entry in &head_flat {
+            wt_index.add_or_replace(IndexEntry {
+                ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
+                dev: 0, ino: 0, mode: entry.mode, uid: 0, gid: 0, size: 0,
+                oid: entry.oid, flags: 0, flags_extended: None,
+                path: entry.path.as_bytes().to_vec(),
+            });
+        }
+        for path in &matched_paths {
+            let abs = work_tree.join(path);
+            if abs.exists() {
+                let data = fs::read(&abs)?;
+                let blob_oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let meta = fs::metadata(&abs)?;
+                let mode = if meta.permissions().mode() & 0o111 != 0 {
+                    MODE_EXECUTABLE
+                } else {
+                    MODE_REGULAR
+                };
+                wt_index.add_or_replace(IndexEntry {
+                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
+                    dev: 0, ino: 0, mode, uid: 0, gid: 0,
+                    size: data.len() as u32, oid: blob_oid, flags: 0,
+                    flags_extended: None, path: path.as_bytes().to_vec(),
+                });
+            } else {
+                wt_index.remove(path.as_bytes());
+            }
+        }
+        write_tree_from_index(&repo.odb, &wt_index, "")?
+    };
 
     let stash_msg = stash_save_msg(head, opts.message.as_deref());
     let reflog_msg = stash_reflog_msg(head, opts.message.as_deref());
@@ -534,18 +637,7 @@ fn do_push_pathspec(
         .map(|e| (e.path.clone(), e))
         .collect();
 
-    // Collect paths that match pathspec
-    let mut matched_paths: BTreeSet<String> = BTreeSet::new();
-    for e in &matching_staged {
-        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
-            matched_paths.insert(p.clone());
-        }
-    }
-    for e in &matching_unstaged {
-        if let Some(p) = e.new_path.as_ref().or(e.old_path.as_ref()) {
-            matched_paths.insert(p.clone());
-        }
-    }
+    // matched_paths already collected above
 
     // Rebuild index: for matched paths, reset to HEAD state; for others, keep current
     let mut new_index = index.clone();
@@ -818,15 +910,63 @@ fn do_list(extra_args: Vec<String>) -> Result<()> {
 // Show
 // ---------------------------------------------------------------------------
 
-fn do_show(stash_ref: Option<String>, patch: bool) -> Result<()> {
+#[derive(Clone, Copy, PartialEq)]
+enum ShowMode {
+    Stat,
+    Patch,
+    NameStatus,
+    NameOnly,
+}
+
+fn do_show(stash_ref: Option<String>, mode: ShowMode) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
 
-    if patch {
-        show_stash_diff(&repo, &stash_oid, true)?;
-    } else {
-        // Default: --stat format
-        show_stash_stat(&repo, &stash_oid)?;
+    match mode {
+        ShowMode::Patch => show_stash_diff(&repo, &stash_oid, true)?,
+        ShowMode::NameStatus => show_stash_name_status(&repo, &stash_oid, true)?,
+        ShowMode::NameOnly => show_stash_name_status(&repo, &stash_oid, false)?,
+        ShowMode::Stat => show_stash_stat(&repo, &stash_oid)?,
+    }
+
+    Ok(())
+}
+
+fn show_stash_name_status(repo: &Repository, stash_oid: &ObjectId, with_status: bool) -> Result<()> {
+    let obj = repo.odb.read(stash_oid)?;
+    let stash_commit = parse_commit(&obj.data)?;
+    let parent_oid = stash_commit.parents.first()
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: no parents"))?;
+    let parent_obj = repo.odb.read(parent_oid)?;
+    let parent_commit = parse_commit(&parent_obj.data)?;
+
+    let old_entries = flatten_tree_full(&repo.odb, &parent_commit.tree, "")?;
+    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+
+    use std::collections::BTreeMap;
+    let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &old_entries { old_map.insert(&e.path, e); }
+    let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &new_entries { new_map.insert(&e.path, e); }
+
+    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
+    for e in &old_entries { all_paths.insert(&e.path); }
+    for e in &new_entries { all_paths.insert(&e.path); }
+
+    for path in &all_paths {
+        let old = old_map.get(path);
+        let new = new_map.get(path);
+        let status = match (old, new) {
+            (None, Some(_)) => 'A',
+            (Some(_), None) => 'D',
+            (Some(o), Some(n)) if o.oid != n.oid || o.mode != n.mode => 'M',
+            _ => continue,
+        };
+        if with_status {
+            println!("{}\t{}", status, path);
+        } else {
+            println!("{}", path);
+        }
     }
 
     Ok(())
@@ -1317,6 +1457,7 @@ fn apply_stash_impl(
                             favor: MergeFavor::None,
                             style: ConflictStyle::Merge,
                             marker_size: 7,
+            diff_algorithm: None,
                         };
                         let output = merge(&input)?;
                         fs::write(&file_path, &output.content)?;

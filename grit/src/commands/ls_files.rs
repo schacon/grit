@@ -210,7 +210,9 @@ pub fn run(args: Args) -> Result<()> {
 
         // --deleted / --modified: show entries that are deleted or modified.
         // When both are set, show if EITHER condition is true.
-        if (args.deleted || args.modified) && !show_cached {
+        // Unmerged entries (stage != 0) always pass through — they represent
+        // conflict states that git treats as "modified".
+        if (args.deleted || args.modified) && !show_cached && entry.stage() == 0 {
             if entry.skip_worktree() {
                 continue;
             }
@@ -229,10 +231,28 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        let tag = if args.show_tag {
-            Some(status_tag(entry))
+        // For -d/-m with -t, compute tags. A deleted file with both -d and -m
+        // produces TWO output lines: 'R path' and 'C path'.
+        let (tag, extra_tag) = if args.show_tag {
+            if (args.deleted || args.modified) && entry.stage() == 0 {
+                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                if !full.exists() {
+                    if args.deleted && args.modified {
+                        // Both -d and -m: show R (deleted) and C (modified)
+                        (Some('R'), Some('C'))
+                    } else {
+                        (Some('R'), None)
+                    }
+                } else if is_modified(entry, &full) {
+                    (Some('C'), None)
+                } else {
+                    (Some(status_tag(entry)), None)
+                }
+            } else {
+                (Some(status_tag(entry)), None)
+            }
         } else {
-            None
+            (None, None)
         };
 
         if args.eol {
@@ -301,8 +321,11 @@ pub fn run(args: Args) -> Result<()> {
             )?;
             out.write_all(&[term])?;
         } else if show_cached || args.deleted || args.modified {
-            // Deduplicate: skip if same path as last printed
-            if args.deduplicate {
+            // Deduplicate: skip if same path as last printed.
+            // With -t flag, don't deduplicate unmerged entries (stage != 0)
+            // since they have distinct stage info that should be visible.
+            // Without -t, deduplicate all entries including unmerged.
+            if args.deduplicate && !(args.show_tag && entry.stage() != 0) {
                 if let Some(ref last) = last_dedup_path {
                     if last == &entry.path {
                         continue;
@@ -318,6 +341,12 @@ pub fn run(args: Args) -> Result<()> {
             }
             write!(out, "{qname}")?;
             out.write_all(&[term])?;
+            // Output extra line for deleted files with both -d and -m and -t
+            if let Some(et) = extra_tag {
+                write!(out, "{} ", et)?;
+                write!(out, "{qname}")?;
+                out.write_all(&[term])?;
+            }
         }
     }
 

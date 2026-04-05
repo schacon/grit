@@ -38,7 +38,7 @@ struct ServerCaps {
 impl ServerCaps {
     fn load(git_dir: &Path) -> Self {
         let version = crate::version_string();
-        let agent = format!("agent=git/{version}");
+        let agent = format!("agent=git/{version}-");
 
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");
@@ -163,7 +163,8 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
 
     // Check that the command is valid
     if !caps.is_valid_command(&cmd) {
-        bail!("invalid command '{cmd}'");
+        eprintln!("fatal: invalid command '{cmd}'");
+        std::process::exit(128);
     }
 
     // Read arguments section (after delimiter, up to flush).

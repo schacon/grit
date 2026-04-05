@@ -130,6 +130,14 @@ pub struct Args {
     /// Automatically stash/unstash before/after merge.
     #[arg(long = "autostash")]
     pub autostash: bool,
+
+    /// How to clean up the merge message.
+    #[arg(long = "cleanup", value_name = "MODE")]
+    pub cleanup: Option<String>,
+
+    /// Read the commit message from the given file.
+    #[arg(short = 'F', long = "file", value_name = "FILE")]
+    pub file: Option<String>,
 }
 
 /// Apply branch.<name>.mergeoptions to the args.
@@ -285,11 +293,24 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Parse -X strategy options
     let mut favor = MergeFavor::None;
+    let mut diff_algorithm: Option<String> = None;
     for xopt in &args.strategy_option {
-        match xopt.as_str() {
-            "ours" => favor = MergeFavor::Ours,
-            "theirs" => favor = MergeFavor::Theirs,
-            other => bail!("unknown strategy option: -X {other}"),
+        if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
+            diff_algorithm = Some(algo.to_string());
+        } else {
+            match xopt.as_str() {
+                "ours" => favor = MergeFavor::Ours,
+                "theirs" => favor = MergeFavor::Theirs,
+                other => bail!("unknown strategy option: -X {other}"),
+            }
+        }
+    }
+    // Also read diff.algorithm from config if not set via -X
+    if diff_algorithm.is_none() {
+        if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(algo) = config.get("diff.algorithm") {
+                diff_algorithm = Some(algo);
+            }
         }
     }
     let head = resolve_head(&repo.git_dir)?;
@@ -322,7 +343,7 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("Not possible to fast-forward, aborting.");
         }
-        return do_octopus_merge(&repo, &head, head_oid, &args, favor);
+        return do_octopus_merge(&repo, &head, head_oid, &args, favor, diff_algorithm.as_deref());
     }
 
     // Resolve merge target
@@ -363,7 +384,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff && !args.ff_only {
             // Force a merge commit even though we could fast-forward
-            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor);
+            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref());
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
@@ -381,7 +402,7 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
-    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor)
+    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref())
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -511,7 +532,16 @@ fn create_virtual_merge_base(
 
         // Create a dummy head state for merge_trees
         let head = HeadState::Detached { oid: current };
-        let merge_result = merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, &head, "virtual", favor)?;
+        let merge_result = merge_trees(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            &head,
+            "virtual",
+            favor,
+            None,
+        )?;
 
         // Build a tree from the merged index (use stage-0 entries, or for conflicts pick ours)
         let mut final_entries: Vec<IndexEntry> = Vec::new();
@@ -561,6 +591,7 @@ fn do_real_merge(
     merge_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -604,6 +635,7 @@ fn do_real_merge(
         head,
         &args.commits[0],
         favor,
+        diff_algorithm,
     )?;
 
     // Write index
@@ -691,7 +723,13 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+    let effective_custom_msg = if let Some(ref file_path) = args.file {
+        Some(fs::read_to_string(file_path)
+            .with_context(|| format!("could not read merge message file: {file_path}"))?)
+    } else {
+        args.message.clone()
+    };
+    let mut msg = build_merge_message(head, &args.commits[0], effective_custom_msg.as_deref(), repo);
 
     // Append merge log if --log is set
     if let Some(max_log) = args.log {
@@ -721,6 +759,11 @@ fn do_real_merge(
             .or_else(|| config.get("user.email"))
             .unwrap_or_default();
         msg = append_signoff(&msg, &sob_name, &sob_email);
+    }
+
+    // Apply cleanup mode if specified
+    if let Some(ref mode) = args.cleanup {
+        msg = cleanup_message(&msg, mode);
     }
 
     let commit_data = CommitData {
@@ -771,6 +814,7 @@ fn do_octopus_merge(
     head_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -801,12 +845,12 @@ fn do_octopus_merge(
     if merge_oids.len() == 1 {
         let merge_oid = merge_oids[0];
         if args.no_ff && !args.ff_only {
-            return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
+            return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
         }
         if is_ancestor(repo, head_oid, merge_oid)? {
             return do_fast_forward(repo, head, head_oid, merge_oid, args);
         }
-        return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
+        return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
     }
 
     // Check if we can fast-forward: filter out merge targets that are ancestors
@@ -859,41 +903,27 @@ fn do_octopus_merge(
             head,
             &args.commits[i],
             favor,
+            diff_algorithm,
         )?;
 
         if merge_result.has_conflicts {
-            // Write the conflict state to disk
-            merge_result.index.write(&repo.index_path())?;
+            // Octopus strategy cannot handle conflicts - restore original state
+            let orig_tree = commit_tree(repo, head_oid)?;
+            let orig_entries = tree_to_index_entries(repo, &orig_tree, "")?;
+            let mut orig_index = Index::new();
+            orig_index.entries = orig_entries;
+            orig_index.sort();
+            orig_index.write(&repo.index_path())?;
             if let Some(ref wt) = repo.work_tree {
-                checkout_entries(repo, wt, &merge_result.index)?;
-                for (path, content) in &merge_result.conflict_files {
-                    let abs = wt.join(path);
-                    if let Some(parent) = abs.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::write(&abs, content)?;
-                }
+                checkout_entries(repo, wt, &orig_index)?;
             }
-            // Write MERGE_HEAD with all remaining merge OIDs
-            let merge_head_content: String = merge_oids
-                .iter()
-                .map(|oid| format!("{}\n", oid.to_hex()))
-                .collect();
-            fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
-            let msg =
-                build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
-            fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
-            fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
-            for (ctype, cpath) in &merge_result.conflict_descriptions {
-                if ctype == "rename/delete" || ctype == "modify/delete" {
-                    println!("CONFLICT ({ctype}): {cpath}");
-                } else {
-                    println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
-                }
-            }
-            println!("Automatic merge failed; fix conflicts and then commit the result.");
-            eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
-            std::process::exit(1);
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
+            let _ = fs::remove_file(repo.git_dir.join("MERGE_MODE"));
+            eprintln!("Merge with strategy octopus failed.");
+            println!("Should not be doing an octopus.");
+            eprintln!("fatal: merge program failed");
+            std::process::exit(2);
         }
 
         // Advance current_tree_entries to the merged result
@@ -1800,6 +1830,7 @@ fn merge_trees(
     _head: &HeadState,
     their_name: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
@@ -1842,7 +1873,7 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
                             entry.oid = merged_oid;
@@ -1978,7 +2009,7 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
                             entry.oid = merged_oid;
@@ -2021,13 +2052,14 @@ fn merge_trees(
             // If ours also has a NEW file at theirs_new_path (add/add at rename target)
             if let Some(oe_at_new) = ours.get(theirs_new_path) {
                 if !base.contains_key(theirs_new_path)
-                    && (te.oid != oe_at_new.oid || te.mode != oe_at_new.mode) {
-                        let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                        has_conflicts = true;
-                        stage_entry(&mut index, oe_at_new, 2);
-                        stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push(("rename/add".to_string(), path_str));
-                    }
+                    && (te.oid != oe_at_new.oid || te.mode != oe_at_new.mode)
+                {
+                    let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, oe_at_new, 2);
+                    stage_entry(&mut index, te, 3);
+                    conflict_descriptions.push(("rename/add".to_string(), path_str));
+                }
             }
 
             // Handle "add-source": theirs renamed base_path away, but theirs may also
@@ -2098,7 +2130,7 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2172,7 +2204,7 @@ fn merge_trees(
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor)? {
+                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2219,6 +2251,7 @@ fn try_content_merge(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -2272,6 +2305,7 @@ fn try_content_merge(
         favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
+        diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
     let output = merge_file::merge(&input)?;
@@ -2293,6 +2327,7 @@ fn try_content_merge_add_add(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -2311,6 +2346,7 @@ fn try_content_merge_add_add(
         favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
+        diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
     let output = merge_file::merge(&input)?;
@@ -2635,7 +2671,9 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
     // Load gitattributes and config for CRLF conversion
     let attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let conv = config.as_ref().map(grit_lib::crlf::ConversionConfig::from_config);
+    let conv = config
+        .as_ref()
+        .map(grit_lib::crlf::ConversionConfig::from_config);
 
     for entry in &index.entries {
         if entry.stage() != 0 {
@@ -2755,6 +2793,92 @@ fn parse_date_to_git_ts(date_str: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Apply cleanup mode to a commit message.
+fn cleanup_message(msg: &str, mode: &str) -> String {
+    match mode {
+        "verbatim" => {
+            // Keep message exactly as-is
+            msg.to_string()
+        }
+        "whitespace" => {
+            // Strip trailing whitespace from each line, leading and trailing blank lines
+            let lines: Vec<&str> = msg.lines().collect();
+            let mut result: Vec<String> = lines
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        "strip" | "default" => {
+            // Strip comments (lines starting with #) and trailing whitespace
+            let lines: Vec<&str> = msg.lines().collect();
+            let mut result: Vec<String> = lines
+                .iter()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        "scissors" => {
+            // Strip everything from the scissors line onward.
+            // A scissors line starts at column 0 (not indented).
+            let mut result_lines: Vec<&str> = Vec::new();
+            for line in msg.lines() {
+                if line.starts_with("# ------------------------ >8 ------------------------") {
+                    break;
+                }
+                result_lines.push(line);
+            }
+            // Strip trailing whitespace from lines, leading and trailing blank lines
+            let mut result: Vec<String> = result_lines
+                .iter()
+                .map(|l| l.trim_end().to_string())
+                .collect();
+            // Remove leading empty lines
+            while result.first().is_some_and(|l| l.is_empty()) {
+                result.remove(0);
+            }
+            // Remove trailing empty lines
+            while result.last().is_some_and(|l| l.is_empty()) {
+                result.pop();
+            }
+            if result.is_empty() {
+                String::new()
+            } else {
+                result.join("\n") + "\n"
+            }
+        }
+        _ => {
+            // Unknown mode: treat as default
+            cleanup_message(msg, "strip")
+        }
+    }
 }
 
 fn ensure_trailing_newline(s: &str) -> String {

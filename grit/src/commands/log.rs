@@ -305,9 +305,59 @@ pub struct Args {
     #[arg(long = "binary")]
     pub binary: bool,
 
+    /// Filter: show commits newer than date (filter mode).
+    #[arg(long = "since-as-filter", value_name = "DATE")]
+    pub since_as_filter: Option<String>,
+
+    /// Show commits newer than a specific date.
+    #[arg(long = "since", alias = "after", value_name = "DATE")]
+    pub since: Option<String>,
+
+    /// Show commits older than a specific date.
+    #[arg(long = "until", alias = "before", value_name = "DATE")]
+    pub until: Option<String>,
+
+    /// Annotate each commit with its children (accepted for compatibility).
+    #[arg(long = "children")]
+    pub children: bool,
+
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
+}
+
+/// Extract epoch timestamp from a Git ident string.
+fn extract_epoch_from_ident(ident: &str) -> i64 {
+    if let Some(gt) = ident.rfind('>') {
+        let after = ident[gt + 1..].trim();
+        if let Some(epoch_str) = after.split_whitespace().next() {
+            return epoch_str.parse::<i64>().unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// Parse a date string into a Unix epoch timestamp.
+fn parse_date_to_epoch(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
+        let parts: Vec<&str> = s[..10].split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u8>(),
+                parts[2].parse::<u8>(),
+            ) {
+                if let Ok(month) = time::Month::try_from(m) {
+                    if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
+                        let dt = date.with_hms(0, 0, 0).unwrap().assume_utc();
+                        return Some(dt.unix_timestamp());
+                    }
+                }
+            }
+        }
+    }
+    s.parse::<i64>().ok()
 }
 
 /// Run the `log` command.
@@ -534,9 +584,9 @@ pub fn run(mut args: Args) -> Result<()> {
         let find_oid = resolve_revision(&repo, find_obj_rev)?;
         commits
             .into_iter()
-            .filter(
-                |(_oid, info)| commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default(),
-            )
+            .filter(|(_oid, info)| {
+                commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default()
+            })
             .collect::<Vec<_>>()
     } else {
         commits
@@ -554,6 +604,26 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         commits
     };
+
+    // Apply --since-as-filter / --since
+    let commits = {
+        let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
+        if let Some(s) = since_str {
+            if let Some(threshold) = parse_date_to_epoch(s) {
+                commits.into_iter().filter(|(_oid, info)| {
+                    extract_epoch_from_ident(&info.committer) >= threshold
+                }).collect::<Vec<_>>()
+            } else { commits }
+        } else { commits }
+    };
+    // Apply --until
+    let commits = if let Some(ref s) = args.until {
+        if let Some(threshold) = parse_date_to_epoch(s) {
+            commits.into_iter().filter(|(_oid, info)| {
+                extract_epoch_from_ident(&info.committer) <= threshold
+            }).collect::<Vec<_>>()
+        } else { commits }
+    } else { commits };
 
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()
@@ -1211,10 +1281,9 @@ fn walk_commits(
                 continue;
             }
         }
-        if !pathspecs.is_empty()
-            && !commit_touches_paths(odb, &info, pathspecs)? {
-                continue;
-            }
+        if !pathspecs.is_empty() && !commit_touches_paths(odb, &info, pathspecs)? {
+            continue;
+        }
 
         if skipped < skip_n {
             skipped += 1;

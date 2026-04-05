@@ -3,10 +3,11 @@
 # Results go to /tmp/grit-upstream-results/*.out
 set -eu
 
-REPO=/home/hasi/grit
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 GRIT_BIN=$REPO/target/release/grit
 RESULTS=/tmp/grit-upstream-results
 WORKDIR=/tmp/grit-upstream-workdir
+TEST_FILTER="${1:-}"
 
 rm -rf "$RESULTS" "$WORKDIR"
 mkdir -p "$RESULTS" "$WORKDIR"
@@ -62,6 +63,10 @@ EOF
 cat > "$WORKDIR/t/helper/test-tool" <<'TOOL'
 #!/bin/sh
 case "$1" in
+  trace2)
+    GRIT_BIN=${GRIT_BIN:?}
+    exec "$GRIT_BIN" test-tool "$@"
+    ;;
   chmtime) shift; touch "$@" 2>/dev/null ;;
   *) exit 0 ;;
 esac
@@ -75,17 +80,28 @@ run_test() {
   local f="$1"
   local name=$(basename "$f" .sh)
   local out="$RESULTS/$name.out"
+  local runner=()
+  if command -v timeout >/dev/null 2>&1; then
+    runner=(timeout 60)
+  fi
   (
     cd "$WORKDIR/t"
     GIT_BUILD_DIR="$WORKDIR" TEST_NO_MALLOC_CHECK=1 \
-      timeout 60 bash "./$f" > "$out" 2>&1
+      "${runner[@]}" bash "./$f" > "$out" 2>&1
   ) || true
 }
 
 export GRIT_BIN WORKDIR RESULTS
 export -f run_test
 
-find "$WORKDIR/t" -maxdepth 1 -name 't[0-9]*.sh' -printf '%f\n' | sort | \
+if test -n "$TEST_FILTER"
+then
+  PATTERN="${TEST_FILTER}*.sh"
+else
+  PATTERN='t[0-9]*.sh'
+fi
+
+find "$WORKDIR/t" -maxdepth 1 -name "$PATTERN" -exec basename {} \; | sort | \
   xargs -P 16 -I{} bash -c 'run_test "$@"' _ {}
 
 # Aggregate

@@ -547,6 +547,55 @@ fn reverse_patches(patches: &mut [FilePatch]) {
 // ---------------------------------------------------------------------------
 
 /// Apply hunks to file content (a list of lines). Returns new content.
+/// Find the best starting position for a hunk by scanning around the
+/// nominal position. Returns the 0-based line index where the hunk's
+/// leading context/remove lines match the old file.
+fn find_hunk_start(old_lines: &[&str], hunk: &Hunk, nominal: usize) -> usize {
+    // Collect the leading context + remove lines (the old-side lines)
+    let old_side: Vec<&str> = hunk
+        .lines
+        .iter()
+        .filter_map(|hl| match hl {
+            HunkLine::Context(s) | HunkLine::Remove(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    if old_side.is_empty() {
+        return nominal.min(old_lines.len());
+    }
+
+    // Check if the nominal position matches
+    if matches_at(old_lines, &old_side, nominal) {
+        return nominal;
+    }
+
+    // Scan outward from nominal
+    let max_scan = old_lines.len();
+    for delta in 1..=max_scan {
+        if nominal >= delta && matches_at(old_lines, &old_side, nominal - delta) {
+            return nominal - delta;
+        }
+        if nominal + delta <= old_lines.len() && matches_at(old_lines, &old_side, nominal + delta) {
+            return nominal + delta;
+        }
+    }
+
+    // No match found — return nominal and let the hunk application fail
+    nominal
+}
+
+/// Check if old_side lines match old_lines starting at `start`.
+fn matches_at(old_lines: &[&str], old_side: &[&str], start: usize) -> bool {
+    if start + old_side.len() > old_lines.len() {
+        return false;
+    }
+    old_side
+        .iter()
+        .zip(&old_lines[start..start + old_side.len()])
+        .all(|(a, b)| *a == *b)
+}
+
 fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     // Split into lines, keeping track of trailing newline
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
@@ -558,18 +607,28 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
 
     let mut result: Vec<String> = Vec::new();
     let mut old_idx: usize = 0; // 0-based index into old_lines
+    let mut offset: isize = 0; // accumulated offset from previous hunks
 
     for hunk in hunks {
-        let hunk_start = if hunk.old_start == 0 {
-            0
+        let nominal_start = if hunk.old_start == 0 {
+            0isize
         } else {
-            hunk.old_start - 1
+            hunk.old_start as isize - 1
         };
+        let hunk_start = (nominal_start + offset).max(0) as usize;
+
+        // If context at hunk_start doesn't match, scan nearby to find it
+        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start);
 
         // Copy lines before this hunk
-        while old_idx < hunk_start && old_idx < old_lines.len() {
+        while old_idx < actual_start && old_idx < old_lines.len() {
             result.push(old_lines[old_idx].to_string());
             old_idx += 1;
+        }
+
+        // Update offset based on where we actually found the hunk
+        if actual_start != hunk_start {
+            offset += actual_start as isize - hunk_start as isize;
         }
 
         // Apply hunk
@@ -1037,12 +1096,22 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
+    // CWD prefix for subdir apply
+    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(rel) = cwd.strip_prefix(wt) {
+                let s = rel.to_string_lossy().to_string();
+                if s.is_empty() { String::new() } else { format!("{s}/") }
+            } else { String::new() }
+        } else { String::new() }
+    } else { String::new() };
 
     for fp in patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let raw = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let adjusted = format!("{cwd_prefix}{raw}");
 
         if fp.is_deleted {
             index.remove(adjusted.as_bytes());

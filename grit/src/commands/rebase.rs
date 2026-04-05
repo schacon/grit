@@ -86,7 +86,7 @@ pub struct Args {
     #[arg(long = "no-fork-point")]
     pub no_fork_point: bool,
 
-    /// Be verbose.
+    /// Be verbose (show diffs).
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
@@ -1028,6 +1028,7 @@ fn content_merge_or_conflict(
         favor: Default::default(),
         style: Default::default(),
         marker_size: 7,
+            diff_algorithm: None,
     };
 
     let result = merge(&input)?;

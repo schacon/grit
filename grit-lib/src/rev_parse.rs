@@ -572,9 +572,9 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     if let Ok(oid) = spec.parse::<ObjectId>() {
-        if repo.odb.exists(&oid) {
-            return Ok(oid);
-        }
+        // A full 40-hex OID is always accepted, even if the object
+        // doesn't exist in the ODB (matches git behavior).
+        return Ok(oid);
     }
 
     if is_hex_prefix(spec) {

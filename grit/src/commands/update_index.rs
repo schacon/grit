@@ -103,6 +103,10 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// Suppress output.
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }

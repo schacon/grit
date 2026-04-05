@@ -535,10 +535,6 @@ fn show_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
             let stdout = io::stdout();
             let mut out = stdout.lock();
             out.write_all(&blob.data)?;
-            // Ensure trailing newline
-            if !blob.data.ends_with(b"\n") {
-                out.write_all(b"\n")?;
-            }
             return Ok(());
         }
     }

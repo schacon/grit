@@ -460,6 +460,44 @@ fn fetch_remote(
                 }
             }
         }
+
+        // Emit warnings when CLI refspec destinations conflict with configured tracking
+        let configured_refspecs = collect_refspecs(config, &fetch_key);
+        if !configured_refspecs.is_empty() {
+            for spec in cli_refspecs {
+                if spec.starts_with('^') {
+                    continue;
+                }
+                let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+                let (src, dst) = if let Some(idx) = spec_clean.find(':') {
+                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+                } else {
+                    continue;
+                };
+                if dst.is_empty() || src.contains('*') {
+                    continue;
+                }
+                let remote_ref = if src.starts_with("refs/") {
+                    src.clone()
+                } else {
+                    format!("refs/heads/{src}")
+                };
+                let local_ref = if dst.starts_with("refs/") {
+                    dst.clone()
+                } else {
+                    format!("refs/heads/{dst}")
+                };
+                // Check what the configured refspec would map this destination to
+                if let Some(usual_src) = reverse_map_refspec(&local_ref, &configured_refspecs) {
+                    if usual_src != remote_ref {
+                        eprintln!(
+                            "warning: {} usually tracks {}, not {}",
+                            local_ref, usual_src, remote_ref
+                        );
+                    }
+                }
+            }
+        }
     } else {
         // Pre-check: detect conflicting refspec mappings (multiple src → same dst)
         if !refspecs.is_empty() {
@@ -952,6 +990,29 @@ fn map_ref_through_refspecs(remote_ref: &str, refspecs: &[FetchRefspec]) -> Opti
         }
         if let Some(mapped) = match_refspec_pattern(&rs.src, &rs.dst, remote_ref) {
             return Some(mapped);
+        }
+    }
+    None
+}
+
+/// Reverse-map a local ref through configured refspecs to find
+/// the remote ref that would normally map to it.
+fn reverse_map_refspec(local_ref: &str, refspecs: &[FetchRefspec]) -> Option<String> {
+    for rs in refspecs {
+        if rs.negative || rs.dst.is_empty() {
+            continue;
+        }
+        // Try to reverse the dst pattern to find what src would produce local_ref
+        if let Some(star_pos) = rs.dst.find('*') {
+            let prefix = &rs.dst[..star_pos];
+            let suffix = &rs.dst[star_pos + 1..];
+            if local_ref.starts_with(prefix) && local_ref.ends_with(suffix) {
+                let matched = &local_ref[prefix.len()..local_ref.len() - suffix.len()];
+                let remote_ref = rs.src.replacen('*', matched, 1);
+                return Some(remote_ref);
+            }
+        } else if rs.dst == local_ref {
+            return Some(rs.src.clone());
         }
     }
     None

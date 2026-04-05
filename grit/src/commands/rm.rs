@@ -32,8 +32,15 @@ enum RmErrorKind {
 #[command(about = "Remove files from the working tree and from the index")]
 pub struct Args {
     /// Files to remove.
-    #[arg(required = true)]
     pub pathspec: Vec<String>,
+
+    /// Read pathspec from file (use "-" for stdin).
+    #[arg(long = "pathspec-from-file", value_name = "FILE")]
+    pub pathspec_from_file: Option<String>,
+
+    /// NUL-terminated pathspec input (requires --pathspec-from-file).
+    #[arg(long = "pathspec-file-nul")]
+    pub pathspec_file_nul: bool,
 
     /// Only remove from the index; keep the working tree file.
     #[arg(long = "cached")]
@@ -61,7 +68,42 @@ pub struct Args {
 }
 
 /// Run the `rm` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // Handle --pathspec-from-file / --pathspec-file-nul
+    if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
+        eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+        std::process::exit(128);
+    }
+    if let Some(ref psf) = args.pathspec_from_file {
+        if !args.pathspec.is_empty() {
+            eprintln!("fatal: '--pathspec-from-file' and pathspec arguments cannot be used together");
+            std::process::exit(128);
+        }
+        let content = if psf == "-" {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            buf
+        } else {
+            std::fs::read_to_string(psf)
+                .with_context(|| format!("could not read pathspec from '{psf}'"))?
+        };
+        let paths: Vec<String> = if args.pathspec_file_nul {
+            content.split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
+        } else {
+            content.lines().filter(|s| !s.is_empty()).map(String::from).collect()
+        };
+        if paths.is_empty() {
+            eprintln!("fatal: No pathspec was given. Which files should I remove?");
+            std::process::exit(128);
+        }
+        args.pathspec = paths;
+    }
+    if args.pathspec.is_empty() {
+        eprintln!("fatal: No pathspec was given. Which files should I remove?");
+        std::process::exit(128);
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree

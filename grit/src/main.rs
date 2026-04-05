@@ -46,11 +46,19 @@ fn main() {
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_perf(path, "version", env!("CARGO_PKG_VERSION"));
         let _ = trace2_write_perf(path, "start", &cmd_line.join(" "));
+        let ancestry = get_process_ancestry();
+        let _ = trace2_write_perf(
+            path,
+            "cmd_ancestry",
+            &format!("ancestry:[{}]", ancestry.join(" ")),
+        );
     }
     if let Some(ref path) = trace2_event_path {
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_json_event(path, "version", env!("CARGO_PKG_VERSION"));
         let _ = trace2_write_json_event(path, "start", &cmd_line.join(" "));
+        let ancestry = get_process_ancestry();
+        let _ = trace2_write_json_ancestry(path, &ancestry);
     }
 
     match run() {
@@ -198,6 +206,27 @@ fn trace2_write_json_event(path: &str, event: &str, data: &str) -> std::io::Resu
     Ok(())
 }
 
+/// Write a trace2 JSON cmd_ancestry event line with an ancestry array.
+fn trace2_write_json_ancestry(path: &str, ancestry: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let ancestry = ancestry
+        .iter()
+        .map(|name| format!(r#""{name}""#))
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(
+        file,
+        r#"{{"event":"cmd_ancestry","sid":"grit-0","time":"{}","ancestry":[{}]}}"#,
+        now, ancestry
+    )?;
+    Ok(())
+}
+
 /// Format current time as HH:MM:SS.microseconds for trace2 output.
 fn chrono_now() -> String {
     use std::time::SystemTime;
@@ -211,6 +240,61 @@ fn chrono_now() -> String {
     let mins = (secs_in_day % 3600) / 60;
     let secs = secs_in_day % 60;
     format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
+}
+
+fn exit_with_status(status: std::process::ExitStatus) -> ! {
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "001return" => {
+            let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            std::process::exit(code);
+        }
+        "004child" => {
+            if rest.len() <= 2 {
+                return Ok(());
+            }
+            let status = std::process::Command::new(&rest[2])
+                .args(&rest[3..])
+                .status()?;
+            exit_with_status(status);
+        }
+        "400ancestry" => {
+            if rest.len() < 5 {
+                bail!(
+                    "usage: test-tool trace2 400ancestry <target> <output_file> <child_command_line>"
+                );
+            }
+
+            let target = &rest[2];
+            let output_file = &rest[3];
+            let mut child = std::process::Command::new(&rest[4]);
+            child.args(&rest[5..]);
+            child.env("GIT_TRACE2", "");
+            child.env("GIT_TRACE2_PERF", "");
+            child.env("GIT_TRACE2_EVENT", "");
+            child.env("GIT_TRACE2_BRIEF", "1");
+
+            match target.as_str() {
+                "normal" => {
+                    child.env("GIT_TRACE2", output_file);
+                }
+                "perf" => {
+                    child.env("GIT_TRACE2_PERF", output_file);
+                }
+                "event" => {
+                    child.env("GIT_TRACE2_EVENT", output_file);
+                }
+                _ => bail!("invalid target '{target}', expected: normal, perf, event"),
+            }
+
+            let status = child.status()?;
+            exit_with_status(status);
+        }
+        other => bail!("test-tool trace2: unknown subcommand '{other}'"),
+    }
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -1345,16 +1429,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "trace2" => {
-                    // test-tool trace2 001return <code>
-                    // Simple helper that returns the given exit code,
-                    // triggering trace2 events in the process.
-                    if rest.len() >= 3 && rest[1].starts_with("001return") {
-                        let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                        std::process::exit(code);
-                    }
-                    Ok(())
-                }
+                "trace2" => run_test_tool_trace2(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

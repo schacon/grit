@@ -103,6 +103,7 @@ pub fn run(args: Args) -> Result<()> {
                 favor: MergeFavor::None,
                 style: ConflictStyle::Merge,
                 marker_size: 0,
+                diff_algorithm: None,
             };
 
             let result = merge(&input).context("merge failed")?;

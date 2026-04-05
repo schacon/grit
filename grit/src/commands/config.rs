@@ -50,15 +50,15 @@ pub struct Args {
 
     // ── Legacy action flags ──
     /// Get the value for a given key (legacy).
-    #[arg(long = "get", value_name = "KEY")]
+    #[arg(long = "get", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub get_key: Option<String>,
 
     /// Get all values for a multi-valued key (legacy).
-    #[arg(long = "get-all", value_name = "KEY")]
+    #[arg(long = "get-all", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub get_all_key: Option<String>,
 
     /// Get values matching a regex (legacy).
-    #[arg(long = "get-regexp", value_name = "PATTERN")]
+    #[arg(long = "get-regexp", value_name = "PATTERN", num_args = 0..=1, default_missing_value = "")]
     pub get_regexp: Option<String>,
 
     /// Remove a key (legacy).
@@ -295,6 +295,10 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_blob(&args, blob_spec);
     }
 
+    if args.default_value.is_some() && !default_supported(&args) {
+        bail!("--default is only applicable to --get, --get-all, --get-regexp, and lookup forms");
+    }
+
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
@@ -331,10 +335,21 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_list(&args, git_dir.as_deref());
     }
 
-    if let Some(ref key) = args.get_key {
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+    if let Some(ref key_raw) = args.get_key {
+        // When --get is used without an inline value (e.g. `--get --path a.key`),
+        // the key comes from the first positional argument.
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let k = args.positional.first().cloned().unwrap_or_default();
+            let vp = args.positional.get(1).map(|s| s.as_str());
+            (k, vp)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
+        };
+        if key.is_empty() {
+            bail!("usage: git config --get <key>");
+        }
         let get_args = GetArgs {
-            key: key.clone(),
+            key,
             all: false,
             regexp: false,
             show_names: false,
@@ -346,10 +361,19 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
-    if let Some(ref key) = args.get_all_key {
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+    if let Some(ref key_raw) = args.get_all_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let k = args.positional.first().cloned().unwrap_or_default();
+            let vp = args.positional.get(1).map(|s| s.as_str());
+            (k, vp)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
+        };
+        if key.is_empty() {
+            bail!("usage: git config --get-all <key>");
+        }
         let get_args = GetArgs {
-            key: key.clone(),
+            key,
             all: true,
             regexp: false,
             show_names: false,
@@ -361,9 +385,17 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_get(&args, &get_args, git_dir.as_deref(), value_pattern);
     }
 
-    if let Some(ref pattern) = args.get_regexp {
+    if let Some(ref pattern_raw) = args.get_regexp {
+        let pattern = if pattern_raw.is_empty() {
+            args.positional.first().cloned().unwrap_or_default()
+        } else {
+            pattern_raw.clone()
+        };
+        if pattern.is_empty() {
+            bail!("usage: git config --get-regexp <pattern>");
+        }
         let get_args = GetArgs {
-            key: pattern.clone(),
+            key: pattern,
             all: true,
             regexp: true,
             show_names: true,
@@ -1229,6 +1261,23 @@ fn global_config_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".gitconfig"))
 }
 
+/// Returns whether `--default` is valid for the selected operation.
+fn default_supported(args: &Args) -> bool {
+    if matches!(args.subcommand, Some(ConfigSubcommand::Get(_))) {
+        return true;
+    }
+
+    args.get_key.is_some()
+        || args.get_all_key.is_some()
+        || args.get_regexp.is_some()
+        || args.positional.len() == 1
+}
+
+/// Formats a default value and adds Git-compatible context on failure.
+fn format_default_value(args: &Args, val: &str) -> Result<String> {
+    format_typed_value(args, val).context("failed to format default config value")
+}
+
 /// Canonicalize a value for writing based on type flags.
 ///
 /// When `--bool` is used, the value is validated and written as "true"/"false".
@@ -1346,40 +1395,28 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     }
 
     if type_name == Some("expiry-date") {
-        match parse_expiry_date(val) {
-            Ok(ts) => return Ok(ts.to_string()),
-            Err(e) => bail!("{}", e),
-        }
+        return format_expiry_date(val);
     }
 
     Ok(val.to_owned())
 }
 
-/// Parse an expiry date string into a Unix timestamp.
-///
-/// Accepts:
-/// - "now" → current time
-/// - "never" → 0
-/// - Pure numeric string → epoch timestamp
-/// - Git-format dates: "<epoch> <tz>" (e.g. "1112912053 -0700")
-/// - ISO 8601 dates: "2024-01-15T10:30:00+02:00" or "2024-01-15 10:30:00"
-fn parse_expiry_date(val: &str) -> Result<i64> {
+/// Formats an expiry-date value as an epoch timestamp.
+fn format_expiry_date(val: &str) -> Result<String> {
     let trimmed = val.trim();
-    if trimmed.eq_ignore_ascii_case("now") {
-        return Ok(time::OffsetDateTime::now_utc().unix_timestamp());
-    }
+
     if trimmed.eq_ignore_ascii_case("never") {
-        return Ok(0);
+        return Ok("0".to_owned());
     }
-    // Pure epoch timestamp
-    if let Ok(ts) = trimmed.parse::<i64>() {
-        return Ok(ts);
+
+    if let Ok(n) = parse_i64(trimmed) {
+        return Ok(n.to_string());
     }
-    // Git internal format: "<epoch> <tz>"
-    if let Some((epoch_str, _tz)) = trimmed.split_once(' ') {
-        if let Ok(ts) = epoch_str.parse::<i64>() {
-            return Ok(ts);
-        }
+
+    if let Some(ts) = super::commit::parse_date_to_git_timestamp(trimmed) {
+        let epoch = ts.split_whitespace().next().unwrap_or(&ts);
+        return Ok(epoch.to_owned());
     }
-    bail!("invalid expiry date: '{}'", val)
+
+    bail!("invalid expiry date '{}'", val);
 }

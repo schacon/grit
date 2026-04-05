@@ -62,7 +62,7 @@ commit → check it off → move on.
 
 - [x] `t1505-rev-parse-last` ████████████████████ 7/7 (0 left) — test @{-N} syntax
 - [x] `t1418-reflog-exists` ████████████████████ 6/6 (0 left) — Test reflog display routines
-- [ ] `t0213-trace2-ancestry` ████████████████░░░░ 4/5 (1 left) — test trace2 cmd_ancestry event
+- [x] `t0213-trace2-ancestry` ████████████████████ 5/5 (0 left) — test trace2 cmd_ancestry event
 - [x] `t1100-commit-tree-options` ████████████████████ 5/5 (0 left) — git commit-tree options test
 
 - [ ] `t1003-read-tree-prefix` █████████████░░░░░░░ 2/3 (1 left) — git read-tree --prefix test.
@@ -71,10 +71,12 @@ commit → check it off → move on.
 - [ ] `t0611-reftable-httpd` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — reftable HTTPD tests
 - [ ] `t1022-read-tree-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git read-tree in partial clones
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
+- [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
+- [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
-- [ ] `t0101-at-syntax` ███████████████░░░░░ 6/8 (2 left) — various @{whatever} syntax tests
+- [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
-- [ ] `t1310-config-default` ████████████░░░░░░░░ 3/5 (2 left) — Test git config in different settings (with --default)
+- [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
 - [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
 - [ ] `t1311-config-optional` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — :(optional) paths
@@ -168,7 +170,7 @@ commit → check it off → move on.
 
 ## 3. Index/Checkout (50 files)
 
-- [ ] `t2060-switch` ██████████████████░░ 15/16 (1 left) — switch basic functionality
+- [x] `t2060-switch` ████████████████████ 16/16 — switch basic functionality
 - [ ] `t2050-git-dir-relative` ███████████████░░░░░ 3/4 (1 left) — check problems with relative GIT_DIR
 
 - [ ] `t2015-checkout-unborn` █████████████░░░░░░░ 4/6 (2 left) — checkout from unborn branch
@@ -940,5 +942,5 @@ commit → check it off → move on.
 - [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
-**Total: 765 files not fully passing**
-**8,688/24,806 tests passing, 16,118 failures remaining**
+**Total: 765 tracked files**
+**8,690/24,806 tests passing, 16,116 failures remaining**
