@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    46 |
+| Completed   |    47 |
 | In progress |     0 |
-| Remaining   |   721 |
+| Remaining   |   720 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6134-pathspec-in-submodule` — 3/3 tests pass (`git add` now detects `git -C <submodule> add` in unpopulated submodules and reports the expected fatal message)
 - `t6114-keep-packs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6425-merge-rename-delete` — 1/1 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6110-rev-list-sparse` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -37,4 +38,4 @@
 
 ## What Remains
 
-721 test files still pending. See `plan.md` for the full prioritized list.
+720 test files still pending. See `plan.md` for the full prioritized list.

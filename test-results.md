@@ -10,3 +10,5 @@
 - `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (fully passing; stale plan entry corrected).
 - `./scripts/run-tests.sh t6425-merge-rename-delete.sh`: 1/1 passing (fully passing; stale plan entry corrected).
 - `./scripts/run-tests.sh t6114-keep-packs.sh`: 3/3 passing (fully passing; stale plan entry corrected).
+- `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (now fully passing after `git add` unpopulated-submodule handling fix).
+- `./scripts/run-tests.sh t6136-pathspec-in-bare.sh`: 1/3 passing (unchanged baseline; useful adjacent regression signal).
