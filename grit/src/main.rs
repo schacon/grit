@@ -1147,6 +1147,308 @@ fn run_test_tool_regex(rest: &[String]) -> Result<()> {
     bail!("usage: test-tool regex --bug")
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BloomSettings {
+    hash_version: u32,
+    num_hashes: usize,
+    bits_per_entry: usize,
+    max_changed_paths: usize,
+}
+
+const TEST_BLOOM_SETTINGS: BloomSettings = BloomSettings {
+    // Matches git's DEFAULT_BLOOM_FILTER_SETTINGS used by test-tool bloom.
+    hash_version: 1,
+    num_hashes: 7,
+    bits_per_entry: 10,
+    max_changed_paths: 512,
+};
+
+fn bloom_rotate_left(value: u32, count: u32) -> u32 {
+    value.rotate_left(count)
+}
+
+fn bloom_signed_char_u32(b: u8) -> u32 {
+    ((b as i8) as i32) as u32
+}
+
+fn bloom_murmur3_seeded_v2(mut seed: u32, data: &[u8]) -> u32 {
+    let c1: u32 = 0xcc9e2d51;
+    let c2: u32 = 0x1b873593;
+    let r1: u32 = 15;
+    let r2: u32 = 13;
+    let m: u32 = 5;
+    let n: u32 = 0xe6546b64;
+
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let mut k = (data[i] as u32)
+            | ((data[i + 1] as u32) << 8)
+            | ((data[i + 2] as u32) << 16)
+            | ((data[i + 3] as u32) << 24);
+        k = k.wrapping_mul(c1);
+        k = bloom_rotate_left(k, r1);
+        k = k.wrapping_mul(c2);
+
+        seed ^= k;
+        seed = bloom_rotate_left(seed, r2).wrapping_mul(m).wrapping_add(n);
+        i += 4;
+    }
+
+    let tail = &data[i..];
+    let mut k1: u32 = 0;
+    match tail.len() {
+        3 => {
+            k1 ^= (tail[2] as u32) << 16;
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+        }
+        2 => {
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+        }
+        1 => {
+            k1 ^= tail[0] as u32;
+        }
+        _ => {}
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(c1);
+        k1 = bloom_rotate_left(k1, r1);
+        k1 = k1.wrapping_mul(c2);
+        seed ^= k1;
+    }
+
+    seed ^= data.len() as u32;
+    seed ^= seed >> 16;
+    seed = seed.wrapping_mul(0x85ebca6b);
+    seed ^= seed >> 13;
+    seed = seed.wrapping_mul(0xc2b2ae35);
+    seed ^= seed >> 16;
+    seed
+}
+
+fn bloom_murmur3_seeded_v1(mut seed: u32, data: &[u8]) -> u32 {
+    let c1: u32 = 0xcc9e2d51;
+    let c2: u32 = 0x1b873593;
+    let r1: u32 = 15;
+    let r2: u32 = 13;
+    let m: u32 = 5;
+    let n: u32 = 0xe6546b64;
+
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let mut k = bloom_signed_char_u32(data[i])
+            | (bloom_signed_char_u32(data[i + 1]) << 8)
+            | (bloom_signed_char_u32(data[i + 2]) << 16)
+            | (bloom_signed_char_u32(data[i + 3]) << 24);
+        k = k.wrapping_mul(c1);
+        k = bloom_rotate_left(k, r1);
+        k = k.wrapping_mul(c2);
+
+        seed ^= k;
+        seed = bloom_rotate_left(seed, r2).wrapping_mul(m).wrapping_add(n);
+        i += 4;
+    }
+
+    let tail = &data[i..];
+    let mut k1: u32 = 0;
+    match tail.len() {
+        3 => {
+            k1 ^= bloom_signed_char_u32(tail[2]) << 16;
+            k1 ^= bloom_signed_char_u32(tail[1]) << 8;
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        2 => {
+            k1 ^= bloom_signed_char_u32(tail[1]) << 8;
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        1 => {
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        _ => {}
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(c1);
+        k1 = bloom_rotate_left(k1, r1);
+        k1 = k1.wrapping_mul(c2);
+        seed ^= k1;
+    }
+
+    seed ^= data.len() as u32;
+    seed ^= seed >> 16;
+    seed = seed.wrapping_mul(0x85ebca6b);
+    seed ^= seed >> 13;
+    seed = seed.wrapping_mul(0xc2b2ae35);
+    seed ^= seed >> 16;
+    seed
+}
+
+fn bloom_murmur3_seeded(seed: u32, data: &[u8], version: u32) -> u32 {
+    match version {
+        2 => bloom_murmur3_seeded_v2(seed, data),
+        _ => bloom_murmur3_seeded_v1(seed, data),
+    }
+}
+
+fn bloom_key_hashes(data: &[u8], settings: BloomSettings) -> Vec<u32> {
+    let seed0 = 0x293ae76f;
+    let seed1 = 0x7e646e2c;
+    let hash0 = bloom_murmur3_seeded(seed0, data, settings.hash_version);
+    let hash1 = bloom_murmur3_seeded(seed1, data, settings.hash_version);
+
+    let mut out = Vec::with_capacity(settings.num_hashes);
+    for i in 0..settings.num_hashes {
+        out.push(hash0.wrapping_add((i as u32).wrapping_mul(hash1)));
+    }
+    out
+}
+
+fn bloom_add_hashes_to_filter(hashes: &[u32], filter: &mut [u8]) {
+    let mod_bits = (filter.len() * 8) as u64;
+    if mod_bits == 0 {
+        return;
+    }
+    for hash in hashes {
+        let hash_mod = (*hash as u64) % mod_bits;
+        let block_pos = (hash_mod / 8) as usize;
+        let bitmask = 1u8 << (hash_mod & 7);
+        filter[block_pos] |= bitmask;
+    }
+}
+
+fn bloom_print_filter(filter: &[u8]) {
+    println!("Filter_Length:{}", filter.len());
+    print!("Filter_Data:");
+    for b in filter {
+        print!("{b:02x}|");
+    }
+    println!();
+}
+
+fn bloom_collect_paths_with_prefixes(path: &str, out: &mut std::collections::BTreeSet<String>) {
+    if path.is_empty() {
+        return;
+    }
+    let mut cur = path.to_string();
+    loop {
+        out.insert(cur.clone());
+        let Some(pos) = cur.rfind('/') else {
+            break;
+        };
+        cur.truncate(pos);
+        if cur.is_empty() {
+            break;
+        }
+    }
+}
+
+fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!(
+            "usage: test-tool bloom [get_murmur3|get_murmur3_seven_highbit|generate_filter|get_filter_for_commit]"
+        );
+    }
+
+    match rest[1].as_str() {
+        "get_murmur3" => {
+            let Some(s) = rest.get(2) else {
+                bail!("usage: test-tool bloom get_murmur3 <string>");
+            };
+            let hashed = bloom_murmur3_seeded(0, s.as_bytes(), 2);
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        "get_murmur3_seven_highbit" => {
+            let bytes = [0x99u8, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+            let hashed = bloom_murmur3_seeded(0, &bytes, 2);
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        "generate_filter" => {
+            if rest.len() < 3 {
+                bail!("usage: test-tool bloom generate_filter <string> [<string>...]");
+            }
+            let len = (TEST_BLOOM_SETTINGS.bits_per_entry + 7) / 8;
+            let mut filter = vec![0u8; len];
+            for item in rest.iter().skip(2) {
+                let hashes = bloom_key_hashes(item.as_bytes(), TEST_BLOOM_SETTINGS);
+                print!("Hashes:");
+                for h in &hashes {
+                    print!("0x{h:08x}|");
+                }
+                println!();
+                bloom_add_hashes_to_filter(&hashes, &mut filter);
+            }
+            bloom_print_filter(&filter);
+            Ok(())
+        }
+        "get_filter_for_commit" => {
+            let Some(commit_hex) = rest.get(2) else {
+                bail!("usage: test-tool bloom get_filter_for_commit <commit-hex>");
+            };
+            let commit_oid = commit_hex
+                .parse::<grit_lib::objects::ObjectId>()
+                .map_err(|_| anyhow::anyhow!("cannot parse oid '{commit_hex}'"))?;
+            let repo = grit_lib::repo::Repository::discover(None)?;
+            let commit_obj = repo.odb.read(&commit_oid)?;
+            if commit_obj.kind != grit_lib::objects::ObjectKind::Commit {
+                bail!("object '{commit_hex}' is not a commit");
+            }
+            let commit = grit_lib::objects::parse_commit(&commit_obj.data)?;
+
+            let parent_tree = if let Some(parent_oid) = commit.parents.first() {
+                let parent_obj = repo.odb.read(parent_oid)?;
+                if parent_obj.kind != grit_lib::objects::ObjectKind::Commit {
+                    None
+                } else {
+                    let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+                    Some(parent_commit.tree)
+                }
+            } else {
+                None
+            };
+
+            let diffs = grit_lib::diff::diff_trees(
+                &repo.odb,
+                parent_tree.as_ref(),
+                Some(&commit.tree),
+                "",
+            )?;
+
+            let mut changed_paths: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for d in diffs {
+                if let Some(path) = d.new_path.or(d.old_path) {
+                    bloom_collect_paths_with_prefixes(&path, &mut changed_paths);
+                }
+            }
+
+            let mut filter = if changed_paths.len() > TEST_BLOOM_SETTINGS.max_changed_paths {
+                vec![0xff]
+            } else {
+                let bit_count = changed_paths.len() * TEST_BLOOM_SETTINGS.bits_per_entry;
+                let mut len = (bit_count + 7) / 8;
+                if len == 0 {
+                    len = 1;
+                }
+                let mut data = vec![0u8; len];
+                for path in &changed_paths {
+                    let hashes = bloom_key_hashes(path.as_bytes(), TEST_BLOOM_SETTINGS);
+                    bloom_add_hashes_to_filter(&hashes, &mut data);
+                }
+                data
+            };
+
+            bloom_print_filter(&filter);
+            filter.clear();
+            Ok(())
+        }
+        _ => bail!(
+            "usage: test-tool bloom [get_murmur3|get_murmur3_seven_highbit|generate_filter|get_filter_for_commit]"
+        ),
+    }
+}
+
 fn parse_c_style_quoted_pathspec(input: &str) -> Result<Vec<u8>> {
     let bytes = input.as_bytes();
     if bytes.len() < 2 || bytes[0] != b'"' || *bytes.last().unwrap_or(&0) != b'"' {
@@ -1466,6 +1768,7 @@ fn run_test_tool(rest: &[String]) -> Result<()> {
         "example-tap" => run_test_tool_example_tap(),
         "advise" => run_test_tool_advise(rest),
         "json-writer" => run_test_tool_json_writer(rest),
+        "bloom" => run_test_tool_bloom(rest),
         "mktemp" => run_test_tool_mktemp(rest),
         "regex" => run_test_tool_regex(rest),
         "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
