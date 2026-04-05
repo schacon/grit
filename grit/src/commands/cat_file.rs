@@ -2,11 +2,22 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use std::fs::OpenOptions;
 use std::io::{self, BufRead, Read as _, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{
+    convert_to_worktree, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
+    ConversionConfig, GitAttributes,
+};
+use grit_lib::index::{Index, MODE_REGULAR};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
+use grit_lib::wildmatch::wildmatch;
 
 /// Arguments for `grit cat-file`.
 #[derive(Debug, ClapArgs)]
@@ -140,9 +151,18 @@ pub fn run(args: Args) -> Result<()> {
     validate_args(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    let transform_ctx = TransformContext::new(&repo);
 
     if args.is_batch_mode() {
-        return run_batch(&repo, &args);
+        return run_batch(&repo, &args, &transform_ctx);
+    }
+
+    if args.textconv || args.filters {
+        let obj_str = args
+            .type_or_object
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("object required when not in batch mode"))?;
+        return run_transform_single(&repo, &args, &transform_ctx, obj_str);
     }
 
     let (expected_kind, obj_str) = match (args.type_or_object.as_deref(), args.object.as_deref()) {
@@ -299,12 +319,8 @@ fn validate_args(args: &Args) -> Result<()> {
     let has_mode = !cmdmodes.is_empty();
     let mode_name = cmdmodes.first().copied().unwrap_or("");
 
-    // --path requires --textconv or --filters (not batch)
+    // --path requires --textconv or --filters.
     if args.path.is_some() && !args.textconv && !args.filters {
-        if is_batch {
-            usage_error("fatal: '--path=<path|tree-ish>' needs '--filters' or '--textconv'");
-        }
-        // --path without --textconv/--filters in non-batch mode
         usage_error("fatal: '--path=<path|tree-ish>' needs '--filters' or '--textconv'");
     }
 
@@ -325,8 +341,8 @@ fn validate_args(args: &Args) -> Result<()> {
         usage_error("fatal: '-Z' requires a batch mode");
     }
 
-    // Mode flags are incompatible with batch mode
-    if has_mode && is_batch {
+    // Mode flags are incompatible with batch mode, except --textconv/--filters.
+    if has_mode && is_batch && mode_name != "--textconv" && mode_name != "--filters" {
         usage_error(&format!(
             "fatal: '{}' is incompatible with batch mode",
             mode_name
@@ -336,7 +352,7 @@ fn validate_args(args: &Args) -> Result<()> {
     // Mode flags are incompatible with --follow-symlinks (a batch-only option)
     // (already handled above since --follow-symlinks requires batch mode)
 
-    // --textconv/--filters require an object argument (unless in batch mode)
+    // --textconv/--filters require exactly one object argument (unless in batch mode)
     if (args.textconv || args.filters) && !is_batch && args.type_or_object.is_none() {
         let opt = if args.textconv {
             "--textconv"
@@ -362,12 +378,12 @@ fn validate_args(args: &Args) -> Result<()> {
         }
     }
 
-    // --textconv/--filters: too many arguments check
+    // --textconv/--filters: allow exactly one positional argument.
     if (args.textconv || args.filters) && !is_batch {
         let positional_count = args.type_or_object.as_ref().map_or(0, |_| 1)
             + args.object.as_ref().map_or(0, |_| 1)
             + args.trailing.len();
-        if positional_count > 2 {
+        if positional_count > 1 {
             usage_error("fatal: too many arguments");
         }
     }
@@ -380,7 +396,7 @@ fn validate_args(args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
+fn run_batch(repo: &Repository, args: &Args, transform_ctx: &TransformContext) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut stdout_lock = stdout.lock();
@@ -423,10 +439,21 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         std::process::exit(128);
                     }
                     if use_app_buffer {
-                        print_batch_entry(repo, obj_str, true, format, nul_output, &mut app_buf)?;
+                        print_batch_entry(
+                            repo,
+                            args,
+                            transform_ctx,
+                            obj_str,
+                            true,
+                            format,
+                            nul_output,
+                            &mut app_buf,
+                        )?;
                     } else {
                         print_batch_entry(
                             repo,
+                            args,
+                            transform_ctx,
                             obj_str,
                             true,
                             format,
@@ -442,10 +469,21 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         std::process::exit(128);
                     }
                     if use_app_buffer {
-                        print_batch_entry(repo, obj_str, false, format, nul_output, &mut app_buf)?;
+                        print_batch_entry(
+                            repo,
+                            args,
+                            transform_ctx,
+                            obj_str,
+                            false,
+                            format,
+                            nul_output,
+                            &mut app_buf,
+                        )?;
                     } else {
                         print_batch_entry(
                             repo,
+                            args,
+                            transform_ctx,
                             obj_str,
                             false,
                             format,
@@ -478,6 +516,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
             let include_content = args.batch_includes_content();
             print_batch_entry(
                 repo,
+                args,
+                transform_ctx,
                 trimmed,
                 include_content,
                 format,
@@ -528,13 +568,16 @@ fn read_input_records(stdin: &io::Stdin, nul_input: bool) -> Result<Vec<String>>
 
 fn print_batch_entry(
     repo: &Repository,
+    args: &Args,
+    transform_ctx: &TransformContext,
     input: &str,
     include_content: bool,
     format: &str,
     nul_output: bool,
     out: &mut impl Write,
 ) -> Result<()> {
-    let (obj_str, rest) = parse_batch_input(input, format);
+    let split_on_whitespace = (args.textconv || args.filters) || format.contains("%(rest)");
+    let (obj_str, rest) = parse_batch_input(input, split_on_whitespace);
     let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
 
     if obj_str.is_empty() {
@@ -573,7 +616,22 @@ fn print_batch_entry(
                 }
                 out.write_all(eol)?;
                 if include_content {
-                    out.write_all(&obj.data)?;
+                    if args.textconv || args.filters {
+                        let path = resolve_batch_transform_path(args, rest, &oid);
+                        let mode = mode.unwrap_or(MODE_REGULAR);
+                        let transformed = transform_content(
+                            repo,
+                            transform_ctx,
+                            &oid,
+                            &path,
+                            mode,
+                            &obj,
+                            args.filters,
+                        )?;
+                        out.write_all(&transformed)?;
+                    } else {
+                        out.write_all(&obj.data)?;
+                    }
                     out.write_all(eol)?;
                 }
             }
@@ -582,7 +640,7 @@ fn print_batch_entry(
     Ok(())
 }
 
-fn parse_batch_input<'a>(line: &'a str, format: &str) -> (&'a str, &'a str) {
+fn parse_batch_input<'a>(line: &'a str, split_on_whitespace: bool) -> (&'a str, &'a str) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return ("", "");
@@ -590,7 +648,7 @@ fn parse_batch_input<'a>(line: &'a str, format: &str) -> (&'a str, &'a str) {
     // Only split object from rest when a custom format containing %(rest) is used.
     // Otherwise the entire line is the object name (important for paths with spaces
     // like "HEAD:path with spaces").
-    if format.contains("%(rest)") {
+    if split_on_whitespace {
         if let Some(split_at) = trimmed.find(char::is_whitespace) {
             let object = &trimmed[..split_at];
             let rest = trimmed[split_at..].trim_start();
@@ -614,6 +672,363 @@ fn apply_format(
         .replace("%(objectsize)", &object_size.to_string())
         .replace("%(objectmode)", object_mode)
         .replace("%(rest)", rest)
+}
+
+#[derive(Debug, Clone)]
+struct TransformContext {
+    config: ConfigSet,
+    conversion: ConversionConfig,
+    attrs: GitAttributes,
+    diff_attrs: Vec<DiffAttrRule>,
+}
+
+impl TransformContext {
+    fn new(repo: &Repository) -> Self {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conversion = ConversionConfig::from_config(&config);
+        let attrs = load_attr_rules(repo);
+        let diff_attrs = load_diff_attr_rules(repo);
+        Self {
+            config,
+            conversion,
+            attrs,
+            diff_attrs,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DiffAttrRule {
+    pattern: String,
+    value: DiffAttrValue,
+}
+
+#[derive(Debug, Clone)]
+enum DiffAttrValue {
+    Unset,
+    Set,
+    Driver(String),
+}
+
+fn run_transform_single(
+    repo: &Repository,
+    args: &Args,
+    transform_ctx: &TransformContext,
+    obj_str: &str,
+) -> Result<()> {
+    let (oid, mode, path) = resolve_transform_target(repo, args, obj_str)?;
+    let obj = match repo.read_replaced(&oid) {
+        Ok(obj) => obj,
+        Err(_) => fatal(&format!("Not a valid object name {obj_str}")),
+    };
+    let transformed = transform_content(repo, transform_ctx, &oid, &path, mode, &obj, args.filters)?;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    out.write_all(&transformed)?;
+    Ok(())
+}
+
+fn resolve_transform_target(repo: &Repository, args: &Args, obj_str: &str) -> Result<(ObjectId, u32, String)> {
+    if let Some(path) = args.path.as_deref() {
+        let oid = match resolve_object(repo, obj_str) {
+            Ok(oid) => oid,
+            Err(_) => fatal(&format!("Not a valid object name {obj_str}")),
+        };
+        return Ok((oid, MODE_REGULAR, path.to_owned()));
+    }
+
+    if let Some(index_path) = obj_str.strip_prefix(':') {
+        if index_path.is_empty() {
+            fatal(&format!(
+                "<object>:<path> required, only <object> '{}' given",
+                obj_str
+            ));
+        }
+        let index = match Index::load(&repo.index_path()) {
+            Ok(index) => index,
+            Err(_) => fatal(&format!("Not a valid object name {obj_str}")),
+        };
+        if let Some(entry) = index.get(index_path.as_bytes(), 0) {
+            return Ok((entry.oid, entry.mode, index_path.to_owned()));
+        }
+        fatal(&format!("Not a valid object name {obj_str}"));
+    }
+
+    if let Some((rev, path)) = obj_str.split_once(':') {
+        if rev.is_empty() || path.is_empty() {
+            fatal(&format!("Not a valid object name {obj_str}"));
+        }
+
+        let rev_oid = match rev_parse::resolve_revision(repo, rev) {
+            Ok(oid) => oid,
+            Err(_) => fatal(&format!("invalid object name '{}'.", rev)),
+        };
+        let tree_oid = peel_to_tree_oid(repo, rev_oid)
+            .unwrap_or_else(|_| fatal(&format!("invalid object name '{}'.", rev)));
+        let (oid, mode) = resolve_path_in_tree(repo, tree_oid, path)
+            .unwrap_or_else(|_| fatal(&format!("path '{}' does not exist in '{}'", path, rev)));
+        return Ok((oid, mode, path.to_owned()));
+    }
+
+    if resolve_object(repo, obj_str).is_ok() {
+        fatal(&format!(
+            "<object>:<path> required, only <object> '{}' given",
+            obj_str
+        ));
+    }
+
+    fatal(&format!("Not a valid object name {obj_str}"));
+}
+
+fn resolve_batch_transform_path(args: &Args, rest: &str, oid: &ObjectId) -> String {
+    if let Some(path) = args.path.as_deref() {
+        return path.to_owned();
+    }
+    if !rest.is_empty() {
+        return rest.to_owned();
+    }
+    fatal(&format!("missing path for '{}'", oid));
+}
+
+fn transform_content(
+    _repo: &Repository,
+    transform_ctx: &TransformContext,
+    oid: &ObjectId,
+    path: &str,
+    mode: u32,
+    obj: &grit_lib::objects::Object,
+    filters_mode: bool,
+) -> Result<Vec<u8>> {
+    if obj.kind != ObjectKind::Blob || !is_regular_mode(mode) {
+        return Ok(obj.data.clone());
+    }
+
+    if filters_mode {
+        let attrs = get_file_attrs(&transform_ctx.attrs, path, &transform_ctx.config);
+        let oid_hex = oid.to_string();
+        return Ok(convert_to_worktree(
+            &obj.data,
+            path,
+            &transform_ctx.conversion,
+            &attrs,
+            Some(&oid_hex),
+        ));
+    }
+
+    let Some(command) = resolve_textconv_command(transform_ctx, path) else {
+        return Ok(obj.data.clone());
+    };
+
+    // Git textconv runs on a worktree-view tempfile.
+    let attrs = get_file_attrs(&transform_ctx.attrs, path, &transform_ctx.config);
+    let oid_hex = oid.to_string();
+    let worktree_data = convert_to_worktree(
+        &obj.data,
+        path,
+        &transform_ctx.conversion,
+        &attrs,
+        Some(&oid_hex),
+    );
+    run_textconv_command(&command, &worktree_data)
+        .map_err(|_| anyhow::anyhow!("could not convert '{}' {}", oid, path))
+}
+
+fn run_textconv_command(command: &str, input_data: &[u8]) -> Result<Vec<u8>> {
+    let temp_path = create_temp_textconv_file(input_data)?;
+    let quoted = shell_quote(temp_path.to_string_lossy().as_ref());
+    let shell_command = format!("{command} {quoted}");
+
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&shell_command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .with_context(|| format!("running textconv command '{command}'"))?;
+
+    let _ = std::fs::remove_file(&temp_path);
+
+    if !output.status.success() {
+        bail!("textconv command exited with status {}", output.status);
+    }
+
+    Ok(output.stdout)
+}
+
+fn create_temp_textconv_file(data: &[u8]) -> Result<std::path::PathBuf> {
+    let pid = std::process::id();
+    for attempt in 0..32u32 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("grit-textconv-{pid}-{now}-{attempt}"));
+        match OpenOptions::new().create_new(true).write(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(data)?;
+                return Ok(path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err.into()),
+        }
+    }
+    bail!("failed to create temporary textconv input file")
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
+}
+
+fn resolve_textconv_command(transform_ctx: &TransformContext, path: &str) -> Option<String> {
+    let mut selected: Option<DiffAttrValue> = None;
+    for rule in &transform_ctx.diff_attrs {
+        if diff_attr_pattern_matches(&rule.pattern, path) {
+            selected = Some(rule.value.clone());
+        }
+    }
+
+    match selected {
+        Some(DiffAttrValue::Driver(driver)) => transform_ctx.config.get(&format!("diff.{driver}.textconv")),
+        _ => None,
+    }
+}
+
+fn diff_attr_pattern_matches(pattern: &str, path: &str) -> bool {
+    if pattern.contains('/') {
+        return wildmatch(pattern.as_bytes(), path.as_bytes(), 0);
+    }
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    wildmatch(pattern.as_bytes(), basename.as_bytes(), 0)
+}
+
+fn load_attr_rules(repo: &Repository) -> GitAttributes {
+    if let Some(work_tree) = repo.work_tree.as_deref() {
+        let rules = load_gitattributes(work_tree);
+        if !rules.is_empty() {
+            return rules;
+        }
+    }
+
+    if let Ok(index) = Index::load(&repo.index_path()) {
+        return load_gitattributes_from_index(&index, &repo.odb);
+    }
+
+    Vec::new()
+}
+
+fn load_diff_attr_rules(repo: &Repository) -> Vec<DiffAttrRule> {
+    let mut rules = Vec::new();
+
+    if let Some(work_tree) = repo.work_tree.as_deref() {
+        parse_diff_attr_file(&work_tree.join(".gitattributes"), &mut rules);
+        parse_diff_attr_file(&work_tree.join(".git/info/attributes"), &mut rules);
+    }
+
+    if rules.is_empty() {
+        if let Ok(index) = Index::load(&repo.index_path()) {
+            if let Some(entry) = index.get(b".gitattributes", 0) {
+                if let Ok(obj) = repo.odb.read(&entry.oid) {
+                    if let Ok(content) = String::from_utf8(obj.data) {
+                        parse_diff_attr_content(&content, &mut rules);
+                    }
+                }
+            }
+        }
+        parse_diff_attr_file(&repo.git_dir.join("info/attributes"), &mut rules);
+    }
+
+    rules
+}
+
+fn parse_diff_attr_file(path: &Path, rules: &mut Vec<DiffAttrRule>) {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        parse_diff_attr_content(&content, rules);
+    }
+}
+
+fn parse_diff_attr_content(content: &str, rules: &mut Vec<DiffAttrRule>) {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            continue;
+        };
+
+        let mut value: Option<DiffAttrValue> = None;
+        for token in parts {
+            if token == "binary" || token == "-diff" {
+                value = Some(DiffAttrValue::Unset);
+            } else if token == "diff" {
+                value = Some(DiffAttrValue::Set);
+            } else if let Some(driver) = token.strip_prefix("diff=") {
+                value = Some(DiffAttrValue::Driver(driver.to_owned()));
+            }
+        }
+
+        if let Some(value) = value {
+            rules.push(DiffAttrRule {
+                pattern: pattern.to_owned(),
+                value,
+            });
+        }
+    }
+}
+
+fn is_regular_mode(mode: u32) -> bool {
+    mode & 0o170000 == 0o100000
+}
+
+fn peel_to_tree_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let obj = repo.odb.read(&oid)?;
+        match obj.kind {
+            ObjectKind::Commit => return Ok(parse_commit(&obj.data)?.tree),
+            ObjectKind::Tree => return Ok(oid),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => bail!("not a tree-ish"),
+        }
+    }
+}
+
+fn resolve_path_in_tree(repo: &Repository, tree_oid: ObjectId, path: &str) -> Result<(ObjectId, u32)> {
+    let parts: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect();
+    if parts.is_empty() {
+        bail!("empty path");
+    }
+
+    let mut current_tree = tree_oid;
+    for (index, part) in parts.iter().enumerate() {
+        let tree_obj = repo.odb.read(&current_tree)?;
+        let entries = parse_tree(&tree_obj.data)?;
+        let Some(entry) = entries.iter().find(|entry| entry.name == part.as_bytes()) else {
+            bail!("path missing");
+        };
+        if index == parts.len() - 1 {
+            return Ok((entry.oid, entry.mode));
+        }
+        if entry.mode != 0o040000 {
+            bail!("path missing");
+        }
+        current_tree = entry.oid;
+    }
+
+    bail!("path missing")
+}
+
+fn fatal(msg: &str) -> ! {
+    eprintln!("fatal: {msg}");
+    std::process::exit(128);
 }
 
 fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {

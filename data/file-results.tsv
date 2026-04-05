@@ -876,10 +876,10 @@ t8003-blame-corner-cases	yes	30	20	10	ok	20	30	0
 t8004-blame-with-conflicts	yes	3	3	0	ok	3	3	0
 t8005-blame-i18n	yes	0	0	0	ok	0	0	0
 t8006-blame-textconv	yes	16	6	10	ok	6	16	0
-t8007-cat-file-textconv	yes	15	9	6	ok	9	15	0
+t8007-cat-file-textconv	yes	15	15	0	ok	15	15	0
 t8008-blame-formats	yes	5	5	0	ok	5	5	0
 t8009-blame-vs-topicbranches	yes	2	1	1	ok	1	2	0
-t8010-cat-file-filters	yes	9	4	5	ok	4	9	0
+t8010-cat-file-filters	yes	9	9	0	ok	9	9	0
 t8011-blame-split-file	yes	10	4	6	ok	4	10	0
 t8012-blame-colors	yes	0	0	0	ok	0	0	0
 t8013-blame-ignore-revs	yes	19	19	0	ok	19	19	0
