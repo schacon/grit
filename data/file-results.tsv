@@ -160,7 +160,7 @@ t1513-rev-parse-prefix	yes	11	11	0	ok	11	11	0
 t1514-rev-parse-push	yes	9	3	6	ok	3	9	0
 t1515-rev-parse-outside-repo	yes	4	4	0	ok	4	4	0
 t1517-outside-repo	yes	195	97	98	ok	97	195	0
-t1600-index	yes	7	4	3	ok	4	7	0
+t1600-index	yes	7	5	2	ok	5	7	0
 t1601-index-bogus	yes	4	4	0	ok	4	4	0
 t1700-split-index	yes	28	2	26	ok	2	28	0
 t1701-racy-split-index	yes	31	1	30	ok	1	31	0
