@@ -239,15 +239,15 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
         if rev_list.len() != 1 {
-            return fail_verify(quiet);
+            return fail_verify(quiet, false);
         }
         let repo = discover_optional(None)?;
         let Some(current) = repo.as_ref() else {
-            return fail_verify(quiet);
+            return fail_verify(quiet, false);
         };
         let oid = match resolve_revision(current, rev_list[0]) {
             Ok(oid) => oid,
-            Err(_) => return fail_verify(quiet),
+            Err(_) => return fail_verify(quiet, false),
         };
         if let Some(mut len) = short_len {
             if len == 0 {
@@ -637,11 +637,16 @@ fn parse_short_len(raw: &str) -> Result<usize> {
     Ok(parsed.clamp(4, 40))
 }
 
-fn fail_verify(quiet: bool) -> Result<()> {
+fn fail_verify(quiet: bool, is_reflog_selector: bool) -> Result<()> {
     if quiet {
         std::process::exit(1);
     }
-    bail!("Needed a single revision")
+    if is_reflog_selector {
+        // Match git behavior for invalid reflog selectors when not quiet.
+        bail!("log for '<ref>' has no entries")
+    } else {
+        bail!("Needed a single revision")
+    }
 }
 
 fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {

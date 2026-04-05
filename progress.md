@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    53 |
+| Completed   |    54 |
 | In progress |     0 |
-| Remaining   |   714 |
+| Remaining   |   713 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1503-rev-parse-verify` — 12/12 tests pass (added `reflog delete --rewrite` compatibility and improved reflog approxidate fallback for date selectors like `1.year.ago`)
 - `t1015-read-index-unmerged` — 6/6 tests pass (fixed D/F conflict cleanup in `merge --abort`, `am --skip`, and `format-patch -1 <rev>` target selection)
 - `t1408-packed-refs` — 3/3 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t0070-fundamental` — 11/11 tests pass (implemented missing `test-tool` helpers in `grit` and fixed `tests/test-tool` pkt-line delegation)
@@ -47,4 +48,4 @@
 
 ## What Remains
 
-715 test files still pending. See `plan.md` for the full prioritized list.
+713 test files still pending. See `plan.md` for the full prioritized list.

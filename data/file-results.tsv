@@ -146,7 +146,7 @@ t1460-refs-migrate	yes	37	1	36	ok	1	37	0
 t1500-rev-parse	yes	81	38	43	ok	38	81	0
 t1501-work-tree	yes	39	20	19	ok	20	39	0
 t1502-rev-parse-parseopt	yes	37	11	26	ok	11	37	0
-t1503-rev-parse-verify	yes	12	9	3	ok	9	12	0
+t1503-rev-parse-verify	yes	12	12	0	ok	12	12	0
 t1504-ceiling-dirs	yes	44	8	36	ok	8	44	0
 t1505-rev-parse-last	yes	7	7	0	ok	7	7	0
 t1506-rev-parse-diagnosis	yes	30	13	17	ok	13	30	0

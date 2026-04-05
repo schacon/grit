@@ -780,6 +780,45 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+    let parse_relative_ago = |input: &str| -> Option<i64> {
+        let normalized = input.trim().to_ascii_lowercase().replace(['.', '_'], " ");
+        let parts: Vec<&str> = normalized.split_whitespace().collect();
+        if parts.len() != 3 || parts[2] != "ago" {
+            return None;
+        }
+
+        let amount: i64 = parts[0].parse().ok()?;
+        if amount < 0 {
+            return None;
+        }
+
+        let unit_seconds: i64 = match parts[1] {
+            "second" | "seconds" | "sec" | "secs" => 1,
+            "minute" | "minutes" | "min" | "mins" => 60,
+            "hour" | "hours" | "hr" | "hrs" => 60 * 60,
+            "day" | "days" => 60 * 60 * 24,
+            "week" | "weeks" => 60 * 60 * 24 * 7,
+            // Git's approxidate handles calendar-aware months/years; for this
+            // focused parser we use fixed-length approximations.
+            "month" | "months" => 60 * 60 * 24 * 30,
+            "year" | "years" => 60 * 60 * 24 * 365,
+            _ => return None,
+        };
+
+        let delta = amount.checked_mul(unit_seconds)?;
+        now.checked_sub(delta)
+    };
+
+    if s.trim().eq_ignore_ascii_case("now") {
+        return Some(now);
+    }
+
+    if let Some(ts) = parse_relative_ago(s) {
+        return Some(ts);
+    }
+
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
         // Scan for 4-digit year followed by -MM-DD
