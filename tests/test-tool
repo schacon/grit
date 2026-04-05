@@ -4,18 +4,102 @@
 case "$1" in
   chmtime)
     shift
-    # Parse =<epoch> or +N/-N syntax
-    case "$1" in
-      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@" ;;
-      +*|-*) 
-        offset="$1"; shift
-        for f in "$@"; do
-          cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-          new=$((cur + offset))
+    usage() {
+      echo "usage: test-tool chmtime [--get|-g|--verbose|-v] [(+|=|=+|=-|-)<seconds>] <file>..." >&2
+      exit 1
+    }
+    is_int() {
+      expr "$1" : '[-+]\{0,1\}[0-9][0-9]*$' >/dev/null
+    }
+
+    get=0
+    verbose=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --get|-g) get=1; shift ;;
+        --verbose|-v) verbose=1; shift ;;
+        *) break ;;
+      esac
+    done
+
+    timespec=""
+    if [ $# -gt 0 ]; then
+      case "$1" in
+        =+*)
+          val="${1#=+}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        =-*)
+          val="${1#=-}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        =*)
+          val="${1#=}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        +*|-*)
+          is_int "$1" || usage
+          timespec="$1"
+          shift
+          ;;
+        *)
+          if is_int "$1"; then
+            timespec="$1"
+            shift
+          elif [ "$get" -eq 0 ] && [ "$verbose" -eq 0 ]; then
+            echo "test-tool chmtime: unknown format: $1" >&2
+            usage
+          fi
+          ;;
+      esac
+    fi
+
+    [ $# -gt 0 ] || usage
+
+    for f in "$@"; do
+      cur=$(stat -c %Y "$f" 2>/dev/null) || {
+        echo "Failed to stat $f. Skipping" >&2
+        continue
+      }
+
+      new="$cur"
+      if [ -n "$timespec" ]; then
+        case "$timespec" in
+          =+*)
+            now=$(date +%s)
+            new=$((now + ${timespec#=+}))
+            ;;
+          =-*)
+            now=$(date +%s)
+            new=$((now - ${timespec#=-}))
+            ;;
+          =*)
+            new="${timespec#=}"
+            ;;
+          *)
+            new=$((cur + timespec))
+            ;;
+        esac
+
+        [ "$new" -ge 0 ] || new=0
+        if [ "$new" != "$cur" ]; then
           touch -d "@$new" "$f"
-        done ;;
-      *) echo "test-tool chmtime: unknown format: $1" >&2; exit 1 ;;
-    esac ;;
+        fi
+      fi
+
+      if [ "$get" -eq 1 ]; then
+        printf '%s\n' "$new"
+      elif [ "$verbose" -eq 1 ]; then
+        printf '%s\t%s\n' "$new" "$f"
+      fi
+    done
+    ;;
   sha1)
     sha1sum | cut -d' ' -f1 ;;
   sha256)
