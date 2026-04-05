@@ -884,7 +884,7 @@ t8011-blame-split-file	yes	10	4	6	ok	4	10	0
 t8012-blame-colors	yes	0	0	0	ok	0	0	0
 t8013-blame-ignore-revs	yes	19	19	0	ok	19	19	0
 t8014-blame-ignore-fuzzy	yes	16	7	9	ok	7	16	0
-t8015-blame-diff-algorithm	yes	7	3	4	ok	3	7	0
+t8015-blame-diff-algorithm	yes	7	7	0	ok	7	7	0
 t8020-last-modified	yes	28	1	27	ok	1	28	0
 t9001-send-email	yes	216	68	148	ok	67	215	1
 t9002-column	yes	16	6	10	ok	6	16	0
