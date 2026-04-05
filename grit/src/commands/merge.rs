@@ -2731,6 +2731,44 @@ fn remove_deleted_files(
     Ok(())
 }
 
+fn remove_path_for_checkout(path: &Path) -> Result<()> {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return Ok(());
+    };
+    if meta.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn ensure_directory(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.is_dir() {
+                return Ok(());
+            }
+            remove_path_for_checkout(path)?;
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    if let Some(parent) = path.parent() {
+        ensure_directory(parent)?;
+    }
+    fs::create_dir_all(path)?;
+    Ok(())
+}
+
+fn ensure_parent_directory(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        ensure_directory(parent)?;
+    }
+    Ok(())
+}
+
 /// Checkout index entries to working tree.
 fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
     // Load gitattributes and config for CRLF conversion
@@ -2747,25 +2785,18 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
-        if let Some(parent) = abs_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        ensure_parent_directory(&abs_path)?;
 
         let obj = repo.odb.read(&entry.oid)?;
         if obj.kind != ObjectKind::Blob {
             continue;
         }
 
-        if abs_path.is_dir() {
-            fs::remove_dir_all(&abs_path)?;
-        }
+        remove_path_for_checkout(&abs_path)?;
 
         if entry.mode == MODE_SYMLINK {
             let target = String::from_utf8(obj.data)
                 .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
-            if abs_path.exists() || abs_path.is_symlink() {
-                let _ = fs::remove_file(&abs_path);
-            }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
             // Apply CRLF conversion if configured

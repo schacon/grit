@@ -75,7 +75,7 @@ commit → check it off → move on.
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
-- [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
+- [x] `t1015-read-index-unmerged` ████████████████████ 6/6 (0 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
 - [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure

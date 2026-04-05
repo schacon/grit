@@ -214,8 +214,10 @@ pub fn run(args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     // Determine the list of commits to format
-    let revision = args.revision.as_deref().unwrap_or("-1");
-    let commits = if args.root {
+    let revision = args.revision.as_deref().unwrap_or("HEAD");
+    let commits = if args.last_one {
+        collect_single_commit(&repo, revision)?
+    } else if args.root {
         collect_root_commits(&repo, revision)?
     } else {
         collect_commits(&repo, revision)?
@@ -377,6 +379,15 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Collect exactly one commit identified by `revision`.
+fn collect_single_commit(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
+    let oid = resolve_revision(repo, revision)
+        .with_context(|| format!("unknown revision '{revision}'"))?;
+    let obj = repo.odb.read(&oid).context("reading commit")?;
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+    Ok(vec![(oid, commit)])
 }
 
 /// Collect commits to format, in patch order (oldest first).

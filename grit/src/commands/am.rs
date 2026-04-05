@@ -2790,7 +2790,14 @@ fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
+        if abs_path.is_dir() {
+            fs::remove_dir_all(&abs_path)?;
+        }
+
         if let Some(parent) = abs_path.parent() {
+            if parent.exists() && !parent.is_dir() {
+                fs::remove_file(parent)?;
+            }
             fs::create_dir_all(parent)?;
         }
 

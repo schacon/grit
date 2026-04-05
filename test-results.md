@@ -27,3 +27,7 @@
 - `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 4/11 passing, with remaining failures in `send-split-sideband`/`receive-sideband`/`unpack-sideband` execution via the local `tests/test-tool` wrapper.
 - Direct validation using `/workspace/tests/grit test-tool pkt-line ...`: sideband helper flows match expected output (`receive-sideband`, EOF/missing-sideband diagnostics, and both `unpack-sideband` modes with/without `--reader-use-sideband` and chomp toggles).
 - `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after fixing D/F conflict handling in `merge --abort` and `am --skip`, and correcting `format-patch -1 <rev>` range selection behavior).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1015-read-index-unmerged.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t1015-read-index-unmerged.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.
