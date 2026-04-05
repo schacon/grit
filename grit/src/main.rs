@@ -246,6 +246,16 @@ fn exit_with_status(status: std::process::ExitStatus) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
+const TEST_TOOL_EXAMPLE_TAP_OUTPUT: &str = include_str!("test_tool_example_tap_output.txt");
+
+fn run_test_tool_example_tap(rest: &[String]) -> Result<()> {
+    if rest.len() != 1 {
+        bail!("usage: test-tool example-tap");
+    }
+    print!("{TEST_TOOL_EXAMPLE_TAP_OUTPUT}");
+    std::process::exit(1);
+}
+
 fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "001return" => {
@@ -1536,6 +1546,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                 }
                 "trace2" => run_test_tool_trace2(rest),
+                "example-tap" => run_test_tool_example_tap(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),

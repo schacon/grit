@@ -17,7 +17,7 @@ commit → check it off → move on.
 - [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
 - [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
 - [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
-- [ ] `t0080-unit-test-output` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the output of the unit test framework
+- [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
 - [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
 - [x] `t0007-git-var` ████████████████████ 27/27 (0 left) — basic sanity checks for git var
 - [x] `t0009-git-dir-validation` ████████████████████ 6/6 (0 left) — setup: validation of .git file/directory types
