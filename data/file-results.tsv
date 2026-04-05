@@ -456,7 +456,7 @@ t4121-apply-diffs	yes	2	2	0	ok	2	2	0
 t4122-apply-symlink-inside	yes	7	1	6	ok	1	7	0
 t4123-apply-shrink	yes	2	2	0	ok	2	2	0
 t4124-apply-ws-rule	yes	85	13	72	ok	13	85	0
-t4125-apply-ws-fuzz	yes	4	2	2	ok	2	4	0
+t4125-apply-ws-fuzz	yes	4	4	0	ok	4	4	0
 t4126-apply-empty	yes	8	3	5	ok	3	8	0
 t4127-apply-same-fn	yes	7	3	4	ok	3	7	0
 t4128-apply-root	yes	12	2	10	ok	2	12	0

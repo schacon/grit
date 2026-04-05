@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    62 |
-| In progress |     1 |
-| Remaining   |   703 |
+| Completed   |    63 |
+| In progress |     0 |
+| Remaining   |   702 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -53,7 +53,8 @@
 - `t4073-diff-stat-name-width` — 6/6 tests pass (fixed trailing `--stat-*` option parsing after revisions in `grit diff`)
 - `t4006-diff-mode` — 7/7 tests pass (binary stat row now renders as `Bin`; update-index `--chmod` now syncs worktree mode to match test helper expectations)
 - `t4007-rename-3` — 13/13 tests pass (`diff-files` now honors `-C/--find-copies-harder/-R` and emits copy-raw records for reverse index/worktree diffs)
+- `t4125-apply-ws-fuzz` — 4/4 tests pass (`git apply --whitespace=fix` now normalizes context/remove matching and writes whitespace-fixed added lines)
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4125-apply-ws-fuzz`) and 703 remain pending. See `plan.md` for the full prioritized list.
+No test files are currently marked in progress; 702 remain pending. See `plan.md` for the full prioritized list.

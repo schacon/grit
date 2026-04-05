@@ -596,7 +596,27 @@ fn matches_at(old_lines: &[&str], old_side: &[&str], start: usize) -> bool {
         .all(|(a, b)| *a == *b)
 }
 
-fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
+fn canonicalize_ws_line(line: &str) -> String {
+    let mut end = line.len();
+    while end > 0 {
+        let b = line.as_bytes()[end - 1];
+        if b == b' ' || b == b'\t' {
+            end -= 1;
+        } else {
+            break;
+        }
+    }
+    line[..end].to_string()
+}
+
+fn lines_equal(expected: &str, actual: &str, whitespace_fix: bool) -> bool {
+    if expected == actual {
+        return true;
+    }
+    whitespace_fix && canonicalize_ws_line(expected) == canonicalize_ws_line(actual)
+}
+
+fn apply_hunks(old_content: &str, hunks: &[Hunk], whitespace_fix: bool) -> Result<String> {
     // Split into lines, keeping track of trailing newline
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
     let old_lines: Vec<&str> = if old_content.is_empty() {
@@ -639,7 +659,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
                 HunkLine::Context(s) => {
                     if old_idx < old_lines.len() {
                         // Verify context matches
-                        if old_lines[old_idx] != s.as_str() {
+                        if !lines_equal(s, old_lines[old_idx], whitespace_fix) {
                             bail!(
                                 "context mismatch at line {}: expected {:?}, got {:?}",
                                 old_idx + 1,
@@ -649,11 +669,15 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
                         }
                         old_idx += 1;
                     }
-                    result.push(s.clone());
+                    if whitespace_fix {
+                        result.push(canonicalize_ws_line(s));
+                    } else {
+                        result.push(s.clone());
+                    }
                 }
                 HunkLine::Remove(s) => {
                     if old_idx < old_lines.len() {
-                        if old_lines[old_idx] != s.as_str() {
+                        if !lines_equal(s, old_lines[old_idx], whitespace_fix) {
                             bail!(
                                 "remove mismatch at line {}: expected {:?}, got {:?}",
                                 old_idx + 1,
@@ -666,7 +690,11 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
                     remove_no_newline = false;
                 }
                 HunkLine::Add(s) => {
-                    result.push(s.clone());
+                    if whitespace_fix {
+                        result.push(canonicalize_ws_line(s));
+                    } else {
+                        result.push(s.clone());
+                    }
                     add_no_newline = false;
                 }
                 HunkLine::NoNewline => {
@@ -1005,6 +1033,7 @@ fn remove_empty_dirs_up(dir: &Path) {
 }
 
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
     for fp in patches {
         let path_str = fp
             .effective_path()
@@ -1039,7 +1068,7 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
                     fs::create_dir_all(parent)?;
                 }
             }
-            let content = apply_hunks("", &fp.hunks).with_context(|| {
+            let content = apply_hunks("", &fp.hunks, false).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
             fs::write(&path, content.as_bytes())
@@ -1080,7 +1109,7 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        let new_content = apply_hunks(&old_content, &fp.hunks)
+        let new_content = apply_hunks(&old_content, &fp.hunks, whitespace_fix)
             .with_context(|| format!("failed to apply patch to {}", path.display()))?;
         fs::write(&path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
@@ -1181,7 +1210,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         let new_content = if fp.hunks.is_empty() {
             old_content.clone()
         } else {
-            apply_hunks(&old_content, &fp.hunks)
+            apply_hunks(&old_content, &fp.hunks, false)
                 .with_context(|| format!("failed to apply patch to {adjusted}"))?
         };
 
@@ -1224,6 +1253,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
 
 /// Check if patches apply cleanly without modifying anything.
 fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
     for fp in patches {
         let path_str = fp
             .effective_path()
@@ -1242,7 +1272,7 @@ fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
                 bail!("{}: already exists", path.display());
             }
             // Verify hunks apply to empty content
-            apply_hunks("", &fp.hunks).with_context(|| {
+            apply_hunks("", &fp.hunks, whitespace_fix).with_context(|| {
                 format!(
                     "patch does not apply cleanly to new file {}",
                     path.display()
@@ -1253,7 +1283,7 @@ fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
 
         let old_content = fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        apply_hunks(&old_content, &fp.hunks)
+        apply_hunks(&old_content, &fp.hunks, whitespace_fix)
             .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }
 

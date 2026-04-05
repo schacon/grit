@@ -19,3 +19,8 @@
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4007-rename-3.sh`: 13/13 passing.
 - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
 - `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 2/4 passing (baseline for next in-progress Diff target).
+- `cargo build --release`: passes (rebuild after `grit apply` whitespace-fix matching changes).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4125-apply-ws-fuzz.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- `cargo test -p grit-lib --lib`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated auto-fixes reverted; task-only changes kept).
