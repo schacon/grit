@@ -134,6 +134,48 @@ const ALL_COMMANDS: &[&str] = &[
     "write-tree",
 ];
 
+fn alias_names_for_help() -> Vec<String> {
+    let git_dir = std::env::var("GIT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        });
+
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return Vec::new();
+    };
+
+    let mut names: Vec<String> = Vec::new();
+    for entry in config.entries() {
+        if !entry.key.starts_with("alias.") {
+            continue;
+        }
+        let rest = &entry.key["alias.".len()..];
+        if let Some(name) = rest.strip_suffix(".command") {
+            if !name.is_empty() && !name.contains('.') {
+                names.push(name.to_owned());
+            }
+            continue;
+        }
+        if let Some(name) = rest.strip_prefix('.') {
+            if !name.is_empty() && !name.contains('.') {
+                names.push(name.to_owned());
+            }
+            continue;
+        }
+        if !rest.is_empty() && !rest.contains('.') {
+            names.push(rest.to_owned());
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Run `grit help`.
 pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
@@ -160,6 +202,9 @@ pub fn run(args: Args) -> Result<()> {
         writeln!(out, "Available commands:")?;
         for cmd in ALL_COMMANDS {
             writeln!(out, "   {cmd}")?;
+        }
+        for alias in alias_names_for_help() {
+            writeln!(out, "   {alias}")?;
         }
         writeln!(out)?;
         writeln!(
@@ -204,6 +249,9 @@ pub fn run(args: Args) -> Result<()> {
         writeln!(out, "Commands:")?;
         for cmd in ALL_COMMANDS {
             writeln!(out, "   {cmd}")?;
+        }
+        for alias in alias_names_for_help() {
+            writeln!(out, "   {alias}")?;
         }
         writeln!(out)?;
         writeln!(

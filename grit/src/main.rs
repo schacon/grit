@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::cell::RefCell;
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -1123,6 +1124,24 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_mktemp(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!("usage: test-tool mktemp <template>");
+    }
+
+    let status = std::process::Command::new("mktemp")
+        .args(&rest[1..])
+        .status()?;
+    exit_with_status(status);
+}
+
+fn run_test_tool_regex(rest: &[String]) -> Result<()> {
+    if rest.get(1).map(String::as_str) == Some("--bug") {
+        return Ok(());
+    }
+    bail!("usage: test-tool regex --bug")
+}
+
 fn run_test_tool(rest: &[String]) -> Result<()> {
     match rest.first().map(String::as_str).unwrap_or("") {
         "wildmatch" => {
@@ -1171,6 +1190,8 @@ fn run_test_tool(rest: &[String]) -> Result<()> {
         "example-tap" => run_test_tool_example_tap(),
         "advise" => run_test_tool_advise(rest),
         "json-writer" => run_test_tool_json_writer(rest),
+        "mktemp" => run_test_tool_mktemp(rest),
+        "regex" => run_test_tool_regex(rest),
         _ => test_tool_usage(),
     }
 }
@@ -1376,6 +1397,8 @@ fn run() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    ALIAS_EXPANSION_STACK.with(|stack| stack.borrow_mut().clear());
 
     apply_globals(&opts)?;
 
@@ -1692,6 +1715,9 @@ fn print_list_cmds(categories: &str) {
         match cat {
             "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
             "list-complete" => result.extend_from_slice(&complete),
+            "deprecated" => {
+                result.extend_from_slice(DEPRECATED_ALIASABLE_COMMANDS);
+            }
             "list-all" | "builtins" | "main" => {
                 result.extend_from_slice(&mainporcelain);
                 result.extend_from_slice(&complete);
@@ -1701,8 +1727,34 @@ fn print_list_cmds(categories: &str) {
                 // Non-built-in commands like gitk
                 result.push("gitk");
             }
-            "alias" | "nohelpers" => {
-                // alias = git aliases (handled by config, could list them)
+            "alias" => {
+                // List configured aliases.
+                if let Some(config) = load_config_set_for_lookup() {
+                    use std::collections::BTreeSet;
+                    let mut aliases = BTreeSet::new();
+                    for entry in config.entries() {
+                        if !entry.key.starts_with("alias.") {
+                            continue;
+                        }
+                        let rest = &entry.key["alias.".len()..];
+                        if let Some(name) = rest.strip_suffix(".command") {
+                            if !name.is_empty() && !name.contains('.') {
+                                aliases.insert(name.to_string());
+                            }
+                        } else if let Some(name) = rest.strip_prefix('.') {
+                            if !name.is_empty() && !name.contains('.') {
+                                aliases.insert(name.to_string());
+                            }
+                        } else if !rest.is_empty() && !rest.contains('.') {
+                            aliases.insert(rest.to_string());
+                        }
+                    }
+                    for alias in aliases {
+                        println!("{alias}");
+                    }
+                }
+            }
+            "nohelpers" => {
                 // nohelpers = filter out helper programs
             }
             "parseopt" => {
@@ -1947,14 +1999,19 @@ fn split_alias_words(input: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-fn get_alias_value(subcmd: &str) -> Option<String> {
-    let key = format!("alias.{subcmd}");
+#[derive(Debug, Clone)]
+struct AliasEntry {
+    key: String,
+    value: Option<String>,
+}
 
-    // Highest priority: `-c alias.<name>=...`
-    if let Some(v) = protocol::check_config_param(&key) {
-        return Some(v);
-    }
+thread_local! {
+    static ALIAS_EXPANSION_STACK: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+}
 
+const DEPRECATED_ALIASABLE_COMMANDS: &[&str] = &["pack-redundant", "whatchanged"];
+
+fn load_config_set_for_lookup() -> Option<grit_lib::config::ConfigSet> {
     let git_dir = std::env::var("GIT_DIR")
         .ok()
         .map(std::path::PathBuf::from)
@@ -1963,14 +2020,192 @@ fn get_alias_value(subcmd: &str) -> Option<String> {
                 .ok()
                 .map(|r| r.git_dir)
         });
+    grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).ok()
+}
 
-    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
-        if let Some(v) = config.get(&key) {
-            return Some(v);
+fn find_alias_entry(subcmd: &str) -> Option<AliasEntry> {
+    let config = load_config_set_for_lookup()?;
+    let subcmd_lower = subcmd.to_lowercase();
+
+    for entry in config.entries().iter().rev() {
+        if !entry.key.starts_with("alias.") {
+            continue;
+        }
+
+        let rest = &entry.key["alias.".len()..];
+
+        // Subsection syntax: alias.<name>.command (case-sensitive by design)
+        if let Some(name) = rest.strip_suffix(".command") {
+            if !name.is_empty() && name == subcmd {
+                return Some(AliasEntry {
+                    key: entry.key.clone(),
+                    value: entry.value.clone(),
+                });
+            }
+            continue;
+        }
+
+        // Empty subsection in simple syntax: alias..foo => alias.foo
+        if let Some(name) = rest.strip_prefix('.') {
+            if !name.contains('.') && name.to_lowercase() == subcmd_lower {
+                return Some(AliasEntry {
+                    key: entry.key.clone(),
+                    value: entry.value.clone(),
+                });
+            }
+            continue;
+        }
+
+        // Simple syntax: alias.foo (case-insensitive command key)
+        if !rest.contains('.') && rest.to_lowercase() == subcmd_lower {
+            return Some(AliasEntry {
+                key: entry.key.clone(),
+                value: entry.value.clone(),
+            });
         }
     }
 
     None
+}
+
+fn quote_trace_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
+    let safe = arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/');
+    if safe {
+        return arg.to_string();
+    }
+    format!("'{}'", arg.replace('\'', r#"'"'"'"#))
+}
+
+fn emit_git_trace(line: String) {
+    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+        if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
+            write_git_trace(&trace_val, &format!("{line}\n"));
+        }
+    }
+}
+
+fn format_alias_loop_message(
+    stack: &[(String, String)],
+    from: &str,
+    to: &str,
+    cycle_start_idx: usize,
+) -> String {
+    let mut msg = String::new();
+
+    for (src, dst) in stack.iter().skip(cycle_start_idx) {
+        msg.push_str(&format!("'{src}' is aliased to '{dst}'\n"));
+    }
+    msg.push_str(&format!("'{from}' is aliased to '{to}'\n"));
+
+    msg.push_str(&format!(
+        "fatal: alias loop detected: expansion of '{to}' does not terminate:\n"
+    ));
+
+    let mut chain = vec![to.to_string()];
+    for (src, dst) in stack.iter().skip(cycle_start_idx) {
+        if chain.last().is_some_and(|last| last == src) {
+            chain.push(dst.clone());
+        }
+    }
+    if chain.last().is_none_or(|last| last != from) {
+        chain.push(from.to_string());
+    }
+
+    if let Some(first) = chain.first() {
+        msg.push_str(&format!("  {first} <==\n"));
+        for name in chain.iter().skip(1) {
+            msg.push_str(&format!("  {name} ==>\n"));
+        }
+    }
+
+    msg
+}
+
+fn is_builtin_command(subcmd: &str) -> bool {
+    KNOWN_COMMANDS.contains(&subcmd)
+}
+
+fn can_alias_shadow_builtin(subcmd: &str) -> bool {
+    DEPRECATED_ALIASABLE_COMMANDS.contains(&subcmd)
+}
+
+fn try_expand_alias(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<Option<()>> {
+    let should_check_alias = !is_builtin_command(subcmd) || can_alias_shadow_builtin(subcmd);
+    if !should_check_alias {
+        return Ok(None);
+    }
+
+    let Some(alias_entry) = find_alias_entry(subcmd) else {
+        return Ok(None);
+    };
+
+    let alias_value = alias_entry.value.unwrap_or_default();
+    if alias_value.trim().is_empty() {
+        bail!("{} has no value", alias_entry.key);
+    }
+
+    if let Some(shell_body) = alias_value.strip_prefix('!') {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let body = shell_body.trim_start();
+        let prepared = format!("{body} \"$@\"");
+        let mut trace = format!(
+            "trace: start_command: {} -c {} {}",
+            quote_trace_arg(&shell),
+            quote_trace_arg(&prepared),
+            quote_trace_arg(body)
+        );
+        for arg in rest {
+            trace.push(' ');
+            trace.push_str(&quote_trace_arg(arg));
+        }
+        emit_git_trace(trace);
+
+        let status = std::process::Command::new(&shell)
+            .arg("-c")
+            .arg(prepared)
+            .arg(body)
+            .args(rest)
+            .status()?;
+        exit_with_status(status);
+    }
+
+    let mut expanded = split_alias_words(&alias_value)?;
+    if expanded.is_empty() {
+        bail!("{} has no value", alias_entry.key);
+    }
+
+    let aliased_subcmd = expanded.remove(0);
+    let mut expanded_rest = expanded;
+    expanded_rest.extend(rest.iter().cloned());
+
+    let loop_error = ALIAS_EXPANSION_STACK.with(|stack| {
+        let stack = stack.borrow();
+        stack
+            .iter()
+            .position(|(src, _)| src == &aliased_subcmd)
+            .map(|idx| format_alias_loop_message(&stack, subcmd, &aliased_subcmd, idx))
+    });
+    if let Some(msg) = loop_error {
+        eprint!("{msg}");
+        std::process::exit(128);
+    }
+
+    ALIAS_EXPANSION_STACK.with(|stack| {
+        stack
+            .borrow_mut()
+            .push((subcmd.to_string(), aliased_subcmd.clone()));
+    });
+    let result = dispatch(&aliased_subcmd, &expanded_rest, opts);
+    ALIAS_EXPANSION_STACK.with(|stack| {
+        let _ = stack.borrow_mut().pop();
+    });
+    result?;
+    Ok(Some(()))
 }
 
 const KNOWN_COMMANDS: &[&str] = &[
@@ -2125,6 +2360,10 @@ const KNOWN_COMMANDS: &[&str] = &[
 ///
 /// Each arm only constructs the clap parser for that specific command.
 fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if let Some(()) = try_expand_alias(subcmd, rest, opts)? {
+        return Ok(());
+    }
+
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
@@ -2179,6 +2418,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
         "grep" => {
+            // `git grep -h` without a pattern should show usage/help.
+            if rest.len() == 1 && rest[0] == "-h" {
+                return commands::grep::run(parse_cmd_args(subcmd, rest));
+            }
+
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
@@ -2269,6 +2513,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             match sub {
                 "pack" => pkt_line::cmd_pack().map_err(Into::into),
                 "unpack" => pkt_line::cmd_unpack().map_err(Into::into),
+                "send-split-sideband" => pkt_line::cmd_send_split_sideband().map_err(Into::into),
+                "receive-sideband" => pkt_line::cmd_receive_sideband().map_err(Into::into),
+                "unpack-sideband" => {
+                    let chomp_newline = !rest.iter().any(|a| a == "--no-chomp-newline");
+                    let reader_use_sideband = rest.iter().any(|a| a == "--reader-use-sideband");
+                    pkt_line::cmd_unpack_sideband(chomp_newline, reader_use_sideband)
+                        .map_err(Into::into)
+                }
                 other => bail!("pkt-line: unknown subcommand '{other}'"),
             }
         }
@@ -2350,30 +2602,18 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
-            if let Some(alias) = get_alias_value(subcmd) {
-                if alias.trim().is_empty() {
-                    bail!("alias.{subcmd} has no value");
-                }
+            let helper = format!("git-{subcmd}");
+            let mut trace = format!("trace: run_command: {}", quote_trace_arg(&helper));
+            for arg in rest {
+                trace.push(' ');
+                trace.push_str(&quote_trace_arg(arg));
+            }
+            emit_git_trace(trace);
 
-                if let Some(shell_body) = alias.strip_prefix('!') {
-                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-                    let body = shell_body.trim_start();
-                    let status = std::process::Command::new(shell)
-                        .arg("-c")
-                        .arg(format!("{body} \"$@\""))
-                        .arg(body)
-                        .args(rest)
-                        .status()?;
-                    exit_with_status(status);
-                }
-
-                let mut expanded = split_alias_words(&alias)?;
-                if expanded.is_empty() {
-                    bail!("alias.{subcmd} has no value");
-                }
-                let aliased_subcmd = expanded.remove(0);
-                expanded.extend(rest.iter().cloned());
-                return dispatch(&aliased_subcmd, &expanded, opts);
+            match std::process::Command::new(&helper).args(rest).status() {
+                Ok(status) => exit_with_status(status),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
             }
 
             let commands = KNOWN_COMMANDS;
@@ -2391,7 +2631,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             match autocorrect.as_deref() {
                 Some("never") => {
                     // With never, just say it's not a command, no suggestions
-                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                    bail!("git: '{subcmd}' is not a git command. See 'git --help'.");
                 }
                 Some("immediate") | Some("-1") if suggestions.len() == 1 => {
                     // Auto-run the single matching command
@@ -2405,11 +2645,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 _ => {
                     // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                        bail!("git: '{subcmd}' is not a git command. See 'git --help'.\n\nunrecognized subcommand");
                     } else {
                         let similar = suggestions.join("\n\t");
                         bail!(
-                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
+                            "git: '{subcmd}' is not a git command. See 'git --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
                         );
                     }
                 }

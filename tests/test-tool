@@ -114,8 +114,7 @@ case "$1" in
           printf "%04x%s", $len, $data;
         ' ;;
       *)
-        echo "test-tool pkt-line: unknown subcommand '$1'" >&2
-        exit 1 ;;
+        exec git pkt-line "$@" ;;
     esac ;;
   serve-v2)
     shift
