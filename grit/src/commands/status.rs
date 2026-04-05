@@ -503,11 +503,16 @@ fn format_long(
     };
     let cp = comment_prefix;
 
-    // Determine if hints should be shown
-    let show_hints = match config.get("advice.statusHints") {
+    // Determine if hints should be shown.
+    // `GIT_ADVICE` globally overrides per-advice config knobs.
+    let config_hints = match config.get("advice.statusHints") {
         Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
         _ => true,
     };
+    let show_hints = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_str(&v))
+        .unwrap_or(config_hints);
 
     // Branch info
     match head {
@@ -739,11 +744,15 @@ fn format_long(
             "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
         )?;
     } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
-        cpw(
-            out,
-            cp,
-            "nothing added to commit but untracked files present (use \"git add\" to track)",
-        )?;
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "nothing added to commit but untracked files present (use \"git add\" to track)",
+            )?;
+        } else {
+            cpw(out, cp, "nothing added to commit but untracked files present")?;
+        }
     } else if staged.is_empty() {
         cpw(
             out,
@@ -753,6 +762,14 @@ fn format_long(
     }
 
     Ok(())
+}
+
+fn parse_bool_str(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 /// Find untracked files in the working tree (raw, before ignore filtering).

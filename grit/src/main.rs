@@ -444,6 +444,63 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn parse_bool_str(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn run_test_tool_advise(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool advise <message>");
+    }
+    let advice_msg = &rest[1];
+
+    let global_advice = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_str(&v));
+    if global_advice == Some(false) {
+        return Ok(());
+    }
+
+    let config_advice = if let Some(v) = protocol::check_config_param("advice.nestedTag") {
+        parse_bool_str(&v)
+    } else {
+        let git_dir = std::env::var("GIT_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                grit_lib::repo::Repository::discover(None)
+                    .ok()
+                    .map(|r| r.git_dir)
+            });
+        if let Some(gd) = git_dir {
+            if let Ok(config) = grit_lib::config::ConfigSet::load(Some(gd.as_path()), true) {
+                config
+                    .get("advice.nestedTag")
+                    .and_then(|v| parse_bool_str(&v))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
+    let enabled = global_advice == Some(true) || config_advice != Some(false);
+    if !enabled {
+        return Ok(());
+    }
+
+    eprintln!("hint: {advice_msg}");
+    if config_advice.is_none() {
+        eprintln!("hint: Disable this message with \"git config set advice.nestedTag false\"");
+    }
+    Ok(())
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -452,6 +509,7 @@ struct GlobalOpts {
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
     bare: bool,
+    no_advice: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -529,6 +587,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --no-advice
+        if arg == "--no-advice" {
+            opts.no_advice = true;
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
@@ -581,6 +646,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
+    }
+    if opts.no_advice {
+        std::env::set_var("GIT_ADVICE", "false");
     }
     Ok(())
 }
@@ -1635,6 +1703,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 }
                 "trace2" => run_test_tool_trace2(rest),
                 "example-tap" => run_test_tool_example_tap(rest),
+                "advise" => run_test_tool_advise(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),

@@ -14,7 +14,7 @@ t0012-help	yes	124	15	109	ok	15	124	0
 t0013-sha1dc	yes	0	0	0	ok	0	0	0
 t0014-alias	yes	21	1	20	ok	1	21	0
 t0017-env-helper	yes	5	0	5	ok	0	5	0
-t0018-advice	yes	6	1	5	ok	1	6	0
+t0018-advice	yes	6	6	0	ok	6	6	0
 t0019-json-writer	yes	16	1	15	ok	1	16	0
 t0020-crlf	yes	36	19	17	ok	19	36	0
 t0021-conversion	yes	42	18	24	ok	18	42	0
