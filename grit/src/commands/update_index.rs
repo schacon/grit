@@ -296,6 +296,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
                 }
+                apply_chmod_to_worktree(&abs_path, chmod_val)?;
                 continue;
             }
             // With --add --chmod, fall through to add/update the file first,
@@ -329,12 +330,12 @@ pub fn run(args: Args) -> Result<()> {
                 let sub_git_dir = resolve_gitdir(&dot_git)?;
                 let head_path = sub_git_dir.join("HEAD");
                 let head_content = std::fs::read_to_string(&head_path)
-                    .with_context(|| format!("reading HEAD of submodule"))?;
+                    .with_context(|| "reading HEAD of submodule".to_string())?;
                 let head_content = head_content.trim();
                 let oid: ObjectId = if let Some(refname) = head_content.strip_prefix("ref: ") {
                     let ref_path = sub_git_dir.join(refname);
                     let ref_content = std::fs::read_to_string(&ref_path)
-                        .with_context(|| format!("reading ref in submodule"))?;
+                        .with_context(|| "reading ref in submodule".to_string())?;
                     ref_content.trim().parse().with_context(|| "invalid oid")?
                 } else {
                     head_content.parse().with_context(|| "invalid HEAD oid")?
@@ -368,11 +369,10 @@ pub fn run(args: Args) -> Result<()> {
         // On filesystems without symlink support (core.symlinks=false), keep
         // an existing symlink entry's mode even if the worktree stores it
         // as a plain file containing the link target.
-        if !symlinks_enabled && !meta.file_type().is_symlink() {
-            if existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
+        if !symlinks_enabled && !meta.file_type().is_symlink()
+            && existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
                 mode = grit_lib::index::MODE_SYMLINK;
             }
-        }
 
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;
@@ -415,6 +415,7 @@ pub fn run(args: Args) -> Result<()> {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
             }
+            apply_chmod_to_worktree(&abs_path, chmod_val)?;
         }
     }
 
@@ -601,6 +602,32 @@ fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+fn apply_chmod_to_worktree(path: &Path, chmod_val: &str) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    if !meta.file_type().is_file() {
+        return Ok(());
+    }
+
+    let mut mode = meta.mode();
+    match chmod_val {
+        "+x" => mode |= 0o111,
+        "-x" => mode &= !0o111,
+        other => bail!("--chmod param '{}' must be either +x or -x", other),
+    }
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .with_context(|| format!("updating worktree mode for '{}'", path.display()))?;
+
+    Ok(())
 }
 
 fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {

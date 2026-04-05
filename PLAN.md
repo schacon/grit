@@ -394,7 +394,7 @@ commit → check it off → move on.
 - [ ] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
 
 - [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
-- [~] `t4006-diff-mode` ██████████████░░░░░░ 5/7 (2 left) — Test mode change diffs.
+- [~] `t4006-diff-mode` ██████████████████░░ 6/7 (1 left) — Test mode change diffs.
 
 - [x] `t4073-diff-stat-name-width` ████████████████████ 6/6 (0 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
 - [ ] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
