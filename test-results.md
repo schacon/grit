@@ -2,6 +2,18 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `git apply` reverse patch ordering and worktree preflight sequence validation updates for repeated same-file patch application).
+- `./scripts/run-tests.sh t4127-apply-same-fn.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4127-apply-same-fn.sh` (from `tests/`): 7/7 passing with expected non-zero `apply` failure in the negative test case and full suite success.
+- Regression checks after `apply` updates:
+  - `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing.
+  - `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4152-am-subjects.sh`: 13/13 passing.
+  - `./scripts/run-tests.sh t4133-apply-filenames.sh`: 4/4 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `diff-index` `GIT_DIFF_OPTS` context parsing support).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4003-diff-rename-1.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t4003-diff-rename-1.sh`: 7/7 passing; `data/file-results.tsv` refreshed.

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    71 |
+| Completed   |    72 |
 | In progress |     1 |
-| Remaining   |   695 |
+| Remaining   |   694 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4127-apply-same-fn` — 7/7 tests pass (`git apply -R` now reverses multi-patch same-file sequences in reverse file order, and worktree preflight now rejects invalid source-path reuse before partial writes)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3211-peel-ref` — 8/8 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected)
@@ -65,4 +66,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4049-diff-stat-count`) and 695 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4049-diff-stat-count`) and 694 remain pending. See `plan.md` for the full prioritized list.

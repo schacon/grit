@@ -602,6 +602,11 @@ fn reverse_patches(patches: &mut [FilePatch]) {
             hunk.lines = new_lines;
         }
     }
+
+    // Apply reversed patchsets in reverse file order so that a later patch in
+    // the forward direction is undone first. This matches Git's reverse-apply
+    // behavior for multi-part patches touching the same path.
+    patches.reverse();
 }
 
 fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
@@ -1328,6 +1333,105 @@ fn remove_empty_dirs_up(dir: &Path) {
     }
 }
 
+fn record_path_existence(
+    path: &str,
+    current: &mut HashMap<String, bool>,
+    initial: &mut HashMap<String, bool>,
+) {
+    if current.contains_key(path) {
+        return;
+    }
+    let exists = Path::new(path).exists();
+    current.insert(path.to_string(), exists);
+    initial.insert(path.to_string(), exists);
+}
+
+/// Preflight worktree patch ordering/path availability before writing.
+///
+/// This catches invalid sequences (e.g. later patches reading a path that was
+/// moved away by an earlier rename) and prevents partially-applied worktree
+/// state when such sequences are detected.
+fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let mut current_exists: HashMap<String, bool> = HashMap::new();
+    let mut initial_exists: HashMap<String, bool> = HashMap::new();
+
+    for fp in patches {
+        if let Some(source) = fp.source_path() {
+            let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+        }
+        if let Some(target) = fp.target_path() {
+            let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+            record_path_existence(&adjusted, &mut current_exists, &mut initial_exists);
+        }
+    }
+
+    for fp in patches {
+        let source_adjusted = fp
+            .source_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_default();
+        let target_adjusted = fp
+            .target_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_default();
+
+        let source_exists_now = current_exists
+            .get(&source_adjusted)
+            .copied()
+            .unwrap_or_else(|| Path::new(&source_adjusted).exists());
+        let source_existed_initially = initial_exists
+            .get(&source_adjusted)
+            .copied()
+            .unwrap_or(source_exists_now);
+
+        if fp.is_deleted {
+            if !source_exists_now {
+                bail!(
+                    "failed to read {}: No such file or directory (os error 2)",
+                    source_adjusted
+                );
+            }
+            current_exists.insert(source_adjusted.clone(), false);
+            if source_adjusted != target_adjusted {
+                current_exists.insert(target_adjusted.clone(), false);
+            }
+            continue;
+        }
+
+        if fp.is_new {
+            let target_exists_now = current_exists
+                .get(&target_adjusted)
+                .copied()
+                .unwrap_or_else(|| Path::new(&target_adjusted).exists());
+            if target_exists_now {
+                bail!("{target_adjusted}: already exists");
+            }
+            current_exists.insert(target_adjusted.clone(), true);
+            continue;
+        }
+
+        if !source_exists_now {
+            let can_use_initial_snapshot = source_adjusted != target_adjusted
+                && (fp.is_copy || fp.is_rename)
+                && source_existed_initially;
+            if !can_use_initial_snapshot {
+                bail!(
+                    "failed to read {}: No such file or directory (os error 2)",
+                    source_adjusted
+                );
+            }
+        }
+
+        if fp.is_rename && source_adjusted != target_adjusted {
+            current_exists.insert(source_adjusted, false);
+        }
+        current_exists.insert(target_adjusted, true);
+    }
+
+    Ok(())
+}
+
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
     let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
     let mut had_rejects = false;
@@ -1350,6 +1454,7 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             source_snapshots.insert(source_adjusted, content);
         }
     }
+    precheck_worktree_patch_sequence(patches, args)?;
 
     for fp in patches {
         let path_str = fp

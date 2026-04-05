@@ -421,7 +421,7 @@ commit → check it off → move on.
 - [ ] `t4072-diff-max-depth` ██████████████████░░ 72/76 (4 left) — check that diff --max-depth will limit recursion
 - [ ] `t4040-whitespace-status` ████████████░░░░░░░░ 7/11 (4 left) — diff --exit-code with whitespace
 - [ ] `t4107-apply-ignore-whitespace` ████████████░░░░░░░░ 7/11 (4 left) — git-apply --ignore-whitespace.
-- [ ] `t4127-apply-same-fn` ████████░░░░░░░░░░░░ 3/7 (4 left) — apply same filename
+- [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
 
 - [ ] `t4136-apply-check` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — git apply should exit non-zero with unrecognized input.
