@@ -206,7 +206,7 @@ t2060-switch	yes	16	16	0	ok	16	16	0
 t2061-switch-orphan	yes	15	15	0	ok	15	15	0
 t2070-restore	yes	15	5	10	ok	5	15	0
 t2071-restore-patch	yes	15	2	13	ok	2	15	0
-t2072-restore-pathspec-file	yes	12	2	10	ok	2	12	0
+t2072-restore-pathspec-file	yes	12	12	0	ok	12	12	0
 t2080-parallel-checkout-basics	yes	11	0	11	ok	0	11	0
 t2081-parallel-checkout-collisions	yes	6	6	0	ok	6	6	0
 t2082-parallel-checkout-attributes	yes	5	5	0	ok	5	5	0

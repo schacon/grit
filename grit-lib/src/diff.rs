@@ -560,13 +560,21 @@ pub fn diff_index_to_worktree(
             Ok(meta) => {
                 // Check if the file has changed using stat data first
                 if stat_matches(ie, &meta) {
-                    // Stat data matches content-wise, but also check mode.
-                    // The index mode might have been changed via --chmod=+x.
                     let worktree_mode = mode_from_metadata(&meta);
-                    if worktree_mode == ie.mode {
-                        continue; // Fast path: stat+mode match, assume unchanged
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let worktree_oid = hash_worktree_file(
+                        odb,
+                        &file_path,
+                        &meta,
+                        &conv,
+                        &file_attrs,
+                        path_str_ref,
+                    )?;
+
+                    if worktree_mode == ie.mode && worktree_oid == ie.oid {
+                        continue; // truly unchanged
                     }
-                    // Mode differs — emit a mode-only change entry.
+
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -575,7 +583,7 @@ pub fn diff_index_to_worktree(
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
-                        new_oid: ie.oid,
+                        new_oid: worktree_oid,
                         score: None,
                     });
                     continue;
@@ -796,11 +804,15 @@ pub fn diff_tree_to_worktree(
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
-                // Fast path: if the index entry matches the tree entry AND
-                // stat cache matches, the file is unchanged — skip hashing.
                 if let Some(ie) = index_entries.get(path.as_bytes()) {
                     if ie.oid == te.oid && ie.mode == te.mode && stat_matches(ie, meta) {
-                        continue;
+                        let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                        let wt_oid =
+                            hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
+                        let wt_mode = mode_from_metadata(meta);
+                        if wt_oid == te.oid && wt_mode == te.mode {
+                            continue;
+                        }
                     }
                 }
 
