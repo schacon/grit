@@ -4,7 +4,7 @@
 //! corresponding objects and refs.  Parses `commit`, `blob`, `reset`,
 //! and `tag` directives.
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -19,5 +19,5 @@ pub struct Args {
 
 /// Run `grit fast-import` by delegating to the system Git binary.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("fast-import", &args.args)
+    system_git::run("fast-import", &args.args)
 }

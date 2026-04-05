@@ -4,7 +4,7 @@
 //! commits and emitting `commit`, `blob`, and `reset` directives.
 //! Supports `--all` to export every ref.
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -32,5 +32,5 @@ pub fn run(args: Args) -> Result<()> {
             }
         })
         .collect();
-    git_passthrough::run("fast-export", &normalized)
+    system_git::run("fast-export", &normalized)
 }

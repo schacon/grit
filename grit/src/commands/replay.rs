@@ -8,7 +8,7 @@
 //! Delegates to the system Git binary which uses the cherry-pick
 //! infrastructure internally.
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -23,5 +23,5 @@ pub struct Args {
 
 /// Run `grit replay` by delegating to the system Git binary.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("replay", &args.args)
+    system_git::run("replay", &args.args)
 }

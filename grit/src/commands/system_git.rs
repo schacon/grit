@@ -1,4 +1,4 @@
-//! Shared passthrough runner for maintenance subcommands.
+//! Shared runner for delegating to the system Git binary.
 
 use anyhow::{Context, Result};
 use std::ffi::OsString;

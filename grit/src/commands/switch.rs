@@ -6,7 +6,7 @@
 //! out in another worktree (a check that older system `git` versions omit
 //! for `-C`/`-c`).
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -27,7 +27,7 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("fatal: {msg}");
         std::process::exit(128);
     }
-    git_passthrough::run("switch", &args.args)
+    system_git::run("switch", &args.args)
 }
 
 /// Parse the raw switch arguments to extract the target branch name and check

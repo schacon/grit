@@ -1,6 +1,6 @@
 //! `grit repack` command.
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -14,5 +14,5 @@ pub struct Args {
 
 /// Run `grit repack`.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("repack", &args.args)
+    system_git::run("repack", &args.args)
 }
