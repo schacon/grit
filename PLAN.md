@@ -383,7 +383,7 @@ commit → check it off → move on.
 - [x] `t4113-apply-ending` ████████████████████ 3/3 (done) — git apply trying to add an ending line.
 
 - [x] `t4025-hunk-header` ████████████████████ 2/2 (done) — diff hunk header truncation
-- [ ] `t4066-diff-emit-delay` ██████████░░░░░░░░░░ 1/2 (1 left) — test combined/stat/moved interaction
+- [x] `t4066-diff-emit-delay` ████████████████████ 2/2 (done) — test combined/stat/moved interaction
 - [ ] `t4123-apply-shrink` ██████████░░░░░░░░░░ 1/2 (1 left) — apply a patch that is larger than the preimage
 - [ ] `t4134-apply-submodule` ██████████░░░░░░░░░░ 1/2 (1 left) — git apply submodule tests
 - [ ] `t4256-am-format-flowed` ██████████░░░░░░░░░░ 1/2 (1 left) — test format=flowed support of git am

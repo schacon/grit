@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    80 |
+| Completed   |    81 |
 | In progress |     0 |
-| Remaining   |   686 |
+| Remaining   |   685 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4066-diff-emit-delay` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay bash scripts/run-upstream-tests.sh t4066-diff-emit-delay 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t3305-notes-fanout` — 7/7 tests pass (`git notes` now rewrites note trees with automatic `2/38` fanout once the note count crosses the threshold, preserves mixed non-note entries while reading and writing nested notes trees, and `git log` now loads fanout notes recursively for display)
 - `t4065-diff-anchored` — 7/7 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored bash scripts/run-upstream-tests.sh t4065-diff-anchored 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t4204-patch-id` — 26/26 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already passes the full patch-id upstream file, so the remaining `PLAN.md` entry was stale and no Rust code changes were required)
@@ -73,4 +74,4 @@
 
 ## What Remains
 
-686 test files still pending. See `PLAN.md` for the full prioritized list.
+685 test files still pending. See `PLAN.md` for the full prioritized list.
