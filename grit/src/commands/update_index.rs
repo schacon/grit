@@ -7,7 +7,10 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry, MODE_SYMLINK};
+use grit_lib::index::{
+    entry_from_stat, normalize_mode, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK,
+    MODE_REGULAR, MODE_SYMLINK,
+};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -70,6 +73,10 @@ pub struct Args {
     /// Ignore missing files when adding.
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
+
+    /// Ignore submodule changes for --refresh.
+    #[arg(long = "ignore-submodules")]
+    pub ignore_submodules: bool,
 
     /// When removing entries, don't update (skip-worktree) entries.
     #[arg(long = "ignore-skip-worktree-entries")]
@@ -211,7 +218,7 @@ pub fn run(args: Args) -> Result<()> {
         args.files.clone()
     };
 
-    for input_path in paths {
+    for input_path in &paths {
         let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
 
@@ -420,7 +427,34 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.refresh || args.really_refresh || args.again {
         // Re-stat all entries
-        refresh_index(&mut index, work_tree, &repo.odb)?;
+        let only_paths = if paths.is_empty() {
+            None
+        } else {
+            Some(
+                paths
+                    .iter()
+                    .map(|p| path_to_bytes(p.as_path()))
+                    .collect::<Result<std::collections::HashSet<_>>>()?,
+            )
+        };
+        let stale = refresh_index(
+            &mut index,
+            work_tree,
+            &repo.odb,
+            args.ignore_missing,
+            args.unmerged,
+            args.ignore_submodules,
+            only_paths.as_ref(),
+        )?;
+        let quiet_refresh = args.quiet || matches!(std::env::var("GIT_QUIET"), Ok(v) if !v.is_empty());
+        if !stale.is_empty() {
+            if !quiet_refresh {
+                for path in stale {
+                    println!("{path}");
+                }
+                std::process::exit(1);
+            }
+        }
     }
 
     index.write(&index_path).context("writing index")?;
@@ -510,23 +544,117 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 }
 
 /// Re-stat all tracked files, updating mtime/ctime/size.
-fn refresh_index(index: &mut Index, work_tree: &std::path::Path, _odb: &Odb) -> Result<()> {
+fn refresh_index(
+    index: &mut Index,
+    work_tree: &std::path::Path,
+    _odb: &Odb,
+    ignore_missing: bool,
+    allow_unmerged: bool,
+    ignore_submodules: bool,
+    only_paths: Option<&std::collections::HashSet<Vec<u8>>>,
+) -> Result<Vec<String>> {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut stale_paths: Vec<String> = Vec::new();
+    let mut seen_unmerged = std::collections::HashSet::<Vec<u8>>::new();
+
     for entry in &mut index.entries {
+        if let Some(filter) = only_paths {
+            if !filter.contains(&entry.path) {
+                continue;
+            }
+        }
+
         let path = std::path::Path::new(
             std::str::from_utf8(&entry.path)
                 .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?,
         );
-        let abs = work_tree.join(path);
-        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
-            use std::os::unix::fs::MetadataExt;
-            entry.ctime_sec = meta.ctime() as u32;
-            entry.ctime_nsec = meta.ctime_nsec() as u32;
-            entry.mtime_sec = meta.mtime() as u32;
-            entry.mtime_nsec = meta.mtime_nsec() as u32;
-            entry.size = meta.size() as u32;
+        let path_str = path.to_string_lossy().to_string();
+
+        if entry.stage() != 0 {
+            if !allow_unmerged && seen_unmerged.insert(entry.path.clone()) {
+                stale_paths.push(path_str);
+            }
+            continue;
         }
+
+        if entry.mode == MODE_GITLINK {
+            if ignore_submodules {
+                continue;
+            }
+            let abs = work_tree.join(path);
+            let dot_git = abs.join(".git");
+            let current = if dot_git.exists() {
+                let sub_git_dir = resolve_gitdir(&dot_git)?;
+                let head_path = sub_git_dir.join("HEAD");
+                let head_content = std::fs::read_to_string(&head_path)?;
+                let head_content = head_content.trim();
+                Some(if let Some(refname) = head_content.strip_prefix("ref: ") {
+                    let ref_path = sub_git_dir.join(refname);
+                    let ref_content = std::fs::read_to_string(&ref_path)?;
+                    ref_content.trim().parse().context("invalid submodule ref oid")?
+                } else {
+                    head_content.parse().context("invalid submodule HEAD oid")?
+                })
+            } else {
+                None
+            };
+            if current != Some(entry.oid) {
+                stale_paths.push(path_str);
+            }
+            continue;
+        }
+
+        let abs = work_tree.join(path);
+        let meta = match std::fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if !ignore_missing {
+                    stale_paths.push(path_str);
+                }
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&abs)?;
+            let oid = Odb::hash_object_data(
+                grit_lib::objects::ObjectKind::Blob,
+                target.as_os_str().as_encoded_bytes(),
+            );
+            if oid != entry.oid || entry.mode != MODE_SYMLINK {
+                stale_paths.push(path_str);
+                continue;
+            }
+        } else if meta.file_type().is_file() {
+            let mode = if meta.mode() & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            };
+            let data = std::fs::read(&abs)?;
+            let oid = Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            if oid != entry.oid || entry.mode != mode {
+                stale_paths.push(path_str);
+                continue;
+            }
+        } else {
+            stale_paths.push(path_str);
+            continue;
+        }
+
+        entry.ctime_sec = meta.ctime() as u32;
+        entry.ctime_nsec = meta.ctime_nsec() as u32;
+        entry.mtime_sec = meta.mtime() as u32;
+        entry.mtime_nsec = meta.mtime_nsec() as u32;
+        entry.dev = meta.dev() as u32;
+        entry.ino = meta.ino() as u32;
+        entry.uid = meta.uid();
+        entry.gid = meta.gid();
+        entry.size = meta.size() as u32;
     }
-    Ok(())
+    Ok(stale_paths)
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {

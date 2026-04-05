@@ -886,6 +886,14 @@ fn checkout_index_to_worktree(
         if entry.stage() != 0 {
             continue;
         }
+        // Submodule entries point at commits in a different object store.
+        // Do not try to materialize them as blobs in the superproject.
+        if entry.mode == 0o160000 {
+            let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+            let submodule_dir = work_tree.join(&path_str);
+            let _ = std::fs::create_dir_all(&submodule_dir);
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 

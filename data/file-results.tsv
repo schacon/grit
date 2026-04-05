@@ -213,7 +213,7 @@ t2082-parallel-checkout-attributes	yes	5	1	4	ok	1	5	0
 t2100-update-cache-badpath	yes	5	5	0	ok	5	5	0
 t2101-update-index-reupdate	yes	0	0	0	timeout	0	0	0
 t2102-update-index-symlinks	yes	3	3	0	ok	3	3	0
-t2103-update-index-ignore-missing	yes	5	1	4	ok	1	5	0
+t2103-update-index-ignore-missing	yes	5	5	0	ok	5	5	0
 t2104-update-index-skip-worktree	yes	7	7	0	ok	7	7	0
 t2105-update-index-gitfile	yes	4	4	0	ok	4	4	0
 t2106-update-index-assume-unchanged	yes	2	2	0	ok	2	2	0
