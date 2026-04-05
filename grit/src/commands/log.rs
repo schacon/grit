@@ -331,14 +331,23 @@ fn extract_epoch_from_ident(ident: &str) -> i64 {
     if let Some(gt) = ident.rfind('>') {
         let after = ident[gt + 1..].trim();
         if let Some(epoch_str) = after.split_whitespace().next() {
-            return epoch_str.parse::<i64>().unwrap_or(0);
+            if let Ok(epoch) = epoch_str.parse::<i64>() {
+                return epoch;
+            }
+        }
+        if let Some(epoch) = parse_date_to_epoch(after, false) {
+            return epoch;
         }
     }
     0
 }
 
 /// Parse a date string into a Unix epoch timestamp.
-fn parse_date_to_epoch(s: &str) -> Option<i64> {
+///
+/// Returns the start-of-day timestamp for inclusive lower-bound filters
+/// (e.g. `--since-as-filter`) and end-of-day timestamp for inclusive
+/// upper-bound filters (e.g. `--until`) when only a calendar date is given.
+fn parse_date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
     let s = s.trim();
     if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let parts: Vec<&str> = s[..10].split('-').collect();
@@ -350,7 +359,12 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
             ) {
                 if let Ok(month) = time::Month::try_from(m) {
                     if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                        let dt = date.with_hms(0, 0, 0).unwrap().assume_utc();
+                        let dt = if end_of_day {
+                            date.with_hms(23, 59, 59).ok()?
+                        } else {
+                            date.with_hms(0, 0, 0).ok()?
+                        }
+                        .assume_utc();
                         return Some(dt.unix_timestamp());
                     }
                 }
@@ -626,7 +640,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let commits = {
         let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
         if let Some(s) = since_str {
-            if let Some(threshold) = parse_date_to_epoch(s) {
+            if let Some(threshold) = parse_date_to_epoch(s, false) {
                 commits
                     .into_iter()
                     .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) >= threshold)
@@ -640,7 +654,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     // Apply --until
     let commits = if let Some(ref s) = args.until {
-        if let Some(threshold) = parse_date_to_epoch(s) {
+        if let Some(threshold) = parse_date_to_epoch(s, true) {
             commits
                 .into_iter()
                 .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)

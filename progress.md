@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    64 |
-| In progress |     1 |
-| Remaining   |   700 |
+| Completed   |    65 |
+| In progress |     0 |
+| Remaining   |   699 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -55,7 +55,8 @@
 - `t4007-rename-3` — 13/13 tests pass (`diff-files` now honors `-C/--find-copies-harder/-R` and emits copy-raw records for reverse index/worktree diffs)
 - `t4125-apply-ws-fuzz` — 4/4 tests pass (`git apply --whitespace=fix` now normalizes context/remove matching and writes whitespace-fixed added lines)
 - `t4131-apply-fake-ancestor` — 3/3 tests pass (`git apply --build-fake-ancestor=<file>` now writes a synthetic index from patch `index` headers and respects subdirectory invocation)
+- `t4217-log-limit` — 3/3 tests pass (`git log --since-as-filter` now interprets non-epoch ident dates and uses end-of-day date thresholds)
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4217-log-limit`) and 700 remain pending. See `plan.md` for the full prioritized list.
+No test files are currently marked in progress; 699 remain pending. See `plan.md` for the full prioritized list.

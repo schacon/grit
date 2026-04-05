@@ -493,7 +493,7 @@ t4213-log-tabexpand	yes	9	1	8	ok	1	9	0
 t4214-log-graph-octopus	yes	17	1	16	ok	1	17	0
 t4215-log-skewed-merges	yes	10	0	10	ok	0	10	0
 t4216-log-bloom	yes	167	12	155	ok	12	167	0
-t4217-log-limit	yes	3	1	2	ok	1	3	0
+t4217-log-limit	yes	3	3	0	ok	3	3	0
 t4252-am-options	yes	8	1	7	ok	1	8	0
 t4253-am-keep-cr-dos	yes	7	1	6	ok	1	7	0
 t4254-am-corrupt	yes	0	0	0	ok	0	0	0

@@ -401,7 +401,7 @@ commit → check it off → move on.
 - [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (0 left) — format-patch mime headers and extra headers do not conflict
 - [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (0 left) — Pickaxe options
 - [x] `t4131-apply-fake-ancestor` ████████████████████ 3/3 (0 left) — git apply --build-fake-ancestor handling.
-- [~] `t4217-log-limit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git log with filter options limiting the output
+- [x] `t4217-log-limit` ████████████████████ 3/3 (0 left) — git log with filter options limiting the output
 - [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
 - [ ] `t4112-apply-renames` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git apply should not get confused with rename/copy.
 

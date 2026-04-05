@@ -1004,7 +1004,11 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
                 .with_context(|| format!("resolving old blob id `{old_oid}` for `{adjusted}`"))?;
             let mode = fp.old_mode.as_deref().map(parse_mode).unwrap_or(0o100644);
             Some((mode, oid))
-        } else { current_index.get(adjusted.as_bytes(), 0).map(|entry| (entry.mode, entry.oid)) };
+        } else {
+            current_index
+                .get(adjusted.as_bytes(), 0)
+                .map(|entry| (entry.mode, entry.oid))
+        };
 
         let Some((mode, oid)) = resolved else {
             continue;
