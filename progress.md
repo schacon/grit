@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    66 |
+| Completed   |    68 |
 | In progress |     1 |
-| Remaining   |   700 |
+| Remaining   |   698 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -57,7 +57,9 @@
 - `t4131-apply-fake-ancestor` — 3/3 tests pass (`git apply --build-fake-ancestor=<file>` now writes a synthetic index from patch `index` headers and respects subdirectory invocation)
 - `t4217-log-limit` — 3/3 tests pass (`git log --since-as-filter` now interprets non-epoch ident dates and uses end-of-day date thresholds)
 - `t4112-apply-renames` — 2/2 tests pass (`git apply` now distinguishes source vs target paths for rename/copy hunks and snapshots preimage sources across multi-file patches)
+- `t4117-apply-reject` — 8/8 tests pass (`git apply --reject` now applies matching hunks, writes `<path>.rej` for rejected hunks, and exits non-zero on partial apply)
+- `t4152-am-subjects` — 13/13 tests pass (`git am` now folds wrapped Subject continuations into subject text without injecting blank separator lines; `-k` preserves multiline subject breaks)
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4117-apply-reject`) and 700 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4003-diff-rename-1`) and 698 remain pending. See `plan.md` for the full prioritized list.

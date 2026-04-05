@@ -83,6 +83,10 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// Leave rejected hunks in corresponding *.rej files.
+    #[arg(long = "reject")]
+    pub reject: bool,
+
     /// How to handle whitespace errors.
     #[arg(long = "whitespace", value_name = "ACTION", default_value = "warn")]
     pub whitespace: String,
@@ -804,6 +808,136 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], whitespace_fix: bool) -> Resul
     Ok(out)
 }
 
+/// Apply hunks while collecting failed hunks for `--reject` mode.
+///
+/// Returns `(new_content, rejected_hunks)`.
+fn apply_hunks_with_reject(
+    old_content: &str,
+    hunks: &[Hunk],
+    whitespace_fix: bool,
+) -> Result<(String, Vec<Hunk>)> {
+    let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
+    let mut lines: Vec<String> = if old_content.is_empty() {
+        Vec::new()
+    } else {
+        old_content
+            .lines()
+            .map(std::string::ToString::to_string)
+            .collect()
+    };
+
+    let mut offset: isize = 0;
+    let mut rejected: Vec<Hunk> = Vec::new();
+
+    for hunk in hunks {
+        let nominal_start = if hunk.old_start == 0 {
+            0isize
+        } else {
+            hunk.old_start as isize - 1
+        };
+        let hunk_start = (nominal_start + offset).max(0) as usize;
+
+        let old_lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start.min(old_lines.len()));
+
+        let mut idx = actual_start;
+        let mut replacement: Vec<String> = Vec::new();
+        let mut failed = false;
+
+        for hl in &hunk.lines {
+            match hl {
+                HunkLine::Context(s) => {
+                    if idx >= lines.len() || !lines_equal(s, &lines[idx], whitespace_fix) {
+                        failed = true;
+                        break;
+                    }
+                    idx += 1;
+                    if whitespace_fix {
+                        replacement.push(canonicalize_ws_line(s));
+                    } else {
+                        replacement.push(s.clone());
+                    }
+                }
+                HunkLine::Remove(s) => {
+                    if idx >= lines.len() || !lines_equal(s, &lines[idx], whitespace_fix) {
+                        failed = true;
+                        break;
+                    }
+                    idx += 1;
+                }
+                HunkLine::Add(s) => {
+                    if whitespace_fix {
+                        replacement.push(canonicalize_ws_line(s));
+                    } else {
+                        replacement.push(s.clone());
+                    }
+                }
+                HunkLine::NoNewline => {}
+            }
+        }
+
+        if failed {
+            rejected.push(hunk.clone());
+            continue;
+        }
+
+        let removed_count = idx.saturating_sub(actual_start);
+        lines.splice(actual_start..idx, replacement.iter().cloned());
+        offset += replacement.len() as isize - removed_count as isize;
+    }
+
+    if lines.is_empty() {
+        return Ok((String::new(), rejected));
+    }
+
+    let mut out = lines.join("\n");
+    if has_trailing_newline {
+        out.push('\n');
+    }
+    Ok((out, rejected))
+}
+
+fn render_hunk_line(line: &HunkLine) -> String {
+    match line {
+        HunkLine::Context(s) => format!(" {s}"),
+        HunkLine::Add(s) => format!("+{s}"),
+        HunkLine::Remove(s) => format!("-{s}"),
+        HunkLine::NoNewline => "\\ No newline at end of file".to_string(),
+    }
+}
+
+fn write_reject_file(path: &Path, patch: &FilePatch, rejected_hunks: &[Hunk]) -> Result<()> {
+    if rejected_hunks.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let old_hdr = patch.old_path.as_deref().unwrap_or("/dev/null");
+    let new_hdr = patch.new_path.as_deref().unwrap_or("/dev/null");
+
+    let mut out = String::new();
+    out.push_str(&format!("--- {old_hdr}\n"));
+    out.push_str(&format!("+++ {new_hdr}\n"));
+
+    for hunk in rejected_hunks {
+        out.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
+        ));
+        for line in &hunk.lines {
+            out.push_str(&render_hunk_line(line));
+            out.push('\n');
+        }
+    }
+
+    fs::write(path, out.as_bytes()).with_context(|| format!("failed to write {}", path.display()))
+}
+
 // ---------------------------------------------------------------------------
 // Stat / numstat / summary output
 // ---------------------------------------------------------------------------
@@ -1140,6 +1274,7 @@ fn remove_empty_dirs_up(dir: &Path) {
 
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
     let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
+    let mut had_rejects = false;
     // Snapshot source-side file contents used by cross-path rename/copy patches
     // so later modifications/removals do not affect subsequent patch sections.
     let mut source_snapshots: HashMap<String, String> = HashMap::new();
@@ -1241,8 +1376,14 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        let new_content = apply_hunks(&old_content, &fp.hunks, whitespace_fix)
-            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+        let (new_content, rejected_hunks) = if args.reject {
+            apply_hunks_with_reject(&old_content, &fp.hunks, whitespace_fix)
+                .with_context(|| format!("failed to apply patch to {}", path.display()))?
+        } else {
+            let content = apply_hunks(&old_content, &fp.hunks, whitespace_fix)
+                .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+            (content, Vec::new())
+        };
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 fs::create_dir_all(parent)?;
@@ -1250,6 +1391,12 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
         }
         fs::write(&path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
+
+        if !rejected_hunks.is_empty() {
+            had_rejects = true;
+            let reject_path = PathBuf::from(format!("{path_adjusted}.rej"));
+            write_reject_file(&reject_path, fp, &rejected_hunks)?;
+        }
 
         if fp.is_rename && read_path != path {
             if read_path.exists() {
@@ -1260,6 +1407,10 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
                 remove_empty_dirs_up(parent);
             }
         }
+    }
+
+    if had_rejects {
+        bail!("patch failed");
     }
 
     Ok(())

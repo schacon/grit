@@ -1985,13 +1985,39 @@ fn parse_mbox_with_opts(
             }
         }
 
-        // Build message from subject + body
-        let effective_body_lines: Vec<String> = if is_format_flowed {
+        // Build message from subject + body. Subject continuation lines in
+        // mailbox headers are folded in two ways:
+        // - default (`git am`): unwrap subject continuations into one line;
+        // - keep mode (`git am -k`): preserve continuation line breaks.
+        //
+        // `Subject:` continuation lines are captured in `body_lines` by this
+        // parser, so normalize here before constructing the final message.
+        let mut effective_body_lines: Vec<String> = if is_format_flowed {
             unflow_format_flowed(&body_lines)
         } else {
             body_lines.iter().map(|l| l.to_string()).collect()
         };
         let mut body_str = effective_body_lines.join("\n").trim().to_string();
+        if !body_str.is_empty() && !subject.is_empty() {
+            let mut consumed = 0usize;
+            let mut continuation = Vec::new();
+            for line in &effective_body_lines {
+                if line.trim().is_empty() {
+                    break;
+                }
+                continuation.push(line.trim().to_string());
+                consumed += 1;
+            }
+            if !continuation.is_empty() {
+                if keep {
+                    subject = format!("{subject}\n{}", continuation.join("\n"));
+                } else {
+                    subject = format!("{subject} {}", continuation.join(" "));
+                }
+                effective_body_lines.drain(0..consumed);
+                body_str = effective_body_lines.join("\n").trim().to_string();
+            }
+        }
 
         // Handle --scissors: trim at scissors line, potentially replace subject
         if scissors && !no_scissors {

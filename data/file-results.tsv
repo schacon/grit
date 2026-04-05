@@ -448,7 +448,7 @@ t4113-apply-ending	yes	3	3	0	ok	3	3	0
 t4114-apply-typechange	yes	12	5	7	ok	5	12	0
 t4115-apply-symlink	yes	8	1	7	ok	1	8	0
 t4116-apply-reverse	yes	7	2	5	ok	2	7	0
-t4117-apply-reject	yes	8	5	3	ok	5	8	0
+t4117-apply-reject	yes	8	8	0	ok	8	8	0
 t4118-apply-empty-context	yes	3	3	0	ok	3	3	0
 t4119-apply-config	yes	11	1	10	ok	1	11	0
 t4120-apply-popt	yes	12	3	9	ok	3	12	0
@@ -474,7 +474,7 @@ t4140-apply-ita	yes	7	2	5	ok	2	7	0
 t4141-apply-too-large	yes	1	1	0	ok	1	1	0
 t4150-am	yes	87	23	64	ok	23	87	0
 t4151-am-abort	yes	20	2	18	ok	2	20	0
-t4152-am-subjects	yes	13	10	3	ok	10	13	0
+t4152-am-subjects	yes	13	13	0	ok	13	13	0
 t4153-am-resume-override-opts	yes	6	1	5	ok	1	6	0
 t4200-rerere	yes	36	6	30	ok	6	36	0
 t4201-shortlog	yes	32	7	25	ok	7	32	0

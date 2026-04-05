@@ -405,10 +405,10 @@ commit → check it off → move on.
 - [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
 - [x] `t4112-apply-renames` ████████████████████ 2/2 (0 left) — git apply should not get confused with rename/copy.
 
-- [ ] `t4152-am-subjects` ███████████████░░░░░ 10/13 (3 left) — test subject preservation with format-patch | am
-- [~] `t4117-apply-reject` ████████████░░░░░░░░ 5/8 (3 left) — git apply with rejects
+- [x] `t4152-am-subjects` ████████████████████ 13/13 (0 left) — test subject preservation with format-patch | am
+- [x] `t4117-apply-reject` ████████████████████ 8/8 (0 left) — git apply with rejects
 
-- [ ] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
+- [~] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
 
 - [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 

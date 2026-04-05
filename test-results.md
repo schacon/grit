@@ -2,6 +2,19 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `git am` folded-subject continuation parsing fix).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4152-am-subjects.sh`: 13/13 passing.
+- `./scripts/run-tests.sh t4152-am-subjects.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
+- Regression checks:
+  - `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing.
+  - `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 3/3 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+- `./scripts/run-tests.sh t4003-diff-rename-1.sh`: 4/7 passing (baseline for next in-progress Diff target).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4003-diff-rename-1.sh`: fails in rename/copy patch hunk shape cases (3 failing tests).
+
 - `cargo build --release`: passes (rebuild after `git apply` rename/copy source-target path handling updates).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4112-apply-renames.sh`: 2/2 passing.
 - `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing; `data/file-results.tsv` refreshed.
@@ -12,6 +25,16 @@
 - `cargo test -p grit-lib --lib`: passes.
 - `./scripts/run-tests.sh t4117-apply-reject.sh`: 5/8 passing (baseline for next in-progress Diff target).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4117-apply-reject.sh`: fails in reject-mode cases (`--reject` currently unsupported; 3 failing tests).
+- `cargo build --release`: passes (rebuild after `git apply --reject` support and partial-apply reject emission changes).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4117-apply-reject.sh`: 8/8 passing.
+- `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing; `data/file-results.tsv` refreshed.
+- Regression checks:
+  - `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing.
+  - `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing.
+  - `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 3/3 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
 
 - `cargo build --release`: passes (rebuild after diff trailing-stat option parsing fix).
 - `bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width`: 6/6 passing.
