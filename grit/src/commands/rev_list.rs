@@ -2,12 +2,17 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::pack::{read_local_pack_indexes, verify_pack_and_collect};
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, ObjectFilter,
     OrderingMode, OutputMode, RevListOptions,
 };
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::io::Write;
 
 /// Arguments for `grit rev-list`.
@@ -23,6 +28,8 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
 
     let mut options = RevListOptions::default();
+    let mut disk_usage = None;
+    let mut object_type_filter = None;
     let mut abbrev_len = 7usize;
     let mut revision_specs = Vec::new();
     let mut read_stdin = false;
@@ -62,8 +69,10 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                "--disk-usage" => disk_usage = Some(false),
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
+                "--filter-provided-objects" => { /* accepted for disk-usage helper mode */ }
                 "--boundary" => options.boundary = true,
                 "--in-commit-order" => options.in_commit_order = true,
                 "--no-kept-objects" => options.no_kept_objects = true,
@@ -280,8 +289,20 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
-                    let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    options.filter = Some(filter);
+                    if let Some(kind) = spec.strip_prefix("object:type=") {
+                        object_type_filter = Some(parse_object_type_filter(kind)?);
+                    } else {
+                        let filter =
+                            ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
+                        options.filter = Some(filter);
+                    }
+                }
+                _ if arg.starts_with("--disk-usage=") => {
+                    let value = arg.trim_start_matches("--disk-usage=");
+                    if value != "human" {
+                        bail!("unsupported --disk-usage mode: {value}");
+                    }
+                    disk_usage = Some(true);
                 }
                 _ if arg.starts_with("--default") => {
                     // --default REV: use REV as default if no revisions given
@@ -334,6 +355,10 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(def) = default_rev {
             revision_specs.push(def);
         }
+    }
+
+    if let Some(human) = disk_usage {
+        return print_disk_usage(&repo, options.all_refs, &revision_specs, object_type_filter, human);
     }
 
     // Handle symmetric diff (A...B) tokens
@@ -517,4 +542,139 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn parse_object_type_filter(value: &str) -> Result<ObjectKind> {
+    match value {
+        "commit" => Ok(ObjectKind::Commit),
+        "tree" => Ok(ObjectKind::Tree),
+        "blob" => Ok(ObjectKind::Blob),
+        "tag" => Ok(ObjectKind::Tag),
+        _ => bail!("unsupported object:type filter: {value}"),
+    }
+}
+
+fn print_disk_usage(
+    repo: &Repository,
+    all_refs: bool,
+    revision_specs: &[String],
+    object_type_filter: Option<ObjectKind>,
+    human: bool,
+) -> Result<()> {
+    let mut starts = Vec::new();
+    if all_refs {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+            starts.push(oid);
+        }
+        starts.extend(
+            refs::list_refs(&repo.git_dir, "refs/")?
+                .into_iter()
+                .map(|(_, oid)| oid),
+        );
+    }
+    for spec in revision_specs {
+        starts.push(grit_lib::rev_parse::resolve_revision(repo, spec)?);
+    }
+
+    let pack_disk_sizes = collect_pack_disk_sizes(repo)?;
+    let mut seen = HashSet::new();
+    let mut total = 0u64;
+    for oid in starts {
+        accumulate_disk_usage(
+            repo,
+            oid,
+            object_type_filter,
+            &pack_disk_sizes,
+            &mut seen,
+            &mut total,
+        )?;
+    }
+
+    if human {
+        let (value, unit) = humanize_bytes(total as usize);
+        println!("{} {}", value.unwrap_or_default(), unit.unwrap_or_default());
+    } else {
+        println!("{total}");
+    }
+    Ok(())
+}
+
+fn collect_pack_disk_sizes(repo: &Repository) -> Result<BTreeMap<ObjectId, u64>> {
+    let mut out = BTreeMap::new();
+    for idx in read_local_pack_indexes(repo.odb.objects_dir()).context("reading pack indexes")? {
+        for record in verify_pack_and_collect(&idx.idx_path)
+            .with_context(|| format!("verifying {:?}", idx.idx_path))?
+        {
+            out.insert(record.oid, record.size_in_pack);
+        }
+    }
+    Ok(out)
+}
+
+fn accumulate_disk_usage(
+    repo: &Repository,
+    oid: ObjectId,
+    object_type_filter: Option<ObjectKind>,
+    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
+    seen: &mut HashSet<ObjectId>,
+    total: &mut u64,
+) -> Result<()> {
+    if !seen.insert(oid) {
+        return Ok(());
+    }
+
+    let object = repo.odb.read(&oid)?;
+    if object_type_filter.is_none_or(|kind| kind == object.kind) {
+        *total += object_disk_size(repo, oid, pack_disk_sizes)?;
+    }
+
+    match object.kind {
+        ObjectKind::Commit => {
+            let commit = parse_commit(&object.data)?;
+            accumulate_disk_usage(repo, commit.tree, object_type_filter, pack_disk_sizes, seen, total)?;
+            for parent in commit.parents {
+                accumulate_disk_usage(repo, parent, object_type_filter, pack_disk_sizes, seen, total)?;
+            }
+        }
+        ObjectKind::Tree => {
+            for entry in parse_tree(&object.data)? {
+                if entry.mode == 0o160000 {
+                    continue;
+                }
+                accumulate_disk_usage(repo, entry.oid, object_type_filter, pack_disk_sizes, seen, total)?;
+            }
+        }
+        ObjectKind::Tag => {
+            let tag = parse_tag(&object.data)?;
+            accumulate_disk_usage(repo, tag.object, object_type_filter, pack_disk_sizes, seen, total)?;
+        }
+        ObjectKind::Blob => {}
+    }
+
+    Ok(())
+}
+
+fn object_disk_size(
+    repo: &Repository,
+    oid: ObjectId,
+    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
+) -> Result<u64> {
+    if let Some(size) = pack_disk_sizes.get(&oid) {
+        return Ok(*size);
+    }
+    Ok(fs::metadata(repo.odb.object_path(&oid))?.len())
+}
+
+fn humanize_bytes(value: usize) -> (Option<String>, Option<String>) {
+    if value < 1024 {
+        return (Some(value.to_string()), Some("B".to_owned()));
+    }
+    let mut scaled = value as f64 / 1024.0;
+    let units = ["KiB", "MiB", "GiB", "TiB"];
+    let mut index = 0usize;
+    while scaled >= 1023.95 && index + 1 < units.len() {
+        scaled /= 1024.0;
+        index += 1;
+    }
+    (Some(format!("{scaled:.2}")), Some(units[index].to_owned()))
 }
