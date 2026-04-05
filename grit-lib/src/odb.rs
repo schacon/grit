@@ -34,6 +34,8 @@ use crate::pack;
 #[derive(Debug, Clone)]
 pub struct Odb {
     objects_dir: PathBuf,
+    /// Work tree root for resolving relative alternate env paths.
+    work_tree: Option<PathBuf>,
 }
 
 impl Odb {
@@ -45,6 +47,16 @@ impl Odb {
     pub fn new(objects_dir: &Path) -> Self {
         Self {
             objects_dir: objects_dir.to_path_buf(),
+            work_tree: None,
+        }
+    }
+
+    /// Create an [`Odb`] with a work tree for resolving relative alternate paths.
+    #[must_use]
+    pub fn with_work_tree(objects_dir: &Path, work_tree: &Path) -> Self {
+        Self {
+            objects_dir: objects_dir.to_path_buf(),
+            work_tree: Some(work_tree.to_path_buf()),
         }
     }
 
@@ -77,7 +89,7 @@ impl Odb {
             }
         }
         // Check GIT_ALTERNATE_OBJECT_DIRECTORIES env var.
-        for alt_dir in env_alternate_dirs() {
+        for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
             if self.exists_in_dir(&alt_dir, oid) {
                 return true;
             }
@@ -141,7 +153,7 @@ impl Odb {
         }
 
         // Check GIT_ALTERNATE_OBJECT_DIRECTORIES env var.
-        for alt_dir in env_alternate_dirs() {
+        for alt_dir in env_alternate_dirs(self.work_tree.as_deref()) {
             if let Ok(obj) = Self::read_from_dir(&alt_dir, oid) {
                 return Ok(obj);
             }
@@ -310,13 +322,96 @@ pub(crate) fn parse_object_bytes(raw: &[u8]) -> Result<Object> {
 
 /// Parse `GIT_ALTERNATE_OBJECT_DIRECTORIES` into a list of paths.
 ///
-/// The env var contains colon-separated (`:`-separated on Unix) absolute paths
-/// to additional object directories to search.
-fn env_alternate_dirs() -> Vec<PathBuf> {
+/// The env var contains colon-separated (`:`-separated on Unix) paths
+/// to additional object directories to search. Supports double-quoted
+/// entries with octal escapes (e.g. `\057` for `/`).
+///
+/// Relative paths are resolved against `resolve_base` (typically the work tree root).
+fn env_alternate_dirs(resolve_base: Option<&Path>) -> Vec<PathBuf> {
     match std::env::var("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
-        Ok(val) if !val.is_empty() => val.split(':').map(PathBuf::from).collect(),
+        Ok(val) if !val.is_empty() => {
+            let mut dirs = parse_alternate_env(&val);
+            if let Some(base) = resolve_base {
+                for dir in &mut dirs {
+                    if dir.is_relative() {
+                        *dir = base.join(&dir);
+                    }
+                }
+            }
+            dirs
+        }
         _ => Vec::new(),
     }
+}
+
+/// Parse a colon-separated alternates string, handling double-quoted entries
+/// with octal escape sequences.
+fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut chars = val.chars().peekable();
+    while chars.peek().is_some() {
+        if chars.peek() == Some(&':') {
+            chars.next();
+            continue;
+        }
+        if chars.peek() == Some(&'"') {
+            chars.next();
+            let mut path = String::new();
+            loop {
+                match chars.next() {
+                    None | Some('"') => break,
+                    Some('\\') => match chars.peek() {
+                        Some(c) if c.is_ascii_digit() => {
+                            let mut oct = String::new();
+                            for _ in 0..3 {
+                                if let Some(&c) = chars.peek() {
+                                    if c.is_ascii_digit() {
+                                        oct.push(c);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            if let Ok(byte) = u8::from_str_radix(&oct, 8) {
+                                path.push(byte as char);
+                            }
+                        }
+                        Some(_) => {
+                            if let Some(c) = chars.next() {
+                                match c {
+                                    'n' => path.push('\n'),
+                                    't' => path.push('\t'),
+                                    'r' => path.push('\r'),
+                                    _ => path.push(c),
+                                }
+                            }
+                        }
+                        None => {}
+                    },
+                    Some(c) => path.push(c),
+                }
+            }
+            if !path.is_empty() {
+                result.push(PathBuf::from(path));
+            }
+        } else {
+            let mut path = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ':' {
+                    break;
+                }
+                path.push(c);
+                chars.next();
+            }
+            if !path.is_empty() {
+                result.push(PathBuf::from(path));
+            }
+        }
+    }
+    result
 }
 
 #[cfg(test)]
