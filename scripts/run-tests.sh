@@ -119,7 +119,10 @@ run_one() {
     local base="${f%.sh}"
 
     local output
-    output=$(cd "$TESTS_DIR" && GUST_BIN="$(pwd)/grit" timeout "$TIMEOUT" bash "$f" 2>&1) || true
+    output=$(
+        cd "$TESTS_DIR" &&
+            EDITOR=: VISUAL=: GUST_BIN="$(pwd)/grit" timeout "$TIMEOUT" bash "$f" 2>&1
+    ) || true
     local summary
     summary=$(echo "$output" | grep "^# Tests:" | tail -1)
 

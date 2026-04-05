@@ -122,13 +122,8 @@ fn read_var(name: &str, config: &ConfigSet, strict: bool) -> Result<Option<Strin
 
 /// Build the author identity string from env/config.
 fn author_ident(config: &ConfigSet, strict: bool) -> Result<Option<String>> {
-    let name = std::env::var("GIT_AUTHOR_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"));
-    let email = std::env::var("GIT_AUTHOR_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
+    let name = env_or_config("GIT_AUTHOR_NAME", "user.name", config, strict);
+    let email = env_or_config("GIT_AUTHOR_EMAIL", "user.email", config, strict).unwrap_or_default();
     let date = std::env::var("GIT_AUTHOR_DATE")
         .ok()
         .unwrap_or_else(|| format_git_timestamp(OffsetDateTime::now_utc()));
@@ -138,13 +133,9 @@ fn author_ident(config: &ConfigSet, strict: bool) -> Result<Option<String>> {
 
 /// Build the committer identity string from env/config.
 fn committer_ident(config: &ConfigSet, strict: bool) -> Result<Option<String>> {
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .ok()
-        .or_else(|| config.get("user.name"));
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .ok()
-        .or_else(|| config.get("user.email"))
-        .unwrap_or_default();
+    let name = env_or_config("GIT_COMMITTER_NAME", "user.name", config, strict);
+    let email =
+        env_or_config("GIT_COMMITTER_EMAIL", "user.email", config, strict).unwrap_or_default();
     let date = std::env::var("GIT_COMMITTER_DATE")
         .ok()
         .unwrap_or_else(|| format_git_timestamp(OffsetDateTime::now_utc()));
@@ -173,6 +164,19 @@ fn build_ident(
         }
         None => Ok(None),
     }
+}
+
+fn env_or_config(
+    env_name: &str,
+    config_key: &str,
+    config: &ConfigSet,
+    strict: bool,
+) -> Option<String> {
+    let env_value = std::env::var(env_name).ok().filter(|v| !v.is_empty());
+    if strict {
+        return env_value;
+    }
+    env_value.or_else(|| config.get(config_key).filter(|v| !v.is_empty()))
 }
 
 /// Format a UTC timestamp in Git's native `<epoch> <tz>` format.
