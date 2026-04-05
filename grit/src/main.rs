@@ -126,7 +126,7 @@ fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
-    let result = Vec::new();
+    let mut result = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut pid = std::process::id();
@@ -338,7 +338,6 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
-<<<<<<< HEAD
 fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "run-twice" => {
@@ -819,7 +818,7 @@ fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
             "usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>"
         ),
     }
-=======
+/*
 fn run_test_tool_example_tap() -> ! {
     print!(
         concat!(
@@ -915,7 +914,7 @@ fn run_test_tool_example_tap() -> ! {
         )
     );
     std::process::exit(1);
->>>>>>> dd487a50 (fix: pass t0080-unit-test-output (1/1))
+*/
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -2137,7 +2136,6 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "example-tap" => run_test_tool_example_tap(),
                 "trace2" => run_test_tool_trace2(rest),
                 "example-tap" => run_test_tool_example_tap(rest),
                 "advise" => run_test_tool_advise(rest),
