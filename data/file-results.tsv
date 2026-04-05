@@ -770,7 +770,7 @@ t7102-reset	yes	38	26	12	ok	26	38	0
 t7103-reset-bare	yes	13	8	5	ok	8	13	0
 t7104-reset-hard	yes	3	3	0	ok	3	3	0
 t7105-reset-patch	yes	13	4	9	ok	4	13	0
-t7106-reset-unborn-branch	yes	7	3	4	ok	3	7	0
+t7106-reset-unborn-branch	yes	7	7	0	ok	7	7	0
 t7107-reset-pathspec-file	yes	11	0	11	ok	0	11	0
 t7110-reset-merge	yes	21	9	12	ok	9	21	0
 t7111-reset-table	yes	42	34	8	ok	34	42	0
@@ -820,7 +820,7 @@ t7514-commit-patch	yes	3	1	2	ok	1	3	0
 t7515-status-symlinks	yes	3	3	0	ok	3	3	0
 t7516-commit-races	yes	2	0	2	ok	0	2	0
 t7517-per-repo-email	yes	16	8	8	ok	8	16	0
-t7518-ident-corner-cases	yes	5	1	4	ok	1	5	0
+t7518-ident-corner-cases	yes	5	5	0	ok	5	5	0
 t7519-status-fsmonitor	yes	33	14	19	ok	14	33	0
 t7520-ignored-hook-warning	yes	5	4	1	ok	4	5	0
 t7521-ignored-mode	yes	12	1	11	ok	1	12	0
@@ -833,10 +833,10 @@ t7600-merge	yes	83	53	30	ok	53	83	0
 t7601-merge-pull-config	yes	65	43	22	ok	43	65	0
 t7602-merge-octopus-many	yes	5	1	4	ok	1	5	0
 t7603-merge-reduce-heads	yes	13	8	5	ok	8	13	0
-t7604-merge-custom-message	yes	8	4	4	ok	4	8	0
+t7604-merge-custom-message	yes	8	8	0	ok	8	8	0
 t7605-merge-resolve	yes	4	4	0	ok	4	4	0
 t7606-merge-custom	yes	4	4	0	ok	4	4	0
-t7607-merge-state	yes	1	0	1	ok	0	1	0
+t7607-merge-state	yes	1	1	0	ok	1	1	0
 t7608-merge-messages	yes	5	5	0	ok	5	5	0
 t7609-mergetool--lib	yes	0	0	0	ok	0	0	0
 t7610-mergetool	yes	0	0	0	timeout	0	0	0
