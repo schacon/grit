@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    43 |
+| Completed   |    44 |
 | In progress |     0 |
-| Remaining   |   724 |
+| Remaining   |   723 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3500-cherry` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3102-ls-tree-wildcards` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t0050-filesystem` — 13/13 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -37,4 +38,4 @@
 
 ## What Remains
 
-725 test files still pending. See `plan.md` for the full prioritized list.
+723 test files still pending. See `plan.md` for the full prioritized list.

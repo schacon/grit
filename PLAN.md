@@ -247,7 +247,7 @@ commit → check it off → move on.
 - [x] `t3102-ls-tree-wildcards` ████████████████████ 4/4 (0 left) — ls-tree with(out) globs
 - [x] `t3500-cherry` ████████████████████ 4/4 (0 left) — git cherry should detect patches integrated upstream
 
-- [ ] `t3009-ls-files-others-nonsubmodule` ██████████░░░░░░░░░░ 1/2 (1 left) — test git ls-files --others with non-submodule repositories
+- [x] `t3009-ls-files-others-nonsubmodule` ████████████████████ 2/2 (0 left) — test git ls-files --others with non-submodule repositories
 
 - [ ] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
 - [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
