@@ -138,7 +138,7 @@ pub fn run(args: Args) -> Result<()> {
         for input_path in &args.files {
             let (rel_path, _) = resolve_repo_path(work_tree, &cwd, input_path)?;
             let rel_bytes = path_to_bytes(&rel_path)?;
-            index.unresolve(&rel_bytes);
+            let _ = index.unresolve(&rel_bytes);
         }
         index.write(&index_path).context("writing index")?;
         return Ok(());

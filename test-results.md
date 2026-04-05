@@ -2,6 +2,19 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012 2>&1 | tail -40`: the requested tail-only run only surfaced stale `/tmp/grit-upstream-workdir` cleanup noise; the full rerun of `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012` confirmed 3/3 passing against `target/release/grit`, so the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3012 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2023 bash scripts/run-upstream-tests.sh t2023 2>&1 | tail -40`: 5/5 passing against `target/release/grit` after implementing resolve-undo persistence plus `checkout -m` conflict restoration for both path and branch-switch flows.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3008 bash scripts/run-upstream-tests.sh t3008 2>&1 | tail -40`: 1/1 passing against `target/release/grit`; the tree already contained the required `test-tool online-cpus` and `test-tool lazy-init-name-hash` support, so the remaining `PLAN.md` entry was stale rather than a missing implementation.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3008 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2023 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test -p grit-lib --lib`: 97/97 passing.
+- `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3908 bash scripts/run-upstream-tests.sh t3908 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3908 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.

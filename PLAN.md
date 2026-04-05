@@ -178,7 +178,7 @@ commit → check it off → move on.
 - [x] `t2012-checkout-last` ████████████████████ 22/22 (0 left) — checkout can switch to last branch and merge base
 - [x] `t2010-checkout-ambiguous` ████████████████████ 10/10 (0 left) — checkout and pathspecs/refspecs ambiguities
 - [x] `t2104-update-index-skip-worktree` ████████████████████ 7/7 (0 left) — skip-worktree bit test
-- [ ] `t2023-checkout-m` ████████░░░░░░░░░░░░ 2/5 (3 left) — checkout -m -- <conflicted path>
+- [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
 
 - [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
 - [ ] `t2202-add-addremove` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git add --all
@@ -249,9 +249,9 @@ commit → check it off → move on.
 - [x] `t3009-ls-files-others-nonsubmodule` ████████████████████ 2/2 (0 left) — test git ls-files --others with non-submodule repositories
 
 - [x] `t3908-stash-in-worktree` ████████████████████ 2/2 (0 left) — Test git stash in a worktree
-- [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
+- [x] `t3008-ls-files-lazy-init-name-hash` ████████████████████ 1/1 (0 left) — Test the lazy init name hash with various folder structures
 - [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
-- [ ] `t3012-ls-files-dedup` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git ls-files --deduplicate test
+- [x] `t3012-ls-files-dedup` ████████████████████ 3/3 (0 left) — git ls-files --deduplicate test
 - [ ] `t3307-notes-man` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Examples from the git-notes man page
 
 - [ ] `t3423-rebase-reword` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git rebase interactive with rewording

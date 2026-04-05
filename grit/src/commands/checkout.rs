@@ -277,6 +277,13 @@ pub fn run(args: Args) -> Result<()> {
             &paths,
             args.no_overlay,
             args.merge,
+            if args.ours {
+                Some(2)
+            } else if args.theirs {
+                Some(3)
+            } else {
+                None
+            },
         );
     }
 
@@ -369,7 +376,20 @@ pub fn run(args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false, false) {
+            match checkout_paths(
+                &repo,
+                None,
+                &paths,
+                false,
+                false,
+                if args.ours {
+                    Some(2)
+                } else if args.theirs {
+                    Some(3)
+                } else {
+                    None
+                },
+            ) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -1214,6 +1234,7 @@ fn checkout_paths(
     paths: &[String],
     no_overlay: bool,
     merge: bool,
+    conflict_stage: Option<u8>,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1244,6 +1265,17 @@ fn checkout_paths(
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
                 let path_bytes = rel.as_bytes();
+
+                if let Some(stage) = conflict_stage {
+                    let entry = index.get(path_bytes, stage).cloned().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "error: pathspec '{}' did not match any file(s) known to git",
+                            path_str
+                        )
+                    })?;
+                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
+                    continue;
+                }
 
                 // Handle glob pathspecs
                 if is_glob_pattern(&rel) {

@@ -6,13 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    62 |
+| Completed   |    65 |
 | In progress |     0 |
-| Remaining   |   704 |
+| Remaining   |   701 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t3012-ls-files-dedup` — 3/3 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled `git ls-files --deduplicate` correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t3008-ls-files-lazy-init-name-hash` — 1/1 tests pass (the source tree already had the required `test-tool online-cpus` and `test-tool lazy-init-name-hash` support; rerunning upstream verification against the current `target/release/grit` confirmed this was a stale `PLAN.md` entry rather than a remaining Rust code gap)
+- `t2023-checkout-m` — 5/5 tests pass (`checkout` now persists resolve-undo data in the index, `checkout -m -- <path>` recreates conflicted files from saved stages, and `checkout -m <branch>` restores conflict stages when a branch switch hits local content conflicts)
 - `t3908-stash-in-worktree` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled `git stash` from a subdirectory in a linked worktree correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t1512-rev-parse-disambiguation` — 3/3 tests pass (`rev-parse` now emits Git-style short-object ambiguity diagnostics for ambiguous blobs, invalid loose objects, and corrupt loose objects; the tracked 3-test slice was re-verified directly with the missing hash helpers loaded from `tests/test-lib-functions.sh`)
 - `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled nested non-submodule repositories correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
@@ -55,4 +58,4 @@
 
 ## What Remains
 
-704 test files still pending. See `PLAN.md` for the full prioritized list.
+701 test files still pending. See `PLAN.md` for the full prioritized list.

@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::stat_matches;
+use grit_lib::diff::{diff_index_to_worktree, unified_diff, DiffEntry, DiffStatus};
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -110,16 +111,11 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
     }
 
-    // Stubs for unsupported interactive modes — accept the flags
-    // gracefully so scripts that pass them don't hard-fail.
-    if args.patch || args.interactive || args.edit {
-        // Real git would enter interactive mode; we just warn and succeed.
+    if args.patch || args.interactive {
         let mode_name = if args.patch {
             "-p/--patch"
-        } else if args.interactive {
-            "-i/--interactive"
         } else {
-            "-e/--edit"
+            "-i/--interactive"
         };
         eprintln!(
             "warning: {} mode is not yet implemented; doing nothing",
@@ -178,6 +174,10 @@ pub fn run(mut args: Args) -> Result<()> {
         if ps.is_empty() {
             bail!("invalid path ''");
         }
+    }
+
+    if args.edit {
+        return run_edit(&repo, &index, work_tree, prefix.as_deref(), &args);
     }
 
     // "git add" with no pathspecs and no flags: give advice
@@ -497,6 +497,213 @@ fn glob_matches_simple(pattern: &str, text: &str) -> bool {
         return text.ends_with(suffix);
     }
     text == pattern
+}
+
+/// Run `git add -e` by editing the diff between the index and working tree,
+/// then applying the edited patch back to the index.
+fn run_edit(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    args: &Args,
+) -> Result<()> {
+    let mut entries = diff_index_to_worktree(&repo.odb, index, work_tree)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    entries.retain(|entry| edit_entry_matches(entry, work_tree, prefix, &args.pathspec));
+
+    let patch = build_edit_patch(&repo.odb, work_tree, &entries)?;
+    let temp_path = edit_patch_path();
+    fs::write(&temp_path, patch).context("writing add -e patch")?;
+
+    let editor = resolve_editor(repo);
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$@\""))
+        .arg("grit-add-edit")
+        .arg(&temp_path)
+        .status()
+        .with_context(|| format!("failed to launch editor '{editor}'"))?;
+
+    if !status.success() {
+        let _ = fs::remove_file(&temp_path);
+        bail!("editor returned non-zero exit status");
+    }
+
+    let edited = fs::read_to_string(&temp_path).context("reading edited add -e patch")?;
+    if edited.trim().is_empty() {
+        let _ = fs::remove_file(&temp_path);
+        return Ok(());
+    }
+
+    let apply_result = crate::commands::apply::run(crate::commands::apply::Args {
+        cached: true,
+        stat: false,
+        numstat: false,
+        summary: false,
+        check: false,
+        index: false,
+        reverse: false,
+        strip: 1,
+        directory: None,
+        recount: true,
+        unidiff_zero: false,
+        allow_binary_replacement: false,
+        verbose: false,
+        whitespace: "warn".to_string(),
+        include: None,
+        exclude: None,
+        inaccurate_eof: false,
+        patches: vec![temp_path.clone()],
+    });
+
+    let _ = fs::remove_file(&temp_path);
+    apply_result
+}
+
+fn edit_entry_matches(
+    entry: &DiffEntry,
+    work_tree: &Path,
+    prefix: Option<&str>,
+    pathspecs: &[String],
+) -> bool {
+    let path = entry.path();
+    if let Some(prefix) = prefix {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+    }
+    if pathspecs.is_empty() {
+        return true;
+    }
+
+    pathspecs.iter().any(|spec| {
+        let resolved = resolve_pathspec(spec, work_tree, prefix);
+        crate::pathspec::pathspec_matches(&resolved, path)
+    })
+}
+
+fn build_edit_patch(odb: &Odb, work_tree: &Path, entries: &[DiffEntry]) -> Result<String> {
+    let mut patch = String::new();
+    for entry in entries {
+        patch.push_str(&render_edit_entry(odb, work_tree, entry)?);
+    }
+    Ok(patch)
+}
+
+fn render_edit_entry(odb: &Odb, work_tree: &Path, entry: &DiffEntry) -> Result<String> {
+    let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
+    let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
+    let old_content = read_entry_content(odb, work_tree, entry, true)?;
+    let new_content = read_entry_content(odb, work_tree, entry, false)?;
+
+    let mut out = String::new();
+    out.push_str(&format!("diff --git a/{old_path} b/{new_path}\n"));
+    match entry.status {
+        DiffStatus::Added => {
+            out.push_str(&format!("new file mode {}\n", entry.new_mode));
+            out.push_str(&format!(
+                "index {}..{} {}\n",
+                abbreviate_oid(&entry.old_oid.to_hex()),
+                abbreviate_oid(&entry.new_oid.to_hex()),
+                entry.new_mode
+            ));
+        }
+        DiffStatus::Deleted => {
+            out.push_str(&format!("deleted file mode {}\n", entry.old_mode));
+            out.push_str(&format!(
+                "index {}..{} {}\n",
+                abbreviate_oid(&entry.old_oid.to_hex()),
+                abbreviate_oid(&entry.new_oid.to_hex()),
+                entry.old_mode
+            ));
+        }
+        _ => {
+            if entry.old_mode != entry.new_mode {
+                out.push_str(&format!("old mode {}\n", entry.old_mode));
+                out.push_str(&format!("new mode {}\n", entry.new_mode));
+                out.push_str(&format!(
+                    "index {}..{}\n",
+                    abbreviate_oid(&entry.old_oid.to_hex()),
+                    abbreviate_oid(&entry.new_oid.to_hex())
+                ));
+            } else {
+                out.push_str(&format!(
+                    "index {}..{} {}\n",
+                    abbreviate_oid(&entry.old_oid.to_hex()),
+                    abbreviate_oid(&entry.new_oid.to_hex()),
+                    entry.old_mode
+                ));
+            }
+        }
+    }
+    out.push_str(&unified_diff(
+        &old_content,
+        &new_content,
+        old_path,
+        new_path,
+        3,
+    ));
+    Ok(out)
+}
+
+fn read_entry_content(
+    odb: &Odb,
+    work_tree: &Path,
+    entry: &DiffEntry,
+    old_side: bool,
+) -> Result<String> {
+    let (oid, path) = if old_side {
+        (&entry.old_oid, entry.old_path.as_deref())
+    } else {
+        (&entry.new_oid, entry.new_path.as_deref())
+    };
+
+    if oid == &grit_lib::diff::zero_oid() || path == Some("/dev/null") {
+        return Ok(String::new());
+    }
+
+    if !old_side && matches!(entry.status, DiffStatus::Added | DiffStatus::Modified) {
+        let wt_path = work_tree.join(path.unwrap_or_default());
+        let bytes = fs::read(&wt_path)
+            .with_context(|| format!("reading working tree file '{}'", wt_path.display()))?;
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+
+    let obj = odb.read(oid).context("reading blob for add -e")?;
+    if obj.kind != ObjectKind::Blob {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&obj.data).into_owned())
+}
+
+fn abbreviate_oid(hex: &str) -> &str {
+    &hex[..hex.len().min(7)]
+}
+
+fn edit_patch_path() -> PathBuf {
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for attempt in 0..1024 {
+        let path = base.join(format!("grit-add-edit-{pid}-{attempt}.patch"));
+        if !path.exists() {
+            return path;
+        }
+    }
+    base.join(format!("grit-add-edit-{pid}.patch"))
+}
+
+fn resolve_editor(repo: &Repository) -> String {
+    std::env::var("GIT_EDITOR")
+        .ok()
+        .or_else(|| {
+            ConfigSet::load(Some(&repo.git_dir), true)
+                .ok()
+                .and_then(|cfg| cfg.get("core.editor"))
+        })
+        .or_else(|| std::env::var("VISUAL").ok())
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_else(|| "vi".to_string())
 }
 
 /// Add all files under the working tree (or a prefix) to the index.
