@@ -955,7 +955,7 @@ t9301-fast-import-notes	yes	17	17	0	ok	17	17	0
 t9302-fast-import-unpack-limit	yes	3	3	0	ok	3	3	0
 t9303-fast-import-compression	yes	16	0	16	ok	0	16	0
 t9304-fast-import-marks	yes	8	8	0	ok	8	8	0
-t9305-fast-import-signatures	yes	21	17	4	ok	17	21	0
+t9305-fast-import-signatures	yes	21	21	0	ok	21	21	0
 t9306-fast-import-signed-tags	yes	10	6	4	ok	6	10	0
 t9350-fast-export	yes	73	53	20	ok	52	72	1
 t9351-fast-export-anonymize	yes	17	12	5	ok	12	17	0

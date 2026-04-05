@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use sha1::{Digest, Sha1};
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -413,7 +414,24 @@ pub fn run(args: Args) -> Result<()> {
         raw_message,
     };
 
-    let commit_bytes = serialize_commit(&commit_data);
+    let mut commit_bytes = serialize_commit(&commit_data);
+    let should_sign = should_sign_commit(&args, &config);
+    if should_sign {
+        let sig_format = config
+            .get("gpg.format")
+            .unwrap_or_else(|| "openpgp".to_owned())
+            .to_lowercase();
+        let signing_key = args
+            .gpg_sign
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .or_else(|| config.get("user.signingkey"))
+            .unwrap_or_else(|| "-".to_owned());
+        let payload = pseudo_signature_payload(&sig_format, &signing_key, &commit_bytes);
+        commit_bytes =
+            serialize_commit_with_signatures(&commit_data, &[("gpgsig".to_owned(), payload)]);
+    }
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
@@ -1160,5 +1178,69 @@ fn ensure_trailing_newline(s: &str) -> String {
         s.to_owned()
     } else {
         format!("{s}\n")
+    }
+}
+
+fn should_sign_commit(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_gpg_sign {
+        return false;
+    }
+    if args.gpg_sign.is_some() {
+        return true;
+    }
+    config
+        .get("commit.gpgSign")
+        .or_else(|| config.get("commit.gpgsign"))
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn pseudo_signature_payload(format: &str, key: &str, unsigned_commit: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(unsigned_commit);
+    let digest = hasher.finalize();
+    format!(
+        "GRITSIGV1 {} {} {}",
+        format,
+        key,
+        hex::encode(digest.as_slice())
+    )
+}
+
+fn serialize_commit_with_signatures(
+    c: &CommitData,
+    signatures: &[(String, String)],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("tree {}\n", c.tree).as_bytes());
+    for p in &c.parents {
+        out.extend_from_slice(format!("parent {p}\n").as_bytes());
+    }
+    out.extend_from_slice(format!("author {}\n", c.author).as_bytes());
+    out.extend_from_slice(format!("committer {}\n", c.committer).as_bytes());
+    for (header, value) in signatures {
+        append_multiline_header(&mut out, header, value);
+    }
+    if let Some(enc) = &c.encoding {
+        out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
+    }
+    out.push(b'\n');
+    if let Some(raw) = &c.raw_message {
+        out.extend_from_slice(raw);
+    } else {
+        out.extend_from_slice(c.message.as_bytes());
+    }
+    out
+}
+
+fn append_multiline_header(out: &mut Vec<u8>, header: &str, value: &str) {
+    let mut lines = value.split('\n');
+    if let Some(first) = lines.next() {
+        out.extend_from_slice(format!("{header} {first}\n").as_bytes());
+        for line in lines {
+            out.extend_from_slice(format!(" {line}\n").as_bytes());
+        }
+    } else {
+        out.extend_from_slice(format!("{header} \n").as_bytes());
     }
 }

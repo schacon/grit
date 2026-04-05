@@ -209,13 +209,14 @@ test_path_is_missing () { ! test -e "$1"; }
 test_grep () {
 	local negate=""
 	local invert=""
+	local grep_opts=""
 	while test $# -gt 0; do
 		case "$1" in
 		-e) shift; break ;;
 		!) negate=1; shift ;;
 		-v) invert="-v"; shift ;;
 		--) shift; break ;;
-		-*) shift ;;
+		-*) grep_opts="$grep_opts $1"; shift ;;
 		*) break ;;
 		esac
 	done
@@ -223,9 +224,9 @@ test_grep () {
 	shift
 	if test -n "$negate"
 	then
-		! grep "$pattern" "$@"
+		! grep $invert $grep_opts "$pattern" "$@"
 	else
-		grep $invert "$pattern" "$@"
+		grep $invert $grep_opts "$pattern" "$@"
 	fi
 }
 
