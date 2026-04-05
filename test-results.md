@@ -2,6 +2,18 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4112 cargo build --release -p grit-rs`: completed to rebuild `target/release/grit` after fixing `git apply` rename/copy handling to read source preimages and write destination paths correctly.
+- `cargo test -p grit-rs apply -- --nocapture`: 2/2 passing.
+- `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4112 bash scripts/run-upstream-tests.sh t4112-apply-renames 2>&1 | tail -40`: initial reproduction reported 0/2 passing; after fixing `git apply` rename/copy source-vs-destination path handling and preimage snapshotting for later copy sections, the rerun completed with 2/2 passing against refreshed `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4112 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 cargo build --release -p grit-rs`: completed to rebuild `grit` after fixing multiline subject handling in `format-patch` and RFC 2047 subject decoding in `am`.
+- `mv target/release/grit target/release/grit.bin && ln -s /tmp/grit-build-t4152/release/grit target/release/grit`: completed because the copied `target/release/grit` binary was being killed on startup in this sandbox while the `/tmp` build artifact executed correctly.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 bash scripts/run-upstream-tests.sh t4152-am-subjects 2>&1 | tail -40`: initial reproduction reported 10/13 passing; after fixing subject paragraph splitting, header folding/encoding, and `am` subject decoding, the final rerun completed with 13/13 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4044 cargo build --release -p grit-rs`: completed to rebuild `grit` after teaching patch `index <old>..<new>` headers to use repository-aware unique blob abbreviations.
 - `cp /tmp/grit-build-t4044/release/grit target/release/grit`: completed because `scripts/run-upstream-tests.sh` executes `target/release/grit`.
 - `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR="${TAR:-tar}" bash ./t4044-diff-index-unique-abbrev.sh`: direct isolated upstream rerun completed with 2/2 passing after the formatter change.

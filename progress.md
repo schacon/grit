@@ -6,13 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    99 |
-| In progress |     1 |
-| Remaining   |   666 |
+| Completed   |   101 |
+| In progress |     0 |
+| Remaining   |   665 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4112-apply-renames` — 2/2 tests pass (`git apply --check` and `git apply --index` now treat rename/copy patches as source-to-destination transforms, reading hunks from the source path while writing the destination path, and snapshotting rename/copy source preimages before earlier file sections mutate them; verified with `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4112 bash scripts/run-upstream-tests.sh t4112-apply-renames 2>&1 | tail -40` against refreshed `target/release/grit`)
+- `t4152-am-subjects` — 13/13 tests pass (`format-patch` now treats the entire first paragraph as the subject, folds long subjects like Git, RFC 2047-encodes preserved multiline `-k` subjects without splitting quoted-printable escapes, and `am` now decodes those encoded `Subject:` headers before applying `--keep` normalization; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4152 bash scripts/run-upstream-tests.sh t4152-am-subjects 2>&1 | tail -40` against `target/release/grit` symlinked to `/tmp/grit-build-t4152/release/grit`)
 - `t4044-diff-index-unique-abbrev` — 2/2 tests pass (`git diff` and `git diff-index -p` now expand patch-header blob IDs to the shortest repository-unique abbreviation instead of slicing fixed 7-character prefixes, so ambiguous pairs render as `51d27384..51d2738e`; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4044 bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev 2>&1 | tail -40` against refreshed `target/release/grit`)
 - `t4131-apply-fake-ancestor` — 3/3 tests pass (`git apply` now accepts `--build-fake-ancestor=<file>`, writes a real temporary index from patch pre-image blobs using repository-root paths even from subdirectories, and exits after building the fake ancestor instead of mutating the worktree; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4131 bash scripts/run-upstream-tests.sh t4131-apply-fake-ancestor 2>&1 | tail -40` against refreshed `target/release/grit`)
 - `t4217-log-limit` — 3/3 tests pass (`git commit` now canonicalizes `GIT_COMMITTER_DATE` values like `YYYY-MM-DD HH:MM` to Git's `<epoch> <tz>` format, so `git log --since-as-filter` can compare commit dates correctly; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4217 bash scripts/run-upstream-tests.sh t4217-log-limit 2>&1 | tail -40` against refreshed `target/release/grit`)
@@ -92,4 +94,4 @@
 
 ## What Remains
 
-666 test files still pending. See `PLAN.md` for the full prioritized list.
+665 test files still pending. See `PLAN.md` for the full prioritized list.
