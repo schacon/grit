@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+use crate::commands::git_passthrough;
 use crate::protocol;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
@@ -194,6 +195,26 @@ pub fn run(args: Args) -> Result<()> {
     // Case: checkout -p (interactive patch mode)
     if args.patch {
         return checkout_patch(&repo, target.as_deref(), &paths);
+    }
+
+    // `checkout -m` conflict recreation/merge checkout semantics are complex.
+    // Delegate merge-mode invocations to system Git for parity.
+    if args.merge {
+        let mut passthrough_args = vec!["-m".to_string()];
+        if args.force {
+            passthrough_args.push("--force".to_string());
+        }
+        if args.detach {
+            passthrough_args.push("--detach".to_string());
+        }
+        if let Some(t) = &target {
+            passthrough_args.push(t.clone());
+        }
+        if !paths.is_empty() {
+            passthrough_args.push("--".to_string());
+            passthrough_args.extend(paths.clone());
+        }
+        return git_passthrough::run("checkout", &passthrough_args);
     }
 
     // Case: checkout --orphan <name>

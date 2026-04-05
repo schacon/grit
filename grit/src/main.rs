@@ -924,6 +924,7 @@ struct GlobalOpts {
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
+    env_overrides: Vec<(String, String)>,
     bare: bool,
     no_advice: bool,
 }
@@ -1003,6 +1004,34 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // Pathspec global modes
+        if arg == "--literal-pathspecs" {
+            opts.env_overrides
+                .push(("GIT_LITERAL_PATHSPECS".to_owned(), "1".to_owned()));
+            i += 1;
+            continue;
+        }
+        if arg == "--glob-pathspecs" {
+            opts.env_overrides
+                .push(("GIT_LITERAL_PATHSPECS".to_owned(), "0".to_owned()));
+            opts.env_overrides
+                .push(("GIT_GLOB_PATHSPECS".to_owned(), "1".to_owned()));
+            i += 1;
+            continue;
+        }
+        if arg == "--noglob-pathspecs" {
+            opts.env_overrides
+                .push(("GIT_NOGLOB_PATHSPECS".to_owned(), "1".to_owned()));
+            i += 1;
+            continue;
+        }
+        if arg == "--icase-pathspecs" {
+            opts.env_overrides
+                .push(("GIT_ICASE_PATHSPECS".to_owned(), "1".to_owned()));
+            i += 1;
+            continue;
+        }
+
         // --no-advice
         if arg == "--no-advice" {
             opts.no_advice = true;
@@ -1065,6 +1094,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
+    }
+    for (k, v) in &opts.env_overrides {
+        std::env::set_var(k, v);
     }
     Ok(())
 }
