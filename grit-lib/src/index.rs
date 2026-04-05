@@ -16,6 +16,7 @@
 //! the authoritative format specification.
 
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -320,7 +321,17 @@ impl Index {
 
         let tmp_path = path.with_extension("lock");
         {
-            let mut f = fs::File::create(&tmp_path)?;
+            let mut f = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+            {
+                Ok(file) => file,
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(lockfile_exists_error(path, &tmp_path));
+                }
+                Err(e) => return Err(Error::Io(e)),
+            };
             f.write_all(&body)?;
             f.write_all(&checksum)?;
         }
@@ -416,6 +427,57 @@ impl Index {
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
     }
+}
+
+fn lockfile_exists_error(index_path: &Path, lock_path: &Path) -> Error {
+    let mut message = format!("Unable to create '{}': File exists.", lock_path.display());
+
+    let git_dir = index_path.parent().unwrap_or_else(|| Path::new("."));
+    let lockfile_pid_enabled = crate::config::ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.lockfilePid"))
+        .and_then(|res| res.ok())
+        .unwrap_or(false);
+
+    if let Some(pid) = read_lock_pid(lock_path) {
+        if process_is_alive(pid) {
+            if lockfile_pid_enabled {
+                message.push_str(&format!("\nLock is held by process {pid}."));
+            } else {
+                message.push_str(&format!("\nLock file references process {pid}."));
+            }
+        } else {
+            message.push_str(&format!(
+                "\nLock file references process {pid}, which is no longer running; it appears to be stale."
+            ));
+        }
+    }
+
+    Error::Io(io::Error::new(io::ErrorKind::AlreadyExists, message))
+}
+
+fn read_lock_pid(lock_path: &Path) -> Option<u32> {
+    let parent = lock_path.parent()?;
+    let lock_name = lock_path.file_name()?.to_str()?;
+    let stem = lock_name.strip_suffix(".lock").unwrap_or(lock_name);
+    let pid_name = format!("{stem}~pid.lock");
+    let pid_path = parent.join(pid_name);
+    let content = fs::read_to_string(pid_path).ok()?;
+    let mut words = content.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("pid"), Some(num)) => num.parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).exists()
+}
+
+#[cfg(not(unix))]
+fn process_is_alive(_pid: u32) -> bool {
+    false
 }
 
 /// Parse a single index entry from `data`, returning `(entry, bytes_consumed)`.
