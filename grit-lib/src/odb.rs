@@ -357,8 +357,8 @@ fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
         if chars.peek() == Some(&'"') {
             // Try quoted parsing; if EOF is hit without closing quote,
             // fall back to treating the whole segment as a raw path.
+            chars.next(); // consume the opening '"'
             let saved: Vec<char> = chars.clone().collect();
-            chars.next();
             let mut path = String::new();
             let mut properly_closed = false;
             loop {

@@ -80,7 +80,11 @@ impl Repository {
             None => None,
         };
 
-        let odb = Odb::new(&objects_dir);
+        let odb = if let Some(ref wt) = work_tree {
+            Odb::with_work_tree(&objects_dir, wt)
+        } else {
+            Odb::new(&objects_dir)
+        };
 
         Ok(Self {
             git_dir,
