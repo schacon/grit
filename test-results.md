@@ -37,3 +37,4 @@
 - `./scripts/run-tests.sh t2050-git-dir-relative.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t2015-checkout-unborn.sh`: 6/6 passing.
 - `./scripts/run-tests.sh t2105-update-index-gitfile.sh`: 4/4 passing (re-run confirmed stable full pass).
+- `./scripts/run-tests.sh t2012-checkout-last.sh`: 22/22 passing.

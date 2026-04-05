@@ -176,7 +176,7 @@ commit → check it off → move on.
 - [x] `t2015-checkout-unborn` ████████████████████ 6/6 (0 left) — checkout from unborn branch
 - [x] `t2105-update-index-gitfile` ████████████████████ 4/4 (0 left) — git update-index for gitlink to .git file.
 
-- [ ] `t2012-checkout-last` █████████████████░░░ 19/22 (3 left) — checkout can switch to last branch and merge base
+- [x] `t2012-checkout-last` ████████████████████ 22/22 (0 left) — checkout can switch to last branch and merge base
 - [ ] `t2010-checkout-ambiguous` ██████████████░░░░░░ 7/10 (3 left) — checkout and pathspecs/refspecs ambiguities
 - [ ] `t2104-update-index-skip-worktree` ███████████░░░░░░░░░ 4/7 (3 left) — skip-worktree bit test
 - [ ] `t2023-checkout-m` ████████░░░░░░░░░░░░ 2/5 (3 left) — checkout -m -- <conflicted path>
