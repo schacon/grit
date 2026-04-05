@@ -16,3 +16,5 @@
 - `./scripts/run-tests.sh t3205-branch-color.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t1601-index-bogus.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t3012-ls-files-dedup.sh`: 3/3 passing.
+- `GUST_BIN=/workspace/tests/grit bash tests/t3307-notes-man.sh`: 3/3 passing after adding missing fixture files.
+- `./scripts/run-tests.sh t3307-notes-man.sh`: 3/3 passing.

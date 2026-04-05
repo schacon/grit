@@ -253,7 +253,7 @@ commit → check it off → move on.
 - [x] `t3008-ls-files-lazy-init-name-hash` ████████████████████ 1/1 (0 left) — Test the lazy init name hash with various folder structures
 - [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
 - [x] `t3012-ls-files-dedup` ████████████████████ 3/3 (0 left) — git ls-files --deduplicate test
-- [ ] `t3307-notes-man` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Examples from the git-notes man page
+- [x] `t3307-notes-man` ████████████████████ 3/3 (0 left) — Examples from the git-notes man page
 
 - [ ] `t3423-rebase-reword` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git rebase interactive with rewording
 - [ ] `t3702-add-edit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — add -e basic tests
