@@ -140,6 +140,6 @@ case "$1" in
     shift
     exec git test-tool wildmatch "$@" ;;
   *)
-    echo "test-tool: unknown subcommand '$1'" >&2
-    exit 1 ;;
+    # Delegate unsupported helpers to grit's `git test-tool ...`
+    exec git test-tool "$@" ;;
 esac

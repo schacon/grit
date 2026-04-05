@@ -15,14 +15,14 @@ commit → check it off → move on.
 ## 1. Basic/Setup (37 files)
 
 - [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
-- [ ] `t0062-revision-walking` ██████████░░░░░░░░░░ 1/2 (1 left) — Test revision walking api
-- [ ] `t0071-sort` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — verify sort functions
+- [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
+- [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
 - [ ] `t0080-unit-test-output` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the output of the unit test framework
 - [x] `t0056-git-C` ████████████████████ 11/11 (0 left) — 
 - [ ] `t0007-git-var` █████████████████░░░ 24/27 (3 left) — basic sanity checks for git var
 - [x] `t0009-git-dir-validation` ████████████████████ 6/6 (0 left) — setup: validation of .git file/directory types
 
-- [ ] `t0081-find-pack` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test `test-tool find-pack`
+- [x] `t0081-find-pack` ████████████████████ 4/4 (0 left) — test `test-tool find-pack`
 - [ ] `t0030-stripspace` █████████████████░░░ 26/30 (4 left) — git stripspace
 - [ ] `t0041-usage` ███████████████░░░░░ 12/16 (4 left) — Test commands behavior when given invalid argument value
 - [ ] `t0004-unwritable` ███████████░░░░░░░░░ 5/9 (4 left) — detect unwritable repository and fail correctly

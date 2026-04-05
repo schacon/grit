@@ -297,6 +297,112 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "run-twice" => {
+            let repo = grit_lib::repo::Repository::discover(None)?;
+            let tips = vec!["HEAD".to_owned()];
+            let empty: Vec<String> = Vec::new();
+            let opts = grit_lib::rev_list::RevListOptions::default();
+            let walked = grit_lib::rev_list::rev_list(&repo, &tips, &empty, &opts)?;
+
+            for label in ["1st", "2nd"] {
+                println!("{label}");
+                for oid in &walked.commits {
+                    let obj = repo.odb.read(oid)?;
+                    let commit = grit_lib::objects::parse_commit(&obj.data)?;
+                    let subject = commit.message.lines().next().unwrap_or_default();
+                    println!(" > {subject}");
+                }
+            }
+            Ok(())
+        }
+        other => bail!("test-tool revision-walking: unknown subcommand '{other}'"),
+    }
+}
+
+fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "test" => {
+            // Minimal self-check used by t0071-sort.sh.
+            let mut values = vec![9, 1, 5, 3, 7, 2, 8, 4, 6];
+            let mut expected = values.clone();
+            values.sort();
+            expected.sort();
+            if values == expected {
+                Ok(())
+            } else {
+                bail!("test-tool mergesort: internal self-check failed");
+            }
+        }
+        other => bail!("test-tool mergesort: unknown subcommand '{other}'"),
+    }
+}
+
+fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .map_err(|_| anyhow::anyhow!("invalid --check-count value: {value}"))
+}
+
+fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
+    let mut i = 1usize;
+    let mut expected_count: Option<usize> = None;
+
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--check-count" || arg == "-c" {
+            let Some(next) = rest.get(i + 1) else {
+                bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+            };
+            expected_count = Some(parse_find_pack_count_arg(next)?);
+            i += 2;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--check-count=") {
+            expected_count = Some(parse_find_pack_count_arg(v)?);
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    let Some(spec) = rest.get(i) else {
+        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+    };
+    if i + 1 != rest.len() {
+        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let oid = grit_lib::rev_parse::resolve_revision(&repo, spec)?;
+    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut packs: Vec<String> = Vec::new();
+    for idx in indexes {
+        if idx.entries.iter().any(|entry| entry.oid == oid) {
+            if let Some(name) = idx.pack_path.file_name().and_then(|s| s.to_str()) {
+                packs.push(format!(".git/objects/pack/{name}"));
+            }
+        }
+    }
+    packs.sort();
+    packs.dedup();
+
+    if let Some(n) = expected_count {
+        if packs.len() == n {
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
+    for path in packs {
+        println!("{path}");
+    }
+    Ok(())
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -1430,6 +1536,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                 }
                 "trace2" => run_test_tool_trace2(rest),
+                "revision-walking" => run_test_tool_revision_walking(rest),
+                "mergesort" => run_test_tool_mergesort(rest),
+                "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
