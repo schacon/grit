@@ -503,10 +503,19 @@ fn format_long(
     };
     let cp = comment_prefix;
 
-    // Determine if hints should be shown
-    let show_hints = match config.get("advice.statusHints") {
-        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
-        _ => true,
+    // Determine if hints should be shown.
+    // GIT_ADVICE has highest priority, then advice.statusHints config.
+    let show_hints = match std::env::var("GIT_ADVICE")
+        .ok()
+        .map(|v| v.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("false" | "no" | "off" | "0") => false,
+        Some("true" | "yes" | "on" | "1") => true,
+        _ => match config.get("advice.statusHints") {
+            Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+            _ => true,
+        },
     };
 
     // Branch info
@@ -722,34 +731,50 @@ fn format_long(
         if hide_untracked {
             // When hiding untracked, don't say "working tree clean"
         } else if !ignored_files.is_empty() {
-            cpw(
-                out,
-                cp,
-                "nothing to commit but untracked files present (use \"git add\" to track)",
-            )?;
+            if show_hints {
+                cpw(
+                    out,
+                    cp,
+                    "nothing to commit but untracked files present (use \"git add\" to track)",
+                )?;
+            } else {
+                cpw(out, cp, "nothing to commit but untracked files present")?;
+            }
         } else {
             cpw(out, cp, "nothing to commit, working tree clean")?;
         }
     } else if !staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
         // Only staged changes — no footer needed (git doesn't print one)
     } else if staged.is_empty() && !unstaged.is_empty() && untracked.is_empty() {
-        cpw(
-            out,
-            cp,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
-        )?;
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+            )?;
+        } else {
+            cpw(out, cp, "no changes added to commit")?;
+        }
     } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
-        cpw(
-            out,
-            cp,
-            "nothing added to commit but untracked files present (use \"git add\" to track)",
-        )?;
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "nothing added to commit but untracked files present (use \"git add\" to track)",
+            )?;
+        } else {
+            cpw(out, cp, "nothing added to commit but untracked files present")?;
+        }
     } else if staged.is_empty() {
-        cpw(
-            out,
-            cp,
-            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
-        )?;
+        if show_hints {
+            cpw(
+                out,
+                cp,
+                "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+            )?;
+        } else {
+            cpw(out, cp, "no changes added to commit")?;
+        }
     }
 
     Ok(())

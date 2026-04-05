@@ -360,9 +360,81 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DecorationStyle {
+    None,
+    Short,
+    Full,
+}
+
+fn parse_log_decorate_value(value: &str) -> DecorationStyle {
+    match value.to_ascii_lowercase().as_str() {
+        "full" => DecorationStyle::Full,
+        "short" | "auto" | "true" | "yes" | "on" | "1" => DecorationStyle::Short,
+        _ => DecorationStyle::None,
+    }
+}
+
+fn format_requests_decorations(fmt: Option<&str>) -> bool {
+    let Some(raw) = fmt else {
+        return false;
+    };
+    let template = raw
+        .strip_prefix("format:")
+        .or_else(|| raw.strip_prefix("tformat:"))
+        .unwrap_or(raw);
+
+    let mut chars = template.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            continue;
+        }
+        match chars.next() {
+            Some('%') => {}
+            Some('d') | Some('D') => return true,
+            Some(_) => {}
+            None => break,
+        }
+    }
+    false
+}
+
+fn decoration_style_for_log(args: &Args, config: &grit_lib::config::ConfigSet) -> DecorationStyle {
+    let mut style = config
+        .get("log.decorate")
+        .map(|v| parse_log_decorate_value(&v))
+        .unwrap_or(DecorationStyle::None);
+
+    for arg in std::env::args().skip(1) {
+        if arg == "--no-decorate" {
+            style = DecorationStyle::None;
+            continue;
+        }
+
+        if let Some(suffix) = arg.strip_prefix("--decorate") {
+            if suffix.is_empty() {
+                style = DecorationStyle::Short;
+                continue;
+            }
+            if let Some(value) = suffix.strip_prefix('=') {
+                style = parse_log_decorate_value(value);
+            }
+        }
+    }
+
+    // %d / %D request decorations explicitly, even when --no-decorate
+    // or log.decorate=false are present; those only affect style.
+    if format_requests_decorations(args.format.as_deref()) && style != DecorationStyle::Full {
+        style = DecorationStyle::Short;
+    }
+
+    style
+}
+
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -372,23 +444,25 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         // Check config for color.diff / color.ui
         let mut c = false;
-        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-            if let Some(val) = config.get("color.diff") {
+        if let Some(val) = config.get("color.diff") {
+            match val.as_str() {
+                "always" | "true" => c = true,
+                "auto" => {
+                    c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                }
+                _ => {}
+            }
+        }
+        if !c {
+            if let Some(val) = config.get("color.ui") {
                 match val.as_str() {
                     "always" | "true" => c = true,
-                    "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                        || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
-                    _ => {}
-                }
-            }
-            if !c {
-                if let Some(val) = config.get("color.ui") {
-                    match val.as_str() {
-                        "always" | "true" => c = true,
-                        "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                            || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
-                        _ => {}
+                    "auto" => {
+                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
                     }
+                    _ => {}
                 }
             }
         }
@@ -508,33 +582,11 @@ pub fn run(mut args: Args) -> Result<()> {
         .transpose()
         .context("invalid --grep regex")?;
 
-    // Collect ref decorations — manually determine last-wins for
-    // --decorate / --no-decorate so that flag order is respected.
-    let (show_decorations, decorate_full) = {
-        // Default: decorations off (git only decorates for terminal/auto)
-        let mut show = false;
-        let mut full = false;
-        for arg in std::env::args() {
-            if arg == "--no-decorate" {
-                show = false;
-                full = false;
-            } else if arg.starts_with("--decorate") {
-                show = true;
-                full = arg == "--decorate=full";
-            }
-        }
-        if args.decorate.is_some() {
-            show = true;
-        }
-        if args.no_decorate {
-            show = false;
-        }
-        (show, full)
-    };
-    let decorations = if !show_decorations {
-        None
-    } else {
-        Some(collect_decorations(&repo, decorate_full)?)
+    let decoration_style = decoration_style_for_log(&args, &config);
+    let decorations = match decoration_style {
+        DecorationStyle::None => None,
+        DecorationStyle::Short => Some(collect_decorations(&repo, false)?),
+        DecorationStyle::Full => Some(collect_decorations(&repo, true)?),
     };
 
     // Walk commits
@@ -704,14 +756,12 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         }
     }
 
-    let decorate_full = match &args.decorate {
-        Some(Some(s)) if s == "full" => true,
-        _ => false,
-    };
-    let decorations = if args.no_decorate {
-        None
-    } else {
-        Some(collect_decorations(repo, decorate_full)?)
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let decoration_style = decoration_style_for_log(args, &config);
+    let decorations = match decoration_style {
+        DecorationStyle::None => None,
+        DecorationStyle::Short => Some(collect_decorations(repo, false)?),
+        DecorationStyle::Full => Some(collect_decorations(repo, true)?),
     };
 
     let mut commits = Vec::new();
@@ -2497,6 +2547,7 @@ fn collect_decorations(
     full: bool,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut head_branch_name: Option<String> = None;
 
     // HEAD
     let head = resolve_head(&repo.git_dir)?;
@@ -2504,6 +2555,7 @@ fn collect_decorations(
         let hex = oid.to_hex();
         let label = match &head {
             HeadState::Branch { short_name, .. } => {
+                head_branch_name = Some(short_name.clone());
                 if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
@@ -2521,6 +2573,7 @@ fn collect_decorations(
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "refs/heads/",
+            head_branch_name.as_deref(),
             &mut map,
         )?;
         collect_refs_from_dir(
@@ -2528,6 +2581,7 @@ fn collect_decorations(
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: refs/tags/",
+            None,
             &mut map,
         )?;
     } else {
@@ -2536,6 +2590,7 @@ fn collect_decorations(
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "",
+            head_branch_name.as_deref(),
             &mut map,
         )?;
         collect_refs_from_dir(
@@ -2543,6 +2598,7 @@ fn collect_decorations(
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: ",
+            None,
             &mut map,
         )?;
     }
@@ -2556,6 +2612,7 @@ fn collect_refs_from_dir(
     dir: &std::path::Path,
     strip_prefix: &str,
     display_prefix: &str,
+    skip_head_branch: Option<&str>,
     map: &mut std::collections::HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
@@ -2567,12 +2624,24 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(
+                odb,
+                &path,
+                strip_prefix,
+                display_prefix,
+                skip_head_branch,
+                map,
+            )?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
+                if strip_prefix == "refs/heads/"
+                    && skip_head_branch.is_some_and(|head_name| head_name == name)
+                {
+                    continue;
+                }
                 let label = format!("{display_prefix}{name}");
                 // Dereference annotated tags to the commit they point at
                 let resolved_hex = if display_prefix.contains("tag") {

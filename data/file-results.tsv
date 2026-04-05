@@ -4,7 +4,7 @@ t0001-init	yes	102	54	48	ok	54	102	0
 t0002-gitfile	yes	14	8	6	ok	8	14	0
 t0003-attributes	yes	55	15	40	ok	15	55	0
 t0004-unwritable	yes	9	5	4	ok	5	9	0
-t0005-signals	yes	5	1	4	ok	1	5	0
+t0005-signals	yes	5	5	0	ok	5	5	0
 t0006-date	yes	0	0	0	ok	0	0	0
 t0007-git-var	yes	27	24	3	ok	24	27	0
 t0008-ignores	yes	0	0	0	timeout	0	0	0
@@ -33,7 +33,7 @@ t0034-root-safe-directory	yes	0	0	0	ok	0	0	0
 t0035-safe-bare-repository	yes	12	1	11	ok	1	12	0
 t0040-parse-options	yes	94	0	94	ok	0	94	0
 t0041-usage	yes	16	12	4	ok	12	16	0
-t0050-filesystem	yes	13	12	1	ok	10	11	2
+t0050-filesystem	yes	13	13	0	ok	11	11	2
 t0051-windows-named-pipe	yes	0	0	0	ok	0	0	0
 t0052-simple-ipc	yes	0	0	0	ok	0	0	0
 t0055-beyond-symlinks	yes	3	3	0	ok	3	3	0
@@ -43,7 +43,7 @@ t0061-run-command	yes	24	3	21	ok	3	24	0
 t0062-revision-walking	yes	2	1	1	ok	1	2	0
 t0066-dir-iterator	yes	10	2	8	ok	2	10	0
 t0067-parse_pathspec_file	yes	8	0	8	ok	0	8	0
-t0068-for-each-repo	yes	5	1	4	ok	1	5	0
+t0068-for-each-repo	yes	5	5	0	ok	5	5	0
 t0070-fundamental	yes	11	1	10	ok	1	11	0
 t0071-sort	yes	1	0	1	ok	0	1	0
 t0080-unit-test-output	yes	1	0	1	ok	0	1	0

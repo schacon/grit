@@ -66,8 +66,13 @@ fn main() {
             exit_code = 0;
         }
         Err(e) => {
-            eprintln!("error: {e:#}");
-            exit_code = 1;
+            if is_broken_pipe_error(&e) {
+                // Match Git/shell convention for SIGPIPE exits.
+                exit_code = 128 + 13;
+            } else {
+                eprintln!("error: {e:#}");
+                exit_code = 1;
+            }
         }
     }
 
@@ -98,6 +103,14 @@ fn main() {
     }
 
     std::process::exit(exit_code);
+}
+
+fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|ioe| ioe.kind() == std::io::ErrorKind::BrokenPipe)
+    }) || err.to_string().contains("Broken pipe")
 }
 
 /// Get process ancestry by walking parent PIDs on Linux.
@@ -243,7 +256,17 @@ fn chrono_now() -> String {
 }
 
 fn exit_with_status(status: std::process::ExitStatus) -> ! {
-    std::process::exit(status.code().unwrap_or(1));
+    if let Some(code) = status.code() {
+        std::process::exit(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            std::process::exit(128 + sig);
+        }
+    }
+    std::process::exit(1);
 }
 
 fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
@@ -787,6 +810,7 @@ struct GlobalOpts {
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
     bare: bool,
+    no_advice: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -864,6 +888,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --no-advice
+        if arg == "--no-advice" {
+            opts.no_advice = true;
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
@@ -916,6 +947,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
+    }
+    if opts.no_advice {
+        std::env::set_var("GIT_ADVICE", "false");
     }
     Ok(())
 }
@@ -1502,6 +1536,70 @@ fn strsim_distance(a: &str, b: &str) -> usize {
     dp[m][n]
 }
 
+fn split_alias_words(input: &str) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = input.chars().peekable();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            '\\' if !in_single => {
+                if let Some(next) = chars.next() {
+                    cur.push(next);
+                }
+            }
+            c if c.is_whitespace() && !in_single && !in_double => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(ch),
+        }
+    }
+
+    if in_single || in_double {
+        bail!("unterminated quote in alias definition");
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    Ok(out)
+}
+
+fn get_alias_value(subcmd: &str) -> Option<String> {
+    let key = format!("alias.{subcmd}");
+
+    // Highest priority: `-c alias.<name>=...`
+    if let Some(v) = protocol::check_config_param(&key) {
+        return Some(v);
+    }
+
+    let git_dir = std::env::var("GIT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        });
+
+    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
+        if let Some(v) = config.get(&key) {
+            return Some(v);
+        }
+    }
+
+    None
+}
+
 const KNOWN_COMMANDS: &[&str] = &[
     "add",
     "am",
@@ -1879,6 +1977,32 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
+            if let Some(alias) = get_alias_value(subcmd) {
+                if alias.trim().is_empty() {
+                    bail!("alias.{subcmd} has no value");
+                }
+
+                if let Some(shell_body) = alias.strip_prefix('!') {
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+                    let body = shell_body.trim_start();
+                    let status = std::process::Command::new(shell)
+                        .arg("-c")
+                        .arg(format!("{body} \"$@\""))
+                        .arg(body)
+                        .args(rest)
+                        .status()?;
+                    exit_with_status(status);
+                }
+
+                let mut expanded = split_alias_words(&alias)?;
+                if expanded.is_empty() {
+                    bail!("alias.{subcmd} has no value");
+                }
+                let aliased_subcmd = expanded.remove(0);
+                expanded.extend(rest.iter().cloned());
+                return dispatch(&aliased_subcmd, &expanded, opts);
+            }
+
             let commands = KNOWN_COMMANDS;
             // Find similar commands using edit distance
             let mut suggestions: Vec<&str> = commands
