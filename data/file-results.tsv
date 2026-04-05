@@ -675,7 +675,7 @@ t6000-rev-list-misc	yes	23	6	17	ok	6	23	0
 t6001-rev-list-graft	yes	14	3	11	ok	3	14	0
 t6002-rev-list-bisect	yes	53	4	49	ok	4	53	0
 t6003-rev-list-topo-order	yes	36	21	15	ok	21	36	0
-t6004-rev-list-path-optim	yes	7	2	5	ok	2	7	0
+t6004-rev-list-path-optim	yes	7	7	0	ok	7	7	0
 t6005-rev-list-count	yes	6	1	5	ok	1	6	0
 t6006-rev-list-format	yes	80	63	17	ok	63	80	0
 t6007-rev-list-cherry-pick-file	yes	23	1	22	ok	1	23	0

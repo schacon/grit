@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    62 |
+| Completed   |    63 |
 | In progress |     0 |
-| Remaining   |   705 |
+| Remaining   |   704 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -49,7 +49,8 @@
 - `t6415-merge-dir-to-symlink` — 24/24 tests pass (`rm --cached` now treats tracked symlink paths as non-directories by using `symlink_metadata` for recursion checks and removal dispatch; merge now aborts before overwriting untracked/dirty files in directory→symlink transitions, preserving local data and matching expected merge refusal behavior)
 - `t6404-recursive-merge` — 6/6 tests pass (virtual merge-base construction now reuses conflict-marker blobs from higher-stage entries to preserve nested virtual-base stage-1 OIDs; merge now emits Git-compatible binary conflict diagnostic `Cannot merge binary files: <path> (HEAD vs. <branch>)`)
 - `t6439-merge-co-error-msgs` — 6/6 tests pass (merge now performs fast-forward overwrite checks before mutating HEAD/index/worktree; merge overwrite diagnostics now combine local+untracked sections in Git-compatible order, include strategy-failure trailer for `GIT_MERGE_VERBOSITY=0`, and checkout diagnostics no longer include duplicated `error:` prefixes)
+- `t6004-rev-list-path-optim` — 7/7 tests pass (rev-list path limiting now supports `.` and glob pathspecs via wildmatch and performs merge-aware TREESAME simplification, fixing path-optimization and `d/*`/`d/[a-m]*` history selection)
 
 ## What Remains
 
-705 test files still pending. See `plan.md` for the full prioritized list.
+704 test files still pending. See `plan.md` for the full prioritized list.

@@ -63,3 +63,8 @@
 - `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after `t6439` merge-core safety/message updates).
 - `./scripts/run-tests.sh t6415-merge-dir-to-symlink.sh`: 24/24 passing (regression check after `t6439` merge-core safety/message updates).
 - `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (regression check after `t6439` merge-core safety/message updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6004-rev-list-path-optim.sh`: 7/7 passing (direct validation after rev-list pathspec matcher + merge-aware path simplification updates).
+- `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (now fully passing).
+- `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after pathspec/path-optimization changes).
+- `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (pathspec/revision regression check after rev-list pathspec matching update).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (merge+rev-list regression check after rev-list pathspec matching update).

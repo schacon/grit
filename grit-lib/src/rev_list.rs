@@ -1734,26 +1734,87 @@ fn commit_touches_paths(
 ) -> Result<bool> {
     let commit = load_commit(repo, oid)?;
     let parents = graph.parents_of(oid)?;
-    let parent_tree = if let Some(&parent) = parents.first() {
-        Some(load_commit(repo, parent)?.tree)
-    } else {
-        None
-    };
     let commit_entries = flatten_tree(repo, commit.tree, "")?;
     let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
-    let parent_map: HashMap<String, ObjectId> = if let Some(pt) = parent_tree {
-        flatten_tree(repo, pt, "")?.into_iter().collect()
-    } else {
-        HashMap::new()
-    };
-    for path in paths {
-        let c_oid = commit_map.get(path.as_str());
-        let p_oid = parent_map.get(path.as_str());
-        if c_oid != p_oid {
-            return Ok(true);
+
+    // Root commit: include only when any requested pathspec exists.
+    if parents.is_empty() {
+        return Ok(commit_map
+            .keys()
+            .any(|path| paths.iter().any(|spec| pathspec_matches(spec, path))));
+    }
+
+    // Single-parent commit: include only when requested paths changed.
+    if parents.len() == 1 {
+        let parent = load_commit(repo, parents[0])?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        return Ok(path_differs_for_specs(&commit_map, &parent_map, paths));
+    }
+
+    // Merge commit simplification for default dense history:
+    // if exactly one parent is TREESAME for the requested paths, omit this
+    // merge commit and let traversal effectively follow that parent.
+    let mut treesame_parents = 0usize;
+    let mut differs_any = false;
+    for parent_oid in &parents {
+        let parent = load_commit(repo, *parent_oid)?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if differs {
+            differs_any = true;
+        } else {
+            treesame_parents += 1;
         }
     }
-    Ok(false)
+
+    if treesame_parents == 1 {
+        return Ok(false);
+    }
+
+    Ok(differs_any)
+}
+
+fn path_differs_for_specs(
+    current: &HashMap<String, ObjectId>,
+    parent: &HashMap<String, ObjectId>,
+    specs: &[String],
+) -> bool {
+    let mut paths = std::collections::BTreeSet::new();
+    paths.extend(current.keys().cloned());
+    paths.extend(parent.keys().cloned());
+
+    for path in &paths {
+        if !specs.iter().any(|spec| pathspec_matches(spec, path)) {
+            continue;
+        }
+        if current.get(path) != parent.get(path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn pathspec_matches(spec: &str, path: &str) -> bool {
+    let normalized = spec.strip_prefix("./").unwrap_or(spec);
+    if normalized == "." || normalized.is_empty() {
+        return true;
+    }
+
+    if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
+        return crate::wildmatch::wildmatch(
+            normalized.as_bytes(),
+            path.as_bytes(),
+            crate::wildmatch::WM_PATHNAME,
+        );
+    }
+
+    if let Some(prefix) = normalized.strip_suffix('/') {
+        return path == prefix || path.starts_with(&format!("{prefix}/"));
+    }
+
+    path == normalized || path.starts_with(&format!("{normalized}/"))
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
