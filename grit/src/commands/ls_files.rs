@@ -62,6 +62,10 @@ pub struct Args {
     #[arg(short = 't')]
     pub show_tag: bool,
 
+    /// Show lowercase tags for tracked files (`-v`).
+    #[arg(short = 'v')]
+    pub show_untracked_cache_tag: bool,
+
     /// Show verbose long format.
     #[arg(long)]
     pub long: bool,
@@ -231,9 +235,9 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // For -d/-m with -t, compute tags. A deleted file with both -d and -m
+        // For -d/-m with -t/-v, compute tags. A deleted file with both -d and -m
         // produces TWO output lines: 'R path' and 'C path'.
-        let (tag, extra_tag) = if args.show_tag {
+        let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
             if (args.deleted || args.modified) && entry.stage() == 0 {
                 let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
                 if !full.exists() {
@@ -249,7 +253,13 @@ pub fn run(args: Args) -> Result<()> {
                     (Some(status_tag(entry)), None)
                 }
             } else {
-                (Some(status_tag(entry)), None)
+                let base_tag = status_tag(entry);
+                let adjusted_tag = if args.show_untracked_cache_tag {
+                    base_tag.to_ascii_lowercase()
+                } else {
+                    base_tag
+                };
+                (Some(adjusted_tag), None)
             }
         } else {
             (None, None)

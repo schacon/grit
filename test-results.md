@@ -5,6 +5,9 @@
 - `cargo build --release`: passes (rebuild after `diff-index` `GIT_DIFF_OPTS` context parsing support).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4003-diff-rename-1.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t4003-diff-rename-1.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `cargo build --release`: passes (rebuild after `ls-files -v` parsing and `diff-files` assume-unchanged filtering updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4039-diff-assume-unchanged.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t4039-diff-assume-unchanged.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
 - `cargo build --release`: passes (rebuild after `git apply` filename consistency validation checks).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4133-apply-filenames.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t4133-apply-filenames.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
@@ -24,6 +27,8 @@
   - `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 passing (known harness blocker unchanged).
 - `./scripts/run-tests.sh t4018-diff-funcname.sh`: 1/9 passing (baseline for next in-progress Diff target).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4018-diff-funcname.sh`: fails due missing `test-tool userdiff` support and downstream hunk-header expectations (8 failing tests).
+- `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 1/4 passing (baseline for current in-progress Diff target).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4049-diff-stat-count.sh`: still fails in stat summary counting and missing binary fixture path in simplified harness.
 
 - `cargo build --release`: passes (rebuild after `git am` folded-subject continuation parsing fix).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4152-am-subjects.sh`: 13/13 passing.

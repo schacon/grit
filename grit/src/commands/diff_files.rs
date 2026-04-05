@@ -320,6 +320,9 @@ fn collect_changes(
     let mut staged: BTreeMap<String, (u32, ObjectId)> = BTreeMap::new();
 
     for entry in &index.entries {
+        if entry.assume_unchanged() {
+            continue;
+        }
         let Ok(path) = String::from_utf8(entry.path.clone()) else {
             continue;
         };
