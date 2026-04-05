@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
+use std::os::unix::ffi::OsStringExt;
 use std::path::Component;
+use std::path::Path;
 use std::path::PathBuf;
 
 use grit_lib::ignore::IgnoreMatcher;
@@ -153,6 +155,7 @@ pub fn run(args: Args) -> Result<()> {
         pathspec_filter.push(Pathspec {
             matcher: PathspecMatcher::Literal(cwd_prefix.clone()),
             exclude: false,
+            display: String::new(),
         });
     }
 
@@ -173,8 +176,11 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
+        let entry_path = normalize_repo_path_bytes(&entry.path);
+        let mut entry_matched = vec![false; pathspec_filter.len()];
+
         // Filter by pathspec
-        if !matches_pathspecs(&pathspec_filter, &entry.path, &mut matched) {
+        if !matches_pathspecs(&pathspec_filter, &entry_path, &mut entry_matched) {
             continue;
         }
 
@@ -188,7 +194,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // --ignored with --cached: only show tracked files that are ignored
         if args.ignored && show_cached && !args.others {
-            let path_str = String::from_utf8_lossy(&entry.path);
+            let path_str = String::from_utf8_lossy(&entry_path);
             // Pass None for index so tracked files aren't auto-skipped
             let std_ignored = if let Some(ref mut m) = matcher {
                 let (ignored, _) = m
@@ -215,7 +221,7 @@ pub fn run(args: Args) -> Result<()> {
             if entry.skip_worktree() {
                 continue;
             }
-            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+            let full = work_tree.join(std::str::from_utf8(&entry_path).unwrap_or(""));
             let is_deleted = !full.exists();
             let is_mod = is_modified(entry, &full);
             let dominated = if args.deleted && args.modified {
@@ -234,7 +240,7 @@ pub fn run(args: Args) -> Result<()> {
         // produces TWO output lines: 'R path' and 'C path'.
         let (tag, extra_tag) = if args.show_tag {
             if (args.deleted || args.modified) && entry.stage() == 0 {
-                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+                let full = work_tree.join(std::str::from_utf8(&entry_path).unwrap_or(""));
                 if !full.exists() {
                     if args.deleted && args.modified {
                         // Both -d and -m: show R (deleted) and C (modified)
@@ -254,10 +260,14 @@ pub fn run(args: Args) -> Result<()> {
             (None, None)
         };
 
+        if args.eol || show_stage || show_cached || args.deleted || args.modified {
+            merge_matched_flags(&mut matched, &entry_matched);
+        }
+
         if args.eol {
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(display);
-            let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
+            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let name = String::from_utf8_lossy(&display);
+            let path_str = std::str::from_utf8(&entry_path).unwrap_or("");
 
             // Determine index line endings
             let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
@@ -304,8 +314,8 @@ pub fn run(args: Args) -> Result<()> {
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
             out.write_all(&[term])?;
         } else if show_stage {
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(display);
+            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let name = String::from_utf8_lossy(&display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -326,14 +336,14 @@ pub fn run(args: Args) -> Result<()> {
             // Without -t, deduplicate all entries including unmerged.
             if args.deduplicate && !(args.show_tag && entry.stage() != 0) {
                 if let Some(ref last) = last_dedup_path {
-                    if last == &entry.path {
+                    if last == &entry_path {
                         continue;
                     }
                 }
-                last_dedup_path = Some(entry.path.clone());
+                last_dedup_path = Some(entry_path.clone());
             }
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(display);
+            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let name = String::from_utf8_lossy(&display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -354,15 +364,19 @@ pub fn run(args: Args) -> Result<()> {
     // --ignored implies --others only when --cached is not explicitly set
     let show_others = args.others || (args.ignored && !args.cached);
     if show_others {
-        let indexed_paths: BTreeSet<Vec<u8>> =
-            index.entries.iter().map(|e| e.path.clone()).collect();
+        let indexed_paths: BTreeSet<Vec<u8>> = index
+            .entries
+            .iter()
+            .map(|e| normalize_repo_path_bytes(&e.path))
+            .collect();
         let mut untracked = Vec::new();
         walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
-            if !matches_pathspecs(&pathspec_filter, path_bytes, &mut matched) {
+            let mut entry_matched = vec![false; pathspec_filter.len()];
+            if !matches_pathspecs(&pathspec_filter, path_bytes, &mut entry_matched) {
                 continue;
             }
 
@@ -393,8 +407,9 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Make path relative to cwd before collecting
-            let display = display_path_from_cwd(path_bytes, &cwd_prefix);
-            filtered_untracked.push(display.to_vec());
+            let display = display_path_from_cwd(path_bytes, &cwd, work_tree)?;
+            merge_matched_flags(&mut matched, &entry_matched);
+            filtered_untracked.push(display);
         }
 
         // Collapse to directories if --directory (after making paths cwd-relative)
@@ -451,13 +466,24 @@ pub fn run(args: Args) -> Result<()> {
 
     // --error-unmatch: fail if any pathspec matched nothing.
     if args.error_unmatch {
-        for (i, spec) in pathspec_filter.iter().enumerate() {
-            if !matched[i] {
-                anyhow::bail!(
+        let unmatched: Vec<String> = pathspec_filter
+            .iter()
+            .enumerate()
+            .filter(|(i, spec)| !spec.exclude && !matched[*i])
+            .map(|(_, spec)| spec.display())
+            .collect();
+        if !unmatched.is_empty() {
+            let stderr = io::stderr();
+            let mut err = stderr.lock();
+            for spec in unmatched {
+                writeln!(
+                    err,
                     "error: pathspec '{}' did not match any file(s) known to git",
-                    spec.display()
-                );
+                    spec
+                )?;
             }
+            writeln!(err, "Did you forget to 'git add'?")?;
+            std::process::exit(1);
         }
     }
 
@@ -521,6 +547,7 @@ fn walk_worktree(
 struct Pathspec {
     matcher: PathspecMatcher,
     exclude: bool,
+    display: String,
 }
 
 #[derive(Debug, Clone)]
@@ -545,10 +572,7 @@ impl Pathspec {
     }
 
     fn display(&self) -> String {
-        match &self.matcher {
-            PathspecMatcher::Literal(v) => String::from_utf8_lossy(v).into_owned(),
-            PathspecMatcher::Glob(s) => s.clone(),
-        }
+        self.display.clone()
     }
 }
 
@@ -667,6 +691,7 @@ fn resolve_pathspec(
         return Ok(Pathspec {
             matcher: PathspecMatcher::Literal(cwd_prefix_bytes(work_tree, cwd)?),
             exclude: false,
+            display: pathspec.to_string_lossy().into_owned(),
         });
     }
     let pathspec_str = pathspec.to_string_lossy();
@@ -677,27 +702,31 @@ fn resolve_pathspec(
             return Ok(Pathspec {
                 matcher: PathspecMatcher::Literal(Vec::new()),
                 exclude: parsed.exclude,
+                display: pathspec_str.into_owned(),
             });
         }
         if has_glob_chars(parsed.pattern) {
             return Ok(Pathspec {
                 matcher: PathspecMatcher::Glob(parsed.pattern.to_string()),
                 exclude: parsed.exclude,
+                display: pathspec_str.into_owned(),
             });
         }
         return Ok(Pathspec {
             matcher: PathspecMatcher::Literal(parsed.pattern.as_bytes().to_vec()),
             exclude: parsed.exclude,
+            display: pathspec_str.into_owned(),
         });
     }
     if has_glob_chars(parsed.pattern) {
-        // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
-        let prefix = cwd_prefix_bytes(work_tree, cwd)?;
-        let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        let pattern = format!("{}{}", prefix_str, parsed.pattern);
         return Ok(Pathspec {
-            matcher: PathspecMatcher::Glob(pattern),
+            matcher: PathspecMatcher::Glob(resolve_pathspec_pattern(
+                work_tree,
+                cwd,
+                parsed.pattern,
+            )?),
             exclude: parsed.exclude,
+            display: pathspec_str.into_owned(),
         });
     }
     let combined = if std::path::Path::new(parsed.pattern).is_absolute() {
@@ -715,7 +744,21 @@ fn resolve_pathspec(
     Ok(Pathspec {
         matcher: PathspecMatcher::Literal(path_to_bytes(rel)),
         exclude: parsed.exclude,
+        display: pathspec_str.into_owned(),
     })
+}
+
+fn resolve_pathspec_pattern(work_tree: &Path, cwd: &Path, pattern: &str) -> Result<String> {
+    let combined = if Path::new(pattern).is_absolute() {
+        PathBuf::from(pattern)
+    } else {
+        cwd.join(pattern)
+    };
+    let normalized = normalize_path(&combined);
+    let rel = normalized
+        .strip_prefix(work_tree)
+        .with_context(|| format!("pathspec '{}' is outside repository work tree", pattern))?;
+    Ok(String::from_utf8_lossy(&path_to_bytes(rel)).into_owned())
 }
 
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {
@@ -734,11 +777,38 @@ fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Resul
     Ok(bytes)
 }
 
-fn display_path_from_cwd<'a>(path: &'a [u8], cwd_prefix: &[u8]) -> &'a [u8] {
-    if cwd_prefix.is_empty() {
-        return path;
+fn display_path_from_cwd(path: &[u8], cwd: &Path, work_tree: &Path) -> Result<Vec<u8>> {
+    if cwd == work_tree {
+        return Ok(path.to_vec());
     }
-    path.strip_prefix(cwd_prefix).unwrap_or(path)
+    let cwd_rel = cwd.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "current directory '{}' is outside repository work tree '{}'",
+            cwd.display(),
+            work_tree.display()
+        )
+    })?;
+    let target = PathBuf::from(std::ffi::OsString::from_vec(path.to_vec()));
+    Ok(path_to_bytes(&relative_path(cwd_rel, &target)))
+}
+
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let shared = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+
+    let mut rel = PathBuf::new();
+    for _ in &from_components[shared..] {
+        rel.push("..");
+    }
+    for component in &to_components[shared..] {
+        rel.push(component.as_os_str());
+    }
+    rel
 }
 
 fn matches_pathspecs(pathspecs: &[Pathspec], path: &[u8], matched: &mut [bool]) -> bool {
@@ -783,6 +853,17 @@ fn normalize_path(path: &std::path::Path) -> PathBuf {
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     use std::os::unix::ffi::OsStrExt;
     path.as_os_str().as_bytes().to_vec()
+}
+
+fn normalize_repo_path_bytes(path: &[u8]) -> Vec<u8> {
+    let raw = PathBuf::from(std::ffi::OsString::from_vec(path.to_vec()));
+    path_to_bytes(&normalize_path(&raw))
+}
+
+fn merge_matched_flags(overall: &mut [bool], entry: &[bool]) {
+    for (overall, entry) in overall.iter_mut().zip(entry.iter()) {
+        *overall |= *entry;
+    }
 }
 
 /// Collapse file paths into unique top-level directory entries.

@@ -9,6 +9,7 @@
 use crate::commands::git_passthrough;
 use anyhow::Result;
 use clap::Args as ClapArgs;
+use grit_lib::{config::ConfigSet, refs, repo::Repository};
 
 /// Arguments for `grit switch`.
 #[derive(Debug, ClapArgs)]
@@ -25,6 +26,10 @@ pub fn run(args: Args) -> Result<()> {
     // worktree unless --ignore-other-worktrees is given.
     if let Err(msg) = check_worktree_conflict(&args.args) {
         eprintln!("fatal: {msg}");
+        std::process::exit(128);
+    }
+    if let Err(msg) = check_ambiguous_remote_tracking(&args.args) {
+        eprintln!("{msg}");
         std::process::exit(128);
     }
     git_passthrough::run("switch", &args.args)
@@ -130,8 +135,6 @@ fn check_worktree_conflict(args: &[String]) -> std::result::Result<(), String> {
 }
 
 fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
-    use grit_lib::repo::Repository;
-
     let repo = match Repository::discover(None) {
         Ok(r) => r,
         Err(_) => return Ok(()),
@@ -218,4 +221,97 @@ fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
     }
 
     Ok(())
+}
+
+fn check_ambiguous_remote_tracking(args: &[String]) -> std::result::Result<(), String> {
+    if args.iter().any(|arg| arg == "--no-guess") {
+        return Ok(());
+    }
+
+    let mut positional: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            positional.extend_from_slice(&args[i + 1..]);
+            break;
+        }
+        if arg.starts_with('-') {
+            let takes_value = matches!(
+                arg.as_str(),
+                "-c" | "-C" | "--create" | "--force-create" | "--orphan" | "--conflict"
+            );
+            if takes_value && i + 1 < args.len() {
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        positional.push(arg.clone());
+        i += 1;
+    }
+
+    let target = match positional.as_slice() {
+        [branch] => branch.as_str(),
+        [_, start_point]
+            if args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "-c" | "-C" | "--create" | "--force-create")) =>
+        {
+            start_point.as_str()
+        }
+        _ => return Ok(()),
+    };
+
+    if target.contains('/') {
+        return Ok(());
+    }
+
+    let repo = match Repository::discover(None) {
+        Ok(r) => r,
+        Err(_) => return Ok(()),
+    };
+
+    if refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{target}")).is_ok() {
+        return Ok(());
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if matches!(config.get("checkout.guess").as_deref(), Some("false")) {
+        return Ok(());
+    }
+
+    let candidates = refs::list_refs(&repo.git_dir, "refs/remotes/")
+        .map_err(|err| err.to_string())?
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| !name.ends_with("/HEAD"))
+        .filter(|name| name.rsplit('/').next() == Some(target))
+        .collect::<Vec<_>>();
+
+    if candidates.len() <= 1 {
+        return Ok(());
+    }
+
+    if let Some(default_remote) = config.get("checkout.defaultRemote") {
+        let preferred = format!("refs/remotes/{default_remote}/{target}");
+        if candidates.iter().any(|candidate| candidate == &preferred) {
+            return Ok(());
+        }
+    }
+
+    eprintln!("hint: If you meant to check out a remote tracking branch on, e.g. 'origin',");
+    eprintln!("hint: you can do so by fully qualifying the name with the --track option:");
+    eprintln!("hint:");
+    eprintln!("hint:     git switch --track origin/<name>");
+    eprintln!("hint:");
+    eprintln!("hint: If you'd like to always have checkouts of an ambiguous <name> prefer");
+    eprintln!("hint: one remote, e.g. the 'origin' remote, consider setting");
+    eprintln!("hint: checkout.defaultRemote=origin in your config.");
+    Err(format!(
+        "fatal: '{}' matched multiple ({}) remote tracking branches",
+        target,
+        candidates.len()
+    ))
 }

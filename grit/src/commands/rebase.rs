@@ -90,6 +90,22 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// Preserve merge structure during replay.
+    #[arg(long = "rebase-merges")]
+    pub rebase_merges: bool,
+
+    /// Rebase all reachable commits, including the root commit.
+    #[arg(long = "root")]
+    pub root: bool,
+
+    /// Strategy-specific option passed through to the merge backend.
+    #[arg(short = 'X', long = "strategy-option")]
+    pub strategy_option: Vec<String>,
+
+    /// Control how commits that become empty are handled.
+    #[arg(long = "empty")]
+    pub empty: Option<String>,
+
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
@@ -227,11 +243,63 @@ impl TodoItem {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum EmptyMode {
+    #[default]
+    Keep,
+    Ask,
+}
+
+impl EmptyMode {
+    fn from_arg(value: Option<&str>) -> Result<Self> {
+        match value {
+            None | Some("keep") => Ok(Self::Keep),
+            Some("ask") => Ok(Self::Ask),
+            Some(other) => bail!("unsupported --empty mode '{other}'"),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Ask => "ask",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self> {
+        Self::from_arg(Some(value))
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct RebaseOptions {
+    empty: EmptyMode,
+    subtree: Option<String>,
+}
+
+impl RebaseOptions {
+    fn from_args(args: &Args) -> Result<Self> {
+        Ok(Self {
+            empty: EmptyMode::from_arg(args.empty.as_deref())?,
+            subtree: args
+                .strategy_option
+                .iter()
+                .find_map(|opt| opt.strip_prefix("subtree=").map(ToOwned::to_owned)),
+        })
+    }
+}
+
+enum ReplayStatus {
+    Applied,
+    EmptyStopped,
+}
+
 // ── Main rebase flow ────────────────────────────────────────────────
 
 fn do_rebase(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
+    let rebase_options = RebaseOptions::from_args(&args)?;
 
     if is_rebase_in_progress(git_dir) {
         bail!(
@@ -272,11 +340,6 @@ fn do_rebase(args: Args) -> Result<()> {
         return do_interactive_stub(&repo, &args);
     }
 
-    // Resolve upstream
-    let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
-    let upstream_oid = resolve_revision(&repo, upstream_spec)
-        .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-
     // Resolve current HEAD early (needed for --keep-base)
     let head_state = resolve_head(git_dir)?;
     let head_oid_early = head_state
@@ -284,14 +347,27 @@ fn do_rebase(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
         .to_owned();
 
+    // Resolve upstream
+    let upstream_oid = if args.root {
+        None
+    } else {
+        let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
+        Some(
+            resolve_revision(&repo, upstream_spec)
+                .with_context(|| format!("bad revision '{upstream_spec}'"))?,
+        )
+    };
+
     // Resolve onto (defaults to upstream, or merge-base with --keep-base)
     let onto_oid = if let Some(ref onto_spec) = args.onto {
         resolve_revision(&repo, onto_spec).with_context(|| format!("bad revision '{onto_spec}'"))?
     } else if args.keep_base {
         // --keep-base: onto = merge-base(upstream, HEAD)
+        let upstream_oid =
+            upstream_oid.ok_or_else(|| anyhow::anyhow!("--keep-base requires an upstream"))?;
         find_merge_base(&repo, upstream_oid, head_oid_early).unwrap_or(upstream_oid)
     } else {
-        upstream_oid
+        upstream_oid.unwrap_or(head_oid_early)
     };
 
     // Use the already-resolved HEAD
@@ -305,7 +381,15 @@ fn do_rebase(args: Args) -> Result<()> {
     }
 
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
-    let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
+    let commits = if args.root {
+        collect_commits_from_root(&repo, head_oid)?
+    } else {
+        collect_commits_to_replay(
+            &repo,
+            head_oid,
+            upstream_oid.ok_or_else(|| anyhow::anyhow!("missing upstream"))?,
+        )?
+    };
 
     // Fast-forward detection: if the first commit to replay is already a child
     // of onto, then replaying would produce identical commits → noop.
@@ -352,6 +436,10 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
+    fs::write(rb_dir.join("empty"), rebase_options.empty.as_str())?;
+    if let Some(ref subtree) = rebase_options.subtree {
+        fs::write(rb_dir.join("strategy-subtree"), subtree)?;
+    }
     // Write the "rebasing" marker so git-prompt.sh detects this as a
     // rebase (not an "am" or ambiguous "AM/REBASE").
     fs::write(rb_dir.join("rebasing"), "")?;
@@ -394,7 +482,7 @@ fn do_rebase(args: Args) -> Result<()> {
     );
 
     // Replay each commit
-    replay_remaining(&repo)?;
+    replay_remaining(&repo, &rebase_options)?;
 
     Ok(())
 }
@@ -444,8 +532,29 @@ fn collect_commits_to_replay(
     Ok(commits)
 }
 
+fn collect_commits_from_root(repo: &Repository, head: ObjectId) -> Result<Vec<ObjectId>> {
+    let mut commits = Vec::new();
+    let mut current = head;
+
+    loop {
+        let obj = repo.odb.read(&current)?;
+        if obj.kind != ObjectKind::Commit {
+            break;
+        }
+        let commit = parse_commit(&obj.data)?;
+        commits.push(current);
+        if commit.parents.is_empty() {
+            break;
+        }
+        current = commit.parents[0];
+    }
+
+    commits.reverse();
+    Ok(commits)
+}
+
 /// Replay all remaining commits from the todo list.
-fn replay_remaining(repo: &Repository) -> Result<()> {
+fn replay_remaining(repo: &Repository, options: &RebaseOptions) -> Result<()> {
     let git_dir = &repo.git_dir;
     let rb_dir = rebase_dir(git_dir);
 
@@ -469,8 +578,8 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
             .cloned()
             .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
 
-        match cherry_pick_for_rebase(repo, &commit_oid, item.action) {
-            Ok(()) => {
+        match cherry_pick_for_rebase(repo, &commit_oid, item.action, options) {
+            Ok(ReplayStatus::Applied) => {
                 let head = resolve_head(git_dir)?;
                 let new_oid = *head
                     .oid()
@@ -514,6 +623,22 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                     }
                 }
             }
+            Ok(ReplayStatus::EmptyStopped) => {
+                write_todo(&rb_dir, &todo[i + 1..])?;
+                fs::write(rb_dir.join("msgnum"), "1")?;
+                fs::write(rb_dir.join("end"), todo[i + 1..].len().to_string())?;
+
+                let obj = repo.odb.read(&commit_oid)?;
+                let commit = parse_commit(&obj.data)?;
+                let subject = commit.message.lines().next().unwrap_or("");
+                eprintln!(
+                    "The previous cherry-pick is now empty, possibly due to conflict resolution.\n\
+                     hint: run \"grit rebase --skip\" to skip this commit.\n\
+                     hint: subject: {}",
+                    subject
+                );
+                std::process::exit(1);
+            }
             Err(_e) => {
                 // Conflicts — leave state for --continue
                 write_todo(&rb_dir, &todo[i + 1..])?;
@@ -548,20 +673,12 @@ fn cherry_pick_for_rebase(
     repo: &Repository,
     commit_oid: &ObjectId,
     action: TodoAction,
-) -> Result<()> {
+    options: &RebaseOptions,
+) -> Result<ReplayStatus> {
     let git_dir = &repo.git_dir;
 
     let commit_obj = repo.odb.read(commit_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
-
-    // Parent tree (base for the cherry-pick)
-    let parent_oid = commit
-        .parents
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick root commit in rebase"))?;
-    let parent_obj = repo.odb.read(parent_oid)?;
-    let parent_commit = parse_commit(&parent_obj.data)?;
-    let parent_tree_oid = parent_commit.tree;
 
     // Commit's tree (theirs — the changes we want)
     let commit_tree_oid = commit.tree;
@@ -577,9 +694,25 @@ fn cherry_pick_for_rebase(
     let head_tree_oid = head_commit.tree;
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
-    let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
+    let reference_entries = tree_to_index_entries(repo, &head_tree_oid, "")?;
+    let base_entries = if let Some(parent_oid) = commit.parents.first() {
+        let parent_obj = repo.odb.read(parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        self::subtree_adjust_entries(
+            tree_to_index_entries(repo, &parent_commit.tree, "")?,
+            options.subtree.as_deref(),
+            &reference_entries,
+        )
+    } else {
+        Vec::new()
+    };
+    let ours_entries = tree_to_map(reference_entries.clone());
+    let theirs_entries = tree_to_map(self::subtree_adjust_entries(
+        tree_to_index_entries(repo, &commit_tree_oid, "")?,
+        options.subtree.as_deref(),
+        &reference_entries,
+    ));
+    let base_entries = tree_to_map(base_entries);
 
     let merged_index =
         three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
@@ -603,6 +736,9 @@ fn cherry_pick_for_rebase(
 
     // Create the rebased commit, preserving the original author
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
+    if options.empty == EmptyMode::Ask && tree_oid == head_tree_oid {
+        return Ok(ReplayStatus::EmptyStopped);
+    }
 
     let config = ConfigSet::load(Some(git_dir), true)?;
     let now = time::OffsetDateTime::now_utc();
@@ -629,7 +765,7 @@ fn cherry_pick_for_rebase(
     // Update HEAD (detached)
     fs::write(git_dir.join("HEAD"), format!("{}\n", new_oid.to_hex()))?;
 
-    Ok(())
+    Ok(ReplayStatus::Applied)
 }
 
 /// Finish the rebase: point the original branch at the new HEAD.
@@ -751,7 +887,8 @@ fn do_continue() -> Result<()> {
     eprintln!("Applying: {}", subject);
 
     // Continue with remaining
-    replay_remaining(&repo)?;
+    let options = load_rebase_options(&rb_dir)?;
+    replay_remaining(&repo, &options)?;
 
     Ok(())
 }
@@ -790,7 +927,8 @@ fn do_skip() -> Result<()> {
     // Advance past the current commit in the todo list
     // (replay_remaining reads todo and msgnum, so just advance msgnum or trim todo)
     // The todo was already trimmed when conflicts happened, so just continue
-    replay_remaining(&repo)?;
+    let options = load_rebase_options(&rebase_dir(git_dir))?;
+    replay_remaining(&repo, &options)?;
 
     Ok(())
 }
@@ -929,7 +1067,8 @@ fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
         format!("{}\n", head_oid.to_hex()),
     )?;
 
-    replay_remaining(repo)
+    let options = load_rebase_options(&rb_dir)?;
+    replay_remaining(repo, &options)
 }
 
 // ── Cleanup ─────────────────────────────────────────────────────────
@@ -938,6 +1077,19 @@ fn cleanup_rebase_state(git_dir: &Path) {
     let rb_dir = rebase_dir(git_dir);
     let _ = fs::remove_dir_all(&rb_dir);
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+}
+
+fn load_rebase_options(rb_dir: &Path) -> Result<RebaseOptions> {
+    let empty = fs::read_to_string(rb_dir.join("empty"))
+        .ok()
+        .map(|value| EmptyMode::parse(value.trim()))
+        .transpose()?
+        .unwrap_or_default();
+    let subtree = fs::read_to_string(rb_dir.join("strategy-subtree"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(RebaseOptions { empty, subtree })
 }
 
 fn load_todo(rb_dir: &Path) -> Result<Vec<TodoItem>> {
@@ -1177,6 +1329,74 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
         out.insert(e.path.clone(), e);
     }
     out
+}
+
+fn subtree_adjust_entries(
+    entries: Vec<IndexEntry>,
+    subtree: Option<&str>,
+    reference_entries: &[IndexEntry],
+) -> Vec<IndexEntry> {
+    let Some(subtree) = subtree else {
+        return entries;
+    };
+    let reference_paths: HashSet<Vec<u8>> =
+        reference_entries.iter().map(|e| e.path.clone()).collect();
+    let original_score = overlap_score(&entries, &reference_paths);
+    let prefixed = prefix_entries(&entries, subtree);
+    let prefixed_score = overlap_score(&prefixed, &reference_paths);
+    let stripped = strip_entries(&entries, subtree);
+    let stripped_score = overlap_score(&stripped, &reference_paths);
+
+    if prefixed_score > original_score && prefixed_score >= stripped_score {
+        prefixed
+    } else if stripped_score > original_score {
+        stripped
+    } else {
+        entries
+    }
+}
+
+fn overlap_score(entries: &[IndexEntry], reference_paths: &HashSet<Vec<u8>>) -> usize {
+    entries
+        .iter()
+        .filter(|entry| reference_paths.contains(&entry.path))
+        .count()
+}
+
+fn prefix_entries(entries: &[IndexEntry], subtree: &str) -> Vec<IndexEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            let mut updated = entry.clone();
+            let mut path = subtree.as_bytes().to_vec();
+            if !path.is_empty() {
+                path.push(b'/');
+            }
+            path.extend_from_slice(&entry.path);
+            updated.flags = path.len().min(0x0FFF) as u16;
+            updated.path = path;
+            updated
+        })
+        .collect()
+}
+
+fn strip_entries(entries: &[IndexEntry], subtree: &str) -> Vec<IndexEntry> {
+    let mut prefix = subtree.as_bytes().to_vec();
+    if !prefix.is_empty() {
+        prefix.push(b'/');
+    }
+
+    let mut stripped = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let Some(rest) = entry.path.strip_prefix(prefix.as_slice()) else {
+            return entries.to_vec();
+        };
+        let mut updated = entry.clone();
+        updated.flags = rest.len().min(0x0FFF) as u16;
+        updated.path = rest.to_vec();
+        stripped.push(updated);
+    }
+    stripped
 }
 
 fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {

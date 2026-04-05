@@ -180,7 +180,7 @@ commit → check it off → move on.
 - [x] `t2104-update-index-skip-worktree` ████████████████████ 7/7 (0 left) — skip-worktree bit test
 - [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
 
-- [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
+- [x] `t2027-checkout-track` ████████████████████ 5/5 (0 left) — tests for git branch --track
 - [x] `t2202-add-addremove` ████████████████████ 3/3 (0 left) — git add --all
 - [ ] `t2018-checkout-branch` ████████████████░░░░ 21/25 (4 left) — checkout
 - [ ] `t2006-checkout-index-basic` ███████████░░░░░░░░░ 5/9 (4 left) — basic checkout-index tests
@@ -260,7 +260,7 @@ commit → check it off → move on.
 - [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
 - [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
 
-- [ ] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
+- [~] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
 
 - [ ] `t3506-cherry-pick-ff` ████████████░░░░░░░░ 7/11 (4 left) — test cherry-picking with --ff option
 - [ ] `t3103-ls-tree-misc` ████████████░░░░░░░░ 6/10 (4 left) — 
@@ -384,11 +384,11 @@ commit → check it off → move on.
 
 - [x] `t4025-hunk-header` ████████████████████ 2/2 (done) — diff hunk header truncation
 - [x] `t4066-diff-emit-delay` ████████████████████ 2/2 (done) — test combined/stat/moved interaction
-- [ ] `t4123-apply-shrink` ██████████░░░░░░░░░░ 1/2 (1 left) — apply a patch that is larger than the preimage
-- [ ] `t4134-apply-submodule` ██████████░░░░░░░░░░ 1/2 (1 left) — git apply submodule tests
+- [x] `t4123-apply-shrink` ████████████████████ 2/2 (done) — apply a patch that is larger than the preimage
+- [x] `t4134-apply-submodule` ████████████████████ 2/2 (done) — git apply submodule tests
 - [ ] `t4256-am-format-flowed` ██████████░░░░░░░░░░ 1/2 (1 left) — test format=flowed support of git am
-- [ ] `t4029-diff-trailing-space` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — diff honors config option, diff.suppressBlankEmpty
-- [ ] `t4110-apply-scan` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git apply test for patches which require scanning forwards and backwards.
+- [x] `t4029-diff-trailing-space` ████████████████████ 1/1 (done) — diff honors config option, diff.suppressBlankEmpty
+- [x] `t4110-apply-scan` ████████████████████ 1/1 (done) — git apply test for patches which require scanning forwards and backwards.
 
 - [ ] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
 

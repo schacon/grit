@@ -2,7 +2,28 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2027 bash scripts/run-upstream-tests.sh t2027-checkout-track 2>&1 | tail -40`: initial reproduction showed 4/5 passing with the ambiguous remote-tracking case still failing; after teaching `checkout` to emit the `git checkout --track` ambiguity hint and `switch` to emit `git switch --track` before passthrough, the rerun completed with 5/5 passing against rebuilt `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2027 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan bash scripts/run-upstream-tests.sh t4110-apply-scan 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 1/1 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4123-apply-shrink bash scripts/run-upstream-tests.sh t4123-apply-shrink 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4123-apply-shrink cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4029-diff-trailing-space bash scripts/run-upstream-tests.sh t4029-diff-trailing-space 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 1/1 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4029-diff-trailing-space cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay bash scripts/run-upstream-tests.sh t4066-diff-emit-delay 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4134-apply-submodule bash scripts/run-upstream-tests.sh t4134-apply-submodule 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4134-apply-submodule cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.

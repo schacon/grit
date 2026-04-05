@@ -138,6 +138,10 @@ pub struct Args {
     /// Read the commit message from the given file.
     #[arg(short = 'F', long = "file", value_name = "FILE")]
     pub file: Option<String>,
+
+    /// Allow merging histories that do not share a common ancestor.
+    #[arg(long = "allow-unrelated-histories")]
+    pub allow_unrelated_histories: bool,
 }
 
 /// Apply branch.<name>.mergeoptions to the args.
@@ -618,13 +622,26 @@ fn do_real_merge(
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
-    if bases.is_empty() {
-        bail!("refusing to merge unrelated histories");
-    }
     // If multiple merge bases (criss-cross):
     // - resolve strategy: fail (doesn't support virtual merge bases)
     // - recursive/ort: create a virtual merge base
-    let base_oid = if bases.len() > 1 {
+    let base_oid = if bases.is_empty() {
+        if !args.allow_unrelated_histories {
+            bail!("refusing to merge unrelated histories");
+        }
+        let empty_tree = repo.odb.write(ObjectKind::Tree, &[])?;
+        let commit_data = CommitData {
+            tree: empty_tree,
+            parents: vec![],
+            author: "virtual <virtual> 0 +0000".to_string(),
+            committer: "virtual <virtual> 0 +0000".to_string(),
+            encoding: None,
+            message: "virtual base".to_string(),
+            raw_message: None,
+        };
+        let commit_bytes = serialize_commit(&commit_data);
+        repo.odb.write(ObjectKind::Commit, &commit_bytes)?
+    } else if bases.len() > 1 {
         if args.strategy.as_deref() == Some("resolve") {
             bail!("merge: warning: multiple common ancestors found");
         }
@@ -1176,8 +1193,22 @@ fn do_strategy_ours(
         format!("{}\n", head_oid.to_hex()),
     )?;
 
-    let tree_oid = commit_tree(repo, head_oid)?;
     let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+
+    if args.no_commit {
+        fs::write(
+            repo.git_dir.join("MERGE_HEAD"),
+            format!("{}\n", merge_oid.to_hex()),
+        )?;
+        fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
+        fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
+        if !args.quiet {
+            eprintln!("Automatic merge went well; stopped before committing as requested");
+        }
+        return Ok(());
+    }
+
+    let tree_oid = commit_tree(repo, head_oid)?;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();

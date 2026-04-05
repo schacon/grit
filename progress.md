@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    81 |
-| In progress |     0 |
-| Remaining   |   685 |
+| Completed   |    86 |
+| In progress |     1 |
+| Remaining   |   679 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t2027-checkout-track` — 5/5 tests pass (`checkout` now detects ambiguous remote-tracking branch names and emits the expected `--track` hint, while `switch` intercepts the same ambiguity before passthrough so the advice mentions `git switch --track`; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t2027 bash scripts/run-upstream-tests.sh t2027-checkout-track 2>&1 | tail -40` against rebuilt `target/release/grit`)
+- `t4110-apply-scan` — 1/1 test passes (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan bash scripts/run-upstream-tests.sh t4110-apply-scan 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t4123-apply-shrink` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4123-apply-shrink bash scripts/run-upstream-tests.sh t4123-apply-shrink 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t4029-diff-trailing-space` — 1/1 test passes (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4029-diff-trailing-space bash scripts/run-upstream-tests.sh t4029-diff-trailing-space 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t4134-apply-submodule` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4134-apply-submodule bash scripts/run-upstream-tests.sh t4134-apply-submodule 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t4066-diff-emit-delay` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay bash scripts/run-upstream-tests.sh t4066-diff-emit-delay 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t3305-notes-fanout` — 7/7 tests pass (`git notes` now rewrites note trees with automatic `2/38` fanout once the note count crosses the threshold, preserves mixed non-note entries while reading and writing nested notes trees, and `git log` now loads fanout notes recursively for display)
 - `t4065-diff-anchored` — 7/7 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored bash scripts/run-upstream-tests.sh t4065-diff-anchored 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
@@ -74,4 +79,4 @@
 
 ## What Remains
 
-685 test files still pending. See `PLAN.md` for the full prioritized list.
+679 test files still pending. See `PLAN.md` for the full prioritized list.

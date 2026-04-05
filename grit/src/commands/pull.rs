@@ -211,6 +211,10 @@ fn do_merge_or_rebase(
             fork_point: false,
             no_fork_point: false,
             verbose: false,
+            rebase_merges: false,
+            root: false,
+            strategy_option: Vec::new(),
+            empty: None,
         };
         super::rebase::run(rebase_args)
     } else {
@@ -263,6 +267,7 @@ fn do_merge_or_rebase(
             autostash: false,
             cleanup: None,
             file: None,
+            allow_unrelated_histories: false,
         };
         super::merge::run(merge_args)
     }

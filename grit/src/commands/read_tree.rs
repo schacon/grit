@@ -34,7 +34,7 @@ pub struct Args {
     #[arg(long)]
     pub reset: bool,
 
-    /// Stage a tree into the index under the given prefix (must end with /).
+    /// Stage a tree into the index under the given prefix.
     #[arg(long)]
     pub prefix: Option<String>,
 
@@ -143,14 +143,19 @@ pub fn run(args: Args) -> Result<()> {
         bail!("too many trees (max 3)");
     }
 
-    if let Some(prefix) = &args.prefix {
+    let normalized_prefix = args.prefix.as_ref().map(|prefix| {
+        if prefix.is_empty() || prefix.ends_with('/') {
+            prefix.clone()
+        } else {
+            format!("{prefix}/")
+        }
+    });
+
+    if let Some(prefix) = &normalized_prefix {
         if prefix.starts_with('/') {
             bail!("--prefix must be relative to repository root");
         }
-        if !prefix.is_empty() && !prefix.ends_with('/') {
-            bail!("--prefix requires a trailing '/'");
-        }
-        if args.merge || args.update || args.reset || tree_oids.len() != 1 {
+        if args.merge || args.reset || tree_oids.len() != 1 {
             bail!("--prefix only supports a single non-merge tree read");
         }
     }
@@ -174,7 +179,7 @@ pub fn run(args: Args) -> Result<()> {
     let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
     let mut new_index = old_index.clone();
 
-    if let Some(prefix) = &args.prefix {
+    if let Some(prefix) = &normalized_prefix {
         read_tree_into_index_prefixed(&repo, &tree_oids[0], prefix, &mut new_index, prot)?;
     } else if !args.merge {
         if tree_oids.len() == 1 {

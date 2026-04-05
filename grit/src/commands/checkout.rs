@@ -390,6 +390,10 @@ pub fn run(args: Args) -> Result<()> {
         return switch_branch(&repo, &target, &branch_ref, args.force, args.merge);
     }
 
+    if !args.no_guess {
+        emit_ambiguous_remote_tracking_hint(&repo, &target, "checkout")?;
+    }
+
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
         Ok(oid) => detach_head(&repo, &oid, args.force),
@@ -2025,6 +2029,53 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
 
     checkout_eprintln!("HEAD is now at {} {}", abbrev, subject);
     Ok(())
+}
+
+fn emit_ambiguous_remote_tracking_hint(
+    repo: &Repository,
+    target: &str,
+    command_name: &str,
+) -> Result<()> {
+    if target.contains('/') {
+        return Ok(());
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if matches!(config.get("checkout.guess").as_deref(), Some("false")) {
+        return Ok(());
+    }
+
+    let candidates = refs::list_refs(&repo.git_dir, "refs/remotes/")?
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|name| !name.ends_with("/HEAD"))
+        .filter(|name| name.rsplit('/').next() == Some(target))
+        .collect::<Vec<_>>();
+
+    if candidates.len() <= 1 {
+        return Ok(());
+    }
+
+    if let Some(default_remote) = config.get("checkout.defaultRemote") {
+        let preferred = format!("refs/remotes/{default_remote}/{target}");
+        if candidates.iter().any(|candidate| candidate == &preferred) {
+            return Ok(());
+        }
+    }
+
+    eprintln!("hint: If you meant to check out a remote tracking branch on, e.g. 'origin',");
+    eprintln!("hint: you can do so by fully qualifying the name with the --track option:");
+    eprintln!("hint:");
+    eprintln!("hint:     git {command_name} --track origin/<name>");
+    eprintln!("hint:");
+    eprintln!("hint: If you'd like to always have checkouts of an ambiguous <name> prefer");
+    eprintln!("hint: one remote, e.g. the 'origin' remote, consider setting");
+    eprintln!("hint: checkout.defaultRemote=origin in your config.");
+    bail!(
+        "fatal: '{}' matched multiple ({}) remote tracking branches",
+        target,
+        candidates.len()
+    );
 }
 
 // ---------------------------------------------------------------------------
