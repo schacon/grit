@@ -938,7 +938,7 @@ commit → check it off → move on.
 - [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
 - [ ] `t9303-fast-import-compression` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — compression setting of fast-import utility
 - [ ] `t9350-fast-export` ██████████████░░░░░░ 53/73 (20 left) — git fast-export
-- [ ] `t9903-bash-prompt` ░░░░░░░░░░░░░░░░░░░░ 1/67 (66 left) — test git-specific bash prompt functions
+- [x] `t9903-bash-prompt` ████████████████████ 67/67 (0 left) — test git-specific bash prompt functions
 - [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 

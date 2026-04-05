@@ -1517,7 +1517,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
         "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
         "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
-        "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
+        "rebase" => {
+            if rest.iter().any(|arg| arg == "-i" || arg == "--interactive") {
+                commands::git_passthrough::run("rebase", rest)
+            } else {
+                commands::rebase::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
             let rest = preprocess_log_args(rest);

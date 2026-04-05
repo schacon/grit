@@ -180,7 +180,7 @@ pub fn run(mut args: Args) -> Result<()> {
 //   end         — total number of patches
 
 fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
-    git_dir.join("rebase-apply")
+    git_dir.join("rebase-merge")
 }
 
 fn is_rebase_in_progress(git_dir: &Path) -> bool {
@@ -404,7 +404,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
 
     let todo_content = fs::read_to_string(rb_dir.join("todo"))?;
     let todo: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
-    let _total: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
+    let total_for_prompt: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
     let msgnum: usize = fs::read_to_string(rb_dir.join("msgnum"))?.trim().parse()?;
 
     for i in (msgnum - 1)..todo.len() {
@@ -462,7 +462,8 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                             let remaining: Vec<&str> = todo[i + 1..].to_vec();
                             fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                             fs::write(rb_dir.join("msgnum"), "1")?;
-                            fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                            fs::write(rb_dir.join("end"), total_for_prompt.to_string())?;
+                            fs::write(rb_dir.join("last"), total_for_prompt.to_string())?;
                             std::process::exit(code);
                         }
                     }
@@ -473,7 +474,8 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                 let remaining: Vec<&str> = todo[i + 1..].to_vec();
                 fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                 fs::write(rb_dir.join("msgnum"), "1")?;
-                fs::write(rb_dir.join("end"), remaining.len().to_string())?;
+                fs::write(rb_dir.join("end"), total_for_prompt.to_string())?;
+                fs::write(rb_dir.join("last"), total_for_prompt.to_string())?;
 
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
@@ -824,6 +826,8 @@ fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
 fn cleanup_rebase_state(git_dir: &Path) {
     let rb_dir = rebase_dir(git_dir);
     let _ = fs::remove_dir_all(&rb_dir);
+    // Legacy location used by older grit versions.
+    let _ = fs::remove_dir_all(git_dir.join("rebase-apply"));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 }
 

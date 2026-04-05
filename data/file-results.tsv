@@ -1009,4 +1009,4 @@ t9835-git-p4-metadata-encoding-python2	yes	0	0	0	ok	0	0	0
 t9836-git-p4-metadata-encoding-python3	yes	0	0	0	ok	0	0	0
 t9850-shell	yes	5	5	0	ok	5	5	0
 t9902-completion	yes	263	21	242	ok	19	261	2
-t9903-bash-prompt	yes	67	1	66	ok	1	67	0
+t9903-bash-prompt	yes	67	67	0	ok	67	67	0
