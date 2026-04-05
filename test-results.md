@@ -58,3 +58,8 @@
 - `./scripts/run-tests.sh t6400-merge-df.sh`: 7/7 passing (regression check after merge preflight updates).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge preflight updates).
 - `./scripts/run-tests.sh t3600-rm.sh`: 49/82 passing (status snapshot regression run after `rm` symlink handling change; suite remains partially implemented overall).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6439-merge-co-error-msgs.sh`: 6/6 passing (direct validation after fast-forward preflight safety, merge/check-out error-message ordering, and verbosity-sensitive strategy-failure trailer fixes).
+- `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (now fully passing).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after `t6439` merge-core safety/message updates).
+- `./scripts/run-tests.sh t6415-merge-dir-to-symlink.sh`: 24/24 passing (regression check after `t6439` merge-core safety/message updates).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (regression check after `t6439` merge-core safety/message updates).

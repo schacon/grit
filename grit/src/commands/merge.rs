@@ -440,7 +440,6 @@ pub fn run(mut args: Args) -> Result<()> {
 fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let merge_oid = resolve_merge_target(repo, &args.commits[0])?;
     update_head(&repo.git_dir, head, &merge_oid)?;
-
     // Update index and working tree
     let commit_obj = repo.odb.read(&merge_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
@@ -478,8 +477,6 @@ fn do_fast_forward(
         format!("{}\n", head_oid.to_hex()),
     )?;
 
-    update_head(&repo.git_dir, head, &merge_oid)?;
-
     // Update index and working tree
     let commit_obj = repo.odb.read(&merge_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
@@ -488,10 +485,14 @@ fn do_fast_forward(
     new_index.entries = entries;
     new_index.sort();
 
+    let old_tree = commit_tree(repo, head_oid)?;
+    let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
+    bail_if_merge_would_overwrite_local_changes(repo, &old_entries, &new_index, false)?;
+
+    update_head(&repo.git_dir, head, &merge_oid)?;
+
     if let Some(ref wt) = repo.work_tree {
         // Remove files that existed in old HEAD but not in new
-        let old_tree = commit_tree(repo, head_oid)?;
-        let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
         remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index)?;
     }
@@ -703,7 +704,16 @@ fn do_real_merge(
     )?;
 
     // Refuse merges that would overwrite local changes or untracked files.
-    bail_if_merge_would_overwrite_local_changes(repo, &ours_entries, &merge_result.index)?;
+    let append_strategy_failed = std::env::var("GIT_MERGE_VERBOSITY")
+        .ok()
+        .as_deref()
+        .is_some_and(|v| v.trim() == "0");
+    bail_if_merge_would_overwrite_local_changes(
+        repo,
+        &ours_entries,
+        &merge_result.index,
+        append_strategy_failed,
+    )?;
 
     // Write index
     merge_result.index.write(&repo.index_path())?;
@@ -884,10 +894,12 @@ fn bail_if_merge_would_overwrite_local_changes(
     repo: &Repository,
     old_entries: &HashMap<Vec<u8>, IndexEntry>,
     new_index: &Index,
+    append_strategy_failed: bool,
 ) -> Result<()> {
     let Some(work_tree) = repo.work_tree.as_deref() else {
         return Ok(());
     };
+    let current_index = Index::load(&repo.index_path())?;
 
     let new_map: HashMap<&[u8], &IndexEntry> = new_index
         .entries
@@ -897,6 +909,14 @@ fn bail_if_merge_would_overwrite_local_changes(
         .collect();
 
     let mut overwrite_local: BTreeSet<String> = BTreeSet::new();
+    let current_tracked_paths: BTreeSet<Vec<u8>> = current_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    // Dirty tracked paths from HEAD that would change in the target.
     for (path, old_entry) in old_entries {
         let changed = match new_map.get(path.as_slice()) {
             Some(new_entry) => new_entry.oid != old_entry.oid || new_entry.mode != old_entry.mode,
@@ -916,19 +936,94 @@ fn bail_if_merge_would_overwrite_local_changes(
         }
     }
 
+    // Staged changes (including staged additions) that would be overwritten.
+    for idx_entry in &current_index.entries {
+        if idx_entry.stage() != 0 {
+            continue;
+        }
+        let head_entry = old_entries.get(&idx_entry.path);
+        let is_staged = match head_entry {
+            Some(head) => head.oid != idx_entry.oid || head.mode != idx_entry.mode,
+            None => true, // staged addition
+        };
+        if !is_staged {
+            continue;
+        }
+
+        let new_entry = new_map.get(idx_entry.path.as_slice()).copied();
+        let staged_matches_target = match new_entry {
+            Some(ne) => ne.oid == idx_entry.oid && ne.mode == idx_entry.mode,
+            None => false,
+        };
+        if staged_matches_target {
+            continue;
+        }
+
+        let target_changes = match (head_entry, new_entry) {
+            (Some(head), Some(ne)) => ne.oid != head.oid || ne.mode != head.mode,
+            (Some(_), None) => true,
+            (None, Some(_)) => true,
+            (None, None) => false,
+        };
+        if !target_changes {
+            continue;
+        }
+
+        if new_entry.is_none() && head_entry.is_some() {
+            continue;
+        }
+
+        overwrite_local.insert(String::from_utf8_lossy(&idx_entry.path).to_string());
+    }
+
     let mut overwrite_untracked: BTreeSet<String> = BTreeSet::new();
-    let old_tracked: BTreeSet<Vec<u8>> = old_entries.keys().cloned().collect();
+    for new_entry in new_index.entries.iter().filter(|e| e.stage() == 0) {
+        if current_tracked_paths.contains(&new_entry.path) {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(&new_entry.path).to_string();
+        let abs = work_tree.join(&rel);
+        let Ok(_meta) = fs::symlink_metadata(&abs) else {
+            continue;
+        };
+
+        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
+            let mut prefix = String::new();
+            for component in rel.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                if prefix.len() < rel.len() && current_tracked_paths.contains(prefix.as_bytes()) {
+                    return true;
+                }
+            }
+            false
+        });
+        let replaces_tracked_dir = current_tracked_paths.iter().any(|path| {
+            path.starts_with(&new_entry.path)
+                && path.len() > new_entry.path.len()
+                && path.get(new_entry.path.len()) == Some(&b'/')
+        });
+        if !has_tracked_prefix && !replaces_tracked_dir {
+            overwrite_untracked.insert(rel);
+        }
+    }
+
+    // Also protect untracked files nested beneath directories that turn into
+    // files/symlinks in the merge result (directory→file transitions).
     for new_entry in &new_index.entries {
         if new_entry.stage() != 0 {
             continue;
         }
-        if old_entries.contains_key(&new_entry.path) {
+        if current_tracked_paths.contains(&new_entry.path) {
             continue;
         }
 
         let mut prefix = new_entry.path.clone();
         prefix.push(b'/');
-        let replaces_tracked_dir = old_entries.keys().any(|p| p.starts_with(&prefix));
+        let replaces_tracked_dir = current_tracked_paths.iter().any(|p| p.starts_with(&prefix));
         if !replaces_tracked_dir {
             continue;
         }
@@ -958,32 +1053,43 @@ fn bail_if_merge_would_overwrite_local_changes(
                     stack.push((child_abs, child_rel));
                     continue;
                 }
-                if !old_tracked.contains(child_rel.as_bytes()) {
+                if !current_tracked_paths.contains(child_rel.as_bytes()) {
                     overwrite_untracked.insert(child_rel);
                 }
             }
         }
     }
 
-    if !overwrite_local.is_empty() {
-        let mut msg = String::from(
-            "error: Your local changes to the following files would be overwritten by merge:\n",
-        );
-        for path in &overwrite_local {
-            msg.push_str(&format!("\t{path}\n"));
+    if !overwrite_local.is_empty() || !overwrite_untracked.is_empty() {
+        let mut msg = String::new();
+        if !overwrite_local.is_empty() {
+            msg.push_str(
+                "Your local changes to the following files would be overwritten by merge:\n",
+            );
+            for path in &overwrite_local {
+                msg.push_str(&format!("\t{path}\n"));
+            }
+            msg.push_str("Please commit your changes or stash them before you merge.\n");
         }
-        msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
-        bail!("{msg}");
-    }
 
-    if !overwrite_untracked.is_empty() {
-        let mut msg = String::from(
-            "error: The following untracked working tree files would be overwritten by merge:\n",
-        );
-        for path in &overwrite_untracked {
-            msg.push_str(&format!("\t{path}\n"));
+        if !overwrite_untracked.is_empty() {
+            if overwrite_local.is_empty() {
+                msg.push_str(
+                    "The following untracked working tree files would be overwritten by merge:\n",
+                );
+            } else {
+                msg.push_str("error: The following untracked working tree files would be overwritten by merge:\n");
+            }
+            for path in &overwrite_untracked {
+                msg.push_str(&format!("\t{path}\n"));
+            }
+            msg.push_str("Please move or remove them before you merge.\n");
         }
-        msg.push_str("Please move or remove them before you merge.\nAborting");
+
+        msg.push_str("Aborting");
+        if append_strategy_failed {
+            msg.push_str("\nMerge with strategy ort failed.");
+        }
         bail!("{msg}");
     }
 

@@ -876,7 +876,7 @@ fn check_dirty_worktree(
 
     if !would_overwrite.is_empty() {
         let mut msg = String::from(
-            "error: Your local changes to the following files would be overwritten by checkout:\n",
+            "Your local changes to the following files would be overwritten by checkout:\n",
         );
         for path in &would_overwrite {
             msg.push_str(&format!("\t{}\n", path));
@@ -949,21 +949,15 @@ fn check_dirty_worktree(
                     continue; // target doesn't touch this file, staged change is safe
                 }
 
-                // Both staged and target change the file from HEAD.
-                // If the target removes the file but we have staged changes,
-                // git allows this (file is preserved in index/worktree).
-                // Only block if target adds/changes to different content.
-                if new_entry.is_none() && head_oid.is_some() {
-                    continue; // target removes, but our staged version can be carried
-                }
-
                 // The index differs from both HEAD and the target, so
                 // switching would silently discard the staged change.
                 let rel_path = String::from_utf8_lossy(path_bytes);
                 staged_conflicts.push(rel_path.into_owned());
             }
             if !staged_conflicts.is_empty() {
-                let mut msg = String::from("error: Your local changes to the following files would be overwritten by checkout:\n");
+                let mut msg = String::from(
+                    "Your local changes to the following files would be overwritten by checkout:\n",
+                );
                 for path in &staged_conflicts {
                     msg.push_str(&format!("\t{}\n", path));
                 }
@@ -983,6 +977,7 @@ fn check_dirty_worktree(
         .collect();
 
     let mut untracked_conflicts = Vec::new();
+    let mut dir_untracked_conflicts = Vec::new();
     for new_entry in &new_index.entries {
         if new_entry.stage() != 0 {
             continue;
@@ -1026,6 +1021,43 @@ fn check_dirty_worktree(
                         && op_str.as_bytes().get(rel_str.len()) == Some(&b'/')
                 });
 
+                if replaces_tracked_dir && abs_path.is_dir() {
+                    let mut has_untracked_in_dir = false;
+                    let mut stack = vec![abs_path.clone()];
+                    while let Some(dir) = stack.pop() {
+                        let Ok(children) = std::fs::read_dir(&dir) else {
+                            continue;
+                        };
+                        for child in children.flatten() {
+                            let child_path = child.path();
+                            let Ok(meta) = std::fs::symlink_metadata(&child_path) else {
+                                continue;
+                            };
+                            if meta.file_type().is_dir() {
+                                stack.push(child_path);
+                                continue;
+                            }
+
+                            let Ok(rel_child) = child_path.strip_prefix(work_tree) else {
+                                continue;
+                            };
+                            let rel_child_str = rel_child.to_string_lossy().replace('\\', "/");
+                            if !old_paths.contains(rel_child_str.as_bytes()) {
+                                has_untracked_in_dir = true;
+                                break;
+                            }
+                        }
+                        if has_untracked_in_dir {
+                            break;
+                        }
+                    }
+
+                    if has_untracked_in_dir {
+                        dir_untracked_conflicts.push(rel_path.into_owned());
+                    }
+                    continue;
+                }
+
                 if !has_tracked_prefix && !replaces_tracked_dir {
                     untracked_conflicts.push(rel_path.into_owned());
                 }
@@ -1033,9 +1065,22 @@ fn check_dirty_worktree(
         }
     }
 
+    dir_untracked_conflicts.sort();
+    dir_untracked_conflicts.dedup();
+    if !dir_untracked_conflicts.is_empty() {
+        let mut msg = String::from(
+            "Updating the following directories would lose untracked files in them:\n",
+        );
+        for path in &dir_untracked_conflicts {
+            msg.push_str(&format!("\t{}\n", path));
+        }
+        msg.push_str("\nAborting");
+        bail!("{msg}");
+    }
+
     if !untracked_conflicts.is_empty() {
         let mut msg = String::from(
-            "error: The following untracked working tree files would be overwritten by checkout:\n",
+            "The following untracked working tree files would be overwritten by checkout:\n",
         );
         for path in &untracked_conflicts {
             msg.push_str(&format!("\t{}\n", path));

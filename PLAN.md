@@ -717,7 +717,7 @@ commit → check it off → move on.
 - [ ] `t6004-rev-list-path-optim` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git rev-list trivial path optimization test
 
 - [ ] `t6005-rev-list-count` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git rev-list --max-count and --skip test
-- [ ] `t6439-merge-co-error-msgs` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — unpack-trees error messages
+- [x] `t6439-merge-co-error-msgs` ████████████████████ 6/6 (0 left) — unpack-trees error messages
 - [ ] `t6010-merge-base` ██████████░░░░░░░░░░ 6/12 (6 left) — Merge base and parent list computation.
 
 - [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands

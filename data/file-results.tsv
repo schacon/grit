@@ -753,7 +753,7 @@ t6434-merge-recursive-rename-options	yes	27	5	22	ok	5	27	0
 t6435-merge-sparse	yes	6	6	0	ok	6	6	0
 t6436-merge-overwrite	yes	18	4	14	ok	4	18	0
 t6437-submodule-merge	yes	22	6	16	ok	4	20	2
-t6439-merge-co-error-msgs	yes	6	1	5	ok	1	6	0
+t6439-merge-co-error-msgs	yes	6	6	0	ok	6	6	0
 t6500-gc	yes	35	15	20	ok	15	35	0
 t6501-freshen-objects	yes	42	33	9	ok	33	42	0
 t6600-test-reach	yes	47	7	40	ok	7	47	0
