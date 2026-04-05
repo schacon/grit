@@ -72,7 +72,12 @@ fn main() {
                 // Match Git/shell convention for SIGPIPE exits.
                 exit_code = 128 + 13;
             } else {
-                eprintln!("error: {e:#}");
+                let rendered = format!("{e:#}");
+                if rendered.starts_with("git: '") {
+                    eprintln!("{rendered}");
+                } else {
+                    eprintln!("error: {rendered}");
+                }
                 exit_code = 1;
             }
         }
@@ -1621,12 +1626,13 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     Ok(())
 }
 
-/// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
-///
-/// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
-/// This wrapper lets us parse it standalone from a slice of arguments.
 #[derive(Debug, Parser)]
-#[command(name = "grit", disable_help_subcommand = true)]
+#[command(
+    name = "git",
+    disable_help_subcommand = true,
+    about = None,
+    long_about = None
+)]
 struct ArgsWrapper<T: Args> {
     #[command(flatten)]
     inner: T,
@@ -1645,6 +1651,7 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                     let _ = e.print();
+                    println!("usage: git {subcmd}");
                     std::process::exit(129)
                 }
                 _ => {
@@ -2914,15 +2921,15 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     // Auto-run the single matching command
                     let corrected = suggestions[0].to_owned();
                     eprintln!(
-                        "WARNING: You called a grit command named '{subcmd}', which does not exist."
+                                    "WARNING: You called a git command named '{subcmd}', which does not exist."
                     );
-                    eprintln!("Auto-correcting to 'grit {corrected}'");
+                                eprintln!("Auto-correcting to 'git {corrected}'");
                     dispatch(&corrected, rest, opts)
                 }
                 _ => {
                     // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("git: '{subcmd}' is not a git command. See 'git --help'.\n\nunrecognized subcommand");
+                                    bail!("git: '{subcmd}' is not a git command. See 'git --help'.");
                     } else {
                         let similar = suggestions.join("\n\t");
                         bail!(
