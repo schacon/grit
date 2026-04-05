@@ -1034,6 +1034,20 @@ test_line_count () {
 	fi
 }
 
+# test_stdout_line_count OP N CMD...
+# Run CMD and assert wc -l on its stdout.
+test_stdout_line_count () {
+	local op="$1"
+	local count="$2"
+	shift 2
+	local tmp="${TRASH_DIRECTORY}/.stdout.$$"
+	"$@" >"$tmp" &&
+	test_line_count "$op" "$count" "$tmp"
+	local rc=$?
+	rm -f "$tmp"
+	return $rc
+}
+
 # Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.
 test_copy_bytes () {
 	dd ibs=1 count="$1" 2>/dev/null
