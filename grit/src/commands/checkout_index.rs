@@ -6,8 +6,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::objects::ObjectKind;
 use std::io::{self, BufRead};
-use std::path::Component;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use grit_lib::index::{Index, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::repo::Repository;
@@ -216,12 +215,12 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
-        if !parent.exists() {
-            if args.mkdir || args.force || args.all {
-                std::fs::create_dir_all(parent)?;
-            } else {
-                bail!("'{rel_path}': leading directories do not exist");
-            }
+        if args.mkdir || args.force || args.all {
+            ensure_parent_dirs(parent, args.force, &rel_path)?;
+        } else if !parent.exists() {
+            bail!("'{rel_path}': leading directories do not exist");
+        } else if !std::fs::symlink_metadata(parent)?.file_type().is_dir() {
+            bail!("'{rel_path}': leading path is not a directory");
         }
     }
 
@@ -261,6 +260,37 @@ fn checkout_entry(
     }
 
     Ok(outcome)
+}
+
+fn ensure_parent_dirs(parent: &Path, force: bool, rel_path: &str) -> Result<()> {
+    let mut current = PathBuf::new();
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if meta.file_type().is_dir() {
+                    continue;
+                }
+                if !force {
+                    bail!(
+                        "'{rel_path}': cannot create directory '{}': File exists",
+                        current.display()
+                    );
+                }
+                if meta.file_type().is_symlink() || meta.is_file() {
+                    std::fs::remove_file(&current)?;
+                } else {
+                    std::fs::remove_dir_all(&current)?;
+                }
+                std::fs::create_dir(&current)?;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)?;
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(())
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
