@@ -960,6 +960,20 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 }
 
 /// Resolve the author identity from args, env, and config.
+
+/// Check if an ident name is valid (not empty and not all special characters).
+fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
+    let cleaned: String = name.chars().filter(|&c| c != '.' && c != ',' && c != ';' && c != '<' && c != '>' && c != '\'' && c != '"' && c != ' ').collect();
+    if cleaned.is_empty() {
+        if name.is_empty() {
+            bail!("empty ident name (for <{}>) not allowed", kind);
+        } else {
+            bail!("invalid ident name: '{}'", name);
+        }
+    }
+    Ok(())
+}
+
 fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
     // --reuse-message / --reedit-message: reuse the original commit's author
     let reuse_rev = args.reuse_message.as_ref().or(args.reedit_message.as_ref());
@@ -977,11 +991,20 @@ fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Resul
 
     let name = std::env::var("GIT_AUTHOR_NAME")
         .ok()
-        .or_else(|| config.get("user.name"))
-        .ok_or_else(|| anyhow::anyhow!(
-            "Author identity unknown\n\nPlease tell me who you are.\n\n\
-             Run\n\n  git config user.email \"you@example.com\"\n  git config user.name \"Your Name\""
-        ))?;
+        .or_else(|| config.get("user.name"));
+    let name = match name {
+        Some(n) if n.is_empty() => {
+            eprintln!("Author identity unknown");
+            bail!("empty ident name (for <author>) not allowed");
+        }
+        Some(n) => n,
+        None => {
+            eprintln!("Author identity unknown");
+            bail!("Author identity unknown\n\nPlease tell me who you are.\n\n\
+                 Run\n\n  git config user.email \"you@example.com\"\n  git config user.name \"Your Name\"");
+        }
+    };
+    validate_ident_name(&name, "author")?;
 
     let email = std::env::var("GIT_AUTHOR_EMAIL")
         .ok()
@@ -1006,8 +1029,16 @@ fn resolve_author(args: &Args, config: &ConfigSet, now: OffsetDateTime) -> Resul
 fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> {
     let name = std::env::var("GIT_COMMITTER_NAME")
         .ok()
-        .or_else(|| config.get("user.name"))
-        .unwrap_or_else(|| "Unknown".to_owned());
+        .or_else(|| config.get("user.name"));
+    let name = match name {
+        Some(n) if n.is_empty() => {
+            eprintln!("Committer identity unknown");
+            bail!("empty ident name (for <committer>) not allowed");
+        }
+        Some(n) => n,
+        None => "Unknown".to_owned(),
+    };
+    validate_ident_name(&name, "committer")?;
 
     let email = std::env::var("GIT_COMMITTER_EMAIL")
         .ok()
