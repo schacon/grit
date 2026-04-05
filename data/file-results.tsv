@@ -169,7 +169,7 @@ t1900-repo-info	yes	37	9	28	ok	9	37	0
 t1901-repo-structure	yes	4	2	2	ok	2	4	0
 t2000-conflict-when-checking-files-out	yes	14	14	0	ok	14	14	0
 t2002-checkout-cache-u	yes	3	3	0	ok	3	3	0
-t2003-checkout-cache-mkdir	yes	10	3	7	ok	3	10	0
+t2003-checkout-cache-mkdir	yes	10	4	6	ok	4	10	0
 t2004-checkout-cache-temp	yes	23	8	15	ok	8	23	0
 t2005-checkout-index-symlinks	yes	3	3	0	ok	3	3	0
 t2006-checkout-index-basic	yes	9	9	0	ok	9	9	0
@@ -219,7 +219,7 @@ t2105-update-index-gitfile	yes	4	4	0	ok	4	4	0
 t2106-update-index-assume-unchanged	yes	2	2	0	ok	2	2	0
 t2107-update-index-basic	yes	10	5	5	ok	5	10	0
 t2108-update-index-refresh-racy	yes	6	0	6	ok	0	6	0
-t2200-add-update	yes	19	13	6	ok	13	19	0
+t2200-add-update	yes	19	14	5	ok	14	19	0
 t2201-add-update-typechange	yes	6	2	4	ok	2	6	0
 t2202-add-addremove	yes	3	3	0	ok	3	3	0
 t2203-add-intent	yes	19	4	15	ok	4	19	0

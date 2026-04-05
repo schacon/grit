@@ -10,7 +10,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use crate::commands::git_passthrough;
@@ -786,6 +786,8 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
     }
 
+    refresh_stage0_index_stats(&mut new_index, &work_tree)?;
+
     new_index
         .write(&repo.index_path())
         .context("writing index")?;
@@ -819,6 +821,8 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
     }
+
+    refresh_stage0_index_stats(&mut new_index, &work_tree)?;
 
     // Write the new index
     let index_path = repo.index_path();
@@ -961,9 +965,37 @@ fn switch_to_tree(
     // When force, write all entries even if OID matches (to restore dirty files).
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
 
+    // After writing files, refresh stat metadata in the new index so
+    // diff-files does not report freshly checked-out files as modified.
+    refresh_stage0_index_stats(&mut new_index, &work_tree)?;
+
     // Write the new index
     new_index.write(&index_path).context("writing index")?;
 
+    Ok(())
+}
+
+fn refresh_stage0_index_stats(index: &mut Index, work_tree: &Path) -> Result<()> {
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(rel.as_ref());
+        let meta = match std::fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        entry.ctime_sec = meta.ctime() as u32;
+        entry.ctime_nsec = meta.ctime_nsec() as u32;
+        entry.mtime_sec = meta.mtime() as u32;
+        entry.mtime_nsec = meta.mtime_nsec() as u32;
+        entry.dev = meta.dev() as u32;
+        entry.ino = meta.ino() as u32;
+        entry.uid = meta.uid();
+        entry.gid = meta.gid();
+        entry.size = meta.size() as u32;
+    }
     Ok(())
 }
 
