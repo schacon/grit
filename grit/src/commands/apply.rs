@@ -1096,12 +1096,22 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
+    // CWD prefix for subdir apply
+    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(rel) = cwd.strip_prefix(wt) {
+                let s = rel.to_string_lossy().to_string();
+                if s.is_empty() { String::new() } else { format!("{s}/") }
+            } else { String::new() }
+        } else { String::new() }
+    } else { String::new() };
 
     for fp in patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let raw = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let adjusted = format!("{cwd_prefix}{raw}");
 
         if fp.is_deleted {
             index.remove(adjusted.as_bytes());

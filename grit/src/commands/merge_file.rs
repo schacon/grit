@@ -171,7 +171,6 @@ pub fn run_inner(args: Args) -> Result<i32> {
         favor,
         style,
         marker_size: args.marker_size.unwrap_or(0),
-        diff_algorithm: None,
     };
 
     let result = merge(&input).context("merge failed")?;
