@@ -126,7 +126,7 @@ fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
-    let result = Vec::new();
+    let mut result = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut pid = std::process::id();
@@ -338,7 +338,6 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
-<<<<<<< HEAD
 fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "run-twice" => {
@@ -819,103 +818,6 @@ fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
             "usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>"
         ),
     }
-=======
-fn run_test_tool_example_tap() -> ! {
-    print!(
-        concat!(
-            "# BUG: check outside of test at t/helper/test-example-tap.c:77\n",
-            "ok 1 - passing test\n",
-            "ok 2 - passing test and assertion return 1\n",
-            "# check \"1 == 2\" failed at t/helper/test-example-tap.c:81\n",
-            "#    left: 1\n",
-            "#   right: 2\n",
-            "not ok 3 - failing test\n",
-            "ok 4 - failing test and assertion return 0\n",
-            "not ok 5 - passing TEST_TODO() # TODO\n",
-            "ok 6 - passing TEST_TODO() returns 1\n",
-            "# todo check 'check(x)' succeeded at t/helper/test-example-tap.c:26\n",
-            "not ok 7 - failing TEST_TODO()\n",
-            "ok 8 - failing TEST_TODO() returns 0\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:31\n",
-            "# skipping test - missing prerequisite\n",
-            "# skipping check '1' at t/helper/test-example-tap.c:33\n",
-            "ok 9 - test_skip() # SKIP\n",
-            "ok 10 - skipped test returns 1\n",
-            "# skipping test - missing prerequisite\n",
-            "ok 11 - test_skip() inside TEST_TODO() # SKIP\n",
-            "ok 12 - test_skip() inside TEST_TODO() returns 1\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:49\n",
-            "not ok 13 - TEST_TODO() after failing check\n",
-            "ok 14 - TEST_TODO() after failing check returns 0\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:57\n",
-            "not ok 15 - failing check after TEST_TODO()\n",
-            "ok 16 - failing check after TEST_TODO() returns 0\n",
-            "# check \"!strcmp(\"\\thello\\\\\", \"there\\\"\\n\")\" failed at t/helper/test-example-tap.c:62\n",
-            "#    left: \"\\thello\\\\\"\n",
-            "#   right: \"there\\\"\\n\"\n",
-            "# check \"!strcmp(\"NULL\", NULL)\" failed at t/helper/test-example-tap.c:63\n",
-            "#    left: \"NULL\"\n",
-            "#   right: NULL\n",
-            "# check \"'a' == '\\n'\" failed at t/helper/test-example-tap.c:64\n",
-            "#    left: 'a'\n",
-            "#   right: '\\n'\n",
-            "# check \"'\\\\' == '\\''\" failed at t/helper/test-example-tap.c:65\n",
-            "#    left: '\\\\'\n",
-            "#   right: '\\''\n",
-            "# check \"'\\a' == '\\v'\" failed at t/helper/test-example-tap.c:66\n",
-            "#    left: '\\a'\n",
-            "#   right: '\\v'\n",
-            "# check \"'\\x00' == '\\x01'\" failed at t/helper/test-example-tap.c:67\n",
-            "#    left: '\\000'\n",
-            "#   right: '\\001'\n",
-            "not ok 17 - messages from failing string and char comparison\n",
-            "# BUG: test has no checks at t/helper/test-example-tap.c:96\n",
-            "not ok 18 - test with no checks\n",
-            "ok 19 - test with no checks returns 0\n",
-            "ok 20 - if_test passing test\n",
-            "# check \"1 == 2\" failed at t/helper/test-example-tap.c:102\n",
-            "#    left: 1\n",
-            "#   right: 2\n",
-            "not ok 21 - if_test failing test\n",
-            "not ok 22 - if_test passing TEST_TODO() # TODO\n",
-            "# todo check 'check(1)' succeeded at t/helper/test-example-tap.c:106\n",
-            "not ok 23 - if_test failing TEST_TODO()\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:108\n",
-            "# skipping test - missing prerequisite\n",
-            "# skipping check '1' at t/helper/test-example-tap.c:110\n",
-            "ok 24 - if_test test_skip() # SKIP\n",
-            "# skipping test - missing prerequisite\n",
-            "ok 25 - if_test test_skip() inside TEST_TODO() # SKIP\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:115\n",
-            "not ok 26 - if_test TEST_TODO() after failing check\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:121\n",
-            "not ok 27 - if_test failing check after TEST_TODO()\n",
-            "# check \"!strcmp(\"\\thello\\\\\", \"there\\\"\\n\")\" failed at t/helper/test-example-tap.c:124\n",
-            "#    left: \"\\thello\\\\\"\n",
-            "#   right: \"there\\\"\\n\"\n",
-            "# check \"!strcmp(\"NULL\", NULL)\" failed at t/helper/test-example-tap.c:125\n",
-            "#    left: \"NULL\"\n",
-            "#   right: NULL\n",
-            "# check \"'a' == '\\n'\" failed at t/helper/test-example-tap.c:126\n",
-            "#    left: 'a'\n",
-            "#   right: '\\n'\n",
-            "# check \"'\\\\' == '\\''\" failed at t/helper/test-example-tap.c:127\n",
-            "#    left: '\\\\'\n",
-            "#   right: '\\''\n",
-            "# check \"'\\a' == '\\v'\" failed at t/helper/test-example-tap.c:128\n",
-            "#    left: '\\a'\n",
-            "#   right: '\\v'\n",
-            "# check \"'\\x00' == '\\x01'\" failed at t/helper/test-example-tap.c:129\n",
-            "#    left: '\\000'\n",
-            "#   right: '\\001'\n",
-            "not ok 28 - if_test messages from failing string and char comparison\n",
-            "# BUG: test has no checks at t/helper/test-example-tap.c:131\n",
-            "not ok 29 - if_test test with no checks\n",
-            "1..29\n"
-        )
-    );
-    std::process::exit(1);
->>>>>>> dd487a50 (fix: pass t0080-unit-test-output (1/1))
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -2137,7 +2039,6 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "example-tap" => run_test_tool_example_tap(),
                 "trace2" => run_test_tool_trace2(rest),
                 "example-tap" => run_test_tool_example_tap(rest),
                 "advise" => run_test_tool_advise(rest),
