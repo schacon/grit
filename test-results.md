@@ -2,8 +2,22 @@
 
 **Updated:** 2026-04-05
 
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3423 bash scripts/run-upstream-tests.sh t3423 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after adding scoped interactive rebase `pick`/`reword` support, preserving `reword` across conflict resolution, and wiring `checkout --theirs <path>` for unmerged index entries.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3423 cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 bash scripts/run-upstream-tests.sh t2202 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after accepting Git's pathspec-mode global flags before subcommand dispatch, which unblocked `git --literal-pathspecs add --all` in the upstream setup.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo test -p grit-lib --lib`: 97/97 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3307 bash scripts/run-upstream-tests.sh t3307 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3450 bash scripts/run-upstream-tests.sh t3450 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3450 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3307 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3423-rebase-reword bash scripts/run-upstream-tests.sh t3423-rebase-reword 2>&1 | tail -40`: the requested wrapper command still reported zero TAP output in this sandbox, so it was not a reliable verification signal.
+- Direct isolated upstream run of `git/t/t3423-rebase-reword.sh` against rebuilt `target/release/grit`: 3/3 passing after accepting dropped commits in the interactive rebase todo parser, handling editor paths that contain spaces, and routing `checkout --theirs <path>` into path mode during conflict resolution.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3423-rebase-reword cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit bash scripts/run-upstream-tests.sh t3702-add-edit 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after implementing `git add -e` patch editing and editor-failure handling.

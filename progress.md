@@ -6,13 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    66 |
+| Completed   |    70 |
 | In progress |     0 |
-| Remaining   |   700 |
+| Remaining   |   696 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t2202-add-addremove` — 3/3 tests pass (`git --literal-pathspecs add --all` now works because the top-level parser accepts Git's pathspec-mode global flags before dispatch, and the upstream `t2202` rerun completed green against the refreshed release binary)
+- `t3450-history` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already matched the two placeholder `git history` failure cases, so the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t3307-notes-man` — 3/3 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already matched the manpage examples for text notes and binary notes, so the remaining `PLAN.md` entry was stale and no Rust code changes were required)
 - `t3423-rebase-reword` — 3/3 tests pass (`rebase -i` now supports the scoped `pick`/`reword` todo flow, reworded commits reopen the commit-message editor after conflicts on `rebase --continue`, and `checkout --theirs <path>` now restores stage 3 content during conflict resolution)
 - `t3702-add-edit` — 3/3 tests pass (`git add -e` now opens the index-vs-worktree patch in the configured shell-style editor, applies the edited result back to the index with hunk recounting, preserves the working tree, and fails cleanly when the editor exits non-zero)
 - `t3012-ls-files-dedup` — 3/3 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled `git ls-files --deduplicate` correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
@@ -60,4 +63,4 @@
 
 ## What Remains
 
-700 test files still pending. See `PLAN.md` for the full prioritized list.
+696 test files still pending. See `PLAN.md` for the full prioritized list.

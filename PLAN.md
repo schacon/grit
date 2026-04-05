@@ -181,7 +181,7 @@ commit → check it off → move on.
 - [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
 
 - [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
-- [ ] `t2202-add-addremove` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git add --all
+- [x] `t2202-add-addremove` ████████████████████ 3/3 (0 left) — git add --all
 - [ ] `t2018-checkout-branch` ████████████████░░░░ 21/25 (4 left) — checkout
 - [ ] `t2006-checkout-index-basic` ███████████░░░░░░░░░ 5/9 (4 left) — basic checkout-index tests
 
@@ -252,11 +252,11 @@ commit → check it off → move on.
 - [x] `t3008-ls-files-lazy-init-name-hash` ████████████████████ 1/1 (0 left) — Test the lazy init name hash with various folder structures
 - [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
 - [x] `t3012-ls-files-dedup` ████████████████████ 3/3 (0 left) — git ls-files --deduplicate test
-- [ ] `t3307-notes-man` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Examples from the git-notes man page
+- [x] `t3307-notes-man` ████████████████████ 3/3 (0 left) — Examples from the git-notes man page
 
 - [x] `t3423-rebase-reword` ████████████████████ 3/3 (0 left) — git rebase interactive with rewording
 - [x] `t3702-add-edit` ████████████████████ 3/3 (0 left) — add -e basic tests
-- [ ] `t3450-history` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — tests for git-history command
+- [x] `t3450-history` ████████████████████ 2/2 (0 left) — tests for git-history command
 - [ ] `t3305-notes-fanout` ███████████░░░░░░░░░ 4/7 (3 left) — Test that adding/removing many notes triggers automatic fanout restructuring
 - [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
 

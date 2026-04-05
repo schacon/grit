@@ -972,6 +972,10 @@ struct GlobalOpts {
     config_overrides: Vec<String>,
     bare: bool,
     no_advice: bool,
+    literal_pathspecs: bool,
+    glob_pathspecs: bool,
+    noglob_pathspecs: bool,
+    icase_pathspecs: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1056,6 +1060,28 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // Pathspec parsing globals accepted by Git before the subcommand.
+        if arg == "--literal-pathspecs" {
+            opts.literal_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--glob-pathspecs" {
+            opts.glob_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--noglob-pathspecs" {
+            opts.noglob_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--icase-pathspecs" {
+            opts.icase_pathspecs = true;
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
@@ -1111,6 +1137,18 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
+    }
+    if opts.literal_pathspecs {
+        std::env::set_var("GIT_LITERAL_PATHSPECS", "1");
+    }
+    if opts.glob_pathspecs {
+        std::env::set_var("GIT_GLOB_PATHSPECS", "1");
+    }
+    if opts.noglob_pathspecs {
+        std::env::set_var("GIT_NOGLOB_PATHSPECS", "1");
+    }
+    if opts.icase_pathspecs {
+        std::env::set_var("GIT_ICASE_PATHSPECS", "1");
     }
     Ok(())
 }
