@@ -170,7 +170,7 @@ commit → check it off → move on.
 
 ## 3. Index/Checkout (50 files)
 
-- [ ] `t2060-switch` ██████████████████░░ 15/16 (1 left) — switch basic functionality
+- [x] `t2060-switch` ████████████████████ 16/16 — switch basic functionality
 - [ ] `t2050-git-dir-relative` ███████████████░░░░░ 3/4 (1 left) — check problems with relative GIT_DIR
 
 - [ ] `t2015-checkout-unborn` █████████████░░░░░░░ 4/6 (2 left) — checkout from unborn branch
