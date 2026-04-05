@@ -6,7 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{
-    parse_bool, parse_color, parse_i64, parse_path, ConfigFile, ConfigScope, ConfigSet,
+    parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet,
 };
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
