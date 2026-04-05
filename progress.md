@@ -6,13 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    87 |
-| In progress |     1 |
-| Remaining   |   678 |
+| Completed   |    91 |
+| In progress |     0 |
+| Remaining   |   675 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4007-rename-3` — 13/13 tests pass (`diff-files` now accepts `-C`, `--find-copies-harder`, and `-R`, builds reverse diff entries against the worktree snapshots, and reuses copy detection so the upstream copy-to-index cases emit the expected `C100` raw diff; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4007 bash scripts/run-upstream-tests.sh t4007-rename-3 2>&1 | tail -40` against rebuilt `target/release/grit`)
+- `t4256-am-format-flowed` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4256 bash scripts/run-upstream-tests.sh t4256-am-format-flowed 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t3427-rebase-subtree` — 3/3 tests pass (`merge -s ours --no-commit --allow-unrelated-histories` now leaves the expected in-progress merge state for subtree setup, `read-tree --prefix` now accepts the upstream no-trailing-slash form with `-u`, and `rebase` now handles `-Xsubtree`, `--empty=ask`, `--rebase-merges`, and `--root`, stopping only for commits that become empty while preserving intentional empty commits)
+- `t4111-apply-subdir` — 10/10 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4111 bash scripts/run-upstream-tests.sh t4111-apply-subdir 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t3005-ls-files-relative` — 4/4 tests pass (`ls-files` now normalizes tracked index paths before matching and display, resolves subdirectory-relative pathspecs and output names with `..` segments, and only counts `--error-unmatch` matches after mode-specific filtering so `-c` and `-o` report the expected missing paths; verified with `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t3005 bash scripts/run-upstream-tests.sh t3005-ls-files-relative 2>&1 | tail -40` against rebuilt `target/release/grit`)
 - `t2027-checkout-track` — 5/5 tests pass (`checkout` now detects ambiguous remote-tracking branch names and emits the expected `--track` hint, while `switch` intercepts the same ambiguity before passthrough so the advice mentions `git switch --track`; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t2027 bash scripts/run-upstream-tests.sh t2027-checkout-track 2>&1 | tail -40` against rebuilt `target/release/grit`)
 - `t4110-apply-scan` — 1/1 test passes (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan bash scripts/run-upstream-tests.sh t4110-apply-scan 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
@@ -80,4 +84,4 @@
 
 ## What Remains
 
-679 test files still pending. See `PLAN.md` for the full prioritized list.
+675 test files still pending. See `PLAN.md` for the full prioritized list.

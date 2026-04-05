@@ -260,7 +260,7 @@ commit → check it off → move on.
 - [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
 - [x] `t3005-ls-files-relative` ████████████████████ 4/4 (0 left) — ls-files tests with relative paths
 
-- [~] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
+- [x] `t3427-rebase-subtree` ████████████████████ 3/3 (0 left) — git rebase tests for -Xsubtree
 
 - [ ] `t3506-cherry-pick-ff` ████████████░░░░░░░░ 7/11 (4 left) — test cherry-picking with --ff option
 - [ ] `t3103-ls-tree-misc` ████████████░░░░░░░░ 6/10 (4 left) — 
@@ -386,13 +386,13 @@ commit → check it off → move on.
 - [x] `t4066-diff-emit-delay` ████████████████████ 2/2 (done) — test combined/stat/moved interaction
 - [x] `t4123-apply-shrink` ████████████████████ 2/2 (done) — apply a patch that is larger than the preimage
 - [x] `t4134-apply-submodule` ████████████████████ 2/2 (done) — git apply submodule tests
-- [ ] `t4256-am-format-flowed` ██████████░░░░░░░░░░ 1/2 (1 left) — test format=flowed support of git am
+- [x] `t4256-am-format-flowed` ████████████████████ 2/2 (done) — test format=flowed support of git am
 - [x] `t4029-diff-trailing-space` ████████████████████ 1/1 (done) — diff honors config option, diff.suppressBlankEmpty
 - [x] `t4110-apply-scan` ████████████████████ 1/1 (done) — git apply test for patches which require scanning forwards and backwards.
 
-- [ ] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
+- [x] `t4007-rename-3` ████████████████████ 13/13 (0 left) — Rename interaction with pathspec.
 
-- [ ] `t4111-apply-subdir` ████████████████░░░░ 8/10 (2 left) — patching from inconvenient places
+- [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
 - [ ] `t4006-diff-mode` ██████████████░░░░░░ 5/7 (2 left) — Test mode change diffs.
 
 - [ ] `t4073-diff-stat-name-width` █████████████░░░░░░░ 4/6 (2 left) — git-diff check diffstat filepaths length when containing UTF-8 chars

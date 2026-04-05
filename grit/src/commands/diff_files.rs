@@ -5,7 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
+use grit_lib::diff::{
+    count_changes, detect_copies, detect_renames, format_stat_line, stat_matches, unified_diff,
+    zero_oid, DiffEntry, DiffStatus,
+};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
@@ -18,8 +21,6 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
-// ── Public clap interface ────────────────────────────────────────────
 
 /// Arguments for `grit diff-files`.
 #[derive(Debug, ClapArgs)]
@@ -42,45 +43,91 @@ pub fn run(args: Args) -> Result<()> {
     let index = Index::load(&index_path).context("loading index")?;
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
+    let special_diff_entries =
+        (options.reverse || options.find_copies || options.find_renames.is_some())
+            .then(|| build_diff_entries(&repo, &index, &work_tree, &changes, &options))
+            .transpose()?;
 
     if !options.quiet && !options.suppress_diff {
-        match options.format {
-            OutputFormat::Raw => {
-                for change in &changes {
-                    println!("{}", render_raw(change, &repo, options.abbrev)?);
+        if let Some(diff_entries) = &special_diff_entries {
+            match options.format {
+                OutputFormat::Raw => {
+                    for entry in diff_entries {
+                        println!("{}", render_raw_diff_entry(entry, &repo, options.abbrev)?);
+                    }
+                }
+                OutputFormat::NameOnly => {
+                    for entry in diff_entries {
+                        println!("{}", entry.path());
+                    }
+                }
+                OutputFormat::NameStatus => {
+                    for entry in diff_entries {
+                        match (entry.status, entry.score) {
+                            (DiffStatus::Renamed, Some(score)) => {
+                                println!(
+                                    "R{score:03}\t{}\t{}",
+                                    entry.old_path.as_deref().unwrap_or(""),
+                                    entry.new_path.as_deref().unwrap_or("")
+                                );
+                            }
+                            (DiffStatus::Copied, Some(score)) => {
+                                println!(
+                                    "C{score:03}\t{}\t{}",
+                                    entry.old_path.as_deref().unwrap_or(""),
+                                    entry.new_path.as_deref().unwrap_or("")
+                                );
+                            }
+                            _ => {
+                                println!("{}\t{}", entry.status.letter(), entry.path());
+                            }
+                        }
+                    }
+                }
+                OutputFormat::Patch | OutputFormat::Stat | OutputFormat::NumStat => {
+                    bail!("unsupported output format with reverse/copy detection");
                 }
             }
-            OutputFormat::NameOnly => {
-                for change in &changes {
-                    println!("{}", change.path);
+        } else {
+            match options.format {
+                OutputFormat::Raw => {
+                    for change in &changes {
+                        println!("{}", render_raw(change, &repo, options.abbrev)?);
+                    }
                 }
-            }
-            OutputFormat::NameStatus => {
-                for change in &changes {
-                    println!("{}\t{}", change.status, change.path);
+                OutputFormat::NameOnly => {
+                    for change in &changes {
+                        println!("{}", change.path);
+                    }
                 }
-            }
-            OutputFormat::Patch => {
-                for change in &changes {
-                    print_patch(change, &repo, &work_tree)?;
+                OutputFormat::NameStatus => {
+                    for change in &changes {
+                        println!("{}\t{}", change.status, change.path);
+                    }
                 }
-            }
-            OutputFormat::Stat => {
-                print_stat(&changes, &repo, &work_tree)?;
-            }
-            OutputFormat::NumStat => {
-                print_numstat(&changes, &repo, &work_tree)?;
+                OutputFormat::Patch => {
+                    for change in &changes {
+                        print_patch(change, &repo, &work_tree)?;
+                    }
+                }
+                OutputFormat::Stat => {
+                    print_stat(&changes, &repo, &work_tree)?;
+                }
+                OutputFormat::NumStat => {
+                    print_numstat(&changes, &repo, &work_tree)?;
+                }
             }
         }
     }
 
-    if (options.exit_code || options.quiet) && !changes.is_empty() {
+    let has_changes = special_diff_entries
+        .as_ref()
+        .map_or(!changes.is_empty(), |entries| !entries.is_empty());
+    if (options.exit_code || options.quiet) && has_changes {
         std::process::exit(1);
     }
     Ok(())
 }
-
-// ── Internal types ───────────────────────────────────────────────────
 
 /// Output format for `diff-files`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +163,14 @@ struct Options {
     format: OutputFormat,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
+    /// Reverse the diff direction.
+    reverse: bool,
+    /// Rename similarity threshold used for copy/rename detection.
+    find_renames: Option<u32>,
+    /// Enable copy detection.
+    find_copies: bool,
+    /// Consider unmodified source files during copy detection.
+    find_copies_harder: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -133,8 +188,6 @@ struct Change {
     old_oid: ObjectId,
 }
 
-// ── Option parsing ───────────────────────────────────────────────────
-
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut pathspecs = Vec::new();
     let mut stage: u8 = 0;
@@ -143,6 +196,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
+    let mut reverse = false;
+    let mut find_renames: Option<u32> = None;
+    let mut find_copies = false;
+    let mut find_copies_harder = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -181,6 +238,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
+                "-R" => reverse = true,
                 "-s" | "--no-patch" => suppress_diff = true,
                 "--patch-with-raw" => {
                     format = OutputFormat::Patch;
@@ -195,12 +253,56 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-2" => stage = 2,
                 "-3" => stage = 3,
                 "--abbrev" => abbrev = Some(7),
+                "-C" | "--find-copies" => {
+                    find_copies = true;
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
+                "--find-copies-harder" => {
+                    find_copies_harder = true;
+                }
+                "-M" | "--find-renames" => {
+                    if find_renames.is_none() {
+                        find_renames = Some(50);
+                    }
+                }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
                     let parsed = value
                         .parse::<usize>()
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
+                }
+                _ if arg.starts_with("-C") && arg.len() > 2 => {
+                    let value = &arg[2..];
+                    let parsed = value
+                        .parse::<u32>()
+                        .with_context(|| format!("invalid -C value: `{value}`"))?;
+                    find_copies = true;
+                    find_renames = Some(parsed);
+                }
+                _ if arg.starts_with("-M") && arg.len() > 2 => {
+                    let value = &arg[2..];
+                    let parsed = value
+                        .parse::<u32>()
+                        .with_context(|| format!("invalid -M value: `{value}`"))?;
+                    find_renames = Some(parsed);
+                }
+                _ if arg.starts_with("--find-copies=") => {
+                    let value = arg.trim_start_matches("--find-copies=");
+                    let parsed = value
+                        .parse::<u32>()
+                        .with_context(|| format!("invalid --find-copies value: `{value}`"))?;
+                    find_copies = true;
+                    find_renames = Some(parsed);
+                }
+                _ if arg.starts_with("--find-renames=") => {
+                    let value = arg.trim_start_matches("--find-renames=");
+                    let parsed = value
+                        .parse::<u32>()
+                        .with_context(|| format!("invalid --find-renames value: `{value}`"))?;
+                    find_renames = Some(parsed);
                 }
                 // Silently accept diff options we don't fully implement yet
                 "-w"
@@ -238,10 +340,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         abbrev,
         format,
         suppress_diff,
+        reverse,
+        find_renames,
+        find_copies,
+        find_copies_harder,
     })
 }
-
-// ── Core diff logic ──────────────────────────────────────────────────
 
 /// Build the list of changes between the index and the working tree.
 fn collect_changes(
@@ -383,8 +487,6 @@ fn is_stat_smudged(entry: &IndexEntry) -> bool {
         && entry.ino == 0
 }
 
-// ── Worktree probing ─────────────────────────────────────────────────
-
 /// Result of probing a working-tree file against its index entry.
 enum WorktreeStatus {
     /// File is unchanged according to stat info — no need to hash.
@@ -480,8 +582,6 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
 
     Ok(None)
 }
-
-// ── Output renderers ─────────────────────────────────────────────────
 
 /// Format a change in Git's raw diff format.
 ///
@@ -621,8 +721,6 @@ fn load_patch_contents(
     Ok((old_content, new_content))
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
 /// Format an OID, optionally abbreviated.
 fn format_oid(
     oid: ObjectId,
@@ -682,4 +780,204 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
+}
+
+fn collect_stage0_entries(
+    index: &Index,
+    pathspecs: &[String],
+) -> BTreeMap<String, (u32, ObjectId)> {
+    let mut entries = BTreeMap::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let Ok(path) = String::from_utf8(entry.path.clone()) else {
+            continue;
+        };
+        if matches_pathspec(&path, pathspecs) {
+            entries.insert(path, (canonicalize_mode(entry.mode), entry.oid));
+        }
+    }
+    entries
+}
+
+fn collect_worktree_snapshots(
+    repo: &Repository,
+    work_tree: &Path,
+    stage0_entries: &BTreeMap<String, (u32, ObjectId)>,
+) -> Result<BTreeMap<String, (u32, ObjectId)>> {
+    let mut snapshots = BTreeMap::new();
+    for path in stage0_entries.keys() {
+        let abs = work_tree.join(path);
+        if let Some((mode, oid)) = read_worktree_info(repo, &abs)? {
+            snapshots.insert(path.clone(), (mode, oid));
+        }
+    }
+    Ok(snapshots)
+}
+
+fn build_diff_entries(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    changes: &[Change],
+    options: &Options,
+) -> Result<Vec<DiffEntry>> {
+    let stage0_entries = collect_stage0_entries(index, &options.pathspecs);
+    let worktree_snapshots = collect_worktree_snapshots(repo, work_tree, &stage0_entries)?;
+
+    let mut diff_entries = Vec::with_capacity(changes.len());
+    for change in changes {
+        let index_snapshot = stage0_entries
+            .get(&change.path)
+            .copied()
+            .unwrap_or((change.old_mode, change.old_oid));
+        let worktree_snapshot = worktree_snapshots.get(&change.path).copied();
+
+        let entry = if options.reverse {
+            reverse_change_to_diff_entry(change, worktree_snapshot, index_snapshot)
+        } else {
+            change_to_diff_entry(change, worktree_snapshot)
+        };
+        diff_entries.push(entry);
+    }
+
+    let diff_entries = if options.find_copies {
+        let threshold = options.find_renames.unwrap_or(50);
+        let source_entries: Vec<(String, String, ObjectId)> = if options.reverse {
+            worktree_snapshots
+                .iter()
+                .map(|(path, (mode, oid))| (path.clone(), format!("{mode:06o}"), *oid))
+                .collect()
+        } else {
+            stage0_entries
+                .iter()
+                .map(|(path, (mode, oid))| (path.clone(), format!("{mode:06o}"), *oid))
+                .collect()
+        };
+        detect_copies(
+            &repo.odb,
+            diff_entries,
+            threshold,
+            options.find_copies_harder,
+            &source_entries,
+        )
+    } else if let Some(threshold) = options.find_renames {
+        detect_renames(&repo.odb, diff_entries, threshold)
+    } else {
+        diff_entries
+    };
+
+    Ok(diff_entries)
+}
+
+fn change_to_diff_entry(change: &Change, worktree_snapshot: Option<(u32, ObjectId)>) -> DiffEntry {
+    match change.status {
+        'D' => DiffEntry {
+            status: DiffStatus::Deleted,
+            old_path: Some(change.path.clone()),
+            new_path: None,
+            old_mode: format!("{:06o}", change.old_mode),
+            new_mode: "000000".to_owned(),
+            old_oid: change.old_oid,
+            new_oid: zero_oid(),
+            score: None,
+        },
+        'U' => DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(change.path.clone()),
+            new_path: Some(change.path.clone()),
+            old_mode: format!("{:06o}", change.old_mode),
+            new_mode: format!("{:06o}", change.new_mode),
+            old_oid: change.old_oid,
+            new_oid: zero_oid(),
+            score: None,
+        },
+        _ => {
+            let (new_mode, new_oid) = worktree_snapshot.unwrap_or((change.new_mode, zero_oid()));
+            DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(change.path.clone()),
+                new_path: Some(change.path.clone()),
+                old_mode: format!("{:06o}", change.old_mode),
+                new_mode: format!("{new_mode:06o}"),
+                old_oid: change.old_oid,
+                new_oid,
+                score: None,
+            }
+        }
+    }
+}
+
+fn reverse_change_to_diff_entry(
+    change: &Change,
+    worktree_snapshot: Option<(u32, ObjectId)>,
+    index_snapshot: (u32, ObjectId),
+) -> DiffEntry {
+    match change.status {
+        'D' => DiffEntry {
+            status: DiffStatus::Added,
+            old_path: None,
+            new_path: Some(change.path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: format!("{:06o}", index_snapshot.0),
+            old_oid: zero_oid(),
+            new_oid: index_snapshot.1,
+            score: None,
+        },
+        'U' => DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(change.path.clone()),
+            new_path: Some(change.path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: format!("{:06o}", index_snapshot.0),
+            old_oid: zero_oid(),
+            new_oid: index_snapshot.1,
+            score: None,
+        },
+        _ => {
+            let (old_mode, old_oid) = worktree_snapshot.unwrap_or((0, zero_oid()));
+            DiffEntry {
+                status: DiffStatus::Modified,
+                old_path: Some(change.path.clone()),
+                new_path: Some(change.path.clone()),
+                old_mode: format!("{old_mode:06o}"),
+                new_mode: format!("{:06o}", index_snapshot.0),
+                old_oid,
+                new_oid: index_snapshot.1,
+                score: None,
+            }
+        }
+    }
+}
+
+fn render_raw_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    abbrev: Option<usize>,
+) -> Result<String> {
+    let width = abbrev.unwrap_or(40).clamp(4, 40);
+
+    let old_oid = format_oid(entry.old_oid, repo, abbrev, width)?;
+    let new_oid = format_oid(entry.new_oid, repo, abbrev, width)?;
+
+    let status = match (entry.status, entry.score) {
+        (DiffStatus::Renamed, Some(score)) => format!("R{score:03}"),
+        (DiffStatus::Copied, Some(score)) => format!("C{score:03}"),
+        _ => entry.status.letter().to_string(),
+    };
+
+    let path = match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => format!(
+            "{}\t{}",
+            entry.old_path.as_deref().unwrap_or(""),
+            entry.new_path.as_deref().unwrap_or("")
+        ),
+        _ => entry.path().to_owned(),
+    };
+
+    Ok(format!(
+        ":{} {} {} {} {}\t{}",
+        entry.old_mode, entry.new_mode, old_oid, new_oid, status, path
+    ))
 }

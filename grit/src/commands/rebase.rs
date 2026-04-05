@@ -695,16 +695,20 @@ fn cherry_pick_for_rebase(
 
     // Three-way merge: base=parent_tree, ours=HEAD_tree, theirs=commit_tree
     let reference_entries = tree_to_index_entries(repo, &head_tree_oid, "")?;
-    let base_entries = if let Some(parent_oid) = commit.parents.first() {
+    let (base_entries, original_parent_tree_oid) = if let Some(parent_oid) = commit.parents.first()
+    {
         let parent_obj = repo.odb.read(parent_oid)?;
         let parent_commit = parse_commit(&parent_obj.data)?;
-        self::subtree_adjust_entries(
-            tree_to_index_entries(repo, &parent_commit.tree, "")?,
-            options.subtree.as_deref(),
-            &reference_entries,
+        (
+            self::subtree_adjust_entries(
+                tree_to_index_entries(repo, &parent_commit.tree, "")?,
+                options.subtree.as_deref(),
+                &reference_entries,
+            ),
+            Some(parent_commit.tree),
         )
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
     let ours_entries = tree_to_map(reference_entries.clone());
     let theirs_entries = tree_to_map(self::subtree_adjust_entries(
@@ -736,7 +740,10 @@ fn cherry_pick_for_rebase(
 
     // Create the rebased commit, preserving the original author
     let tree_oid = write_tree_from_index(&repo.odb, &merged_index, "")?;
-    if options.empty == EmptyMode::Ask && tree_oid == head_tree_oid {
+    let originally_empty = original_parent_tree_oid == Some(commit_tree_oid)
+        || (original_parent_tree_oid.is_none()
+            && tree_to_index_entries(repo, &commit_tree_oid, "")?.is_empty());
+    if options.empty == EmptyMode::Ask && tree_oid == head_tree_oid && !originally_empty {
         return Ok(ReplayStatus::EmptyStopped);
     }
 
