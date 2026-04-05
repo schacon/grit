@@ -79,10 +79,22 @@ pub struct UpdateArgs {
     /// Initialize uninitialized submodules before updating.
     #[arg(long)]
     pub init: bool,
+
+    /// Use the status of the submodule's remote-tracking branch.
+    #[arg(long)]
+    pub remote: bool,
 }
 
 #[derive(Debug, ClapArgs)]
 pub struct AddArgs {
+    /// Use the given name instead of defaulting to its path.
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Branch to track.
+    #[arg(short = 'b', long = "branch")]
+    pub branch: Option<String>,
+
     /// URL of the submodule repository.
     pub url: String,
 
@@ -544,10 +556,47 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             }
         }
 
-        // Checkout the recorded commit.
+        // Determine which commit to checkout.
+        let checkout_oid = if args.remote {
+            // Fetch from remote and use the remote tracking branch.
+            let fetch_status = Command::new(&git_bin)
+                .args(["fetch", "origin"])
+                .current_dir(&sub_path)
+                .status()
+                .context("failed to fetch in submodule")?;
+            if !fetch_status.success() {
+                bail!("failed to fetch in submodule '{}'", m.name);
+            }
+
+            // Get the branch from config (submodule.<name>.branch), default to master.
+            let branch = {
+                let config_path2 = repo.git_dir.join("config");
+                let content2 = fs::read_to_string(&config_path2).unwrap_or_default();
+                let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local).ok();
+                cfg2.and_then(|c| {
+                    let key = format!("submodule.{}.branch", m.name);
+                    c.entries.iter().find(|e| e.key == key).and_then(|e| e.value.clone())
+                }).unwrap_or_else(|| "master".to_string())
+            };
+
+            // Resolve origin/<branch> to an OID.
+            let output = Command::new(&git_bin)
+                .args(["rev-parse", &format!("origin/{branch}")])
+                .current_dir(&sub_path)
+                .output()
+                .context("failed to resolve remote tracking branch")?;
+            if !output.status.success() {
+                bail!("failed to resolve origin/{} in submodule '{}'", branch, m.name);
+            }
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        } else {
+            recorded_oid.to_string()
+        };
+
+        // Checkout the target commit.
         let status = Command::new(&git_bin)
             .arg("checkout")
-            .arg(recorded_oid)
+            .arg(&checkout_oid)
             .arg("--quiet")
             .current_dir(&sub_path)
             .status()
@@ -556,7 +605,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         if !status.success() {
             bail!(
                 "failed to checkout {} in submodule '{}'",
-                recorded_oid,
+                checkout_oid,
                 m.name
             );
         }
@@ -564,7 +613,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         eprintln!(
             "Submodule path '{}': checked out '{}'",
             m.path,
-            &recorded_oid[..recorded_oid.len().min(12)]
+            &checkout_oid[..checkout_oid.len().min(12)]
         );
     }
 
@@ -627,8 +676,8 @@ fn run_add(args: &AddArgs) -> Result<()> {
         }
     }
 
-    // Derive the submodule name (same as path for simplicity).
-    let name = &path;
+    // Derive the submodule name (use --name if provided, otherwise path).
+    let name = args.name.as_deref().unwrap_or(&path);
 
     // Update .gitmodules.
     let gitmodules_path = work_tree.join(".gitmodules");
@@ -642,6 +691,18 @@ fn run_add(args: &AddArgs) -> Result<()> {
     config.set(&format!("submodule.{name}.path"), &path)?;
     config.set(&format!("submodule.{name}.url"), &args.url)?;
     config.write()?;
+
+    // Also register the submodule in the local .git/config (like git does).
+    let local_config_path = repo.git_dir.join("config");
+    let mut local_config = if local_config_path.exists() {
+        let content = fs::read_to_string(&local_config_path)?;
+        ConfigFile::parse(&local_config_path, &content, ConfigScope::Local)?
+    } else {
+        ConfigFile::parse(&local_config_path, "", ConfigScope::Local)?
+    };
+    local_config.set(&format!("submodule.{name}.url"), &args.url)?;
+    local_config.set(&format!("submodule.{name}.active"), "true")?;
+    local_config.write()?;
 
     // Add the submodule path to the index.
     // Use --no-warn-embedded-repo so the add doesn't warn about the
@@ -1126,6 +1187,23 @@ fn run_set_url(args: &SetUrlArgs) -> Result<()> {
         if has_url {
             local_config.set(&url_key, &args.newurl)?;
             local_config.write()?;
+        }
+    }
+
+    // Sync the submodule's remote.origin.url (like git submodule sync does).
+    let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &args.newurl);
+    let sub_path = work_tree.join(&sm.path);
+    if sub_path.join(".git").exists() {
+        let sub_git_dir = resolve_submodule_git_dir(&sub_path);
+        if let Some(sub_git) = sub_git_dir {
+            let sub_config_path = sub_git.join("config");
+            if sub_config_path.exists() {
+                let sub_content = fs::read_to_string(&sub_config_path)?;
+                let mut sub_config =
+                    ConfigFile::parse(&sub_config_path, &sub_content, ConfigScope::Local)?;
+                sub_config.set("remote.origin.url", &resolved_url)?;
+                sub_config.write()?;
+            }
         }
     }
 

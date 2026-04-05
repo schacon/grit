@@ -324,14 +324,20 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut c = false;
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
             if let Some(val) = config.get("color.diff") {
-                if val == "always" || val == "true" {
-                    c = true;
+                match val.as_str() {
+                    "always" | "true" => c = true,
+                    "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
+                    _ => {}
                 }
             }
             if !c {
                 if let Some(val) = config.get("color.ui") {
-                    if val == "always" || val == "true" {
-                        c = true;
+                    match val.as_str() {
+                        "always" | "true" => c = true,
+                        "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
+                        _ => {}
                     }
                 }
             }
@@ -1454,7 +1460,11 @@ fn format_commit(
         }
         Some("medium") | None => {
             let dec = format_decoration(&hex, decorations);
-            writeln!(out, "commit {hex}{dec}")?;
+            if use_color {
+                writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
+            } else {
+                writeln!(out, "commit {hex}{dec}")?;
+            }
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
                     .parents

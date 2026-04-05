@@ -525,6 +525,23 @@ pub fn diff_index_to_worktree(
         }
 
         let file_path = work_tree.join(path_str_ref);
+
+        // If any parent component of the path is a symlink, the file is effectively
+        // deleted from the working tree (a symlink replaced a directory).
+        if has_symlink_in_path(work_tree, path_str_ref) {
+            result.push(DiffEntry {
+                status: DiffStatus::Deleted,
+                old_path: Some(path_str_ref.to_owned()),
+                new_path: None,
+                old_mode: format_mode(ie.mode),
+                new_mode: "000000".to_owned(),
+                old_oid: ie.oid,
+                new_oid: zero_oid(),
+                score: None,
+            });
+            continue;
+        }
+
         match fs::symlink_metadata(&file_path) {
             Ok(meta) if meta.is_dir() => {
                 // A directory exists where the index expects a file.
@@ -635,6 +652,21 @@ pub fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
 }
 
 /// Hash a working tree file as a blob to get its OID.
+/// Check if any parent component of `rel_path` (relative to `work_tree`) is a symlink.
+fn has_symlink_in_path(work_tree: &Path, rel_path: &str) -> bool {
+    let mut check = work_tree.to_path_buf();
+    let components: Vec<&str> = rel_path.split('/').collect();
+    // Check all components except the last one (which is the file itself)
+    for component in &components[..components.len().saturating_sub(1)] {
+        check.push(component);
+        match fs::symlink_metadata(&check) {
+            Ok(meta) if meta.file_type().is_symlink() => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn hash_worktree_file(
     _odb: &Odb,
     path: &Path,
