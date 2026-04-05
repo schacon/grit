@@ -70,7 +70,7 @@ commit → check it off → move on.
 - [ ] `t1008-read-tree-overlay` ██████████░░░░░░░░░░ 1/2 (1 left) — test multi-tree read-tree without merging
 - [ ] `t0611-reftable-httpd` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — reftable HTTPD tests
 - [ ] `t1022-read-tree-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git read-tree in partial clones
-- [ ] `t1402-check-ref-format` ███████████████████░ 97/99 (2 left) — Test git check-ref-format
+- [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
 - [ ] `t0101-at-syntax` ███████████████░░░░░ 6/8 (2 left) — various @{whatever} syntax tests
 - [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
