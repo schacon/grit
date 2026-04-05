@@ -109,7 +109,7 @@ fn parse_size_suffix(s: &str) -> Option<u64> {
 fn split_combine(spec: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
-    let mut chars = spec.chars().peekable();
+    let chars = spec.chars().peekable();
     for ch in chars {
         if ch == '+' {
             if !current.is_empty() {

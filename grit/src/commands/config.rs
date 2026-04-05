@@ -95,23 +95,23 @@ pub struct Args {
 
     // ── Type flags ──
     /// Ensure the value is a valid boolean and canonicalize.
-    #[arg(long = "bool")]
+    #[arg(long = "bool", global = true)]
     pub type_bool: bool,
 
     /// Ensure the value is a valid integer and canonicalize.
-    #[arg(long = "int")]
+    #[arg(long = "int", global = true)]
     pub type_int: bool,
 
     /// Ensure the value is a valid bool-or-int and canonicalize.
-    #[arg(long = "bool-or-int")]
+    #[arg(long = "bool-or-int", global = true)]
     pub type_bool_or_int: bool,
 
     /// Expand `~/` in the value.
-    #[arg(long = "path")]
+    #[arg(long = "path", global = true)]
     pub type_path: bool,
 
     /// Type selector (alternative to individual flags).
-    #[arg(long = "type", value_name = "TYPE")]
+    #[arg(long = "type", value_name = "TYPE", global = true)]
     pub type_name: Option<String>,
 
     // ── Display flags ──
@@ -140,11 +140,11 @@ pub struct Args {
     pub no_includes: bool,
 
     /// Default value if key is not found (legacy --get/--get-all).
-    #[arg(long = "default", value_name = "VALUE")]
+    #[arg(long = "default", value_name = "VALUE", global = true)]
     pub default_value: Option<String>,
 
     /// Only match exact values (instead of treating value as regex).
-    #[arg(long = "fixed-value")]
+    #[arg(long = "fixed-value", global = true)]
     pub fixed_value: bool,
 
     // ── URL match flags ──
@@ -229,6 +229,10 @@ pub struct SetArgs {
     /// Replace all matching values.
     #[arg(long)]
     pub all: bool,
+
+    /// Append a new line for a multi-valued key.
+    #[arg(long)]
+    pub append: bool,
 }
 
 /// Arguments for `grit config unset`.
@@ -284,6 +288,10 @@ pub struct EditArgs {}
 pub fn run(args: Args) -> Result<()> {
     // If --blob is given, read config from the blob and handle read-only ops
     if let Some(ref blob_spec) = args.blob {
+        // --blob is incompatible with file-scope flags
+        if args.system || args.global || args.local || args.worktree || args.file.is_some() {
+            bail!("--blob and file-location options (--system, --global, --local, --worktree, --file) are incompatible");
+        }
         return cmd_blob(&args, blob_spec);
     }
 
@@ -377,6 +385,27 @@ pub fn run(args: Args) -> Result<()> {
     if let Some(ref key) = args.get_color_key {
         let default_color = args.positional.first().map(|s| s.as_str()).unwrap_or("");
         return cmd_get_color(key, default_color, git_dir.as_deref());
+    }
+
+    // Validate --default is only used with get operations
+    if args.default_value.is_some() {
+        let is_get_op = args.get_key.is_some()
+            || args.get_all_key.is_some()
+            || args.get_regexp.is_some()
+            || args.get_urlmatch_key.is_some();
+        if !is_get_op {
+            let is_positional_get = args.positional.len() <= 1
+                && args.unset_key.is_none()
+                && args.unset_all_key.is_none()
+                && args.add_key.is_none()
+                && !args.remove_section
+                && !args.rename_section
+                && !args.list;
+            if !is_positional_get {
+                eprintln!("error: --default is only applicable to --get, --get-all, --get-regexp, and --get-urlmatch");
+                std::process::exit(129);
+            }
+        }
     }
 
     if let Some(ref key) = args.unset_key {
@@ -624,7 +653,9 @@ fn cmd_set(
         None => ConfigFile::parse(file_path, "", scope)?,
     };
 
-    if set_args.all {
+    if set_args.append {
+        config.add_value(&set_args.key, &value)?;
+    } else if set_args.all {
         config.replace_all_with_comment(&set_args.key, &value, value_pattern, comment)?;
     } else if let Some(pattern) = value_pattern {
         config.replace_all_with_comment(&set_args.key, &value, Some(pattern), comment)?;
