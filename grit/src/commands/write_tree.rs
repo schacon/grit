@@ -26,11 +26,31 @@ pub fn run(args: Args) -> Result<()> {
     let index = Index::load(&repo.index_path()).context("loading index")?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
-    let oid = write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
-        .context("building tree from index")?;
+    let oid = match write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)
+        .context("building tree from index")
+    {
+        Ok(oid) => oid,
+        Err(err) => {
+            if is_permission_denied(&err) {
+                eprintln!(
+                    "error: insufficient permission for adding an object to repository database .git/objects"
+                );
+                eprintln!("fatal: git-write-tree: error building trees");
+                std::process::exit(128);
+            }
+            return Err(err);
+        }
+    };
 
     println!("{oid}");
     Ok(())
+}
+
+fn is_permission_denied(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        let msg = cause.to_string();
+        msg.contains("Permission denied") || msg.contains("permission denied")
+    })
 }
 
 /// Build and write tree objects from the index, return the root tree OID.

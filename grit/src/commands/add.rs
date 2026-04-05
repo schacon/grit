@@ -938,7 +938,21 @@ fn stage_file(
         }
     };
 
-    let oid = odb.write(ObjectKind::Blob, &data)?;
+    let oid = match odb.write(ObjectKind::Blob, &data) {
+        Ok(oid) => oid,
+        Err(err) => {
+            if is_permission_denied_error(&err) {
+                eprintln!(
+                    "error: insufficient permission for adding an object to repository database .git/objects"
+                );
+                eprintln!("error: {rel_path}: failed to insert into database");
+                eprintln!("error: unable to index file '{}'", rel_path);
+                eprintln!("fatal: updating files failed");
+                std::process::exit(128);
+            }
+            return Err(err.into());
+        }
+    };
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
                              // Use stage_file which also clears conflict stages (1, 2, 3) for the same
@@ -1239,4 +1253,9 @@ fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec
             anyhow::bail!("unsupported working-tree-encoding: {encoding}");
         }
     }
+}
+
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
 }
