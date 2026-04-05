@@ -81,3 +81,7 @@
 - `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing (post-merge regression check).
 - `./scripts/run-tests.sh t1512-rev-parse-disambiguation.sh`: 3/3 passing (post-merge regression check).
 - `./scripts/run-tests.sh t2006-checkout-index-basic.sh`: 9/9 passing (stale plan entry corrected; no code changes required).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after fixing checkout path mode parsing for non-commit first positional argument without `--`).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1051-large-conversion.sh`: 12/12 passing (2 SHA1/size prereq cases skipped by harness as expected).
+- `./scripts/run-tests.sh t1051-large-conversion.sh`: 12/12 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; retained only checkout/path-mode fix).

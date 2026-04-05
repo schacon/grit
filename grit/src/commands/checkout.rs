@@ -301,21 +301,32 @@ pub fn run(args: Args) -> Result<()> {
             }
             return checkout_paths_with_merge(&repo, &paths);
         }
+        let mut source_spec = target.clone();
+        let mut checkout_pathspecs = paths.clone();
         if !has_separator {
             if let Some(ref t) = target {
-                let is_rev = resolve_revision(&repo, t).is_ok()
-                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
-                let cwd = std::env::current_dir().unwrap_or_default();
-                let is_path = cwd.join(t).exists();
-                if is_rev && is_path {
+                let is_commitish = resolve_to_commit(&repo, t).is_ok();
+                let is_path = pathspec_exists_in_worktree_or_index(&repo, t);
+                if is_commitish && is_path {
                     bail!(
                         "fatal: ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
                         t
                     );
                 }
+                // Without `--`, interpret all args as pathspecs when the first
+                // token is not a commit-ish.
+                if !is_commitish {
+                    source_spec = None;
+                    checkout_pathspecs.insert(0, t.clone());
+                }
             }
         }
-        return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
+        return checkout_paths(
+            &repo,
+            source_spec.as_deref(),
+            &checkout_pathspecs,
+            args.no_overlay,
+        );
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -486,6 +497,40 @@ fn emit_ambiguous_tracking_hint(target: &str, matches: &[String]) {
     }
     eprintln!("hint: If you meant to check out one of these branches, use:");
     eprintln!("hint:   git checkout --track <remote>/{}", target);
+}
+
+/// Return whether a pathspec resolves to an existing worktree or index path.
+fn pathspec_exists_in_worktree_or_index(repo: &Repository, spec: &str) -> bool {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return false;
+    };
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(_) => return false,
+    };
+    let rel = resolve_pathspec(spec, work_tree, &cwd);
+    if rel.is_empty() {
+        return true;
+    }
+    let abs = work_tree.join(&rel);
+    if abs.exists() || abs.is_symlink() {
+        return true;
+    }
+
+    let Ok(index) = Index::load(&repo.index_path()) else {
+        return false;
+    };
+    if index.get(rel.as_bytes(), 0).is_some() {
+        return true;
+    }
+    let prefix = if rel.ends_with('/') {
+        rel
+    } else {
+        format!("{rel}/")
+    };
+    index.entries.iter().any(|entry| {
+        entry.stage() == 0 && String::from_utf8_lossy(&entry.path).starts_with(&prefix)
+    })
 }
 
 /// Split positional arguments into (target, paths) around `--`.

@@ -97,7 +97,7 @@ t1016-compatObjectFormat	yes	0	0	0	ok	0	0	0
 t1020-subdirectory	yes	15	9	6	ok	9	15	0
 t1022-read-tree-partial-clone	yes	1	1	0	ok	1	1	0
 t1050-large	yes	29	14	15	ok	14	29	0
-t1051-large-conversion	yes	12	8	4	ok	8	12	0
+t1051-large-conversion	yes	12	12	0	ok	12	12	0
 t1060-object-corruption	yes	17	11	6	ok	10	16	1
 t1090-sparse-checkout-scope	yes	7	2	5	ok	2	7	0
 t1091-sparse-checkout-builtin	yes	77	10	67	ok	9	76	1

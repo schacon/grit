@@ -6,14 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    71 |
+| Completed   |    72 |
 | In progress |     0 |
-| Remaining   |   696 |
+| Remaining   |   695 |
 | **Total**   |   767 |
 
 ## Recently completed
 
 - `t1512-rev-parse-disambiguation` — 3/3 tests pass (implemented rev-parse ambiguous-short-id diagnostics with candidate hints/bad-object handling, added `test-tool` hash/zlib compatibility helpers, and restored missing test-lib helper functions used by loose-object fixtures)
+- `t1051-large-conversion` — 12/12 tests pass (fixed checkout path mode to treat `<paths...>` as pathspecs when no `--` is provided and the first token is not a commit-ish, preserving ambiguity diagnostics for real commit-ish/path collisions)
 - `t1412-reflog-loop` — 3/3 tests pass (restored branch-creation reflog entries for checkout-created branches and fixed append semantics in test helper commits so reflog walk history matches upstream)
 - `t2006-checkout-index-basic` — 9/9 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t1407-worktree-ref-store` — 4/4 tests pass (implemented `test-tool ref-store` worktree backend for `resolve-ref` and `create-symref` operations used by upstream API coverage)
@@ -64,4 +65,4 @@
 
 ## What Remains
 
-698 test files still pending. See `plan.md` for the full prioritized list.
+695 test files still pending. See `plan.md` for the full prioritized list.
