@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -132,6 +133,10 @@ struct BlameLine {
     content: String,
     /// Source filename (differs from target when -C detects a copy).
     source_file: Option<String>,
+    /// True when this line was forced through an ignored revision.
+    ignored: bool,
+    /// True when this line could not be blamed past an ignored revision.
+    unblamable: bool,
 }
 
 /// Parsed author/committer string.
@@ -244,6 +249,7 @@ fn content_lines(s: &str) -> Vec<&str> {
 struct TrackedLine {
     final_lineno: usize,
     current_idx: usize,
+    ignored: bool,
 }
 
 /// Core blame: walk first-parent history, diff blobs, attribute lines.
@@ -273,6 +279,7 @@ fn compute_blame(
         .map(|i| TrackedLine {
             final_lineno: i + 1,
             current_idx: i,
+            ignored: false,
         })
         .collect();
 
@@ -294,6 +301,88 @@ fn compute_blame(
 
         let is_ignored = ignore_revs.contains(&current_oid);
 
+        // If an ignored merge commit is encountered, try to continue blame
+        // through the parent that actually contributed each line.
+        if is_ignored && commit.parents.len() > 1 {
+            let cur_content = read_blob_string(odb, &current_blob_oid)?;
+            let cur_lines = content_lines(&cur_content);
+
+            let mut parent_lines: Vec<Option<Vec<String>>> = Vec::new();
+            let mut parent_blames: Vec<Option<Vec<BlameLine>>> = Vec::new();
+            for parent_oid in &commit.parents {
+                let parent_commit = get_commit(odb, *parent_oid, &mut commit_cache)?;
+                if let Some(p_blob_oid) = resolve_path_in_tree(odb, &parent_commit.tree, file_path)? {
+                    let p_content = read_blob_string(odb, &p_blob_oid)?;
+                    let p_lines = content_lines(&p_content)
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    let p_blame = compute_blame(odb, *parent_oid, file_path, ignore_revs)?;
+                    parent_lines.push(Some(p_lines));
+                    parent_blames.push(Some(p_blame));
+                } else {
+                    parent_lines.push(None);
+                    parent_blames.push(None);
+                }
+            }
+
+            for t in pending.drain(..) {
+                let idx = t.current_idx;
+                let Some(cur_line) = cur_lines.get(idx).copied() else {
+                    result.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                        source_file: None,
+                        ignored: t.ignored,
+                        unblamable: true,
+                    });
+                    continue;
+                };
+
+                let mut picked: Option<BlameLine> = None;
+                for i in 0..commit.parents.len() {
+                    let Some(lines) = parent_lines.get(i).and_then(|v| v.as_ref()) else {
+                        continue;
+                    };
+                    if idx >= lines.len() || lines[idx] != cur_line {
+                        continue;
+                    }
+                    let Some(blames) = parent_blames.get(i).and_then(|v| v.as_ref()) else {
+                        continue;
+                    };
+                    if let Some(line_blame) = blames.iter().find(|b| b.final_lineno == idx + 1) {
+                        picked = Some(line_blame.clone());
+                        break;
+                    }
+                }
+
+                if let Some(pb) = picked {
+                    result.push(BlameLine {
+                        oid: pb.oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: pb.orig_lineno,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                        source_file: pb.source_file,
+                        ignored: true,
+                        unblamable: pb.unblamable,
+                    });
+                } else {
+                    result.push(BlameLine {
+                        oid: current_oid,
+                        final_lineno: t.final_lineno,
+                        orig_lineno: idx + 1,
+                        content: final_lines[t.final_lineno - 1].clone(),
+                        source_file: None,
+                        ignored: t.ignored,
+                        unblamable: true,
+                    });
+                }
+            }
+            break;
+        }
+
         if commit.parents.is_empty() {
             // Root commit — attribute all remaining lines
             for t in pending.drain(..) {
@@ -303,6 +392,8 @@ fn compute_blame(
                     orig_lineno: t.current_idx + 1,
                     content: final_lines[t.final_lineno - 1].clone(),
                     source_file: None,
+                    ignored: t.ignored,
+                    unblamable: false,
                 });
             }
             break;
@@ -322,6 +413,8 @@ fn compute_blame(
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
                         source_file: None,
+                        ignored: t.ignored,
+                        unblamable: false,
                     });
                 }
                 break;
@@ -336,6 +429,8 @@ fn compute_blame(
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
                         source_file: None,
+                        ignored: t.ignored,
+                        unblamable: true,
                     });
                 }
                 break;
@@ -363,16 +458,30 @@ fn compute_blame(
                             still_pending.push(TrackedLine {
                                 final_lineno: t.final_lineno,
                                 current_idx: parent_idx,
+                                ignored: t.ignored,
                             });
                         } else if is_ignored {
-                            // Commit is ignored — pass line through to parent
-                            // even though it was "introduced" here.
-                            // Use a best-effort mapping: keep the same index.
-                            let par_idx = t.current_idx.min(par_lines.len().saturating_sub(1));
-                            still_pending.push(TrackedLine {
-                                final_lineno: t.final_lineno,
-                                current_idx: par_idx,
-                            });
+                            // Best-effort pass-through through ignored revisions:
+                            // if parent has a same-slot line, keep walking with
+                            // an ignored marker; otherwise keep blame on the
+                            // ignored commit and mark as unblamable.
+                            if t.current_idx < par_lines.len() {
+                                still_pending.push(TrackedLine {
+                                    final_lineno: t.final_lineno,
+                                    current_idx: t.current_idx,
+                                    ignored: true,
+                                });
+                            } else {
+                                result.push(BlameLine {
+                                    oid: current_oid,
+                                    final_lineno: t.final_lineno,
+                                    orig_lineno: t.current_idx + 1,
+                                    content: final_lines[t.final_lineno - 1].clone(),
+                                    source_file: None,
+                                    ignored: t.ignored,
+                                    unblamable: true,
+                                });
+                            }
                         } else {
                             // Line was introduced in current commit
                             result.push(BlameLine {
@@ -381,13 +490,19 @@ fn compute_blame(
                                 orig_lineno: t.current_idx + 1,
                                 content: final_lines[t.final_lineno - 1].clone(),
                                 source_file: None,
+                                ignored: t.ignored,
+                                unblamable: false,
                             });
                         }
                     } else if is_ignored {
-                        let par_idx = par_lines.len().saturating_sub(1);
-                        still_pending.push(TrackedLine {
+                        result.push(BlameLine {
+                            oid: current_oid,
                             final_lineno: t.final_lineno,
-                            current_idx: par_idx,
+                            orig_lineno: t.current_idx + 1,
+                            content: final_lines[t.final_lineno - 1].clone(),
+                            source_file: None,
+                            ignored: t.ignored,
+                            unblamable: true,
                         });
                     } else {
                         // Out of range — attribute to current
@@ -397,6 +512,8 @@ fn compute_blame(
                             orig_lineno: t.current_idx + 1,
                             content: final_lines[t.final_lineno - 1].clone(),
                             source_file: None,
+                            ignored: t.ignored,
+                            unblamable: false,
                         });
                     }
                 }
@@ -424,6 +541,24 @@ fn get_commit(
     let c = parse_commit(&obj.data)?;
     cache.insert(oid, c.clone());
     Ok(c)
+}
+
+fn config_bool(config: &ConfigSet, key: &str) -> bool {
+    matches!(config.get_bool(key), Some(Ok(true)))
+}
+
+fn peel_to_commit_oid(odb: &Odb, mut oid: ObjectId) -> Result<Option<ObjectId>> {
+    loop {
+        let obj = odb.read(&oid)?;
+        match obj.kind {
+            ObjectKind::Commit => return Ok(Some(oid)),
+            ObjectKind::Tag => {
+                let tag = grit_lib::objects::parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 /// Map each line in `new` to its origin in `old` (if any).
@@ -465,6 +600,7 @@ fn build_line_map(old: &[&str], new: &[&str]) -> Vec<Option<usize>> {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let odb = Odb::new(&repo.git_dir.join("objects"));
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     let (rev, file_path) = parse_blame_args(&args.args)?;
 
@@ -479,27 +615,47 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
-    // Build the set of revisions to ignore
+    // Build the set of revisions to ignore.
+    // Sources:
+    // 1) config blame.ignoreRevsFile (can be multi-valued)
+    // 2) CLI --ignore-revs-file (processed after config; empty string resets)
+    // 3) CLI --ignore-rev
     let mut ignore_revs = HashSet::new();
-    for rev_str in &args.ignore_rev {
-        let oid = ObjectId::from_hex(rev_str)
-            .with_context(|| format!("invalid --ignore-rev: {rev_str}"))?;
-        ignore_revs.insert(oid);
-    }
+    let mut ignore_revs_files = config.get_all("blame.ignoreRevsFile");
     for file in &args.ignore_revs_file {
+        if file.is_empty() {
+            ignore_revs_files.clear();
+        } else {
+            ignore_revs_files.push(file.clone());
+        }
+    }
+
+    for file in &ignore_revs_files {
         let contents = std::fs::read_to_string(file)
-            .with_context(|| format!("cannot read --ignore-revs-file: {file}"))?;
+            .with_context(|| format!("could not open file with revisions to ignore: {file}"))?;
         for line in contents.lines() {
             let line = line.trim();
-            // Skip blank lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            let oid = ObjectId::from_hex(line)
-                .with_context(|| format!("invalid rev in {file}: {line}"))?;
-            ignore_revs.insert(oid);
+            let oid = resolve_revision(&repo, line)
+                .map_err(|_| anyhow::anyhow!("invalid object name: {line}"))?;
+            if let Some(oid) = peel_to_commit_oid(&odb, oid)? {
+                ignore_revs.insert(oid);
+            }
         }
     }
+
+    for rev_str in &args.ignore_rev {
+        let oid = resolve_revision(&repo, rev_str)
+            .with_context(|| format!("cannot find revision {rev_str} to ignore"))?;
+        let oid = peel_to_commit_oid(&odb, oid)?
+            .ok_or_else(|| anyhow::anyhow!("cannot find revision {rev_str} to ignore"))?;
+        ignore_revs.insert(oid);
+    }
+
+    let mark_unblamable = config_bool(&config, "blame.markUnblamableLines");
+    let mark_ignored = config_bool(&config, "blame.markIgnoredLines");
 
     let mut blame_lines = match compute_blame(&odb, start_oid, &file_path, &ignore_revs) {
         Ok(lines) => lines,
@@ -531,6 +687,8 @@ pub fn run(args: Args) -> Result<()> {
                     orig_lineno: i + 1,
                     content: line.to_string(),
                     source_file: None,
+                    ignored: false,
+                    unblamable: false,
                 })
                 .collect()
         }
@@ -585,9 +743,19 @@ pub fn run(args: Args) -> Result<()> {
             &commits,
             &file_path,
             args.line_porcelain,
+            mark_unblamable,
+            mark_ignored,
         )?;
     } else {
-        write_default(&mut out, &blame_lines, &commits, &args, &file_path)?;
+        write_default(
+            &mut out,
+            &blame_lines,
+            &commits,
+            &args,
+            &file_path,
+            mark_unblamable,
+            mark_ignored,
+        )?;
     }
 
     Ok(())
@@ -715,6 +883,8 @@ fn write_porcelain(
     commits: &HashMap<ObjectId, CommitData>,
     filename: &str,
     line_porcelain: bool,
+    mark_unblamable: bool,
+    mark_ignored: bool,
 ) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
 
@@ -774,6 +944,12 @@ fn write_porcelain(
             writeln!(out, "filename {filename}")?;
         }
 
+        if mark_ignored && bl.ignored {
+            writeln!(out, "ignored")?;
+        }
+        if mark_unblamable && bl.unblamable {
+            writeln!(out, "unblamable")?;
+        }
         writeln!(out, "\t{}", bl.content)?;
     }
 
@@ -813,6 +989,8 @@ fn write_default(
     commits: &HashMap<ObjectId, CommitData>,
     args: &Args,
     file_path: &str,
+    mark_unblamable: bool,
+    mark_ignored: bool,
 ) -> Result<()> {
     let hash_len = if args.no_abbrev || args.long_hash {
         40
@@ -874,11 +1052,18 @@ fn write_default(
         } else {
             String::new()
         };
+        let marker = if mark_unblamable && bl.unblamable {
+            "*"
+        } else if mark_ignored && bl.ignored {
+            "?"
+        } else {
+            ""
+        };
 
         if args.suppress {
             writeln!(
                 out,
-                "{color_start}{short} {fname}{lineno:>w$}) {content}{color_end}",
+                "{color_start}{marker}{short} {fname}{lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
@@ -895,7 +1080,7 @@ fn write_default(
 
             writeln!(
                 out,
-                "{color_start}{short} {fname}({who} {ts} {lineno:>w$}) {content}{color_end}",
+                "{color_start}{marker}{short} {fname}({who} {ts} {lineno:>w$}) {content}{color_end}",
                 lineno = bl.final_lineno,
                 w = lineno_width,
                 content = bl.content,
