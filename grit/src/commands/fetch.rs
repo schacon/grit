@@ -203,6 +203,17 @@ fn fetch_remote(
     copy_objects(&remote_repo.git_dir, git_dir, args.refetch)
         .context("copying objects from remote")?;
 
+    // Verify that all objects reachable from remote refs exist locally.
+    // This catches incomplete remotes that are missing some objects.
+    {
+        let tip_oids: Vec<ObjectId> = remote_heads
+            .iter()
+            .chain(remote_tags.iter())
+            .map(|(_, oid)| *oid)
+            .collect();
+        check_connectivity(git_dir, &tip_oids)?;
+    }
+
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
     if let Some(depth) = effective_depth {
@@ -739,6 +750,55 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
         }
     }
 
+    Ok(())
+}
+
+/// Verify that all objects reachable from the given OIDs exist in the local ODB.
+/// This is used after copying objects from a remote to detect incomplete transfers.
+fn check_connectivity(
+    git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
+    use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
+    use grit_lib::odb::Odb;
+    use std::collections::HashSet;
+
+    let odb = Odb::new(&git_dir.join("objects"));
+    let mut seen = HashSet::new();
+    let mut stack: Vec<ObjectId> = tip_oids.to_vec();
+
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = odb.read(&oid).with_context(|| {
+            "remote did not send all necessary objects".to_string()
+        })?;
+        match obj.kind {
+            ObjectKind::Commit => {
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.push(commit.tree);
+                    for parent in &commit.parents {
+                        stack.push(*parent);
+                    }
+                }
+            }
+            ObjectKind::Tree => {
+                if let Ok(entries) = parse_tree(&obj.data) {
+                    for entry in entries {
+                        // Skip gitlink (submodule) entries
+                        if entry.mode == 0o160000 {
+                            continue;
+                        }
+                        stack.push(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Blob | ObjectKind::Tag => {
+                // Blobs and tags are leaf objects, no further traversal needed
+            }
+        }
+    }
     Ok(())
 }
 
