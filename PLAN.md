@@ -703,7 +703,7 @@ commit → check it off → move on.
 - [x] `t6136-pathspec-in-bare` ████████████████████ 3/3 (0 left) — diagnosing out-of-scope pathspec
 - [x] `t6413-merge-crlf` ████████████████████ 3/3 (0 left) — merge conflict in crlf repo
 
-- [ ] `t6428-merge-conflicts-sparse` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge cases
+- [x] `t6428-merge-conflicts-sparse` ████████████████████ 2/2 (0 left) — merge cases
 - [ ] `t6431-merge-criscross` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge-recursive backend test
 - [ ] `t6412-merge-large-rename` ██████████████░░░░░░ 7/10 (3 left) — merging with large rename matrix
 - [ ] `t6400-merge-df` ███████████░░░░░░░░░ 4/7 (3 left) — Test merge with directory/file conflicts

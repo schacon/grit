@@ -190,10 +190,6 @@ pub fn run(args: Args) -> Result<()> {
         if args.unmerged && entry.stage() == 0 {
             continue;
         }
-        if show_cached && !args.unmerged && !args.stage && entry.stage() != 0 && !args.deduplicate {
-            continue;
-        }
-
         // --ignored with --cached: only show tracked files that are ignored
         if args.ignored && show_cached && !args.others {
             let path_str = String::from_utf8_lossy(&entry.path);
@@ -920,7 +916,7 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
 
 fn status_tag(entry: &IndexEntry) -> char {
     if entry.stage() != 0 {
-        'C' // unmerged (conflict)
+        'M' // unmerged entries are shown as modified in git ls-files -t
     } else if entry.skip_worktree() {
         'S'
     } else if entry.assume_unchanged() {

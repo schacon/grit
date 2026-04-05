@@ -643,6 +643,11 @@ fn do_real_merge(
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
+    // Sparse checkout safety: if a SKIP_WORKTREE path is currently present in
+    // the working tree and this merge would update that path, abort before
+    // touching the index/worktree so user data is preserved.
+    bail_if_merge_touches_present_skip_worktree(repo, &ours_entries, &theirs_entries)?;
+
     // Save ORIG_HEAD
     fs::write(
         repo.git_dir.join("ORIG_HEAD"),
@@ -828,6 +833,42 @@ fn do_real_merge(
             if let Ok(diff_entries) = diff_trees(&repo.odb, Some(&old_tree), Some(&new_tree), "") {
                 print_diffstat(repo, &diff_entries, args.compact_summary);
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn bail_if_merge_touches_present_skip_worktree(
+    repo: &Repository,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> Result<()> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    let index = Index::load(&repo.index_path())?;
+
+    for entry in &index.entries {
+        if entry.stage() != 0 || !entry.skip_worktree() {
+            continue;
+        }
+
+        let path_str = String::from_utf8_lossy(&entry.path).to_string();
+        let abs = work_tree.join(&path_str);
+        if fs::symlink_metadata(&abs).is_err() {
+            continue;
+        }
+
+        let ours_e = ours.get(&entry.path);
+        let theirs_e = theirs.get(&entry.path);
+        let unchanged = match (ours_e, theirs_e) {
+            (Some(o), Some(t)) => o.oid == t.oid && o.mode == t.mode,
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            bail!("Entry '{}' not uptodate. Cannot merge.", path_str);
         }
     }
 

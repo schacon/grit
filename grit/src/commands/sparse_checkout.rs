@@ -127,6 +127,11 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("bare repository cannot use sparse checkout"))?;
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let cone_mode = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
 
     let index_path = repo.git_dir.join("index");
     let mut index = Index::load(&index_path).context("reading index")?;
@@ -138,7 +143,7 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
 
     for entry in &mut index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let matches = path_matches_sparse_patterns(&path_str, patterns);
+        let matches = path_matches_sparse_patterns(&path_str, patterns, cone_mode);
 
         if matches {
             // File should be in the working tree
@@ -175,24 +180,56 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
 
 /// Check if a file path matches any of the sparse checkout patterns.
 /// Patterns are treated as directory prefixes (like git's cone mode).
-fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
-    // Always include top-level files (not in subdirectories)
-    if !path.contains('/') {
-        return true;
+fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: bool) -> bool {
+    if cone_mode {
+        // Cone mode keeps top-level files and explicitly included directories.
+        if !path.contains('/') {
+            return true;
+        }
+
+        for pattern in patterns {
+            let prefix = pattern.trim_end_matches('/');
+            if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
+                return true;
+            }
+            if path == prefix {
+                return true;
+            }
+        }
+        return false;
     }
 
-    for pattern in patterns {
-        // Treat pattern as a directory prefix
-        let prefix = pattern.trim_end_matches('/');
-        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-            return true;
+    // Non-cone mode interprets sparse-checkout patterns in order, where later
+    // patterns override earlier ones and negated patterns remove matches.
+    let mut included = false;
+    for raw_pattern in patterns {
+        let pattern = raw_pattern.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
         }
-        // Also check if path IS the pattern (exact match)
-        if path == prefix {
-            return true;
+
+        let (negated, core_pattern) = if let Some(rest) = pattern.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, pattern)
+        };
+        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let matches = if let Some(prefix) = normalized.strip_suffix('/') {
+            path == prefix || path.starts_with(&format!("{prefix}/"))
+        } else {
+            crate::pathspec::pathspec_matches(normalized, path)
+        };
+
+        if matches {
+            included = !negated;
         }
     }
-    false
+
+    included
 }
 
 /// Remove empty directories walking up from `dir` to `stop` (exclusive).

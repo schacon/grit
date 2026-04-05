@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    49 |
+| Completed   |    51 |
 | In progress |     0 |
-| Remaining   |   718 |
+| Remaining   |   716 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6428-merge-conflicts-sparse` — 2/2 tests pass (sparse-checkout no-cone glob semantics fixed; merge conflict stages now preserved in index and shown as modified in `ls-files -t`)
 - `t6413-merge-crlf` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6136-pathspec-in-bare` — 3/3 tests pass (`log` and `ls-files` now reject out-of-repo `..` pathspecs in bare/.git contexts with the expected "outside repository" diagnostics)
 - `t6134-pathspec-in-submodule` — 3/3 tests pass (`git add` now detects `git -C <submodule> add` in unpopulated submodules and reports the expected fatal message)
@@ -40,4 +41,4 @@
 
 ## What Remains
 
-718 test files still pending. See `plan.md` for the full prioritized list.
+716 test files still pending. See `plan.md` for the full prioritized list.
