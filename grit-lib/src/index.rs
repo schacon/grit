@@ -20,6 +20,7 @@ use std::path::Path;
 
 use sha1::{Digest, Sha1};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 
@@ -302,12 +303,56 @@ impl Index {
         let checksum = hasher.finalize();
 
         let tmp_path = path.with_extension("lock");
+        let pid_path = pid_path_for_lock(&tmp_path);
+        let lockfile_pid_enabled = lockfile_pid_enabled(path);
+
+        let mut lock_file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
         {
-            let mut f = fs::File::create(&tmp_path)?;
-            f.write_all(&body)?;
-            f.write_all(&checksum)?;
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let message = build_lock_exists_message(&tmp_path, &pid_path, &e);
+                return Err(Error::Io(io::Error::new(io::ErrorKind::AlreadyExists, message)));
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        let mut wrote_pid_file = false;
+        if lockfile_pid_enabled {
+            if let Err(e) = write_lock_pid_file(&pid_path) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(Error::Io(e));
+            }
+            wrote_pid_file = true;
         }
-        fs::rename(&tmp_path, path)?;
+
+        if let Err(e) = (|| -> io::Result<()> {
+            lock_file.write_all(&body)?;
+            lock_file.write_all(&checksum)?;
+            Ok(())
+        })() {
+            let _ = fs::remove_file(&tmp_path);
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+            return Err(Error::Io(e));
+        }
+        drop(lock_file);
+
+        if let Err(e) = fs::rename(&tmp_path, path) {
+            let _ = fs::remove_file(&tmp_path);
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+            return Err(Error::Io(e));
+        }
+        {
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+        }
         Ok(())
     }
 
@@ -401,6 +446,91 @@ impl Index {
         self.entries
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
+    }
+}
+
+fn lockfile_pid_enabled(index_path: &Path) -> bool {
+    let git_dir = match index_path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.lockfilepid"))
+        .and_then(|res| res.ok())
+        .unwrap_or(false)
+}
+
+fn pid_path_for_lock(lock_path: &Path) -> std::path::PathBuf {
+    let file_name = lock_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "index.lock".to_owned());
+    let pid_name = if let Some(base) = file_name.strip_suffix(".lock") {
+        format!("{base}~pid.lock")
+    } else {
+        format!("{file_name}~pid.lock")
+    };
+    lock_path.with_file_name(pid_name)
+}
+
+fn write_lock_pid_file(pid_path: &Path) -> io::Result<()> {
+    use std::io::Write as _;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(pid_path)?;
+    writeln!(file, "pid {}", std::process::id())?;
+    Ok(())
+}
+
+fn build_lock_exists_message(lock_path: &Path, pid_path: &Path, err: &io::Error) -> String {
+    let mut msg = format!("Unable to create '{}': {}.\n\n", lock_path.display(), err);
+
+    if let Some(pid) = read_lock_pid(pid_path) {
+        if is_process_running(pid) {
+            msg.push_str(&format!(
+                "Lock is held by process {pid}; if no git process is running, the lock file may be stale (PIDs can be reused)"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "Lock was held by process {pid}, which is no longer running; the lock file appears to be stale"
+            ));
+        }
+    } else {
+        msg.push_str(
+            "Another git process seems to be running in this repository, or the lock file may be stale",
+        );
+    }
+
+    msg
+}
+
+fn read_lock_pid(pid_path: &Path) -> Option<u64> {
+    let raw = fs::read_to_string(pid_path).ok()?;
+    let trimmed = raw.trim();
+    if let Some(v) = trimmed.strip_prefix("pid ") {
+        return v.trim().parse::<u64>().ok();
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+fn is_process_running(pid: u64) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_path = std::path::PathBuf::from(format!("/proc/{pid}"));
+        proc_path.exists()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let status = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status();
+        status.map(|s| s.success()).unwrap_or(false)
     }
 }
 

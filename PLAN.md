@@ -26,7 +26,7 @@ commit → check it off → move on.
 - [x] `t0030-stripspace` ████████████████████ 30/30 (0 left) — git stripspace
 - [x] `t0041-usage` ████████████████████ 16/16 (0 left) — Test commands behavior when given invalid argument value
 - [x] `t0004-unwritable` ████████████████████ 9/9 (0 left) — detect unwritable repository and fail correctly
-- [ ] `t0031-lockfile-pid` ████████░░░░░░░░░░░░ 3/7 (4 left) — lock file PID info tests
+- [x] `t0031-lockfile-pid` ████████████████████ 7/7 (0 left) — lock file PID info tests
 
 - [ ] `t0005-signals` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — signals work as we expect
 - [ ] `t0068-for-each-repo` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git for-each-repo builtin
