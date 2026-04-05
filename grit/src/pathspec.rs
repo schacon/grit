@@ -1,5 +1,60 @@
 //! Pathspec matching utilities shared across commands.
 
+/// Parsed pathspec magic flags plus the underlying pattern.
+#[derive(Debug, Clone, Copy)]
+pub struct MagicPathspec<'a> {
+    /// Whether matching paths should be excluded.
+    pub exclude: bool,
+    /// Whether the pathspec is rooted at the repository top.
+    pub top: bool,
+    /// The pattern body after removing any supported magic prefix.
+    pub pattern: &'a str,
+}
+
+/// Parse the subset of pathspec magic currently shared across commands.
+#[must_use]
+pub fn parse_magic_pathspec(spec: &str) -> MagicPathspec<'_> {
+    if let Some(pattern) = spec.strip_prefix(":/") {
+        return MagicPathspec {
+            exclude: false,
+            top: true,
+            pattern,
+        };
+    }
+    if let Some(pattern) = spec.strip_prefix(":!") {
+        return MagicPathspec {
+            exclude: true,
+            top: false,
+            pattern,
+        };
+    }
+    if let Some(rest) = spec.strip_prefix(":(") {
+        if let Some(close) = rest.find(')') {
+            let (magic, suffix) = rest.split_at(close);
+            let pattern = &suffix[1..];
+            let mut exclude = false;
+            let mut top = false;
+            for word in magic.split(',') {
+                match word {
+                    "exclude" => exclude = true,
+                    "top" => top = true,
+                    _ => {}
+                }
+            }
+            return MagicPathspec {
+                exclude,
+                top,
+                pattern,
+            };
+        }
+    }
+    MagicPathspec {
+        exclude: false,
+        top: false,
+        pattern: spec,
+    }
+}
+
 /// Check if a string contains glob meta-characters.
 pub fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
@@ -100,7 +155,7 @@ fn match_char_class(pattern: &[u8], ch: u8) -> Option<(bool, usize)> {
 /// Check whether a path matches a pathspec (which may be literal or glob).
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
     if has_glob_chars(spec) {
-        glob_match(spec, path)
+        path == spec || path.starts_with(&format!("{spec}/")) || glob_match(spec, path)
     } else if let Some(prefix) = spec.strip_suffix('/') {
         path == prefix || path.starts_with(&format!("{prefix}/"))
     } else {

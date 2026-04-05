@@ -780,6 +780,10 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
+    if let Some(ts) = parse_relative_approxidate(s) {
+        return Some(ts);
+    }
+
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
         // Scan for 4-digit year followed by -MM-DD
@@ -811,6 +815,49 @@ fn approxidate(s: &str) -> Option<i64> {
         None
     };
     re_like(s)
+}
+
+fn parse_relative_approxidate(input: &str) -> Option<i64> {
+    let normalized = input.trim().replace(['.', ','], " ").to_ascii_lowercase();
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    if tokens == ["now"] {
+        return Some(time::OffsetDateTime::now_utc().unix_timestamp());
+    }
+
+    let mut idx = 0usize;
+    let mut total = time::Duration::ZERO;
+    let mut saw_component = false;
+
+    while idx < tokens.len() {
+        if tokens[idx] == "ago" {
+            return if saw_component && idx + 1 == tokens.len() {
+                Some((time::OffsetDateTime::now_utc() - total).unix_timestamp())
+            } else {
+                None
+            };
+        }
+
+        let count = tokens[idx].parse::<i64>().ok()?;
+        let unit = *tokens.get(idx + 1)?;
+        total += match unit {
+            "second" | "seconds" => time::Duration::seconds(count),
+            "minute" | "minutes" => time::Duration::minutes(count),
+            "hour" | "hours" => time::Duration::hours(count),
+            "day" | "days" => time::Duration::days(count),
+            "week" | "weeks" => time::Duration::weeks(count),
+            "month" | "months" => time::Duration::days(count * 30),
+            "year" | "years" => time::Duration::days(count * 365),
+            _ => return None,
+        };
+        saw_component = true;
+        idx += 2;
+    }
+
+    None
 }
 
 /// Try to resolve `@{upstream}`, `@{u}`, `@{push}` style suffixes.

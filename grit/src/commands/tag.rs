@@ -20,7 +20,6 @@ use time::OffsetDateTime;
 #[command(about = "Create, list, delete or verify a tag object signed with GPG")]
 pub struct Args {
     /// Positional arguments: tag name(s), optional commit.
-    #[arg(trailing_var_arg = true)]
     pub positional: Vec<String>,
 
     /// Create an annotated tag.

@@ -10,7 +10,8 @@
 
 ## Verification
 
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1503 cargo build --release`
+- `cargo fmt`
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1503 cargo build --release -p grit-rs`
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1503 bash scripts/run-upstream-tests.sh t1503`
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1503 bash scripts/run-upstream-tests.sh t1503 2>&1 | tail -40`
 

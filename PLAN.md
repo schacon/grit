@@ -80,10 +80,10 @@ commit → check it off → move on.
 - [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
 - [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
-- [ ] `t1408-packed-refs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — packed-refs entries are covered by loose refs
+- [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
 - [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
 - [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
-- [ ] `t1503-rev-parse-verify` ███████████████░░░░░ 9/12 (3 left) — test git rev-parse --verify
+- [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
 - [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
 - [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api
 - [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again
@@ -244,14 +244,14 @@ commit → check it off → move on.
 - [x] `t3004-ls-files-basic` ████████████████████ 6/6 (0 left) — basic ls-files tests
 
 - [x] `t3304-notes-mixed` ████████████████████ 6/6 (0 left) — Test notes trees that also contain non-notes
-- [ ] `t3102-ls-tree-wildcards` ███████████████░░░░░ 3/4 (1 left) — ls-tree with(out) globs
-- [ ] `t3500-cherry` ███████████████░░░░░ 3/4 (1 left) — git cherry should detect patches integrated upstream
+- [x] `t3102-ls-tree-wildcards` ████████████████████ 4/4 (0 left) — ls-tree with(out) globs
+- [x] `t3500-cherry` ████████████████████ 4/4 (0 left) — git cherry should detect patches integrated upstream
 
 - [ ] `t3009-ls-files-others-nonsubmodule` ██████████░░░░░░░░░░ 1/2 (1 left) — test git ls-files --others with non-submodule repositories
 
 - [ ] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
 - [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
-- [ ] `t3205-branch-color` ██████████░░░░░░░░░░ 2/4 (2 left) — basic branch output coloring
+- [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
 - [ ] `t3012-ls-files-dedup` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git ls-files --deduplicate test
 - [ ] `t3307-notes-man` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Examples from the git-notes man page
 

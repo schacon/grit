@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    40 |
+| Completed   |    45 |
 | In progress |     0 |
-| Remaining   |   727 |
+| Remaining   |   722 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1503-rev-parse-verify` — 12/12 tests pass (`reflog delete --rewrite` is accepted and date-based reflog verification now resolves selectors like `1.year.ago`)
+- `t1408-packed-refs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected after rebuilding `target/release/grit`)
+- `t3102-ls-tree-wildcards` — 4/4 tests pass (`ls-tree` and `ls-files` now agree on negated pathspec handling for wildcard filters)
+- `t3205-branch-color` — 4/4 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected after rebuilding `target/release/grit`)
+- `t3500-cherry` — 4/4 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3211-peel-ref` — 8/8 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected)
@@ -34,4 +39,4 @@
 
 ## What Remains
 
-727 test files still pending. See `plan.md` for the full prioritized list.
+722 test files still pending. See `PLAN.md` for the full prioritized list.

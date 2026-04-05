@@ -11,6 +11,8 @@ use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::repo::Repository;
 
+use crate::pathspec::parse_magic_pathspec;
+
 /// Arguments for `grit ls-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -148,7 +150,10 @@ pub fn run(args: Args) -> Result<()> {
         .map(|p| resolve_pathspec(work_tree, &cwd, p))
         .collect::<Result<Vec<_>>>()?;
     if pathspec_filter.is_empty() && !cwd_prefix.is_empty() {
-        pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
+        pathspec_filter.push(Pathspec {
+            matcher: PathspecMatcher::Literal(cwd_prefix.clone()),
+            exclude: false,
+        });
     }
 
     // Track which pathspecs matched at least one entry (for --error-unmatch).
@@ -169,14 +174,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
         // Filter by pathspec
-        if !pathspec_filter.is_empty() {
-            let idx = pathspec_filter
-                .iter()
-                .position(|spec| spec.matches(&entry.path));
-            match idx {
-                Some(i) => matched[i] = true,
-                None => continue,
-            }
+        if !matches_pathspecs(&pathspec_filter, &entry.path, &mut matched) {
+            continue;
         }
 
         // Unmerged: stage != 0
@@ -363,14 +362,8 @@ pub fn run(args: Args) -> Result<()> {
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
-            if !pathspec_filter.is_empty() {
-                let idx = pathspec_filter
-                    .iter()
-                    .position(|spec| spec.matches(path_bytes));
-                match idx {
-                    Some(i) => matched[i] = true,
-                    None => continue,
-                }
+            if !matches_pathspecs(&pathspec_filter, path_bytes, &mut matched) {
+                continue;
             }
 
             // Apply exclude filtering (always when matcher is loaded)
@@ -460,13 +453,9 @@ pub fn run(args: Args) -> Result<()> {
     if args.error_unmatch {
         for (i, spec) in pathspec_filter.iter().enumerate() {
             if !matched[i] {
-                let spec_str = match spec {
-                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
-                    Pathspec::Glob(s) => s.clone(),
-                };
                 anyhow::bail!(
                     "error: pathspec '{}' did not match any file(s) known to git",
-                    spec_str
+                    spec.display()
                 );
             }
         }
@@ -529,16 +518,22 @@ fn walk_worktree(
 
 /// A parsed pathspec — either a literal prefix or a glob pattern.
 #[derive(Debug, Clone)]
-enum Pathspec {
+struct Pathspec {
+    matcher: PathspecMatcher,
+    exclude: bool,
+}
+
+#[derive(Debug, Clone)]
+enum PathspecMatcher {
     Literal(Vec<u8>),
     Glob(String),
 }
 
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
-        match self {
-            Pathspec::Literal(spec) => path == spec.as_slice() || path.starts_with(spec),
-            Pathspec::Glob(pattern) => {
+        match &self.matcher {
+            PathspecMatcher::Literal(spec) => literal_matches_path(spec, path),
+            PathspecMatcher::Glob(pattern) => {
                 // Try literal match first (for files with glob chars in names)
                 if path == pattern.as_bytes() {
                     return true;
@@ -548,6 +543,20 @@ impl Pathspec {
             }
         }
     }
+
+    fn display(&self) -> String {
+        match &self.matcher {
+            PathspecMatcher::Literal(v) => String::from_utf8_lossy(v).into_owned(),
+            PathspecMatcher::Glob(s) => s.clone(),
+        }
+    }
+}
+
+fn literal_matches_path(spec: &[u8], path: &[u8]) -> bool {
+    path == spec
+        || path
+            .strip_prefix(spec)
+            .is_some_and(|rest| rest.starts_with(b"/"))
 }
 
 /// Check if a string contains glob meta-characters.
@@ -655,31 +664,46 @@ fn resolve_pathspec(
     pathspec: &std::path::Path,
 ) -> Result<Pathspec> {
     if pathspec.as_os_str().is_empty() || pathspec == std::path::Path::new(".") {
-        return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
+        return Ok(Pathspec {
+            matcher: PathspecMatcher::Literal(cwd_prefix_bytes(work_tree, cwd)?),
+            exclude: false,
+        });
     }
     let pathspec_str = pathspec.to_string_lossy();
-    // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
-    if let Some(rest) = pathspec_str.strip_prefix(":/") {
-        if rest.is_empty() || rest == "*" {
+    let parsed = parse_magic_pathspec(&pathspec_str);
+    if parsed.top {
+        if parsed.pattern.is_empty() || parsed.pattern == "*" {
             // Match everything from root
-            return Ok(Pathspec::Literal(Vec::new()));
+            return Ok(Pathspec {
+                matcher: PathspecMatcher::Literal(Vec::new()),
+                exclude: parsed.exclude,
+            });
         }
-        if has_glob_chars(rest) {
-            return Ok(Pathspec::Glob(rest.to_string()));
+        if has_glob_chars(parsed.pattern) {
+            return Ok(Pathspec {
+                matcher: PathspecMatcher::Glob(parsed.pattern.to_string()),
+                exclude: parsed.exclude,
+            });
         }
-        return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
+        return Ok(Pathspec {
+            matcher: PathspecMatcher::Literal(parsed.pattern.as_bytes().to_vec()),
+            exclude: parsed.exclude,
+        });
     }
-    if has_glob_chars(&pathspec_str) {
+    if has_glob_chars(parsed.pattern) {
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        let pattern = format!("{}{}", prefix_str, pathspec_str);
-        return Ok(Pathspec::Glob(pattern));
+        let pattern = format!("{}{}", prefix_str, parsed.pattern);
+        return Ok(Pathspec {
+            matcher: PathspecMatcher::Glob(pattern),
+            exclude: parsed.exclude,
+        });
     }
-    let combined = if pathspec.is_absolute() {
-        pathspec.to_path_buf()
+    let combined = if std::path::Path::new(parsed.pattern).is_absolute() {
+        std::path::PathBuf::from(parsed.pattern)
     } else {
-        cwd.join(pathspec)
+        cwd.join(parsed.pattern)
     };
     let normalized = normalize_path(&combined);
     let rel = normalized.strip_prefix(work_tree).with_context(|| {
@@ -688,7 +712,10 @@ fn resolve_pathspec(
             pathspec.display()
         )
     })?;
-    Ok(Pathspec::Literal(path_to_bytes(rel)))
+    Ok(Pathspec {
+        matcher: PathspecMatcher::Literal(path_to_bytes(rel)),
+        exclude: parsed.exclude,
+    })
 }
 
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {
@@ -712,6 +739,31 @@ fn display_path_from_cwd<'a>(path: &'a [u8], cwd_prefix: &[u8]) -> &'a [u8] {
         return path;
     }
     path.strip_prefix(cwd_prefix).unwrap_or(path)
+}
+
+fn matches_pathspecs(pathspecs: &[Pathspec], path: &[u8], matched: &mut [bool]) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+
+    let mut any_positive = false;
+    let mut included = false;
+    let mut excluded = false;
+
+    for (i, spec) in pathspecs.iter().enumerate() {
+        let is_match = spec.matches(path);
+        if is_match {
+            matched[i] = true;
+        }
+        if spec.exclude {
+            excluded |= is_match;
+        } else {
+            any_positive = true;
+            included |= is_match;
+        }
+    }
+
+    (!any_positive || included) && !excluded
 }
 
 fn normalize_path(path: &std::path::Path) -> PathBuf {

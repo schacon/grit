@@ -3,10 +3,13 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
+use std::path::{Component, Path, PathBuf};
 
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+
+use crate::pathspec::parse_magic_pathspec;
 
 /// Arguments for `grit ls-tree`.
 #[derive(Debug, ClapArgs)]
@@ -93,33 +96,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-
-    // Resolve pathspecs relative to cwd within the work tree, then express
-    // them as repo-root-relative paths so the tree walk can match correctly.
-    if !args.paths.is_empty() {
-        if let Some(ref wt) = repo.work_tree {
-            let cwd = std::env::current_dir().context("resolving cwd")?;
-            let prefix = cwd.strip_prefix(wt).unwrap_or(std::path::Path::new(""));
-            if !prefix.as_os_str().is_empty() {
-                let mut resolved = Vec::with_capacity(args.paths.len());
-                for p in &args.paths {
-                    let combined = prefix.join(p);
-                    let mut norm = Vec::new();
-                    for comp in combined.components() {
-                        match comp {
-                            std::path::Component::ParentDir => {
-                                norm.pop();
-                            }
-                            std::path::Component::CurDir => {}
-                            other => norm.push(other.as_os_str().to_string_lossy().into_owned()),
-                        }
-                    }
-                    resolved.push(norm.join("/"));
-                }
-                args.paths = resolved;
-            }
-        }
-    }
+    let pathspecs = PathspecMatcher::compile(&repo, &args.paths)?;
 
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
     let obj = repo.odb.read(&oid)?;
@@ -165,6 +142,7 @@ pub fn run(mut args: Args) -> Result<()> {
         &obj.data,
         "",
         &args,
+        &pathspecs,
         &mut out,
         term,
         cwd_prefix.as_deref(),
@@ -195,6 +173,7 @@ fn list_tree(
     data: &[u8],
     prefix: &str,
     args: &Args,
+    pathspecs: &PathspecMatcher,
     out: &mut impl Write,
     term: u8,
     cwd_prefix: Option<&str>,
@@ -211,36 +190,36 @@ fn list_tree(
 
         let is_tree = entry.mode == 0o040000;
 
-        // Apply path filter
-        if !args.paths.is_empty() {
-            let matches = args.paths.iter().any(|p| {
-                let has_trailing_slash = p.ends_with('/');
-                let ps = p.strip_suffix('/').unwrap_or(p.as_str());
-                // Trailing-slash pathspec only matches trees, not blobs
-                if has_trailing_slash && !is_tree && full_name == ps {
-                    return false;
-                }
-                full_name == ps
-                    || full_name.starts_with(&format!("{ps}/"))
-                    || ps.starts_with(&format!("{full_name}/"))
-            });
-            if !matches {
-                continue;
-            }
-            // If pathspec points INTO this tree, descend.
-            // Exact match without trailing slash shows the tree entry itself.
-            // Trailing slash or deeper path means descend into the tree.
-            let is_ancestor = is_tree
-                && args.paths.iter().any(|p| {
-                    let ps = p.strip_suffix('/').unwrap_or(p.as_str());
-                    ps.starts_with(&format!("{full_name}/"))
-                        || (p.ends_with('/') && ps == full_name)
-                });
-            if is_tree && is_ancestor && !args.recursive {
+        if !args.recursive && is_tree && pathspecs.should_descend(&full_name) {
+            let sub_obj = repo.odb.read(&entry.oid)?;
+            list_tree(
+                repo,
+                &sub_obj.data,
+                &full_name,
+                args,
+                pathspecs,
+                out,
+                term,
+                cwd_prefix,
+            )?;
+            continue;
+        }
+
+        if !pathspecs.should_output(&full_name, is_tree) {
+            if args.recursive && is_tree {
                 let sub_obj = repo.odb.read(&entry.oid)?;
-                list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
-                continue;
+                list_tree(
+                    repo,
+                    &sub_obj.data,
+                    &full_name,
+                    args,
+                    pathspecs,
+                    out,
+                    term,
+                    cwd_prefix,
+                )?;
             }
+            continue;
         }
 
         if args.recursive && is_tree {
@@ -250,7 +229,16 @@ fn list_tree(
             }
             // Recurse
             let sub_obj = repo.odb.read(&entry.oid)?;
-            list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
+            list_tree(
+                repo,
+                &sub_obj.data,
+                &full_name,
+                args,
+                pathspecs,
+                out,
+                term,
+                cwd_prefix,
+            )?;
             continue;
         }
 
@@ -262,6 +250,182 @@ fn list_tree(
         print_entry(repo, entry, &display_name, args, out, term)?;
     }
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct PathspecMatcher {
+    includes: Vec<CompiledPathspec>,
+    excludes: Vec<CompiledPathspec>,
+}
+
+impl PathspecMatcher {
+    fn compile(repo: &Repository, raw_specs: &[String]) -> Result<Self> {
+        if raw_specs.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let cwd = std::env::current_dir().context("resolving cwd")?;
+        let mut matcher = Self::default();
+        for raw in raw_specs {
+            let (exclude, spec) = CompiledPathspec::compile(repo, &cwd, raw)?;
+            if exclude {
+                matcher.excludes.push(spec);
+            } else {
+                matcher.includes.push(spec);
+            }
+        }
+        Ok(matcher)
+    }
+
+    fn should_output(&self, path: &str, is_tree: bool) -> bool {
+        let included = self.includes.is_empty()
+            || self
+                .includes
+                .iter()
+                .any(|spec| spec.matches_output(path, is_tree));
+        included
+            && !self
+                .excludes
+                .iter()
+                .any(|spec| spec.matches_subtree_or_path(path))
+    }
+
+    fn should_descend(&self, tree_path: &str) -> bool {
+        if self
+            .excludes
+            .iter()
+            .any(|spec| spec.matches_subtree_or_path(tree_path))
+        {
+            return false;
+        }
+
+        self.includes
+            .iter()
+            .any(|spec| spec.requires_descend(tree_path))
+    }
+}
+
+#[derive(Debug)]
+struct CompiledPathspec {
+    pattern: String,
+    is_glob: bool,
+    trailing_slash: bool,
+}
+
+impl CompiledPathspec {
+    fn compile(repo: &Repository, cwd: &Path, raw: &str) -> Result<(bool, Self)> {
+        let parsed = parse_magic_pathspec(raw);
+        let exclude = parsed.exclude;
+        let rooted = parsed.top;
+        let spec = parsed.pattern;
+        let trailing_slash = spec.ends_with('/') && !spec.is_empty();
+        let spec = spec.strip_suffix('/').unwrap_or(spec);
+        let is_glob = crate::pathspec::has_glob_chars(spec);
+
+        let pattern = if let Some(work_tree) = repo.work_tree.as_ref() {
+            resolve_pathspec_pattern(work_tree, cwd, spec, rooted)?
+        } else {
+            spec.to_owned()
+        };
+
+        Ok((
+            exclude,
+            Self {
+                pattern,
+                is_glob,
+                trailing_slash,
+            },
+        ))
+    }
+
+    fn matches_output(&self, path: &str, is_tree: bool) -> bool {
+        if self.trailing_slash && !is_tree && path == self.pattern {
+            return false;
+        }
+
+        if self.is_glob {
+            path == self.pattern
+                || path.starts_with(&format!("{}/", self.pattern))
+                || crate::pathspec::glob_match(&self.pattern, path)
+        } else if self.pattern.is_empty() {
+            true
+        } else {
+            path == self.pattern || path.starts_with(&format!("{}/", self.pattern))
+        }
+    }
+
+    fn matches_subtree_or_path(&self, path: &str) -> bool {
+        self.matches_output(path, true)
+    }
+
+    fn requires_descend(&self, tree_path: &str) -> bool {
+        if self.pattern.is_empty() {
+            return false;
+        }
+        if self.trailing_slash && tree_path == self.pattern {
+            return true;
+        }
+        if !self.is_glob {
+            return self.pattern.starts_with(&format!("{tree_path}/"));
+        }
+
+        let literal_prefix = self
+            .pattern
+            .find(['*', '?', '['])
+            .map(|pos| &self.pattern[..pos])
+            .unwrap_or(&self.pattern);
+        if literal_prefix.starts_with(&format!("{tree_path}/")) {
+            return true;
+        }
+
+        let trimmed_prefix = literal_prefix.trim_end_matches('/');
+        !trimmed_prefix.is_empty() && tree_path.starts_with(trimmed_prefix)
+    }
+}
+
+fn resolve_pathspec_pattern(
+    work_tree: &Path,
+    cwd: &Path,
+    spec: &str,
+    rooted: bool,
+) -> Result<String> {
+    if spec.is_empty() {
+        return Ok(String::new());
+    }
+
+    let base = if rooted {
+        work_tree.to_path_buf()
+    } else {
+        cwd.to_path_buf()
+    };
+    let combined = if Path::new(spec).is_absolute() {
+        PathBuf::from(spec)
+    } else {
+        base.join(spec)
+    };
+    let normalized = normalize_path(&combined);
+    let relative = normalized.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "pathspec '{}' is outside repository work tree '{}'",
+            spec,
+            work_tree.display()
+        )
+    })?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn print_entry(
