@@ -48,10 +48,12 @@ pub fn run(args: Args) -> Result<()> {
         ShowAbsoluteGitDir,
         ShowRefFormat,
         GitPath(String),
+        All,
         Branches(Option<String>),
         Tags(Option<String>),
         Remotes(Option<String>),
         Glob(String),
+        Exclude(String),
         LocalEnvVars,
         ResolveGitDir(String),
         Revision(String),
@@ -150,6 +152,18 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::Remotes(None));
             } else if let Some(pattern) = arg.strip_prefix("--remotes=") {
                 actions.push(Action::Remotes(Some(pattern.to_owned())));
+            } else if arg == "--all" {
+                actions.push(Action::All);
+            } else if let Some(pattern) = arg.strip_prefix("--exclude=") {
+                actions.push(Action::Exclude(pattern.to_owned()));
+            } else if arg == "--exclude" {
+                i += 1;
+                if let Some(pattern) = args.args.get(i) {
+                    actions.push(Action::Exclude(pattern.to_owned()));
+                }
+            } else if arg.starts_with("--exclude-hidden=") {
+                // --exclude-hidden=fetch/receive: accepted but currently a no-op
+                // (we don't have transfer.hideRefs support yet)
             } else if arg == "--show-ref-format" {
                 actions.push(Action::ShowRefFormat);
             } else if arg == "--sq-quote" {
@@ -261,6 +275,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Process actions in order
     let mut saw_path_sep_output = false;
+    let mut exclude_patterns: Vec<String> = Vec::new();
     for action in &actions {
         match action {
             Action::ShowIsInsideWorkTree => {
@@ -385,57 +400,83 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not a git repository");
                 }
             }
+            Action::Exclude(pattern) => {
+                exclude_patterns.push(pattern.clone());
+            }
+            Action::All => {
+                if let Some(current) = repo.as_ref() {
+                    let matching = grit_lib::refs::list_refs(&current.git_dir, "refs/")
+                        .context("failed to list refs")?;
+                    for (refname, oid) in &matching {
+                        if !is_excluded(refname, &exclude_patterns) {
+                            println!("{oid}");
+                        }
+                    }
+                    exclude_patterns.clear();
+                }
+            }
             Action::Branches(pattern) => {
                 if let Some(current) = repo.as_ref() {
                     let matching = if let Some(pat) = pattern {
-                        let full = format!("refs/heads/{pat}");
+                        let full = normalize_ref_pattern("refs/heads/", pat);
                         grit_lib::refs::list_refs_glob(&current.git_dir, &full)
                             .context("failed to list branch refs")?
                     } else {
                         grit_lib::refs::list_refs(&current.git_dir, "refs/heads/")
                             .context("failed to list branch refs")?
                     };
-                    for (_, oid) in matching {
-                        println!("{oid}");
+                    for (refname, oid) in &matching {
+                        if !is_excluded(refname, &exclude_patterns) {
+                            println!("{oid}");
+                        }
                     }
+                    exclude_patterns.clear();
                 }
             }
             Action::Tags(pattern) => {
                 if let Some(current) = repo.as_ref() {
                     let matching = if let Some(pat) = pattern {
-                        let full = format!("refs/tags/{pat}");
+                        let full = normalize_ref_pattern("refs/tags/", pat);
                         grit_lib::refs::list_refs_glob(&current.git_dir, &full)
                             .context("failed to list tag refs")?
                     } else {
                         grit_lib::refs::list_refs(&current.git_dir, "refs/tags/")
                             .context("failed to list tag refs")?
                     };
-                    for (_, oid) in matching {
-                        println!("{oid}");
+                    for (refname, oid) in &matching {
+                        if !is_excluded(refname, &exclude_patterns) {
+                            println!("{oid}");
+                        }
                     }
+                    exclude_patterns.clear();
                 }
             }
             Action::Remotes(pattern) => {
                 if let Some(current) = repo.as_ref() {
                     let matching = if let Some(pat) = pattern {
-                        let full = format!("refs/remotes/{pat}");
+                        let full = normalize_ref_pattern("refs/remotes/", pat);
                         grit_lib::refs::list_refs_glob(&current.git_dir, &full)
                             .context("failed to list remote refs")?
                     } else {
                         grit_lib::refs::list_refs(&current.git_dir, "refs/remotes/")
                             .context("failed to list remote refs")?
                     };
-                    for (_, oid) in matching {
-                        println!("{oid}");
+                    for (refname, oid) in &matching {
+                        if !is_excluded(refname, &exclude_patterns) {
+                            println!("{oid}");
+                        }
                     }
+                    exclude_patterns.clear();
                 }
             }
             Action::Glob(full) => {
                 if let Some(current) = repo.as_ref() {
                     let matching = grit_lib::refs::list_refs_glob(&current.git_dir, full)
                         .context("failed to list refs")?;
-                    for (_, oid) in matching {
-                        println!("{oid}");
+                    for (refname, oid) in &matching {
+                        if !is_excluded(refname, &exclude_patterns) {
+                            println!("{oid}");
+                        }
                     }
                 }
             }
@@ -675,8 +716,7 @@ fn run_parseopt(extra_args: &[String]) -> Result<()> {
         };
         // Parse name part: may contain , for aliases; = means takes argument
         let takes_arg = name_part.contains('=');
-        let clean = name_part
-            .replace(['=', '!', '*', '?'], "");
+        let clean = name_part.replace(['=', '!', '*', '?'], "");
         let names: Vec<String> = clean.split(',').map(|s| s.to_string()).collect();
         specs.push(OptSpec { names, takes_arg });
     }
@@ -759,6 +799,23 @@ fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
+/// Check whether a ref name matches any of the exclude patterns.
+fn is_excluded(refname: &str, patterns: &[String]) -> bool {
+    for pat in patterns {
+        let full_pat = if pat.contains('*') || pat.contains('?') || pat.contains('[') {
+            pat.clone()
+        } else {
+            // Treat non-glob patterns as exact ref suffixes
+            pat.clone()
+        };
+        // Try matching as a glob pattern against the full refname
+        if grit_lib::refs::ref_matches_glob(refname, &full_pat) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Normalize a --glob pattern: prepend refs/ if needed, append /* if no glob chars.
 fn normalize_glob_pattern(pattern: &str) -> String {
     let full = if pattern.starts_with("refs/") {
@@ -766,10 +823,27 @@ fn normalize_glob_pattern(pattern: &str) -> String {
     } else {
         format!("refs/{pattern}")
     };
-    // If no glob characters, treat as prefix pattern by appending /*
-    if !full.contains('*') && !full.contains('?') && !full.contains('[') {
-        format!("{full}/*")
+    ensure_glob_suffix(&full)
+}
+
+/// Normalize a ref-category pattern (for --branches=, --tags=, --remotes=).
+/// The `prefix` is e.g. `refs/heads/`, and `pattern` is the user-supplied
+/// portion. If the pattern has no glob characters, append `/*` so it matches
+/// everything under that prefix path.
+fn normalize_ref_pattern(prefix: &str, pattern: &str) -> String {
+    let full = format!("{prefix}{pattern}");
+    ensure_glob_suffix(&full)
+}
+
+/// If the given pattern has no glob characters, treat it as a prefix and
+/// append `/*` (or just `*` if it ends with `/`).
+fn ensure_glob_suffix(pattern: &str) -> String {
+    if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
+        return pattern.to_owned();
+    }
+    if pattern.ends_with('/') {
+        format!("{pattern}*")
     } else {
-        full
+        format!("{pattern}/*")
     }
 }

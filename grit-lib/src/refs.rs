@@ -418,6 +418,19 @@ pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, Obje
     Ok(results)
 }
 
+/// Check whether a ref name matches a glob pattern.
+///
+/// Supports `*`, `?`, and `[…]` wildcards. An exact string match is also accepted.
+pub fn ref_matches_glob(refname: &str, pattern: &str) -> bool {
+    // For exact matches (no glob characters), check suffix match
+    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
+        return refname == pattern
+            || refname.ends_with(&format!("/{pattern}"))
+            || refname.starts_with(&format!("{pattern}/"));
+    }
+    glob_match(pattern, refname)
+}
+
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pat = pattern.as_bytes();
     let txt = text.as_bytes();
