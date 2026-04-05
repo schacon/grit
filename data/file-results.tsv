@@ -172,7 +172,7 @@ t2002-checkout-cache-u	yes	3	3	0	ok	3	3	0
 t2003-checkout-cache-mkdir	yes	10	3	7	ok	3	10	0
 t2004-checkout-cache-temp	yes	23	8	15	ok	8	23	0
 t2005-checkout-index-symlinks	yes	3	3	0	ok	3	3	0
-t2006-checkout-index-basic	yes	9	5	4	ok	5	9	0
+t2006-checkout-index-basic	yes	9	9	0	ok	9	9	0
 t2007-checkout-symlink	yes	4	4	0	ok	4	4	0
 t2008-checkout-subdir	yes	9	9	0	ok	9	9	0
 t2009-checkout-statinfo	yes	3	3	0	ok	3	3	0

@@ -76,3 +76,8 @@
 - `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1412-reflog-loop.sh`: 3/3 passing.
 - `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing.
 - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check after the above changes).
+- `./scripts/run-tests.sh t1901-repo-structure.sh`: 4/4 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1512-rev-parse-disambiguation.sh`: 3/3 passing (post-merge regression check).
+- `./scripts/run-tests.sh t2006-checkout-index-basic.sh`: 9/9 passing (stale plan entry corrected; no code changes required).
