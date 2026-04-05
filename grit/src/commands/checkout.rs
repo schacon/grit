@@ -17,6 +17,7 @@ use crate::commands::git_passthrough;
 use crate::protocol;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_REGULAR, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -106,6 +107,14 @@ pub struct Args {
     #[arg(long = "ignore-other-worktrees")]
     pub ignore_other_worktrees: bool,
 
+    /// Update ignored files in the way (default behavior).
+    #[arg(long = "overwrite-ignore", hide = true, overrides_with = "no_overwrite_ignore")]
+    pub overwrite_ignore: bool,
+
+    /// Refuse to overwrite ignored files.
+    #[arg(long = "no-overwrite-ignore", hide = true, overrides_with = "overwrite_ignore")]
+    pub no_overwrite_ignore: bool,
+
     /// Recurse into submodules.
     #[arg(long = "recurse-submodules")]
     pub recurse_submodules: bool,
@@ -144,6 +153,7 @@ use std::cell::Cell;
 
 thread_local! {
     static QUIET: Cell<bool> = const { Cell::new(false) };
+    static OVERWRITE_IGNORE: Cell<bool> = const { Cell::new(true) };
 }
 
 /// Print to stderr unless quiet mode is enabled.
@@ -159,6 +169,7 @@ macro_rules! checkout_eprintln {
 
 pub fn run(args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
+    OVERWRITE_IGNORE.with(|o| o.set(!args.no_overwrite_ignore || args.overwrite_ignore));
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Detect if `--` was used in the original command line. Clap strips a
@@ -1073,6 +1084,12 @@ fn check_dirty_worktree(
         .collect();
 
     let mut untracked_conflicts = Vec::new();
+    let allow_overwrite_ignored = OVERWRITE_IGNORE.with(|o| o.get());
+    let mut ignore_matcher = if allow_overwrite_ignored {
+        Some(IgnoreMatcher::from_repository(repo).unwrap_or_default())
+    } else {
+        None
+    };
     for new_entry in &new_index.entries {
         if new_entry.stage() != 0 {
             continue;
@@ -1117,6 +1134,17 @@ fn check_dirty_worktree(
                 });
 
                 if !has_tracked_prefix && !replaces_tracked_dir {
+                    if allow_overwrite_ignored
+                        && obstruction_is_ignored_only(
+                            repo,
+                            old_index,
+                            work_tree,
+                            rel_str,
+                            ignore_matcher.as_mut(),
+                        )?
+                    {
+                        continue;
+                    }
                     untracked_conflicts.push(rel_path.into_owned());
                 }
             }
@@ -1135,6 +1163,51 @@ fn check_dirty_worktree(
     }
 
     Ok(())
+}
+
+fn obstruction_is_ignored_only(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    rel_path: &str,
+    matcher: Option<&mut IgnoreMatcher>,
+) -> Result<bool> {
+    let Some(matcher) = matcher else {
+        return Ok(false);
+    };
+
+    let abs_path = work_tree.join(rel_path);
+    let meta = match std::fs::symlink_metadata(&abs_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(false),
+    };
+
+    if meta.file_type().is_dir() {
+        let entries = match std::fs::read_dir(&abs_path) {
+            Ok(it) => it,
+            Err(_) => return Ok(false),
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return Ok(false),
+            };
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let child_rel = if rel_path.is_empty() {
+                name.to_string()
+            } else {
+                format!("{rel_path}/{name}")
+            };
+            if !obstruction_is_ignored_only(repo, index, work_tree, &child_rel, Some(matcher))? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+
+    let (ignored, _) = matcher.check_path(repo, Some(index), rel_path, false)?;
+    Ok(ignored)
 }
 
 /// Check if a working tree file differs from its index entry.
@@ -2222,6 +2295,9 @@ fn checkout_index_to_worktree(
     // Remove paths that are no longer present in the new index.
     for old_path in old_stage0.difference(&new_stage0) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
+        if has_symlink_ancestor(work_tree, &rel) {
+            continue;
+        }
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
@@ -2266,6 +2342,25 @@ fn checkout_index_to_worktree(
     }
 
     Ok(())
+}
+
+fn has_symlink_ancestor(work_tree: &Path, rel_path: &str) -> bool {
+    let rel = Path::new(rel_path);
+    let mut current = work_tree.to_path_buf();
+    let components: Vec<_> = rel.components().collect();
+    if components.len() <= 1 {
+        return false;
+    }
+
+    for comp in components.iter().take(components.len() - 1) {
+        current.push(comp.as_os_str());
+        if let Ok(meta) = std::fs::symlink_metadata(&current) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Write a blob object to the working tree.
