@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    60 |
+| Completed   |    61 |
 | In progress |     0 |
-| Remaining   |   707 |
+| Remaining   |   706 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2104-update-index-skip-worktree` — 7/7 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2010-checkout-ambiguous` — 10/10 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t1600-index` — 7/7 tests pass (implemented index v4 write/read support with path compression + `index.skipHash`/`feature.manyFiles` trailing-hash behavior, and added missing `test_trailing_hash` helper command in `tests/`)
 - `t2012-checkout-last` — 22/22 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
@@ -54,4 +55,4 @@
 
 ## What Remains
 
-707 test files still pending. See `plan.md` for the full prioritized list.
+706 test files still pending. See `plan.md` for the full prioritized list.

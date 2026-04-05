@@ -42,3 +42,4 @@
 - `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after implementing index v4 write support, zero-checksum acceptance for skipHash, and `test-tool hexdump` helper; reverted unrelated clippy edits in non-target files).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1600-index.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t1600-index.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
