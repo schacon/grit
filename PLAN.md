@@ -926,7 +926,7 @@ commit → check it off → move on.
 
 ## 10. Contrib/Other (15 files)
 
-- [ ] `t9304-fast-import-marks` █████████████████░░░ 7/8 (1 left) — test exotic situations with marks
+- [x] `t9304-fast-import-marks` ████████████████████ 8/8 (0 left) — test exotic situations with marks
 - [ ] `t9850-shell` ████████░░░░░░░░░░░░ 2/5 (3 left) — git shell tests
 - [ ] `t9305-fast-import-signatures` ████████████████░░░░ 17/21 (4 left) — git fast-import --signed-commits=<mode>
 - [ ] `t9306-fast-import-signed-tags` ████████████░░░░░░░░ 6/10 (4 left) — git fast-import --signed-tags=<mode>
@@ -934,7 +934,7 @@ commit → check it off → move on.
 - [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
 - [ ] `t9301-fast-import-notes` █████████░░░░░░░░░░░ 8/17 (9 left) — test git fast-import of notes objects
 - [ ] `t9003-help-autocorrect` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — help.autocorrect finding a match
-- [ ] `t9002-column` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git column
+- [x] `t9002-column` ████████████████████ 16/16 (0 left) — git column
 - [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
 - [ ] `t9303-fast-import-compression` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — compression setting of fast-import utility
 - [ ] `t9350-fast-export` ██████████████░░░░░░ 53/73 (20 left) — git fast-export

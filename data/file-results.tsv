@@ -876,7 +876,7 @@ t8014-blame-ignore-fuzzy	yes	16	4	12	ok	4	16	0
 t8015-blame-diff-algorithm	yes	7	2	5	ok	2	7	0
 t8020-last-modified	yes	28	1	27	ok	1	28	0
 t9001-send-email	yes	216	68	148	ok	67	215	1
-t9002-column	yes	16	6	10	ok	6	16	0
+t9002-column	yes	16	16	0	ok	16	16	0
 t9003-help-autocorrect	yes	10	1	9	ok	1	10	0
 t9100-git-svn-basic	yes	0	0	0	ok	0	0	0
 t9101-git-svn-props	yes	0	0	0	ok	0	0	0
@@ -954,7 +954,7 @@ t9300-fast-import	yes	0	0	0	timeout	0	0	0
 t9301-fast-import-notes	yes	17	8	9	ok	8	17	0
 t9302-fast-import-unpack-limit	yes	3	3	0	ok	3	3	0
 t9303-fast-import-compression	yes	16	0	16	ok	0	16	0
-t9304-fast-import-marks	yes	8	7	1	ok	7	8	0
+t9304-fast-import-marks	yes	8	8	0	ok	8	8	0
 t9305-fast-import-signatures	yes	21	17	4	ok	17	21	0
 t9306-fast-import-signed-tags	yes	10	6	4	ok	6	10	0
 t9350-fast-export	yes	73	53	20	ok	52	72	1

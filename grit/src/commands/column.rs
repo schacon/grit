@@ -23,9 +23,9 @@ pub struct Args {
     #[arg(long = "mode", default_value = "column")]
     pub mode: String,
 
-    /// Total display width (defaults to 80).
-    #[arg(long = "width", default_value_t = 80)]
-    pub width: usize,
+    /// Total display width (defaults to `$COLUMNS` or 80).
+    #[arg(long = "width")]
+    pub width: Option<usize>,
 
     /// Padding between columns (defaults to 1).
     #[arg(long = "padding", default_value_t = 1, allow_hyphen_values = true)]
@@ -54,9 +54,11 @@ enum ColumnMode {
 /// Run the `column` command.
 pub fn run(args: Args) -> Result<()> {
     if args.padding < 0 {
-        bail!("--padding must be non-negative");
+        eprintln!("fatal: --padding must be non-negative");
+        std::process::exit(128);
     }
     let padding = args.padding as usize;
+    let width = resolve_width(args.width);
 
     let (mode, dense) = parse_mode(&args.mode)?;
 
@@ -78,7 +80,14 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     match mode {
-        ColumnMode::Plain | ColumnMode::Never => {
+        ColumnMode::Never => {
+            // Match git behavior: "--mode=never" bypasses column formatting
+            // options and prints raw input.
+            for item in &items {
+                writeln!(out, "{item}")?;
+            }
+        }
+        ColumnMode::Plain => {
             if let Some(ref nl) = args.nl {
                 for item in &items {
                     write!(out, "{}{item}{nl}", args.indent)?;
@@ -91,21 +100,32 @@ pub fn run(args: Args) -> Result<()> {
         }
         ColumnMode::Row => {
             if dense {
-                format_rows_dense(&items, args.width, padding, &args.indent, &mut out)?;
+                format_rows_dense(&items, width, padding, &args.indent, &mut out)?;
             } else {
-                format_rows(&items, args.width, padding, &args.indent, &mut out)?;
+                format_rows(&items, width, padding, &args.indent, &mut out)?;
             }
         }
         ColumnMode::Column | ColumnMode::Always | ColumnMode::Auto => {
             if dense {
-                format_columns_dense(&items, args.width, padding, &args.indent, &mut out)?;
+                format_columns_dense(&items, width, padding, &args.indent, &mut out)?;
             } else {
-                format_columns(&items, args.width, padding, &args.indent, &mut out)?;
+                format_columns(&items, width, padding, &args.indent, &mut out)?;
             }
         }
     }
 
     Ok(())
+}
+
+fn resolve_width(explicit_width: Option<usize>) -> usize {
+    explicit_width
+        .or_else(|| {
+            std::env::var("COLUMNS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|v| *v > 0)
+        })
+        .unwrap_or(80)
 }
 
 /// Parse a mode string like "column", "column,dense", "row,nodense" etc.
@@ -153,13 +173,16 @@ fn format_rows(
     };
 
     let mut col = 0;
-    for item in items {
+    for (i, item) in items.iter().enumerate() {
         if col == 0 {
             write!(out, "{indent}")?;
         }
+        let is_last_item = i + 1 == items.len();
         col += 1;
-        if col < num_cols {
+        if col < num_cols && !is_last_item {
             write!(out, "{item:<width$}", width = col_width)?;
+        } else if col < num_cols {
+            write!(out, "{item}")?;
         } else {
             writeln!(out, "{item}")?;
             col = 0;
