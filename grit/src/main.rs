@@ -7,7 +7,10 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
+use std::process::{Command as ProcessCommand, Stdio};
 
 mod commands;
 pub mod pathspec;
@@ -998,7 +1001,143 @@ fn get_autocorrect_setting() -> Option<String> {
     None
 }
 
-fn strsim_distance(a: &str, b: &str) -> usize {
+fn discover_git_dir() -> Option<std::path::PathBuf> {
+    std::env::var("GIT_DIR")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        })
+}
+
+fn get_alias_definition(alias: &str) -> Option<String> {
+    let key = format!("alias.{alias}");
+    let git_dir = discover_git_dir();
+    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).ok()?;
+    config.get(&key)
+}
+
+fn list_alias_names() -> Vec<String> {
+    let git_dir = discover_git_dir();
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in config.entries() {
+        if let Some(name) = entry.key.strip_prefix("alias.") {
+            if !name.is_empty() && seen.insert(name.to_owned()) {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
+}
+
+fn split_alias_words(input: &str) -> Vec<String> {
+    input
+        .split_whitespace()
+        .map(std::borrow::ToOwned::to_owned)
+        .collect()
+}
+
+fn run_alias(alias: &str, value: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    let depth = std::env::var("GRIT_ALIAS_DEPTH")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0);
+    if depth >= 10 {
+        bail!("fatal: alias loop detected for '{alias}'");
+    }
+    // Shell aliases ("!cmd ...") are not handled internally; run via sh -c.
+    if let Some(shell) = value.strip_prefix('!') {
+        let mut cmd = ProcessCommand::new("sh");
+        cmd.arg("-c").arg(shell);
+        if !rest.is_empty() {
+            cmd.arg(alias);
+            cmd.args(rest);
+        }
+        let status = cmd
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
+    let mut expanded = split_alias_words(value);
+    if expanded.is_empty() {
+        bail!("fatal: bad alias.{alias} string: empty command");
+    }
+    let new_subcmd = expanded.remove(0);
+    let mut new_rest = expanded;
+    new_rest.extend(rest.iter().cloned());
+
+    std::env::set_var("GRIT_ALIAS_DEPTH", (depth + 1).to_string());
+    let result = dispatch(&new_subcmd, &new_rest, opts);
+    if depth == 0 {
+        std::env::remove_var("GRIT_ALIAS_DEPTH");
+    } else {
+        std::env::set_var("GRIT_ALIAS_DEPTH", depth.to_string());
+    }
+    result
+}
+
+fn list_external_git_commands() -> Vec<String> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let mut cmds = Vec::new();
+    let mut seen = HashSet::new();
+    for dir in std::env::split_paths(&path) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(cmd) = name.strip_prefix("git-") else {
+                continue;
+            };
+            if cmd.is_empty() || !seen.insert(cmd.to_owned()) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            cmds.push(cmd.to_owned());
+        }
+    }
+    cmds
+}
+
+fn run_external_git_command(subcmd: &str, rest: &[String]) -> Result<()> {
+    let exe = format!("git-{subcmd}");
+    let status = ProcessCommand::new(exe)
+        .args(rest)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+fn strsim_distance_with_transpose(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let (m, n) = (a.len(), b.len());
@@ -1012,9 +1151,13 @@ fn strsim_distance(a: &str, b: &str) -> usize {
     for i in 1..=m {
         for j in 1..=n {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
+            let mut best = (dp[i - 1][j] + 1)
                 .min(dp[i][j - 1] + 1)
                 .min(dp[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(dp[i - 2][j - 2] + 1);
+            }
+            dp[i][j] = best;
         }
     }
     dp[m][n]
@@ -1439,41 +1582,61 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
-            let commands = KNOWN_COMMANDS;
-            // Find similar commands using edit distance
-            let mut suggestions: Vec<&str> = commands
+            if let Some(alias_value) = get_alias_definition(subcmd) {
+                return run_alias(subcmd, &alias_value, rest, opts);
+            }
+            let external_commands = list_external_git_commands();
+            if external_commands.iter().any(|cmd| cmd == subcmd) {
+                return run_external_git_command(subcmd, rest);
+            }
+
+            let alias_names = list_alias_names();
+            let mut all_candidates: Vec<(String, bool)> = KNOWN_COMMANDS
                 .iter()
-                .filter(|cmd| strsim_distance(subcmd, cmd) <= 2)
-                .copied()
+                .map(|s| ((*s).to_owned(), false))
                 .collect();
-            suggestions.sort();
+            all_candidates.extend(alias_names.into_iter().map(|s| (s, true)));
+            all_candidates.extend(external_commands.into_iter().map(|s| (s, false)));
+
+            let mut suggestions: Vec<(String, bool, usize)> = all_candidates
+                .into_iter()
+                .map(|(name, is_alias)| {
+                    (
+                        name.clone(),
+                        is_alias,
+                        strsim_distance_with_transpose(subcmd, &name),
+                    )
+                })
+                .filter(|(_, _, dist)| *dist <= 2)
+                .collect();
+            suggestions.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| b.1.cmp(&a.1)).then(a.0.cmp(&b.0)));
+            suggestions.dedup_by(|a, b| a.0 == b.0);
 
             // Check help.autocorrect config
             let autocorrect = get_autocorrect_setting();
 
             match autocorrect.as_deref() {
                 Some("never") => {
-                    // With never, just say it's not a command, no suggestions
-                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                    eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+                    std::process::exit(1);
                 }
-                Some("immediate") | Some("-1") if suggestions.len() == 1 => {
-                    // Auto-run the single matching command
-                    let corrected = suggestions[0].to_owned();
-                    eprintln!(
-                        "WARNING: You called a grit command named '{subcmd}', which does not exist."
-                    );
-                    eprintln!("Auto-correcting to 'grit {corrected}'");
+                Some("immediate") | Some("-1") if !suggestions.is_empty() => {
+                    // Auto-run the best matching command.
+                    let corrected = suggestions[0].0.clone();
                     dispatch(&corrected, rest, opts)
                 }
                 _ => {
-                    // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                        eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+                        std::process::exit(1);
                     } else {
-                        let similar = suggestions.join("\n\t");
-                        bail!(
-                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
-                        );
+                        eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.\n");
+                        eprintln!("The most similar command is");
+                        for (name, _, _) in &suggestions {
+                            eprintln!("\t{name}");
+                        }
+                        eprintln!("\n");
+                        std::process::exit(1);
                     }
                 }
             }
