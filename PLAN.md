@@ -698,7 +698,7 @@ commit → check it off → move on.
 - [x] `t6425-merge-rename-delete` ████████████████████ 1/1 (0 left) — Merge-recursive rename/delete conflict message
 - [x] `t6408-merge-up-to-date` ████████████████████ 7/7 (0 left) — merge fast-forward and up to date
 - [x] `t6417-merge-ours-theirs` ████████████████████ 7/7 (0 left) — Merge-recursive ours and theirs variants
-- [ ] `t6114-keep-packs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — rev-list with .keep packs
+- [x] `t6114-keep-packs` ████████████████████ 3/3 (0 left) — rev-list with .keep packs
 - [ ] `t6134-pathspec-in-submodule` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — test case exclude pathspec
 - [ ] `t6136-pathspec-in-bare` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — diagnosing out-of-scope pathspec
 - [ ] `t6413-merge-crlf` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — merge conflict in crlf repo

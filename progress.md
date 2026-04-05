@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    45 |
+| Completed   |    46 |
 | In progress |     0 |
-| Remaining   |   722 |
+| Remaining   |   721 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6114-keep-packs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6425-merge-rename-delete` — 1/1 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6110-rev-list-sparse` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -36,4 +37,4 @@
 
 ## What Remains
 
-722 test files still pending. See `plan.md` for the full prioritized list.
+721 test files still pending. See `plan.md` for the full prioritized list.
