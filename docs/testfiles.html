@@ -71,21 +71,21 @@ tr:hover td { background: #161b22; }
   <a href="index.html">&larr; Dashboard</a> &middot;
   <a href="tests.html">All Test Cases</a> &middot;
   <a href="timeline.html">Timeline</a>
-  &nbsp;&mdash;&nbsp; <span id="gen-time" data-ts="1775410416">2026-04-05 17:33 UTC</span>
-  &middot; <a href="https://github.com/schacon/grit/commit/ec0d804db00d16c2ecb7e22636f81314a96554ed" style="color:#484f58">ec0d804</a>
+  &nbsp;&mdash;&nbsp; <span id="gen-time" data-ts="1775413296">2026-04-05 18:21 UTC</span>
+  &middot; <a href="https://github.com/schacon/grit/commit/283fa878e064b95443e8ac4e796cd87e6b6b78e9" style="color:#484f58">283fa87</a>
 </p>
 
 <div class="summary-cards">
-  <div class="card"><div class="num">830</div><div class="label">Test Files</div></div>
-  <div class="card"><div class="num" style="color:#3fb950">166</div><div class="label">Fully Passing</div></div>
-  <div class="card"><div class="num">11,148</div><div class="label">Tests Passing</div></div>
+  <div class="card"><div class="num">842</div><div class="label">Test Files</div></div>
+  <div class="card"><div class="num" style="color:#3fb950">178</div><div class="label">Fully Passing</div></div>
+  <div class="card"><div class="num">11,193</div><div class="label">Tests Passing</div></div>
   <div class="card"><div class="num">18,097</div><div class="label">Upstream Tests</div></div>
-  <div class="card"><div class="num" style="color:#3fb950">61.6%</div><div class="label">Pass Rate</div></div>
+  <div class="card"><div class="num" style="color:#3fb950">61.9%</div><div class="label">Pass Rate</div></div>
 </div>
 <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1.5rem;">
   <button class="filter-btn" onclick="filterCat('t0')" data-cat="t0" title="Basic / Setup: 2144/4767 (45%)">t0xxx &mdash; 45%</button>
   <button class="filter-btn" onclick="filterCat('t1')" data-cat="t1" title="Plumbing: read-tree, cat-file, refs: 987/2391 (41%)">t1xxx &mdash; 41%</button>
-  <button class="filter-btn" onclick="filterCat('t2')" data-cat="t2" title="Checkout / Index: 355/969 (37%)">t2xxx &mdash; 37%</button>
+  <button class="filter-btn" onclick="filterCat('t2')" data-cat="t2" title="Checkout / Index: 639/1250 (51%)">t2xxx &mdash; 51%</button>
   <button class="filter-btn" onclick="filterCat('t3')" data-cat="t3" title="ls-files, merge, cherry-pick, rm, add, mv: 2980/4801 (62%)">t3xxx &mdash; 62%</button>
   <button class="filter-btn" onclick="filterCat('t4')" data-cat="t4" title="Diff: 1155/3360 (34%)">t4xxx &mdash; 34%</button>
   <button class="filter-btn" onclick="filterCat('t5')" data-cat="t5" title="Pack / Fetch / Push / Clone: 1289/4759 (27%)">t5xxx &mdash; 27%</button>
@@ -4781,17 +4781,17 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:64.3%;background:#d29922"></div></div></td>
   <td class="right"><span style="color:#d29922">64%</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="3" data-source="grit">
   <td class="mono">t2002-checkout-cache-u</td>
   <td class="desc" title="git checkout-index -u test.
 ">git checkout-index -u test.
 </td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">3</td>
+  <td class="right mono" style="color:#3fb950">3</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="30.0" data-total="10" data-source="upstream">
   <td class="mono">t2003-checkout-cache-mkdir</td>
@@ -4805,17 +4805,17 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:30.0%;background:#db6d28"></div></div></td>
   <td class="right"><span style="color:#db6d28">30%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="30.4" data-total="23" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="34.8" data-total="23" data-source="upstream">
   <td class="mono">t2004-checkout-cache-temp</td>
   <td class="desc" title="git checkout-index --temp test.
 ">git checkout-index --temp test.
 </td>
   <td class="right mono">23</td>
-  <td class="right mono" style="color:#3fb950">7</td>
-  <td class="right mono" style="color:#f85149">16</td>
+  <td class="right mono" style="color:#3fb950">8</td>
+  <td class="right mono" style="color:#f85149">15</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:30.4%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">30%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:34.8%;background:#db6d28"></div></div></td>
+  <td class="right"><span style="color:#db6d28">35%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="100.0" data-total="3" data-source="upstream">
   <td class="mono">t2005-checkout-index-symlinks</td>
@@ -4871,35 +4871,35 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
   <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="70.0" data-total="10" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="100.0" data-total="10" data-source="upstream">
   <td class="mono">t2010-checkout-ambiguous</td>
   <td class="desc" title="checkout and pathspecs/refspecs ambiguities">checkout and pathspecs/refspecs ambiguities</td>
   <td class="right mono">10</td>
-  <td class="right mono" style="color:#3fb950">7</td>
-  <td class="right mono" style="color:#f85149">3</td>
+  <td class="right mono" style="color:#3fb950">10</td>
+  <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:70.0%;background:#d29922"></div></div></td>
-  <td class="right"><span style="color:#d29922">70%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="50.0" data-total="10" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="80.0" data-total="10" data-source="upstream">
   <td class="mono">t2011-checkout-invalid-head</td>
   <td class="desc" title="checkout switching away from an invalid branch">checkout switching away from an invalid branch</td>
   <td class="right mono">10</td>
-  <td class="right mono" style="color:#3fb950">5</td>
-  <td class="right mono" style="color:#f85149">5</td>
+  <td class="right mono" style="color:#3fb950">8</td>
+  <td class="right mono" style="color:#f85149">2</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:50.0%;background:#d29922"></div></div></td>
-  <td class="right"><span style="color:#d29922">50%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:80.0%;background:#58a6ff"></div></div></td>
+  <td class="right"><span style="color:#58a6ff">80%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="86.4" data-total="22" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="100.0" data-total="22" data-source="upstream">
   <td class="mono">t2012-checkout-last</td>
   <td class="desc" title="checkout can switch to last branch and merge base">checkout can switch to last branch and merge base</td>
   <td class="right mono">22</td>
-  <td class="right mono" style="color:#3fb950">19</td>
-  <td class="right mono" style="color:#f85149">3</td>
+  <td class="right mono" style="color:#3fb950">22</td>
+  <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:86.4%;background:#58a6ff"></div></div></td>
-  <td class="right"><span style="color:#58a6ff">86%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="18.9" data-total="74" data-source="upstream">
   <td class="mono">t2013-checkout-submodule</td>
@@ -4963,45 +4963,45 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:84.0%;background:#58a6ff"></div></div></td>
   <td class="right"><span style="color:#58a6ff">84%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="55.6" data-total="9" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="77.8" data-total="9" data-source="upstream">
   <td class="mono">t2019-checkout-ambiguous-ref</td>
   <td class="desc" title="checkout handling of ambiguous (branch/tag) refs">checkout handling of ambiguous (branch/tag) refs</td>
   <td class="right mono">9</td>
-  <td class="right mono" style="color:#3fb950">5</td>
-  <td class="right mono" style="color:#f85149">4</td>
+  <td class="right mono" style="color:#3fb950">7</td>
+  <td class="right mono" style="color:#f85149">2</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:55.6%;background:#d29922"></div></div></td>
-  <td class="right"><span style="color:#d29922">56%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:77.8%;background:#58a6ff"></div></div></td>
+  <td class="right"><span style="color:#58a6ff">78%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="65.4" data-total="26" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="61.5" data-total="26" data-source="upstream">
   <td class="mono">t2020-checkout-detach</td>
   <td class="desc" title="checkout into detached HEAD state">checkout into detached HEAD state</td>
   <td class="right mono">26</td>
-  <td class="right mono" style="color:#3fb950">17</td>
-  <td class="right mono" style="color:#f85149">9</td>
+  <td class="right mono" style="color:#3fb950">16</td>
+  <td class="right mono" style="color:#f85149">10</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:65.4%;background:#d29922"></div></div></td>
-  <td class="right"><span style="color:#d29922">65%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:61.5%;background:#d29922"></div></div></td>
+  <td class="right"><span style="color:#d29922">62%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="44.4" data-total="9" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="66.7" data-total="9" data-source="upstream">
   <td class="mono">t2021-checkout-overwrite</td>
   <td class="desc" title="checkout must not overwrite an untracked objects">checkout must not overwrite an untracked objects</td>
   <td class="right mono">9</td>
-  <td class="right mono" style="color:#3fb950">4</td>
-  <td class="right mono" style="color:#f85149">5</td>
+  <td class="right mono" style="color:#3fb950">6</td>
+  <td class="right mono" style="color:#f85149">3</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:44.4%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">44%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:66.7%;background:#d29922"></div></div></td>
+  <td class="right"><span style="color:#d29922">67%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="20.0" data-total="5" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="80.0" data-total="5" data-source="upstream">
   <td class="mono">t2022-checkout-paths</td>
   <td class="desc" title="checkout $tree -- $paths">checkout $tree -- $paths</td>
   <td class="right mono">5</td>
-  <td class="right mono" style="color:#3fb950">1</td>
-  <td class="right mono" style="color:#f85149">4</td>
+  <td class="right mono" style="color:#3fb950">4</td>
+  <td class="right mono" style="color:#f85149">1</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:20.0%;background:#f85149"></div></div></td>
-  <td class="right"><span style="color:#db6d28">20%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:80.0%;background:#58a6ff"></div></div></td>
+  <td class="right"><span style="color:#58a6ff">80%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="40.0" data-total="5" data-source="upstream">
   <td class="mono">t2023-checkout-m</td>
@@ -5015,17 +5015,17 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:40.0%;background:#db6d28"></div></div></td>
   <td class="right"><span style="color:#db6d28">40%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="8.7" data-total="23" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="43.5" data-total="23" data-source="upstream">
   <td class="mono">t2024-checkout-dwim</td>
   <td class="desc" title="checkout <branch>
 ">checkout <branch>
 </td>
   <td class="right mono">23</td>
-  <td class="right mono" style="color:#3fb950">2</td>
-  <td class="right mono" style="color:#f85149">21</td>
+  <td class="right mono" style="color:#3fb950">10</td>
+  <td class="right mono" style="color:#f85149">13</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:8.7%;background:#f85149"></div></div></td>
-  <td class="right"><span style="color:#db6d28">9%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:43.5%;background:#db6d28"></div></div></td>
+  <td class="right"><span style="color:#db6d28">44%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="16.7" data-total="6" data-source="upstream">
   <td class="mono">t2025-checkout-no-overlay</td>
@@ -5047,25 +5047,25 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:9.1%;background:#f85149"></div></div></td>
   <td class="right"><span style="color:#db6d28">9%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="40.0" data-total="5" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="80.0" data-total="5" data-source="upstream">
   <td class="mono">t2027-checkout-track</td>
   <td class="desc" title="tests for git branch --track">tests for git branch --track</td>
   <td class="right mono">5</td>
-  <td class="right mono" style="color:#3fb950">2</td>
-  <td class="right mono" style="color:#f85149">3</td>
+  <td class="right mono" style="color:#3fb950">4</td>
+  <td class="right mono" style="color:#f85149">1</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:40.0%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">40%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:80.0%;background:#58a6ff"></div></div></td>
+  <td class="right"><span style="color:#58a6ff">80%</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="27" data-source="grit">
   <td class="mono">t2030-checkout-index-basic</td>
   <td class="desc" title="grit checkout-index basic operations">grit checkout-index basic operations</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">27</td>
+  <td class="right mono" style="color:#3fb950">27</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="14.3" data-total="14" data-source="upstream">
   <td class="mono">t2030-unresolve-info</td>
@@ -5077,55 +5077,55 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:14.3%;background:#f85149"></div></div></td>
   <td class="right"><span style="color:#db6d28">14%</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="25" data-source="grit">
   <td class="mono">t2031-checkout-index-symlink</td>
   <td class="desc" title="grit checkout-index with symlinks">grit checkout-index with symlinks</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">25</td>
+  <td class="right mono" style="color:#3fb950">25</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="28" data-source="grit">
   <td class="mono">t2032-checkout-index-parallel</td>
   <td class="desc" title="grit checkout-index with many files and edge cases">grit checkout-index with many files and edge cases</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">28</td>
+  <td class="right mono" style="color:#3fb950">28</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="28" data-source="grit">
   <td class="mono">t2040-checkout-file-modes</td>
   <td class="desc" title="grit checkout file mode handling">grit checkout file mode handling</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">28</td>
+  <td class="right mono" style="color:#3fb950">28</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="29" data-source="grit">
   <td class="mono">t2045-checkout-conflict</td>
   <td class="desc" title="checkout with conflicting changes">checkout with conflicting changes</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">29</td>
+  <td class="right mono" style="color:#3fb950">29</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="80" data-source="grit">
   <td class="mono">t2050-checkout</td>
   <td class="desc" title="grit checkout — branch switching and file restoration">grit checkout — branch switching and file restoration</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">80</td>
+  <td class="right mono" style="color:#3fb950">80</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="100.0" data-total="4" data-source="upstream">
   <td class="mono">t2050-git-dir-relative</td>
@@ -5149,15 +5149,15 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
   <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="15" data-source="grit">
   <td class="mono">t2061-switch-orphan</td>
   <td class="desc" title="switch --orphan">switch --orphan</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">15</td>
+  <td class="right mono" style="color:#3fb950">15</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="33.3" data-total="15" data-source="upstream">
   <td class="mono">t2070-restore</td>
@@ -5225,17 +5225,17 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:20.0%;background:#f85149"></div></div></td>
   <td class="right"><span style="color:#db6d28">20%</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="20.0" data-total="5" data-source="grit">
   <td class="mono">t2100-update-cache-badpath</td>
   <td class="desc" title="git update-index nonsense-path test.
 ">git update-index nonsense-path test.
 </td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
-  <td class="right mono" style="color:#f85149"></td>
+  <td class="right mono">5</td>
+  <td class="right mono" style="color:#3fb950">1</td>
+  <td class="right mono" style="color:#f85149">4</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:20.0%;background:#f85149"></div></div></td>
+  <td class="right"><span style="color:#db6d28">20%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="-1" data-total="0" data-source="upstream">
   <td class="mono">t2101-update-index-reupdate</td>
@@ -5249,17 +5249,17 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
   <td class="right"><span style="color:#7d8590">—</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="100.0" data-total="3" data-source="grit">
   <td class="mono">t2102-update-index-symlinks</td>
   <td class="desc" title="git update-index on filesystem w/o symlinks test.
 ">git update-index on filesystem w/o symlinks test.
 </td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
+  <td class="right mono">3</td>
+  <td class="right mono" style="color:#3fb950">3</td>
   <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="20.0" data-total="5" data-source="upstream">
   <td class="mono">t2103-update-index-ignore-missing</td>
@@ -5271,15 +5271,15 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:20.0%;background:#f85149"></div></div></td>
   <td class="right"><span style="color:#db6d28">20%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="57.1" data-total="7" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="100.0" data-total="7" data-source="upstream">
   <td class="mono">t2104-update-index-skip-worktree</td>
   <td class="desc" title="skip-worktree bit test">skip-worktree bit test</td>
   <td class="right mono">7</td>
-  <td class="right mono" style="color:#3fb950">4</td>
-  <td class="right mono" style="color:#f85149">3</td>
+  <td class="right mono" style="color:#3fb950">7</td>
+  <td class="right mono" style="color:#f85149"></td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:57.1%;background:#d29922"></div></div></td>
-  <td class="right"><span style="color:#d29922">57%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:100.0%;background:#3fb950"></div></div></td>
+  <td class="right"><span style="color:#3fb950">✓ PASS</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="100.0" data-total="4" data-source="upstream">
   <td class="mono">t2105-update-index-gitfile</td>
@@ -5339,15 +5339,15 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:68.4%;background:#d29922"></div></div></td>
   <td class="right"><span style="color:#d29922">68%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="16.7" data-total="6" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="33.3" data-total="6" data-source="upstream">
   <td class="mono">t2201-add-update-typechange</td>
   <td class="desc" title="more git add -u">more git add -u</td>
   <td class="right mono">6</td>
-  <td class="right mono" style="color:#3fb950">1</td>
-  <td class="right mono" style="color:#f85149">5</td>
+  <td class="right mono" style="color:#3fb950">2</td>
+  <td class="right mono" style="color:#f85149">4</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:16.7%;background:#f85149"></div></div></td>
-  <td class="right"><span style="color:#db6d28">17%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:33.3%;background:#db6d28"></div></div></td>
+  <td class="right"><span style="color:#db6d28">33%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="0.0" data-total="3" data-source="upstream">
   <td class="mono">t2202-add-addremove</td>
@@ -5401,25 +5401,25 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:50.0%;background:#d29922"></div></div></td>
   <td class="right"><span style="color:#d29922">50%</span></td>
 </tr>
-<tr class="grit-only" data-cat="t2" data-pct="-1" data-total="0" data-source="grit">
+<tr class="grit-only" data-cat="t2" data-pct="0.0" data-total="5" data-source="grit">
   <td class="mono">t2300-cd-to-toplevel</td>
   <td class="desc" title="cd_to_toplevel">cd_to_toplevel</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
-  <td class="right mono" style="color:#f85149"></td>
+  <td class="right mono">5</td>
+  <td class="right mono" style="color:#3fb950">0</td>
+  <td class="right mono" style="color:#f85149">5</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0.0%;background:#f85149"></div></div></td>
+  <td class="right"><span style="color:#f85149">0%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="17.2" data-total="232" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="15.9" data-total="232" data-source="upstream">
   <td class="mono">t2400-worktree-add</td>
   <td class="desc" title="test git worktree add">test git worktree add</td>
   <td class="right mono">232</td>
-  <td class="right mono" style="color:#3fb950">40</td>
-  <td class="right mono" style="color:#f85149">192</td>
+  <td class="right mono" style="color:#3fb950">37</td>
+  <td class="right mono" style="color:#f85149">195</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:17.2%;background:#f85149"></div></div></td>
-  <td class="right"><span style="color:#db6d28">17%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:15.9%;background:#f85149"></div></div></td>
+  <td class="right"><span style="color:#db6d28">16%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="38.5" data-total="13" data-source="upstream">
   <td class="mono">t2401-worktree-prune</td>
@@ -5431,25 +5431,25 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:38.5%;background:#db6d28"></div></div></td>
   <td class="right"><span style="color:#db6d28">38%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="29.6" data-total="27" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="33.3" data-total="27" data-source="upstream">
   <td class="mono">t2402-worktree-list</td>
   <td class="desc" title="test git worktree list">test git worktree list</td>
   <td class="right mono">27</td>
-  <td class="right mono" style="color:#3fb950">8</td>
-  <td class="right mono" style="color:#f85149">19</td>
+  <td class="right mono" style="color:#3fb950">9</td>
+  <td class="right mono" style="color:#f85149">18</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:29.6%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">30%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:33.3%;background:#db6d28"></div></div></td>
+  <td class="right"><span style="color:#db6d28">33%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="-1" data-total="0" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="48.5" data-total="33" data-source="upstream">
   <td class="mono">t2403-worktree-move</td>
   <td class="desc" title="test git worktree move, remove, lock and unlock">test git worktree move, remove, lock and unlock</td>
-  <td class="right mono"></td>
-  <td class="right mono" style="color:#3fb950"></td>
-  <td class="right mono" style="color:#f85149"></td>
+  <td class="right mono">33</td>
+  <td class="right mono" style="color:#3fb950">16</td>
+  <td class="right mono" style="color:#f85149">17</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:0%;background:#21262d"></div></div></td>
-  <td class="right"><span style="color:#7d8590">—</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:48.5%;background:#db6d28"></div></div></td>
+  <td class="right"><span style="color:#db6d28">48%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="33.3" data-total="12" data-source="upstream">
   <td class="mono">t2404-worktree-config</td>
@@ -5461,15 +5461,15 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:33.3%;background:#db6d28"></div></div></td>
   <td class="right"><span style="color:#db6d28">33%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="27.3" data-total="11" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="18.2" data-total="11" data-source="upstream">
   <td class="mono">t2405-worktree-submodule</td>
   <td class="desc" title="Combination of submodules and multiple worktrees">Combination of submodules and multiple worktrees</td>
   <td class="right mono">11</td>
-  <td class="right mono" style="color:#3fb950">3</td>
-  <td class="right mono" style="color:#f85149">8</td>
+  <td class="right mono" style="color:#3fb950">2</td>
+  <td class="right mono" style="color:#f85149">9</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:27.3%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">27%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:18.2%;background:#f85149"></div></div></td>
+  <td class="right"><span style="color:#db6d28">18%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="16.7" data-total="24" data-source="upstream">
   <td class="mono">t2406-worktree-repair</td>
@@ -5481,25 +5481,25 @@ tr:hover td { background: #161b22; }
   <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:16.7%;background:#f85149"></div></div></td>
   <td class="right"><span style="color:#db6d28">17%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="8.3" data-total="12" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="16.7" data-total="12" data-source="upstream">
   <td class="mono">t2407-worktree-heads</td>
   <td class="desc" title="test operations trying to overwrite refs at worktree HEAD">test operations trying to overwrite refs at worktree HEAD</td>
   <td class="right mono">12</td>
-  <td class="right mono" style="color:#3fb950">1</td>
-  <td class="right mono" style="color:#f85149">11</td>
+  <td class="right mono" style="color:#3fb950">2</td>
+  <td class="right mono" style="color:#f85149">10</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:8.3%;background:#f85149"></div></div></td>
-  <td class="right"><span style="color:#db6d28">8%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:16.7%;background:#f85149"></div></div></td>
+  <td class="right"><span style="color:#db6d28">17%</span></td>
 </tr>
-<tr class="canonical" data-cat="t2" data-pct="40.0" data-total="10" data-source="upstream">
+<tr class="canonical" data-cat="t2" data-pct="50.0" data-total="10" data-source="upstream">
   <td class="mono">t2500-untracked-overwriting</td>
   <td class="desc" title="Test handling of overwriting untracked files">Test handling of overwriting untracked files</td>
   <td class="right mono">10</td>
-  <td class="right mono" style="color:#3fb950">4</td>
-  <td class="right mono" style="color:#f85149">6</td>
+  <td class="right mono" style="color:#3fb950">5</td>
+  <td class="right mono" style="color:#f85149">5</td>
   <td class="right mono" style="color:#7d8590"></td>
-  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:40.0%;background:#db6d28"></div></div></td>
-  <td class="right"><span style="color:#db6d28">40%</span></td>
+  <td class="bar-cell"><div class="bar-bg"><div class="bar-fg" style="width:50.0%;background:#d29922"></div></div></td>
+  <td class="right"><span style="color:#d29922">50%</span></td>
 </tr>
 <tr class="canonical" data-cat="t2" data-pct="12.5" data-total="24" data-source="upstream">
   <td class="mono">t2501-cwd-empty</td>

@@ -1,10 +1,10 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	541	178	21	32.8
-am	Main Porcelain	yes	160	43	8	26.8
+add	Main Porcelain	yes	541	178	21	32.9
+am	Main Porcelain	yes	160	43	8	26.9
 archive	Main Porcelain	yes	114	66	0	57.8
 bisect	Main Porcelain	yes	96	18	0	18.8
 branch	Main Porcelain	yes	351	138	0	39.2
-checkout	Main Porcelain	yes	436	180	5	41.3
+checkout	Main Porcelain	yes	436	206	5	47.2
 cherry-pick	Main Porcelain	yes	189	67	6	35.5
 clean	Main Porcelain	yes	87	28	0	32.4
 clone	Main Porcelain	yes	425	118	42	27.7
@@ -24,7 +24,7 @@ pull	Main Porcelain	yes	142	37	0	26.2
 push	Main Porcelain	yes	233	87	14	37.2
 range-diff	Main Porcelain	yes	47	5	0	10.4
 rebase	Main Porcelain	yes	558	92	146	16.6
-reset	Main Porcelain	yes	119	67	0	56.7
+reset	Main Porcelain	yes	119	68	0	56.9
 restore	Main Porcelain	yes	40	9	0	21.8
 revert	Main Porcelain	yes	20	4	0	19.0
 rm	Main Porcelain	yes	97	53	0	54.1
@@ -35,7 +35,7 @@ status	Main Porcelain	yes	474	105	39	22.1
 submodule	Main Porcelain	yes	476	124	0	26.1
 switch	Main Porcelain	yes	16	16	0	100.0
 tag	Main Porcelain	yes	213	128	0	60.1
-worktree	Main Porcelain	yes	232	45	33	19.2
+worktree	Main Porcelain	yes	232	44	33	19.2
 annotate	Ancillary Porcelain	yes	1	0	1	0.0
 blame	Ancillary Porcelain	yes	98	30	24	30.4
 bundle	Ancillary Porcelain	yes	43	0	30	0.0
@@ -132,7 +132,7 @@ stripspace	Plumbing	yes	30	30	0	100.0
 symbolic-ref	Plumbing	yes	27	25	0	94.1
 unpack-file	Plumbing	yes	0	0	0	0.0
 unpack-objects	Plumbing	yes	7	3	0	42.9
-update-index	Plumbing	yes	82	23	7	28.1
+update-index	Plumbing	yes	82	26	7	31.7
 update-ref	Plumbing	yes	305	3	254	0.9
 update-server-info	Plumbing	yes	11	3	0	29.8
 upload-archive	Plumbing	yes	0	0	0	0.0
