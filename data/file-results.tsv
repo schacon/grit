@@ -576,7 +576,7 @@ t5525-fetch-tagopt	yes	5	5	0	ok	5	5	0
 t5526-fetch-submodules	yes	56	5	51	ok	5	56	0
 t5527-fetch-odd-refs	yes	5	5	0	ok	5	5	0
 t5528-push-default	yes	32	14	18	ok	13	31	1
-t5529-push-errors	yes	8	5	3	ok	5	8	0
+t5529-push-errors	yes	8	8	0	ok	8	8	0
 t5530-upload-pack-error	yes	11	2	9	ok	2	11	0
 t5531-deep-submodule-push	yes	29	5	24	ok	5	29	0
 t5532-fetch-proxy	yes	5	4	1	ok	4	5	0
@@ -620,7 +620,7 @@ t5580-unc-paths	yes	0	0	0	ok	0	0	0
 t5581-http-curl-verbose	yes	2	1	1	ok	1	2	0
 t5582-fetch-negative-refspec	yes	16	7	9	ok	7	16	0
 t5583-push-branches	yes	8	5	3	ok	5	8	0
-t5600-clone-fail-cleanup	yes	14	13	1	ok	13	14	0
+t5600-clone-fail-cleanup	yes	14	14	0	ok	14	14	0
 t5601-clone	yes	115	21	94	ok	21	115	0
 t5602-clone-remote-exec	yes	3	3	0	ok	3	3	0
 t5603-clone-dirname	yes	47	1	46	ok	1	47	0
@@ -633,7 +633,7 @@ t5609-clone-branch	yes	7	7	0	ok	7	7	0
 t5610-clone-detached	yes	13	2	11	ok	1	12	1
 t5611-clone-config	yes	13	3	10	ok	3	13	0
 t5612-clone-refspec	yes	13	1	12	ok	1	13	0
-t5613-info-alternate	yes	13	12	1	ok	12	13	0
+t5613-info-alternate	yes	13	13	0	ok	13	13	0
 t5614-clone-submodules-shallow	yes	9	4	5	ok	4	9	0
 t5615-alternate-env	yes	9	9	0	ok	9	9	0
 t5616-partial-clone	yes	47	9	38	ok	9	47	0
