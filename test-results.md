@@ -14,3 +14,4 @@
 - `./scripts/run-tests.sh t6136-pathspec-in-bare.sh`: 3/3 passing (fully passing after bare-repo pathspec diagnostics fixes in `log` and `ls-files`).
 - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (fully passing after sparse-checkout non-cone matching and merge conflict index stage handling fixes).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge conflict index stage handling changes).
+- `./scripts/run-tests.sh t6431-merge-criscross.sh`: 2/2 passing (fully passing; stale plan entry corrected).
