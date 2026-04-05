@@ -436,6 +436,16 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
         }
 
+        // Global pager-related options (accepted and ignored for now)
+        if arg == "--no-pager" || arg == "--paginate" {
+            i += 1;
+            continue;
+        }
+        if let Some(_val) = arg.strip_prefix("--paginate=") {
+            i += 1;
+            continue;
+        }
+
         // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
         if arg == "--version" || arg == "-v" || arg == "-V" {
             subcmd = Some("version".to_owned());
@@ -616,7 +626,11 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
                     // (user-facing options like --no-guess)
                     positive.push(format!("--{long}{suffix}"));
                 } else {
-                    positive.push(format!("--{long}{suffix}"));
+                    // `--track` is treated specially by upstream completion:
+                    // it may take an optional mode, but completion helper
+                    // still lists it without '='.
+                    let render_suffix = if long == "track" { "" } else { suffix };
+                    positive.push(format!("--{long}{render_suffix}"));
                     // Auto-generate --no- variant for the negative list
                     negative.push(format!("--no-{long}"));
                 }

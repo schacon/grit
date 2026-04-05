@@ -940,7 +940,7 @@ commit → check it off → move on.
 - [ ] `t9350-fast-export` ██████████████░░░░░░ 53/73 (20 left) — git fast-export
 - [x] `t9903-bash-prompt` ████████████████████ 67/67 (0 left) — test git-specific bash prompt functions
 - [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
-- [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
+- [x] `t9902-completion` ████████████████████ 263/263 (0 left) — test bash completion
 
 **Total: 765 tracked files**
 **8,690/24,806 tests passing, 16,116 failures remaining**

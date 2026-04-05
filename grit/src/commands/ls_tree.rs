@@ -149,7 +149,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut out = stdout.lock();
     let term = if args.null_terminated { b'\0' } else { b'\n' };
 
-    // Compute cwd prefix for display path adjustment
+    // Compute cwd prefix (repo-root-relative current directory)
     let cwd_prefix = if let Some(ref wt) = repo.work_tree {
         let cwd = std::env::current_dir().unwrap_or_default();
         cwd.strip_prefix(wt)
@@ -160,6 +160,17 @@ pub fn run(mut args: Args) -> Result<()> {
         None
     };
 
+    // Match upstream ls-tree behaviour from subdirectories:
+    // when no explicit pathspec is provided, list entries relative to cwd.
+    // We emulate this by implicitly filtering to "<cwd>/", then rendering
+    // output relative to that cwd prefix.
+    let display_base = cwd_prefix.clone();
+    if args.paths.is_empty() {
+        if let Some(prefix) = cwd_prefix.as_deref() {
+            args.paths.push(format!("{prefix}/"));
+        }
+    }
+
     list_tree(
         &repo,
         &obj.data,
@@ -167,27 +178,43 @@ pub fn run(mut args: Args) -> Result<()> {
         &args,
         &mut out,
         term,
-        cwd_prefix.as_deref(),
+        display_base.as_deref(),
     )?;
 
     Ok(())
 }
 
 /// Make a repo-root-relative path display-relative to the cwd prefix.
-/// E.g., if cwd_prefix is "aa" and path is "a[a]/three", return "../a[a]/three".
 fn make_cwd_relative(path: &str, cwd_prefix: Option<&str>) -> String {
-    let prefix = match cwd_prefix {
+    let cwd = match cwd_prefix {
         Some(p) if !p.is_empty() => p,
         _ => return path.to_string(),
     };
-    // Count depth of cwd_prefix
-    let depth = prefix.split('/').count();
-    let mut result = String::new();
-    for _ in 0..depth {
-        result.push_str("../");
+
+    let path_parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let cwd_parts: Vec<&str> = cwd.split('/').filter(|s| !s.is_empty()).collect();
+
+    let mut common = 0usize;
+    while common < path_parts.len()
+        && common < cwd_parts.len()
+        && path_parts[common] == cwd_parts[common]
+    {
+        common += 1;
     }
-    result.push_str(path);
-    result
+
+    let mut out_parts: Vec<String> = Vec::new();
+    for _ in common..cwd_parts.len() {
+        out_parts.push("..".to_string());
+    }
+    for part in path_parts.iter().skip(common) {
+        out_parts.push((*part).to_string());
+    }
+
+    if out_parts.is_empty() {
+        ".".to_string()
+    } else {
+        out_parts.join("/")
+    }
 }
 
 fn list_tree(

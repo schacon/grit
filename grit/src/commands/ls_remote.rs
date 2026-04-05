@@ -126,16 +126,13 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
 fn resolve_remote_or_path(path: &Path) -> PathBuf {
     let path_str = path.to_string_lossy();
 
-    // Try remote resolution first for simple names (no path separators).
-    // Remote config takes precedence over filesystem directories with the
-    // same name, matching git's behaviour.
-    if !path_str.contains('/') && !path_str.contains('\\') {
-        if let Ok(repo) = Repository::discover(None) {
-            let config_path = repo.git_dir.join("config");
-            if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Some(url) = parse_remote_url(&content, &path_str) {
-                    return PathBuf::from(url);
-                }
+    // Remote config takes precedence over filesystem paths, even when the
+    // remote name itself contains slashes.
+    if let Ok(repo) = Repository::discover(None) {
+        let config_path = repo.git_dir.join("config");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Some(url) = parse_remote_url(&content, &path_str) {
+                return PathBuf::from(url);
             }
         }
     }

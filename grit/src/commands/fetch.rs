@@ -128,21 +128,19 @@ pub fn run(args: Args) -> Result<()> {
         Ok(())
     } else {
         let remote_name = args.remote.as_deref().unwrap_or("origin");
-        // Detect path-based remote: contains '/' or starts with '.'
-        // Also check if it's a local directory path (for `git fetch <dir> ...`)
-        if remote_name.contains('/') || remote_name.starts_with('.') {
+        // Remote config takes precedence over path-like names, even if the
+        // remote name contains '/' or matches an existing directory.
+        let url_key = format!("remote.{remote_name}.url");
+        if config.get(&url_key).is_some() {
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
+        } else if remote_name.starts_with('.')
+            || remote_name.contains('/')
+            || std::path::Path::new(remote_name).is_dir()
+        {
+            // Treat as a local directory path.
             fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
         } else {
-            // Check if it's a configured remote name first
-            let url_key = format!("remote.{remote_name}.url");
-            if config.get(&url_key).is_some() {
-                fetch_remote(&git_dir, &config, remote_name, None, &args)
-            } else if std::path::Path::new(remote_name).is_dir() {
-                // Treat as a local directory path
-                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
-            } else {
-                fetch_remote(&git_dir, &config, remote_name, None, &args)
-            }
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
         }
     }
 }
@@ -646,6 +644,27 @@ fn fetch_remote(
             }
         }
         prune_stale_refs(git_dir, &dst_prefix, &updated_refs, remote_name, args.quiet)?;
+    }
+
+    // Update refs/remotes/<remote>/HEAD to mirror the remote's default branch.
+    // We store it as a direct ref to keep completion and ref lookups aligned.
+    if let Some(default_branch) = remote_head_branch.as_deref() {
+        let head_source = format!("refs/heads/{default_branch}");
+        let mapped_default = if refspecs.is_empty() {
+            Some(format!("{dst_prefix}{default_branch}"))
+        } else {
+            map_ref_through_refspecs(&head_source, &refspecs)
+        };
+        if let Some(mapped_default_ref) = mapped_default {
+            if let Ok(default_oid) = refs::resolve_ref(git_dir, &mapped_default_ref) {
+                let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
+                updated_refs.push(remote_head_ref.clone());
+                if read_ref_oid(git_dir, &remote_head_ref).as_ref() != Some(&default_oid) {
+                    refs::write_ref(git_dir, &remote_head_ref, &default_oid)
+                        .with_context(|| format!("updating ref {remote_head_ref}"))?;
+                }
+            }
+        }
     }
 
     // Write FETCH_HEAD (default branch first, then not-for-merge entries)

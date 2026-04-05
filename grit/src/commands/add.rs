@@ -533,6 +533,12 @@ fn add_all(
                     return false;
                 }
             }
+            // In sparse-checkout mode, entries outside the sparse view are
+            // marked skip-worktree and may legitimately be absent from the
+            // working tree. Do not treat those as deletions for `git add .`.
+            if ie.skip_worktree() {
+                return false;
+            }
             let path_str = std::str::from_utf8(&ie.path).unwrap_or("");
             !worktree_paths.contains(path_str)
         })

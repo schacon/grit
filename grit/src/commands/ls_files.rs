@@ -358,7 +358,13 @@ pub fn run(args: Args) -> Result<()> {
         let indexed_paths: BTreeSet<Vec<u8>> =
             index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
-        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
+        walk_worktree(
+            work_tree,
+            work_tree,
+            &indexed_paths,
+            &mut untracked,
+            args.directory || args.no_empty_directory,
+        )?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
@@ -481,6 +487,7 @@ fn walk_worktree(
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
+    include_empty_dirs: bool,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -521,7 +528,13 @@ fn walk_worktree(
                 }
                 continue;
             }
-            walk_worktree(root, &path, indexed, out)?;
+            let before_len = out.len();
+            walk_worktree(root, &path, indexed, out, include_empty_dirs)?;
+            if include_empty_dirs && out.len() == before_len {
+                let mut dir_entry = rel_bytes;
+                dir_entry.push(b'/');
+                out.push(dir_entry);
+            }
         }
     }
     Ok(())
@@ -570,7 +583,19 @@ fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_ti = 0;
 
     while ti < text.len() {
-        if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
+        if pi + 1 < pattern.len() && pattern[pi] == b'\\' {
+            // Backslash escapes the next byte as a literal.
+            if pattern[pi + 1] == text[ti] {
+                pi += 2;
+                ti += 1;
+            } else if star_pi != usize::MAX {
+                star_ti += 1;
+                ti = star_ti;
+                pi = star_pi + 1;
+            } else {
+                return false;
+            }
+        } else if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
             pi += 1;
             ti += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
@@ -673,7 +698,10 @@ fn resolve_pathspec(
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        let pattern = format!("{}{}", prefix_str, pathspec_str);
+        // Our glob matcher treats '\' as an escape character, so any literal
+        // backslashes originating from the cwd prefix must be escaped.
+        let escaped_prefix = prefix_str.replace('\\', "\\\\");
+        let pattern = format!("{}{}", escaped_prefix, pathspec_str);
         return Ok(Pathspec::Glob(pattern));
     }
     let combined = if pathspec.is_absolute() {
