@@ -53,6 +53,14 @@ pub fn write_tree_from_index(
         .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
 
+    // Check for null SHA1 entries
+    for entry in &entries {
+        if entry.oid.is_zero() {
+            let path = String::from_utf8_lossy(&entry.path);
+            anyhow::bail!("entry '{}' has a null sha1", path);
+        }
+    }
+
     // Verify all referenced objects exist (unless --missing-ok).
     // Skip gitlink entries (mode 160000) — their OIDs reference commits
     // in submodule repositories, not the parent ODB.

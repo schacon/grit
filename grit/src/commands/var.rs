@@ -193,6 +193,14 @@ fn git_editor(config: &ConfigSet) -> Option<String> {
         .or_else(|| config.get("core.editor"))
         .or_else(|| std::env::var("VISUAL").ok())
         .or_else(|| std::env::var("EDITOR").ok())
+        .or_else(|| {
+            for p in &["/usr/bin/vi", "/bin/vi"] {
+                if std::path::Path::new(p).exists() {
+                    return Some("vi".to_owned());
+                }
+            }
+            None
+        })
 }
 
 /// Resolve the sequence editor: GIT_SEQUENCE_EDITOR env → sequence.editor config → GIT_EDITOR.

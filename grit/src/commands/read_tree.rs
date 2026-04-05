@@ -234,8 +234,13 @@ fn tree_to_index_entries(
     }
     let entries = parse_tree(&obj.data)?;
     let mut result = Vec::new();
+    let allow_null = std::env::var("GIT_ALLOW_NULL_SHA1").as_deref() == Ok("1");
 
     for te in entries {
+        if !allow_null && te.oid.is_zero() {
+            let name = String::from_utf8_lossy(&te.name);
+            bail!("entry '{}' has a null sha1", name);
+        }
         verify_path_component(&te.name, prot)?;
 
         let name = String::from_utf8_lossy(&te.name).into_owned();

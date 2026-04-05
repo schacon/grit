@@ -46,6 +46,12 @@ impl ObjectId {
         &self.0
     }
 
+    /// Check if this is the null (all-zero) object ID.
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.0 == [0u8; 20]
+    }
+
     /// Lowercase hex representation (40 characters).
     #[must_use]
     pub fn to_hex(&self) -> String {
