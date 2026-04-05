@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    58 |
+| Completed   |    59 |
 | In progress |     0 |
-| Remaining   |   709 |
+| Remaining   |   708 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2010-checkout-ambiguous` — 10/10 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2012-checkout-last` — 22/22 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2105-update-index-gitfile` — 4/4 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2015-checkout-unborn` — 6/6 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
@@ -52,4 +53,4 @@
 
 ## What Remains
 
-709 test files still pending. See `plan.md` for the full prioritized list.
+708 test files still pending. See `plan.md` for the full prioritized list.
