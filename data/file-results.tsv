@@ -218,7 +218,7 @@ t2104-update-index-skip-worktree	yes	7	7	0	ok	7	7	0
 t2105-update-index-gitfile	yes	4	4	0	ok	4	4	0
 t2106-update-index-assume-unchanged	yes	2	2	0	ok	2	2	0
 t2107-update-index-basic	yes	10	10	0	ok	10	10	0
-t2108-update-index-refresh-racy	yes	6	0	6	ok	0	6	0
+t2108-update-index-refresh-racy	yes	6	6	0	ok	6	6	0
 t2200-add-update	yes	19	19	0	ok	19	19	0
 t2201-add-update-typechange	yes	6	6	0	ok	6	6	0
 t2202-add-addremove	yes	3	3	0	ok	3	3	0

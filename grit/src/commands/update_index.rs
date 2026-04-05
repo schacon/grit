@@ -480,6 +480,23 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.refresh || args.really_refresh || args.again {
+        let refresh_only_mode = !args.add
+            && !args.remove
+            && !args.force_remove
+            && !args.assume_unchanged
+            && !args.no_assume_unchanged
+            && !args.skip_worktree
+            && !args.no_skip_worktree
+            && args.cacheinfo.is_empty()
+            && args.chmod.is_empty()
+            && paths.is_empty();
+        let index_mtime_sec = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&index_path)
+                .ok()
+                .map(|m| m.mtime() as u32)
+                .unwrap_or(0)
+        };
         // Re-stat all entries
         let only_paths = if paths.is_empty() {
             None
@@ -491,23 +508,31 @@ pub fn run(args: Args) -> Result<()> {
                     .collect::<Result<std::collections::HashSet<_>>>()?,
             )
         };
-        let stale = refresh_index(
+        let (stale, refresh_needs_write) = refresh_index(
             &mut index,
             work_tree,
             &repo.odb,
             args.ignore_missing,
             args.unmerged,
             args.ignore_submodules,
+            args.really_refresh,
+            index_mtime_sec,
             only_paths.as_ref(),
         )?;
         let quiet_refresh = args.quiet || matches!(std::env::var("GIT_QUIET"), Ok(v) if !v.is_empty());
         if !stale.is_empty() {
+            if refresh_only_mode && refresh_needs_write {
+                index.write(&index_path).context("writing index")?;
+            }
             if !quiet_refresh {
                 for path in stale {
                     println!("{path}");
                 }
                 std::process::exit(1);
             }
+        }
+        if refresh_only_mode && !refresh_needs_write {
+            return Ok(());
         }
     }
 
@@ -621,11 +646,14 @@ fn refresh_index(
     ignore_missing: bool,
     allow_unmerged: bool,
     ignore_submodules: bool,
+    really_refresh: bool,
+    index_mtime_sec: u32,
     only_paths: Option<&std::collections::HashSet<Vec<u8>>>,
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, bool)> {
     use std::os::unix::fs::MetadataExt;
 
     let mut stale_paths: Vec<String> = Vec::new();
+    let mut needs_write = false;
     let mut seen_unmerged = std::collections::HashSet::<Vec<u8>>::new();
 
     for entry in &mut index.entries {
@@ -697,6 +725,9 @@ fn refresh_index(
                 stale_paths.push(path_str);
                 continue;
             }
+            if meta.mtime() as u32 == index_mtime_sec {
+                needs_write = true;
+            }
         } else if meta.file_type().is_file() {
             let mode = if meta.mode() & 0o111 != 0 {
                 MODE_EXECUTABLE
@@ -709,22 +740,48 @@ fn refresh_index(
                 stale_paths.push(path_str);
                 continue;
             }
+            if meta.mtime() as u32 == index_mtime_sec {
+                needs_write = true;
+            }
         } else {
             stale_paths.push(path_str);
             continue;
         }
 
-        entry.ctime_sec = meta.ctime() as u32;
-        entry.ctime_nsec = meta.ctime_nsec() as u32;
-        entry.mtime_sec = meta.mtime() as u32;
-        entry.mtime_nsec = meta.mtime_nsec() as u32;
-        entry.dev = meta.dev() as u32;
-        entry.ino = meta.ino() as u32;
-        entry.uid = meta.uid();
-        entry.gid = meta.gid();
-        entry.size = meta.size() as u32;
+        if really_refresh {
+            let ctime_sec = meta.ctime() as u32;
+            let ctime_nsec = meta.ctime_nsec() as u32;
+            let mtime_sec = meta.mtime() as u32;
+            let mtime_nsec = meta.mtime_nsec() as u32;
+            let dev = meta.dev() as u32;
+            let ino = meta.ino() as u32;
+            let uid = meta.uid();
+            let gid = meta.gid();
+            let size = meta.size() as u32;
+            if entry.ctime_sec != ctime_sec
+                || entry.ctime_nsec != ctime_nsec
+                || entry.mtime_sec != mtime_sec
+                || entry.mtime_nsec != mtime_nsec
+                || entry.dev != dev
+                || entry.ino != ino
+                || entry.uid != uid
+                || entry.gid != gid
+                || entry.size != size
+            {
+                needs_write = true;
+                entry.ctime_sec = ctime_sec;
+                entry.ctime_nsec = ctime_nsec;
+                entry.mtime_sec = mtime_sec;
+                entry.mtime_nsec = mtime_nsec;
+                entry.dev = dev;
+                entry.ino = ino;
+                entry.uid = uid;
+                entry.gid = gid;
+                entry.size = size;
+            }
+        }
     }
-    Ok(stale_paths)
+    Ok((stale_paths, needs_write))
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {

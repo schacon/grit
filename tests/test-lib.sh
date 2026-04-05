@@ -212,6 +212,24 @@ test_path_is_dir_not_symlink () {
 	! test -h "$1"
 }
 
+# Set mtime to a fixed timestamp used by racy-index tests.
+# Optional second arg adds seconds to the base timestamp.
+test_set_magic_mtime () {
+	local inc="${2:-0}"
+	local mtime=$((1234567890 + inc))
+	touch -m -d "@$mtime" "$1" &&
+	test_is_magic_mtime "$1" "$inc"
+}
+
+# Check if file has the expected magic timestamp.
+test_is_magic_mtime () {
+	local inc="${2:-0}"
+	local mtime=$((1234567890 + inc))
+	local actual
+	actual=$(stat -c %Y "$1" 2>/dev/null) || return 1
+	test "$actual" = "$mtime"
+}
+
 test_grep () {
 	local negate=""
 	local invert=""
