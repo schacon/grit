@@ -122,11 +122,12 @@ fn list_tree(
             // If pathspec points INTO this tree, descend.
             // Exact match without trailing slash shows the tree entry itself.
             // Trailing slash or deeper path means descend into the tree.
-            let is_ancestor = is_tree && args.paths.iter().any(|p| {
-                let ps = p.strip_suffix('/').unwrap_or(p.as_str());
-                ps.starts_with(&format!("{full_name}/"))
-                    || (p.ends_with('/') && ps == full_name)
-            });
+            let is_ancestor = is_tree
+                && args.paths.iter().any(|p| {
+                    let ps = p.strip_suffix('/').unwrap_or(p.as_str());
+                    ps.starts_with(&format!("{full_name}/"))
+                        || (p.ends_with('/') && ps == full_name)
+                });
             if is_tree && is_ancestor && !args.recursive {
                 let sub_obj = repo.odb.read(&entry.oid)?;
                 list_tree(repo, &sub_obj.data, &full_name, args, out, term)?;

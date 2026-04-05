@@ -26,11 +26,10 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let config = parse_args(&args);
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port))
-        .unwrap_or_else(|e| {
-            eprintln!("Failed to bind: {e}");
-            std::process::exit(1);
-        });
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", config.port)).unwrap_or_else(|e| {
+        eprintln!("Failed to bind: {e}");
+        std::process::exit(1);
+    });
 
     let port = listener
         .local_addr()
@@ -47,11 +46,10 @@ fn main() {
 
     // Write PID file if requested
     if let Some(ref pid_path) = config.pid_file {
-        fs::write(pid_path, format!("{}", std::process::id()))
-            .unwrap_or_else(|e| {
-                eprintln!("Failed to write PID file: {e}");
-                std::process::exit(1);
-            });
+        fs::write(pid_path, format!("{}", std::process::id())).unwrap_or_else(|e| {
+            eprintln!("Failed to write PID file: {e}");
+            std::process::exit(1);
+        });
     }
 
     for stream in listener.incoming() {
@@ -199,10 +197,7 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
             break;
         }
         if let Some((key, value)) = line.split_once(':') {
-            headers.insert(
-                key.trim().to_lowercase(),
-                value.trim().to_string(),
-            );
+            headers.insert(key.trim().to_lowercase(), value.trim().to_string());
         }
     }
 
@@ -212,18 +207,28 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
         let mut body = vec![0u8; len];
         reader.read_exact(&mut body).map_err(|e| e.to_string())?;
         body
-    } else if headers.get("transfer-encoding").map_or(false, |v| v.contains("chunked")) {
+    } else if headers
+        .get("transfer-encoding")
+        .is_some_and(|v| v.contains("chunked"))
+    {
         let mut body = Vec::new();
         loop {
             let mut size_line = String::new();
-            reader.read_line(&mut size_line).map_err(|e| e.to_string())?;
+            reader
+                .read_line(&mut size_line)
+                .map_err(|e| e.to_string())?;
             let chunk_size = usize::from_str_radix(size_line.trim(), 16)
                 .map_err(|e| format!("Invalid chunk size: {}", e))?;
-            if chunk_size == 0 { let mut t = String::new(); let _ = reader.read_line(&mut t); break; }
+            if chunk_size == 0 {
+                let mut t = String::new();
+                let _ = reader.read_line(&mut t);
+                break;
+            }
             let mut chunk = vec![0u8; chunk_size];
             reader.read_exact(&mut chunk).map_err(|e| e.to_string())?;
             body.extend_from_slice(&chunk);
-            let mut crlf = [0u8; 2]; let _ = reader.read_exact(&mut crlf);
+            let mut crlf = [0u8; 2];
+            let _ = reader.read_exact(&mut crlf);
         }
         body
     } else {
@@ -241,9 +246,16 @@ fn read_request(stream: &mut TcpStream) -> Result<Request, String> {
 
 fn log_access(config: &Config, method: &str, path: &str, query: &str, status: u16) {
     use std::fs::OpenOptions;
-    let line = if query.is_empty() { format!("{} {} HTTP/1.1 {}", method, path, status) }
-              else { format!("{} {}?{} HTTP/1.1 {}", method, path, query, status) };
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&config.access_log) {
+    let line = if query.is_empty() {
+        format!("{} {} HTTP/1.1 {}", method, path, status)
+    } else {
+        format!("{} {}?{} HTTP/1.1 {}", method, path, query, status)
+    };
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config.access_log)
+    {
         let _ = writeln!(f, "{}", line);
     }
 }
@@ -269,7 +281,9 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
         req.path.contains("git-receive-pack") || req.query.contains("service=git-receive-pack")
     } else if req.path.starts_with("/auth-fetch/") {
         req.path.contains("git-upload-pack") && req.method == "POST"
-    } else { req.path.starts_with("/auth/") };
+    } else {
+        req.path.starts_with("/auth/")
+    };
     if needs_auth {
         if let (Some(ref user), Some(ref pass)) = (&config.auth_user, &config.auth_pass) {
             if !check_auth(&req, user, pass) {
@@ -289,14 +303,26 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     for pfx in &["/auth/smart", "/auth-push/smart", "/auth-fetch/smart"] {
         if req.path.starts_with(&format!("{}/", pfx)) {
             let r = handle_smart_http_with_path(&mut stream, &req, config, pfx);
-            log_access(config, &req.method, &req.path, &req.query, if r.is_ok() { 200 } else { 500 });
+            log_access(
+                config,
+                &req.method,
+                &req.path,
+                &req.query,
+                if r.is_ok() { 200 } else { 500 },
+            );
             return r;
         }
     }
     // Route: /smart/<repo> → git-http-backend CGI
     if req.path.starts_with("/smart/") {
         let r = handle_smart_http(&mut stream, &req, config);
-        log_access(config, &req.method, &req.path, &req.query, if r.is_ok() { 200 } else { 500 });
+        log_access(
+            config,
+            &req.method,
+            &req.path,
+            &req.query,
+            if r.is_ok() { 200 } else { 500 },
+        );
         return r;
     }
 
@@ -322,13 +348,7 @@ fn handle_connection(mut stream: TcpStream, config: &Config) -> Result<(), Strin
     }
 
     log_access(config, &req.method, &req.path, &req.query, 404);
-    send_response(
-        &mut stream,
-        404,
-        "Not Found",
-        &[],
-        b"Not Found\n",
-    )
+    send_response(&mut stream, 404, "Not Found", &[], b"Not Found\n")
 }
 
 fn check_auth(req: &Request, expected_user: &str, expected_pass: &str) -> bool {
@@ -346,8 +366,7 @@ fn check_auth(req: &Request, expected_user: &str, expected_pass: &str) -> bool {
 
 /// Minimal base64 decoder (avoids external dep).
 fn base64_decode(input: &str) -> Result<String, String> {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = Vec::new();
     let mut buf: u32 = 0;
     let mut bits: u32 = 0;
@@ -385,10 +404,7 @@ fn serve_static_file(
     let full_path = config.root.join(rel_path);
 
     // Ensure we don't escape the root
-    let canonical_root = config
-        .root
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
+    let canonical_root = config.root.canonicalize().map_err(|e| e.to_string())?;
     let canonical_path = match full_path.canonicalize() {
         Ok(p) => p,
         Err(_) => {
@@ -406,13 +422,7 @@ fn serve_static_file(
     let body = fs::read(&canonical_path).map_err(|e| e.to_string())?;
     let content_type = guess_content_type(rel_path);
 
-    send_response(
-        stream,
-        200,
-        "OK",
-        &[("Content-Type", &content_type)],
-        &body,
-    )
+    send_response(stream, 200, "OK", &[("Content-Type", &content_type)], &body)
 }
 
 fn guess_content_type(path: &str) -> String {
@@ -425,11 +435,7 @@ fn guess_content_type(path: &str) -> String {
     }
 }
 
-fn handle_smart_http(
-    stream: &mut TcpStream,
-    req: &Request,
-    config: &Config,
-) -> Result<(), String> {
+fn handle_smart_http(stream: &mut TcpStream, req: &Request, config: &Config) -> Result<(), String> {
     handle_smart_http_with_path(stream, req, config, "/smart")
 }
 
@@ -441,11 +447,7 @@ fn handle_smart_http_with_path(
 ) -> Result<(), String> {
     let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
 
-    let path_translated = format!(
-        "{}{}",
-        config.root.display(),
-        smart_path
-    );
+    let path_translated = format!("{}{}", config.root.display(), smart_path);
 
     let mut cmd = Command::new(&config.git_http_backend);
     cmd.env("REQUEST_METHOD", &req.method)
@@ -480,7 +482,9 @@ fn handle_smart_http_with_path(
         }
     }
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn git-http-backend: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git-http-backend: {e}"))?;
 
     // Send request body to CGI stdin
     if let Some(mut stdin) = child.stdin.take() {
@@ -496,10 +500,7 @@ fn handle_smart_http_with_path(
     parse_and_send_cgi_response(stream, &stdout)
 }
 
-fn parse_and_send_cgi_response(
-    stream: &mut TcpStream,
-    cgi_output: &[u8],
-) -> Result<(), String> {
+fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {
     // Find the header/body separator (blank line: \r\n\r\n or \n\n)
     let mut header_end = None;
     let mut body_start = None;

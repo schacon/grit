@@ -148,7 +148,11 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("--cacheinfo needs mode,object,path: '{val}'");
                 }
                 i += 1;
-                (parts[0].to_string(), parts[1].to_string(), parts[2].as_bytes().to_vec())
+                (
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[2].as_bytes().to_vec(),
+                )
             } else {
                 // Legacy form: 3 separate values
                 if i + 2 >= cacheinfo_vals.len() {
@@ -199,10 +203,7 @@ pub fn run(args: Args) -> Result<()> {
         // Refuse to add a path that traverses through a symbolic link.
         // Check every *parent* component of the repo-relative path.
         if check_symlink_in_path(work_tree, &rel_path).is_some() {
-            bail!(
-                "'{}' is beyond a symbolic link",
-                input_path.display()
-            );
+            bail!("'{}' is beyond a symbolic link", input_path.display());
         }
 
         if args.force_remove {

@@ -67,8 +67,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     }
 
     // Canonicalize path for absolute output
-    let abs_path = fs::canonicalize(&path)
-        .unwrap_or_else(|_| path.clone());
+    let abs_path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
 
     // Determine the real git directory (where HEAD, objects, refs live)
     let real_git_dir = if let Some(ref sep) = args.separate_git_dir {
@@ -103,8 +102,10 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
 
     // On reinit, warn if --initial-branch is given (it's ignored)
     if is_reinit && args.initial_branch.is_some() {
-        eprintln!("hint: ignored --initial-branch={} for existing repository",
-                  args.initial_branch.as_deref().unwrap_or(""));
+        eprintln!(
+            "hint: ignored --initial-branch={} for existing repository",
+            args.initial_branch.as_deref().unwrap_or("")
+        );
     }
 
     // Load config to get defaults (system + global + GIT_CONFIG_PARAMETERS)
@@ -123,8 +124,12 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         if let Some(ref b) = args.initial_branch {
             b.clone()
         } else if let Ok(b) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
-            if !b.is_empty() { b } else {
-                config.get("init.defaultBranch").unwrap_or_else(|| "master".to_owned())
+            if !b.is_empty() {
+                b
+            } else {
+                config
+                    .get("init.defaultBranch")
+                    .unwrap_or_else(|| "master".to_owned())
             }
         } else if let Some(b) = config.get("init.defaultBranch") {
             b
@@ -144,7 +149,11 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     let object_format = if let Some(ref fmt) = args.object_format {
         fmt.clone()
     } else if let Ok(hash) = std::env::var("GIT_DEFAULT_HASH") {
-        if !hash.is_empty() { hash } else { "sha1".to_owned() }
+        if !hash.is_empty() {
+            hash
+        } else {
+            "sha1".to_owned()
+        }
     } else if let Some(fmt) = config.get("init.defaultObjectFormat") {
         fmt
     } else {
@@ -201,16 +210,23 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     }
 
     // Create the git directory structure
-    create_git_dir(&real_git_dir, &initial_branch, bare, &object_format,
-                   template_dir.as_deref(), skip_default_templates,
-                   args.shared.as_deref(), is_reinit, ref_format)?;
+    create_git_dir(
+        &real_git_dir,
+        &initial_branch,
+        bare,
+        &object_format,
+        template_dir.as_deref(),
+        skip_default_templates,
+        args.shared.as_deref(),
+        is_reinit,
+        ref_format,
+    )?;
 
     // Handle --separate-git-dir: write gitfile at path/.git
     if args.separate_git_dir.is_some() && !bare {
         let gitfile_path = abs_path.join(".git");
         let gitfile_content = format!("gitdir: {}\n", real_git_dir.display());
-        fs::write(&gitfile_path, gitfile_content)
-            .with_context(|| "cannot write gitfile")?;
+        fs::write(&gitfile_path, gitfile_content).with_context(|| "cannot write gitfile")?;
     }
 
     if !args.quiet {

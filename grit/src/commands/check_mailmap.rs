@@ -94,8 +94,7 @@ fn parse_mailmap_line(line: &str) -> Option<MailmapEntry> {
             let match_email = &emails[1];
 
             let before_first = line[..canonical_email.start].trim();
-            let between =
-                line[canonical_email.end..match_email.start].trim();
+            let between = line[canonical_email.end..match_email.start].trim();
 
             let canonical_name = if before_first.is_empty() {
                 None
@@ -199,14 +198,8 @@ fn map_contact(
         }
 
         // Match found — apply canonical values.
-        let result_name = entry
-            .canonical_name
-            .as_deref()
-            .unwrap_or(orig_name);
-        let result_email = entry
-            .canonical_email
-            .as_deref()
-            .unwrap_or(orig_email);
+        let result_name = entry.canonical_name.as_deref().unwrap_or(orig_name);
+        let result_email = entry.canonical_email.as_deref().unwrap_or(orig_email);
 
         return (result_name.to_string(), result_email.to_string());
     }

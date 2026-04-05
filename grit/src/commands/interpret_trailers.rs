@@ -72,13 +72,11 @@ pub fn run(args: Args) -> Result<()> {
         io::stdout().write_all(output.as_bytes())?;
     } else {
         for file in &args.files {
-            let input =
-                fs::read_to_string(file).with_context(|| format!("reading '{file}'"))?;
+            let input = fs::read_to_string(file).with_context(|| format!("reading '{file}'"))?;
             let output = process_message(&input, &args);
 
             if args.in_place {
-                fs::write(file, &output)
-                    .with_context(|| format!("writing '{file}'"))?;
+                fs::write(file, &output).with_context(|| format!("writing '{file}'"))?;
             } else {
                 io::stdout().write_all(output.as_bytes())?;
             }
@@ -210,7 +208,7 @@ fn find_trailer_block(lines: &[&str]) -> (usize, usize) {
         if trailer_start > 0
             && lines
                 .get(trailer_start - 1)
-                .map_or(false, |l| l.trim().is_empty())
+                .is_some_and(|l| l.trim().is_empty())
         {
             trailer_start - 1
         } else {
@@ -239,7 +237,11 @@ fn process_message(input: &str, args: &Args) -> String {
     }
 
     // Parse new trailers from --trailer args.
-    let new_trailers: Vec<Trailer> = args.trailer.iter().map(|t| parse_trailer_token(t)).collect();
+    let new_trailers: Vec<Trailer> = args
+        .trailer
+        .iter()
+        .map(|t| parse_trailer_token(t))
+        .collect();
 
     if args.parse {
         // --parse: only output trailers.

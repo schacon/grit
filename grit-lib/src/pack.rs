@@ -678,10 +678,7 @@ fn read_pack_object_at(
                 .iter()
                 .find(|e| e.oid == base_oid)
                 .ok_or_else(|| {
-                    Error::CorruptObject(format!(
-                        "ref-delta base {} not found in pack",
-                        base_oid
-                    ))
+                    Error::CorruptObject(format!("ref-delta base {} not found in pack", base_oid))
                 })?;
             let (base_kind, base_data) =
                 read_pack_object_at(pack_bytes, base_entry.offset, idx, depth + 1)?;

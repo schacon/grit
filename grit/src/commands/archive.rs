@@ -7,7 +7,9 @@ use clap::Args as ClapArgs;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf::{convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig, GitAttributes};
+use grit_lib::crlf::{
+    convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig, GitAttributes,
+};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -72,7 +74,16 @@ pub fn run(args: Args) -> Result<()> {
 
     // Collect all entries
     let mut entries: Vec<ArchiveEntry> = Vec::new();
-    collect_entries(&repo, &tree_data, prefix, &args.paths, &conv, &attrs, &config, &mut entries)?;
+    collect_entries(
+        &repo,
+        &tree_data,
+        prefix,
+        &args.paths,
+        &conv,
+        &attrs,
+        &config,
+        &mut entries,
+    )?;
 
     // If prefix ends with '/', add a directory entry for it
     if !prefix.is_empty() && prefix.ends_with('/') {
@@ -162,13 +173,23 @@ fn collect_entries(
                 mode: entry.mode,
                 data: Vec::new(),
             });
-            collect_entries(repo, &sub_obj.data, &dir_path, filter_paths, conv, attrs, config, entries)?;
+            collect_entries(
+                repo,
+                &sub_obj.data,
+                &dir_path,
+                filter_paths,
+                conv,
+                attrs,
+                config,
+                entries,
+            )?;
         } else {
             let blob = repo.odb.read(&entry.oid)?;
             // Apply working-tree conversion (CRLF, ident, filters)
             let file_attrs = get_file_attrs(attrs, &full_path, config);
             let oid_hex = entry.oid.to_hex();
-            let converted = convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex));
+            let converted =
+                convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex));
             entries.push(ArchiveEntry {
                 path: full_path,
                 mode: entry.mode,
@@ -304,7 +325,11 @@ fn write_zip(out: &mut impl Write, entries: &[ArchiveEntry]) -> Result<()> {
             }
         };
 
-        let uncompressed_size = if is_dir { 0u32 } else { entry.data.len() as u32 };
+        let uncompressed_size = if is_dir {
+            0u32
+        } else {
+            entry.data.len() as u32
+        };
         let compressed_size = compressed.len() as u32;
 
         // External attributes
@@ -313,7 +338,7 @@ fn write_zip(out: &mut impl Write, entries: &[ArchiveEntry]) -> Result<()> {
         } else {
             let mode = entry.mode & 0o777;
             let mode = if mode == 0 { 0o644 } else { mode };
-            (mode as u32) << 16
+            mode << 16
         };
 
         // Local file header

@@ -18,9 +18,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
-use grit_lib::objects::{
-    parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind,
-};
+use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -220,13 +218,21 @@ fn do_am(args: Args) -> Result<()> {
             let mut patches = parse_stgit_series(mbox_path)?;
             all_patches.append(&mut patches);
         } else {
-            let mut patches = parse_patches(&content, format_override, keep, keep_non_patch, scissors, no_scissors)?;
+            let mut patches = parse_patches(
+                &content,
+                format_override,
+                keep,
+                keep_non_patch,
+                scissors,
+                no_scissors,
+            )?;
             all_patches.append(&mut patches);
         }
     }
 
     if all_patches.is_empty() {
-        eprintln!("Patch format detection failed."); std::process::exit(128);
+        eprintln!("Patch format detection failed.");
+        std::process::exit(128);
     }
 
     if args.dry_run {
@@ -265,9 +271,17 @@ fn do_am(args: Args) -> Result<()> {
     } else if args.three_way {
         true
     } else {
-        config.get("am.threeWay").or_else(|| config.get("am.threeway")).map(|v| v == "true").unwrap_or(false)
+        config
+            .get("am.threeWay")
+            .or_else(|| config.get("am.threeway"))
+            .map(|v| v == "true")
+            .unwrap_or(false)
     };
-    let message_id = args.message_id || config.get("am.messageid").map(|v| v == "true").unwrap_or(false);
+    let message_id = args.message_id
+        || config
+            .get("am.messageid")
+            .map(|v| v == "true")
+            .unwrap_or(false);
     let opts = AmOptions {
         quiet: args.quiet,
         three_way,
@@ -288,7 +302,8 @@ fn do_am(args: Args) -> Result<()> {
 
 fn do_am_stdin(args: Args) -> Result<()> {
     let mut input = String::new();
-    io::stdin().read_to_string(&mut input)
+    io::stdin()
+        .read_to_string(&mut input)
         .context("failed to read from stdin")?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -302,9 +317,17 @@ fn do_am_stdin(args: Args) -> Result<()> {
         );
     }
 
-    let all_patches = parse_patches(&input, args.patch_format.as_deref(), args.keep, args.keep_non_patch, args.scissors, args.no_scissors)?;
+    let all_patches = parse_patches(
+        &input,
+        args.patch_format.as_deref(),
+        args.keep,
+        args.keep_non_patch,
+        args.scissors,
+        args.no_scissors,
+    )?;
     if all_patches.is_empty() {
-        eprintln!("Patch format detection failed."); std::process::exit(128);
+        eprintln!("Patch format detection failed.");
+        std::process::exit(128);
     }
 
     if args.dry_run {
@@ -339,9 +362,17 @@ fn do_am_stdin(args: Args) -> Result<()> {
     } else if args.three_way {
         true
     } else {
-        config.get("am.threeWay").or_else(|| config.get("am.threeway")).map(|v| v == "true").unwrap_or(false)
+        config
+            .get("am.threeWay")
+            .or_else(|| config.get("am.threeway"))
+            .map(|v| v == "true")
+            .unwrap_or(false)
     };
-    let message_id = args.message_id || config.get("am.messageid").map(|v| v == "true").unwrap_or(false);
+    let message_id = args.message_id
+        || config
+            .get("am.messageid")
+            .map(|v| v == "true")
+            .unwrap_or(false);
     let opts = AmOptions {
         quiet: args.quiet,
         three_way,
@@ -455,10 +486,17 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             let obj = repo.odb.read(head_oid)?;
             let commit = parse_commit(&obj.data)?;
             let head_entries = tree_to_index_entries(repo, &commit.tree, "")?;
-            if index.entries.len() != head_entries.len() ||
-                index.entries.iter().zip(head_entries.iter()).any(|(a, b)| a.oid != b.oid || a.path != b.path) {
-                bail!("your local changes would be overwritten by am.\n\
-                       Please commit your changes or stash them before you apply patches.");
+            if index.entries.len() != head_entries.len()
+                || index
+                    .entries
+                    .iter()
+                    .zip(head_entries.iter())
+                    .any(|(a, b)| a.oid != b.oid || a.path != b.path)
+            {
+                bail!(
+                    "your local changes would be overwritten by am.\n\
+                       Please commit your changes or stash them before you apply patches."
+                );
             }
         }
     }
@@ -470,18 +508,21 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             if !opts.no_verify {
                 let msg_path = git_dir.join("MERGE_MSG");
                 fs::write(&msg_path, &patch.message)?;
-                if !run_hook(git_dir, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
+                if !run_hook(
+                    git_dir,
+                    "applypatch-msg",
+                    &[msg_path.to_str().unwrap_or("")],
+                )? {
                     let _ = fs::remove_file(&msg_path);
                     bail!("applypatch-msg hook rejected the patch");
                 }
             }
 
             // Run pre-applypatch hook
-            if !opts.no_verify {
-                if !run_hook(git_dir, "pre-applypatch", &[])? {
+            if !opts.no_verify
+                && !run_hook(git_dir, "pre-applypatch", &[])? {
                     bail!("pre-applypatch hook rejected the patch");
                 }
-            }
 
             // Create empty commit
             let index = load_index(repo)?;
@@ -503,7 +544,11 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     if !opts.no_verify {
         let msg_path = git_dir.join("MERGE_MSG");
         fs::write(&msg_path, &patch.message)?;
-        if !run_hook(git_dir, "applypatch-msg", &[msg_path.to_str().unwrap_or("")])? {
+        if !run_hook(
+            git_dir,
+            "applypatch-msg",
+            &[msg_path.to_str().unwrap_or("")],
+        )? {
             let _ = fs::remove_file(&msg_path);
             bail!("applypatch-msg hook rejected the patch");
         }
@@ -552,11 +597,10 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     }
 
     // Run pre-applypatch hook
-    if !opts.no_verify {
-        if !run_hook(git_dir, "pre-applypatch", &[])? {
+    if !opts.no_verify
+        && !run_hook(git_dir, "pre-applypatch", &[])? {
             bail!("pre-applypatch hook rejected the patch");
         }
-    }
 
     create_am_commit(repo, &index, patch, opts)?;
 
@@ -581,7 +625,9 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
     // Parse the patch to extract index lines with blob SHAs
     let file_patches = parse_patch(&patch.diff)?;
     let head = resolve_head(git_dir)?;
-    let head_oid = head.oid().ok_or_else(|| anyhow::anyhow!("no HEAD for 3-way merge"))?;
+    let head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD for 3-way merge"))?;
     let head_obj = repo.odb.read(head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
 
@@ -597,7 +643,8 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
     let mut affected_paths = Vec::new();
 
     for fp in &file_patches {
-        let path_str = fp.effective_path()
+        let path_str = fp
+            .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let rel_path = strip_components(path_str, 1);
         let abs_path = work_tree.join(&rel_path);
@@ -627,8 +674,7 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             fs::read_to_string(&abs_path).unwrap_or_default()
         } else {
             // Try from HEAD tree
-            get_blob_from_tree(repo, &head_commit.tree, &rel_path)
-                .unwrap_or_default()
+            get_blob_from_tree(repo, &head_commit.tree, &rel_path).unwrap_or_default()
         };
 
         // Try to find the base blob from the index line in the diff
@@ -673,7 +719,11 @@ fn build_preimage_from_hunks(current: &str, hunks: &[Hunk]) -> Result<String> {
 
     let mut cur_idx = 0;
     for hunk in hunks {
-        let hunk_start = if hunk.old_start == 0 { 0 } else { hunk.old_start - 1 };
+        let hunk_start = if hunk.old_start == 0 {
+            0
+        } else {
+            hunk.old_start - 1
+        };
         // Copy lines before this hunk from current
         while cur_idx < hunk_start && cur_idx < current_lines.len() {
             pre_lines.push(current_lines[cur_idx].to_string());
@@ -724,7 +774,10 @@ fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
 
     let mut result = Vec::new();
     let mut has_conflicts = false;
-    let max_len = base_lines.len().max(ours_lines.len()).max(theirs_lines.len());
+    let max_len = base_lines
+        .len()
+        .max(ours_lines.len())
+        .max(theirs_lines.len());
 
     for i in 0..max_len {
         let b = base_lines.get(i).copied().unwrap_or("");
@@ -742,11 +795,11 @@ fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
         } else {
             // Both changed differently - conflict
             has_conflicts = true;
-            result.push(format!("<<<<<<< HEAD"));
+            result.push("<<<<<<< HEAD".to_string());
             result.push(o.to_string());
-            result.push(format!("======="));
+            result.push("=======".to_string());
             result.push(t.to_string());
-            result.push(format!(">>>>>>> patch"));
+            result.push(">>>>>>> patch".to_string());
         }
     }
 
@@ -756,7 +809,10 @@ fn three_way_merge(base: &str, ours: &str, theirs: &str) -> MergeResult {
         content.push('\n');
     }
 
-    MergeResult { content, has_conflicts }
+    MergeResult {
+        content,
+        has_conflicts,
+    }
 }
 
 /// Get a blob from a tree by path.
@@ -806,7 +862,11 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
                 let old_abs = work_tree.join(&old_rel);
                 if old_abs.exists() {
                     // Read old content, apply hunks if any, write to new path
-                    let new_rel = fp.new_path.as_deref().map(|p| strip_components(p, 0)).unwrap_or_else(|| rel_path.clone());
+                    let new_rel = fp
+                        .new_path
+                        .as_deref()
+                        .map(|p| strip_components(p, 0))
+                        .unwrap_or_else(|| rel_path.clone());
                     let new_abs = work_tree.join(&new_rel);
                     if let Some(parent) = new_abs.parent() {
                         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -818,8 +878,9 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
                     let new_content = if fp.hunks.is_empty() {
                         old_content
                     } else {
-                        apply_hunks(&old_content, &fp.hunks)
-                            .with_context(|| format!("failed to apply patch to {}", old_abs.display()))?
+                        apply_hunks(&old_content, &fp.hunks).with_context(|| {
+                            format!("failed to apply patch to {}", old_abs.display())
+                        })?
                     };
                     fs::write(&new_abs, new_content.as_bytes())?;
                     fs::remove_file(&old_abs)?;
@@ -848,7 +909,7 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
             let content = apply_hunks("", &fp.hunks)?;
             fs::write(&path, content.as_bytes())?;
             #[cfg(unix)]
-            if fp.new_mode.as_deref().map_or(false, |m| m == "100755") {
+            if fp.new_mode.as_deref() == Some("100755") {
                 use std::os::unix::fs::PermissionsExt;
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
             }
@@ -856,8 +917,8 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
         }
 
         // Modify existing file
-        let old_content = fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))?;
+        let old_content =
+            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
 
         if fp.hunks.is_empty() {
             #[cfg(unix)]
@@ -948,7 +1009,12 @@ fn stage_affected_files(repo: &Repository, affected_paths: &[String]) -> Result<
 }
 
 /// Create a commit from the current index using the patch metadata.
-fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &AmOptions) -> Result<()> {
+fn create_am_commit(
+    repo: &Repository,
+    index: &Index,
+    patch: &MboxPatch,
+    opts: &AmOptions,
+) -> Result<()> {
     let git_dir = &repo.git_dir;
     let tree_oid = write_tree_from_index(&repo.odb, index, "")?;
 
@@ -1015,7 +1081,7 @@ fn create_am_commit(repo: &Repository, index: &Index, patch: &MboxPatch, opts: &
         committer: committer_ident,
         encoding: None,
         message,
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1033,7 +1099,7 @@ fn add_trailer(message: &str, trailer: &str) -> String {
     let lines: Vec<&str> = trimmed.lines().collect();
 
     // Check if there's already a trailer block
-    let has_trailer_block = lines.last().map_or(false, |l| {
+    let has_trailer_block = lines.last().is_some_and(|l| {
         l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
     });
 
@@ -1058,7 +1124,7 @@ fn add_signoff(message: &str, sob_line: &str) -> String {
     }
 
     // Check if there's already a trailer block (lines matching "Key: value")
-    let has_trailer_block = lines.last().map_or(false, |l| {
+    let has_trailer_block = lines.last().is_some_and(|l| {
         l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
     });
 
@@ -1183,7 +1249,9 @@ fn do_continue(quiet: bool) -> Result<()> {
         }
     }
 
-    let current: usize = fs::read_to_string(state_dir.join("current"))?.trim().parse()?;
+    let current: usize = fs::read_to_string(state_dir.join("current"))?
+        .trim()
+        .parse()?;
     let patch_file = state_dir.join("patches").join(current.to_string());
     let serialized = fs::read_to_string(&patch_file)?;
     let patch = deserialize_mbox_patch(&serialized)?;
@@ -1194,10 +1262,7 @@ fn do_continue(quiet: bool) -> Result<()> {
         Err(_) => patch.message.clone(),
     };
 
-    let patched = MboxPatch {
-        message,
-        ..patch
-    };
+    let patched = MboxPatch { message, ..patch };
 
     // Load saved options
     let mut opts = load_am_options(&state_dir);
@@ -1262,8 +1327,7 @@ fn do_abort() -> Result<()> {
         }
 
         // Restore HEAD — use saved head-name to restore branch state
-        let head_name = fs::read_to_string(state_dir.join("head-name"))
-            .unwrap_or_default();
+        let head_name = fs::read_to_string(state_dir.join("head-name")).unwrap_or_default();
         let head_name = head_name.trim();
         if let Some(refname) = head_name.strip_prefix("ref: ") {
             // Was on a branch — restore the ref
@@ -1289,13 +1353,27 @@ fn do_abort() -> Result<()> {
 
 fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     let mut out = String::new();
-    if opts.three_way { out.push_str("threeway\n"); }
-    if opts.no_verify { out.push_str("no-verify\n"); }
-    if opts.signoff { out.push_str("signoff\n"); }
-    if opts.quiet { out.push_str("quiet\n"); }
-    if opts.message_id { out.push_str("message-id\n"); }
-    if opts.allow_empty { out.push_str("allow-empty\n"); }
-    if opts.ignore_date { out.push_str("ignore-date\n"); }
+    if opts.three_way {
+        out.push_str("threeway\n");
+    }
+    if opts.no_verify {
+        out.push_str("no-verify\n");
+    }
+    if opts.signoff {
+        out.push_str("signoff\n");
+    }
+    if opts.quiet {
+        out.push_str("quiet\n");
+    }
+    if opts.message_id {
+        out.push_str("message-id\n");
+    }
+    if opts.allow_empty {
+        out.push_str("allow-empty\n");
+    }
+    if opts.ignore_date {
+        out.push_str("ignore-date\n");
+    }
     out.push_str(&format!("empty={}\n", opts.empty));
     fs::write(state_dir.join("options"), out)?;
     Ok(())
@@ -1343,11 +1421,10 @@ fn run_hook(git_dir: &Path, hook_name: &str, args: &[&str]) -> Result<bool> {
 
     // Build the command - use sh to handle scripts without shebangs
     let mut cmd = std::process::Command::new(&hook_path);
-    cmd.args(args)
-        .env("GIT_DIR", git_dir)
-        .current_dir(work_dir);
+    cmd.args(args).env("GIT_DIR", git_dir).current_dir(work_dir);
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .or_else(|_| {
             // If direct execution fails, try via /bin/sh
             std::process::Command::new("/bin/sh")
@@ -1396,9 +1473,13 @@ fn detect_patch_format(input: &str) -> &'static str {
                 }
                 if lt.starts_with("From:") || lt.starts_with("Date:") {
                     // Looks like stgit if first line isn't a standard mbox header
-                    if !first.starts_with("From ") && !first.starts_with("From:") &&
-                       !first.starts_with("Subject:") && !first.starts_with("Date:") &&
-                       !first.starts_with("Message-ID:") && !first.starts_with("X-") {
+                    if !first.starts_with("From ")
+                        && !first.starts_with("From:")
+                        && !first.starts_with("Subject:")
+                        && !first.starts_with("Date:")
+                        && !first.starts_with("Message-ID:")
+                        && !first.starts_with("X-")
+                    {
                         return "stgit";
                     }
                 }
@@ -1569,7 +1650,9 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
             // Convert to git format: "epoch +/-HHMM"
             let parts: Vec<&str> = val.split_whitespace().collect();
             if parts.len() >= 2 {
-                if let (Ok(epoch), Ok(offset_secs)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
+                if let (Ok(epoch), Ok(offset_secs)) =
+                    (parts[0].parse::<i64>(), parts[1].parse::<i64>())
+                {
                     // HG offset is seconds west of UTC (positive = west)
                     // Git offset is +/-HHMM (positive = east)
                     let git_offset_secs = -offset_secs;
@@ -1613,7 +1696,7 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
     let body = body_lines.join("\n").trim().to_string();
     // For HG patches, the first line of the body is the subject
     let (subject, rest) = if let Some(idx) = body.find('\n') {
-        (body[..idx].to_string(), body[idx+1..].trim().to_string())
+        (body[..idx].to_string(), body[idx + 1..].trim().to_string())
     } else {
         (body.clone(), String::new())
     };
@@ -1638,7 +1721,14 @@ fn parse_hg_patch(input: &str) -> Result<Vec<MboxPatch>> {
 }
 
 /// Parse patches from input, auto-detecting or using the specified format.
-fn parse_patches(input: &str, format: Option<&str>, keep: bool, keep_non_patch: bool, scissors: bool, no_scissors: bool) -> Result<Vec<MboxPatch>> {
+fn parse_patches(
+    input: &str,
+    format: Option<&str>,
+    keep: bool,
+    keep_non_patch: bool,
+    scissors: bool,
+    no_scissors: bool,
+) -> Result<Vec<MboxPatch>> {
     let fmt = format.unwrap_or_else(|| detect_patch_format(input));
     match fmt {
         "stgit" => parse_stgit_patch(input),
@@ -1693,7 +1783,13 @@ fn unquote_mboxrd(input: &str) -> String {
 }
 
 /// Parse an mbox file into individual patches with options.
-fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors: bool, no_scissors: bool) -> Result<Vec<MboxPatch>> {
+fn parse_mbox_with_opts(
+    input: &str,
+    keep: bool,
+    keep_non_patch: bool,
+    scissors: bool,
+    no_scissors: bool,
+) -> Result<Vec<MboxPatch>> {
     // Handle mboxrd: unquote >From lines
     let input = unquote_mboxrd(input);
     let mut patches = Vec::new();
@@ -1718,7 +1814,14 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
                 break;
             }
             // If we haven't found any "From " line yet and we see headers, treat as raw patch
-            if !found_from && (line.starts_with("From:") || line.starts_with("Subject:") || line.starts_with("Date:") || line.starts_with("Message-ID:") || line.starts_with("Message-Id:") || line.starts_with("X-")) {
+            if !found_from
+                && (line.starts_with("From:")
+                    || line.starts_with("Subject:")
+                    || line.starts_with("Date:")
+                    || line.starts_with("Message-ID:")
+                    || line.starts_with("Message-Id:")
+                    || line.starts_with("X-"))
+            {
                 found_from = true;
                 break;
             }
@@ -1770,9 +1873,11 @@ fn parse_mbox_with_opts(input: &str, keep: bool, keep_non_patch: bool, scissors:
                 };
                 subject = subj;
                 last_header = "subject".to_string();
-            } else if let Some(value) = line.strip_prefix("Message-ID: ")
+            } else if let Some(value) = line
+                .strip_prefix("Message-ID: ")
                 .or_else(|| line.strip_prefix("Message-Id: "))
-                .or_else(|| line.strip_prefix("Message-id: ")) {
+                .or_else(|| line.strip_prefix("Message-id: "))
+            {
                 message_id = value.trim().to_string();
                 last_header = "message-id".to_string();
             } else {
@@ -1996,11 +2101,10 @@ fn parse_date_to_epoch(date: &str) -> String {
 
     // Already in "epoch offset" format?
     let parts: Vec<&str> = date.split_whitespace().collect();
-    if parts.len() == 2 {
-        if parts[0].parse::<i64>().is_ok() {
+    if parts.len() == 2
+        && parts[0].parse::<i64>().is_ok() {
             return date.to_string();
         }
-    }
 
     // Try RFC 2822-like: "Thu, 07 Apr 2005 22:14:13 -0700"
     if let Some(parsed) = parse_rfc2822_date(date) {
@@ -2054,9 +2158,18 @@ fn parse_rfc2822_date(date: &str) -> Option<String> {
 
     let day: u32 = tokens[0].parse().ok()?;
     let month = match tokens[1].to_lowercase().as_str() {
-        "jan" => 1u32, "feb" => 2, "mar" => 3, "apr" => 4,
-        "may" => 5, "jun" => 6, "jul" => 7, "aug" => 8,
-        "sep" => 9, "oct" => 10, "nov" => 11, "dec" => 12,
+        "jan" => 1u32,
+        "feb" => 2,
+        "mar" => 3,
+        "apr" => 4,
+        "may" => 5,
+        "jun" => 6,
+        "jul" => 7,
+        "aug" => 8,
+        "sep" => 9,
+        "oct" => 10,
+        "nov" => 11,
+        "dec" => 12,
         _ => return None,
     };
     let year: i32 = tokens[2].parse().ok()?;
@@ -2066,7 +2179,11 @@ fn parse_rfc2822_date(date: &str) -> Option<String> {
     }
     let hour: u32 = time_parts[0].parse().ok()?;
     let min: u32 = time_parts[1].parse().ok()?;
-    let sec: u32 = if time_parts.len() > 2 { time_parts[2].parse().ok()? } else { 0 };
+    let sec: u32 = if time_parts.len() > 2 {
+        time_parts[2].parse().ok()?
+    } else {
+        0
+    };
 
     // Convert to Unix timestamp
     // Days from year 0 to year, then month/day, then subtract Unix epoch
@@ -2076,14 +2193,24 @@ fn parse_rfc2822_date(date: &str) -> Option<String> {
 }
 
 /// Convert a date to Unix epoch seconds.
-fn datetime_to_epoch(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32, tz_offset_secs: i32) -> Option<i64> {
+fn datetime_to_epoch(
+    year: i32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    min: u32,
+    sec: u32,
+    tz_offset_secs: i32,
+) -> Option<i64> {
     // Use a simple calculation
     let m = if month <= 2 { month + 12 } else { month };
     let y = if month <= 2 { year - 1 } else { year };
 
     // Julian Day Number
-    let jdn = (day as i64) + (153 * (m as i64 - 3) + 2) / 5
-        + 365 * (y as i64) + (y as i64) / 4 - (y as i64) / 100 + (y as i64) / 400 + 1721119;
+    let jdn = (day as i64) + (153 * (m as i64 - 3) + 2) / 5 + 365 * (y as i64) + (y as i64) / 4
+        - (y as i64) / 100
+        + (y as i64) / 400
+        + 1721119;
 
     // Unix epoch = JDN of 1970-01-01 = 2440588
     let days_since_epoch = jdn - 2440588;
@@ -2184,14 +2311,22 @@ struct FilePatch {
 impl FilePatch {
     fn effective_path(&self) -> Option<&str> {
         if self.is_deleted {
-            return self.old_path.as_deref().filter(|p| *p != "/dev/null")
+            return self
+                .old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
                 .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"));
         }
         if self.is_new {
-            return self.new_path.as_deref().filter(|p| *p != "/dev/null")
+            return self
+                .new_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
                 .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"));
         }
-        self.new_path.as_deref().filter(|p| *p != "/dev/null")
+        self.new_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
             .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"))
     }
 }
@@ -2326,8 +2461,8 @@ fn strip_components(path: &str, n: usize) -> String {
 
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
     let header = lines[start];
-    let (old_start, old_count, new_start, new_count) = parse_hunk_header(header)
-        .with_context(|| format!("invalid hunk header: {header}"))?;
+    let (old_start, old_count, new_start, new_count) =
+        parse_hunk_header(header).with_context(|| format!("invalid hunk header: {header}"))?;
 
     let mut hunk = Hunk {
         old_start,
@@ -2399,7 +2534,11 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     let mut old_idx: usize = 0;
 
     for hunk in hunks {
-        let hunk_start = if hunk.old_start == 0 { 0 } else { hunk.old_start - 1 };
+        let hunk_start = if hunk.old_start == 0 {
+            0
+        } else {
+            hunk.old_start - 1
+        };
 
         while old_idx < hunk_start && old_idx < old_lines.len() {
             result.push(old_lines[old_idx].to_string());
@@ -2413,7 +2552,9 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
                         if old_lines[old_idx] != s.as_str() {
                             bail!(
                                 "context mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1, s, old_lines[old_idx]
+                                old_idx + 1,
+                                s,
+                                old_lines[old_idx]
                             );
                         }
                         old_idx += 1;
@@ -2425,7 +2566,9 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
                         if old_lines[old_idx] != s.as_str() {
                             bail!(
                                 "remove mismatch at line {}: expected {:?}, got {:?}",
-                                old_idx + 1, s, old_lines[old_idx]
+                                old_idx + 1,
+                                s,
+                                old_lines[old_idx]
                             );
                         }
                         old_idx += 1;
@@ -2448,7 +2591,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
         return Ok(String::new());
     }
 
-    let ends_no_newline = hunks.last().map_or(false, |h| {
+    let ends_no_newline = hunks.last().is_some_and(|h| {
         let mut last_was_add = false;
         let mut saw_no_newline_after_add = false;
         for hl in &h.lines {
@@ -2586,11 +2729,7 @@ fn tree_to_index_entries(
     Ok(result)
 }
 
-fn checkout_index_to_worktree(
-    repo: &Repository,
-    work_tree: &Path,
-    index: &Index,
-) -> Result<()> {
+fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
     use grit_lib::index::{MODE_EXECUTABLE, MODE_SYMLINK};
 
     for entry in &index.entries {
@@ -2604,8 +2743,8 @@ fn checkout_index_to_worktree(
         let obj = repo.odb.read(&entry.oid)?;
 
         if entry.mode == MODE_SYMLINK {
-            let target = String::from_utf8(obj.data)
-                .map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
+            let target =
+                String::from_utf8(obj.data).map_err(|_| anyhow::anyhow!("symlink not UTF-8"))?;
             if abs_path.exists() || abs_path.is_symlink() {
                 let _ = fs::remove_file(&abs_path);
             }

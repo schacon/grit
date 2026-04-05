@@ -81,20 +81,16 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                         match_slash = true;
                     } else {
                         // Valid ** must be at start or after / , and before end or /
-                        let prev_ok =
-                            prev_p < 2 || (prev_p >= 1 && p[prev_p - 1] == b'/');
+                        let prev_ok = prev_p < 2 || (prev_p >= 1 && p[prev_p - 1] == b'/');
                         let next_ok = pi >= p.len()
                             || p[pi] == b'/'
-                            || (pi + 1 < p.len()
-                                && p[pi] == b'\\'
-                                && p[pi + 1] == b'/');
+                            || (pi + 1 < p.len() && p[pi] == b'\\' && p[pi + 1] == b'/');
 
                         if prev_ok && next_ok {
-                            if pi < p.len() && p[pi] == b'/' {
-                                if dowild(&p[pi + 1..], &text[ti..], flags) == WM_MATCH {
+                            if pi < p.len() && p[pi] == b'/'
+                                && dowild(&p[pi + 1..], &text[ti..], flags) == WM_MATCH {
                                     return WM_MATCH;
                                 }
-                            }
                             match_slash = true;
                         } else {
                             match_slash = false;
@@ -106,11 +102,10 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
 
                 // Trailing star(s)?
                 if pi >= p.len() {
-                    if !match_slash {
-                        if text[ti..].iter().any(|&b| b == b'/') {
+                    if !match_slash
+                        && text[ti..].contains(&b'/') {
                             return WM_ABORT_TO_STARSTAR;
                         }
-                    }
                     return WM_MATCH;
                 }
 
@@ -255,7 +250,10 @@ fn do_bracket(pattern: &[u8], pi: &mut usize, t_ch: u8, t_ch_raw: u8, flags: u32
             if t_ch == p_ch {
                 matched = true;
             }
-        } else if p_ch == b'-' && prev_ch != 0 && idx + 1 < pattern.len() && pattern[idx + 1] != b']'
+        } else if p_ch == b'-'
+            && prev_ch != 0
+            && idx + 1 < pattern.len()
+            && pattern[idx + 1] != b']'
         {
             idx += 1;
             p_ch = pattern[idx];
@@ -346,8 +344,7 @@ fn match_posix_class(class: &[u8], ch: u8, flags: u32) -> Option<bool> {
         b"punct" => ch.is_ascii_punctuation(),
         b"space" => ch.is_ascii_whitespace(),
         b"upper" => {
-            ch.is_ascii_uppercase()
-                || ((flags & WM_CASEFOLD) != 0 && ch.is_ascii_lowercase())
+            ch.is_ascii_uppercase() || ((flags & WM_CASEFOLD) != 0 && ch.is_ascii_lowercase())
         }
         b"xdigit" => ch.is_ascii_hexdigit(),
         _ => return None,
@@ -409,11 +406,7 @@ mod tests {
 
     #[test]
     fn character_classes() {
-        assert!(wildmatch(
-            b"[[:alpha:]][[:digit:]][[:upper:]]",
-            b"a1B",
-            0
-        ));
+        assert!(wildmatch(b"[[:alpha:]][[:digit:]][[:upper:]]", b"a1B", 0));
     }
 
     #[test]

@@ -190,16 +190,16 @@ fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<Object
     let mut oids = Vec::new();
     for spec in specs {
         if let Some((lhs, rhs)) = spec.split_once("..") {
-            let exclude_oid = resolve_revision(repo, lhs)
-                .with_context(|| format!("bad revision '{lhs}'"))?;
-            let include_oid = resolve_revision(repo, rhs)
-                .with_context(|| format!("bad revision '{rhs}'"))?;
+            let exclude_oid =
+                resolve_revision(repo, lhs).with_context(|| format!("bad revision '{lhs}'"))?;
+            let include_oid =
+                resolve_revision(repo, rhs).with_context(|| format!("bad revision '{rhs}'"))?;
 
             let range_oids = walk_commit_range(repo, exclude_oid, include_oid)?;
             oids.extend(range_oids);
         } else {
-            let oid = resolve_revision(repo, spec)
-                .with_context(|| format!("bad revision '{spec}'"))?;
+            let oid =
+                resolve_revision(repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
             oids.push(oid);
         }
     }
@@ -207,11 +207,7 @@ fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<Object
 }
 
 /// Walk commits reachable from `tip` but not from `base`, oldest first.
-fn walk_commit_range(
-    repo: &Repository,
-    base: ObjectId,
-    tip: ObjectId,
-) -> Result<Vec<ObjectId>> {
+fn walk_commit_range(repo: &Repository, base: ObjectId, tip: ObjectId) -> Result<Vec<ObjectId>> {
     let mut result = Vec::new();
     let mut current = tip;
 
@@ -232,11 +228,7 @@ fn walk_commit_range(
     Ok(result)
 }
 
-fn cherry_pick_one_commit(
-    repo: &Repository,
-    commit_oid: ObjectId,
-    args: &Args,
-) -> Result<()> {
+fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) -> Result<()> {
     let git_dir = &repo.git_dir;
 
     let commit_obj = repo.odb.read(&commit_oid)?;
@@ -286,7 +278,9 @@ fn cherry_pick_one_commit(
         let mut new_index = Index::new();
         new_index.entries = entries;
         new_index.sort();
-        new_index.write(&repo.index_path()).context("writing index")?;
+        new_index
+            .write(&repo.index_path())
+            .context("writing index")?;
         if let Some(wt) = &repo.work_tree {
             checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
         }
@@ -307,7 +301,11 @@ fn cherry_pick_one_commit(
         let cur_index = load_index(repo)?;
         // If the index has only stage-0 entries and differs from HEAD tree,
         // use the index entries as ours.
-        let stage0: Vec<IndexEntry> = cur_index.entries.into_iter().filter(|e| e.stage() == 0).collect();
+        let stage0: Vec<IndexEntry> = cur_index
+            .entries
+            .into_iter()
+            .filter(|e| e.stage() == 0)
+            .collect();
         if !stage0.is_empty() {
             tree_to_map(stage0)
         } else {
@@ -319,13 +317,8 @@ fn cherry_pick_one_commit(
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
     let favor = parse_merge_favor(&args.strategy_option);
-    let merge_result = three_way_merge_with_content(
-        repo,
-        &base_entries,
-        &ours_entries,
-        &theirs_entries,
-        favor,
-    )?;
+    let merge_result =
+        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries, favor)?;
 
     let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
 
@@ -345,13 +338,22 @@ fn cherry_pick_one_commit(
     }
 
     let old_index = load_index(repo)?;
-    merge_result.index.write(&repo.index_path()).context("writing index")?;
+    merge_result
+        .index
+        .write(&repo.index_path())
+        .context("writing index")?;
 
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick in a bare repository"))?;
-    checkout_merged_index(repo, work_tree, &old_index, &merge_result.index, &merge_result.conflict_content)?;
+    checkout_merged_index(
+        repo,
+        work_tree,
+        &old_index,
+        &merge_result.index,
+        &merge_result.conflict_content,
+    )?;
 
     // Build the cherry-pick message.
     let mut msg = commit.message.clone();
@@ -400,7 +402,9 @@ fn cherry_pick_one_commit(
     create_cherry_pick_commit(repo, &head, &merge_result.index, &msg, &commit)?;
 
     let new_head = resolve_head(git_dir)?;
-    let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+    let new_oid = new_head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
     let branch = branch_name(&head);
     let first_line = msg.lines().next().unwrap_or("");
@@ -483,7 +487,9 @@ fn do_continue(mut args: Args) -> Result<()> {
     create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit)?;
 
     let new_head = resolve_head(git_dir)?;
-    let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+    let new_oid = new_head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
     let branch = branch_name(&head);
     let first_line = msg.lines().next().unwrap_or("");
@@ -883,7 +889,11 @@ fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
 /// Check if two blobs have the same content modulo a trailing newline.
 /// Returns true if the contents are equal after stripping a single trailing `\n`
 /// from both sides (or if both are already equal).
-fn same_blob_content_modulo_trailing_newline(repo: &Repository, a: &IndexEntry, b: &IndexEntry) -> bool {
+fn same_blob_content_modulo_trailing_newline(
+    repo: &Repository,
+    a: &IndexEntry,
+    b: &IndexEntry,
+) -> bool {
     if a.mode != b.mode {
         return false;
     }
@@ -963,7 +973,16 @@ fn three_way_merge_with_content(
                 out.entries.push(te.clone());
             }
             (Some(be), Some(oe), Some(te)) => {
-                content_merge_or_conflict(repo, &mut out, &mut conflict_content, &path, be, oe, te, favor)?;
+                content_merge_or_conflict(
+                    repo,
+                    &mut out,
+                    &mut conflict_content,
+                    &path,
+                    be,
+                    oe,
+                    te,
+                    favor,
+                )?;
             }
             (None, Some(oe), None) => {
                 out.entries.push(oe.clone());
@@ -994,7 +1013,10 @@ fn three_way_merge_with_content(
     }
 
     out.sort();
-    Ok(MergeResult { index: out, conflict_content })
+    Ok(MergeResult {
+        index: out,
+        conflict_content,
+    })
 }
 
 fn content_merge_or_conflict(

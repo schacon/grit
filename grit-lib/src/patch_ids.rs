@@ -162,11 +162,7 @@ pub fn compute_patch_ids_from_text(input: &[u8], mode: PatchIdMode) -> Vec<(Obje
                 before = 1;
                 after = 1;
                 // Fall through to hunk-content processing below.
-            } else if !line
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic())
-            {
+            } else if !line.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
                 // Non-alpha first char signals end of this patch's diffs.
                 // Re-use the `continue` path; treat as patch boundary.
                 text_flush_one_hunk(&mut result, &mut ctx);

@@ -45,7 +45,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // Collect all paths.
     let mut all_paths: Vec<Vec<u8>> = Vec::new();
-    for k in base_entries.keys().chain(b1_entries.keys()).chain(b2_entries.keys()) {
+    for k in base_entries
+        .keys()
+        .chain(b1_entries.keys())
+        .chain(b2_entries.keys())
+    {
         if !all_paths.contains(k) {
             all_paths.push(k.clone());
         }

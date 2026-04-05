@@ -118,8 +118,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve the target commit
     let rev = args.commit.as_deref().unwrap_or("HEAD");
-    let resolved_oid = resolve_revision(&repo, rev)
-        .with_context(|| format!("Not a valid object name {rev}"))?;
+    let resolved_oid =
+        resolve_revision(&repo, rev).with_context(|| format!("Not a valid object name {rev}"))?;
 
     // Peel to commit (in case user passed a tag name which resolves to a tag object)
     let target_oid = peel_to_commit(&repo, &resolved_oid)
@@ -206,7 +206,7 @@ fn run_contains(
 
     for (tag_oid, tag_name) in ref_map {
         if let Some(depth) = ancestor_depth(repo, tag_oid, target_oid) {
-            if best.as_ref().map_or(true, |(_, d)| depth < *d) {
+            if best.as_ref().is_none_or(|(_, d)| depth < *d) {
                 best = Some((tag_name.clone(), depth));
             }
         }
@@ -229,11 +229,7 @@ fn run_contains(
 
 /// Check if `ancestor` is reachable from `descendant` by walking parents.
 /// Returns Some(depth) if reachable, None otherwise.
-fn ancestor_depth(
-    repo: &Repository,
-    descendant: &ObjectId,
-    ancestor: &ObjectId,
-) -> Option<usize> {
+fn ancestor_depth(repo: &Repository, descendant: &ObjectId, ancestor: &ObjectId) -> Option<usize> {
     if descendant == ancestor {
         return Some(0);
     }
@@ -315,7 +311,10 @@ fn build_ref_map(
         let short_name = if use_all_refs {
             refname.strip_prefix("refs/").unwrap_or(refname).to_string()
         } else {
-            refname.strip_prefix("refs/tags/").unwrap_or(refname).to_string()
+            refname
+                .strip_prefix("refs/tags/")
+                .unwrap_or(refname)
+                .to_string()
         };
 
         // Filter by glob patterns
@@ -338,8 +337,7 @@ fn build_ref_map(
                 // Annotated tag — peel to commit
                 if let Ok(tag_data) = parse_tag(&obj.data) {
                     if let Some(commit_oid) = peel_to_commit(repo, &tag_data.object) {
-                        map.entry(commit_oid)
-                            .or_insert_with(|| short_name.clone());
+                        map.entry(commit_oid).or_insert_with(|| short_name.clone());
                     }
                 }
             }
@@ -372,8 +370,7 @@ fn build_ref_map(
                 // Peel to commit
                 if let Some(commit_oid) = peel_to_commit(repo, oid) {
                     // Tags have higher priority — only insert if not already present
-                    map.entry(commit_oid)
-                        .or_insert_with(|| display.clone());
+                    map.entry(commit_oid).or_insert_with(|| display.clone());
                 }
             }
         }

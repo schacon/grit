@@ -156,7 +156,8 @@ fn parse_identity_date(input: &str, default_tz: &str) -> Result<String> {
             let tz_str_inner = parts[0];
             let datetime_part = parts[1];
             if let Ok(tz) = parse_git_tz(tz_str_inner) {
-                let ymd_hms = format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok();
+                let ymd_hms =
+                    format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]").ok();
                 if let Some(ref fmt) = ymd_hms {
                     if let Ok(naive) = PrimitiveDateTime::parse(datetime_part, fmt) {
                         let dt = naive.assume_offset(tz);

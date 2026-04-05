@@ -163,9 +163,7 @@ fn list_replace_refs(repo: &Repository, pattern: Option<&str>, format: &ListForm
 
     for (refname, replacement_oid) in &refs {
         // Extract the original SHA from the ref name
-        let original_hex = refname
-            .strip_prefix("refs/replace/")
-            .unwrap_or(refname);
+        let original_hex = refname.strip_prefix("refs/replace/").unwrap_or(refname);
 
         // Apply glob pattern filter if given
         if let Some(pat) = pattern {
@@ -235,8 +233,8 @@ fn create_graft(
     // Resolve new parents
     let mut new_parents: Vec<ObjectId> = Vec::new();
     for p in parent_strs {
-        let pid = resolve_revision(repo, p)
-            .with_context(|| format!("Failed to resolve parent '{p}'"))?;
+        let pid =
+            resolve_revision(repo, p).with_context(|| format!("Failed to resolve parent '{p}'"))?;
         new_parents.push(pid);
     }
 

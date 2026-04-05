@@ -80,9 +80,15 @@ pub fn run(args: Args) -> Result<()> {
         let path_bytes = path.as_bytes();
 
         // Extract base (stage 1), ours (stage 2), theirs (stage 3) if available
-        let base_path = tmp_dir.path().join(format!("{}.BASE", path.replace('/', "_")));
-        let local_path = tmp_dir.path().join(format!("{}.LOCAL", path.replace('/', "_")));
-        let remote_path = tmp_dir.path().join(format!("{}.REMOTE", path.replace('/', "_")));
+        let base_path = tmp_dir
+            .path()
+            .join(format!("{}.BASE", path.replace('/', "_")));
+        let local_path = tmp_dir
+            .path()
+            .join(format!("{}.LOCAL", path.replace('/', "_")));
+        let remote_path = tmp_dir
+            .path()
+            .join(format!("{}.REMOTE", path.replace('/', "_")));
 
         // Write stage files
         for (stage, dest) in [(1u8, &base_path), (2, &local_path), (3, &remote_path)] {

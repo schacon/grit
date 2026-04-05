@@ -79,11 +79,7 @@ fn find_git_dir() -> Option<std::path::PathBuf> {
 /// `GIT_CONFIG_PARAMETERS` and the normal config file cascade).
 fn get_credential_helper() -> Option<String> {
     let git_dir = find_git_dir();
-    let config = grit_lib::config::ConfigSet::load(
-        git_dir.as_deref(),
-        true,
-    )
-    .unwrap_or_default();
+    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).unwrap_or_default();
     config.get("credential.helper")
 }
 
@@ -129,7 +125,9 @@ fn invoke_helper(
     // Parse helper output — key=value lines until blank line or EOF.
     let mut result = creds.clone();
     for line in output.stdout.split(|&b| b == b'\n') {
-        let line = std::str::from_utf8(line).unwrap_or("").trim_end_matches('\r');
+        let line = std::str::from_utf8(line)
+            .unwrap_or("")
+            .trim_end_matches('\r');
         if line.is_empty() {
             break;
         }

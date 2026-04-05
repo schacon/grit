@@ -30,7 +30,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Version info
     report.push_str("[System Info]\n");
-    report.push_str(&format!("grit version: git version 2.47.0.grit\n"));
+    report.push_str(&"grit version: git version 2.47.0.grit\n".to_string());
 
     // OS info
     let os_info = collect_os_info();

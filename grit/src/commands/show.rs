@@ -285,7 +285,9 @@ fn show_commit(
     // --name-only: just print file names
     if args.name_only {
         for entry in &diff_entries {
-            let path = entry.new_path.as_deref()
+            let path = entry
+                .new_path
+                .as_deref()
                 .or(entry.old_path.as_deref())
                 .unwrap_or("");
             writeln!(out, "{path}")?;
@@ -296,7 +298,9 @@ fn show_commit(
     // --name-status: print status letter and file name
     if args.name_status {
         for entry in &diff_entries {
-            let path = entry.new_path.as_deref()
+            let path = entry
+                .new_path
+                .as_deref()
                 .or(entry.old_path.as_deref())
                 .unwrap_or("");
             let status = match entry.status {
@@ -316,10 +320,14 @@ fn show_commit(
     // --raw: raw diff-tree output format
     if args.raw {
         for entry in &diff_entries {
-            let old_path = entry.old_path.as_deref()
+            let old_path = entry
+                .old_path
+                .as_deref()
                 .or(entry.new_path.as_deref())
                 .unwrap_or("");
-            let new_path = entry.new_path.as_deref()
+            let new_path = entry
+                .new_path
+                .as_deref()
                 .or(entry.old_path.as_deref())
                 .unwrap_or("");
             let status_char = match entry.status {
@@ -381,7 +389,14 @@ fn show_commit(
         };
 
         let patch = if !args.anchored.is_empty() {
-            anchored_unified_diff(&old_content, &new_content, old_path, new_path, context, &args.anchored)
+            anchored_unified_diff(
+                &old_content,
+                &new_content,
+                old_path,
+                new_path,
+                context,
+                &args.anchored,
+            )
         } else {
             unified_diff(&old_content, &new_content, old_path, new_path, context)
         };
@@ -402,7 +417,9 @@ fn write_diffstat(
     let mut total_del = 0usize;
 
     for entry in entries {
-        let path = entry.new_path.as_deref()
+        let path = entry
+            .new_path
+            .as_deref()
             .or(entry.old_path.as_deref())
             .unwrap_or("")
             .to_string();
@@ -437,8 +454,12 @@ fn write_diffstat(
         };
 
         // Simple line-count based insertions/deletions.
-        let ins = new_lines.len().saturating_sub(old_lines.len().min(new_lines.len()));
-        let del = old_lines.len().saturating_sub(new_lines.len().min(old_lines.len()));
+        let ins = new_lines
+            .len()
+            .saturating_sub(old_lines.len().min(new_lines.len()));
+        let del = old_lines
+            .len()
+            .saturating_sub(new_lines.len().min(old_lines.len()));
 
         // More accurate: count changed lines using the diff
         let patch = unified_diff(&old_content, &new_content, &path, &path, 0);
@@ -475,15 +496,27 @@ fn write_diffstat(
     }
 
     let files = stats.len();
-    let file_word = if files == 1 { "file changed" } else { "files changed" };
+    let file_word = if files == 1 {
+        "file changed"
+    } else {
+        "files changed"
+    };
     let ins_part = if total_ins > 0 {
-        let word = if total_ins == 1 { "insertion(+)" } else { "insertions(+)" };
+        let word = if total_ins == 1 {
+            "insertion(+)"
+        } else {
+            "insertions(+)"
+        };
         format!(", {total_ins} {word}")
     } else {
         String::new()
     };
     let del_part = if total_del > 0 {
-        let word = if total_del == 1 { "deletion(-)" } else { "deletions(-)" };
+        let word = if total_del == 1 {
+            "deletion(-)"
+        } else {
+            "deletions(-)"
+        };
         format!(", {total_del} {word}")
     } else {
         String::new()
@@ -797,9 +830,8 @@ fn format_date_iso(ident: &str) -> String {
             let offset_secs = parse_offset_seconds(offset_str);
             let dt = time::OffsetDateTime::from_unix_timestamp(ts + offset_secs as i64)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-            let format = time::format_description::parse(
-                "[year]-[month]-[day] [hour]:[minute]:[second]",
-            );
+            let format =
+                time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]");
             if let Ok(fmt) = format {
                 if let Ok(formatted) = dt.format(&fmt) {
                     // Git outputs: 2001-09-09 01:46:40 +0000
@@ -924,8 +956,13 @@ fn format_date(ident: &str) -> String {
     };
     format!(
         "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
-        weekday, month, dt.day(),
-        dt.hour(), dt.minute(), dt.second(),
-        dt.year(), offset_str
+        weekday,
+        month,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        dt.year(),
+        offset_str
     )
 }

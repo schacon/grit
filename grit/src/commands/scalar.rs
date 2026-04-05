@@ -60,8 +60,7 @@ pub fn run(args: &[String]) -> Result<()> {
 
     // Apply -C
     if let Some(dir) = &chdir {
-        std::env::set_current_dir(dir)
-            .with_context(|| format!("cannot change to '{dir}'"))?;
+        std::env::set_current_dir(dir).with_context(|| format!("cannot change to '{dir}'"))?;
     }
 
     // Apply -c config args (pass through to git commands via environment)
@@ -129,8 +128,6 @@ fn git_binary() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("git"))
 }
 
-
-
 /// Check if a directory is a bare repository (no worktree).
 fn is_bare_repo(dir: &Path) -> bool {
     let output = Command::new(git_binary())
@@ -138,9 +135,7 @@ fn is_bare_repo(dir: &Path) -> bool {
         .current_dir(dir)
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim() == "true"
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "true",
         _ => false,
     }
 }
@@ -152,9 +147,7 @@ fn is_inside_git_dir(dir: &Path) -> bool {
         .current_dir(dir)
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim() == "true"
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "true",
         _ => false,
     }
 }
@@ -166,13 +159,11 @@ fn get_registered_repos() -> Vec<String> {
         .args(["config", "--global", "--get-all", "maintenance.repo"])
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect()
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -195,7 +186,10 @@ fn register_repo(repo_path: &str) -> Result<()> {
 fn unregister_repo(repo_path: &str) -> Result<()> {
     let status = Command::new(git_binary())
         .args([
-            "config", "--global", "--unset-all", "maintenance.repo",
+            "config",
+            "--global",
+            "--unset-all",
+            "maintenance.repo",
             repo_path,
         ])
         .status();
@@ -406,7 +400,9 @@ fn resolve_repo_path(target: &Path) -> Result<PathBuf> {
 
     // Try the target itself
     if looks_like_repo(target) {
-        return Ok(target.canonicalize().unwrap_or_else(|_| target.to_path_buf()));
+        return Ok(target
+            .canonicalize()
+            .unwrap_or_else(|_| target.to_path_buf()));
     }
 
     // Try git rev-parse from target
@@ -451,17 +447,13 @@ fn cmd_unregister(args: &[String]) -> Result<()> {
         if src.exists() {
             src.canonicalize().unwrap_or(src)
         } else {
-            target.canonicalize().unwrap_or_else(|_| {
-                std::env::current_dir()
-                    .unwrap_or_default()
-                    .join(&target)
-            })
+            target
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(&target))
         }
     };
 
-    let abs_path = repo_path
-        .canonicalize()
-        .unwrap_or(repo_path.clone());
+    let abs_path = repo_path.canonicalize().unwrap_or(repo_path.clone());
     unregister_repo(&abs_path.display().to_string())?;
 
     // Also try without canonicalize in case it was registered differently
@@ -486,8 +478,8 @@ fn cmd_run(args: &[String]) -> Result<()> {
     let mut task: Option<String> = None;
     let mut dir: Option<String> = None;
 
-    let mut iter = args.iter();
-    while let Some(arg) = iter.next() {
+    let iter = args.iter();
+    for arg in iter {
         match arg.as_str() {
             _ if !arg.starts_with('-') => {
                 if task.is_none() {
@@ -555,8 +547,7 @@ fn cmd_delete(args: &[String]) -> Result<()> {
         .arg(&target)
         .status();
 
-    fs::remove_dir_all(&target)
-        .with_context(|| format!("failed to delete '{}'", dir))?;
+    fs::remove_dir_all(&target).with_context(|| format!("failed to delete '{}'", dir))?;
 
     Ok(())
 }
@@ -680,16 +671,15 @@ fn cmd_diagnose(args: &[String]) -> Result<()> {
     let repo_path = resolve_repo_path(&target)?;
 
     // Collect diagnostic info
-    println!("Collecting diagnostic info for '{}'...", repo_path.display());
+    println!(
+        "Collecting diagnostic info for '{}'...",
+        repo_path.display()
+    );
 
     // Available space
     #[cfg(unix)]
     {
-        if let Ok(output) = Command::new("df")
-            .arg("-h")
-            .arg(&repo_path)
-            .output()
-        {
+        if let Ok(output) = Command::new("df").arg("-h").arg(&repo_path).output() {
             if output.status.success() {
                 let df_out = String::from_utf8_lossy(&output.stdout);
                 // Parse available space from df output
@@ -709,10 +699,7 @@ fn cmd_diagnose(args: &[String]) -> Result<()> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let zip_name = format!(
-        "scalar_diagnostic_{}.zip",
-        timestamp
-    );
+    let zip_name = format!("scalar_diagnostic_{}.zip", timestamp);
     let zip_path = std::env::current_dir()?.join(&zip_name);
 
     // Create temp directory with diagnostics
@@ -805,17 +792,11 @@ fn cmd_diagnose(args: &[String]) -> Result<()> {
 
     match status {
         Ok(s) if s.success() => {
-            eprintln!(
-                "Created diagnostic archive at '{}'",
-                zip_path.display()
-            );
+            eprintln!("Created diagnostic archive at '{}'", zip_path.display());
         }
         _ => {
             // Fallback: just mention the directory
-            eprintln!(
-                "Diagnostic data collected in '{}'",
-                diag_dir.display()
-            );
+            eprintln!("Diagnostic data collected in '{}'", diag_dir.display());
         }
     }
 

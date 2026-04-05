@@ -144,12 +144,7 @@ fn cmd_write(object_dir: Option<PathBuf>) -> Result<()> {
     // Build chunks in memory
     let fanout = build_fanout(&sorted_oids);
     let oid_lookup = build_oid_lookup(&sorted_oids);
-    let commit_data = build_commit_data(
-        &sorted_oids,
-        &commits,
-        &oid_to_idx,
-        &generations,
-    );
+    let commit_data = build_commit_data(&sorted_oids, &commits, &oid_to_idx, &generations);
 
     // Chunk table: 3 chunks + terminator
     let num_chunks: u8 = 3;
@@ -168,8 +163,8 @@ fn cmd_write(object_dir: Option<PathBuf>) -> Result<()> {
     let info_dir = objects_dir.join("info");
     fs::create_dir_all(&info_dir)?;
     let graph_path = info_dir.join("commit-graph");
-    let file = fs::File::create(&graph_path)
-        .with_context(|| format!("creating {:?}", graph_path))?;
+    let file =
+        fs::File::create(&graph_path).with_context(|| format!("creating {:?}", graph_path))?;
     let mut w = BufWriter::new(file);
 
     // Header
@@ -210,10 +205,7 @@ fn write_chunk_entry(w: &mut impl Write, chunk_id: u32, offset: u64) -> Result<(
 }
 
 /// Collect all commits reachable from refs.
-fn collect_all_commits(
-    repo: &Repository,
-    odb: &Odb,
-) -> Result<HashMap<ObjectId, CommitInfo>> {
+fn collect_all_commits(repo: &Repository, odb: &Odb) -> Result<HashMap<ObjectId, CommitInfo>> {
     let mut commits: HashMap<ObjectId, CommitInfo> = HashMap::new();
     let mut stack: Vec<ObjectId> = Vec::new();
 
@@ -302,11 +294,7 @@ fn collect_all_commits(
     Ok(commits)
 }
 
-fn collect_ref_tips(
-    _git_dir: &Path,
-    dir: &Path,
-    stack: &mut Vec<ObjectId>,
-) -> Result<()> {
+fn collect_ref_tips(_git_dir: &Path, dir: &Path, stack: &mut Vec<ObjectId>) -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
@@ -496,7 +484,7 @@ fn sha1_hash(data: &[u8]) -> [u8; 20] {
             #[allow(clippy::unwrap_used)]
             let output = child.wait_with_output().unwrap();
             let hex = String::from_utf8_lossy(&output.stdout);
-            let hex = hex.trim().split_whitespace().next().unwrap_or("");
+            let hex = hex.split_whitespace().next().unwrap_or("");
             let mut hash = [0u8; 20];
             for i in 0..20 {
                 if i * 2 + 2 <= hex.len() {
@@ -520,8 +508,7 @@ fn cmd_verify(object_dir: Option<PathBuf>) -> Result<()> {
         bail!("commit-graph file does not exist at {:?}", graph_path);
     }
 
-    let data = fs::read(&graph_path)
-        .with_context(|| format!("reading {:?}", graph_path))?;
+    let data = fs::read(&graph_path).with_context(|| format!("reading {:?}", graph_path))?;
 
     if data.len() < 8 {
         bail!("commit-graph file too small");
@@ -587,10 +574,8 @@ fn cmd_verify(object_dir: Option<PathBuf>) -> Result<()> {
     if fanout_off + 256 * 4 > data.len() {
         bail!("OID fanout chunk extends past end of file");
     }
-    let total_commits = u32::from_be_bytes(
-        data[fanout_off + 255 * 4..fanout_off + 256 * 4]
-            .try_into()?,
-    );
+    let total_commits =
+        u32::from_be_bytes(data[fanout_off + 255 * 4..fanout_off + 256 * 4].try_into()?);
 
     // Verify fanout is monotonically increasing
     let mut prev = 0u32;

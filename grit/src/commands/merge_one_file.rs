@@ -34,16 +34,21 @@ pub struct Args {
 
 const EMPTY_OID: &str = "0000000000000000000000000000000000000000";
 
-fn read_blob_to_temp(repo: &Repository, oid_hex: &str, label: &str) -> Result<tempfile::NamedTempFile> {
+fn read_blob_to_temp(
+    repo: &Repository,
+    oid_hex: &str,
+    label: &str,
+) -> Result<tempfile::NamedTempFile> {
     let mut tmp = tempfile::Builder::new()
         .prefix(&format!(".merge_{label}_"))
         .tempfile_in(".")
         .context("creating temp file")?;
 
     if oid_hex != EMPTY_OID {
-        let oid = ObjectId::from_hex(oid_hex)
-            .with_context(|| format!("invalid OID: {oid_hex}"))?;
-        let obj = repo.odb.read(&oid)
+        let oid = ObjectId::from_hex(oid_hex).with_context(|| format!("invalid OID: {oid_hex}"))?;
+        let obj = repo
+            .odb
+            .read(&oid)
             .with_context(|| format!("reading blob {oid_hex}"))?;
         if obj.kind != ObjectKind::Blob {
             anyhow::bail!("{oid_hex} is not a blob");

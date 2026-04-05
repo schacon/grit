@@ -7,8 +7,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::error::Error;
 use grit_lib::diff::stat_matches;
+use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -115,10 +115,17 @@ pub fn run(mut args: Args) -> Result<()> {
     // gracefully so scripts that pass them don't hard-fail.
     if args.patch || args.interactive || args.edit {
         // Real git would enter interactive mode; we just warn and succeed.
-        let mode_name = if args.patch { "-p/--patch" }
-            else if args.interactive { "-i/--interactive" }
-            else { "-e/--edit" };
-        eprintln!("warning: {} mode is not yet implemented; doing nothing", mode_name);
+        let mode_name = if args.patch {
+            "-p/--patch"
+        } else if args.interactive {
+            "-i/--interactive"
+        } else {
+            "-e/--edit"
+        };
+        eprintln!(
+            "warning: {} mode is not yet implemented; doing nothing",
+            mode_name
+        );
         return Ok(());
     }
 
@@ -154,10 +161,17 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // "git add" with no pathspecs and no flags: give advice
-    if args.pathspec.is_empty() && !args.all && !args.update && !args.refresh && args.chmod.is_none() {
+    if args.pathspec.is_empty()
+        && !args.all
+        && !args.update
+        && !args.refresh
+        && args.chmod.is_none()
+    {
         eprintln!("Nothing specified, nothing added.");
         eprintln!("hint: Maybe you wanted to say 'git add .'?");
-        eprintln!("hint: Disable this message with \"git config set advice.addEmptyPathspec false\"");
+        eprintln!(
+            "hint: Disable this message with \"git config set advice.addEmptyPathspec false\""
+        );
         return Ok(());
     }
 
@@ -186,7 +200,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let add_cfg = AddConfig {
         core_filemode,
-        ignore_errors: args.ignore_errors || config.get_bool("add.ignore-errors").and_then(|r| r.ok()).unwrap_or(false),
+        ignore_errors: args.ignore_errors
+            || config
+                .get_bool("add.ignore-errors")
+                .and_then(|r| r.ok())
+                .unwrap_or(false),
         conv,
         attrs,
         config: config.clone(),
@@ -194,13 +212,36 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --renormalize: re-apply clean conversion to tracked files
     if args.renormalize {
-        return run_renormalize(odb, &mut index, work_tree, prefix.as_deref(), &args, &add_cfg);
+        return run_renormalize(
+            odb,
+            &mut index,
+            work_tree,
+            prefix.as_deref(),
+            &args,
+            &add_cfg,
+        );
     }
 
     if args.all || args.pathspec.iter().any(|p| p == ".") {
-        add_all(odb, &mut index, work_tree, prefix.as_deref(), &args, &repo, &mut ignore_matcher, &add_cfg)?;
+        add_all(
+            odb,
+            &mut index,
+            work_tree,
+            prefix.as_deref(),
+            &args,
+            &repo,
+            &mut ignore_matcher,
+            &add_cfg,
+        )?;
     } else if args.update {
-        update_tracked(odb, &mut index, work_tree, prefix.as_deref(), &args, &add_cfg)?;
+        update_tracked(
+            odb,
+            &mut index,
+            work_tree,
+            prefix.as_deref(),
+            &args,
+            &add_cfg,
+        )?;
     } else {
         let mut had_errors = false;
         let mut had_ignored = false;
@@ -209,31 +250,40 @@ pub fn run(mut args: Args) -> Result<()> {
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
             let expanded = expand_glob_pathspec(&resolved, work_tree);
             for resolved in &expanded {
-            match add_path(odb, &mut index, work_tree, resolved, &args, &repo, &mut ignore_matcher, &add_cfg) {
-                Ok(()) => {}
-                Err(AddPathError::Ignored(msg)) => {
-                    eprintln!("{msg}");
-                    had_ignored = true;
-                    had_errors = true;
-                }
-                Err(AddPathError::IoError(e)) => {
-                    if add_cfg.ignore_errors {
-                        eprintln!("warning: {e}");
+                match add_path(
+                    odb,
+                    &mut index,
+                    work_tree,
+                    resolved,
+                    &args,
+                    &repo,
+                    &mut ignore_matcher,
+                    &add_cfg,
+                ) {
+                    Ok(()) => {}
+                    Err(AddPathError::Ignored(msg)) => {
+                        eprintln!("{msg}");
+                        had_ignored = true;
                         had_errors = true;
-                    } else {
-                        // Write index even on error if we've done partial work
-                        return Err(e);
+                    }
+                    Err(AddPathError::IoError(e)) => {
+                        if add_cfg.ignore_errors {
+                            eprintln!("warning: {e}");
+                            had_errors = true;
+                        } else {
+                            // Write index even on error if we've done partial work
+                            return Err(e);
+                        }
+                    }
+                    Err(AddPathError::Other(e)) => {
+                        if add_cfg.ignore_errors {
+                            eprintln!("warning: {e}");
+                            had_errors = true;
+                        } else {
+                            return Err(e);
+                        }
                     }
                 }
-                Err(AddPathError::Other(e)) => {
-                    if add_cfg.ignore_errors {
-                        eprintln!("warning: {e}");
-                        had_errors = true;
-                    } else {
-                        return Err(e);
-                    }
-                }
-            }
             } // end expanded loop
         }
 
@@ -373,8 +423,7 @@ fn run_renormalize(
             args.pathspec.iter().any(|ps| {
                 // Simple glob/prefix match
                 let ps_clean = ps.trim_end_matches('*').trim_end_matches('/');
-                path_str.starts_with(ps_clean) ||
-                    glob_matches_simple(ps, &path_str)
+                path_str.starts_with(ps_clean) || glob_matches_simple(ps, &path_str)
             })
         })
         .map(|ie| (ie.path.clone(), ie.oid, ie.mode))
@@ -391,7 +440,8 @@ fn run_renormalize(
         }
 
         // Apply clean conversion
-        let converted = match crlf::convert_to_git(&obj.data, &rel_path, &add_cfg.conv, &file_attrs) {
+        let converted = match crlf::convert_to_git(&obj.data, &rel_path, &add_cfg.conv, &file_attrs)
+        {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -440,7 +490,14 @@ fn add_all(
     };
 
     let mut paths = Vec::new();
-    walk_directory(&scan_root, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
+    walk_directory(
+        &scan_root,
+        work_tree,
+        &mut paths,
+        repo,
+        ignore_matcher,
+        args.force,
+    )?;
 
     // Build a set of worktree paths for fast deletion detection
     let worktree_paths: std::collections::HashSet<&str> =
@@ -554,7 +611,8 @@ fn add_path(
                 if ie.mode == 0o160000 {
                     return Err(AddPathError::Other(anyhow::anyhow!(
                         "'{}' in submodule '{}'",
-                        path, prefix
+                        path,
+                        prefix
                     )));
                 }
             }
@@ -585,9 +643,15 @@ fn add_path(
         let has_unmerged = (1..=3).any(|stage| index.get(path_bytes, stage).is_some());
         if has_unmerged {
             // Can't resolve a conflict if file doesn't exist
-            return Err(AddPathError::Other(anyhow::anyhow!("pathspec '{}' did not match any files", path)));
+            return Err(AddPathError::Other(anyhow::anyhow!(
+                "pathspec '{}' did not match any files",
+                path
+            )));
         }
-        return Err(AddPathError::Other(anyhow::anyhow!("pathspec '{}' did not match any files", path)));
+        return Err(AddPathError::Other(anyhow::anyhow!(
+            "pathspec '{}' did not match any files",
+            path
+        )));
     }
 
     // Use symlink_metadata so symlinks to directories are staged as
@@ -605,7 +669,14 @@ fn add_path(
         }
 
         let mut paths = Vec::new();
-        walk_directory(&abs_path, work_tree, &mut paths, repo, ignore_matcher, args.force)?;
+        walk_directory(
+            &abs_path,
+            work_tree,
+            &mut paths,
+            repo,
+            ignore_matcher,
+            args.force,
+        )?;
         for rel_path in &paths {
             let file_abs = work_tree.join(rel_path);
             if let Err(e) = stage_file(odb, index, work_tree, rel_path, &file_abs, args, add_cfg) {
@@ -625,9 +696,9 @@ fn add_path(
         // but skip the check if the file has unmerged entries (conflict resolution).
         if !has_unmerged {
             if let Some(ref mut matcher) = ignore_matcher {
-                let (is_ignored, _match_info) =
-                    matcher.check_path(repo, Some(&*index), path, false)
-                        .map_err(|e| AddPathError::Other(e.into()))?;
+                let (is_ignored, _match_info) = matcher
+                    .check_path(repo, Some(&*index), path, false)
+                    .map_err(|e| AddPathError::Other(e.into()))?;
                 if is_ignored {
                     return Err(AddPathError::Ignored(format!(
                         "The following paths are ignored by one of your .gitignore files:\n\
@@ -667,7 +738,12 @@ fn stage_gitlink(
     let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
         let ref_path = abs_path.join(".git").join(refname);
         fs::read_to_string(&ref_path)
-            .with_context(|| format!("cannot resolve ref '{}' in embedded repo '{}'", refname, rel_path))?
+            .with_context(|| {
+                format!(
+                    "cannot resolve ref '{}' in embedded repo '{}'",
+                    refname, rel_path
+                )
+            })?
             .trim()
             .to_string()
     } else {
@@ -678,7 +754,8 @@ fn stage_gitlink(
         .with_context(|| format!("invalid HEAD OID in embedded repo '{}'", rel_path))?;
 
     // Check whether this entry is already tracked as a gitlink in the index
-    let already_tracked = index.get(rel_path.as_bytes(), 0)
+    let already_tracked = index
+        .get(rel_path.as_bytes(), 0)
         .map(|e| e.mode == 0o160000)
         .unwrap_or(false);
 
@@ -793,7 +870,8 @@ fn stage_file(
         // core.filemode=false: preserve existing mode from index if any,
         // otherwise default to 100644
         // Check for unmerged entries: prefer higher stages for mode
-        let existing_mode = index.get(rel_path.as_bytes(), 0)
+        let existing_mode = index
+            .get(rel_path.as_bytes(), 0)
             .or_else(|| index.get(rel_path.as_bytes(), 2))
             .or_else(|| index.get(rel_path.as_bytes(), 1))
             .map(|e| e.mode);
@@ -805,7 +883,11 @@ fn stage_file(
         if is_symlink {
             let display_path = rel_path;
             eprintln!("warning: cannot chmod {} '{}'", chmod_val, display_path);
-            return Err(anyhow::anyhow!("cannot chmod {} '{}'", chmod_val, display_path));
+            return Err(anyhow::anyhow!(
+                "cannot chmod {} '{}'",
+                chmod_val,
+                display_path
+            ));
         }
         match chmod_val.as_str() {
             "+x" => 0o100755,
@@ -835,8 +917,12 @@ fn stage_file(
         let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
         // Apply working-tree-encoding conversion (e.g. UTF-16 → UTF-8)
         let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
-            convert_from_working_tree_encoding(&raw, encoding)
-                .with_context(|| format!("failed to convert '{}' from encoding '{}'", rel_path, encoding))?
+            convert_from_working_tree_encoding(&raw, encoding).with_context(|| {
+                format!(
+                    "failed to convert '{}' from encoding '{}'",
+                    rel_path, encoding
+                )
+            })?
         } else {
             raw
         };
@@ -849,8 +935,8 @@ fn stage_file(
     let oid = odb.write(ObjectKind::Blob, &data)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
-    // path — this is how `git add` resolves merge/cherry-pick conflicts.
+                             // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+                             // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
     if args.verbose {
@@ -1078,7 +1164,8 @@ fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec
             // Detect BOM and decode accordingly
             let text = if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
                 // UTF-16 LE with BOM
-                let u16_data: Vec<u16> = data[2..].chunks(2)
+                let u16_data: Vec<u16> = data[2..]
+                    .chunks(2)
                     .filter(|c| c.len() == 2)
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .collect();
@@ -1086,14 +1173,16 @@ fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec
                     .map_err(|e| anyhow::anyhow!("invalid UTF-16 LE: {e}"))?
             } else if data.len() >= 2 && data[0] == 0xFE && data[1] == 0xFF {
                 // UTF-16 BE with BOM
-                let u16_data: Vec<u16> = data[2..].chunks(2)
+                let u16_data: Vec<u16> = data[2..]
+                    .chunks(2)
                     .filter(|c| c.len() == 2)
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
                     .collect();
                 String::from_utf16(&u16_data)
                     .map_err(|e| anyhow::anyhow!("invalid UTF-16 BE: {e}"))?
             } else if enc_upper == "UTF16BE" {
-                let u16_data: Vec<u16> = data.chunks(2)
+                let u16_data: Vec<u16> = data
+                    .chunks(2)
                     .filter(|c| c.len() == 2)
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
                     .collect();
@@ -1101,7 +1190,8 @@ fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec
                     .map_err(|e| anyhow::anyhow!("invalid UTF-16 BE: {e}"))?
             } else {
                 // Default: try LE
-                let u16_data: Vec<u16> = data.chunks(2)
+                let u16_data: Vec<u16> = data
+                    .chunks(2)
                     .filter(|c| c.len() == 2)
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .collect();

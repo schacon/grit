@@ -151,7 +151,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
                 "-r" => opts.recursive = true,
-                "-t" => { opts.recursive = true; opts.show_trees = true; }
+                "-t" => {
+                    opts.recursive = true;
+                    opts.show_trees = true;
+                }
                 "--root" => opts.root = true,
                 "--stdin" => opts.stdin_mode = true,
                 "--no-commit-id" => opts.no_commit_id = true,
@@ -160,12 +163,18 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => opts.show_merges = true,
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
-                "--stat" => { opts.format = OutputFormat::Stat; opts.stat_too = true; }
+                "--stat" => {
+                    opts.format = OutputFormat::Stat;
+                    opts.stat_too = true;
+                }
                 "--name-only" => opts.format = OutputFormat::NameOnly,
                 "--name-status" => opts.format = OutputFormat::NameStatus,
                 "--summary" => opts.summary = true,
                 "--exit-code" => opts.exit_code = true,
-                "-q" | "--quiet" => { opts.quiet = true; opts.exit_code = true; }
+                "-q" | "--quiet" => {
+                    opts.quiet = true;
+                    opts.exit_code = true;
+                }
                 "--full-index" => opts.full_index = true,
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
@@ -174,8 +183,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                             .with_context(|| format!("invalid --max-depth value: `{val}`"))?,
                     );
                 }
-                "--patch-with-stat" => { opts.format = OutputFormat::Patch; opts.patch_with_stat = true; }
-                "--patch-with-raw" => { opts.format = OutputFormat::Patch; opts.patch_with_raw = true; }
+                "--patch-with-stat" => {
+                    opts.format = OutputFormat::Patch;
+                    opts.patch_with_stat = true;
+                }
+                "--patch-with-raw" => {
+                    opts.format = OutputFormat::Patch;
+                    opts.patch_with_raw = true;
+                }
                 "--pretty" | "--pretty=medium" => opts.pretty = Some("medium".to_string()),
                 _ if arg.starts_with("--pretty=") => {
                     let val = &arg["--pretty=".len()..];
@@ -218,7 +233,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("-M") => {
                     let val = &arg[2..];
                     let pct = if val.ends_with('%') {
-                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
                     } else {
                         // Could be e.g. -M80 or -M80%
                         val.parse::<u32>().unwrap_or(50)
@@ -228,7 +243,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--find-renames=") => {
                     let val = &arg["--find-renames=".len()..];
                     let pct = if val.ends_with('%') {
-                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
                     } else {
                         val.parse::<u32>().unwrap_or(50)
                     };
@@ -241,8 +256,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     }
                 }
                 // Silently accept common diff options that we do not implement.
-                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c"
-                | "--cc" | "--check" => {}
+                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c" | "--cc"
+                | "--check" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
@@ -273,7 +288,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 
     // Patch, stat, summary, name-only, name-status all imply recursion.
     match opts.format {
-        OutputFormat::Patch | OutputFormat::Stat | OutputFormat::NameOnly | OutputFormat::NameStatus => {
+        OutputFormat::Patch
+        | OutputFormat::Stat
+        | OutputFormat::NameOnly
+        | OutputFormat::NameStatus => {
             opts.recursive = true;
         }
         _ => {}
@@ -342,8 +360,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             let commit = parse_commit(&obj.data).context("parsing commit")?;
             if commit.parents.is_empty() {
                 if opts.root {
-                    let entries =
-                        diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+                    let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
                     let filtered = filter_entries(entries, opts);
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
@@ -353,12 +370,8 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 }
             } else {
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
-                let entries = diff_with_opts(
-                    &repo.odb,
-                    Some(&parent_tree),
-                    Some(&commit.tree),
-                    opts,
-                )?;
+                let entries =
+                    diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
                 let filtered = filter_entries(entries, opts);
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
@@ -475,8 +488,7 @@ fn process_stdin_commit(
 
     let has_diff = if parent_oids.is_empty() {
         if opts.root {
-            let entries =
-                diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+            let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_entries(entries, opts);
             let hd = !filtered.is_empty();
             print_diff(out, &repo.odb, &filtered, opts, None)?;
@@ -486,12 +498,7 @@ fn process_stdin_commit(
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
-        let entries = diff_with_opts(
-            &repo.odb,
-            Some(&parent_tree),
-            Some(&commit.tree),
-            opts,
-        )?;
+        let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
         let filtered = filter_entries(entries, opts);
         let hd = !filtered.is_empty();
         print_diff(out, &repo.odb, &filtered, opts, None)?;
@@ -786,7 +793,9 @@ fn detect_copies(
     if harder {
         // Use all old-tree blobs as potential copy sources.
         for (oid, path, mode) in old_tree_entries {
-            sources.entry(*oid).or_insert_with(|| (path.clone(), mode.clone()));
+            sources
+                .entry(*oid)
+                .or_insert_with(|| (path.clone(), mode.clone()));
         }
     }
 
@@ -797,9 +806,9 @@ fn detect_copies(
             _ => {
                 if entry.old_oid.as_bytes() != &[0u8; 20] {
                     if let Some(ref p) = entry.old_path {
-                        sources.entry(entry.old_oid).or_insert_with(|| {
-                            (p.clone(), entry.old_mode.clone())
-                        });
+                        sources
+                            .entry(entry.old_oid)
+                            .or_insert_with(|| (p.clone(), entry.old_mode.clone()));
                     }
                 }
             }
@@ -853,12 +862,24 @@ fn print_diff(
     let entries = if let Some(threshold) = opts.find_renames {
         let mut result = detect_renames(odb, entries.to_vec(), threshold);
         if let Some(copy_threshold) = opts.find_copies {
-            result = detect_copies(odb, result, copy_threshold, opts.find_copies_harder, &old_blobs);
+            result = detect_copies(
+                odb,
+                result,
+                copy_threshold,
+                opts.find_copies_harder,
+                &old_blobs,
+            );
         }
         owned_entries = result;
         &owned_entries[..]
     } else if let Some(copy_threshold) = opts.find_copies {
-        owned_entries = detect_copies(odb, entries.to_vec(), copy_threshold, opts.find_copies_harder, &old_blobs);
+        owned_entries = detect_copies(
+            odb,
+            entries.to_vec(),
+            copy_threshold,
+            opts.find_copies_harder,
+            &old_blobs,
+        );
         &owned_entries[..]
     } else {
         entries
@@ -900,7 +921,14 @@ fn print_diff(
                 writeln!(out)?;
             }
             for entry in entries {
-                write_patch_entry(out, odb, entry, opts.context_lines, opts.abbrev, opts.full_index)?;
+                write_patch_entry(
+                    out,
+                    odb,
+                    entry,
+                    opts.context_lines,
+                    opts.abbrev,
+                    opts.full_index,
+                )?;
             }
         }
         OutputFormat::Stat => {
@@ -918,14 +946,22 @@ fn print_diff(
             for entry in entries {
                 match (entry.status, entry.score) {
                     (DiffStatus::Renamed, Some(s)) => {
-                        writeln!(out, "R{:03}\t{}\t{}", s,
+                        writeln!(
+                            out,
+                            "R{:03}\t{}\t{}",
+                            s,
                             entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or(""))?;
+                            entry.new_path.as_deref().unwrap_or("")
+                        )?;
                     }
                     (DiffStatus::Copied, Some(s)) => {
-                        writeln!(out, "C{:03}\t{}\t{}", s,
+                        writeln!(
+                            out,
+                            "C{:03}\t{}\t{}",
+                            s,
                             entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or(""))?;
+                            entry.new_path.as_deref().unwrap_or("")
+                        )?;
                     }
                     _ => {
                         writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
@@ -958,22 +994,40 @@ fn write_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
                 writeln!(out, " delete mode {} {}", entry.old_mode, entry.path())?;
             }
             DiffStatus::Modified if entry.old_mode != entry.new_mode => {
-                writeln!(out, " mode change {} => {} {}", entry.old_mode, entry.new_mode, entry.path())?;
+                writeln!(
+                    out,
+                    " mode change {} => {} {}",
+                    entry.old_mode,
+                    entry.new_mode,
+                    entry.path()
+                )?;
             }
             DiffStatus::TypeChanged => {
-                writeln!(out, " mode change {} => {} {}", entry.old_mode, entry.new_mode, entry.path())?;
+                writeln!(
+                    out,
+                    " mode change {} => {} {}",
+                    entry.old_mode,
+                    entry.new_mode,
+                    entry.path()
+                )?;
             }
             DiffStatus::Renamed => {
                 let sim = entry.score.unwrap_or(100);
-                writeln!(out, " rename {} => {} ({sim}%)",
+                writeln!(
+                    out,
+                    " rename {} => {} ({sim}%)",
                     entry.old_path.as_deref().unwrap_or(""),
-                    entry.new_path.as_deref().unwrap_or(""))?;
+                    entry.new_path.as_deref().unwrap_or("")
+                )?;
             }
             DiffStatus::Copied => {
                 let sim = entry.score.unwrap_or(100);
-                writeln!(out, " copy {} => {} ({sim}%)",
+                writeln!(
+                    out,
+                    " copy {} => {} ({sim}%)",
                     entry.old_path.as_deref().unwrap_or(""),
-                    entry.new_path.as_deref().unwrap_or(""))?;
+                    entry.new_path.as_deref().unwrap_or("")
+                )?;
             }
             _ => {}
         }
@@ -1105,11 +1159,7 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
     }
 
     let n = entries.len();
-    let mut summary = format!(
-        " {} file{} changed",
-        n,
-        if n == 1 { "" } else { "s" },
-    );
+    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" },);
     if total_ins > 0 {
         summary.push_str(&format!(
             ", {} insertion{}(+)",
@@ -1273,9 +1323,9 @@ fn format_author_date(date_str: &str) -> Option<String> {
         let tz_secs = parse_tz_offset_secs(tz);
         if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs) {
             // Try YYYY-MM-DD HH:MM:SS
-            let ymd_hms = time::format_description::parse(
-                "[year]-[month]-[day] [hour]:[minute]:[second]"
-            ).ok()?;
+            let ymd_hms =
+                time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+                    .ok()?;
             if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &ymd_hms) {
                 let dt = naive.assume_offset(offset);
                 let ts = dt.unix_timestamp();
@@ -1288,7 +1338,9 @@ fn format_author_date(date_str: &str) -> Option<String> {
 }
 
 fn parse_tz_offset_secs(tz: &str) -> i32 {
-    if tz.len() < 4 { return 0; }
+    if tz.len() < 4 {
+        return 0;
+    }
     let (sign, rest) = if tz.starts_with('+') {
         (1i32, &tz[1..])
     } else if tz.starts_with('-') {

@@ -27,8 +27,12 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let repo = open_repo(&args.directory)
-        .with_context(|| format!("could not open repository at '{}'", args.directory.display()))?;
+    let repo = open_repo(&args.directory).with_context(|| {
+        format!(
+            "could not open repository at '{}'",
+            args.directory.display()
+        )
+    })?;
 
     if args.advertise_refs {
         return advertise_refs_with_caps(&repo);

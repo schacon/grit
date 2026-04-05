@@ -59,7 +59,9 @@ pub fn run(args: Args) -> Result<()> {
         };
 
         // Extract author date
-        let author_date = commit.author.split('>')
+        let author_date = commit
+            .author
+            .split('>')
             .nth(1)
             .map(|s| s.trim())
             .unwrap_or("")
@@ -70,22 +72,23 @@ pub fn run(args: Args) -> Result<()> {
         let files = collect_tree_paths(&repo.odb, &tree_oid, "");
 
         // Get parent tree files
-        let parent_files: HashSet<(String, ObjectId)> = if let Some(parent_oid) = commit.parents.first() {
-            if let Ok(parent_obj) = repo.odb.read(parent_oid) {
-                if let Ok(parent_commit) = parse_commit(&parent_obj.data) {
-                    collect_tree_paths(&repo.odb, &parent_commit.tree, "")
-                        .into_iter()
-                        .collect()
+        let parent_files: HashSet<(String, ObjectId)> =
+            if let Some(parent_oid) = commit.parents.first() {
+                if let Ok(parent_obj) = repo.odb.read(parent_oid) {
+                    if let Ok(parent_commit) = parse_commit(&parent_obj.data) {
+                        collect_tree_paths(&repo.odb, &parent_commit.tree, "")
+                            .into_iter()
+                            .collect()
+                    } else {
+                        HashSet::new()
+                    }
                 } else {
                     HashSet::new()
                 }
             } else {
+                // Root commit — all files are new
                 HashSet::new()
-            }
-        } else {
-            // Root commit — all files are new
-            HashSet::new()
-        };
+            };
 
         // Files changed in this commit
         for (path, blob_oid) in &files {
@@ -93,7 +96,8 @@ pub fn run(args: Args) -> Result<()> {
                 if !filter_paths.is_empty() && !filter_paths.contains(path) {
                     continue;
                 }
-                last_modified.entry(path.clone())
+                last_modified
+                    .entry(path.clone())
                     .or_insert_with(|| author_date.clone());
             }
         }
@@ -150,7 +154,10 @@ fn collect_tree_paths(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Vec<(Stri
         }
         let oid = match ObjectId::from_bytes(&bytes[null_pos + 1..null_pos + 21]) {
             Ok(o) => o,
-            Err(_) => { pos = null_pos + 21; continue; }
+            Err(_) => {
+                pos = null_pos + 21;
+                continue;
+            }
         };
 
         let full_path = if prefix.is_empty() {

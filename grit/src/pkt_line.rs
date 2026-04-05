@@ -14,7 +14,7 @@ pub const RESPONSE_END: &str = "0002";
 /// newline — one is appended automatically.
 pub fn write_line(w: &mut impl Write, data: &str) -> io::Result<()> {
     let len = 4 + data.len() + 1; // prefix + content + \n
-    write!(w, "{:04x}{}\n", len, data)
+    writeln!(w, "{:04x}{}", len, data)
 }
 
 /// Write a flush packet (`0000`).
@@ -48,8 +48,8 @@ pub fn read_packet(r: &mut impl Read) -> io::Result<Option<Packet>> {
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e),
     }
-    let len_str = std::str::from_utf8(&len_buf)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let len_str =
+        std::str::from_utf8(&len_buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let len = usize::from_str_radix(len_str, 16)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -76,9 +76,7 @@ pub fn read_packet(r: &mut impl Read) -> io::Result<Option<Packet>> {
 
 /// Read packets from `r` until a flush or delimiter packet, or EOF.
 /// Returns the collected data lines and the terminator (Flush/Delim/None).
-pub fn read_until_flush_or_delim(
-    r: &mut impl Read,
-) -> io::Result<(Vec<String>, Option<Packet>)> {
+pub fn read_until_flush_or_delim(r: &mut impl Read) -> io::Result<(Vec<String>, Option<Packet>)> {
     let mut lines = Vec::new();
     loop {
         match read_packet(r)? {

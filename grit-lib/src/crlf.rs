@@ -214,11 +214,7 @@ fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
 }
 
 /// Get file attributes for a given path from .gitattributes rules and config.
-pub fn get_file_attrs(
-    rules: &[AttrRule],
-    rel_path: &str,
-    config: &ConfigSet,
-) -> FileAttrs {
+pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) -> FileAttrs {
     let mut fa = FileAttrs::default();
 
     // Walk rules; last match wins for each attribute.
@@ -441,9 +437,7 @@ fn check_safecrlf_input(
     // (the conversion would be irreversible — CRLF→LF, but checkout won't
     // add CR back because autocrlf=input only strips on input)
     if conv.autocrlf == AutoCrlf::Input && is_all_crlf(data) {
-        let msg = format!(
-            "fatal: CRLF would be replaced by LF in {rel_path}"
-        );
+        let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
@@ -454,9 +448,7 @@ fn check_safecrlf_input(
     // safecrlf with autocrlf=true: reject if file is all LF
     // (LF→LF on input, then LF→CRLF on checkout changes the file)
     if conv.autocrlf == AutoCrlf::True && is_all_lf(data) {
-        let msg = format!(
-            "fatal: LF would be replaced by CRLF in {rel_path}"
-        );
+        let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
@@ -660,8 +652,7 @@ fn run_filter(cmd: &str, data: &[u8], _rel_path: &str) -> Result<Vec<u8>, std::i
 
     let output = child.wait_with_output()?;
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(std::io::Error::other(
             format!("filter command exited with status {}", output.status),
         ));
     }

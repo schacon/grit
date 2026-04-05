@@ -276,16 +276,31 @@ pub fn run(args: Args) -> Result<()> {
             })
         }
         Some(StashCommand::List { args: list_args }) => do_list(list_args),
-        Some(StashCommand::Show { patch, stat: _, patience: _, args: show_args }) => {
+        Some(StashCommand::Show {
+            patch,
+            stat: _,
+            patience: _,
+            args: show_args,
+        }) => {
             // Parse stash ref from trailing args (non-flag args)
             let stash_ref = show_args.iter().find(|a| !a.starts_with('-')).cloned();
             do_show(stash_ref, patch)
         }
-        Some(StashCommand::Pop { index, no_index: _, quiet, stash }) => {
+        Some(StashCommand::Pop {
+            index,
+            no_index: _,
+            quiet,
+            stash,
+        }) => {
             let q = quiet || args.quiet;
             do_pop(stash, index, q)
         }
-        Some(StashCommand::Apply { index, no_index: _, quiet, stash }) => {
+        Some(StashCommand::Apply {
+            index,
+            no_index: _,
+            quiet,
+            stash,
+        }) => {
             let q = quiet || args.quiet;
             do_apply(stash, false, index, q)
         }
@@ -303,7 +318,11 @@ pub fn run(args: Args) -> Result<()> {
             };
             do_create(msg)
         }
-        Some(StashCommand::Store { message, quiet, commit }) => {
+        Some(StashCommand::Store {
+            message,
+            quiet,
+            commit,
+        }) => {
             let q = quiet || args.quiet;
             do_store(commit, message, q)
         }
@@ -396,7 +415,11 @@ fn do_push(opts: PushOpts) -> Result<()> {
     )?;
 
     // Update refs/stash
-    update_stash_ref(&repo, &stash_oid, &stash_reflog_msg(&head, opts.message.as_deref()))?;
+    update_stash_ref(
+        &repo,
+        &stash_oid,
+        &stash_reflog_msg(&head, opts.message.as_deref()),
+    )?;
 
     // Determine effective keep_index
     let effective_keep_index = if opts.no_keep_index {
@@ -639,7 +662,8 @@ fn do_push_staged(
     // For files that were newly added (not in HEAD), also remove from worktree
     // For files that were modified, restore them to HEAD content in worktree
     let head_tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
-    let head_paths: std::collections::BTreeSet<String> = head_tree_entries.iter().map(|e| e.path.clone()).collect();
+    let head_paths: std::collections::BTreeSet<String> =
+        head_tree_entries.iter().map(|e| e.path.clone()).collect();
 
     // Revert staged changes in the worktree
     for change in &staged {
@@ -739,8 +763,7 @@ fn do_create(message: Option<String>) -> Result<()> {
 fn do_store(commit_hex: String, message: Option<String>, quiet: bool) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let oid = ObjectId::from_hex(&commit_hex)
-        .context("not a valid object")?;
+    let oid = ObjectId::from_hex(&commit_hex).context("not a valid object")?;
 
     // Verify it's a commit
     let obj = repo.odb.read(&oid)?;
@@ -935,11 +958,7 @@ fn show_stash_stat(repo: &Repository, stash_oid: &ObjectId) -> Result<()> {
         let changes = s.insertions + s.deletions;
         let bar_ins = (s.insertions as f64 * scale).ceil() as usize;
         let bar_del = (s.deletions as f64 * scale).ceil() as usize;
-        let bar = format!(
-            "{}{}",
-            "+".repeat(bar_ins),
-            "-".repeat(bar_del)
-        );
+        let bar = format!("{}{}", "+".repeat(bar_ins), "-".repeat(bar_del));
         println!(
             " {:<width$} | {:>3} {}",
             s.path,
@@ -1101,7 +1120,9 @@ fn apply_stash_impl(
     let mut wt_changes: BTreeMap<String, Option<&FlatTreeEntry>> = BTreeMap::new();
     for (path, stash_entry) in &stash_map {
         match base_map.get(path) {
-            Some(base_entry) if base_entry.oid != stash_entry.oid || base_entry.mode != stash_entry.mode => {
+            Some(base_entry)
+                if base_entry.oid != stash_entry.oid || base_entry.mode != stash_entry.mode =>
+            {
                 wt_changes.insert(path.clone(), Some(stash_entry));
             }
             None => {
@@ -1111,7 +1132,7 @@ fn apply_stash_impl(
         }
     }
     // Track deletions (in base but not in stash)
-    for (path, _) in &base_map {
+    for path in base_map.keys() {
         if !stash_map.contains_key(path) {
             wt_changes.insert(path.clone(), None); // None = deleted
         }
@@ -1119,7 +1140,7 @@ fn apply_stash_impl(
 
     // Check for conflicts: does the worktree have local modifications to files
     // that the stash also wants to change?
-    for (path, _) in &wt_changes {
+    for path in wt_changes.keys() {
         let file_path = work_tree.join(path);
         // Get the current index entry for this file
         if let Some(idx_entry) = current_index.get(path.as_bytes(), 0) {
@@ -1177,7 +1198,7 @@ fn apply_stash_impl(
     // at a path that is currently a DIRECTORY in the worktree, or vice-versa.
     // We must check BEFORE removing anything (deletions below may clear dirs).
     for (path, change) in &wt_changes {
-        if let Some(_) = change {
+        if change.is_some() {
             let file_path = work_tree.join(path);
             if file_path.is_dir() {
                 // A file from the stash conflicts with a directory in the worktree.
@@ -1209,7 +1230,11 @@ fn apply_stash_impl(
                 if let Some(parent) = file_path.parent() {
                     // If a component of the parent is a file, remove it first
                     let mut cur = work_tree.to_path_buf();
-                    if let Ok(rel) = file_path.parent().unwrap_or(work_tree).strip_prefix(work_tree) {
+                    if let Ok(rel) = file_path
+                        .parent()
+                        .unwrap_or(work_tree)
+                        .strip_prefix(work_tree)
+                    {
                         for comp in rel.components() {
                             cur.push(comp);
                             if cur.exists() && !cur.is_dir() {
@@ -1231,11 +1256,13 @@ fn apply_stash_impl(
                     std::os::unix::fs::symlink(&target, &file_path)?;
                 } else if head_moved {
                     // Three-way merge: base (head_at_stash), ours (current HEAD), theirs (stash)
-                    let base_content = base_map.get(path)
+                    let base_content = base_map
+                        .get(path)
                         .and_then(|e| repo.odb.read(&e.oid).ok())
                         .map(|o| o.data)
                         .unwrap_or_default();
-                    let ours_content = current_tree_map.get(path)
+                    let ours_content = current_tree_map
+                        .get(path)
                         .and_then(|oid| repo.odb.read(oid).ok())
                         .map(|o| o.data)
                         .unwrap_or_default();
@@ -1249,7 +1276,7 @@ fn apply_stash_impl(
                         fs::write(&file_path, &ours_content)?;
                     } else {
                         // Both sides changed differently — try content merge
-                        use grit_lib::merge_file::{merge, MergeInput, MergeFavor, ConflictStyle};
+                        use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
                         let input = MergeInput {
                             base: &base_content,
                             ours: &ours_content,
@@ -1268,13 +1295,24 @@ fn apply_stash_impl(
                             // Write conflict stages to index
                             let path_bytes = path.as_bytes();
                             // Remove existing stage-0 entry
-                            new_index.entries.retain(|e| e.path != path_bytes || e.stage() != 0);
+                            new_index
+                                .entries
+                                .retain(|e| e.path != path_bytes || e.stage() != 0);
                             // Add stage entries
                             if let Some(base_entry) = base_map.get(path) {
-                                add_stage_entry(&mut new_index, path_bytes, &base_entry.oid, base_entry.mode, 1);
+                                add_stage_entry(
+                                    &mut new_index,
+                                    path_bytes,
+                                    &base_entry.oid,
+                                    base_entry.mode,
+                                    1,
+                                );
                             }
                             if let Some(ours_oid) = current_tree_map.get(path) {
-                                let mode = current_index.get(path_bytes, 0).map(|e| e.mode).unwrap_or(0o100644);
+                                let mode = current_index
+                                    .get(path_bytes, 0)
+                                    .map(|e| e.mode)
+                                    .unwrap_or(0o100644);
                                 add_stage_entry(&mut new_index, path_bytes, ours_oid, mode, 2);
                             }
                             add_stage_entry(&mut new_index, path_bytes, &entry.oid, entry.mode, 3);
@@ -1543,11 +1581,10 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             return true;
         }
         // Glob pattern matching for patterns like "foo b*"
-        if spec.contains('*') {
-            if glob_match(spec, path) {
+        if spec.contains('*')
+            && glob_match(spec, path) {
                 return true;
             }
-        }
     }
     false
 }
@@ -1617,7 +1654,7 @@ fn create_stash_commit(
             committer: identity.clone(),
             encoding: None,
             message: format!("untracked files on {}\n", branch_description(head)),
-        raw_message: None,
+            raw_message: None,
         };
         let ut_bytes = serialize_commit(&ut_commit);
         Some(repo.odb.write(ObjectKind::Commit, &ut_bytes)?)
@@ -1693,9 +1730,7 @@ fn parse_stash_index(stash_ref: Option<&str>) -> Result<usize> {
             // Accept "stash@{N}" or just "N"
             if let Some(rest) = s.strip_prefix("stash@{") {
                 if let Some(num) = rest.strip_suffix('}') {
-                    return num
-                        .parse::<usize>()
-                        .context("invalid stash index");
+                    return num.parse::<usize>().context("invalid stash index");
                 }
             }
             // Try as plain number
@@ -1788,12 +1823,10 @@ fn branch_description(head: &HeadState) -> String {
 /// Get just the branch short name.
 fn branch_short_name(head: &HeadState) -> String {
     match head {
-        HeadState::Branch { refname, .. } => {
-            refname
-                .strip_prefix("refs/heads/")
-                .unwrap_or(refname)
-                .to_string()
-        }
+        HeadState::Branch { refname, .. } => refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(refname)
+            .to_string(),
         HeadState::Detached { oid } => format!("(no branch): {}", &oid.to_hex()[..7]),
         HeadState::Invalid => "(invalid HEAD)".to_string(),
     }
@@ -1853,11 +1886,7 @@ fn flatten_tree_full(odb: &Odb, tree_oid: &ObjectId, prefix: &str) -> Result<Vec
 }
 
 /// Show diff between two flattened trees.
-fn show_tree_diff(
-    odb: &Odb,
-    old: &[FlatTreeEntry],
-    new: &[FlatTreeEntry],
-) -> Result<()> {
+fn show_tree_diff(odb: &Odb, old: &[FlatTreeEntry], new: &[FlatTreeEntry]) -> Result<()> {
     use std::collections::BTreeMap;
 
     let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
@@ -1886,11 +1915,7 @@ fn show_tree_diff(
                         println!("old mode {}", format_mode(o.mode));
                         println!("new mode {}", format_mode(n.mode));
                     }
-                    println!(
-                        "index {}..{}",
-                        &o.oid.to_hex()[..7],
-                        &n.oid.to_hex()[..7]
-                    );
+                    println!("index {}..{}", &o.oid.to_hex()[..7], &n.oid.to_hex()[..7]);
                     println!("--- a/{path}");
                     println!("+++ b/{path}");
                     show_blob_diff(odb, &o.oid, &n.oid)?;
@@ -2000,11 +2025,7 @@ fn walk_for_untracked(
 }
 
 /// Create a tree object containing untracked files.
-fn create_untracked_tree(
-    odb: &Odb,
-    work_tree: &Path,
-    files: &[String],
-) -> Result<ObjectId> {
+fn create_untracked_tree(odb: &Odb, work_tree: &Path, files: &[String]) -> Result<ObjectId> {
     use std::collections::BTreeMap;
 
     struct TreeBuilder {
@@ -2083,11 +2104,7 @@ fn create_untracked_tree(
 }
 
 /// Create a tree representing the working tree state of all tracked files.
-fn create_worktree_tree(
-    odb: &Odb,
-    index: &Index,
-    work_tree: &Path,
-) -> Result<ObjectId> {
+fn create_worktree_tree(odb: &Odb, index: &Index, work_tree: &Path) -> Result<ObjectId> {
     let mut temp_index = index.clone();
 
     // Collect directory prefixes that are implied by the index (e.g. if the index
@@ -2096,9 +2113,11 @@ fn create_worktree_tree(
     // to capture it in the stash working-tree (type-change detection).
     let mut implied_dirs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for entry in &index.entries {
-        if entry.stage() != 0 { continue; }
+        if entry.stage() != 0 {
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let mut comps = path_str.splitn(2, '/'); 
+        let mut comps = path_str.splitn(2, '/');
         if let Some(first) = comps.next() {
             if comps.next().is_some() {
                 // There's a / in the path -> first is a directory component
@@ -2109,7 +2128,9 @@ fn create_worktree_tree(
                 let parts: Vec<_> = path_path.components().collect();
                 for (i, comp) in parts.iter().enumerate() {
                     if i + 1 < parts.len() {
-                        if !prefix.is_empty() { prefix.push('/'); }
+                        if !prefix.is_empty() {
+                            prefix.push('/');
+                        }
                         prefix.push_str(&comp.as_os_str().to_string_lossy());
                         implied_dirs.insert(prefix.clone());
                     }
@@ -2221,7 +2242,9 @@ fn create_worktree_tree(
     // and the working tree has a DIRECTORY at X, capture all regular files
     // under X/ as extra stash entries.
     for entry in &index.entries {
-        if entry.stage() != 0 { continue; }
+        if entry.stage() != 0 {
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
         // Only look at top-level files (no slash in path)
         // Actually check any depth: if the working tree has a dir where index has file
@@ -2449,7 +2472,11 @@ fn ensure_directory(dir: &Path, work_tree: &Path) -> Result<()> {
 
 /// Remove worktree files/dirs that are not in the target tree set.
 /// This handles type changes (e.g., a file `dir` that should become directory `dir/`).
-fn remove_worktree_extras(dir: &Path, work_tree: &Path, target_paths: &BTreeSet<String>) -> Result<()> {
+fn remove_worktree_extras(
+    dir: &Path,
+    work_tree: &Path,
+    target_paths: &BTreeSet<String>,
+) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Ok(()),

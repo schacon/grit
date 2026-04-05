@@ -177,7 +177,8 @@ impl Odb {
         hasher.update(header.as_bytes());
         hasher.update(data);
         let digest = hasher.finalize();
-        ObjectId::from_bytes(digest.as_slice()).unwrap_or_else(|_| unreachable!("SHA-1 is 20 bytes"))
+        ObjectId::from_bytes(digest.as_slice())
+            .unwrap_or_else(|_| unreachable!("SHA-1 is 20 bytes"))
     }
 
     /// Write an object to the loose store and return its [`ObjectId`].

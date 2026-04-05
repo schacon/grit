@@ -89,14 +89,13 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Handle scissors: discard everything before `-- >8 --`
-        if args.scissors && !past_scissors {
-            if line.contains("-- >8 --") || line.contains("-->8--") {
+        if args.scissors && !past_scissors
+            && (line.contains("-- >8 --") || line.contains("-->8--")) {
                 body_lines.clear();
                 patch_lines.clear();
                 past_scissors = true;
                 continue;
             }
-        }
 
         if !in_patch {
             // Detect the start of the patch
@@ -120,15 +119,13 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Write the commit message body
-    let mut msg_file =
-        std::fs::File::create(&args.msg).context("creating msg file")?;
+    let mut msg_file = std::fs::File::create(&args.msg).context("creating msg file")?;
     for line in &body_lines {
         writeln!(msg_file, "{}", line)?;
     }
 
     // Write the patch
-    let mut patch_file =
-        std::fs::File::create(&args.patch).context("creating patch file")?;
+    let mut patch_file = std::fs::File::create(&args.patch).context("creating patch file")?;
     for line in &patch_lines {
         writeln!(patch_file, "{}", line)?;
     }
@@ -156,9 +153,7 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Case-insensitive header stripping.
 fn strip_header<'a>(line: &'a str, header: &str) -> Option<&'a str> {
-    if line.len() >= header.len()
-        && line[..header.len()].eq_ignore_ascii_case(header)
-    {
+    if line.len() >= header.len() && line[..header.len()].eq_ignore_ascii_case(header) {
         Some(&line[header.len()..])
     } else {
         None

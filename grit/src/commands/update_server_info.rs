@@ -40,8 +40,7 @@ pub fn run(args: Args) -> Result<()> {
 /// Write `info/refs` — one line per ref: `<hex-oid>\t<refname>\n`.
 fn update_info_refs(repo: &Repository) -> Result<()> {
     let info_dir = repo.git_dir.join("info");
-    fs::create_dir_all(&info_dir)
-        .with_context(|| format!("creating {}", info_dir.display()))?;
+    fs::create_dir_all(&info_dir).with_context(|| format!("creating {}", info_dir.display()))?;
 
     let refs = collect_all_refs(&repo.git_dir)?;
     let mut out = String::new();
@@ -49,8 +48,7 @@ fn update_info_refs(repo: &Repository) -> Result<()> {
         out.push_str(&format!("{oid}\t{name}\n"));
     }
 
-    fs::write(info_dir.join("refs"), out)
-        .context("writing info/refs")?;
+    fs::write(info_dir.join("refs"), out).context("writing info/refs")?;
 
     Ok(())
 }
@@ -70,7 +68,9 @@ fn collect_all_refs(git_dir: &Path) -> Result<BTreeMap<String, ObjectId>> {
                 continue;
             }
             let mut parts = line.split_whitespace();
-            let Some(oid_str) = parts.next() else { continue };
+            let Some(oid_str) = parts.next() else {
+                continue;
+            };
             let Some(name) = parts.next() else { continue };
             if let Ok(oid) = oid_str.parse::<ObjectId>() {
                 // Loose refs take priority (already inserted).
@@ -116,8 +116,7 @@ fn collect_loose_refs(
 fn update_info_packs(repo: &Repository) -> Result<()> {
     let objects_dir = repo.odb.objects_dir();
     let info_dir = objects_dir.join("info");
-    fs::create_dir_all(&info_dir)
-        .with_context(|| format!("creating {}", info_dir.display()))?;
+    fs::create_dir_all(&info_dir).with_context(|| format!("creating {}", info_dir.display()))?;
 
     let pack_dir = objects_dir.join("pack");
     let mut packs: Vec<String> = Vec::new();
@@ -143,8 +142,7 @@ fn update_info_packs(repo: &Repository) -> Result<()> {
         out.push('\n');
     }
 
-    fs::write(info_dir.join("packs"), out)
-        .context("writing objects/info/packs")?;
+    fs::write(info_dir.join("packs"), out).context("writing objects/info/packs")?;
 
     Ok(())
 }

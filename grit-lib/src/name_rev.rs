@@ -560,7 +560,7 @@ fn load_commit_cached<'c>(
     cache: &'c mut HashMap<ObjectId, CommitData>,
     oid: ObjectId,
 ) -> Result<&'c CommitData> {
-    if !cache.contains_key(&oid) {
+    if let std::collections::hash_map::Entry::Vacant(e) = cache.entry(oid) {
         let obj = repo.odb.read(&oid)?;
         if obj.kind != ObjectKind::Commit {
             return Err(Error::CorruptObject(format!(
@@ -568,7 +568,7 @@ fn load_commit_cached<'c>(
             )));
         }
         let commit = parse_commit(&obj.data)?;
-        cache.insert(oid, commit);
+        e.insert(commit);
     }
     Ok(cache.get(&oid).unwrap())
 }

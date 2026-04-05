@@ -35,10 +35,7 @@ pub fn check_protocol_allowed(protocol: &str, git_dir: Option<&Path>) -> Result<
     }
 
     // 2. Check protocol.<name>.allow in config
-    let specific = read_config_value(
-        &format!("protocol.{}.allow", protocol),
-        git_dir,
-    );
+    let specific = read_config_value(&format!("protocol.{}.allow", protocol), git_dir);
     if let Some(ref val) = specific {
         return check_allow_value(protocol, val);
     }
@@ -56,10 +53,7 @@ pub fn check_protocol_allowed(protocol: &str, git_dir: Option<&Path>) -> Result<
 fn check_allow_value(protocol: &str, value: &str) -> Result<()> {
     match value.to_lowercase().as_str() {
         "always" => Ok(()),
-        "never" => bail!(
-            "protocol '{}' is not allowed",
-            protocol
-        ),
+        "never" => bail!("protocol '{}' is not allowed", protocol),
         "user" => Ok(()), // We are always in user context
         other => bail!(
             "unknown protocol.allow value '{}' for protocol '{}'",
@@ -89,7 +83,7 @@ fn read_config_value(key: &str, git_dir: Option<&Path>) -> Option<String> {
     }
 
     // Try global config
-    if let Some(home) = std::env::var("HOME").ok() {
+    if let Ok(home) = std::env::var("HOME") {
         let global = std::path::PathBuf::from(home).join(".gitconfig");
         if let Ok(contents) = std::fs::read_to_string(&global) {
             if let Some(val) = parse_config_for_key(&contents, key) {

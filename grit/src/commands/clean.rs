@@ -121,7 +121,10 @@ pub fn run(args: Args) -> Result<()> {
     // Apply --exclude patterns: remove entries matching any exclude pattern.
     if !args.exclude.is_empty() {
         to_remove.retain(|(path, _is_dir)| {
-            !args.exclude.iter().any(|pattern| matches_exclude_pattern(path, pattern))
+            !args
+                .exclude
+                .iter()
+                .any(|pattern| matches_exclude_pattern(path, pattern))
         });
     }
 
@@ -136,7 +139,11 @@ pub fn run(args: Args) -> Result<()> {
 
     for (path, is_dir) in &to_remove {
         if !args.quiet {
-            let prefix = if args.dry_run { "Would remove" } else { "Removing" };
+            let prefix = if args.dry_run {
+                "Would remove"
+            } else {
+                "Removing"
+            };
             if *is_dir {
                 writeln!(out, "{prefix} {path}/")?;
             } else {
@@ -150,8 +157,7 @@ pub fn run(args: Args) -> Result<()> {
                 fs::remove_dir_all(&abs)
                     .with_context(|| format!("failed to remove directory '{path}'"))?;
             } else {
-                fs::remove_file(&abs)
-                    .with_context(|| format!("failed to remove file '{path}'"))?;
+                fs::remove_file(&abs).with_context(|| format!("failed to remove file '{path}'"))?;
                 remove_empty_parents(&abs, &work_tree);
             }
         }
@@ -225,15 +231,15 @@ fn collect_untracked(
 
             // Check if a pathspec exactly matches this directory (treat as
             // whole-dir removal even without -d).
-            let pathspec_exact_match = !pathspec_prefixes.is_empty()
-                && pathspec_prefixes.iter().any(|ps| ps == &rel);
+            let pathspec_exact_match =
+                !pathspec_prefixes.is_empty() && pathspec_prefixes.iter().any(|ps| ps == &rel);
 
             // Also check if a pathspec targets something inside this dir,
             // in which case we must recurse.
             let pathspec_wants_recurse = !pathspec_prefixes.is_empty()
-                && pathspec_prefixes.iter().any(|ps| {
-                    ps.starts_with(&prefix) || ps == &rel
-                });
+                && pathspec_prefixes
+                    .iter()
+                    .any(|ps| ps.starts_with(&prefix) || ps == &rel);
 
             // If pathspec exactly matches this untracked dir, remove it whole
             if !has_tracked && pathspec_exact_match {
@@ -277,13 +283,10 @@ fn collect_untracked(
                     // content. If it does, recurse to collect only
                     // non-ignored files. If all content is non-ignored,
                     // remove the whole dir. If all ignored, skip.
-                    let has_any_ignored = dir_has_any_ignored(
-                        &path, work_tree, matcher, repo, index,
-                    )?;
+                    let has_any_ignored =
+                        dir_has_any_ignored(&path, work_tree, matcher, repo, index)?;
                     let all_ignored = if has_any_ignored {
-                        dir_all_ignored(
-                            &path, work_tree, matcher, repo, index,
-                        )?
+                        dir_all_ignored(&path, work_tree, matcher, repo, index)?
                     } else {
                         false
                     };
@@ -329,9 +332,7 @@ fn collect_untracked(
                 continue;
             }
 
-            let should_include = should_include_path(
-                matcher, repo, index, &rel, false, args,
-            )?;
+            let should_include = should_include_path(matcher, repo, index, &rel, false, args)?;
             if should_include {
                 out.push((rel, false));
             }
@@ -368,11 +369,7 @@ fn should_include_path(
 }
 
 /// Resolve a pathspec to a worktree-relative prefix string.
-fn resolve_pathspec_prefix(
-    work_tree: &Path,
-    cwd: &Path,
-    pathspec: &str,
-) -> Result<String> {
+fn resolve_pathspec_prefix(work_tree: &Path, cwd: &Path, pathspec: &str) -> Result<String> {
     let p = Path::new(pathspec);
     if p.is_absolute() {
         let rel = p
@@ -385,9 +382,7 @@ fn resolve_pathspec_prefix(
     let wt_canon = work_tree
         .canonicalize()
         .unwrap_or_else(|_| work_tree.to_path_buf());
-    let abs_canon = abs
-        .canonicalize()
-        .unwrap_or(abs);
+    let abs_canon = abs.canonicalize().unwrap_or(abs);
 
     if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
         return Ok(rel.to_string_lossy().into_owned());
@@ -434,11 +429,10 @@ fn dir_has_any_ignored(
         if ignored {
             return Ok(true);
         }
-        if is_dir {
-            if dir_has_any_ignored(&path, work_tree, matcher, repo, index)? {
+        if is_dir
+            && dir_has_any_ignored(&path, work_tree, matcher, repo, index)? {
                 return Ok(true);
             }
-        }
     }
     Ok(false)
 }

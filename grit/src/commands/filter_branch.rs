@@ -67,15 +67,9 @@ pub fn run(_args: Args) -> Result<()> {
         stderr,
         "It is recommended to use `git filter-repo` instead."
     )?;
-    writeln!(
-        stderr,
-        "See: https://github.com/newren/git-filter-repo"
-    )?;
+    writeln!(stderr, "See: https://github.com/newren/git-filter-repo")?;
     writeln!(stderr)?;
-    writeln!(
-        stderr,
-        "To install: pip install git-filter-repo"
-    )?;
+    writeln!(stderr, "To install: pip install git-filter-repo")?;
     writeln!(
         stderr,
         "Or see https://github.com/newren/git-filter-repo/blob/main/INSTALL.md"

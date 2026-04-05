@@ -134,7 +134,12 @@ pub fn run(args: Args) -> Result<()> {
     // Determine which mode to use
     let show_cached = args.cached
         || args.stage
-        || (!args.deleted && !args.modified && !args.others && !args.ignored && !args.unmerged && !args.killed);
+        || (!args.deleted
+            && !args.modified
+            && !args.others
+            && !args.ignored
+            && !args.unmerged
+            && !args.killed);
     let show_stage = args.stage || args.unmerged;
 
     let mut pathspec_filter: Vec<Pathspec> = args
@@ -225,7 +230,8 @@ pub fn run(args: Args) -> Result<()> {
             let attr_str = {
                 use grit_lib::crlf;
                 let attrs = crlf::load_gitattributes(work_tree);
-                let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    .unwrap_or_default();
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str, &config);
                 match file_attrs.text {
                     crlf::TextAttr::Set => match file_attrs.eol {
@@ -290,11 +296,8 @@ pub fn run(args: Args) -> Result<()> {
     // --ignored: show only ignored untracked files (implies --others)
     let show_others = args.others || args.ignored;
     if show_others {
-        let indexed_paths: BTreeSet<Vec<u8>> = index
-            .entries
-            .iter()
-            .map(|e| e.path.clone())
-            .collect();
+        let indexed_paths: BTreeSet<Vec<u8>> =
+            index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
         walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
@@ -302,7 +305,9 @@ pub fn run(args: Args) -> Result<()> {
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
             if !pathspec_filter.is_empty() {
-                let idx = pathspec_filter.iter().position(|spec| spec.matches(path_bytes));
+                let idx = pathspec_filter
+                    .iter()
+                    .position(|spec| spec.matches(path_bytes));
                 match idx {
                     Some(i) => matched[i] = true,
                     None => continue,
@@ -321,9 +326,10 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     false
                 };
-                let cli_excluded = args.exclude.iter().any(|pat| {
-                    match_simple_pattern(pat, &path_str)
-                });
+                let cli_excluded = args
+                    .exclude
+                    .iter()
+                    .any(|pat| match_simple_pattern(pat, &path_str));
                 let is_excluded = std_ignored || cli_excluded;
 
                 if args.ignored && !is_excluded {
@@ -351,15 +357,18 @@ pub fn run(args: Args) -> Result<()> {
                     }
                     // Check if any non-directory entry starts with this prefix
                     let prefix = &p[..];
-                    filtered_untracked.iter().any(|f| {
-                        !f.ends_with(b"/") && f.starts_with(prefix)
-                    })
+                    filtered_untracked
+                        .iter()
+                        .any(|f| !f.ends_with(b"/") && f.starts_with(prefix))
                 });
             }
             collapsed
         } else if args.no_empty_directory {
             // Even without --directory, filter out empty dir markers
-            filtered_untracked.into_iter().filter(|p| !p.ends_with(b"/")).collect()
+            filtered_untracked
+                .into_iter()
+                .filter(|p| !p.ends_with(b"/"))
+                .collect()
         } else {
             filtered_untracked
         };
@@ -368,7 +377,8 @@ pub fn run(args: Args) -> Result<()> {
         // based on what actually gets output.
         if args.no_empty_directory && !pathspec_filter.is_empty() && !output_paths.is_empty() {
             // At least one path survived filtering, so pathspecs are matched.
-        } else if args.no_empty_directory && !pathspec_filter.is_empty() && output_paths.is_empty() {
+        } else if args.no_empty_directory && !pathspec_filter.is_empty() && output_paths.is_empty()
+        {
             // All entries were empty dirs that got filtered. Reset matched.
             for m in matched.iter_mut() {
                 *m = false;
@@ -782,11 +792,26 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     let mut needs_quotes = false;
     for ch in name.chars() {
         match ch {
-            '"' => { out.push_str("\\\""); needs_quotes = true; }
-            '\\' => { out.push_str("\\\\"); needs_quotes = true; }
-            '\t' => { out.push_str("\\t"); needs_quotes = true; }
-            '\n' => { out.push_str("\\n"); needs_quotes = true; }
-            '\r' => { out.push_str("\\r"); needs_quotes = true; }
+            '"' => {
+                out.push_str("\\\"");
+                needs_quotes = true;
+            }
+            '\\' => {
+                out.push_str("\\\\");
+                needs_quotes = true;
+            }
+            '\t' => {
+                out.push_str("\\t");
+                needs_quotes = true;
+            }
+            '\n' => {
+                out.push_str("\\n");
+                needs_quotes = true;
+            }
+            '\r' => {
+                out.push_str("\\r");
+                needs_quotes = true;
+            }
             c if c.is_control() || (c as u32) >= 0x80 => {
                 for b in c.to_string().bytes() {
                     out.push_str(&format!("\\{:03o}", b));

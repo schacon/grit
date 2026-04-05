@@ -103,11 +103,7 @@ fn parse_reflog_line(line: &str) -> Option<ReflogEntry> {
 /// Delete specific reflog entries by index (0-based, newest-first order).
 ///
 /// Rewrites the reflog file, omitting entries at the given indices.
-pub fn delete_reflog_entries(
-    git_dir: &Path,
-    refname: &str,
-    indices: &[usize],
-) -> Result<()> {
+pub fn delete_reflog_entries(git_dir: &Path, refname: &str, indices: &[usize]) -> Result<()> {
     let mut entries = read_reflog(git_dir, refname)?;
     if entries.is_empty() {
         return Ok(());
@@ -117,8 +113,7 @@ pub fn delete_reflog_entries(
     // to map indices correctly.
     entries.reverse();
 
-    let indices_set: std::collections::HashSet<usize> =
-        indices.iter().copied().collect();
+    let indices_set: std::collections::HashSet<usize> = indices.iter().copied().collect();
 
     let path = reflog_path(git_dir, refname);
     let remaining: Vec<&ReflogEntry> = entries
@@ -141,11 +136,7 @@ pub fn delete_reflog_entries(
 /// Expire (prune) reflog entries older than a given timestamp (Unix seconds).
 ///
 /// If `expire_time` is `None`, removes all entries.
-pub fn expire_reflog(
-    git_dir: &Path,
-    refname: &str,
-    expire_time: Option<i64>,
-) -> Result<usize> {
+pub fn expire_reflog(git_dir: &Path, refname: &str, expire_time: Option<i64>) -> Result<usize> {
     let entries = read_reflog(git_dir, refname)?;
     if entries.is_empty() {
         return Ok(0);
@@ -159,7 +150,7 @@ pub fn expire_reflog(
         let ts = parse_timestamp_from_identity(&entry.identity);
         let dominated = match (expire_time, ts) {
             (Some(cutoff), Some(t)) => t < cutoff,
-            (None, _) => true, // expire all
+            (None, _) => true,        // expire all
             (Some(_), None) => false, // can't parse => keep
         };
         if dominated {

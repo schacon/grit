@@ -186,8 +186,7 @@ pub fn run(args: Args) -> Result<()> {
 fn common_dir(git_dir: &Path) -> Result<PathBuf> {
     let commondir_file = git_dir.join("commondir");
     if commondir_file.exists() {
-        let raw = fs::read_to_string(&commondir_file)
-            .context("reading commondir")?;
+        let raw = fs::read_to_string(&commondir_file).context("reading commondir")?;
         let rel = raw.trim();
         let p = if Path::new(rel).is_absolute() {
             PathBuf::from(rel)
@@ -228,12 +227,24 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Validate mutually exclusive options
     {
         let mut exclusive = Vec::new();
-        if args.new_branch.is_some() { exclusive.push("-b"); }
-        if args.force_new_branch.is_some() { exclusive.push("-B"); }
-        if args.detach { exclusive.push("--detach"); }
-        if args.orphan { exclusive.push("--orphan"); }
+        if args.new_branch.is_some() {
+            exclusive.push("-b");
+        }
+        if args.force_new_branch.is_some() {
+            exclusive.push("-B");
+        }
+        if args.detach {
+            exclusive.push("--detach");
+        }
+        if args.orphan {
+            exclusive.push("--orphan");
+        }
         if exclusive.len() > 1 {
-            bail!("options '{}' and '{}' cannot be used together", exclusive[0], exclusive[1]);
+            bail!(
+                "options '{}' and '{}' cannot be used together",
+                exclusive[0],
+                exclusive[1]
+            );
         }
         if args.orphan && args.no_checkout {
             bail!("options '--orphan' and '--no-checkout' cannot be used together");
@@ -261,10 +272,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                 .map(|mut d| d.next().is_none())
                 .unwrap_or(false);
         if !is_empty {
-            bail!(
-                "'{path}' already exists",
-                path = wt_path.display()
-            );
+            bail!("'{path}' already exists", path = wt_path.display());
         }
     }
 
@@ -302,7 +310,10 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // Write gitdir file
         let gitdir_content = format!("{}\n", wt_path.join(".git").display());
         fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
-        fs::write(wt_admin.join("commondir"), format!("{}\n", common.display()))?;
+        fs::write(
+            wt_admin.join("commondir"),
+            format!("{}\n", common.display()),
+        )?;
 
         // HEAD points to an unborn branch
         fs::write(
@@ -332,12 +343,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // `worktree add -b <new> <path>` — always create a new branch from HEAD.
     let (branch_name, commit_oid) = if let Some(ref new_b) = args.force_new_branch {
         // -B: create or reset branch
-        let oid = head_oid
-            .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
+        let oid =
+            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
         (new_b.clone(), oid)
     } else if let Some(ref new_b) = args.new_branch {
-        let oid = head_oid
-            .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
+        let oid =
+            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
         (new_b.clone(), oid)
     } else if let Some(ref spec) = args.branch {
         // Try to resolve the branch/commit-ish
@@ -346,17 +357,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             Err(_) => {
                 // Branch doesn't exist yet — create from HEAD
                 let oid = head_oid.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "'{}' is not a commit and HEAD is invalid",
-                        spec
-                    )
+                    anyhow::anyhow!("'{}' is not a commit and HEAD is invalid", spec)
                 })?;
                 (spec.clone(), oid)
             }
         }
     } else {
-        let oid = head_oid
-            .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch"))?;
+        let oid = head_oid.ok_or_else(|| {
+            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
+        })?;
         (wt_name.clone(), oid)
     };
 
@@ -374,7 +383,10 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Write commondir file — relative path from worktree admin to the common dir
     // Standard git uses relative paths like "../../"
-    fs::write(wt_admin.join("commondir"), format!("{}\n", common.display()))?;
+    fs::write(
+        wt_admin.join("commondir"),
+        format!("{}\n", common.display()),
+    )?;
 
     // Write HEAD — either branch or detached
     if args.detach {
@@ -481,7 +493,8 @@ fn checkout_worktree_tree(
             if let Some(parent) = full_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let blob = odb.read(&entry.oid)
+            let blob = odb
+                .read(&entry.oid)
                 .with_context(|| format!("reading blob for {path}"))?;
             fs::write(&full_path, &blob.data)?;
 
@@ -524,9 +537,15 @@ fn add_worktree_tree_to_index(
             add_worktree_tree_to_index(odb, &entry.oid, &path, index, work_tree)?;
         } else if is_gitlink {
             index.add_or_replace(IndexEntry {
-                ctime_sec: 0, ctime_nsec: 0,
-                mtime_sec: 0, mtime_nsec: 0,
-                dev: 0, ino: 0, mode: 0o160000, uid: 0, gid: 0,
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: 0o160000,
+                uid: 0,
+                gid: 0,
                 size: 0,
                 oid: entry.oid,
                 flags: path.len().min(0xfff) as u16,
@@ -550,11 +569,15 @@ fn add_worktree_tree_to_index(
             };
 
             index.add_or_replace(IndexEntry {
-                ctime_sec: mtime_sec, ctime_nsec: mtime_nsec,
-                mtime_sec, mtime_nsec,
-                dev: 0, ino: 0,
+                ctime_sec: mtime_sec,
+                ctime_nsec: mtime_nsec,
+                mtime_sec,
+                mtime_nsec,
+                dev: 0,
+                ino: 0,
                 mode: entry.mode,
-                uid: 0, gid: 0,
+                uid: 0,
+                gid: 0,
                 size: file_size,
                 flags_extended: None,
                 oid: entry.oid,
@@ -646,8 +669,7 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
             // Read the gitdir file to find the worktree path
             let gitdir_path = admin.join("gitdir");
             let wt_path = if gitdir_path.exists() {
-                let raw = fs::read_to_string(&gitdir_path)
-                    .unwrap_or_default();
+                let raw = fs::read_to_string(&gitdir_path).unwrap_or_default();
                 let p = PathBuf::from(raw.trim());
                 // gitdir points to <worktree>/.git, so parent is the worktree
                 p.parent().unwrap_or(&p).to_path_buf()
@@ -709,12 +731,8 @@ fn cmd_list(args: ListArgs) -> Result<()> {
     } else {
         for entry in &entries {
             let sha = match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => {
-                    oid.to_hex()[..7].to_string()
-                }
-                HeadState::Detached { oid } => {
-                    oid.to_hex()[..7].to_string()
-                }
+                HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
+                HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
                 _ => "0000000".to_string(),
             };
 
@@ -759,9 +777,7 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
     } else {
         std::env::current_dir()?.join(&args.path)
     };
-    let wt_path = wt_path
-        .canonicalize()
-        .unwrap_or(wt_path);
+    let wt_path = wt_path.canonicalize().unwrap_or(wt_path);
 
     // Find the matching admin entry
     let wt_name = find_worktree_name(&worktrees_dir, &wt_path)?;
@@ -887,10 +903,7 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
         // Skip locked worktrees
         if admin.join("locked").exists() {
             if args.verbose {
-                eprintln!(
-                    "worktree '{}' is locked; not pruning",
-                    name
-                );
+                eprintln!("worktree '{}' is locked; not pruning", name);
             }
             continue;
         }
@@ -948,8 +961,13 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
     }
 
     // Move the working tree directory
-    fs::rename(&src_path, &dst_path)
-        .with_context(|| format!("cannot move '{}' to '{}'", src_path.display(), dst_path.display()))?;
+    fs::rename(&src_path, &dst_path).with_context(|| {
+        format!(
+            "cannot move '{}' to '{}'",
+            src_path.display(),
+            dst_path.display()
+        )
+    })?;
 
     let dst_path = dst_path.canonicalize().unwrap_or(dst_path);
 
@@ -1043,10 +1061,7 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
             // The worktree exists but .git file is missing — recreate it
             let dotgit_content = format!("gitdir: {}\n", admin.display());
             fs::write(wt_path.join(".git"), &dotgit_content)?;
-            eprintln!(
-                "repair: {}: recreated gitfile",
-                wt_path.display()
-            );
+            eprintln!("repair: {}: recreated gitfile", wt_path.display());
         }
     }
 

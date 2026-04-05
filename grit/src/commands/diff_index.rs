@@ -2,15 +2,19 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{detect_copies, detect_renames, stat_matches, DiffEntry, DiffStatus, zero_oid};
-use std::io::Write;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
+use grit_lib::diff::{
+    detect_copies, detect_renames, stat_matches, zero_oid, DiffEntry, DiffStatus,
+};
+use grit_lib::index::{
+    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
+};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -56,7 +60,7 @@ pub fn run(args: Args) -> Result<()> {
     // Convert to DiffEntry for rename detection and output.
     let diff_entries: Vec<DiffEntry> = changes
         .iter()
-        .map(|c| raw_change_to_diff_entry(c))
+        .map(raw_change_to_diff_entry)
         .collect();
 
     let diff_entries = if options.find_copies {
@@ -85,7 +89,11 @@ pub fn run(args: Args) -> Result<()> {
             let cwd = std::env::current_dir().unwrap_or_default();
             if let Ok(rel) = cwd.strip_prefix(wt) {
                 let s = rel.to_string_lossy().to_string();
-                if s.is_empty() { String::new() } else { format!("{s}/") }
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!("{s}/")
+                }
             } else {
                 String::new()
             }
@@ -98,20 +106,23 @@ pub fn run(args: Args) -> Result<()> {
 
     // Apply --relative: filter and strip prefix
     let diff_entries: Vec<DiffEntry> = if !rel_prefix.is_empty() {
-        diff_entries.into_iter().filter_map(|mut e| {
-            let path = e.path().to_owned();
-            if !path.starts_with(&rel_prefix) {
-                return None;
-            }
-            let stripped = path[rel_prefix.len()..].to_owned();
-            if e.old_path.is_some() {
-                e.old_path = Some(stripped.clone());
-            }
-            if e.new_path.is_some() {
-                e.new_path = Some(stripped);
-            }
-            Some(e)
-        }).collect()
+        diff_entries
+            .into_iter()
+            .filter_map(|mut e| {
+                let path = e.path().to_owned();
+                if !path.starts_with(&rel_prefix) {
+                    return None;
+                }
+                let stripped = path[rel_prefix.len()..].to_owned();
+                if e.old_path.is_some() {
+                    e.old_path = Some(stripped.clone());
+                }
+                if e.new_path.is_some() {
+                    e.new_path = Some(stripped);
+                }
+                Some(e)
+            })
+            .collect()
     } else {
         diff_entries
     };
@@ -136,16 +147,20 @@ pub fn run(args: Args) -> Result<()> {
             for entry in &diff_entries {
                 match (entry.status, entry.score) {
                     (DiffStatus::Renamed, Some(s)) => {
-                        println!("R{:03}\t{}\t{}",
+                        println!(
+                            "R{:03}\t{}\t{}",
                             s,
                             entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or(""));
+                            entry.new_path.as_deref().unwrap_or("")
+                        );
                     }
                     (DiffStatus::Copied, Some(s)) => {
-                        println!("C{:03}\t{}\t{}",
+                        println!(
+                            "C{:03}\t{}\t{}",
                             s,
                             entry.old_path.as_deref().unwrap_or(""),
-                            entry.new_path.as_deref().unwrap_or(""));
+                            entry.new_path.as_deref().unwrap_or("")
+                        );
                     }
                     _ => {
                         println!("{}\t{}", entry.status.letter(), entry.path());
@@ -282,7 +297,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("-M") => {
                     let val = &arg[2..];
                     let pct = if val.ends_with('%') {
-                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
                     } else {
                         val.parse::<u32>().unwrap_or(50)
                     };
@@ -291,7 +306,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--find-renames=") => {
                     let val = &arg["--find-renames=".len()..];
                     let pct = if val.ends_with('%') {
-                        val[..val.len()-1].parse::<u32>().unwrap_or(50)
+                        val[..val.len() - 1].parse::<u32>().unwrap_or(50)
                     } else {
                         val.parse::<u32>().unwrap_or(50)
                     };
@@ -557,7 +572,11 @@ fn diff_tree_vs_worktree(
     Ok(merged.into_values().collect())
 }
 
-fn read_worktree_snapshot_from_meta(_repo: &Repository, abs_path: &Path, metadata: &fs::Metadata) -> Result<Option<Snapshot>> {
+fn read_worktree_snapshot_from_meta(
+    _repo: &Repository,
+    abs_path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<Option<Snapshot>> {
     if metadata.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
         let oid = Odb::hash_object_data(ObjectKind::Blob, target.as_os_str().as_bytes());
@@ -671,8 +690,16 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
 
     DiffEntry {
         status,
-        old_path: if change.status == 'A' { None } else { Some(change.path.clone()) },
-        new_path: if change.status == 'D' { None } else { Some(change.path.clone()) },
+        old_path: if change.status == 'A' {
+            None
+        } else {
+            Some(change.path.clone())
+        },
+        new_path: if change.status == 'D' {
+            None
+        } else {
+            Some(change.path.clone())
+        },
         old_mode: format!("{old_mode:06o}"),
         new_mode: format!("{new_mode:06o}"),
         old_oid: change.old.map_or_else(zero_oid, |s| s.oid),
@@ -682,7 +709,11 @@ fn raw_change_to_diff_entry(change: &RawChange) -> DiffEntry {
 }
 
 /// Render a DiffEntry in raw format.
-fn render_raw_diff_entry(entry: &DiffEntry, repo: &Repository, abbrev: Option<usize>) -> Result<String> {
+fn render_raw_diff_entry(
+    entry: &DiffEntry,
+    repo: &Repository,
+    abbrev: Option<usize>,
+) -> Result<String> {
     let width = abbrev.unwrap_or(40).clamp(4, 40);
 
     let old_oid = if entry.old_oid == zero_oid() {
@@ -749,28 +780,40 @@ fn write_patch_entry(
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "new file mode {}", entry.new_mode)?;
-            writeln!(out, "index {}..{}",
+            writeln!(
+                out,
+                "index {}..{}",
                 &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7])?;
+                &entry.new_oid.to_hex()[..7]
+            )?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "deleted file mode {}", entry.old_mode)?;
-            writeln!(out, "index {}..{}",
+            writeln!(
+                out,
+                "index {}..{}",
                 &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7])?;
+                &entry.new_oid.to_hex()[..7]
+            )?;
         }
         DiffStatus::Modified => {
             if entry.old_mode == entry.new_mode {
-                writeln!(out, "index {}..{} {}",
+                writeln!(
+                    out,
+                    "index {}..{} {}",
                     &entry.old_oid.to_hex()[..7],
                     &entry.new_oid.to_hex()[..7],
-                    entry.old_mode)?;
+                    entry.old_mode
+                )?;
             } else {
                 writeln!(out, "old mode {}", entry.old_mode)?;
                 writeln!(out, "new mode {}", entry.new_mode)?;
-                writeln!(out, "index {}..{}",
+                writeln!(
+                    out,
+                    "index {}..{}",
                     &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         DiffStatus::Renamed => {
@@ -779,9 +822,12 @@ fn write_patch_entry(
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}",
+                writeln!(
+                    out,
+                    "index {}..{}",
                     &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         DiffStatus::Copied => {
@@ -790,9 +836,12 @@ fn write_patch_entry(
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}",
+                writeln!(
+                    out,
+                    "index {}..{}",
                     &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7])?;
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         _ => {}
@@ -814,19 +863,44 @@ fn write_patch_entry(
 
     // Check for binary content
     if is_binary(&old_raw) || is_binary(&new_raw) {
-        let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
-        let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
-        writeln!(out, "Binary files a/{display_old} and b/{display_new} differ")?;
+        let display_old = if entry.status == DiffStatus::Added {
+            "/dev/null"
+        } else {
+            old_path
+        };
+        let display_new = if entry.status == DiffStatus::Deleted {
+            "/dev/null"
+        } else {
+            new_path
+        };
+        writeln!(
+            out,
+            "Binary files a/{display_old} and b/{display_new} differ"
+        )?;
         return Ok(());
     }
 
     let old_content = String::from_utf8_lossy(&old_raw).into_owned();
     let new_content = String::from_utf8_lossy(&new_raw).into_owned();
 
-    let display_old = if entry.status == DiffStatus::Added { "/dev/null" } else { old_path };
-    let display_new = if entry.status == DiffStatus::Deleted { "/dev/null" } else { new_path };
+    let display_old = if entry.status == DiffStatus::Added {
+        "/dev/null"
+    } else {
+        old_path
+    };
+    let display_new = if entry.status == DiffStatus::Deleted {
+        "/dev/null"
+    } else {
+        new_path
+    };
 
-    let patch = unified_diff(&old_content, &new_content, display_old, display_new, context_lines);
+    let patch = unified_diff(
+        &old_content,
+        &new_content,
+        display_old,
+        display_new,
+        context_lines,
+    );
     write!(out, "{patch}")?;
 
     Ok(())
@@ -871,8 +945,16 @@ fn write_diff_index_stat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
         files_changed += 1;
     }
 
-    let max_path_len = file_stats.iter().map(|(p, _, _, _)| p.len()).max().unwrap_or(0);
-    let max_count = file_stats.iter().map(|(_, i, d, _)| i + d).max().unwrap_or(0);
+    let max_path_len = file_stats
+        .iter()
+        .map(|(p, _, _, _)| p.len())
+        .max()
+        .unwrap_or(0);
+    let max_count = file_stats
+        .iter()
+        .map(|(_, i, d, _)| i + d)
+        .max()
+        .unwrap_or(0);
     let count_width = format!("{}", max_count).len();
 
     for (path, ins, del, binary) in &file_stats {
@@ -880,20 +962,47 @@ fn write_diff_index_stat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
             println!(" {:<width$} | Bin", path, width = max_path_len);
         } else {
             let total = ins + del;
-            let bar_len = if max_count > 0 { (total * 40) / max_count.max(1) } else { 0 };
-            let plus_len = if total > 0 { (ins * bar_len) / total.max(1) } else { 0 };
+            let bar_len = if max_count > 0 {
+                (total * 40) / max_count.max(1)
+            } else {
+                0
+            };
+            let plus_len = if total > 0 {
+                (ins * bar_len) / total.max(1)
+            } else {
+                0
+            };
             let minus_len = bar_len.saturating_sub(plus_len);
             let bar: String = "+".repeat(plus_len) + &"-".repeat(minus_len);
-            println!(" {:<width$} | {:>cw$} {}", path, total, bar, width = max_path_len, cw = count_width);
+            println!(
+                " {:<width$} | {:>cw$} {}",
+                path,
+                total,
+                bar,
+                width = max_path_len,
+                cw = count_width
+            );
         }
     }
 
-    let mut summary = format!(" {} file{} changed", files_changed, if files_changed == 1 { "" } else { "s" });
+    let mut summary = format!(
+        " {} file{} changed",
+        files_changed,
+        if files_changed == 1 { "" } else { "s" }
+    );
     if total_ins > 0 {
-        summary.push_str(&format!(", {} insertion{}(+)", total_ins, if total_ins == 1 { "" } else { "s" }));
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" }
+        ));
     }
     if total_del > 0 {
-        summary.push_str(&format!(", {} deletion{}(-)", total_del, if total_del == 1 { "" } else { "s" }));
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" }
+        ));
     }
     println!("{summary}");
     Ok(())
@@ -918,8 +1027,16 @@ fn write_diff_index_numstat(entries: &[DiffEntry], odb: &Odb) -> Result<()> {
 
 /// Count insertions and deletions between two text contents.
 fn count_line_changes(old: &str, new: &str) -> (usize, usize) {
-    let old_lines: Vec<&str> = if old.is_empty() { vec![] } else { old.lines().collect() };
-    let new_lines: Vec<&str> = if new.is_empty() { vec![] } else { new.lines().collect() };
+    let old_lines: Vec<&str> = if old.is_empty() {
+        vec![]
+    } else {
+        old.lines().collect()
+    };
+    let new_lines: Vec<&str> = if new.is_empty() {
+        vec![]
+    } else {
+        new.lines().collect()
+    };
 
     // Use a simple LCS-based approach
     let mut ins = 0;

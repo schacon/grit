@@ -13,9 +13,7 @@ use clap::{Args as ClapArgs, Subcommand};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::ObjectId;
-use grit_lib::reflog::{
-    delete_reflog_entries, expire_reflog, read_reflog, reflog_exists,
-};
+use grit_lib::reflog::{delete_reflog_entries, expire_reflog, read_reflog, reflog_exists};
 use grit_lib::refs::{append_reflog, resolve_ref};
 use grit_lib::repo::Repository;
 
@@ -127,9 +125,7 @@ pub struct ExistsArgs {
 
 /// Arguments for `reflog write`.
 #[derive(Debug, ClapArgs)]
-#[command(
-    override_usage = "git reflog write <refname> <old-oid> <new-oid> <message>"
-)]
+#[command(override_usage = "git reflog write <refname> <old-oid> <new-oid> <message>")]
 pub struct WriteArgs {
     /// Reference name.
     pub refname: String,
@@ -170,8 +166,7 @@ fn run_show(args: ShowArgs) -> Result<()> {
     let refname = resolve_refname(&repo, &args.refname)?;
     let display_name = display_refname(&refname);
 
-    let entries = read_reflog(&repo.git_dir, &refname)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if entries.is_empty() {
         return Ok(());
@@ -202,7 +197,9 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
     let expire_secs = if args.expire == "all" || args.expire == "0" {
         None // expire all
     } else {
-        let expire_days: u64 = args.expire.parse()
+        let expire_days: u64 = args
+            .expire
+            .parse()
             .with_context(|| format!("invalid expire value: '{}'", args.expire))?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -212,8 +209,7 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
     };
 
     let refs_to_expire: Vec<String> = if args.all {
-        grit_lib::reflog::list_reflog_refs(&repo.git_dir)
-            .map_err(|e| anyhow::anyhow!("{e}"))?
+        grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?
     } else {
         let refname = args.refname.as_deref().unwrap_or("HEAD");
         let resolved = resolve_refname(&repo, refname)?;
@@ -222,16 +218,19 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
 
     for refname in &refs_to_expire {
         if args.dry_run {
-            let entries = read_reflog(&repo.git_dir, refname)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            let would_prune = entries.iter().filter(|e| {
-                let ts = parse_ts_from_identity(&e.identity);
-                match (expire_secs, ts) {
-                    (Some(cutoff), Some(t)) => t < cutoff,
-                    (None, _) => true,
-                    _ => false,
-                }
-            }).count();
+            let entries =
+                read_reflog(&repo.git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+            let would_prune = entries
+                .iter()
+                .filter(|e| {
+                    let ts = parse_ts_from_identity(&e.identity);
+                    match (expire_secs, ts) {
+                        (Some(cutoff), Some(t)) => t < cutoff,
+                        (None, _) => true,
+                        _ => false,
+                    }
+                })
+                .count();
             if would_prune > 0 {
                 eprintln!("would prune {would_prune} entries from {refname}");
             }
@@ -270,14 +269,17 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
             // If --updateref, after deleting, update the ref to the new_oid
             // of whatever entry becomes the new @{0}
             if args.updateref {
-                let entries = read_reflog(&repo.git_dir, &refname)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let entries =
+                    read_reflog(&repo.git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
                 // Entries are oldest-first; indices are newest-first
                 let mut reversed = entries.clone();
                 reversed.reverse();
                 // Figure out which entries will remain after deletion
-                let indices_set: std::collections::HashSet<usize> = indices.iter().copied().collect();
-                let remaining: Vec<&grit_lib::reflog::ReflogEntry> = reversed.iter().enumerate()
+                let indices_set: std::collections::HashSet<usize> =
+                    indices.iter().copied().collect();
+                let remaining: Vec<&grit_lib::reflog::ReflogEntry> = reversed
+                    .iter()
+                    .enumerate()
                     .filter(|(i, _)| !indices_set.contains(i))
                     .map(|(_, e)| e)
                     .collect();
@@ -289,12 +291,12 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
                                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                         }
                     } else {
-                        grit_lib::refs::write_ref(&repo.git_dir, &refname, update_oid)
+                        grit_lib::refs::write_ref(&repo.git_dir, refname, update_oid)
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
                     }
                 }
             }
-            delete_reflog_entries(&repo.git_dir, &refname, indices)
+            delete_reflog_entries(&repo.git_dir, refname, indices)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
     }
@@ -329,14 +331,8 @@ fn run_write(args: WriteArgs) -> Result<()> {
         bail!("invalid refname: '{}'", args.refname);
     }
 
-    let old_oid: ObjectId = args
-        .old_oid
-        .parse()
-        .context("invalid old object ID")?;
-    let new_oid: ObjectId = args
-        .new_oid
-        .parse()
-        .context("invalid new object ID")?;
+    let old_oid: ObjectId = args.old_oid.parse().context("invalid old object ID")?;
+    let new_oid: ObjectId = args.new_oid.parse().context("invalid new object ID")?;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
     let name = std::env::var("GIT_COMMITTER_NAME")

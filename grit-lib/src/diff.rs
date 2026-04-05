@@ -159,7 +159,14 @@ fn diff_trees_opts(
     };
 
     let mut result = Vec::new();
-    diff_tree_entries_opts(odb, &old_entries, &new_entries, prefix, show_trees, &mut result)?;
+    diff_tree_entries_opts(
+        odb,
+        &old_entries,
+        &new_entries,
+        prefix,
+        show_trees,
+        &mut result,
+    )?;
     Ok(result)
 }
 
@@ -227,7 +234,13 @@ fn diff_tree_entries_opts(
                                     });
                                 }
                                 // Recurse
-                                let nested = diff_trees_opts(odb, Some(&o.oid), Some(&n.oid), &path, show_trees)?;
+                                let nested = diff_trees_opts(
+                                    odb,
+                                    Some(&o.oid),
+                                    Some(&n.oid),
+                                    &path,
+                                    show_trees,
+                                )?;
                                 result.extend(nested);
                             } else if is_tree_mode(o.mode) && !is_tree_mode(n.mode) {
                                 // Tree → blob: delete tree contents, add blob
@@ -255,7 +268,7 @@ fn diff_tree_entries_opts(
                                     new_mode: format_mode(n.mode),
                                     old_oid: o.oid,
                                     new_oid: n.oid,
-                    score: None,
+                                    score: None,
                                 });
                             }
                         }
@@ -414,7 +427,7 @@ pub fn diff_index_to_tree(
                         new_mode: format_mode(ie.mode),
                         old_oid: te.oid,
                         new_oid: ie.oid,
-                    score: None,
+                        score: None,
                     });
                 }
             }
@@ -444,7 +457,7 @@ pub fn diff_index_to_tree(
             new_mode: "000000".to_owned(),
             old_oid: te.oid,
             new_oid: zero_oid(),
-                    score: None,
+            score: None,
         });
     }
 
@@ -637,8 +650,7 @@ fn hash_worktree_file(
     } else {
         let raw = fs::read(path)?;
         // Apply clean conversion (CRLF→LF) so hash matches index blob
-        crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs)
-            .unwrap_or(raw)
+        crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs).unwrap_or(raw)
     };
 
     Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
@@ -717,8 +729,10 @@ pub fn diff_tree_to_worktree(
         let tree_entry = tree_map.get(path.as_str());
 
         // Gitlink entries (submodules) — compare HEAD commit, not file content.
-        let is_gitlink = tree_entry.map_or(false, |te| te.mode == 0o160000)
-            || index_entries.get(path.as_bytes()).map_or(false, |ie| ie.mode == 0o160000);
+        let is_gitlink = tree_entry.is_some_and(|te| te.mode == 0o160000)
+            || index_entries
+                .get(path.as_bytes())
+                .is_some_and(|ie| ie.mode == 0o160000);
         if is_gitlink {
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
@@ -771,7 +785,7 @@ pub fn diff_tree_to_worktree(
                         new_mode: format_mode(wt_mode),
                         old_oid: te.oid,
                         new_oid: wt_oid,
-                    score: None,
+                        score: None,
                     });
                 }
             }
@@ -871,9 +885,7 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
             }
 
             let score = match (&deleted_contents[di], &added_contents[ai]) {
-                (Some(old_data), Some(new_data)) => {
-                    compute_similarity(old_data, new_data)
-                }
+                (Some(old_data), Some(new_data)) => compute_similarity(old_data, new_data),
                 _ => 0,
             };
 
@@ -934,7 +946,6 @@ pub fn detect_renames(odb: &Odb, entries: Vec<DiffEntry>, threshold: u32) -> Vec
     result.sort_by(|a, b| a.path().cmp(b.path()));
     result
 }
-
 
 /// Detect copies among diff entries.
 ///
@@ -1217,8 +1228,8 @@ fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
     // Git: score = copied * MAX_SCORE / max(src_size, dst_size)
     // We normalize to 0-100.
     let max_size = src_size.max(dst_size);
-    let score = ((shared_bytes * 100) / max_size).min(100) as u32;
-    score
+    
+    ((shared_bytes * 100) / max_size).min(100) as u32
 }
 
 // ── Output formatting ───────────────────────────────────────────────
@@ -1246,12 +1257,7 @@ pub fn format_raw(entry: &DiffEntry) -> String {
 
     format!(
         ":{} {} {} {} {}\t{}",
-        entry.old_mode,
-        entry.new_mode,
-        entry.old_oid,
-        entry.new_oid,
-        status_str,
-        path
+        entry.old_mode, entry.new_mode, entry.old_oid, entry.new_oid, status_str, path
     )
 }
 
@@ -1378,7 +1384,6 @@ pub fn anchored_unified_diff(
     anchors: &[String],
 ) -> String {
     use similar::TextDiff;
-    
 
     let old_lines: Vec<&str> = old_content.lines().collect();
     let new_lines: Vec<&str> = new_content.lines().collect();
@@ -1390,13 +1395,17 @@ pub fn anchored_unified_diff(
         let anchor_str = anchor.as_str();
 
         // Count occurrences in old
-        let old_positions: Vec<usize> = old_lines.iter().enumerate()
+        let old_positions: Vec<usize> = old_lines
+            .iter()
+            .enumerate()
             .filter(|(_, l)| l.trim_end() == anchor_str)
             .map(|(i, _)| i)
             .collect();
 
         // Count occurrences in new
-        let new_positions: Vec<usize> = new_lines.iter().enumerate()
+        let new_positions: Vec<usize> = new_lines
+            .iter()
+            .enumerate()
             .filter(|(_, l)| l.trim_end() == anchor_str)
             .map(|(i, _)| i)
             .collect();
@@ -1451,12 +1460,17 @@ pub fn anchored_unified_diff(
         let new_seg_text = new_segment.join("\n");
 
         if !old_seg_text.is_empty() || !new_seg_text.is_empty() {
-            let old_seg_input = if old_seg_text.is_empty() { String::new() } else { format!("{}\n", old_seg_text) };
-            let new_seg_input = if new_seg_text.is_empty() { String::new() } else { format!("{}\n", new_seg_text) };
-            let seg_diff = TextDiff::from_lines(
-                &old_seg_input,
-                &new_seg_input,
-            );
+            let old_seg_input = if old_seg_text.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", old_seg_text)
+            };
+            let new_seg_input = if new_seg_text.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", new_seg_text)
+            };
+            let seg_diff = TextDiff::from_lines(&old_seg_input, &new_seg_input);
             for change in seg_diff.iter_all_changes() {
                 let tag = match change.tag() {
                     similar::ChangeTag::Equal => ' ',
@@ -1487,12 +1501,17 @@ pub fn anchored_unified_diff(
     let new_seg_text = new_segment.join("\n");
 
     if !old_seg_text.is_empty() || !new_seg_text.is_empty() {
-        let old_seg_input = if old_seg_text.is_empty() { String::new() } else { format!("{}\n", old_seg_text) };
-        let new_seg_input = if new_seg_text.is_empty() { String::new() } else { format!("{}\n", new_seg_text) };
-        let seg_diff = TextDiff::from_lines(
-            &old_seg_input,
-            &new_seg_input,
-        );
+        let old_seg_input = if old_seg_text.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", old_seg_text)
+        };
+        let new_seg_input = if new_seg_text.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", new_seg_text)
+        };
+        let seg_diff = TextDiff::from_lines(&old_seg_input, &new_seg_input);
         for change in seg_diff.iter_all_changes() {
             let tag = match change.tag() {
                 similar::ChangeTag::Equal => ' ',
@@ -1530,7 +1549,7 @@ pub fn anchored_unified_diff(
     let mut i = 0;
     while i < total_ops {
         if ops[i].tag != ' ' {
-            let start = if i > context_lines { i - context_lines } else { 0 };
+            let start = i.saturating_sub(context_lines);
             let mut end = i;
             // Extend to include consecutive changes and their context
             while end < total_ops {
@@ -1574,9 +1593,16 @@ pub fn anchored_unified_diff(
         // Calculate line numbers by counting ops before this hunk
         for op in &ops[..start] {
             match op.tag {
-                ' ' => { old_start += 1; new_start += 1; }
-                '-' => { old_start += 1; }
-                '+' => { new_start += 1; }
+                ' ' => {
+                    old_start += 1;
+                    new_start += 1;
+                }
+                '-' => {
+                    old_start += 1;
+                }
+                '+' => {
+                    new_start += 1;
+                }
                 _ => {}
             }
         }
@@ -1584,14 +1610,24 @@ pub fn anchored_unified_diff(
         let mut new_count = 0usize;
         for op in &ops[start..end] {
             match op.tag {
-                ' ' => { old_count += 1; new_count += 1; }
-                '-' => { old_count += 1; }
-                '+' => { new_count += 1; }
+                ' ' => {
+                    old_count += 1;
+                    new_count += 1;
+                }
+                '-' => {
+                    old_count += 1;
+                }
+                '+' => {
+                    new_count += 1;
+                }
                 _ => {}
             }
         }
 
-        output.push_str(&format!("@@ -{},{} +{},{} @@\n", old_start, old_count, new_start, new_count));
+        output.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            old_start, old_count, new_start, new_count
+        ));
         for op in &ops[start..end] {
             output.push(op.tag);
             output.push_str(&op.line);
@@ -1611,7 +1647,7 @@ fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> 
     // Parse the old start line number from "@@ -<start>,<count> ..."
     let at_pos = header.find("-")?;
     let rest = &header[at_pos + 1..];
-    let comma_or_space = rest.find(|c: char| c == ',' || c == ' ')?;
+    let comma_or_space = rest.find([',', ' '])?;
     let start_str = &rest[..comma_or_space];
     let start_line: usize = start_str.parse().ok()?;
 
@@ -1672,19 +1708,28 @@ pub fn format_stat_line_width(
     let total = insertions + deletions;
     let plus = "+".repeat(insertions.min(50));
     let minus = "-".repeat(deletions.min(50));
-    let cw = if count_width > 0 { count_width } else { format!("{}", total).len() };
+    let cw = if count_width > 0 {
+        count_width
+    } else {
+        format!("{}", total).len()
+    };
     let bar = format!("{}{}", plus, minus);
     if bar.is_empty() {
         format!(
             " {:<width$} | {:>cw$}",
-            path, total,
-            width = max_path_len, cw = cw
+            path,
+            total,
+            width = max_path_len,
+            cw = cw
         )
     } else {
         format!(
             " {:<width$} | {:>cw$} {}",
-            path, total, bar,
-            width = max_path_len, cw = cw
+            path,
+            total,
+            bar,
+            width = max_path_len,
+            cw = cw
         )
     }
 }
@@ -1763,11 +1808,14 @@ fn format_mode(mode: u32) -> String {
 /// Read the HEAD commit OID from a submodule directory.
 /// Returns `None` if the submodule dir doesn't exist or has no HEAD.
 fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
-
     // Also handle gitfile: .git is a file containing "gitdir: <path>"
     let git_dir = if sub_dir.join(".git").is_file() {
         let content = fs::read_to_string(sub_dir.join(".git")).ok()?;
-        let gitdir = content.lines().find_map(|l| l.strip_prefix("gitdir: "))?.trim().to_owned();
+        let gitdir = content
+            .lines()
+            .find_map(|l| l.strip_prefix("gitdir: "))?
+            .trim()
+            .to_owned();
         if Path::new(&gitdir).is_absolute() {
             PathBuf::from(gitdir)
         } else {

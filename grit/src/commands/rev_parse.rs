@@ -3,8 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, discover_optional, is_inside_git_dir, is_inside_work_tree,
-    resolve_revision, show_prefix, symbolic_full_name, abbreviate_ref_name,
+    abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
+    is_inside_work_tree, resolve_revision, show_prefix, symbolic_full_name,
 };
 use std::env;
 
@@ -223,7 +223,8 @@ pub fn run(args: Args) -> Result<()> {
                 use grit_lib::config::ConfigSet;
                 let config = ConfigSet::load(Some(&current.git_dir), false)
                     .unwrap_or_else(|_| ConfigSet::new());
-                len = config.get("core.abbrev")
+                len = config
+                    .get("core.abbrev")
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(7);
             }
@@ -246,9 +247,10 @@ pub fn run(args: Args) -> Result<()> {
     if short_len == Some(0) {
         let default_abbrev = if let Some(ref r) = repo {
             use grit_lib::config::ConfigSet;
-            let config = ConfigSet::load(Some(&r.git_dir), false)
-                .unwrap_or_else(|_| ConfigSet::new());
-            config.get("core.abbrev")
+            let config =
+                ConfigSet::load(Some(&r.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+            config
+                .get("core.abbrev")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(7)
         } else {
@@ -362,7 +364,8 @@ pub fn run(args: Args) -> Result<()> {
             Action::GitPath(path_arg) => {
                 if let Some(current) = repo.as_ref() {
                     let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
-                        let config = grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
+                        let config =
+                            grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
                         if let Some(hooks_path) = config.get("core.hooksPath") {
                             let hooks_dir = std::path::Path::new(&hooks_path);
                             if path_arg == "hooks" {
@@ -672,7 +675,8 @@ fn run_parseopt(extra_args: &[String]) -> Result<()> {
         };
         // Parse name part: may contain , for aliases; = means takes argument
         let takes_arg = name_part.contains('=');
-        let clean = name_part.replace('=', "").replace('!', "").replace('*', "").replace('?', "");
+        let clean = name_part
+            .replace(['=', '!', '*', '?'], "");
         let names: Vec<String> = clean.split(',').map(|s| s.to_string()).collect();
         specs.push(OptSpec { names, takes_arg });
     }
@@ -713,7 +717,11 @@ fn run_parseopt(extra_args: &[String]) -> Result<()> {
         for spec in &specs {
             for name in &spec.names {
                 let long_flag = format!("--{name}");
-                let short_flag = if name.len() == 1 { format!("-{name}") } else { String::new() };
+                let short_flag = if name.len() == 1 {
+                    format!("-{name}")
+                } else {
+                    String::new()
+                };
                 if a == &long_flag || (!short_flag.is_empty() && a == &short_flag) {
                     if spec.takes_arg {
                         i += 1;

@@ -105,8 +105,7 @@ fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
         let rev = &args.revisions[i];
         if let Some(pattern) = rev.strip_prefix("--glob=") {
             let full = normalize_shortlog_glob(pattern);
-            let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full)
-                .unwrap_or_default();
+            let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full).unwrap_or_default();
             for (_, oid) in matching {
                 expanded_revs.push(oid.to_hex());
             }
@@ -114,8 +113,8 @@ fn collect_from_repo(args: &Args) -> Result<Vec<(String, String)>> {
             i += 1;
             if let Some(pattern) = args.revisions.get(i) {
                 let full = normalize_shortlog_glob(pattern);
-                let matching = grit_lib::refs::list_refs_glob(&repo.git_dir, &full)
-                    .unwrap_or_default();
+                let matching =
+                    grit_lib::refs::list_refs_glob(&repo.git_dir, &full).unwrap_or_default();
                 for (_, oid) in matching {
                     expanded_revs.push(oid.to_hex());
                 }
@@ -186,7 +185,7 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
                 };
                 let key = format_key(ident, args.email);
                 let desc =
-                    format_description(&current_message.trim().to_owned(), args.format.as_deref());
+                    format_description(current_message.trim(), args.format.as_deref());
                 result.push((key, desc));
             }
             has_commit = true;
@@ -232,7 +231,10 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
         }
 
         // Date line — skip
-        if line.starts_with("Date:") || line.starts_with("AuthorDate:") || line.starts_with("CommitDate:") {
+        if line.starts_with("Date:")
+            || line.starts_with("AuthorDate:")
+            || line.starts_with("CommitDate:")
+        {
             continue;
         }
 
@@ -262,7 +264,7 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
             _ => &current_author,
         };
         let key = format_key(ident, args.email);
-        let desc = format_description(&current_message.trim().to_owned(), args.format.as_deref());
+        let desc = format_description(current_message.trim(), args.format.as_deref());
         result.push((key, desc));
     }
 
@@ -353,10 +355,7 @@ fn extract_email(ident: &str) -> String {
 }
 
 /// Walk the commit graph, returning (oid, author, committer, message).
-fn walk_commits(
-    odb: &Odb,
-    start: &[ObjectId],
-) -> Result<Vec<(ObjectId, String, String, String)>> {
+fn walk_commits(odb: &Odb, start: &[ObjectId]) -> Result<Vec<(ObjectId, String, String, String)>> {
     let mut visited = HashSet::new();
     let mut queue: Vec<ObjectId> = start.to_vec();
     let mut result = Vec::new();

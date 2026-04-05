@@ -30,8 +30,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-
-
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 
@@ -309,10 +307,7 @@ impl ReftableWriter {
     }
 
     /// Write ref blocks, returning (block_start_position, last_refname) per block.
-    fn write_ref_blocks(
-        &self,
-        out: &mut Vec<u8>,
-    ) -> Result<Vec<(u64, String)>> {
+    fn write_ref_blocks(&self, out: &mut Vec<u8>) -> Result<Vec<(u64, String)>> {
         if self.refs.is_empty() {
             return Ok(Vec::new());
         }
@@ -462,9 +457,9 @@ impl ReftableWriter {
             if block_size > 0 {
                 let written = out.len() - block_start;
                 let target = if is_first_block {
-                    block_size as usize
+                    block_size
                 } else {
-                    block_size as usize
+                    block_size
                 };
                 if written < target {
                     out.resize(block_start + target, 0);
@@ -478,11 +473,7 @@ impl ReftableWriter {
     }
 
     /// Write a single-level ref index block.
-    fn write_ref_index(
-        &self,
-        out: &mut Vec<u8>,
-        block_positions: &[(u64, String)],
-    ) -> Result<()> {
+    fn write_ref_index(&self, out: &mut Vec<u8>, block_positions: &[(u64, String)]) -> Result<()> {
         let mut records_buf = Vec::new();
         let mut restart_offsets: Vec<u32> = Vec::new();
         let mut prev_name = String::new();
@@ -678,15 +669,16 @@ impl ReftableReader {
                 "reftable: unsupported version {version}"
             )));
         }
-        let _block_size =
-            ((data[5] as u32) << 16) | ((data[6] as u32) << 8) | (data[7] as u32);
+        let _block_size = ((data[5] as u32) << 16) | ((data[6] as u32) << 8) | (data[7] as u32);
         let _min_update_index = u64::from_be_bytes(data[8..16].try_into().unwrap());
         let _max_update_index = u64::from_be_bytes(data[16..24].try_into().unwrap());
 
         // Parse footer
         let footer_size = if version == 2 { 72 } else { FOOTER_V1_SIZE };
         if data.len() < footer_size {
-            return Err(Error::InvalidRef("reftable: file too small for footer".into()));
+            return Err(Error::InvalidRef(
+                "reftable: file too small for footer".into(),
+            ));
         }
         let footer_start = data.len() - footer_size;
         let footer = parse_footer(&data[footer_start..], version)?;
@@ -705,7 +697,11 @@ impl ReftableReader {
     /// Read all ref records from the table.
     pub fn read_refs(&self) -> Result<Vec<RefRecord>> {
         let mut refs = Vec::new();
-        let footer_size = if self.version == 2 { 72 } else { FOOTER_V1_SIZE };
+        let footer_size = if self.version == 2 {
+            72
+        } else {
+            FOOTER_V1_SIZE
+        };
         let file_end = self.data.len() - footer_size;
 
         // Determine where ref blocks end
@@ -763,7 +759,7 @@ impl ReftableReader {
             // Read restart count (last 2 bytes before padding)
             let rc = read_u16(&self.data, records_end - 2);
             // Restart table is rc * 3 bytes before the restart_count
-            let restart_table_start = records_end - 2 - (rc as usize * 3);
+            let restart_table_start = records_end - 2 - (rc * 3);
 
             // Read records from block_data_start to restart_table_start
             let mut rpos = block_data_start;
@@ -806,7 +802,11 @@ impl ReftableReader {
             return Ok(Vec::new());
         }
 
-        let footer_size = if self.version == 2 { 72 } else { FOOTER_V1_SIZE };
+        let footer_size = if self.version == 2 {
+            72
+        } else {
+            FOOTER_V1_SIZE
+        };
         let file_end = self.data.len() - footer_size;
         let mut pos = self.log_position as usize;
         let mut logs = Vec::new();
@@ -843,7 +843,7 @@ impl ReftableReader {
                 break;
             }
             let rc = read_u16(&inflated, inflated.len() - 2);
-            let restart_table_start = inflated.len() - 2 - (rc as usize * 3);
+            let restart_table_start = inflated.len() - 2 - (rc * 3);
 
             let mut rpos = 0usize;
             let mut prev_key = Vec::<u8>::new();
@@ -854,9 +854,7 @@ impl ReftableReader {
                 let mut key = Vec::new();
                 key.extend_from_slice(log.refname.as_bytes());
                 key.push(0);
-                key.extend_from_slice(
-                    &(0xffffffffffffffffu64 - log.update_index).to_be_bytes(),
-                );
+                key.extend_from_slice(&(0xffffffffffffffffu64 - log.update_index).to_be_bytes());
                 prev_key = key;
                 logs.push(log);
                 rpos = new_pos;
@@ -903,7 +901,9 @@ fn decode_ref_record(
     let mut name = Vec::with_capacity(prefix_len as usize + suffix_len);
     if prefix_len > 0 {
         if (prefix_len as usize) > prev_name.len() {
-            return Err(Error::InvalidRef("reftable: prefix_len exceeds prev name".into()));
+            return Err(Error::InvalidRef(
+                "reftable: prefix_len exceeds prev name".into(),
+            ));
         }
         name.extend_from_slice(&prev_name[..prefix_len as usize]);
     }
@@ -944,7 +944,9 @@ fn decode_ref_record(
             p = p2;
             let target_len = target_len as usize;
             if p + target_len > data.len() {
-                return Err(Error::InvalidRef("reftable: truncated symref target".into()));
+                return Err(Error::InvalidRef(
+                    "reftable: truncated symref target".into(),
+                ));
             }
             let target = String::from_utf8(data[p..p + target_len].to_vec())
                 .map_err(|_| Error::InvalidRef("reftable: invalid UTF-8 in symref".into()))?;
@@ -968,11 +970,7 @@ fn decode_ref_record(
     ))
 }
 
-fn decode_log_record(
-    data: &[u8],
-    pos: usize,
-    prev_key: &[u8],
-) -> Result<(LogRecord, usize)> {
+fn decode_log_record(data: &[u8], pos: usize, prev_key: &[u8]) -> Result<(LogRecord, usize)> {
     let (prefix_len, p) = get_varint(data, pos)?;
     let (suffix_and_type, mut p) = get_varint(data, p)?;
     let suffix_len = (suffix_and_type >> 3) as usize;
@@ -982,7 +980,9 @@ fn decode_log_record(
     let mut key = Vec::with_capacity(prefix_len as usize + suffix_len);
     if prefix_len > 0 {
         if (prefix_len as usize) > prev_key.len() {
-            return Err(Error::InvalidRef("reftable: log prefix_len exceeds prev key".into()));
+            return Err(Error::InvalidRef(
+                "reftable: log prefix_len exceeds prev key".into(),
+            ));
         }
         key.extend_from_slice(&prev_key[..prefix_len as usize]);
     }
@@ -1002,8 +1002,7 @@ fn decode_log_record(
     if null_pos + 9 > key.len() {
         return Err(Error::InvalidRef("reftable: log key too short".into()));
     }
-    let reversed_idx =
-        u64::from_be_bytes(key[null_pos + 1..null_pos + 9].try_into().unwrap());
+    let reversed_idx = u64::from_be_bytes(key[null_pos + 1..null_pos + 9].try_into().unwrap());
     let update_index = 0xffffffffffffffffu64 - reversed_idx;
 
     if log_type == 0 {
@@ -1013,7 +1012,7 @@ fn decode_log_record(
             LogRecord {
                 refname,
                 update_index,
-                old_id: zero_oid.clone(),
+                old_id: zero_oid,
                 new_id: zero_oid,
                 name: String::new(),
                 email: String::new(),
@@ -1327,7 +1326,12 @@ impl ReftableStack {
     fn write_tables_list(&self) -> Result<()> {
         let tables_list = self.reftable_dir.join("tables.list");
         let lock = self.reftable_dir.join("tables.list.lock");
-        let content = self.table_names.join("\n") + if self.table_names.is_empty() { "" } else { "\n" };
+        let content = self.table_names.join("\n")
+            + if self.table_names.is_empty() {
+                ""
+            } else {
+                "\n"
+            };
         fs::write(&lock, &content).map_err(Error::Io)?;
         fs::rename(&lock, &tables_list).map_err(Error::Io)?;
         Ok(())
@@ -1402,12 +1406,8 @@ fn reftable_resolve_ref_depth(git_dir: &Path, refname: &str, depth: usize) -> Re
         Some(rec) => match rec.value {
             RefValue::Val1(oid) => Ok(oid),
             RefValue::Val2(oid, _) => Ok(oid),
-            RefValue::Symref(target) => {
-                reftable_resolve_ref_depth(git_dir, &target, depth + 1)
-            }
-            RefValue::Deletion => {
-                Err(Error::InvalidRef(format!("ref not found: {refname}")))
-            }
+            RefValue::Symref(target) => reftable_resolve_ref_depth(git_dir, &target, depth + 1),
+            RefValue::Deletion => Err(Error::InvalidRef(format!("ref not found: {refname}"))),
         },
         None => Err(Error::InvalidRef(format!("ref not found: {refname}"))),
     }
@@ -1437,7 +1437,7 @@ pub fn reftable_write_ref(
             refname: refname.to_owned(),
             update_index: 0, // will be set by write_ref
             old_id: old_oid,
-            new_id: oid.clone(),
+            new_id: *oid,
             name,
             email,
             time_seconds: time_secs,
@@ -1453,7 +1453,7 @@ pub fn reftable_write_ref(
     let log = if write_log { log } else { None };
 
     let opts = read_write_options(git_dir);
-    stack.write_ref(refname, RefValue::Val1(oid.clone()), log, &opts)
+    stack.write_ref(refname, RefValue::Val1(*oid), log, &opts)
 }
 
 /// Write a symbolic ref to a reftable repo.
@@ -1473,7 +1473,7 @@ pub fn reftable_write_symref(
         Some(LogRecord {
             refname: refname.to_owned(),
             update_index: 0,
-            old_id: zero_oid.clone(),
+            old_id: zero_oid,
             new_id: zero_oid,
             name,
             email,
@@ -1508,10 +1508,7 @@ pub fn reftable_read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Optio
 }
 
 /// List all refs in a reftable repo under a given prefix.
-pub fn reftable_list_refs(
-    git_dir: &Path,
-    prefix: &str,
-) -> Result<Vec<(String, ObjectId)>> {
+pub fn reftable_list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
     let stack = ReftableStack::open(git_dir)?;
     let refs = stack.read_refs()?;
     let mut result = Vec::new();
@@ -1580,8 +1577,8 @@ pub fn reftable_append_reflog(
     writer.add_log(LogRecord {
         refname: refname.to_owned(),
         update_index,
-        old_id: old_oid.clone(),
-        new_id: new_oid.clone(),
+        old_id: *old_oid,
+        new_id: *new_oid,
         name,
         email,
         time_seconds: time_secs,
@@ -1747,18 +1744,13 @@ fn parse_footer(data: &[u8], version: u8) -> Result<Footer> {
 
     let off = 24;
     let ref_index_position = u64::from_be_bytes(data[off..off + 8].try_into().unwrap());
-    let obj_position_and_id_len =
-        u64::from_be_bytes(data[off + 8..off + 16].try_into().unwrap());
-    let obj_index_position =
-        u64::from_be_bytes(data[off + 16..off + 24].try_into().unwrap());
+    let obj_position_and_id_len = u64::from_be_bytes(data[off + 8..off + 16].try_into().unwrap());
+    let obj_index_position = u64::from_be_bytes(data[off + 16..off + 24].try_into().unwrap());
     let log_position = u64::from_be_bytes(data[off + 24..off + 32].try_into().unwrap());
-    let log_index_position =
-        u64::from_be_bytes(data[off + 32..off + 40].try_into().unwrap());
+    let log_index_position = u64::from_be_bytes(data[off + 32..off + 40].try_into().unwrap());
 
     // CRC-32 check
-    let crc_stored = u32::from_be_bytes(
-        data[footer_size - 4..footer_size].try_into().unwrap(),
-    );
+    let crc_stored = u32::from_be_bytes(data[footer_size - 4..footer_size].try_into().unwrap());
     let crc_computed = crc32(&data[..footer_size - 4]);
     if crc_stored != crc_computed {
         return Err(Error::InvalidRef(format!(

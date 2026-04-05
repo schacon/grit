@@ -157,12 +157,24 @@ pub fn run(args: Args) -> Result<()> {
     // Validate mutually exclusive mode options
     {
         let mut modes = Vec::new();
-        if args.delete || args.force_delete { modes.push("delete"); }
-        if args.rename || args.force_rename { modes.push("rename"); }
-        if args.copy || args.force_copy { modes.push("copy"); }
-        if args.set_upstream_to.is_some() { modes.push("set-upstream-to"); }
-        if args.unset_upstream { modes.push("unset-upstream"); }
-        if args.show_current { modes.push("show-current"); }
+        if args.delete || args.force_delete {
+            modes.push("delete");
+        }
+        if args.rename || args.force_rename {
+            modes.push("rename");
+        }
+        if args.copy || args.force_copy {
+            modes.push("copy");
+        }
+        if args.set_upstream_to.is_some() {
+            modes.push("set-upstream-to");
+        }
+        if args.unset_upstream {
+            modes.push("unset-upstream");
+        }
+        if args.show_current {
+            modes.push("show-current");
+        }
         // --list conflicts with delete/rename/copy but not with filtering
         if args.list && !modes.is_empty() {
             bail!("options are incompatible");
@@ -266,7 +278,10 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 .map_err(|e| anyhow::anyhow!("{e}"))?
                 .into_iter()
                 .map(|(name, oid)| {
-                    let short = name.strip_prefix("refs/remotes/").unwrap_or(&name).to_owned();
+                    let short = name
+                        .strip_prefix("refs/remotes/")
+                        .unwrap_or(&name)
+                        .to_owned();
                     (short, oid)
                 })
                 .collect()
@@ -361,7 +376,11 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
                 // -vv: show tracking info
                 let tracking = get_tracking_info(repo, &b.name)?;
                 if let Some(ref track_str) = tracking {
-                    writeln!(out, "{prefix}{} {short_oid} [{track_str}] {subject}", b.name)?;
+                    writeln!(
+                        out,
+                        "{prefix}{} {short_oid} [{track_str}] {subject}",
+                        b.name
+                    )?;
                 } else {
                     writeln!(out, "{prefix}{} {short_oid} {subject}", b.name)?;
                 }
@@ -377,7 +396,11 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 }
 
 /// Sort branches by the given key.
-fn sort_branches(repo: &Repository, branches: &mut [BranchInfo], sort_key: Option<&str>) -> Result<()> {
+fn sort_branches(
+    repo: &Repository,
+    branches: &mut [BranchInfo],
+    sort_key: Option<&str>,
+) -> Result<()> {
     match sort_key {
         None | Some("refname") => {
             branches.sort_by(|a, b| a.name.cmp(&b.name));
@@ -442,12 +465,12 @@ fn get_tracking_info(repo: &Repository, branch_name: &str) -> Result<Option<Stri
         Some(m) => m,
         None => return Ok(None),
     };
-    let remote = config.get(&remote_key).unwrap_or_else(|| "origin".to_string());
+    let remote = config
+        .get(&remote_key)
+        .unwrap_or_else(|| "origin".to_string());
 
     // Strip refs/heads/ prefix from merge to get the upstream branch name
-    let upstream_branch = merge
-        .strip_prefix("refs/heads/")
-        .unwrap_or(&merge);
+    let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
 
     let upstream_display = format!("{remote}/{upstream_branch}");
 
@@ -544,9 +567,10 @@ fn collect_ancestors(
 
 /// Set upstream tracking branch.
 fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let upstream = args.set_upstream_to.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("upstream name required")
-    })?;
+    let upstream = args
+        .set_upstream_to
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("upstream name required"))?;
 
     let branch_name = match args.name.as_deref() {
         Some(n) => n.to_owned(),
@@ -571,9 +595,7 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     config.write()?;
 
     if !args.quiet {
-        eprintln!(
-            "branch '{branch_name}' set up to track '{remote}/{upstream_branch}'."
-        );
+        eprintln!("branch '{branch_name}' set up to track '{remote}/{upstream_branch}'.");
     }
 
     Ok(())
@@ -688,11 +710,14 @@ fn format_branch(
             String::new()
         };
         result = result.replace("%(upstream:short)", &upstream_name);
-        result = result.replace("%(upstream)", &if upstream_name.is_empty() {
-            String::new()
-        } else {
-            format!("refs/remotes/{upstream_name}")
-        });
+        result = result.replace(
+            "%(upstream)",
+            &if upstream_name.is_empty() {
+                String::new()
+            } else {
+                format!("refs/remotes/{upstream_name}")
+            },
+        );
     }
 
     // %(subject) — commit message first line
@@ -742,8 +767,7 @@ fn create_branch(
             .ok_or_else(|| anyhow::anyhow!("not a valid object name: 'HEAD'"))?,
     };
 
-    grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Create reflog if --create-reflog is specified
     if args.create_reflog {
@@ -768,7 +792,8 @@ fn create_branch(
             // Try to parse as remote tracking branch: origin/branch or refs/remotes/origin/branch
             let remote_ref = if sp.starts_with("refs/remotes/") {
                 Some(sp.to_string())
-            } else if let Ok(_) = grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}")) {
+            } else if grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}")).is_ok()
+            {
                 Some(format!("refs/remotes/{sp}"))
             } else {
                 None
@@ -781,7 +806,7 @@ fn create_branch(
                     let branch = &stripped[slash + 1..];
                     let config_path = repo.git_dir.join("config");
                     let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
-                    cfg.push_str(&format!("\n[branch \"{}\"]",name));
+                    cfg.push_str(&format!("\n[branch \"{}\"]", name));
                     cfg.push_str(&format!("\n\tremote = {}", remote));
                     cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
                     std::fs::write(&config_path, cfg)?;
@@ -828,8 +853,7 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         }
     }
 
-    grit_lib::refs::delete_ref(&repo.git_dir, &refname)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    grit_lib::refs::delete_ref(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // For files backend, clean up empty parent directories
     if !grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
@@ -898,18 +922,16 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
     // Check if new name already exists (unless force; -M or -m -f)
     let force = args.force_rename || args.force;
-    if !force {
-        if grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
+    if !force
+        && grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
             bail!("A branch named '{new_name}' already exists.");
         }
-    }
 
     // Delete the old ref FIRST to avoid d/f conflicts
     // (e.g., renaming m to m/m needs to remove refs/heads/m file before
     // creating refs/heads/m/ directory, or n/n to n needs to remove refs/heads/n/
     // directory before creating refs/heads/n file)
-    grit_lib::refs::delete_ref(&repo.git_dir, &old_ref)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    grit_lib::refs::delete_ref(&repo.git_dir, &old_ref).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Clean up empty parent directories for old ref
     let old_path = repo.git_dir.join(&old_ref);
@@ -1011,18 +1033,16 @@ fn update_worktree_heads(repo: &Repository, old_name: &str, new_name: &str) -> R
 
 /// Get reflog identity string.
 fn get_reflog_identity() -> String {
-    let name = std::env::var("GIT_COMMITTER_NAME")
-        .unwrap_or_else(|_| "Test User".to_string());
-    let email = std::env::var("GIT_COMMITTER_EMAIL")
-        .unwrap_or_else(|_| "test@example.com".to_string());
-    let date = std::env::var("GIT_COMMITTER_DATE")
-        .unwrap_or_else(|_| {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            format!("{now} +0000")
-        });
+    let name = std::env::var("GIT_COMMITTER_NAME").unwrap_or_else(|_| "Test User".to_string());
+    let email =
+        std::env::var("GIT_COMMITTER_EMAIL").unwrap_or_else(|_| "test@example.com".to_string());
+    let date = std::env::var("GIT_COMMITTER_DATE").unwrap_or_else(|_| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("{now} +0000")
+    });
     format!("{name} <{email}> {date}")
 }
 
@@ -1070,11 +1090,10 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("branch '{src_name}' not found."))?;
 
     // Check if dst already exists (unless force copy)
-    if !args.force_copy {
-        if grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
+    if !args.force_copy
+        && grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
             bail!("A branch named '{dst_name}' already exists.");
         }
-    }
 
     // Cannot copy onto itself if the result would be a d/f conflict
     if src_name == dst_name {
@@ -1211,7 +1230,6 @@ fn parse_signature_time(sig: &str) -> i64 {
         0
     }
 }
-
 
 /// Simple glob matching for branch pattern filtering.
 /// Supports `*` (match any chars) and `?` (match one char).

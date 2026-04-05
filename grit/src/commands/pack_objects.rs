@@ -98,7 +98,10 @@ pub fn run(args: Args) -> Result<()> {
         out.write_all(&pack_bytes)?;
         out.flush()?;
     } else {
-        let base = args.base_name.as_ref().ok_or_else(|| anyhow::anyhow!("no base name"))?;
+        let base = args
+            .base_name
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no base name"))?;
 
         // Pack hash is the trailing 20 bytes.
         let pack_hash = hex::encode(&pack_bytes[pack_bytes.len() - 20..]);
@@ -112,10 +115,7 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(&idx_path, &idx_bytes)?;
 
         println!("{pack_hash}");
-        eprintln!(
-            "Total {} (delta 0), reused 0 (delta 0)",
-            entries.len()
-        );
+        eprintln!("Total {} (delta 0), reused 0 (delta 0)", entries.len());
     }
 
     Ok(())
@@ -192,7 +192,7 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
                 pack_dir.join(format!("{}.idx", trimmed))
             };
             // If given a .pack, convert to .idx
-            let idx_path = if idx_path.extension().map_or(false, |e| e == "pack") {
+            let idx_path = if idx_path.extension().is_some_and(|e| e == "pack") {
                 idx_path.with_extension("idx")
             } else {
                 idx_path
@@ -262,8 +262,7 @@ fn resolve_ref(repo: &Repository, refname: &str) -> Result<ObjectId> {
         if path.is_file() {
             let content = std::fs::read_to_string(path)?;
             let trimmed = content.trim();
-            if trimmed.starts_with("ref: ") {
-                let target = &trimmed[5..];
+            if let Some(target) = trimmed.strip_prefix("ref: ") {
                 return resolve_ref(repo, target);
             }
             return ObjectId::from_hex(trimmed)
@@ -349,10 +348,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
 }
 
 /// Read an object from loose store or pack files.
-fn read_object_from_repo(
-    repo: &Repository,
-    oid: &ObjectId,
-) -> Result<grit_lib::objects::Object> {
+fn read_object_from_repo(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::objects::Object> {
     // Try loose first.
     if let Ok(obj) = repo.odb.read(oid) {
         return Ok(obj);
@@ -377,14 +373,20 @@ fn read_object_from_pack(
     indexes: &[grit_lib::pack::PackIndex],
 ) -> Result<grit_lib::objects::Object> {
     let mut pos = offset as usize;
-    let c = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
+    let c = pack_bytes
+        .get(pos)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
     pos += 1;
     let type_code = (c >> 4) & 0x7;
     let mut size = (c & 0x0f) as usize;
     let mut shift = 4u32;
     let mut cur = c;
     while cur & 0x80 != 0 {
-        cur = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
+        cur = pack_bytes
+            .get(pos)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
         pos += 1;
         size |= ((cur & 0x7f) as usize) << shift;
         shift += 7;
@@ -408,15 +410,22 @@ fn read_object_from_pack(
         }
         6 => {
             // OFS_DELTA
-            let mut c2 = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+            let mut c2 = pack_bytes
+                .get(pos)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("truncated"))?;
             pos += 1;
             let mut neg_off = (c2 & 0x7f) as u64;
             while c2 & 0x80 != 0 {
-                c2 = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+                c2 = pack_bytes
+                    .get(pos)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("truncated"))?;
                 pos += 1;
                 neg_off = ((neg_off + 1) << 7) | (c2 & 0x7f) as u64;
             }
-            let base_offset = offset.checked_sub(neg_off)
+            let base_offset = offset
+                .checked_sub(neg_off)
                 .ok_or_else(|| anyhow::anyhow!("ofs-delta underflow"))?;
 
             use flate2::read::ZlibDecoder;

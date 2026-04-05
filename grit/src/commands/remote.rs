@@ -152,7 +152,11 @@ fn cmd_list(verbose: bool) -> Result<()> {
     for (name, info) in &remotes {
         if verbose {
             println!("{}\t{} (fetch)", name, info.url);
-            println!("{}\t{} (push)", name, info.push_url.as_deref().unwrap_or(&info.url));
+            println!(
+                "{}\t{} (push)",
+                name,
+                info.push_url.as_deref().unwrap_or(&info.url)
+            );
         } else {
             println!("{}", name);
         }
@@ -218,8 +222,7 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
     let packed_refs_path = git_dir.join("packed-refs");
     if packed_refs_path.is_file() {
         let prefix = format!("refs/remotes/{}/", args.name);
-        let content = std::fs::read_to_string(&packed_refs_path)
-            .context("reading packed-refs")?;
+        let content = std::fs::read_to_string(&packed_refs_path).context("reading packed-refs")?;
         let filtered: String = content
             .lines()
             .filter(|line| {
@@ -241,8 +244,7 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
         } else {
             format!("{filtered}\n")
         };
-        std::fs::write(&packed_refs_path, filtered)
-            .context("writing packed-refs")?;
+        std::fs::write(&packed_refs_path, filtered).context("writing packed-refs")?;
     }
 
     Ok(())
@@ -302,8 +304,12 @@ fn cmd_rename(args: RenameArgs) -> Result<()> {
     let old_refs_dir = git_dir.join("refs/remotes").join(&args.old);
     let new_refs_dir = git_dir.join("refs/remotes").join(&args.new);
     if old_refs_dir.is_dir() {
-        std::fs::rename(&old_refs_dir, &new_refs_dir)
-            .with_context(|| format!("renaming refs/remotes/{} to refs/remotes/{}", args.old, args.new))?;
+        std::fs::rename(&old_refs_dir, &new_refs_dir).with_context(|| {
+            format!(
+                "renaming refs/remotes/{} to refs/remotes/{}",
+                args.old, args.new
+            )
+        })?;
     }
 
     Ok(())

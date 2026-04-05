@@ -113,8 +113,7 @@ pub fn run(args: Args) -> Result<()> {
             if !path.exists() {
                 return Ok(());
             }
-            let contents = fs::read_to_string(&path)
-                .context("reading credentials file")?;
+            let contents = fs::read_to_string(&path).context("reading credentials file")?;
             let stdout = io::stdout();
             let mut out = stdout.lock();
             for line in contents.lines() {
@@ -170,14 +169,12 @@ pub fn run(args: Args) -> Result<()> {
             if !path.exists() {
                 return Ok(());
             }
-            let contents = fs::read_to_string(&path)
-                .context("reading credentials file")?;
+            let contents = fs::read_to_string(&path).context("reading credentials file")?;
             let remaining: Vec<&str> = contents
                 .lines()
                 .filter(|line| !line_matches(line, &creds))
                 .collect();
-            fs::write(&path, remaining.join("\n") + "\n")
-                .context("writing credentials file")?;
+            fs::write(&path, remaining.join("\n") + "\n").context("writing credentials file")?;
         }
         other => bail!("unknown credential-store action: {other}"),
     }

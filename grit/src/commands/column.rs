@@ -192,7 +192,7 @@ fn format_columns(
     } else {
         (usable / col_width).max(1)
     };
-    let num_rows = (items.len() + num_cols - 1) / num_cols;
+    let num_rows = items.len().div_ceil(num_cols);
 
     for row in 0..num_rows {
         write!(out, "{indent}")?;
@@ -235,7 +235,7 @@ fn format_columns_dense(
     let mut best_col_widths: Vec<usize> = vec![0];
 
     for num_cols in 1..=items.len() {
-        let num_rows = (items.len() + num_cols - 1) / num_cols;
+        let num_rows = items.len().div_ceil(num_cols);
         let mut col_widths = vec![0usize; num_cols];
         for (i, item) in items.iter().enumerate() {
             let col = i / num_rows;
@@ -299,7 +299,7 @@ fn format_rows_dense(
     let mut best_col_widths: Vec<usize> = vec![0];
 
     for num_cols in 1..=items.len() {
-        let num_rows = (items.len() + num_cols - 1) / num_cols;
+        let num_rows = items.len().div_ceil(num_cols);
         let mut col_widths = vec![0usize; num_cols];
         for (i, item) in items.iter().enumerate() {
             let col = i % num_cols;

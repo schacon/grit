@@ -139,14 +139,18 @@ pub fn run(args: Args) -> Result<()> {
 
     // Validate the notes ref — refuse refs outside refs/notes/.
     if notes_ref.starts_with("refs/heads/") || notes_ref.starts_with("refs/remotes/") {
-        bail!("refusing to {} notes in {}", match &args.command {
-            Some(NotesSubcommand::Add { .. }) => "add",
-            Some(NotesSubcommand::Edit { .. }) => "edit",
-            Some(NotesSubcommand::Append { .. }) => "append",
-            Some(NotesSubcommand::Remove { .. }) => "remove",
-            Some(NotesSubcommand::Copy { .. }) => "copy",
-            _ => "use",
-        }, notes_ref);
+        bail!(
+            "refusing to {} notes in {}",
+            match &args.command {
+                Some(NotesSubcommand::Add { .. }) => "add",
+                Some(NotesSubcommand::Edit { .. }) => "edit",
+                Some(NotesSubcommand::Append { .. }) => "append",
+                Some(NotesSubcommand::Remove { .. }) => "remove",
+                Some(NotesSubcommand::Copy { .. }) => "copy",
+                _ => "use",
+            },
+            notes_ref
+        );
     }
     if notes_ref == "/" {
         bail!("refusing to use notes ref '/'");
@@ -163,17 +167,25 @@ pub fn run(args: Args) -> Result<()> {
             force,
             allow_empty,
             object,
-        }) => add_note(&repo, &notes_ref, object.as_deref(), message, file, force, allow_empty),
+        }) => add_note(
+            &repo,
+            &notes_ref,
+            object.as_deref(),
+            message,
+            file,
+            force,
+            allow_empty,
+        ),
         Some(NotesSubcommand::Show { object }) => show_note(&repo, &notes_ref, object.as_deref()),
         Some(NotesSubcommand::Remove { object }) => {
             remove_note(&repo, &notes_ref, object.as_deref())
         }
-        Some(NotesSubcommand::Append { message, file, object }) => {
-            append_note(&repo, &notes_ref, object.as_deref(), message, file)
-        }
-        Some(NotesSubcommand::Edit { object }) => {
-            edit_note(&repo, &notes_ref, object.as_deref())
-        }
+        Some(NotesSubcommand::Append {
+            message,
+            file,
+            object,
+        }) => append_note(&repo, &notes_ref, object.as_deref(), message, file),
+        Some(NotesSubcommand::Edit { object }) => edit_note(&repo, &notes_ref, object.as_deref()),
         Some(NotesSubcommand::Copy { force, from, to }) => {
             copy_note(&repo, &notes_ref, &from, &to, force)
         }
@@ -256,8 +268,12 @@ fn write_notes_commit(
         author: ident.clone(),
         committer: ident,
         encoding: None,
-        message: if message.ends_with('\n') { message.to_owned() } else { format!("{message}\n") },
-    raw_message: None,
+        message: if message.ends_with('\n') {
+            message.to_owned()
+        } else {
+            format!("{message}\n")
+        },
+        raw_message: None,
     };
 
     let commit_data = serialize_commit(&commit);
@@ -455,7 +471,12 @@ fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     if msg.trim().is_empty() {
         // Remove the note if the editor content is empty
         entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
-        write_notes_commit(repo, notes_ref, &entries, "Notes removed by 'git notes edit'")?;
+        write_notes_commit(
+            repo,
+            notes_ref,
+            &entries,
+            "Notes removed by 'git notes edit'",
+        )?;
         return Ok(());
     }
 
@@ -559,11 +580,10 @@ fn append_note(
     let existing_content = entries
         .iter()
         .find(|e| String::from_utf8_lossy(&e.name) == hex)
-        .map(|e| {
+        .and_then(|e| {
             let blob = repo.odb.read(&e.oid).ok()?;
             Some(String::from_utf8_lossy(&blob.data).into_owned())
-        })
-        .flatten();
+        });
 
     // Remove old entry if present
     entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
@@ -604,13 +624,7 @@ fn append_note(
 }
 
 /// Copy a note from one object to another.
-fn copy_note(
-    repo: &Repository,
-    notes_ref: &str,
-    from: &str,
-    to: &str,
-    force: bool,
-) -> Result<()> {
+fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bool) -> Result<()> {
     let from_oid = resolve_object(repo, Some(from))?;
     let to_oid = resolve_object(repo, Some(to))?;
     let from_hex = from_oid.to_hex();
@@ -626,7 +640,10 @@ fn copy_note(
     let note_blob_oid = source_entry.oid;
 
     // Check if target already has a note
-    if entries.iter().any(|e| String::from_utf8_lossy(&e.name) == to_hex) {
+    if entries
+        .iter()
+        .any(|e| String::from_utf8_lossy(&e.name) == to_hex)
+    {
         if !force {
             bail!(
                 "Cannot copy notes. Found existing notes for object {}. Use '-f' to overwrite existing notes",
@@ -644,24 +661,16 @@ fn copy_note(
 
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-    write_notes_commit(
-        repo,
-        notes_ref,
-        &entries,
-        "Notes added by 'git notes copy'",
-    )?;
+    write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes copy'")?;
 
     Ok(())
 }
 
 /// Merge notes refs. This is a simplified implementation that copies
 /// non-conflicting notes from the source ref into the target ref.
-fn merge_notes(
-    repo: &Repository,
-    notes_ref: &str,
-    source_ref: Option<&str>,
-) -> Result<()> {
-    let src = source_ref.ok_or_else(|| anyhow::anyhow!("must specify a notes ref to merge from"))?;
+fn merge_notes(repo: &Repository, notes_ref: &str, source_ref: Option<&str>) -> Result<()> {
+    let src =
+        source_ref.ok_or_else(|| anyhow::anyhow!("must specify a notes ref to merge from"))?;
 
     // Try the ref as-is first, then with refs/notes/ prefix
     let src_entries = if let Ok(entries) = read_notes_tree(repo, src) {
@@ -710,12 +719,7 @@ fn merge_notes(
 }
 
 /// Prune notes for objects that no longer exist in the object database.
-fn prune_notes(
-    repo: &Repository,
-    notes_ref: &str,
-    dry_run: bool,
-    verbose: bool,
-) -> Result<()> {
+fn prune_notes(repo: &Repository, notes_ref: &str, dry_run: bool, verbose: bool) -> Result<()> {
     let entries = read_notes_tree(repo, notes_ref)?;
     let mut kept = Vec::new();
     let mut pruned = false;
@@ -741,12 +745,7 @@ fn prune_notes(
     }
 
     if pruned && !dry_run {
-        write_notes_commit(
-            repo,
-            notes_ref,
-            &kept,
-            "Notes removed by 'git notes prune'",
-        )?;
+        write_notes_commit(repo, notes_ref, &kept, "Notes removed by 'git notes prune'")?;
     }
 
     Ok(())

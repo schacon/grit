@@ -211,8 +211,13 @@ fn format_date(ident: &str) -> String {
     };
     format!(
         "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
-        weekday, month, dt.day(),
-        dt.hour(), dt.minute(), dt.second(),
-        dt.year(), offset_str
+        weekday,
+        month,
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        dt.year(),
+        offset_str
     )
 }

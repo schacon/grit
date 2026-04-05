@@ -36,8 +36,7 @@ pub fn run(_args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let objects_dir = repo.odb.objects_dir();
 
-    let indexes = read_local_pack_indexes(objects_dir)
-        .context("reading pack indexes")?;
+    let indexes = read_local_pack_indexes(objects_dir).context("reading pack indexes")?;
 
     if indexes.len() < 2 {
         // With 0 or 1 packs, nothing can be redundant.

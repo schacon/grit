@@ -104,8 +104,8 @@ fn run_create(args: CreateArgs) -> Result<()> {
     let pack_data = build_pack_data(&objects)?;
 
     // Write bundle file.
-    let mut out = fs::File::create(&args.file)
-        .with_context(|| format!("cannot create {}", args.file))?;
+    let mut out =
+        fs::File::create(&args.file).with_context(|| format!("cannot create {}", args.file))?;
 
     // Bundle v2 header.
     out.write_all(b"# v2 git bundle\n")?;
@@ -119,10 +119,7 @@ fn run_create(args: CreateArgs) -> Result<()> {
     // Write pack data.
     out.write_all(&pack_data)?;
 
-    eprintln!(
-        "Total {} (delta 0), reused 0 (delta 0)",
-        objects.len()
-    );
+    eprintln!("Total {} (delta 0), reused 0 (delta 0)", objects.len());
 
     Ok(())
 }
@@ -148,8 +145,7 @@ fn collect_refs_for_bundle(
             if arg.starts_with('-') {
                 continue; // skip flags
             }
-            let oid = resolve_ref(repo, arg)
-                .with_context(|| format!("cannot resolve '{arg}'"))?;
+            let oid = resolve_ref(repo, arg).with_context(|| format!("cannot resolve '{arg}'"))?;
             // Use full ref name if the short name maps to a known ref
             let full_name = if arg.starts_with("refs/") || arg == "HEAD" {
                 arg.clone()
@@ -229,10 +225,7 @@ fn run_verify(args: VerifyArgs) -> Result<()> {
         bail!("bundle does not contain valid pack data");
     }
 
-    eprintln!(
-        "The bundle contains {} ref(s)",
-        refs.len()
-    );
+    eprintln!("The bundle contains {} ref(s)", refs.len());
     for (refname, oid) in &refs {
         eprintln!("{} {refname}", oid.to_hex());
     }
@@ -320,8 +313,7 @@ fn parse_bundle_header(data: &[u8]) -> Result<(BTreeMap<String, ObjectId>, usize
             break;
         }
 
-        let line_str = std::str::from_utf8(line)
-            .context("invalid UTF-8 in bundle header")?;
+        let line_str = std::str::from_utf8(line).context("invalid UTF-8 in bundle header")?;
 
         // Prerequisite lines start with '-'.
         if line_str.starts_with('-') {
@@ -405,10 +397,7 @@ fn walk_reachable(
             let data = &obj.data;
             let mut pos = 0;
             while pos < data.len() {
-                let nul = data[pos..]
-                    .iter()
-                    .position(|&b| b == 0)
-                    .map(|i| pos + i);
+                let nul = data[pos..].iter().position(|&b| b == 0).map(|i| pos + i);
                 if let Some(nul) = nul {
                     if nul + 21 <= data.len() {
                         if let Ok(entry_oid) = ObjectId::from_bytes(&data[nul + 1..nul + 21]) {
@@ -439,10 +428,7 @@ fn walk_reachable(
     Ok(())
 }
 
-fn read_object(
-    repo: &Repository,
-    oid: &ObjectId,
-) -> Result<grit_lib::objects::Object> {
+fn read_object(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::objects::Object> {
     if let Ok(obj) = repo.odb.read(oid) {
         return Ok(obj);
     }
@@ -464,14 +450,20 @@ fn read_from_pack(
     indexes: &[grit_lib::pack::PackIndex],
 ) -> Result<grit_lib::objects::Object> {
     let mut pos = offset as usize;
-    let c = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+    let c = pack_bytes
+        .get(pos)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("truncated"))?;
     pos += 1;
     let type_code = (c >> 4) & 0x7;
     let mut size = (c & 0x0f) as usize;
     let mut shift = 4u32;
     let mut cur = c;
     while cur & 0x80 != 0 {
-        cur = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+        cur = pack_bytes
+            .get(pos)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("truncated"))?;
         pos += 1;
         size |= ((cur & 0x7f) as usize) << shift;
         shift += 7;
@@ -493,15 +485,22 @@ fn read_from_pack(
             Ok(grit_lib::objects::Object::new(kind, data))
         }
         6 => {
-            let mut c2 = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+            let mut c2 = pack_bytes
+                .get(pos)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("truncated"))?;
             pos += 1;
             let mut neg_off = (c2 & 0x7f) as u64;
             while c2 & 0x80 != 0 {
-                c2 = pack_bytes.get(pos).copied().ok_or_else(|| anyhow::anyhow!("truncated"))?;
+                c2 = pack_bytes
+                    .get(pos)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("truncated"))?;
                 pos += 1;
                 neg_off = ((neg_off + 1) << 7) | (c2 & 0x7f) as u64;
             }
-            let base_offset = offset.checked_sub(neg_off)
+            let base_offset = offset
+                .checked_sub(neg_off)
                 .ok_or_else(|| anyhow::anyhow!("ofs-delta underflow"))?;
 
             use flate2::read::ZlibDecoder;

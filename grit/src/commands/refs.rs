@@ -157,16 +157,25 @@ fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> R
                         refspec_pattern: false,
                         normalize: false,
                     },
-                ).is_err() {
+                )
+                .is_err()
+                {
                     let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
-                    eprintln!("error: {} points to invalid ref target '{}'", name.display(), target);
+                    eprintln!(
+                        "error: {} points to invalid ref target '{}'",
+                        name.display(),
+                        target
+                    );
                     errors += 1;
                 }
             } else if trimmed.len() >= 40 {
                 if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
                     if !repo.odb.exists(&oid) {
                         let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
-                        eprintln!("error: {} points to missing object {trimmed}", name.display());
+                        eprintln!(
+                            "error: {} points to missing object {trimmed}",
+                            name.display()
+                        );
                         errors += 1;
                     }
                 }
@@ -177,8 +186,7 @@ fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> R
 }
 
 fn list_refs(repo: &Repository) -> Result<()> {
-    let refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")
-        .context("failed to list refs")?;
+    let refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/").context("failed to list refs")?;
     for (name, oid) in refs {
         println!("{oid} {name}");
     }
@@ -187,7 +195,10 @@ fn list_refs(repo: &Repository) -> Result<()> {
 
 fn optimize_refs(_repo: &Repository) -> Result<()> {
     // Delegate to pack-refs --all
-    crate::commands::pack_refs::run(crate::commands::pack_refs::Args { all: true, no_prune: false })
+    crate::commands::pack_refs::run(crate::commands::pack_refs::Args {
+        all: true,
+        no_prune: false,
+    })
 }
 
 /// Detect the current ref storage format of a repository.
@@ -314,7 +325,8 @@ fn migrate_files_to_reftable(repo: &Repository) -> Result<()> {
             grit_lib::reftable::reftable_write_symref(git_dir, refname, target, None, None)
                 .with_context(|| format!("writing symref {refname}"))?;
         } else {
-            let oid: grit_lib::objects::ObjectId = value.parse()
+            let oid: grit_lib::objects::ObjectId = value
+                .parse()
                 .with_context(|| format!("parsing oid for {refname}"))?;
             grit_lib::reftable::reftable_write_ref(git_dir, refname, &oid, None, None)
                 .with_context(|| format!("writing ref {refname}"))?;
@@ -338,8 +350,7 @@ fn migrate_reftable_to_files(repo: &Repository) -> Result<()> {
         .context("reading reftable refs")?;
 
     // Also read HEAD
-    let head_content = fs::read_to_string(git_dir.join("HEAD"))
-        .unwrap_or_default();
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).unwrap_or_default();
 
     // Update config to files format BEFORE writing
     update_config_ref_format(git_dir, "files")?;
@@ -377,8 +388,7 @@ fn migrate_reftable_to_files(repo: &Repository) -> Result<()> {
 /// Update the repository config to reflect the new ref storage format.
 fn update_config_ref_format(git_dir: &Path, format: &str) -> Result<()> {
     let config_path = git_dir.join("config");
-    let content = fs::read_to_string(&config_path)
-        .unwrap_or_default();
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
 
     let mut new_content = String::new();
     let mut in_extensions = false;

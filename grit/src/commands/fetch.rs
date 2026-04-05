@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigSet};
+use grit_lib::config::ConfigSet;
 use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
@@ -165,8 +165,12 @@ fn fetch_remote(
     };
 
     // Open the remote repository
-    let remote_repo = open_repo(&remote_path)
-        .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
+    let remote_repo = open_repo(&remote_path).with_context(|| {
+        format!(
+            "could not open remote repository at '{}'",
+            remote_path.display()
+        )
+    })?;
 
     // If command-line refspecs were provided, use those; otherwise use config
     let cli_refspecs = &args.refspecs;
@@ -248,7 +252,10 @@ fn fetch_remote(
                 (false, spec.as_str())
             };
             let (src, dst) = if let Some(idx) = spec_clean.find(':') {
-                (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+                (
+                    spec_clean[..idx].to_owned(),
+                    spec_clean[idx + 1..].to_owned(),
+                )
             } else {
                 (spec_clean.to_owned(), String::new())
             };
@@ -276,7 +283,8 @@ fn fetch_remote(
                             .with_context(|| format!("updating ref {local_ref}"))?;
 
                         if !args.quiet {
-                            let short = local_ref.strip_prefix("refs/heads/")
+                            let short = local_ref
+                                .strip_prefix("refs/heads/")
                                 .or_else(|| local_ref.strip_prefix("refs/tags/"))
                                 .unwrap_or(&local_ref);
                             let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
@@ -284,7 +292,8 @@ fn fetch_remote(
                                 None => eprintln!(" * [new branch]      {branch:<17} -> {short}"),
                                 Some(old) => eprintln!(
                                     "   {}..{}  {branch:<17} -> {short}",
-                                    &old.to_string()[..7], &remote_oid.to_string()[..7],
+                                    &old.to_string()[..7],
+                                    &remote_oid.to_string()[..7],
                                 ),
                             }
                         }
@@ -314,11 +323,10 @@ fn fetch_remote(
                 .with_context(|| format!("couldn't find remote ref '{}'", src))?;
 
             // Build FETCH_HEAD entry
-            let branch = remote_ref.strip_prefix("refs/heads/").unwrap_or(&remote_ref);
-            fetch_head_entries.push(format!(
-                "{}\tbranch '{}' of {url}",
-                remote_oid, branch,
-            ));
+            let branch = remote_ref
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&remote_ref);
+            fetch_head_entries.push(format!("{}\tbranch '{}' of {url}", remote_oid, branch,));
 
             // If a destination is specified, write the ref there
             if !dst.is_empty() {
@@ -333,8 +341,9 @@ fn fetch_remote(
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
                     if old != &remote_oid && !force {
-                        let is_ff = merge_base::is_ancestor(&remote_repo, old.clone(), remote_oid.clone())
-                            .unwrap_or(false);
+                        let is_ff =
+                            merge_base::is_ancestor(&remote_repo, *old, remote_oid)
+                                .unwrap_or(false);
                         if !is_ff {
                             eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
                             bail!("cannot fast-forward ref '{local_ref}'");
@@ -352,7 +361,8 @@ fn fetch_remote(
                         .with_context(|| format!("updating ref {local_ref}"))?;
 
                     if !args.quiet {
-                        let short = local_ref.strip_prefix("refs/heads/")
+                        let short = local_ref
+                            .strip_prefix("refs/heads/")
                             .or_else(|| local_ref.strip_prefix("refs/tags/"))
                             .unwrap_or(&local_ref);
                         match old_oid {
@@ -413,7 +423,10 @@ fn fetch_remote(
 
             if args.porcelain {
                 let zero = "0".repeat(40);
-                let old_hex = old_oid.as_ref().map(|o| o.to_string()).unwrap_or_else(|| zero.clone());
+                let old_hex = old_oid
+                    .as_ref()
+                    .map(|o| o.to_string())
+                    .unwrap_or_else(|| zero.clone());
                 let flag = if old_oid.is_none() { "*" } else { " " };
                 println!("{flag} {old_hex} {remote_oid} {local_ref}");
             } else if !args.quiet {
@@ -466,7 +479,9 @@ fn fetch_remote(
                 refs::delete_ref(git_dir, local_tag_ref)
                     .with_context(|| format!("pruning tag {local_tag_ref}"))?;
                 if !args.quiet {
-                    let tag_name = local_tag_ref.strip_prefix("refs/tags/").unwrap_or(local_tag_ref);
+                    let tag_name = local_tag_ref
+                        .strip_prefix("refs/tags/")
+                        .unwrap_or(local_tag_ref);
                     eprintln!(" - [deleted]         (none)     -> {tag_name}");
                 }
             }
@@ -516,10 +531,7 @@ fn fetch_remote(
             } else {
                 " "
             };
-            lines.push(format!(
-                "{flag} {} {} {local_ref}",
-                old_hex, remote_oid,
-            ));
+            lines.push(format!("{flag} {} {} {local_ref}", old_hex, remote_oid,));
         }
         let content = lines.join("\n") + "\n";
         fs::write(output_path, content).context("writing --output file")?;
@@ -529,18 +541,11 @@ fn fetch_remote(
 }
 
 /// Print a ref update line (to stderr, matching git).
-fn print_update(
-    old_oid: &Option<ObjectId>,
-    new_oid: &ObjectId,
-    branch: &str,
-    remote_name: &str,
-) {
+fn print_update(old_oid: &Option<ObjectId>, new_oid: &ObjectId, branch: &str, remote_name: &str) {
     let tracking = format!("{remote_name}/{branch}");
     match old_oid {
         None => {
-            eprintln!(
-                " * [new branch]      {branch:<17} -> {tracking}"
-            );
+            eprintln!(" * [new branch]      {branch:<17} -> {tracking}");
         }
         Some(old) => {
             eprintln!(
@@ -645,13 +650,10 @@ fn prune_stale_refs(
     let existing = refs::list_refs(git_dir, prefix)?;
     for (refname, _oid) in &existing {
         if !current_refs.contains(refname) {
-            refs::delete_ref(git_dir, refname)
-                .with_context(|| format!("pruning {refname}"))?;
+            refs::delete_ref(git_dir, refname).with_context(|| format!("pruning {refname}"))?;
             if !quiet {
                 // Show short name: "origin/branch" instead of "refs/remotes/origin/branch"
-                let short = refname
-                    .strip_prefix("refs/remotes/")
-                    .unwrap_or(refname);
+                let short = refname.strip_prefix("refs/remotes/").unwrap_or(refname);
                 let branch = short
                     .strip_prefix(&format!("{remote_name}/"))
                     .unwrap_or(short);
@@ -672,7 +674,7 @@ fn write_shallow_info(
     remote_repo: &Repository,
     depth: usize,
 ) -> Result<()> {
-    use grit_lib::objects::{ObjectKind, parse_commit};
+    use grit_lib::objects::{parse_commit, ObjectKind};
     use grit_lib::odb::Odb;
 
     let shallow_path = git_dir.join("shallow");
@@ -694,17 +696,15 @@ fn write_shallow_info(
         let mut oid = *tip_oid;
         for _ in 0..depth.saturating_sub(1) {
             match odb.read(&oid) {
-                Ok(obj) if obj.kind == ObjectKind::Commit => {
-                    match parse_commit(&obj.data) {
-                        Ok(c) => {
-                            if c.parents.is_empty() {
-                                break;
-                            }
-                            oid = c.parents[0];
+                Ok(obj) if obj.kind == ObjectKind::Commit => match parse_commit(&obj.data) {
+                    Ok(c) => {
+                        if c.parents.is_empty() {
+                            break;
                         }
-                        Err(_) => break,
+                        oid = c.parents[0];
                     }
-                }
+                    Err(_) => break,
+                },
                 _ => break,
             }
         }
@@ -816,7 +816,8 @@ fn match_glob_pattern<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
     if let Some(star_pos) = pattern.find('*') {
         let prefix = &pattern[..star_pos];
         let suffix = &pattern[star_pos + 1..];
-        if refname.starts_with(prefix) && refname.ends_with(suffix)
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
             && refname.len() >= prefix.len() + suffix.len()
         {
             Some(&refname[prefix.len()..refname.len() - suffix.len()])
@@ -849,7 +850,8 @@ fn copy_symrefs(
             if let Some(target) = content.strip_prefix("ref: ") {
                 // It's a symbolic ref — write it locally
                 let local_ref = dst_pattern.replacen('*', matched, 1);
-                let local_path = local_git_dir.join(local_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
+                let local_path =
+                    local_git_dir.join(local_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
                 if let Some(parent) = local_path.parent() {
                     fs::create_dir_all(parent)?;
                 }

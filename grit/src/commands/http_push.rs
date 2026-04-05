@@ -31,8 +31,5 @@ pub struct Args {
 
 /// Run `grit http-push`.
 pub fn run(args: Args) -> Result<()> {
-    bail!(
-        "http-push to '{}' is not yet implemented in grit",
-        args.url
-    )
+    bail!("http-push to '{}' is not yet implemented in grit", args.url)
 }

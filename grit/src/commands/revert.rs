@@ -86,7 +86,10 @@ fn do_revert(args: Args) -> Result<()> {
     // Save ORIG_HEAD before starting the revert sequence
     let head = resolve_head(git_dir)?;
     if let Some(head_oid) = head.oid() {
-        let _ = fs::write(git_dir.join("ORIG_HEAD"), format!("{}\n", head_oid.to_hex()));
+        let _ = fs::write(
+            git_dir.join("ORIG_HEAD"),
+            format!("{}\n", head_oid.to_hex()),
+        );
     }
 
     // Expand commit specs (including A..B ranges) into a list of specs
@@ -99,8 +102,8 @@ fn do_revert(args: Args) -> Result<()> {
         // Write todo with remaining commits
         let mut todo_entries: Vec<String> = Vec::new();
         for spec in &expanded {
-            let oid = resolve_revision(&repo, spec)
-                .with_context(|| format!("bad revision '{spec}'"))?;
+            let oid =
+                resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
             let obj = repo.odb.read(&oid)?;
             let commit = parse_commit(&obj.data)?;
             let subject = commit.message.lines().next().unwrap_or("");
@@ -160,10 +163,10 @@ fn expand_revert_specs(repo: &Repository, specs: &[String]) -> Result<Vec<String
     let mut result = Vec::new();
     for spec in specs {
         if let Some((lhs, rhs)) = spec.split_once("..") {
-            let exclude_oid = resolve_revision(repo, lhs)
-                .with_context(|| format!("bad revision '{lhs}'"))?;
-            let include_oid = resolve_revision(repo, rhs)
-                .with_context(|| format!("bad revision '{rhs}'"))?;
+            let exclude_oid =
+                resolve_revision(repo, lhs).with_context(|| format!("bad revision '{lhs}'"))?;
+            let include_oid =
+                resolve_revision(repo, rhs).with_context(|| format!("bad revision '{rhs}'"))?;
             let range_oids = walk_commit_range(repo, exclude_oid, include_oid)?;
             // Revert in reverse order (newest first)
             for oid in range_oids.into_iter().rev() {
@@ -177,11 +180,7 @@ fn expand_revert_specs(repo: &Repository, specs: &[String]) -> Result<Vec<String
 }
 
 /// Walk commits reachable from `tip` but not from `base`, oldest first.
-fn walk_commit_range(
-    repo: &Repository,
-    base: ObjectId,
-    tip: ObjectId,
-) -> Result<Vec<ObjectId>> {
+fn walk_commit_range(repo: &Repository, base: ObjectId, tip: ObjectId) -> Result<Vec<ObjectId>> {
     let mut result = Vec::new();
     let mut current = tip;
     loop {
@@ -209,8 +208,8 @@ fn revert_one_commit(
     let git_dir = &repo.git_dir;
 
     // Resolve commit to revert.
-    let commit_oid = resolve_revision(repo, spec)
-        .with_context(|| format!("bad revision '{spec}'"))?;
+    let commit_oid =
+        resolve_revision(repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
     let commit_obj = repo.odb.read(&commit_oid)?;
     if commit_obj.kind != ObjectKind::Commit {
         bail!("object {} is not a commit", commit_oid);
@@ -227,11 +226,7 @@ fn revert_one_commit(
             )
         })?;
         if m == 0 || m > commit.parents.len() {
-            bail!(
-                "commit {} does not have parent {}",
-                commit_oid,
-                m
-            );
+            bail!("commit {} does not have parent {}", commit_oid, m);
         }
         commit.parents[m - 1]
     } else if commit.parents.is_empty() {
@@ -264,12 +259,8 @@ fn revert_one_commit(
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
 
-    let merged_index = three_way_merge_with_content(
-        repo,
-        &base_entries,
-        &ours_entries,
-        &theirs_entries,
-    )?;
+    let merged_index =
+        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
 
     // Check for conflicts (any entry with stage != 0).
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
@@ -312,7 +303,10 @@ fn revert_one_commit(
             "Revert \"{subject}\"\n\nThis reverts commit {oid}.\n",
             oid = commit_oid.to_hex()
         );
-        fs::write(git_dir.join("REVERT_HEAD"), format!("{}\n", commit_oid.to_hex()))?;
+        fs::write(
+            git_dir.join("REVERT_HEAD"),
+            format!("{}\n", commit_oid.to_hex()),
+        )?;
         fs::write(git_dir.join("MERGE_MSG"), &msg)?;
 
         eprintln!(
@@ -347,7 +341,9 @@ fn revert_one_commit(
     // Print summary.
     let short_oid_new = {
         let new_head = resolve_head(git_dir)?;
-        let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+        let new_oid = new_head
+            .oid()
+            .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
         new_oid.to_hex()[..7].to_owned()
     };
     let branch = match &head {
@@ -403,7 +399,9 @@ fn do_continue() -> Result<()> {
     cleanup_revert_state(git_dir);
 
     let new_head = resolve_head(git_dir)?;
-    let new_oid = new_head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+    let new_oid = new_head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
     let short = &new_oid.to_hex()[..7];
     let branch = match &head {
         HeadState::Branch { short_name, .. } => short_name.as_str(),
@@ -422,9 +420,7 @@ fn do_abort() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("REVERT_HEAD").exists()
-        && !git_dir.join("sequencer").join("todo").exists()
-    {
+    if !git_dir.join("REVERT_HEAD").exists() && !git_dir.join("sequencer").join("todo").exists() {
         bail!("error: no revert in progress");
     }
 

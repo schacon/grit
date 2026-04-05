@@ -36,11 +36,9 @@ pub fn run(args: Args) -> Result<()> {
 
     // Load git config to find the repo list.
     let config = if let Ok(repo) = Repository::discover(None) {
-        ConfigSet::load(Some(&repo.git_dir), true)
-            .context("loading config")?
+        ConfigSet::load(Some(&repo.git_dir), true).context("loading config")?
     } else {
-        ConfigSet::load(None, true)
-            .context("loading config")?
+        ConfigSet::load(None, true).context("loading config")?
     };
 
     let repos = config.get_all(&args.config_key);
@@ -51,8 +49,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // git for-each-repo runs `git <command>` in each repo.
     // Find our own binary path to use as the git executable.
-    let git_exe = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("git"));
+    let git_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("git"));
     let cmd_name = git_exe.as_os_str();
     let cmd_args = &args.command[..];
 

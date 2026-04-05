@@ -56,8 +56,8 @@ pub fn run(args: Args) -> Result<()> {
             anyhow::bail!("could not verify commit '{rev}'");
         }
 
-        let commit = parse_commit(&obj.data)
-            .with_context(|| format!("failed to parse commit '{rev}'"))?;
+        let commit =
+            parse_commit(&obj.data).with_context(|| format!("failed to parse commit '{rev}'"))?;
 
         if args.verbose {
             writeln!(out, "tree {}", commit.tree.to_hex())?;

@@ -83,7 +83,14 @@ pub fn run(args: Args) -> Result<()> {
         run_ref_transaction_hook(&repo, &old_oid, &new_oid, &target_refname)?;
         delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
         if let Some(msg) = &args.log_message {
-            let _ = append_reflog(&repo.git_dir, &target_refname, &old_oid, &new_oid, "grit <grit> 0 +0000", msg);
+            let _ = append_reflog(
+                &repo.git_dir,
+                &target_refname,
+                &old_oid,
+                &new_oid,
+                "grit <grit> 0 +0000",
+                msg,
+            );
         }
         return Ok(());
     }
@@ -379,7 +386,12 @@ fn run_ref_transaction_hook(
     let stdin_bytes = stdin_data.as_bytes();
 
     // Phase 1: preparing — abort if hook fails
-    match run_hook(repo, "reference-transaction", &["preparing"], Some(stdin_bytes)) {
+    match run_hook(
+        repo,
+        "reference-transaction",
+        &["preparing"],
+        Some(stdin_bytes),
+    ) {
         HookResult::Failed(code) => {
             bail!("reference-transaction hook (preparing) exited with status {code}");
         }
@@ -388,10 +400,20 @@ fn run_ref_transaction_hook(
     }
 
     // Phase 2: prepared — informational (don't abort)
-    let _ = run_hook(repo, "reference-transaction", &["prepared"], Some(stdin_bytes));
+    let _ = run_hook(
+        repo,
+        "reference-transaction",
+        &["prepared"],
+        Some(stdin_bytes),
+    );
 
     // Phase 3: committed — informational (don't abort)
-    let _ = run_hook(repo, "reference-transaction", &["committed"], Some(stdin_bytes));
+    let _ = run_hook(
+        repo,
+        "reference-transaction",
+        &["committed"],
+        Some(stdin_bytes),
+    );
 
     Ok(())
 }

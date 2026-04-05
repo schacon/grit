@@ -99,7 +99,12 @@ fn run_maintenance(args: &RunArgs) -> Result<()> {
     let tasks = match args.schedule.as_deref() {
         Some("hourly") => vec!["prefetch", "loose-objects", "incremental-repack"],
         Some("daily") => vec!["loose-objects", "incremental-repack", "pack-refs"],
-        Some("weekly") => vec!["loose-objects", "incremental-repack", "pack-refs", "commit-graph"],
+        Some("weekly") => vec![
+            "loose-objects",
+            "incremental-repack",
+            "pack-refs",
+            "commit-graph",
+        ],
         _ => vec!["gc"],
     };
 
@@ -111,10 +116,7 @@ fn run_maintenance(args: &RunArgs) -> Result<()> {
 }
 
 fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
-    let work_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(&repo.git_dir);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
 
     match task {
         "gc" => {
@@ -164,7 +166,7 @@ fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
                 .current_dir(work_dir)
                 .status();
             // multi-pack-index may not be available; silently ignore failure.
-            if let Err(_) = status {
+            if status.is_err() {
                 // Fallback: do a regular repack.
                 let _ = Command::new(git_bin)
                     .args(["repack", "-d"])
@@ -197,8 +199,7 @@ fn run_start(args: &StartArgs) -> Result<()> {
     let _ = run_register();
 
     let scheduler = args.scheduler.as_deref().unwrap_or(detect_scheduler());
-    let grit_bin = std::env::current_exe()
-        .unwrap_or_else(|_| PathBuf::from("grit"));
+    let grit_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
 
     match scheduler {
         "crontab" => install_crontab(&grit_bin)?,

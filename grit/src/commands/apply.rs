@@ -160,14 +160,22 @@ impl FilePatch {
     /// Otherwise prefer new_path.
     fn effective_path(&self) -> Option<&str> {
         if self.is_deleted {
-            return self.old_path.as_deref().filter(|p| *p != "/dev/null")
+            return self
+                .old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
                 .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"));
         }
         if self.is_new {
-            return self.new_path.as_deref().filter(|p| *p != "/dev/null")
+            return self
+                .new_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
                 .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"));
         }
-        self.new_path.as_deref().filter(|p| *p != "/dev/null")
+        self.new_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
             .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"))
     }
 }
@@ -265,7 +273,10 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             }
 
             patches.push(fp);
-        } else if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
+        } else if lines[i].starts_with("--- ")
+            && i + 1 < lines.len()
+            && lines[i + 1].starts_with("+++ ")
+        {
             // Bare unified diff without "diff --git" header
             let mut fp = FilePatch {
                 old_path: None,
@@ -337,8 +348,8 @@ fn split_diff_git_paths(s: &str) -> Option<(String, String)> {
 /// Parse a single hunk starting at line `i` (which should be an `@@` line).
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
     let header = lines[start];
-    let (old_start, old_count, new_start, new_count) = parse_hunk_header(header)
-        .with_context(|| format!("invalid hunk header: {header}"))?;
+    let (old_start, old_count, new_start, new_count) =
+        parse_hunk_header(header).with_context(|| format!("invalid hunk header: {header}"))?;
 
     let mut hunk = Hunk {
         old_start,
@@ -502,11 +513,15 @@ fn reverse_patches(patches: &mut [FilePatch]) {
         for hunk in &mut fp.hunks {
             std::mem::swap(&mut hunk.old_start, &mut hunk.new_start);
             std::mem::swap(&mut hunk.old_count, &mut hunk.new_count);
-            let new_lines: Vec<HunkLine> = hunk.lines.drain(..).map(|hl| match hl {
-                HunkLine::Add(s) => HunkLine::Remove(s),
-                HunkLine::Remove(s) => HunkLine::Add(s),
-                other => other,
-            }).collect();
+            let new_lines: Vec<HunkLine> = hunk
+                .lines
+                .drain(..)
+                .map(|hl| match hl {
+                    HunkLine::Add(s) => HunkLine::Remove(s),
+                    HunkLine::Remove(s) => HunkLine::Add(s),
+                    other => other,
+                })
+                .collect();
             hunk.lines = new_lines;
         }
     }
@@ -530,7 +545,11 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     let mut old_idx: usize = 0; // 0-based index into old_lines
 
     for hunk in hunks {
-        let hunk_start = if hunk.old_start == 0 { 0 } else { hunk.old_start - 1 };
+        let hunk_start = if hunk.old_start == 0 {
+            0
+        } else {
+            hunk.old_start - 1
+        };
 
         // Copy lines before this hunk
         while old_idx < hunk_start && old_idx < old_lines.len() {
@@ -601,7 +620,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     // Check if the last hunk has a no-newline marker for the new side.
     // The new side ends without newline if the last line that contributes
     // to the new side (Add or Context) is immediately followed by NoNewline.
-    let ends_no_newline = hunks.last().map_or(false, |h| {
+    let ends_no_newline = hunks.last().is_some_and(|h| {
         let mut last_was_new_side = false; // true if last meaningful line goes to new side
         let mut saw_no_newline = false;
         for hl in &h.lines {
@@ -758,11 +777,7 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
         (add as f64 / total as f64 * max_width as f64).round() as usize
     };
     let minus_width = width - plus_width;
-    format!(
-        "{}{}",
-        "+".repeat(plus_width),
-        "-".repeat(minus_width)
-    )
+    format!("{}{}", "+".repeat(plus_width), "-".repeat(minus_width))
 }
 
 // ---------------------------------------------------------------------------
@@ -787,7 +802,8 @@ pub fn run(args: Args) -> Result<()> {
                     .context("failed to read patch from stdin")?;
                 s
             } else {
-                fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?
+                fs::read_to_string(path)
+                    .with_context(|| format!("cannot read {}", path.display()))?
             };
             buf.push_str(&content);
             if !content.ends_with('\n') {
@@ -858,18 +874,15 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
                     fs::create_dir_all(parent)?;
                 }
             }
-            let content = apply_hunks("", &fp.hunks)
-                .with_context(|| format!("failed to apply hunks for new file {}", path.display()))?;
+            let content = apply_hunks("", &fp.hunks).with_context(|| {
+                format!("failed to apply hunks for new file {}", path.display())
+            })?;
             fs::write(&path, content.as_bytes())
                 .with_context(|| format!("failed to write {}", path.display()))?;
 
             // Set executable if mode is 100755
             #[cfg(unix)]
-            if fp
-                .new_mode
-                .as_deref()
-                .map_or(false, |m| m == "100755")
-            {
+            if fp.new_mode.as_deref() == Some("100755") {
                 use std::os::unix::fs::PermissionsExt;
                 let perms = fs::Permissions::from_mode(0o755);
                 fs::set_permissions(&path, perms)?;
@@ -1005,8 +1018,12 @@ fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
                 bail!("{}: already exists", path.display());
             }
             // Verify hunks apply to empty content
-            apply_hunks("", &fp.hunks)
-                .with_context(|| format!("patch does not apply cleanly to new file {}", path.display()))?;
+            apply_hunks("", &fp.hunks).with_context(|| {
+                format!(
+                    "patch does not apply cleanly to new file {}",
+                    path.display()
+                )
+            })?;
             continue;
         }
 

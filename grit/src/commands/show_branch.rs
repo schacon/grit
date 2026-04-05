@@ -58,12 +58,7 @@ pub fn run(args: Args) -> Result<()> {
 
         let subject = match repo.odb.read(oid) {
             Ok(obj) => match parse_commit(&obj.data) {
-                Ok(commit) => commit
-                    .message
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .to_owned(),
+                Ok(commit) => commit.message.lines().next().unwrap_or("").to_owned(),
                 Err(_) => String::new(),
             },
             Err(_) => String::new(),
@@ -82,11 +77,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Recursively collect branches from the heads directory.
-fn collect_branches(
-    dir: &Path,
-    prefix: &str,
-    out: &mut Vec<(String, ObjectId)>,
-) -> Result<()> {
+fn collect_branches(dir: &Path, prefix: &str, out: &mut Vec<(String, ObjectId)>) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return Ok(()),

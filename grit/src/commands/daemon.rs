@@ -72,10 +72,7 @@ fn validate_int(value: &str, name: &str) {
     match value.parse::<i64>() {
         Ok(_) => {}
         _ => {
-            eprintln!(
-                "fatal: invalid {} '{}', expecting an integer",
-                name, value
-            );
+            eprintln!("fatal: invalid {} '{}', expecting an integer", name, value);
             std::process::exit(128);
         }
     }

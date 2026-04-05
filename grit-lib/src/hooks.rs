@@ -83,10 +83,7 @@ pub fn run_hook(
         return HookResult::NotFound;
     }
 
-    let work_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(&repo.git_dir);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
 
     let mut cmd = Command::new(&hook_path);
     cmd.args(args)
@@ -149,7 +146,7 @@ pub fn run_hook_in_git_dir(
 
     let mut cmd = Command::new(&hook_path);
     cmd.args(args)
-        .current_dir(&repo.git_dir)  // receive-side hooks run from GIT_DIR
+        .current_dir(&repo.git_dir) // receive-side hooks run from GIT_DIR
         .env("GIT_DIR", &repo.git_dir)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -213,10 +210,7 @@ pub fn run_hook_with_env(
         return (HookResult::NotFound, Vec::new());
     }
 
-    let work_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(&repo.git_dir);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
 
     let mut cmd = Command::new(&hook_path);
     cmd.args(args)
@@ -282,10 +276,7 @@ pub fn run_hook_capture(
         return (HookResult::NotFound, Vec::new());
     }
 
-    let work_dir = repo
-        .work_tree
-        .as_deref()
-        .unwrap_or(&repo.git_dir);
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
 
     let mut cmd = Command::new(&hook_path);
     cmd.args(args)

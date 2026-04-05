@@ -36,8 +36,12 @@ pub fn run(args: Args) -> Result<()> {
     let git_dir = resolve_git_dir()?;
 
     let remote_path = PathBuf::from(&args.remote);
-    let remote_repo = open_repo(&remote_path)
-        .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
+    let remote_repo = open_repo(&remote_path).with_context(|| {
+        format!(
+            "could not open remote repository at '{}'",
+            remote_path.display()
+        )
+    })?;
 
     // Enumerate remote refs
     let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
@@ -45,26 +49,28 @@ pub fn run(args: Args) -> Result<()> {
 
     // Filter refs if specific ones were requested
     let requested_refs: Vec<(String, ObjectId)> = if args.refs.is_empty() {
-        remote_heads.into_iter().chain(remote_tags.into_iter()).collect()
+        remote_heads
+            .into_iter()
+            .chain(remote_tags)
+            .collect()
     } else {
         let all_refs: Vec<(String, ObjectId)> = remote_heads
             .into_iter()
-            .chain(remote_tags.into_iter())
+            .chain(remote_tags)
             .collect();
         all_refs
             .into_iter()
             .filter(|(name, _)| {
-                args.refs.iter().any(|r| {
-                    name == r || name.ends_with(&format!("/{r}"))
-                })
+                args.refs
+                    .iter()
+                    .any(|r| name == r || name.ends_with(&format!("/{r}")))
             })
             .collect()
     };
 
     if !args.dry_run {
         // Copy objects from remote → local
-        copy_objects(&remote_repo.git_dir, &git_dir)
-            .context("copying objects from remote")?;
+        copy_objects(&remote_repo.git_dir, &git_dir).context("copying objects from remote")?;
     }
 
     // Print fetched refs (plumbing output: <oid> <refname>)
@@ -117,11 +123,10 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() {
-                    if fs::hard_link(entry.path(), &dst_file).is_err() {
+                if !dst_file.exists()
+                    && fs::hard_link(entry.path(), &dst_file).is_err() {
                         fs::copy(entry.path(), &dst_file)?;
                     }
-                }
             }
         }
     }

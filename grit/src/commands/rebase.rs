@@ -178,29 +178,28 @@ fn do_rebase(args: Args) -> Result<()> {
 
     // Check for dirty worktree/index
     {
-        let work_tree = repo.work_tree.as_deref()
+        let work_tree = repo
+            .work_tree
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-        let idx = Index::load(&repo.index_path())
-            .context("failed to read index")?;
-        let head_tree = resolve_head(git_dir)?
-            .oid()
-            .and_then(|oid| {
-                let obj = repo.odb.read(oid).ok()?;
-                parse_commit(&obj.data).ok().map(|c| c.tree)
-            });
-        let staged = grit_lib::diff::diff_index_to_tree(
-            &repo.odb, &idx, head_tree.as_ref(),
-        )?;
+        let idx = Index::load(&repo.index_path()).context("failed to read index")?;
+        let head_tree = resolve_head(git_dir)?.oid().and_then(|oid| {
+            let obj = repo.odb.read(oid).ok()?;
+            parse_commit(&obj.data).ok().map(|c| c.tree)
+        });
+        let staged = grit_lib::diff::diff_index_to_tree(&repo.odb, &idx, head_tree.as_ref())?;
         if !staged.is_empty() {
-            bail!("cannot rebase: your index contains uncommitted changes.\n\
-                   Please commit or stash them.");
+            bail!(
+                "cannot rebase: your index contains uncommitted changes.\n\
+                   Please commit or stash them."
+            );
         }
-        let unstaged = grit_lib::diff::diff_index_to_worktree(
-            &repo.odb, &idx, work_tree,
-        )?;
+        let unstaged = grit_lib::diff::diff_index_to_worktree(&repo.odb, &idx, work_tree)?;
         if !unstaged.is_empty() {
-            bail!("error: cannot rebase: You have unstaged changes.\n\
-                   Please commit or stash them.");
+            bail!(
+                "error: cannot rebase: You have unstaged changes.\n\
+                   Please commit or stash them."
+            );
         }
     }
 
@@ -222,12 +221,10 @@ fn do_rebase(args: Args) -> Result<()> {
 
     // Resolve onto (defaults to upstream, or merge-base with --keep-base)
     let onto_oid = if let Some(ref onto_spec) = args.onto {
-        resolve_revision(&repo, onto_spec)
-            .with_context(|| format!("bad revision '{onto_spec}'"))?
+        resolve_revision(&repo, onto_spec).with_context(|| format!("bad revision '{onto_spec}'"))?
     } else if args.keep_base {
         // --keep-base: onto = merge-base(upstream, HEAD)
-        find_merge_base(&repo, upstream_oid, head_oid_early)
-            .unwrap_or(upstream_oid)
+        find_merge_base(&repo, upstream_oid, head_oid_early).unwrap_or(upstream_oid)
     } else {
         upstream_oid
     };
@@ -237,12 +234,11 @@ fn do_rebase(args: Args) -> Result<()> {
     let head_oid = head_oid_early;
 
     // Check if already up to date (skip if --no-ff forces replay)
-    if !args.no_ff {
-        if head_oid == onto_oid {
+    if !args.no_ff
+        && head_oid == onto_oid {
             eprintln!("Current branch is up to date.");
             return Ok(());
         }
-    }
 
     // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
     let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
@@ -253,7 +249,7 @@ fn do_rebase(args: Args) -> Result<()> {
         let first = &commits[0];
         let obj = repo.odb.read(first).context("reading first commit")?;
         let cd = parse_commit(&obj.data)?;
-        if cd.parents.iter().any(|p| *p == onto_oid) {
+        if cd.parents.contains(&onto_oid) {
             // The commits are already on top of onto — noop
             eprintln!("Current branch is up to date.");
             return Ok(());
@@ -274,12 +270,8 @@ fn do_rebase(args: Args) -> Result<()> {
         if let HeadState::Branch { refname, .. } = &head {
             let msg = format!("rebase (no-ff): checkout {}", onto_oid.to_hex());
             let ident = "grit <grit> 0 +0000";
-            let _ = append_reflog(
-                git_dir, refname, &head_oid, &head_oid, ident, &msg,
-            );
-            let _ = append_reflog(
-                git_dir, "HEAD", &head_oid, &head_oid, ident, &msg,
-            );
+            let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, ident, &msg);
+            let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, ident, &msg);
         }
         return Ok(());
     }
@@ -319,7 +311,10 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
 
     // Save ORIG_HEAD
-    fs::write(git_dir.join("ORIG_HEAD"), format!("{}\n", head_oid.to_hex()))?;
+    fs::write(
+        git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
 
     eprintln!(
         "rebasing {} commits onto {}",
@@ -399,25 +394,24 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
 
         // Read HEAD before cherry-pick for reflog
         let old_head = resolve_head(git_dir)?
-            .oid().cloned().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+            .oid()
+            .cloned()
+            .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
 
         match cherry_pick_for_rebase(repo, &commit_oid) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
-                let new_oid = *head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
+                let new_oid = *head
+                    .oid()
+                    .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?;
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
                 let subject = commit.message.lines().next().unwrap_or("");
-                eprintln!(
-                    "Applying: {}",
-                    subject
-                );
+                eprintln!("Applying: {}", subject);
                 // Add reflog entry for HEAD
                 let msg = format!("rebase: {}", subject);
                 let ident = "grit <grit> 0 +0000";
-                let _ = append_reflog(
-                    git_dir, "HEAD", &old_head, &new_oid, ident, &msg,
-                );
+                let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, ident, &msg);
 
                 // Run --exec command if present
                 if let Ok(exec_cmd) = fs::read_to_string(rb_dir.join("exec")) {
@@ -488,7 +482,9 @@ fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()
     let commit = parse_commit(&commit_obj.data)?;
 
     // Parent tree (base for the cherry-pick)
-    let parent_oid = commit.parents.first()
+    let parent_oid = commit
+        .parents
+        .first()
         .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick root commit in rebase"))?;
     let parent_obj = repo.odb.read(parent_oid)?;
     let parent_commit = parse_commit(&parent_obj.data)?;
@@ -512,12 +508,8 @@ fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
-    let merged_index = three_way_merge_with_content(
-        repo,
-        &base_entries,
-        &ours_entries,
-        &theirs_entries,
-    )?;
+    let merged_index =
+        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
 
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
 
@@ -571,7 +563,10 @@ fn finish_rebase(repo: &Repository) -> Result<()> {
     let head_name = head_name.trim();
 
     let head = resolve_head(git_dir)?;
-    let new_tip = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?.to_owned();
+    let new_tip = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?
+        .to_owned();
 
     if head_name != "detached HEAD" {
         // Update the branch ref to point to the new tip
@@ -590,7 +585,11 @@ fn finish_rebase(repo: &Repository) -> Result<()> {
 
     eprintln!(
         "Successfully rebased and updated {}.",
-        if head_name == "detached HEAD" { "HEAD" } else { head_name }
+        if head_name == "detached HEAD" {
+            "HEAD"
+        } else {
+            head_name
+        }
     );
 
     Ok(())
@@ -632,7 +631,10 @@ fn do_continue() -> Result<()> {
     };
 
     let head = resolve_head(git_dir)?;
-    let head_oid = head.oid().ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?.to_owned();
+    let head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("HEAD has no OID"))?
+        .to_owned();
 
     let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
     let config = ConfigSet::load(Some(git_dir), true)?;
@@ -735,7 +737,10 @@ fn do_abort() -> Result<()> {
         // Re-attach HEAD
         fs::write(git_dir.join("HEAD"), format!("ref: {}\n", head_name))?;
     } else {
-        fs::write(git_dir.join("HEAD"), format!("{}\n", orig_head_oid.to_hex()))?;
+        fs::write(
+            git_dir.join("HEAD"),
+            format!("{}\n", orig_head_oid.to_hex()),
+        )?;
     }
 
     // Restore index and worktree to orig HEAD

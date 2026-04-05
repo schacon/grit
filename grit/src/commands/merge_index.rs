@@ -42,8 +42,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None)?;
-    let index = Index::load(&repo.index_path())
-        .context("loading index")?;
+    let index = Index::load(&repo.index_path()).context("loading index")?;
 
     // Collect unmerged entries by path
     let mut unmerged: BTreeMap<Vec<u8>, UnmergedEntry> = BTreeMap::new();
@@ -55,7 +54,7 @@ pub fn run(args: Args) -> Result<()> {
         let ue = unmerged.entry(entry.path.clone()).or_insert(UnmergedEntry {
             stages: [None, None, None],
         });
-        if stage >= 1 && stage <= 3 {
+        if (1..=3).contains(&stage) {
             ue.stages[(stage - 1) as usize] = Some((entry.oid, entry.mode));
         }
     }
@@ -85,9 +84,7 @@ pub fn run(args: Args) -> Result<()> {
         // Build arguments for the merge program:
         // <merge-program> <base-oid> <stage1-mode> <ours-oid> <stage2-mode> <theirs-oid> <stage3-mode> <path>
         // If a stage is missing, use empty SHA-1 (all zeros) and mode 0
-        let empty_oid = ObjectId::from_hex(
-            "0000000000000000000000000000000000000000",
-        )?;
+        let empty_oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
 
         let (oid1, mode1) = ue.stages[0].unwrap_or((empty_oid, 0));
         let (oid2, mode2) = ue.stages[1].unwrap_or((empty_oid, 0));
@@ -102,9 +99,7 @@ pub fn run(args: Args) -> Result<()> {
             .arg(format!("{:o}", mode3))
             .arg(path_str.as_ref())
             .status()
-            .with_context(|| {
-                format!("running merge program {:?}", args.merge_program)
-            })?;
+            .with_context(|| format!("running merge program {:?}", args.merge_program))?;
 
         if !status.success() {
             had_error = true;

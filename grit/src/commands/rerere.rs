@@ -224,7 +224,10 @@ fn cmd_diff(repo: &Repository, rerere_dir: &Path) -> Result<()> {
                 writeln!(out, "+++ b/{path}")?;
 
                 // Emit a basic unified diff.
-                for diff in similar::TextDiff::from_lines(&recorded, &content).unified_diff().iter_hunks() {
+                for diff in similar::TextDiff::from_lines(&recorded, &content)
+                    .unified_diff()
+                    .iter_hunks()
+                {
                     write!(out, "{diff}")?;
                 }
             }

@@ -152,29 +152,39 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let repo = grit_lib::repo::Repository::discover(None)
-        .context("not a git repository")?;
+    let repo = grit_lib::repo::Repository::discover(None).context("not a git repository")?;
 
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
 
     // Resolve from address
-    let from = args.from.clone().or_else(|| {
-        config.get("sendemail.from").or_else(|| {
-            let name = config.get("user.name").unwrap_or_else(|| "User".to_string());
-            let email = config.get("user.email").unwrap_or_else(|| "user@example.com".to_string());
-            Some(format!("{} <{}>", name, email))
+    let from = args
+        .from
+        .clone()
+        .or_else(|| {
+            config.get("sendemail.from").or_else(|| {
+                let name = config
+                    .get("user.name")
+                    .unwrap_or_else(|| "User".to_string());
+                let email = config
+                    .get("user.email")
+                    .unwrap_or_else(|| "user@example.com".to_string());
+                Some(format!("{} <{}>", name, email))
+            })
         })
-    }).unwrap_or_else(|| "user@example.com".to_string());
+        .unwrap_or_else(|| "user@example.com".to_string());
 
     // Resolve SMTP server
-    let smtp_server = args.smtp_server.clone().or_else(|| {
-        config.get("sendemail.smtpserver")
-    });
+    let smtp_server = args
+        .smtp_server
+        .clone()
+        .or_else(|| config.get("sendemail.smtpserver"));
 
     // Resolve confirm mode
-    let confirm = args.confirm.clone().or_else(|| {
-        config.get("sendemail.confirm")
-    }).unwrap_or_else(|| "auto".to_string());
+    let confirm = args
+        .confirm
+        .clone()
+        .or_else(|| config.get("sendemail.confirm"))
+        .unwrap_or_else(|| "auto".to_string());
 
     // Collect patches
     let patches = collect_patches(&args, &repo)?;
@@ -329,7 +339,10 @@ pub fn run(args: Args) -> Result<()> {
                 }
             } else {
                 // It's an SMTP host — not yet implemented
-                bail!("SMTP host '{}' sending not yet implemented; use a sendmail-compatible command", server);
+                bail!(
+                    "SMTP host '{}' sending not yet implemented; use a sendmail-compatible command",
+                    server
+                );
             }
         } else {
             // Try /usr/sbin/sendmail
@@ -378,11 +391,7 @@ fn collect_patches(args: &Args, repo: &grit_lib::repo::Repository) -> Result<Vec
                 let mut files: Vec<PathBuf> = entries
                     .flatten()
                     .map(|e| e.path())
-                    .filter(|p| {
-                        p.extension()
-                            .map(|e| e == "patch")
-                            .unwrap_or(false)
-                    })
+                    .filter(|p| p.extension().map(|e| e == "patch").unwrap_or(false))
                     .collect();
                 files.sort();
                 patches.extend(files);
@@ -392,9 +401,7 @@ fn collect_patches(args: &Args, repo: &grit_lib::repo::Repository) -> Result<Vec
             let git = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("git"));
             let output = Command::new(&git)
                 .args(["format-patch", "--stdout", p])
-                .current_dir(
-                    repo.work_tree.as_deref().unwrap_or(&repo.git_dir),
-                )
+                .current_dir(repo.work_tree.as_deref().unwrap_or(&repo.git_dir))
                 .output()
                 .context("failed to run format-patch")?;
 

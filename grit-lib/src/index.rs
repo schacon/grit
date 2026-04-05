@@ -153,7 +153,7 @@ pub fn get_index_format_from_env() -> Option<u32> {
         return None;
     }
     match val.parse::<u32>() {
-        Ok(v) if v >= INDEX_FORMAT_LB && v <= INDEX_FORMAT_UB => Some(v),
+        Ok(v) if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) => Some(v),
         _ => {
             eprintln!(
                 "warning: GIT_INDEX_VERSION set, but the value is invalid.\n\
@@ -274,7 +274,11 @@ impl Index {
         // Always write v2 or v3 (we don't implement v4 serialization)
         let write_version = if self.version == 4 {
             // Check if any entry needs v3 (extended flags)
-            if self.entries.iter().any(|e| e.flags_extended.is_some()) { 3 } else { 2 }
+            if self.entries.iter().any(|e| e.flags_extended.is_some()) {
+                3
+            } else {
+                2
+            }
         } else {
             self.version
         };
@@ -295,7 +299,10 @@ impl Index {
         let stage = entry.stage();
         // Binary search for the insertion point by (path, stage)
         let result = self.entries.binary_search_by(|e| {
-            e.path.as_slice().cmp(path.as_slice()).then_with(|| e.stage().cmp(&stage))
+            e.path
+                .as_slice()
+                .cmp(path.as_slice())
+                .then_with(|| e.stage().cmp(&stage))
         });
         match result {
             Ok(pos) => {

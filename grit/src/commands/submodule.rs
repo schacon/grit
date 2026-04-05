@@ -175,7 +175,10 @@ struct SubmoduleInfo {
 /// Run the `submodule` command.
 pub fn run(args: Args) -> Result<()> {
     match args.command {
-        None => run_status(&StatusArgs { recursive: false, paths: vec![] }),
+        None => run_status(&StatusArgs {
+            recursive: false,
+            paths: vec![],
+        }),
         Some(SubmoduleCommand::Status(a)) => run_status(&a),
         Some(SubmoduleCommand::Init(a)) => run_init(&a),
         Some(SubmoduleCommand::Update(a)) => run_update(&a),
@@ -197,23 +200,25 @@ fn parse_gitmodules(work_tree: &Path) -> Result<Vec<SubmoduleInfo>> {
     parse_gitmodules_with_repo(work_tree, None)
 }
 
-fn parse_gitmodules_with_repo(work_tree: &Path, repo: Option<&Repository>) -> Result<Vec<SubmoduleInfo>> {
+fn parse_gitmodules_with_repo(
+    work_tree: &Path,
+    repo: Option<&Repository>,
+) -> Result<Vec<SubmoduleInfo>> {
     let gitmodules_path = work_tree.join(".gitmodules");
     let content = if gitmodules_path.exists() {
-        fs::read_to_string(&gitmodules_path)
-            .context("failed to read .gitmodules")?
+        fs::read_to_string(&gitmodules_path).context("failed to read .gitmodules")?
     } else if let Some(repo) = repo {
         // Fallback: read .gitmodules from the index (e.g. sparse checkout)
-        let index = Index::load(&repo.index_path())
-            .context("failed to load index")?;
+        let index = Index::load(&repo.index_path()).context("failed to load index")?;
         if let Some(ie) = index.get(b".gitmodules", 0) {
-            let obj = repo.odb.read(&ie.oid)
+            let obj = repo
+                .odb
+                .read(&ie.oid)
                 .context("failed to read .gitmodules blob from ODB")?;
             if obj.kind != ObjectKind::Blob {
                 return Ok(Vec::new());
             }
-            String::from_utf8(obj.data)
-                .context("failed to decode .gitmodules blob")?
+            String::from_utf8(obj.data).context("failed to decode .gitmodules blob")?
         } else {
             return Ok(Vec::new());
         }
@@ -258,10 +263,7 @@ fn parse_gitmodules_with_repo(work_tree: &Path, repo: Option<&Repository>) -> Re
 }
 
 /// Filter submodules by path args (empty = all).
-fn filter_submodules<'a>(
-    modules: &'a [SubmoduleInfo],
-    paths: &[String],
-) -> Vec<&'a SubmoduleInfo> {
+fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<&'a SubmoduleInfo> {
     if paths.is_empty() {
         modules.iter().collect()
     } else {
@@ -282,11 +284,7 @@ fn read_submodule_commit(git_dir: &Path, submodule_path: &str) -> Result<Option<
         .arg("ls-tree")
         .arg("HEAD")
         .arg(submodule_path)
-        .current_dir(
-            git_dir
-                .parent()
-                .unwrap_or(git_dir),
-        )
+        .current_dir(git_dir.parent().unwrap_or(git_dir))
         .output()
         .context("failed to run git ls-tree")?;
 
@@ -297,7 +295,7 @@ fn read_submodule_commit(git_dir: &Path, submodule_path: &str) -> Result<Option<
     let text = String::from_utf8_lossy(&output.stdout);
     // Format: <mode> <type> <oid>\t<path>
     for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(4, |c: char| c == ' ' || c == '\t').collect();
+        let parts: Vec<&str> = line.splitn(4, [' ', '\t']).collect();
         if parts.len() >= 3 && parts[1] == "commit" {
             return Ok(Some(parts[2].to_string()));
         }
@@ -326,7 +324,9 @@ fn run_status(args: &StatusArgs) -> Result<()> {
 
         if !sub_path.exists() || !has_checkout {
             // Not initialized / not checked out.
-            let oid = recorded.as_deref().unwrap_or("0000000000000000000000000000000000000000");
+            let oid = recorded
+                .as_deref()
+                .unwrap_or("0000000000000000000000000000000000000000");
             writeln!(out, "-{oid} {}", m.path)?;
         } else {
             // Check current HEAD of the submodule.
@@ -399,7 +399,9 @@ fn read_head_from_file(head_file: &Path) -> Option<String> {
         // Resolve the ref.
         let git_dir = head_file.parent()?;
         let ref_file = git_dir.join(refname);
-        fs::read_to_string(ref_file).ok().map(|s| s.trim().to_string())
+        fs::read_to_string(ref_file)
+            .ok()
+            .map(|s| s.trim().to_string())
     } else {
         Some(content.to_string())
     }
@@ -511,7 +513,8 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                 let content2 = fs::read_to_string(&config_path2)?;
                 let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local)?;
                 let url_key2 = format!("submodule.{}.url", m.name);
-                cfg2.entries.iter()
+                cfg2.entries
+                    .iter()
                     .find(|e| e.key == url_key2)
                     .and_then(|e| e.value.clone())
                     .unwrap_or_else(|| m.url.clone())
@@ -582,9 +585,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
                 .next()
                 .unwrap_or(url)
                 .strip_suffix(".git")
-                .unwrap_or(
-                    url.rsplit('/').next().unwrap_or(url),
-                );
+                .unwrap_or(url.rsplit('/').next().unwrap_or(url));
             basename.to_string()
         }
     };
@@ -777,8 +778,12 @@ fn resolve_relative_url(base: &str, relative: &str) -> String {
         for component in relative.split('/') {
             match component {
                 "." => {}
-                ".." => { result.pop(); }
-                c => { result.push(c); }
+                ".." => {
+                    result.pop();
+                }
+                c => {
+                    result.push(c);
+                }
             }
         }
         result.to_string_lossy().into_owned()
@@ -793,8 +798,12 @@ fn resolve_path_components(base_path: &str, relative: &str) -> String {
     for component in relative.split('/') {
         match component {
             "." | "" => {}
-            ".." => { parts.pop(); }
-            c => { parts.push(c); }
+            ".." => {
+                parts.pop();
+            }
+            c => {
+                parts.push(c);
+            }
         }
     }
     format!("/{}", parts.join("/"))
@@ -826,10 +835,7 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
         let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &m.url);
 
         config.set(&url_key, &resolved_url)?;
-        eprintln!(
-            "Synchronizing submodule url for '{}'",
-            m.path
-        );
+        eprintln!("Synchronizing submodule url for '{}'", m.path);
 
         // Also update the submodule's remote origin URL if checked out.
         let sub_path = work_tree.join(&m.path);
@@ -839,7 +845,8 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
                 let sub_config_path = sub_git.join("config");
                 if sub_config_path.exists() {
                     let sub_content = fs::read_to_string(&sub_config_path)?;
-                    let mut sub_config = ConfigFile::parse(&sub_config_path, &sub_content, ConfigScope::Local)?;
+                    let mut sub_config =
+                        ConfigFile::parse(&sub_config_path, &sub_content, ConfigScope::Local)?;
                     sub_config.set("remote.origin.url", &resolved_url)?;
                     sub_config.write()?;
                 }
@@ -856,7 +863,8 @@ fn run_sync(args: &SyncArgs) -> Result<()> {
                 let nested = parse_gitmodules(&sub_path).unwrap_or_default();
                 if !nested.is_empty() {
                     // Use the grit binary for recursive sync in nested submodules.
-                    let grit_bin = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
+                    let grit_bin =
+                        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit"));
                     let _status = Command::new(&grit_bin)
                         .arg("submodule")
                         .arg("sync")
@@ -943,10 +951,7 @@ fn run_deinit(args: &DeinitArgs) -> Result<()> {
 
         let _ = url_key; // suppress unused warning
 
-        eprintln!(
-            "Cleared directory '{}'",
-            m.path
-        );
+        eprintln!("Cleared directory '{}'", m.path);
         eprintln!(
             "Submodule '{}' ({}) unregistered for path '{}'",
             m.name, m.url, m.path
@@ -983,8 +988,7 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
             continue;
         }
 
-        fs::rename(&dot_git, &modules_dir)
-            .context("failed to move .git directory")?;
+        fs::rename(&dot_git, &modules_dir).context("failed to move .git directory")?;
 
         // Update core.worktree in the moved git dir.
         let moved_config_path = modules_dir.join("config");
@@ -1074,7 +1078,9 @@ fn run_set_branch(args: &SetBranchArgs) -> Result<()> {
 
     // Find the submodule name for this path.
     let modules = parse_gitmodules(work_tree)?;
-    let sm = modules.iter().find(|m| m.path == args.path || m.name == args.path)
+    let sm = modules
+        .iter()
+        .find(|m| m.path == args.path || m.name == args.path)
         .context("submodule not found")?;
 
     let branch_key = format!("submodule.{}.branch", sm.name);
@@ -1102,7 +1108,9 @@ fn run_set_url(args: &SetUrlArgs) -> Result<()> {
 
     // Find the submodule name for this path.
     let modules = parse_gitmodules(work_tree)?;
-    let sm = modules.iter().find(|m| m.path == args.path || m.name == args.path)
+    let sm = modules
+        .iter()
+        .find(|m| m.path == args.path || m.name == args.path)
         .context("submodule not found")?;
 
     let url_key = format!("submodule.{}.url", sm.name);

@@ -87,24 +87,17 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
     }
 
     // HFS / NTFS case-insensitive ".git" check
-    if prot.protect_hfs || prot.protect_ntfs {
-        if name.len() == 4 && name[0] == b'.' {
+    if (prot.protect_hfs || prot.protect_ntfs)
+        && name.len() == 4 && name[0] == b'.' {
             let rest = &name[1..];
             if rest.eq_ignore_ascii_case(b"git") {
-                bail!(
-                    "invalid path '{}'",
-                    String::from_utf8_lossy(name)
-                );
+                bail!("invalid path '{}'", String::from_utf8_lossy(name));
             }
         }
-    }
 
     // NTFS short-name check: "git~1" (case-insensitive)
     if prot.protect_ntfs && name.eq_ignore_ascii_case(b"git~1") {
-        bail!(
-            "invalid path '{}'",
-            String::from_utf8_lossy(name)
-        );
+        bail!("invalid path '{}'", String::from_utf8_lossy(name));
     }
 
     Ok(())
@@ -119,7 +112,9 @@ pub fn run(args: Args) -> Result<()> {
     // Handle --empty: clear the index
     if args.empty {
         let empty_index = Index::new();
-        empty_index.write(&index_path).context("writing empty index")?;
+        empty_index
+            .write(&index_path)
+            .context("writing empty index")?;
         return Ok(());
     }
 
@@ -152,7 +147,8 @@ pub fn run(args: Args) -> Result<()> {
         // Reset mode is a hard replacement by the final tree argument.
         let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
         let mut new_index = Index::new();
-        new_index.entries = tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
+        new_index.entries =
+            tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
         if args.update {
             checkout_index_entries(&repo, &old_index, &new_index)?;
@@ -569,11 +565,7 @@ fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
     }
 
     // Anchored pattern (starts with /)
-    let pat = if pat.starts_with('/') {
-        &pat[1..]
-    } else {
-        pat
-    };
+    let pat = if pat.starts_with('/') { &pat[1..] } else { pat };
 
     // Simple glob matching
     sparse_glob_match(pat, path)
@@ -701,7 +693,8 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
-            let data = crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex));
+            let data =
+                crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex));
             std::fs::write(&abs_path, &data)?;
             if entry.mode == MODE_EXECUTABLE {
                 use std::os::unix::fs::PermissionsExt;

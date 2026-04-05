@@ -11,7 +11,6 @@ use similar::{ChangeTag, TextDiff};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 
-
 /// Arguments for `grit blame`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show what revision and author last modified each line of a file")]
@@ -105,14 +104,22 @@ fn parse_author_field(raw: &str) -> AuthorInfo {
     let parts: Vec<&str> = rest.split_whitespace().collect();
     let timestamp = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let tz = parts.get(1).unwrap_or(&"+0000").to_string();
-    AuthorInfo { name, email, timestamp, tz }
+    AuthorInfo {
+        name,
+        email,
+        timestamp,
+        tz,
+    }
 }
 
 fn format_time(timestamp: i64, tz: &str) -> String {
     let tz_sign: i64 = if tz.starts_with('-') { -1 } else { 1 };
     let tz_digits = tz.trim_start_matches(['+', '-']);
     let tz_hours: i64 = tz_digits.get(..2).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let tz_mins: i64 = tz_digits.get(2..4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let tz_mins: i64 = tz_digits
+        .get(2..4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let tz_offset = tz_sign * (tz_hours * 3600 + tz_mins * 60);
 
     let adjusted = timestamp + tz_offset;
@@ -148,7 +155,10 @@ fn resolve_path_in_tree(odb: &Odb, tree_oid: &ObjectId, path: &str) -> Result<Op
     for (i, part) in parts.iter().enumerate() {
         let obj = odb.read(&current)?;
         let entries = parse_tree(&obj.data)?;
-        match entries.iter().find(|e| String::from_utf8_lossy(&e.name) == *part) {
+        match entries
+            .iter()
+            .find(|e| String::from_utf8_lossy(&e.name) == *part)
+        {
             Some(e) if i == parts.len() - 1 => return Ok(Some(e.oid)),
             Some(e) => current = e.oid,
             None => return Ok(None),
@@ -185,7 +195,12 @@ struct TrackedLine {
 }
 
 /// Core blame: walk first-parent history, diff blobs, attribute lines.
-fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &HashSet<ObjectId>) -> Result<Vec<BlameLine>> {
+fn compute_blame(
+    odb: &Odb,
+    start_oid: ObjectId,
+    file_path: &str,
+    ignore_revs: &HashSet<ObjectId>,
+) -> Result<Vec<BlameLine>> {
     let start_commit = {
         let obj = odb.read(&start_oid)?;
         parse_commit(&obj.data)?
@@ -203,7 +218,10 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
 
     // Lines still needing attribution
     let mut pending: Vec<TrackedLine> = (0..num_lines)
-        .map(|i| TrackedLine { final_lineno: i + 1, current_idx: i })
+        .map(|i| TrackedLine {
+            final_lineno: i + 1,
+            current_idx: i,
+        })
         .collect();
 
     let mut result: Vec<BlameLine> = Vec::with_capacity(num_lines);
@@ -251,7 +269,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                         final_lineno: t.final_lineno,
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
+                        source_file: None,
                     });
                 }
                 break;
@@ -265,7 +283,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                         final_lineno: t.final_lineno,
                         orig_lineno: t.current_idx + 1,
                         content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
+                        source_file: None,
                     });
                 }
                 break;
@@ -310,7 +328,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                                 final_lineno: t.final_lineno,
                                 orig_lineno: t.current_idx + 1,
                                 content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
+                                source_file: None,
                             });
                         }
                     } else if is_ignored {
@@ -326,7 +344,7 @@ fn compute_blame(odb: &Odb, start_oid: ObjectId, file_path: &str, ignore_revs: &
                             final_lineno: t.final_lineno,
                             orig_lineno: t.current_idx + 1,
                             content: final_lines[t.final_lineno - 1].clone(),
-                    source_file: None,
+                            source_file: None,
                         });
                     }
                 }
@@ -446,14 +464,20 @@ pub fn run(args: Args) -> Result<()> {
     // Preload commits for display
     let mut commits: HashMap<ObjectId, CommitData> = HashMap::new();
     for bl in &blame_lines {
-        if !commits.contains_key(&bl.oid) {
+        if let std::collections::hash_map::Entry::Vacant(e) = commits.entry(bl.oid) {
             let obj = odb.read(&bl.oid)?;
-            commits.insert(bl.oid, parse_commit(&obj.data)?);
+            e.insert(parse_commit(&obj.data)?);
         }
     }
 
     if args.porcelain || args.line_porcelain {
-        write_porcelain(&mut out, &blame_lines, &commits, &file_path, args.line_porcelain)?;
+        write_porcelain(
+            &mut out,
+            &blame_lines,
+            &commits,
+            &file_path,
+            args.line_porcelain,
+        )?;
     } else {
         write_default(&mut out, &blame_lines, &commits, &args, &file_path)?;
     }
@@ -472,10 +496,18 @@ fn parse_blame_args(args: &[String]) -> Result<(Option<String>, String)> {
     }
 }
 
-fn parse_line_range(range: &str, blame_lines: &[BlameLine], _line_contents: &[&str]) -> Result<(usize, usize)> {
+fn parse_line_range(
+    range: &str,
+    blame_lines: &[BlameLine],
+    _line_contents: &[&str],
+) -> Result<(usize, usize)> {
     let total = blame_lines.len();
     // Find the max final_lineno for $ handling
-    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(total);
+    let max_lineno = blame_lines
+        .iter()
+        .map(|b| b.final_lineno)
+        .max()
+        .unwrap_or(total);
 
     let parts: Vec<&str> = range.splitn(2, ',').collect();
     if parts.len() != 2 {
@@ -490,8 +522,16 @@ fn parse_line_range(range: &str, blame_lines: &[BlameLine], _line_contents: &[&s
 
 /// Parse a single line-range endpoint.
 /// `relative_to` is `Some(start)` when parsing the end portion (to support `+N`).
-fn parse_line_spec(spec: &str, blame_lines: &[BlameLine], relative_to: Option<usize>) -> Result<usize> {
-    let max_lineno = blame_lines.iter().map(|b| b.final_lineno).max().unwrap_or(0);
+fn parse_line_spec(
+    spec: &str,
+    blame_lines: &[BlameLine],
+    relative_to: Option<usize>,
+) -> Result<usize> {
+    let max_lineno = blame_lines
+        .iter()
+        .map(|b| b.final_lineno)
+        .max()
+        .unwrap_or(0);
 
     if spec == "$" {
         return Ok(max_lineno);
@@ -584,7 +624,9 @@ fn write_porcelain(
             writeln!(out, "committer-time {}", committer.timestamp)?;
             writeln!(out, "committer-tz {}", committer.tz)?;
             // Summary: first non-blank line of the commit message
-            let summary = commit.message.lines()
+            let summary = commit
+                .message
+                .lines()
                 .find(|l| !l.trim().is_empty())
                 .unwrap_or("");
             writeln!(out, "summary {summary}")?;
@@ -667,7 +709,7 @@ fn write_default(
 
         // Filename field for -f / --show-name
         let fname = if args.show_name {
-            let name = bl.source_file.as_deref().unwrap_or(&file_path);
+            let name = bl.source_file.as_deref().unwrap_or(file_path);
             format!("{name} ")
         } else {
             String::new()

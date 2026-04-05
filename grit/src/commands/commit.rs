@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::index::Index;
 use grit_lib::objects::{serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::refs::append_reflog;
@@ -20,7 +21,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use time::OffsetDateTime;
-use grit_lib::hooks::{run_hook, HookResult};
 
 /// Arguments for `grit commit`.
 #[derive(Debug, ClapArgs)]
@@ -183,14 +183,20 @@ pub fn run(args: Args) -> Result<()> {
         args.file.is_some(),
         args.reuse_message.is_some(),
         args.reedit_message.is_some(),
-    ].iter().filter(|&&b| b).count();
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
     if msg_source_count > 1 {
         bail!("Only one of -m, -F, -C, -c can be used.");
     }
 
     // -a and explicit pathspec don't mix
     if args.all && !args.pathspec.is_empty() {
-        bail!("paths '{}' with -a does not make sense", args.pathspec.join(" "));
+        bail!(
+            "paths '{}' with -a does not make sense",
+            args.pathspec.join(" ")
+        );
     }
 
     // --include and --only don't mix
@@ -284,11 +290,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Run pre-commit hook
-    match run_hook(&repo, "pre-commit", &[], None) {
-        HookResult::Failed(code) => {
-            bail!("pre-commit hook exited with status {code}");
-        }
-        _ => {}
+    if let HookResult::Failed(code) = run_hook(&repo, "pre-commit", &[], None) {
+        bail!("pre-commit hook exited with status {code}");
     }
 
     // Build commit message
@@ -303,12 +306,18 @@ pub fn run(args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
     // Check i18n.commitEncoding for non-UTF-8 commit messages
-    let commit_encoding = config.get("i18n.commitEncoding")
+    let commit_encoding = config
+        .get("i18n.commitEncoding")
         .or_else(|| config.get("i18n.commitencoding"));
     let now = OffsetDateTime::now_utc();
 
     // When amending, preserve original author unless explicitly overridden
-    let amend_author = if args.amend && args.author.is_none() && args.reuse_message.is_none() && args.reedit_message.is_none() && args.date.is_none() {
+    let amend_author = if args.amend
+        && args.author.is_none()
+        && args.reuse_message.is_none()
+        && args.reedit_message.is_none()
+        && args.date.is_none()
+    {
         if let Some(head_oid) = head.oid() {
             let obj = repo.odb.read(head_oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
@@ -340,7 +349,9 @@ pub fn run(args: Args) -> Result<()> {
             if let Some(ref raw) = raw_message {
                 let trimmed_raw = {
                     let mut end = raw.len();
-                    while end > 0 && (raw[end - 1] == b'\n' || raw[end - 1] == b' ' || raw[end - 1] == b'\r') {
+                    while end > 0
+                        && (raw[end - 1] == b'\n' || raw[end - 1] == b' ' || raw[end - 1] == b'\r')
+                    {
                         end -= 1;
                     }
                     &raw[..end]
@@ -406,17 +417,29 @@ pub fn run(args: Args) -> Result<()> {
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
-    let old_oid = head.oid().copied().unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     update_head(&repo.git_dir, &head, &commit_oid)?;
 
     // Write reflog entries
     {
         let msg = if head.is_unborn() {
-            format!("commit (initial): {}", commit_data.message.lines().next().unwrap_or(""))
+            format!(
+                "commit (initial): {}",
+                commit_data.message.lines().next().unwrap_or("")
+            )
         } else if args.amend {
-            format!("commit (amend): {}", commit_data.message.lines().next().unwrap_or(""))
+            format!(
+                "commit (amend): {}",
+                commit_data.message.lines().next().unwrap_or("")
+            )
         } else {
-            format!("commit: {}", commit_data.message.lines().next().unwrap_or(""))
+            format!(
+                "commit: {}",
+                commit_data.message.lines().next().unwrap_or("")
+            )
         };
         // Write to HEAD reflog
         let _ = append_reflog(
@@ -450,7 +473,12 @@ pub fn run(args: Args) -> Result<()> {
     if args.amend && !args.no_post_rewrite {
         if let Some(old_oid) = old_head_oid {
             let stdin_data = format!("{} {}\n", old_oid.to_hex(), commit_oid.to_hex());
-            let _ = run_hook(&repo, "post-rewrite", &["amend"], Some(stdin_data.as_bytes()));
+            let _ = run_hook(
+                &repo,
+                "post-rewrite",
+                &["amend"],
+                Some(stdin_data.as_bytes()),
+            );
         }
     }
 
@@ -477,12 +505,9 @@ pub fn run(args: Args) -> Result<()> {
             let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
             Some(parent_commit.tree)
         };
-        if let Ok(diff_entries) = grit_lib::diff::diff_trees(
-            &repo.odb,
-            parent_tree.as_ref(),
-            Some(&commit_data.tree),
-            "",
-        ) {
+        if let Ok(diff_entries) =
+            grit_lib::diff::diff_trees(&repo.odb, parent_tree.as_ref(), Some(&commit_data.tree), "")
+        {
             let zero_oid = ObjectId::from_bytes(&[0u8; 20]).unwrap();
             let mut total_files = 0usize;
             let mut total_ins = 0usize;
@@ -492,14 +517,16 @@ pub fn run(args: Args) -> Result<()> {
                 let old_content = if entry.old_oid == zero_oid {
                     String::new()
                 } else {
-                    repo.odb.read(&entry.old_oid)
+                    repo.odb
+                        .read(&entry.old_oid)
                         .map(|o| String::from_utf8_lossy(&o.data).into_owned())
                         .unwrap_or_default()
                 };
                 let new_content = if entry.new_oid == zero_oid {
                     String::new()
                 } else {
-                    repo.odb.read(&entry.new_oid)
+                    repo.odb
+                        .read(&entry.new_oid)
                         .map(|o| String::from_utf8_lossy(&o.data).into_owned())
                         .unwrap_or_default()
                 };
@@ -574,10 +601,7 @@ fn print_dry_run(
     if !staged.is_empty() {
         writeln!(out)?;
         writeln!(out, "Changes to be committed:")?;
-        writeln!(
-            out,
-            "  (use \"git restore --staged <file>...\" to unstage)"
-        )?;
+        writeln!(out, "  (use \"git restore --staged <file>...\" to unstage)")?;
         for entry in staged {
             let label = status_label_staged(entry.status);
             writeln!(out, "\t{label}:   {}", entry.path())?;
@@ -821,13 +845,19 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         let oid = resolve_revision(repo, rev)?;
         let obj = repo.odb.read(&oid)?;
         let commit = grit_lib::objects::parse_commit(&obj.data)?;
-        return Ok(MessageResult { message: commit.message, raw_bytes: None });
+        return Ok(MessageResult {
+            message: commit.message,
+            raw_bytes: None,
+        });
     }
 
     // -m flags
     if !args.message.is_empty() {
         let msg = args.message.join("\n\n");
-        return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
+        return Ok(MessageResult {
+            message: ensure_trailing_newline(&msg),
+            raw_bytes: None,
+        });
     }
 
     // -F file
@@ -842,7 +872,10 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         };
         match String::from_utf8(raw.clone()) {
             Ok(s) => {
-                return Ok(MessageResult { message: ensure_trailing_newline(&s), raw_bytes: None });
+                return Ok(MessageResult {
+                    message: ensure_trailing_newline(&s),
+                    raw_bytes: None,
+                });
             }
             Err(_) => {
                 // Non-UTF-8 message — store raw bytes.
@@ -861,7 +894,10 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
     // Check for MERGE_MSG
     if let Some(msg) = grit_lib::state::read_merge_msg(&repo.git_dir)? {
-        return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
+        return Ok(MessageResult {
+            message: ensure_trailing_newline(&msg),
+            raw_bytes: None,
+        });
     }
 
     // Check for SQUASH_MSG
@@ -878,13 +914,19 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         if let Some(oid) = head.oid() {
             let obj = repo.odb.read(oid)?;
             let commit = grit_lib::objects::parse_commit(&obj.data)?;
-            return Ok(MessageResult { message: commit.message, raw_bytes: None });
+            return Ok(MessageResult {
+                message: commit.message,
+                raw_bytes: None,
+            });
         }
     }
 
     // If --allow-empty-message, return empty message
     if args.allow_empty_message {
-        return Ok(MessageResult { message: String::new(), raw_bytes: None });
+        return Ok(MessageResult {
+            message: String::new(),
+            raw_bytes: None,
+        });
     }
 
     // TODO: Launch editor
@@ -986,8 +1028,9 @@ pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
             // Try YYYY-MM-DD HH:MM:SS
             if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs as i32) {
                 let fmt = time::format_description::parse(
-                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                ).ok()?;
+                    "[year]-[month]-[day] [hour]:[minute]:[second]",
+                )
+                .ok()?;
                 if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &fmt) {
                     let dt = naive.assume_offset(offset);
                     let epoch = dt.unix_timestamp();
@@ -1026,10 +1069,8 @@ fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Resul
         HeadState::Branch { refname, .. } => {
             // Update the ref that HEAD points to
             if grit_lib::reftable::is_reftable_repo(git_dir) {
-                grit_lib::reftable::reftable_write_ref(
-                    git_dir, refname, commit_oid, None, None,
-                )
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             } else {
                 let ref_path = git_dir.join(refname);
                 if let Some(parent) = ref_path.parent() {

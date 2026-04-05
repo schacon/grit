@@ -26,8 +26,7 @@ use grit_lib::state::{resolve_head, HeadState};
 
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
-    ObjectId::from_hex("0000000000000000000000000000000000000000")
-        .expect("zero oid is valid")
+    ObjectId::from_hex("0000000000000000000000000000000000000000").expect("zero oid is valid")
 }
 
 /// The reset mode.
@@ -113,13 +112,16 @@ pub fn pre_validate_args(raw_args: &[String]) -> Result<()> {
 
 /// Filter out `--end-of-options` from args (replace with `--`).
 pub fn filter_args(raw_args: &[String]) -> Vec<String> {
-    raw_args.iter().map(|a| {
-        if a == "--end-of-options" {
-            "--".to_owned()
-        } else {
-            a.clone()
-        }
-    }).collect()
+    raw_args
+        .iter()
+        .map(|a| {
+            if a == "--end-of-options" {
+                "--".to_owned()
+            } else {
+                a.clone()
+            }
+        })
+        .collect()
 }
 
 /// Run `grit reset`.
@@ -167,7 +169,10 @@ fn split_commit_and_paths(repo: &Repository, rest: &[String]) -> (String, Vec<St
     }
 
     // Detect an explicit `--` or `--end-of-options` separator.
-    if let Some(sep) = rest.iter().position(|a| a == "--" || a == "--end-of-options") {
+    if let Some(sep) = rest
+        .iter()
+        .position(|a| a == "--" || a == "--end-of-options")
+    {
         // Everything before `--` is the optional commit; everything after is paths.
         let commit_spec = if sep == 0 {
             "HEAD".to_owned()
@@ -224,14 +229,7 @@ fn write_reset_reflog(
     let message = format!("reset: moving to {commit_spec}");
 
     // Write reflog for HEAD.
-    let _ = append_reflog(
-        &repo.git_dir,
-        "HEAD",
-        old_oid,
-        new_oid,
-        &identity,
-        &message,
-    );
+    let _ = append_reflog(&repo.git_dir, "HEAD", old_oid, new_oid, &identity, &message);
 
     // Write reflog for the branch ref if on a branch.
     if let HeadState::Branch { refname, .. } = head {
@@ -249,7 +247,13 @@ fn write_reset_reflog(
 /// Reset specific index entries to match the given commit's tree.
 ///
 /// HEAD is not modified.
-fn reset_paths(repo: &Repository, commit_spec: &str, paths: &[String], _quiet: bool, intent_to_add: bool) -> Result<()> {
+fn reset_paths(
+    repo: &Repository,
+    commit_spec: &str,
+    paths: &[String],
+    _quiet: bool,
+    intent_to_add: bool,
+) -> Result<()> {
     let commit_oid = resolve_to_commit(repo, commit_spec)?;
     let tree_oid = commit_to_tree(repo, &commit_oid)?;
     let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
@@ -440,8 +444,11 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
     // Files in HEAD but not in target (or different).
     for (path, head_entry) in &head_map {
         match target_map.get(path) {
-            Some(target_entry) if target_entry.oid == head_entry.oid && target_entry.mode == head_entry.mode => {}
-            _ => { changed_paths.insert(path.clone()); }
+            Some(target_entry)
+                if target_entry.oid == head_entry.oid && target_entry.mode == head_entry.mode => {}
+            _ => {
+                changed_paths.insert(path.clone());
+            }
         }
     }
     // Files in target but not in HEAD.
@@ -514,7 +521,10 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
             // Untracked file would be overwritten.
             let target_entry = target_map.get(path);
             if target_entry.is_some() {
-                bail!("Entry '{}' would be overwritten by merge. Cannot merge.", path_str);
+                bail!(
+                    "Entry '{}' would be overwritten by merge. Cannot merge.",
+                    path_str
+                );
             }
         }
     }

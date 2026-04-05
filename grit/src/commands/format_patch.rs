@@ -364,10 +364,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Collect commits to format, in patch order (oldest first).
-fn collect_commits(
-    repo: &Repository,
-    revision: &str,
-) -> Result<Vec<(ObjectId, CommitData)>> {
+fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
     // Check if it's a `-<n>` count form
     if let Some(count_str) = revision.strip_prefix('-') {
         if let Ok(count) = count_str.parse::<usize>() {
@@ -416,10 +413,10 @@ fn collect_range_commits(
     left: &str,
     right: &str,
 ) -> Result<Vec<(ObjectId, CommitData)>> {
-    let since_oid = resolve_revision(repo, left)
-        .with_context(|| format!("unknown revision '{left}'"))?;
-    let until_oid = resolve_revision(repo, right)
-        .with_context(|| format!("unknown revision '{right}'"))?;
+    let since_oid =
+        resolve_revision(repo, left).with_context(|| format!("unknown revision '{left}'"))?;
+    let until_oid =
+        resolve_revision(repo, right).with_context(|| format!("unknown revision '{right}'"))?;
 
     let mut commits = Vec::new();
     let mut current = until_oid;
@@ -443,10 +440,7 @@ fn collect_range_commits(
 }
 
 /// Collect all commits from root up to the given revision (for --root).
-fn collect_root_commits(
-    repo: &Repository,
-    revision: &str,
-) -> Result<Vec<(ObjectId, CommitData)>> {
+fn collect_root_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
     // If revision is a negative count, just use that
     if let Some(count_str) = revision.strip_prefix('-') {
         if let Ok(count) = count_str.parse::<usize>() {
@@ -478,10 +472,7 @@ fn collect_root_commits(
 }
 
 /// Collect the last N commits from HEAD.
-fn collect_last_n_commits(
-    repo: &Repository,
-    count: usize,
-) -> Result<Vec<(ObjectId, CommitData)>> {
+fn collect_last_n_commits(repo: &Repository, count: usize) -> Result<Vec<(ObjectId, CommitData)>> {
     let head_oid = resolve_head_oid(repo)?;
     let mut commits = Vec::new();
     let mut current = head_oid;
@@ -503,8 +494,7 @@ fn collect_last_n_commits(
 
 /// Resolve HEAD to an ObjectId.
 fn resolve_head_oid(repo: &Repository) -> Result<ObjectId> {
-    let head = grit_lib::state::resolve_head(&repo.git_dir)
-        .context("cannot resolve HEAD")?;
+    let head = grit_lib::state::resolve_head(&repo.git_dir).context("cannot resolve HEAD")?;
     head.oid()
         .copied()
         .ok_or_else(|| anyhow::anyhow!("HEAD is unborn"))
@@ -521,7 +511,10 @@ fn format_cover_letter(
     // Use the last commit's info for From/Date
     let (last_oid, last_commit) = commits.last().expect("non-empty commits");
 
-    out.push_str(&format!("From {} Mon Sep 17 00:00:00 2001\n", last_oid.to_hex()));
+    out.push_str(&format!(
+        "From {} Mon Sep 17 00:00:00 2001\n",
+        last_oid.to_hex()
+    ));
 
     let author_display = format_ident(&last_commit.author);
     out.push_str(&format!("From: {author_display}\n"));
@@ -550,7 +543,8 @@ fn format_cover_letter(
     // Diffstat across all commits
     let first_parent_tree = commits.first().and_then(|(_oid, commit)| {
         commit.parents.first().and_then(|parent_oid| {
-            repo.odb.read(parent_oid)
+            repo.odb
+                .read(parent_oid)
                 .ok()
                 .and_then(|obj| parse_commit(&obj.data).ok())
                 .map(|c| c.tree)
@@ -576,7 +570,12 @@ fn format_cover_letter(
         let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
         total_ins += ins;
         total_del += del;
-        stat_lines.push(grit_lib::diff::format_stat_line(&path, ins, del, max_path_len));
+        stat_lines.push(grit_lib::diff::format_stat_line(
+            &path,
+            ins,
+            del,
+            max_path_len,
+        ));
     }
 
     for line in &stat_lines {
@@ -661,7 +660,12 @@ fn format_single_patch(
         let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
         total_ins += ins;
         total_del += del;
-        stat_lines.push(grit_lib::diff::format_stat_line(&path, ins, del, max_path_len));
+        stat_lines.push(grit_lib::diff::format_stat_line(
+            &path,
+            ins,
+            del,
+            max_path_len,
+        ));
     }
 
     for line in &stat_lines {
@@ -736,17 +740,13 @@ fn format_single_patch(
 
     // Cc headers — emit as a single folded header if multiple
     if !opts.cc.is_empty() {
-        let encoded: Vec<String> = opts.cc.iter()
-            .map(|a| encode_email_address(a))
-            .collect();
+        let encoded: Vec<String> = opts.cc.iter().map(|a| encode_email_address(a)).collect();
         write_folded_header(&mut out, "Cc", &encoded);
     }
 
     // To headers — emit as a single folded header if multiple
     if !opts.to.is_empty() {
-        let encoded: Vec<String> = opts.to.iter()
-            .map(|a| encode_email_address(a))
-            .collect();
+        let encoded: Vec<String> = opts.to.iter().map(|a| encode_email_address(a)).collect();
         write_folded_header(&mut out, "To", &encoded);
     }
 
@@ -967,7 +967,12 @@ fn encode_display_name(name: &str) -> String {
     }
     // RFC 822 specials that require quoting
     // Specials are: ( ) < > [ ] : ; @ \ , . "
-    let specials = |c: char| matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"');
+    let specials = |c: char| {
+        matches!(
+            c,
+            '(' | ')' | '<' | '>' | '[' | ']' | ':' | ';' | '@' | '\\' | ',' | '.' | '"'
+        )
+    };
     if name.chars().any(specials) {
         // Quote the name
         let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1026,8 +1031,7 @@ fn format_date_rfc2822(ident: &str) -> String {
         let offset_str = parts[0];
         if let Ok(ts) = ts_str.parse::<i64>() {
             // Parse the offset string (e.g. "+0000", "-0700") into a UtcOffset
-            let tz_offset = parse_tz_offset(offset_str)
-                .unwrap_or(time::UtcOffset::UTC);
+            let tz_offset = parse_tz_offset(offset_str).unwrap_or(time::UtcOffset::UTC);
             let dt = time::OffsetDateTime::from_unix_timestamp(ts)
                 .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
                 .to_offset(tz_offset);

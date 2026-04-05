@@ -99,8 +99,7 @@ fn split_mbox(
         count += 1;
         let filename = format!("{:04}", count);
         let path = output.join(&filename);
-        let mut f = fs::File::create(&path)
-            .with_context(|| format!("creating {:?}", path))?;
+        let mut f = fs::File::create(&path).with_context(|| format!("creating {:?}", path))?;
         f.write_all(msg.as_bytes())?;
     }
 

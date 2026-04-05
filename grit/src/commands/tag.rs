@@ -240,8 +240,7 @@ fn delete_tag(repo: &Repository, name: &str) -> Result<()> {
     let refname = format!("refs/tags/{name}");
     let oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname)
         .map_err(|_| anyhow::anyhow!("tag '{name}' not found."))?;
-    grit_lib::refs::delete_ref(&repo.git_dir, &refname)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    grit_lib::refs::delete_ref(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
     let hex = oid.to_hex();
     let short = &hex[..7.min(hex.len())];
     eprintln!("Deleted tag '{name}' (was {short})");
@@ -327,7 +326,9 @@ fn list_tags(
         if ignore_case {
             tags.retain(|(name, _)| {
                 let lower_name = name.to_lowercase();
-                patterns.iter().any(|pat| glob_matches(&pat.to_lowercase(), &lower_name))
+                patterns
+                    .iter()
+                    .any(|pat| glob_matches(&pat.to_lowercase(), &lower_name))
             });
         } else {
             tags.retain(|(name, _)| patterns.iter().any(|pat| glob_matches(pat, name)));
@@ -509,7 +510,11 @@ fn sort_tags(
         "version:refname" => {
             tags.sort_by(|a, b| {
                 let ord = compare_version(&a.0, &b.0);
-                if descending { ord.reverse() } else { ord }
+                if descending {
+                    ord.reverse()
+                } else {
+                    ord
+                }
             });
         }
         "creatordate" => {
@@ -517,7 +522,11 @@ fn sort_tags(
                 let da = creator_date(repo, &a.1);
                 let db = creator_date(repo, &b.1);
                 let ord = da.cmp(&db).then_with(|| a.0.cmp(&b.0));
-                if descending { ord.reverse() } else { ord }
+                if descending {
+                    ord.reverse()
+                } else {
+                    ord
+                }
             });
         }
         "refname" => {
@@ -527,7 +536,11 @@ fn sort_tags(
                 } else {
                     a.0.cmp(&b.0)
                 };
-                if descending { ord.reverse() } else { ord }
+                if descending {
+                    ord.reverse()
+                } else {
+                    ord
+                }
             });
         }
         _ if key.is_empty() => {
@@ -613,7 +626,7 @@ fn compare_version(a: &str, b: &str) -> std::cmp::Ordering {
 /// Split a version string into segments at `.` and `-` boundaries.
 fn version_segments(s: &str) -> Vec<&str> {
     // Split on `.` and `-` keeping non-empty pieces
-    s.split(|c: char| c == '.' || c == '-')
+    s.split(['.', '-'])
         .filter(|seg| !seg.is_empty())
         .collect()
 }

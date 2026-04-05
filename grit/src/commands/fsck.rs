@@ -61,9 +61,17 @@ pub struct Args {
 #[derive(Debug)]
 enum Issue {
     /// Object referenced but not found anywhere.
-    Missing { oid: ObjectId, kind: &'static str, referenced_by: ObjectId },
+    Missing {
+        oid: ObjectId,
+        kind: &'static str,
+        referenced_by: ObjectId,
+    },
     /// Object data is corrupt or unparseable.
-    BadObject { oid: ObjectId, kind: ObjectKind, reason: String },
+    BadObject {
+        oid: ObjectId,
+        kind: ObjectKind,
+        reason: String,
+    },
     /// Object is dangling (exists but not reachable from any ref).
     Dangling { oid: ObjectId, kind: ObjectKind },
     /// Object is unreachable (exists but not reachable from any ref).
@@ -87,13 +95,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // 1. Collect all reachable OIDs by walking from refs, HEAD, reflogs.
     //    Also track missing objects and (optionally) bad objects.
-    let (reachable, walked_kinds) = walk_reachable(
-        &repo,
-        &odb,
-        &objects_dir,
-        connectivity_only,
-        &mut issues,
-    )?;
+    let (reachable, walked_kinds) =
+        walk_reachable(&repo, &odb, &objects_dir, connectivity_only, &mut issues)?;
 
     // 2. Enumerate all known objects (loose + packed).
     let all_objects = enumerate_all_objects(&odb, &objects_dir)?;
@@ -177,27 +180,52 @@ pub fn run(args: Args) -> Result<()> {
     // 6. Report issues.
     for issue in &issues {
         match issue {
-            Issue::Missing { oid, kind, referenced_by } => {
+            Issue::Missing {
+                oid,
+                kind,
+                referenced_by,
+            } => {
                 let name_suffix = if name_objects {
-                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                    name_map
+                        .get(oid)
+                        .map(|n| format!(" ({})", n))
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
-                eprintln!("missing {} {}{} (referenced by {})", kind, oid.to_hex(), name_suffix, referenced_by.to_hex());
+                eprintln!(
+                    "missing {} {}{} (referenced by {})",
+                    kind,
+                    oid.to_hex(),
+                    name_suffix,
+                    referenced_by.to_hex()
+                );
                 has_errors = true;
             }
             Issue::BadObject { oid, kind, reason } => {
                 let name_suffix = if name_objects {
-                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                    name_map
+                        .get(oid)
+                        .map(|n| format!(" ({})", n))
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
-                eprintln!("error in {} {}{}: {}", kind.as_str(), oid.to_hex(), name_suffix, reason);
+                eprintln!(
+                    "error in {} {}{}: {}",
+                    kind.as_str(),
+                    oid.to_hex(),
+                    name_suffix,
+                    reason
+                );
                 has_errors = true;
             }
             Issue::Dangling { oid, kind } => {
                 let name_suffix = if name_objects {
-                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                    name_map
+                        .get(oid)
+                        .map(|n| format!(" ({})", n))
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
@@ -205,11 +233,19 @@ pub fn run(args: Args) -> Result<()> {
             }
             Issue::Unreachable { oid, kind } => {
                 let name_suffix = if name_objects {
-                    name_map.get(oid).map(|n| format!(" ({})", n)).unwrap_or_default()
+                    name_map
+                        .get(oid)
+                        .map(|n| format!(" ({})", n))
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
-                eprintln!("unreachable {} {}{}", kind.as_str(), oid.to_hex(), name_suffix);
+                eprintln!(
+                    "unreachable {} {}{}",
+                    kind.as_str(),
+                    oid.to_hex(),
+                    name_suffix
+                );
             }
         }
     }
@@ -325,12 +361,7 @@ fn validate_object(odb: &Odb, oid: &ObjectId, issues: &mut Vec<Issue>) {
 }
 
 /// Validate the parsed content of an object.
-fn validate_object_data(
-    oid: &ObjectId,
-    kind: &ObjectKind,
-    data: &[u8],
-    issues: &mut Vec<Issue>,
-) {
+fn validate_object_data(oid: &ObjectId, kind: &ObjectKind, data: &[u8], issues: &mut Vec<Issue>) {
     match kind {
         ObjectKind::Commit => {
             if let Err(e) = parse_commit(data) {
@@ -425,8 +456,6 @@ fn enumerate_all_objects(_odb: &Odb, objects_dir: &Path) -> Result<BTreeSet<Obje
     Ok(all)
 }
 
-
-
 /// Enumerate all loose objects in the object store.
 fn scan_loose_objects(objects_dir: &Path) -> Result<Vec<(ObjectId, std::path::PathBuf)>> {
     let mut objects = Vec::new();
@@ -487,10 +516,12 @@ fn build_name_map(
             if let Ok(obj) = odb.read(oid) {
                 if obj.kind == ObjectKind::Commit {
                     if let Ok(commit) = parse_commit(&obj.data) {
-                        names.entry(commit.tree)
+                        names
+                            .entry(commit.tree)
                             .or_insert_with(|| format!("{}^{{tree}}", refname));
                         for (i, parent) in commit.parents.iter().enumerate() {
-                            names.entry(*parent)
+                            names
+                                .entry(*parent)
                                 .or_insert_with(|| format!("{}~{}", refname, i + 1));
                         }
                         // Walk the tree to name blobs.
@@ -524,7 +555,12 @@ fn name_tree_entries(
                 names.entry(entry.oid).or_insert(path.clone());
                 // Recurse into subtrees.
                 if entry.mode == 0o40000 {
-                    name_tree_entries(odb, &entry.oid, &format!("{}:{}", prefix, entry_name), names);
+                    name_tree_entries(
+                        odb,
+                        &entry.oid,
+                        &format!("{}:{}", prefix, entry_name),
+                        names,
+                    );
                 }
             }
         }

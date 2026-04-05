@@ -400,7 +400,7 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
 
 /// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).
 pub fn list_refs_glob(git_dir: &Path, pattern: &str) -> Result<Vec<(String, ObjectId)>> {
-    let glob_pos = pattern.find(|c: char| c == '*' || c == '?' || c == '[');
+    let glob_pos = pattern.find(['*', '?', '[']);
     let prefix = match glob_pos {
         Some(pos) => match pattern[..pos].rfind('/') {
             Some(slash) => &pattern[..=slash],

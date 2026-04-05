@@ -154,7 +154,10 @@ fn stateless_rpc(git_dir: &Path, caps: &ServerCaps) -> Result<()> {
     // Validate object-format if provided
     if let Some(ref fmt) = client_object_format {
         if fmt != &caps.object_format {
-            bail!("mismatched object format: client={fmt}, server={}", caps.object_format);
+            bail!(
+                "mismatched object format: client={fmt}, server={}",
+                caps.object_format
+            );
         }
     }
 
@@ -238,8 +241,7 @@ fn cmd_ls_refs(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<
                     peeled: None,
                 };
                 if symrefs {
-                    info.symref_target =
-                        refs::read_symbolic_ref(git_dir, &name).ok().flatten();
+                    info.symref_target = refs::read_symbolic_ref(git_dir, &name).ok().flatten();
                 }
                 if peel && name.starts_with("refs/tags/") {
                     info.peeled = peel_to_commit(git_dir, &oid);
@@ -320,8 +322,7 @@ fn cmd_fetch(_git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<(
 
 /// Handle the `object-info` command.
 fn cmd_object_info(git_dir: &Path, args: &[String], out: &mut impl Write) -> Result<()> {
-    let repo = Repository::open(git_dir, None)
-        .with_context(|| "could not open repository")?;
+    let repo = Repository::open(git_dir, None).with_context(|| "could not open repository")?;
 
     let mut want_size = false;
     let mut oids: Vec<grit_lib::objects::ObjectId> = Vec::new();
@@ -330,9 +331,8 @@ fn cmd_object_info(git_dir: &Path, args: &[String], out: &mut impl Write) -> Res
         if arg == "size" {
             want_size = true;
         } else if let Some(hex) = arg.strip_prefix("oid ") {
-            let oid: grit_lib::objects::ObjectId = hex
-                .parse()
-                .with_context(|| format!("invalid oid: {hex}"))?;
+            let oid: grit_lib::objects::ObjectId =
+                hex.parse().with_context(|| format!("invalid oid: {hex}"))?;
             oids.push(oid);
         }
     }
@@ -461,4 +461,3 @@ fn discover_git_dir() -> Result<std::path::PathBuf> {
         }
     }
 }
-

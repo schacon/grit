@@ -4,11 +4,11 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::Index;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
@@ -312,13 +312,19 @@ fn collect_untracked_and_ignored(
             let dir_path = work_tree.join(check_path);
             let mut sub_files = Vec::new();
             walk_for_untracked(&dir_path, work_tree, &tracked, &mut sub_files, true)?;
-            let all_ignored = !sub_files.is_empty() && sub_files.iter().all(|f| {
-                let f_is_dir = f.ends_with('/');
-                let f_check = if f_is_dir { &f[..f.len() - 1] } else { f.as_str() };
-                matcher.check_path(repo, Some(index), f_check, f_is_dir)
-                    .map(|(ig, _)| ig)
-                    .unwrap_or(false)
-            });
+            let all_ignored = !sub_files.is_empty()
+                && sub_files.iter().all(|f| {
+                    let f_is_dir = f.ends_with('/');
+                    let f_check = if f_is_dir {
+                        &f[..f.len() - 1]
+                    } else {
+                        f.as_str()
+                    };
+                    matcher
+                        .check_path(repo, Some(index), f_check, f_is_dir)
+                        .map(|(ig, _)| ig)
+                        .unwrap_or(false)
+                });
             if all_ignored {
                 if collect_ignored {
                     ignored_files.push(path);
@@ -352,12 +358,17 @@ fn format_short(
         write!(out, "## {branch}")?;
         if !args.no_ahead_behind {
             if let Some(branch_name) = head.branch_name() {
-                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, branch_name) {
+                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, branch_name)
+                {
                     write!(out, "...{upstream}")?;
                     if ahead > 0 || behind > 0 {
                         let mut parts = Vec::new();
-                        if ahead > 0 { parts.push(format!("ahead {ahead}")); }
-                        if behind > 0 { parts.push(format!("behind {behind}")); }
+                        if ahead > 0 {
+                            parts.push(format!("ahead {ahead}"));
+                        }
+                        if behind > 0 {
+                            parts.push(format!("behind {behind}"));
+                        }
                         write!(out, " [{}]", parts.join(", "))?;
                     }
                 }
@@ -472,18 +483,43 @@ fn format_long(
         } => {
             cpw(out, cp, &format!("On branch {short_name}"))?;
             if !args.no_ahead_behind {
-                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, short_name) {
+                if let Ok(Some((upstream, ahead, behind))) = compute_ahead_behind(repo, short_name)
+                {
                     if ahead > 0 && behind > 0 {
-                        cpw(out, cp, &format!("Your branch and '{}' have diverged,", upstream))?;
-                        cpw(out, cp, &format!("and have {} and {} different commits each, respectively.", ahead, behind))?;
+                        cpw(
+                            out,
+                            cp,
+                            &format!("Your branch and '{}' have diverged,", upstream),
+                        )?;
+                        cpw(
+                            out,
+                            cp,
+                            &format!(
+                                "and have {} and {} different commits each, respectively.",
+                                ahead, behind
+                            ),
+                        )?;
                         if show_hints {
                             cpw(out, cp, "  (use \"git pull\" if you want to integrate the remote branch with yours)")?;
                         }
                         cpw(out, cp, "")?;
                     } else if ahead > 0 {
-                        cpw(out, cp, &format!("Your branch is ahead of '{}' by {} commit{}.", upstream, ahead, if ahead == 1 { "" } else { "s" }))?;
+                        cpw(
+                            out,
+                            cp,
+                            &format!(
+                                "Your branch is ahead of '{}' by {} commit{}.",
+                                upstream,
+                                ahead,
+                                if ahead == 1 { "" } else { "s" }
+                            ),
+                        )?;
                         if show_hints {
-                            cpw(out, cp, "  (use \"git push\" to publish your local commits)")?;
+                            cpw(
+                                out,
+                                cp,
+                                "  (use \"git push\" to publish your local commits)",
+                            )?;
                         }
                         cpw(out, cp, "")?;
                     } else if behind > 0 {
@@ -493,7 +529,11 @@ fn format_long(
                         }
                         cpw(out, cp, "")?;
                     } else {
-                        cpw(out, cp, &format!("Your branch is up to date with '{}'.", upstream))?;
+                        cpw(
+                            out,
+                            cp,
+                            &format!("Your branch is up to date with '{}'.", upstream),
+                        )?;
                         cpw(out, cp, "")?;
                     }
                 }
@@ -534,7 +574,11 @@ fn format_long(
         cpw(out, cp, "Changes to be committed:")?;
         if show_hints {
             if head.oid().is_some() {
-                cpw(out, cp, "  (use \"git restore --staged <file>...\" to unstage)")?;
+                cpw(
+                    out,
+                    cp,
+                    "  (use \"git restore --staged <file>...\" to unstage)",
+                )?;
             } else {
                 cpw(out, cp, "  (use \"git rm --cached <file>...\" to unstage)")?;
             }
@@ -562,8 +606,16 @@ fn format_long(
         }
         cpw(out, cp, "Changes not staged for commit:")?;
         if show_hints {
-            cpw(out, cp, "  (use \"git add <file>...\" to update what will be committed)")?;
-            cpw(out, cp, "  (use \"git restore <file>...\" to discard changes in working directory)")?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git add <file>...\" to update what will be committed)",
+            )?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git restore <file>...\" to discard changes in working directory)",
+            )?;
         }
         for entry in unstaged {
             let label = match entry.status {
@@ -586,7 +638,11 @@ fn format_long(
         }
         cpw(out, cp, "Untracked files:")?;
         if show_hints {
-            cpw(out, cp, "  (use \"git add <file>...\" to include in what will be committed)")?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git add <file>...\" to include in what will be committed)",
+            )?;
         }
         for path in untracked {
             cpw(out, cp, &format!("\t{path}"))?;
@@ -601,7 +657,11 @@ fn format_long(
         }
         cpw(out, cp, "Ignored files:")?;
         if show_hints {
-            cpw(out, cp, "  (use \"git add -f <file>...\" to include in what will be committed)")?;
+            cpw(
+                out,
+                cp,
+                "  (use \"git add -f <file>...\" to include in what will be committed)",
+            )?;
         }
         for path in ignored_files {
             cpw(out, cp, &format!("\t{path}"))?;
@@ -612,7 +672,11 @@ fn format_long(
     // "Untracked files not listed" message when -uno is used
     if hide_untracked {
         if show_hints {
-            cpw(out, cp, "Untracked files not listed (use -u option to show untracked files)")?;
+            cpw(
+                out,
+                cp,
+                "Untracked files not listed (use -u option to show untracked files)",
+            )?;
         } else {
             cpw(out, cp, "Untracked files not listed")?;
         }
@@ -623,18 +687,34 @@ fn format_long(
         if hide_untracked {
             // When hiding untracked, don't say "working tree clean"
         } else if !ignored_files.is_empty() {
-            cpw(out, cp, "nothing to commit but untracked files present (use \"git add\" to track)")?;
+            cpw(
+                out,
+                cp,
+                "nothing to commit but untracked files present (use \"git add\" to track)",
+            )?;
         } else {
             cpw(out, cp, "nothing to commit, working tree clean")?;
         }
     } else if !staged.is_empty() && unstaged.is_empty() && untracked.is_empty() {
         // Only staged changes — no footer needed (git doesn't print one)
     } else if staged.is_empty() && !unstaged.is_empty() && untracked.is_empty() {
-        cpw(out, cp, "no changes added to commit (use \"git add\" and/or \"git commit -a\")")?;
+        cpw(
+            out,
+            cp,
+            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+        )?;
     } else if staged.is_empty() && unstaged.is_empty() && !untracked.is_empty() {
-        cpw(out, cp, "nothing added to commit but untracked files present (use \"git add\" to track)")?;
+        cpw(
+            out,
+            cp,
+            "nothing added to commit but untracked files present (use \"git add\" to track)",
+        )?;
     } else if staged.is_empty() {
-        cpw(out, cp, "no changes added to commit (use \"git add\" and/or \"git commit -a\")")?;
+        cpw(
+            out,
+            cp,
+            "no changes added to commit (use \"git add\" and/or \"git commit -a\")",
+        )?;
     }
 
     Ok(())
@@ -695,7 +775,7 @@ fn walk_for_untracked(
                 let has_tracked = tracked
                     .range::<String, _>(&prefix..)
                     .next()
-                    .map_or(false, |t| t.starts_with(&prefix));
+                    .is_some_and(|t| t.starts_with(&prefix));
                 if has_tracked {
                     walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
                 } else {
@@ -736,7 +816,9 @@ fn compute_ahead_behind(
         Some(m) => m,
         None => return Ok(None),
     };
-    let remote = config.get(&remote_key).unwrap_or_else(|| "origin".to_string());
+    let remote = config
+        .get(&remote_key)
+        .unwrap_or_else(|| "origin".to_string());
 
     let upstream_branch = merge.strip_prefix("refs/heads/").unwrap_or(&merge);
     let upstream_display = if remote == "." {
@@ -771,8 +853,14 @@ fn compute_ahead_behind(
     let local_ancestors = collect_ancestors_set(repo, local_oid)?;
     let upstream_ancestors = collect_ancestors_set(repo, upstream_oid)?;
 
-    let ahead = local_ancestors.iter().filter(|oid| !upstream_ancestors.contains(oid)).count();
-    let behind = upstream_ancestors.iter().filter(|oid| !local_ancestors.contains(oid)).count();
+    let ahead = local_ancestors
+        .iter()
+        .filter(|oid| !upstream_ancestors.contains(oid))
+        .count();
+    let behind = upstream_ancestors
+        .iter()
+        .filter(|oid| !local_ancestors.contains(oid))
+        .count();
 
     Ok(Some((upstream_display, ahead, behind)))
 }

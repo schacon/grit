@@ -103,9 +103,11 @@ pub fn run(args: Args) -> Result<()> {
         fs::write(&pack_out, &pack_bytes)?;
         (pack_out, idx_out)
     } else {
-        let pack_path = PathBuf::from(args.pack_file.as_ref().ok_or_else(|| {
-            anyhow::anyhow!("no pack file specified")
-        })?);
+        let pack_path = PathBuf::from(
+            args.pack_file
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("no pack file specified"))?,
+        );
         let mut idx_path = pack_path.clone();
         idx_path.set_extension("idx");
         (pack_path, idx_path)
@@ -172,8 +174,15 @@ fn parse_and_resolve(
     let mut by_offset: HashMap<u64, (ObjectKind, Vec<u8>)> = HashMap::new();
     let mut by_oid: HashMap<ObjectId, (ObjectKind, Vec<u8>)> = HashMap::new();
     let mut resolved: Vec<ResolvedObject> = Vec::new();
-    let mut pending: Vec<(u64, u8, Vec<u8>, Option<ObjectId>, Option<u64>, usize, usize)> =
-        Vec::new();
+    let mut pending: Vec<(
+        u64,
+        u8,
+        Vec<u8>,
+        Option<ObjectId>,
+        Option<u64>,
+        usize,
+        usize,
+    )> = Vec::new();
 
     // Try to open repo ODB for fix-thin.
     let odb = if fix_thin {
@@ -234,14 +243,13 @@ fn parse_and_resolve(
                 base_offset_opt.and_then(|bo| by_offset.get(&bo).cloned())
             } else {
                 // REF_DELTA
-                base_oid_opt
-                    .and_then(|bo| {
-                        by_oid.get(&bo).cloned().or_else(|| {
-                            odb.as_ref()
-                                .and_then(|o| o.read(&bo).ok())
-                                .map(|obj| (obj.kind, obj.data))
-                        })
+                base_oid_opt.and_then(|bo| {
+                    by_oid.get(&bo).cloned().or_else(|| {
+                        odb.as_ref()
+                            .and_then(|o| o.read(&bo).ok())
+                            .map(|obj| (obj.kind, obj.data))
                     })
+                })
             };
 
             if let Some((base_kind, base_data)) = base {
@@ -289,14 +297,20 @@ fn read_pack_entry(
 ) -> Result<(u8, usize, Vec<u8>, Option<ObjectId>, Option<u64>)> {
     use flate2::read::ZlibDecoder;
 
-    let c = pack_bytes.get(*pos).copied().ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
+    let c = pack_bytes
+        .get(*pos)
+        .copied()
+        .ok_or_else(|| anyhow::anyhow!("truncated pack"))?;
     *pos += 1;
     let type_code = (c >> 4) & 0x7;
     let mut size = (c & 0x0f) as usize;
     let mut shift = 4u32;
     let mut cur = c;
     while cur & 0x80 != 0 {
-        cur = pack_bytes.get(*pos).copied().ok_or_else(|| anyhow::anyhow!("truncated pack header"))?;
+        cur = pack_bytes
+            .get(*pos)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("truncated pack header"))?;
         *pos += 1;
         size |= ((cur & 0x7f) as usize) << shift;
         shift += 7;
@@ -308,11 +322,17 @@ fn read_pack_entry(
     match type_code {
         6 => {
             // OFS_DELTA: read negative offset.
-            let mut c2 = pack_bytes.get(*pos).copied().ok_or_else(|| anyhow::anyhow!("truncated ofs-delta"))?;
+            let mut c2 = pack_bytes
+                .get(*pos)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("truncated ofs-delta"))?;
             *pos += 1;
             let mut value = (c2 & 0x7f) as u64;
             while c2 & 0x80 != 0 {
-                c2 = pack_bytes.get(*pos).copied().ok_or_else(|| anyhow::anyhow!("truncated ofs-delta"))?;
+                c2 = pack_bytes
+                    .get(*pos)
+                    .copied()
+                    .ok_or_else(|| anyhow::anyhow!("truncated ofs-delta"))?;
                 *pos += 1;
                 value = ((value + 1) << 7) | (c2 & 0x7f) as u64;
             }
@@ -327,8 +347,10 @@ fn read_pack_entry(
             if *pos + 20 > pack_bytes.len() {
                 bail!("truncated ref-delta base");
             }
-            base_oid = Some(ObjectId::from_bytes(&pack_bytes[*pos..*pos + 20])
-                .map_err(|e| anyhow::anyhow!("{e}"))?);
+            base_oid = Some(
+                ObjectId::from_bytes(&pack_bytes[*pos..*pos + 20])
+                    .map_err(|e| anyhow::anyhow!("{e}"))?,
+            );
             *pos += 20;
         }
         _ => {}
@@ -456,11 +478,12 @@ fn build_idx_v2(entries: &[ResolvedObject], pack_bytes: &[u8]) -> Result<Vec<u8>
 
 /// Verify an existing pack file and its index.
 fn run_verify(args: &Args) -> Result<()> {
-    let pack_path = args.pack_file.as_ref()
+    let pack_path = args
+        .pack_file
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("usage: grit index-pack --verify <pack-file>"))?;
 
-    let pack_bytes = fs::read(pack_path)
-        .with_context(|| format!("cannot read {pack_path}"))?;
+    let pack_bytes = fs::read(pack_path).with_context(|| format!("cannot read {pack_path}"))?;
 
     // Validate pack header.
     if pack_bytes.len() < 12 + 20 {
@@ -504,7 +527,8 @@ fn run_verify(args: &Args) -> Result<()> {
         if existing_idx != expected_idx {
             // Check at least that the pack checksum in the idx matches.
             if existing_idx.len() >= 40 {
-                let idx_pack_checksum = &existing_idx[existing_idx.len() - 40..existing_idx.len() - 20];
+                let idx_pack_checksum =
+                    &existing_idx[existing_idx.len() - 40..existing_idx.len() - 20];
                 let pack_checksum = &pack_bytes[pack_bytes.len() - 20..];
                 if idx_pack_checksum != pack_checksum {
                     bail!("pack checksum in index does not match pack file");

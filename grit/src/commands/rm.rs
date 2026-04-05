@@ -140,7 +140,8 @@ pub fn run(args: Args) -> Result<()> {
             // Check if this is a gitlink entry (mode 160000)
             let is_gitlink = matches.len() == 1
                 && matches[0] == rel
-                && index.get(rel.as_bytes(), 0)
+                && index
+                    .get(rel.as_bytes(), 0)
                     .map(|e| e.mode == 0o160000)
                     .unwrap_or(false);
             if !is_gitlink {
@@ -253,16 +254,12 @@ fn error_message(kind: &RmErrorKind, count: usize, args: &Args) -> (String, Opti
             (header, hint)
         }
         RmErrorKind::StagedInIndex => {
-            let header = format!(
-                "the following file{plural} changes staged in the index:"
-            );
+            let header = format!("the following file{plural} changes staged in the index:");
             let hint = Some("(use --cached to keep the file, or -f to force removal)".to_owned());
             (header, hint)
         }
         RmErrorKind::LocalModifications => {
-            let header = format!(
-                "the following file{plural} local modifications:"
-            );
+            let header = format!("the following file{plural} local modifications:");
             let hint = if args.cached {
                 None
             } else {

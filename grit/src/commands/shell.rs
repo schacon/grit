@@ -35,7 +35,9 @@ pub fn run(args: Args) -> Result<()> {
         Some(f) => f.as_str(),
         None => {
             eprintln!("fatal: Interactive git shell is not enabled.");
-            eprintln!("hint: ~/{}/allowed-commands should exist and list allowed commands.", "git-shell-commands");
+            eprintln!(
+                "hint: ~/git-shell-commands/allowed-commands should exist and list allowed commands."
+            );
             std::process::exit(128);
         }
     };
@@ -44,13 +46,10 @@ pub fn run(args: Args) -> Result<()> {
         bail!("unrecognized flag '{}'; only -c is supported", flag);
     }
 
-    let cmd_str = args
-        .command
-        .as_deref()
-        .unwrap_or_else(|| {
-            eprintln!("fatal: no command specified");
-            std::process::exit(128);
-        });
+    let cmd_str = args.command.as_deref().unwrap_or_else(|| {
+        eprintln!("fatal: no command specified");
+        std::process::exit(128);
+    });
 
     // Parse the command to extract the git command name and the directory argument
     let (git_cmd, directory) = parse_git_command(cmd_str)?;
@@ -109,11 +108,7 @@ fn parse_git_command(cmd_str: &str) -> Result<(String, String)> {
     };
 
     // Strip surrounding quotes from the directory
-    let directory = rest
-        .trim()
-        .trim_matches('\'')
-        .trim_matches('"')
-        .to_string();
+    let directory = rest.trim().trim_matches('\'').trim_matches('"').to_string();
 
     Ok((cmd_name, directory))
 }

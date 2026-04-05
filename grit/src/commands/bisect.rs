@@ -130,8 +130,8 @@ fn cmd_start(args: &[String]) -> Result<()> {
             .to_owned(),
         _ => {
             // Detached HEAD — save the commit hash.
-            let head_content = fs::read_to_string(git_dir.join("HEAD"))
-                .context("cannot read HEAD")?;
+            let head_content =
+                fs::read_to_string(git_dir.join("HEAD")).context("cannot read HEAD")?;
             head_content.trim().to_owned()
         }
     };
@@ -148,8 +148,8 @@ fn cmd_start(args: &[String]) -> Result<()> {
     if !positional.is_empty() {
         // First arg is bad.
         let bad_rev = &positional[0];
-        let bad_oid = resolve_revision(&repo, bad_rev)
-            .with_context(|| format!("bad revision: {bad_rev}"))?;
+        let bad_oid =
+            resolve_revision(&repo, bad_rev).with_context(|| format!("bad revision: {bad_rev}"))?;
         refs::write_ref(git_dir, "refs/bisect/bad", &bad_oid)?;
         writeln!(log_file, "# bad: [{bad_oid}] {bad_rev}")?;
         writeln!(log_file, "git bisect bad {bad_oid}")?;
@@ -188,8 +188,7 @@ fn cmd_bad(args: &[String]) -> Result<()> {
         args[0].clone()
     };
 
-    let oid = resolve_revision(&repo, &rev)
-        .with_context(|| format!("bad revision: {rev}"))?;
+    let oid = resolve_revision(&repo, &rev).with_context(|| format!("bad revision: {rev}"))?;
     refs::write_ref(git_dir, "refs/bisect/bad", &oid)?;
     append_bisect_log(git_dir, &format!("# bad: [{oid}] {rev}"))?;
     append_bisect_log(git_dir, &format!("git bisect bad {oid}"))?;
@@ -209,8 +208,7 @@ fn cmd_good(args: &[String]) -> Result<()> {
     };
 
     for rev in &revs {
-        let oid = resolve_revision(&repo, rev)
-            .with_context(|| format!("good revision: {rev}"))?;
+        let oid = resolve_revision(&repo, rev).with_context(|| format!("good revision: {rev}"))?;
         let ref_name = format!("refs/bisect/good-{oid}");
         refs::write_ref(git_dir, &ref_name, &oid)?;
         append_bisect_log(git_dir, &format!("# good: [{oid}] {rev}"))?;
@@ -232,8 +230,7 @@ fn cmd_skip(args: &[String]) -> Result<()> {
     };
 
     for rev in &revs {
-        let oid = resolve_revision(&repo, rev)
-            .with_context(|| format!("skip revision: {rev}"))?;
+        let oid = resolve_revision(&repo, rev).with_context(|| format!("skip revision: {rev}"))?;
         let ref_name = format!("refs/bisect/skip-{oid}");
         refs::write_ref(git_dir, &ref_name, &oid)?;
         append_bisect_log(git_dir, &format!("# skip: [{oid}] {rev}"))?;
@@ -410,7 +407,10 @@ fn cmd_terms(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    println!("Your current terms are {} for the old state and {} for the new state.", term_good, term_bad);
+    println!(
+        "Your current terms are {} for the old state and {} for the new state.",
+        term_good, term_bad
+    );
     Ok(())
 }
 
@@ -497,9 +497,7 @@ fn bisect_next(repo: &Repository) -> Result<()> {
     // Read all good refs.
     let good_oids = read_bisect_good_refs(git_dir)?;
     if good_oids.is_empty() {
-        println!(
-            "status: waiting for good commit(s), bad commit known"
-        );
+        println!("status: waiting for good commit(s), bad commit known");
         return Ok(());
     }
 
@@ -546,10 +544,7 @@ fn bisect_next(repo: &Repository) -> Result<()> {
     let mid_oid = unskipped[mid_idx];
 
     // Write BISECT_EXPECTED_REV so status knows what we expect.
-    fs::write(
-        git_dir.join("BISECT_EXPECTED_REV"),
-        format!("{mid_oid}\n"),
-    )?;
+    fs::write(git_dir.join("BISECT_EXPECTED_REV"), format!("{mid_oid}\n"))?;
 
     // Checkout the midpoint using git.
     let status = std::process::Command::new(

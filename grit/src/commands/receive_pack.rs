@@ -22,8 +22,12 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let repo = open_repo(&args.directory)
-        .with_context(|| format!("could not open repository at '{}'", args.directory.display()))?;
+    let repo = open_repo(&args.directory).with_context(|| {
+        format!(
+            "could not open repository at '{}'",
+            args.directory.display()
+        )
+    })?;
 
     // Phase 1: Advertise refs
     advertise_refs(&repo.git_dir)?;
@@ -63,7 +67,7 @@ pub fn run(args: Args) -> Result<()> {
         // Write pack data to objects/pack/ if it looks like a packfile
         if pack_data.len() > 12 && &pack_data[..4] == b"PACK" {
             // Use SHA-1 of the pack data as the pack name
-            use sha1::{Sha1, Digest};
+            use sha1::{Digest, Sha1};
             let mut hasher = Sha1::new();
             hasher.update(&pack_data);
             let hash = hasher.finalize();
@@ -83,8 +87,8 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("deleting ref {refname}"))?;
             println!("ok {refname}");
         } else {
-            let new_oid = ObjectId::from_hex(new_hex)
-                .with_context(|| format!("invalid oid: {new_hex}"))?;
+            let new_oid =
+                ObjectId::from_hex(new_hex).with_context(|| format!("invalid oid: {new_hex}"))?;
             refs::write_ref(&repo.git_dir, refname, &new_oid)
                 .with_context(|| format!("updating ref {refname}"))?;
             println!("ok {refname}");

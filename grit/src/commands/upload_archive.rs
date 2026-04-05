@@ -22,8 +22,12 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let repo = open_repo(&args.directory)
-        .with_context(|| format!("could not open repository at '{}'", args.directory.display()))?;
+    let repo = open_repo(&args.directory).with_context(|| {
+        format!(
+            "could not open repository at '{}'",
+            args.directory.display()
+        )
+    })?;
 
     // Read arguments from stdin (one per line, terminated by empty line)
     let stdin = io::stdin();
@@ -111,11 +115,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Recursively print tree entries (placeholder for full archive generation).
-fn print_tree_listing(
-    repo: &Repository,
-    tree_oid: &ObjectId,
-    prefix: &str,
-) -> Result<()> {
+fn print_tree_listing(repo: &Repository, tree_oid: &ObjectId, prefix: &str) -> Result<()> {
     let obj = repo.odb.read(tree_oid)?;
     let entries = parse_tree(&obj.data).context("parsing tree")?;
 

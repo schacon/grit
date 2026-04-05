@@ -37,9 +37,9 @@ struct AttrRule {
 /// Possible attribute values.
 #[derive(Clone)]
 enum AttrValue {
-    Set,              // attr
-    Unset,            // -attr
-    Value(String),    // attr=value
+    Set,           // attr
+    Unset,         // -attr
+    Value(String), // attr=value
 }
 
 impl std::fmt::Display for AttrValue {
@@ -155,11 +155,7 @@ fn load_gitattributes(work_tree: &Path) -> Result<Vec<AttrRule>> {
 }
 
 /// Parse a single .gitattributes file.
-fn parse_gitattributes_file(
-    path: &Path,
-    prefix: &str,
-    rules: &mut Vec<AttrRule>,
-) -> Result<()> {
+fn parse_gitattributes_file(path: &Path, prefix: &str, rules: &mut Vec<AttrRule>) -> Result<()> {
     let content = fs::read_to_string(path)?;
     for line in content.lines() {
         let line = line.trim();
@@ -216,8 +212,7 @@ fn find_attr(rules: &[AttrRule], path: &str, attr: &str) -> Option<AttrValue> {
 
 /// Find all attributes set for a path.
 fn find_all_attrs(rules: &[AttrRule], path: &str) -> Vec<(String, AttrValue)> {
-    let mut map: std::collections::BTreeMap<String, AttrValue> =
-        std::collections::BTreeMap::new();
+    let mut map: std::collections::BTreeMap<String, AttrValue> = std::collections::BTreeMap::new();
     for rule in rules {
         if pattern_matches(&rule.pattern, path) {
             for (name, value) in &rule.attrs {

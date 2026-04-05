@@ -45,8 +45,12 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let remote_path = PathBuf::from(&args.remote);
-    let remote_repo = open_repo(&remote_path)
-        .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
+    let remote_repo = open_repo(&remote_path).with_context(|| {
+        format!(
+            "could not open remote repository at '{}'",
+            remote_path.display()
+        )
+    })?;
 
     // Build list of ref updates from refspecs
     let mut updates = Vec::new();
@@ -74,21 +78,19 @@ pub fn run(args: Args) -> Result<()> {
     // Validate fast-forward unless --force
     for update in &updates {
         if let Some(old) = &update.old_oid {
-            if *old != update.new_oid && !args.force {
-                if !is_ancestor(&repo, *old, update.new_oid)? {
+            if *old != update.new_oid && !args.force
+                && !is_ancestor(&repo, *old, update.new_oid)? {
                     bail!(
                         "non-fast-forward update to '{}' rejected (use --force to override)",
                         update.remote_ref
                     );
                 }
-            }
         }
     }
 
     if !args.dry_run {
         // Copy objects from local → remote
-        copy_objects(&repo.git_dir, &remote_repo.git_dir)
-            .context("copying objects to remote")?;
+        copy_objects(&repo.git_dir, &remote_repo.git_dir).context("copying objects to remote")?;
     }
 
     // Apply ref updates
@@ -181,11 +183,10 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists() {
-                    if fs::hard_link(entry.path(), &dst_file).is_err() {
+                if !dst_file.exists()
+                    && fs::hard_link(entry.path(), &dst_file).is_err() {
                         fs::copy(entry.path(), &dst_file)?;
                     }
-                }
             }
         }
     }

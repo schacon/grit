@@ -123,12 +123,13 @@ fn cmd_set(repo: &Repository, patterns: &[String], cone: bool) -> Result<()> {
 fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     use grit_lib::index::Index;
 
-    let work_tree = repo.work_tree.as_deref()
+    let work_tree = repo
+        .work_tree
+        .as_deref()
         .ok_or_else(|| anyhow::anyhow!("bare repository cannot use sparse checkout"))?;
 
     let index_path = repo.git_dir.join("index");
-    let mut index = Index::load(&index_path)
-        .context("reading index")?;
+    let mut index = Index::load(&index_path).context("reading index")?;
 
     // Promote to version 3 if needed (skip-worktree requires extended flags)
     if index.version < 3 {
@@ -299,8 +300,7 @@ fn sparse_checkout_path(repo: &Repository) -> std::path::PathBuf {
 fn set_sparse_config(repo: &Repository, enable: bool) -> Result<()> {
     let config_path = repo.git_dir.join("config");
     let mut config = if config_path.exists() {
-        let content =
-            fs::read_to_string(&config_path).context("reading repo config")?;
+        let content = fs::read_to_string(&config_path).context("reading repo config")?;
         ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
     } else {
         ConfigFile::parse(&config_path, "", ConfigScope::Local)?
@@ -316,8 +316,7 @@ fn set_sparse_config(repo: &Repository, enable: bool) -> Result<()> {
 fn set_cone_config(repo: &Repository, cone: bool) -> Result<()> {
     let config_path = repo.git_dir.join("config");
     let mut config = if config_path.exists() {
-        let content =
-            fs::read_to_string(&config_path).context("reading repo config")?;
+        let content = fs::read_to_string(&config_path).context("reading repo config")?;
         ConfigFile::parse(&config_path, &content, ConfigScope::Local)?
     } else {
         ConfigFile::parse(&config_path, "", ConfigScope::Local)?

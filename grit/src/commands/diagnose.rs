@@ -32,7 +32,11 @@ pub fn run(args: Args) -> Result<()> {
 
     // OS info
     report.push_str("[System]\n");
-    report.push_str(&format!("os: {} {}\n", std::env::consts::OS, std::env::consts::ARCH));
+    report.push_str(&format!(
+        "os: {} {}\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     if let Ok(content) = fs::read_to_string("/etc/os-release") {
         for line in content.lines() {
             if let Some(pretty) = line.strip_prefix("PRETTY_NAME=") {

@@ -97,11 +97,7 @@ pub fn run(args: Args) -> Result<()> {
             }
             None => {
                 let pad = " ".repeat(b_width + 2 + 12);
-                writeln!(
-                    out,
-                    "{num_a:>a_width$}: {short_a} < {pad} {}",
-                    c.summary
-                )?;
+                writeln!(out, "{num_a:>a_width$}: {short_a} < {pad} {}", c.summary)?;
             }
         }
     }
@@ -112,11 +108,7 @@ pub fn run(args: Args) -> Result<()> {
             let short_b = &c.oid.to_hex()[..12];
             let num_b = i + 1;
             let pad_a = " ".repeat(a_width + 2 + 12);
-            writeln!(
-                out,
-                "{pad_a} > {num_b:>b_width$}: {short_b} {}",
-                c.summary
-            )?;
+            writeln!(out, "{pad_a} > {num_b:>b_width$}: {short_b} {}", c.summary)?;
         }
     }
 

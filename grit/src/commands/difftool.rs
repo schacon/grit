@@ -86,10 +86,7 @@ pub fn run(args: Args) -> Result<()> {
         if entry.status == DiffStatus::Added {
             // New file — diff /dev/null against worktree
             if !args.no_prompt {
-                eprint!(
-                    "View diff for '{}' in {}? [Y/n] ",
-                    entry.path(), tool_name
-                );
+                eprint!("View diff for '{}' in {}? [Y/n] ", entry.path(), tool_name);
                 io::stderr().flush()?;
                 let mut answer = String::new();
                 io::stdin().read_line(&mut answer)?;
@@ -125,10 +122,7 @@ pub fn run(args: Args) -> Result<()> {
             };
 
             if !args.no_prompt {
-                eprint!(
-                    "View diff for '{}' in {}? [Y/n] ",
-                    entry.path(), tool_name
-                );
+                eprint!("View diff for '{}' in {}? [Y/n] ", entry.path(), tool_name);
                 io::stderr().flush()?;
                 let mut answer = String::new();
                 io::stdin().read_line(&mut answer)?;

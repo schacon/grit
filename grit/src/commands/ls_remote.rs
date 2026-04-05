@@ -176,7 +176,10 @@ fn run_bundle_ls_remote(path: &Path, args: &Args) -> Result<()> {
             continue;
         }
         if !args.patterns.is_empty() {
-            let matched = args.patterns.iter().any(|p| refname.contains(p) || refname.ends_with(p));
+            let matched = args
+                .patterns
+                .iter()
+                .any(|p| refname.contains(p) || refname.ends_with(p));
             if !matched {
                 continue;
             }

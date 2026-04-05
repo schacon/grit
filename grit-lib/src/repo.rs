@@ -194,10 +194,7 @@ impl Repository {
     /// `GIT_NO_REPLACE_OBJECTS` is **not** set, this reads the
     /// replacement object instead.  Otherwise it behaves identically
     /// to `self.odb.read(oid)`.
-    pub fn read_replaced(
-        &self,
-        oid: &crate::objects::ObjectId,
-    ) -> Result<crate::objects::Object> {
+    pub fn read_replaced(&self, oid: &crate::objects::ObjectId) -> Result<crate::objects::Object> {
         if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
             return self.odb.read(oid);
         }
@@ -287,9 +284,7 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
             if let Some(val) = cfg.get("safe.bareRepository") {
                 if val == "explicit" {
-                    return Err(Error::ForbiddenBareRepository(
-                        dir.display().to_string()
-                    ));
+                    return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
                 }
             }
         }

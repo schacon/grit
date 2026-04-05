@@ -122,12 +122,12 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                 match input.favor {
                     MergeFavor::Ours => {
                         for line in ours {
-                            content.extend_from_slice(&line);
+                            content.extend_from_slice(line);
                         }
                     }
                     MergeFavor::Theirs => {
                         for line in theirs {
-                            content.extend_from_slice(&line);
+                            content.extend_from_slice(line);
                         }
                     }
                     MergeFavor::Union => {
@@ -151,9 +151,9 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                         conflicts += 1;
                         emit_conflict(
                             &mut content,
-                            &base,
-                            &ours,
-                            &theirs,
+                            base,
+                            ours,
+                            theirs,
                             input.label_ours,
                             input.label_base,
                             input.label_theirs,
@@ -393,10 +393,12 @@ fn emit_inserts_at(
 
     if has_ours && has_theirs {
         // Both sides insert at the same position — check if identical.
-        let o_lines: Vec<Vec<u8>> = o_ins.iter()
+        let o_lines: Vec<Vec<u8>> = o_ins
+            .iter()
             .flat_map(|&(s, e)| ours[s..e].to_vec())
             .collect();
-        let t_lines: Vec<Vec<u8>> = t_ins.iter()
+        let t_lines: Vec<Vec<u8>> = t_ins
+            .iter()
             .flat_map(|&(s, e)| theirs[s..e].to_vec())
             .collect();
 

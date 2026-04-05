@@ -186,15 +186,25 @@ pub fn run(args: Args) -> Result<()> {
     let remote_name = remote_name_owned.as_str();
 
     // Collect push refspecs from config if no CLI refspecs
-    let push_refspecs_from_config: Vec<String> = if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
-        config.get_all(&format!("remote.{remote_name}.push"))
-    } else {
-        Vec::new()
-    };
+    let push_refspecs_from_config: Vec<String> =
+        if args.refspecs.is_empty() && !args.mirror && !push_all && !args.delete {
+            config.get_all(&format!("remote.{remote_name}.push"))
+        } else {
+            Vec::new()
+        };
 
     // Push to each URL
     for url in &urls {
-        push_to_url(&repo, &config, &args, url, remote_name, current_branch.as_deref(), push_all, &push_refspecs_from_config)?;
+        push_to_url(
+            &repo,
+            &config,
+            &args,
+            url,
+            remote_name,
+            current_branch.as_deref(),
+            push_all,
+            &push_refspecs_from_config,
+        )?;
     }
 
     Ok(())
@@ -210,7 +220,6 @@ fn push_to_url(
     push_all: bool,
     push_refspecs_from_config: &[String],
 ) -> Result<()> {
-
     // Check protocol.file.allow before local push
     crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
 
@@ -221,8 +230,12 @@ fn push_to_url(
     };
 
     // Open remote repo
-    let remote_repo = open_repo(&remote_path)
-        .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?;
+    let remote_repo = open_repo(&remote_path).with_context(|| {
+        format!(
+            "could not open remote repository at '{}'",
+            remote_path.display()
+        )
+    })?;
 
     // Build list of ref updates
     let mut updates = Vec::new();
@@ -293,7 +306,10 @@ fn push_to_url(
                 bail!("remote ref '{}' not found", spec);
             }
             let expected_oid = resolve_force_with_lease_expect(
-                &args.force_with_lease, &repo.git_dir, remote_name, spec,
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                spec,
             );
             updates.push(RefUpdate {
                 local_ref: None,
@@ -316,7 +332,10 @@ fn push_to_url(
                     bail!("remote ref '{}' not found", dst);
                 }
                 let expected_oid = resolve_force_with_lease_expect(
-                    &args.force_with_lease, &repo.git_dir, remote_name, &dst,
+                    &args.force_with_lease,
+                    &repo.git_dir,
+                    remote_name,
+                    &dst,
                 );
                 updates.push(RefUpdate {
                     local_ref: None,
@@ -384,7 +403,10 @@ fn push_to_url(
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
-                &args.force_with_lease, &repo.git_dir, remote_name, &dst,
+                &args.force_with_lease,
+                &repo.git_dir,
+                remote_name,
+                &dst,
             );
 
             updates.push(RefUpdate {
@@ -413,7 +435,7 @@ fn push_to_url(
                 let local_refs = refs::list_refs(&repo.git_dir, "refs/")?;
                 for (refname, local_oid) in &local_refs {
                     if let Some(matched) = match_glob(src_pat, refname) {
-                        let remote_ref = dst_pat.replacen('*', &matched, 1);
+                        let remote_ref = dst_pat.replacen('*', matched, 1);
                         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
                         if old_oid.as_ref() == Some(local_oid) {
                             continue;
@@ -448,8 +470,7 @@ fn push_to_url(
         }
     } else {
         // Default: push current branch
-        let branch = current_branch
-            .context("not on a branch; specify a refspec to push")?;
+        let branch = current_branch.context("not on a branch; specify a refspec to push")?;
 
         let local_ref = format!("refs/heads/{branch}");
         let remote_ref = local_ref.clone();
@@ -459,7 +480,10 @@ fn push_to_url(
         let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
         let expected_oid = resolve_force_with_lease_expect(
-            &args.force_with_lease, &repo.git_dir, remote_name, branch,
+            &args.force_with_lease,
+            &repo.git_dir,
+            remote_name,
+            branch,
         );
 
         updates.push(RefUpdate {
@@ -515,7 +539,7 @@ fn push_to_url(
             if old == new {
                 continue;
             }
-            if !args.force && args.force_with_lease.is_none() && !is_ancestor(&repo, *old, *new)? {
+            if !args.force && args.force_with_lease.is_none() && !is_ancestor(repo, *old, *new)? {
                 bail!(
                     "Updates were rejected because the tip of your current branch is behind\n\
                      its remote counterpart. If you want to force the update, use --force.\n\
@@ -547,16 +571,13 @@ fn push_to_url(
         }
         let stdin_data = hook_lines.join("");
         let result = run_hook(
-            &repo,
+            repo,
             "pre-push",
             &[remote_name, url],
             Some(stdin_data.as_bytes()),
         );
-        match result {
-            HookResult::Failed(code) => {
-                bail!("pre-push hook declined the push (exit code {code})");
-            }
-            _ => {}
+        if let HookResult::Failed(code) = result {
+            bail!("pre-push hook declined the push (exit code {code})");
         }
     }
 
@@ -564,8 +585,7 @@ fn push_to_url(
     if !args.push_option.is_empty() {
         let push_opts_path = remote_repo.git_dir.join("push_options");
         let content = args.push_option.join("\n") + "\n";
-        fs::write(&push_opts_path, content)
-            .context("writing push options")?;
+        fs::write(&push_opts_path, content).context("writing push options")?;
     }
 
     // Copy objects to remote, tracking what was added for rollback
@@ -612,9 +632,10 @@ fn push_to_url(
 
     // Build push option env vars for hooks
     let push_option_env: Vec<(String, String)> = if !args.push_option.is_empty() {
-        let mut env = vec![
-            ("GIT_PUSH_OPTION_COUNT".to_owned(), args.push_option.len().to_string()),
-        ];
+        let mut env = vec![(
+            "GIT_PUSH_OPTION_COUNT".to_owned(),
+            args.push_option.len().to_string(),
+        )];
         for (i, opt) in args.push_option.iter().enumerate() {
             env.push((format!("GIT_PUSH_OPTION_{i}"), opt.clone()));
         }
@@ -637,8 +658,14 @@ fn push_to_url(
     let hook_stdin = {
         let mut lines = String::new();
         for update in &updates {
-            let old_hex = update.old_oid.map(|o| o.to_hex()).unwrap_or_else(|| zero_oid_str.clone());
-            let new_hex = update.new_oid.map(|o| o.to_hex()).unwrap_or_else(|| zero_oid_str.clone());
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
             lines.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
         }
         lines
@@ -655,7 +682,7 @@ fn push_to_url(
         );
         if !hook_output.is_empty() {
             let output_str = String::from_utf8_lossy(&hook_output);
-            let color_remote = resolve_color_remote(&repo, &args);
+            let color_remote = resolve_color_remote(repo, args);
             colorize_remote_output(&output_str, color_remote);
         }
         if let HookResult::Failed(_code) = hook_result {
@@ -691,7 +718,7 @@ fn push_to_url(
             // Forward hook output to stderr, optionally colorized
             if !hook_output.is_empty() {
                 let output_str = String::from_utf8_lossy(&hook_output);
-                let color_remote = resolve_color_remote(&repo, &args);
+                let color_remote = resolve_color_remote(repo, args);
                 colorize_remote_output(&output_str, color_remote);
             }
             if let HookResult::Failed(_code) = hook_result {
@@ -705,18 +732,20 @@ fn push_to_url(
                                 old_oid,
                             );
                         } else {
-                            let _ = refs::delete_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                            );
+                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
                         }
                     }
                     eprintln!(
                         " ! [remote rejected] {} -> {} (hook declined)",
-                        update.local_ref.as_deref()
+                        update
+                            .local_ref
+                            .as_deref()
                             .and_then(|r| r.strip_prefix("refs/heads/"))
                             .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)")),
-                        update.remote_ref.strip_prefix("refs/heads/").unwrap_or(&update.remote_ref),
+                        update
+                            .remote_ref
+                            .strip_prefix("refs/heads/")
+                            .unwrap_or(&update.remote_ref),
                     );
                     bail!("failed to push some refs to '{url}'");
                 }
@@ -725,13 +754,7 @@ fn push_to_url(
             }
         }
 
-        let result = apply_ref_update(
-            &repo,
-            &remote_repo,
-            update,
-            &args,
-            url,
-        );
+        let result = apply_ref_update(repo, &remote_repo, update, args, url);
 
         match result {
             Ok(()) => {
@@ -748,10 +771,7 @@ fn push_to_url(
                                 old_oid,
                             );
                         } else {
-                            let _ = refs::delete_ref(
-                                &remote_repo.git_dir,
-                                &prev_update.remote_ref,
-                            );
+                            let _ = refs::delete_ref(&remote_repo.git_dir, &prev_update.remote_ref);
                         }
                     }
                     bail!("atomic push failed: {}", e);
@@ -774,9 +794,7 @@ fn push_to_url(
                         .as_deref()
                         .and_then(|r| r.strip_prefix("refs/tags/"))
                 })
-                .unwrap_or(
-                    update.local_ref.as_deref().unwrap_or("(delete)"),
-                );
+                .unwrap_or(update.local_ref.as_deref().unwrap_or("(delete)"));
             let dst_short = update
                 .remote_ref
                 .strip_prefix("refs/heads/")
@@ -801,7 +819,7 @@ fn push_to_url(
         );
         if !hook_output.is_empty() {
             let output_str = String::from_utf8_lossy(&hook_output);
-            let color_remote = resolve_color_remote(&repo, &args);
+            let color_remote = resolve_color_remote(repo, args);
             colorize_remote_output(&output_str, color_remote);
         }
     }
@@ -810,12 +828,13 @@ fn push_to_url(
     if args.set_upstream {
         if let Some(branch) = current_branch {
             let local_ref = format!("refs/heads/{branch}");
-            if updates.iter().any(|u| u.local_ref.as_deref() == Some(local_ref.as_str())) {
+            if updates
+                .iter()
+                .any(|u| u.local_ref.as_deref() == Some(local_ref.as_str()))
+            {
                 set_upstream_config(&repo.git_dir, branch, remote_name)?;
                 if !args.quiet {
-                    eprintln!(
-                        "branch '{branch}' set up to track '{remote_name}/{branch}'."
-                    );
+                    eprintln!("branch '{branch}' set up to track '{remote_name}/{branch}'.");
                 }
             }
         }
@@ -838,9 +857,7 @@ fn apply_ref_update(
         (Some(new_oid), old_oid_opt) => {
             if !args.dry_run {
                 refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
-                    .with_context(|| {
-                        format!("updating remote ref {}", update.remote_ref)
-                    })?;
+                    .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
             }
 
             let branch_short = update
@@ -858,9 +875,7 @@ fn apply_ref_update(
                         .as_deref()
                         .and_then(|r| r.strip_prefix("refs/tags/"))
                 })
-                .unwrap_or(
-                    update.local_ref.as_deref().unwrap_or("(unknown)"),
-                );
+                .unwrap_or(update.local_ref.as_deref().unwrap_or("(unknown)"));
 
             if args.porcelain {
                 let old_hex = old_oid_opt
@@ -907,9 +922,7 @@ fn apply_ref_update(
             // Delete
             if !args.dry_run {
                 refs::delete_ref(&remote_repo.git_dir, &update.remote_ref)
-                    .with_context(|| {
-                        format!("deleting remote ref {}", update.remote_ref)
-                    })?;
+                    .with_context(|| format!("deleting remote ref {}", update.remote_ref))?;
             }
 
             let branch_short = update
@@ -1014,7 +1027,8 @@ fn copy_symrefs_push(
             let content = content.trim();
             if let Some(target) = content.strip_prefix("ref: ") {
                 let remote_ref = dst_pattern.replacen('*', matched, 1);
-                let remote_path = remote_git_dir.join(remote_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
+                let remote_path =
+                    remote_git_dir.join(remote_ref.replace('/', std::path::MAIN_SEPARATOR_STR));
                 if let Some(parent) = remote_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
@@ -1054,7 +1068,10 @@ fn match_glob<'a>(pattern: &str, refname: &'a str) -> Option<&'a str> {
     if let Some(star_pos) = pattern.find('*') {
         let prefix = &pattern[..star_pos];
         let suffix = &pattern[star_pos + 1..];
-        if refname.starts_with(prefix) && refname.ends_with(suffix) && refname.len() >= prefix.len() + suffix.len() {
+        if refname.starts_with(prefix)
+            && refname.ends_with(suffix)
+            && refname.len() >= prefix.len() + suffix.len()
+        {
             Some(&refname[prefix.len()..refname.len() - suffix.len()])
         } else {
             None
@@ -1093,10 +1110,7 @@ fn set_upstream_config(git_dir: &Path, branch: &str, remote: &str) -> Result<()>
         Some(c) => c,
         None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
     };
-    config.set(
-        &format!("branch.{branch}.remote"),
-        remote,
-    )?;
+    config.set(&format!("branch.{branch}.remote"), remote)?;
     config.set(
         &format!("branch.{branch}.merge"),
         &format!("refs/heads/{branch}"),
@@ -1161,7 +1175,6 @@ fn copy_objects_tracked(src_git_dir: &Path, dst_git_dir: &Path) -> Result<Vec<Pa
     Ok(copied)
 }
 
-
 /// Open a repository (bare or non-bare).
 fn open_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
@@ -1176,15 +1189,14 @@ fn resolve_color_remote(repo: &Repository, _args: &Args) -> bool {
     // Check -c color.remote=always from environment
     // GIT_CONFIG_COUNT / GIT_CONFIG_KEY / GIT_CONFIG_VALUE override
     for (key, val) in std::env::vars() {
-        if key.starts_with("GIT_CONFIG_KEY_") {
-            if val == "color.remote" {
+        if key.starts_with("GIT_CONFIG_KEY_")
+            && val == "color.remote" {
                 let idx = key.strip_prefix("GIT_CONFIG_KEY_").unwrap_or("");
                 let val_key = format!("GIT_CONFIG_VALUE_{idx}");
                 if let Ok(v) = std::env::var(&val_key) {
                     return v == "always" || v == "true";
                 }
             }
-        }
     }
     // Check repo config
     if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
