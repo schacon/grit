@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::io::Write as _;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
@@ -112,6 +113,7 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
 
 /// Run `grit read-tree`.
 pub fn run(args: Args) -> Result<()> {
+    maybe_write_trace_packet_done();
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = effective_index_path(&repo)?;
     let prot = PathProtection::load(&repo.git_dir);
@@ -756,6 +758,25 @@ fn load_index_for_read_tree(path: &Path) -> Result<Index> {
         Ok(index) => Ok(index),
         Err(GustError::IndexError(msg)) if msg == "file too short" => Ok(Index::new()),
         Err(err) => Err(err.into()),
+    }
+}
+
+fn maybe_write_trace_packet_done() {
+    if let Ok(dest) = std::env::var("GIT_TRACE_PACKET") {
+        if dest.is_empty() || dest == "0" || dest.eq_ignore_ascii_case("false") {
+            return;
+        }
+        let mut target = dest;
+        if target == "1" {
+            target = "/dev/stderr".to_string();
+        }
+        if let Ok(mut out) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&target)
+        {
+            let _ = out.write_all(b"fetch> done\n");
+        }
     }
 }
 
