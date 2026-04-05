@@ -96,6 +96,14 @@ pub struct Args {
     /// Do not sign the push.
     #[arg(long = "no-signed")]
     pub no_signed: bool,
+
+    /// Also push annotated tags that point to commits being pushed.
+    #[arg(long = "follow-tags")]
+    pub follow_tags: bool,
+
+    /// Disable --follow-tags.
+    #[arg(long = "no-follow-tags")]
+    pub no_follow_tags: bool,
 }
 
 /// A single ref update to perform on the remote.
@@ -219,7 +227,7 @@ pub fn run(args: Args) -> Result<()> {
 
 fn push_to_url(
     repo: &Repository,
-    _config: &ConfigSet,
+    config: &ConfigSet,
     args: &Args,
     url: &str,
     remote_name: &str,
@@ -408,7 +416,13 @@ fn push_to_url(
             } else {
                 src.clone()
             };
-            let remote_ref = normalize_ref(&dst);
+            // When pushing HEAD without explicit :dst, use the resolved branch name
+            let effective_dst = if dst == "HEAD" && src == "HEAD" {
+                resolved_src.clone()
+            } else {
+                dst.clone()
+            };
+            let remote_ref = normalize_ref(&effective_dst);
 
             let (local_ref, local_oid) = resolve_push_src(&repo.git_dir, &resolved_src)
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
@@ -527,6 +541,50 @@ fn push_to_url(
                 expected_oid: None,
                 refspec_force: false,
             });
+        }
+    }
+
+    // --follow-tags: also push annotated tags pointing at commits being pushed
+    let follow_tags = args.follow_tags
+        || (!args.no_follow_tags
+            && config
+                .get("push.followTags")
+                .map(|v| matches!(v.to_lowercase().as_str(), "true" | "yes" | "1"))
+                .unwrap_or(false));
+    if follow_tags {
+        let pushed_oids: std::collections::HashSet<ObjectId> = updates
+            .iter()
+            .filter_map(|u| u.new_oid)
+            .collect();
+        if !pushed_oids.is_empty() {
+            if let Ok(local_tags) = refs::list_refs(&repo.git_dir, "refs/tags/") {
+                for (tag_name, tag_oid) in &local_tags {
+                    // Skip if already being pushed or already exists on remote
+                    if updates.iter().any(|u| u.remote_ref == *tag_name) {
+                        continue;
+                    }
+                    if refs::resolve_ref(&remote_repo.git_dir, tag_name).is_ok() {
+                        continue;
+                    }
+                    // Check if it's an annotated tag pointing at a pushed commit
+                    if let Ok(obj) = repo.odb.read(tag_oid) {
+                        if obj.kind == grit_lib::objects::ObjectKind::Tag {
+                            if let Ok(tag) = grit_lib::objects::parse_tag(&obj.data) {
+                                if pushed_oids.contains(&tag.object) {
+                                    updates.push(RefUpdate {
+                                        local_ref: Some(tag_name.clone()),
+                                        remote_ref: tag_name.clone(),
+                                        old_oid: None,
+                                        new_oid: Some(*tag_oid),
+                                        expected_oid: None,
+                                        refspec_force: false,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
