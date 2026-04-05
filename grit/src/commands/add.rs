@@ -7,7 +7,6 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -918,14 +917,14 @@ fn stage_file(
         mode
     };
 
-    // Skip if index already has this file with matching stat data and no chmod override
-    if args.chmod.is_none() {
-        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
-            if stat_matches(existing, &meta) && existing.mode == final_mode {
-                return Ok(());
-            }
-        }
-    }
+    // NOTE: do not rely solely on stat equality to skip re-hashing.
+    //
+    // A file can be modified in-place to different content while preserving
+    // size (and sometimes coarse timestamp values), which would make a pure
+    // stat-based shortcut racily miss real content updates.
+    //
+    // We still read and hash below, and stage only if the resulting entry
+    // differs.
 
     // Read file content and hash it
     let data = if is_symlink {
