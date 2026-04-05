@@ -584,9 +584,9 @@ pub fn run(mut args: Args) -> Result<()> {
         let find_oid = resolve_revision(&repo, find_obj_rev)?;
         commits
             .into_iter()
-            .filter(
-                |(_oid, info)| commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default(),
-            )
+            .filter(|(_oid, info)| {
+                commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default()
+            })
             .collect::<Vec<_>>()
     } else {
         commits
@@ -1281,10 +1281,9 @@ fn walk_commits(
                 continue;
             }
         }
-        if !pathspecs.is_empty()
-            && !commit_touches_paths(odb, &info, pathspecs)? {
-                continue;
-            }
+        if !pathspecs.is_empty() && !commit_touches_paths(odb, &info, pathspecs)? {
+            continue;
+        }
 
         if skipped < skip_n {
             skipped += 1;

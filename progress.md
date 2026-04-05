@@ -18,6 +18,7 @@
 - `t1505-rev-parse-last` — 7/7 tests pass (@{-N} syntax fully working)
 - `t1100-commit-tree-options` — 5/5 tests pass
 - `t1418-reflog-exists` — 6/6 tests pass
+- `t0101-at-syntax` — 8/8 tests pass (`@{...}` reflog syntax cases validated)
 
 ## What Remains
 

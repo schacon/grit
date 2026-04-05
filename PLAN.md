@@ -72,7 +72,9 @@ commit → check it off → move on.
 - [ ] `t1022-read-tree-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git read-tree in partial clones
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
-- [ ] `t0101-at-syntax` ███████████████░░░░░ 6/8 (2 left) — various @{whatever} syntax tests
+- [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
+- [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
+- [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
 - [ ] `t1310-config-default` ████████████░░░░░░░░ 3/5 (2 left) — Test git config in different settings (with --default)
 - [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
@@ -940,5 +942,5 @@ commit → check it off → move on.
 - [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
-**Total: 765 files not fully passing**
-**8,688/24,806 tests passing, 16,118 failures remaining**
+**Total: 765 tracked files**
+**8,690/24,806 tests passing, 16,116 failures remaining**

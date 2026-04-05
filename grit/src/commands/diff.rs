@@ -70,10 +70,9 @@ impl WhitespaceMode {
         let mut s = line.to_owned();
 
         // --ignore-cr-at-eol: strip trailing CR
-        if self.ignore_cr_at_eol
-            && s.ends_with('\r') {
-                s.truncate(s.len() - 1);
-            }
+        if self.ignore_cr_at_eol && s.ends_with('\r') {
+            s.truncate(s.len() - 1);
+        }
 
         // -w / --ignore-all-space: remove all whitespace
         if self.ignore_all_space {

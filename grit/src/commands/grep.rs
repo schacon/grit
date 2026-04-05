@@ -1669,9 +1669,10 @@ fn grep_tree(
 
         // Apply pathspec filter
         if !pathspecs.is_empty()
-            && !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink) {
-                continue;
-            }
+            && !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink)
+        {
+            continue;
+        }
 
         // Submodule (gitlink) in tree: recurse if --recurse-submodules
         if is_gitlink {

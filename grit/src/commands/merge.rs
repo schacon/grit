@@ -532,7 +532,16 @@ fn create_virtual_merge_base(
 
         // Create a dummy head state for merge_trees
         let head = HeadState::Detached { oid: current };
-        let merge_result = merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, &head, "virtual", favor, None)?;
+        let merge_result = merge_trees(
+            repo,
+            &base_entries,
+            &ours_entries,
+            &theirs_entries,
+            &head,
+            "virtual",
+            favor,
+            None,
+        )?;
 
         // Build a tree from the merged index (use stage-0 entries, or for conflicts pick ours)
         let mut final_entries: Vec<IndexEntry> = Vec::new();
@@ -2043,13 +2052,14 @@ fn merge_trees(
             // If ours also has a NEW file at theirs_new_path (add/add at rename target)
             if let Some(oe_at_new) = ours.get(theirs_new_path) {
                 if !base.contains_key(theirs_new_path)
-                    && (te.oid != oe_at_new.oid || te.mode != oe_at_new.mode) {
-                        let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                        has_conflicts = true;
-                        stage_entry(&mut index, oe_at_new, 2);
-                        stage_entry(&mut index, te, 3);
-                        conflict_descriptions.push(("rename/add".to_string(), path_str));
-                    }
+                    && (te.oid != oe_at_new.oid || te.mode != oe_at_new.mode)
+                {
+                    let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, oe_at_new, 2);
+                    stage_entry(&mut index, te, 3);
+                    conflict_descriptions.push(("rename/add".to_string(), path_str));
+                }
             }
 
             // Handle "add-source": theirs renamed base_path away, but theirs may also
@@ -2661,7 +2671,9 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
     // Load gitattributes and config for CRLF conversion
     let attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let conv = config.as_ref().map(grit_lib::crlf::ConversionConfig::from_config);
+    let conv = config
+        .as_ref()
+        .map(grit_lib::crlf::ConversionConfig::from_config);
 
     for entry in &index.entries {
         if entry.stage() != 0 {

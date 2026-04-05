@@ -68,11 +68,12 @@ fn check_worktree_conflict(args: &[String]) -> std::result::Result<(), String> {
         }
         // Flags that consume the next argument (skip it)
         if (a == "-c" || a == "-C" || a == "--create" || a == "--force-create")
-            && i + 1 < args.len() {
-                branch = Some(args[i + 1].clone());
-                i += 2;
-                continue;
-            }
+            && i + 1 < args.len()
+        {
+            branch = Some(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
         // Combined form: -c<branch>, -C<branch>
         if let Some(rest) = a.strip_prefix("-c").or_else(|| a.strip_prefix("-C")) {
             if !rest.is_empty() && !rest.starts_with('-') {

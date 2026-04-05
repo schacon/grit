@@ -852,7 +852,9 @@ fn checkout_index_to_worktree(
     // Load gitattributes and config for CRLF conversion
     let attr_rules = grit_lib::crlf::load_gitattributes(&work_tree);
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-    let conv = config.as_ref().map(grit_lib::crlf::ConversionConfig::from_config);
+    let conv = config
+        .as_ref()
+        .map(grit_lib::crlf::ConversionConfig::from_config);
 
     let old_stage0: HashSet<Vec<u8>> = old_index
         .entries

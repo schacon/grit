@@ -218,14 +218,13 @@ fn resolve_object_id_content(repo: &Repository, index: &Index, spec: &str) -> Re
         // Index entry lookup.
         for entry in &index.entries {
             let entry_path = String::from_utf8_lossy(&entry.path);
-            if entry_path == path
-                && entry.stage() == 0 {
-                    let obj = repo
-                        .odb
-                        .read(&entry.oid)
-                        .with_context(|| format!("cannot read blob for index entry '{}'", path))?;
-                    return Ok(obj.data);
-                }
+            if entry_path == path && entry.stage() == 0 {
+                let obj = repo
+                    .odb
+                    .read(&entry.oid)
+                    .with_context(|| format!("cannot read blob for index entry '{}'", path))?;
+                return Ok(obj.data);
+            }
         }
         bail!("path '{}' is not in the index", path);
     } else {
