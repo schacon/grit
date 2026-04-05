@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    41 |
+| Completed   |    42 |
 | In progress |     0 |
-| Remaining   |   726 |
+| Remaining   |   725 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3102-ls-tree-wildcards` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t0050-filesystem` — 13/13 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -35,4 +36,4 @@
 
 ## What Remains
 
-726 test files still pending. See `plan.md` for the full prioritized list.
+725 test files still pending. See `plan.md` for the full prioritized list.
