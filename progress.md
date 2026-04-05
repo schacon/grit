@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    64 |
-| In progress |     0 |
-| Remaining   |   701 |
+| In progress |     1 |
+| Remaining   |   700 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -58,4 +58,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress; 701 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4217-log-limit`) and 700 remain pending. See `plan.md` for the full prioritized list.
