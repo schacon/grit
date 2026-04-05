@@ -307,6 +307,38 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
 
 /// Apply global options (env vars, chdir).
 fn apply_globals(opts: &GlobalOpts) -> Result<()> {
+    // Pre-resolve GIT_ALTERNATE_OBJECT_DIRECTORIES relative paths before -C chdir
+    if opts.change_dir.is_some() {
+        if let Ok(val) = std::env::var("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
+            if !val.is_empty() {
+                let resolved: Vec<String> = val
+                    .split(':')
+                    .map(|p| {
+                        let path = std::path::Path::new(p);
+                        if path.is_relative() {
+                            match std::fs::canonicalize(path) {
+                                Ok(abs) => abs.to_string_lossy().to_string(),
+                                Err(_) => {
+                                    // Try resolving from CWD manually
+                                    if let Ok(cwd) = std::env::current_dir() {
+                                        cwd.join(p).to_string_lossy().to_string()
+                                    } else {
+                                        p.to_string()
+                                    }
+                                }
+                            }
+                        } else {
+                            p.to_string()
+                        }
+                    })
+                    .collect();
+                std::env::set_var(
+                    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+                    resolved.join(":"),
+                );
+            }
+        }
+    }
     if let Some(dir) = &opts.change_dir {
         if !dir.as_os_str().is_empty() {
             std::env::set_current_dir(dir)?;

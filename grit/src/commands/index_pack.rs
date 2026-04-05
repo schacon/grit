@@ -36,6 +36,10 @@ pub struct Args {
     /// Hash algorithm (accepted for compat, only sha1).
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
+
+    /// Strict mode: reject packs with duplicate objects.
+    #[arg(long)]
+    pub strict: bool,
 }
 
 /// A resolved pack object.
@@ -84,6 +88,16 @@ pub fn run(args: Args) -> Result<()> {
 
     // Parse all objects, resolve deltas, collect entries.
     let resolved = parse_and_resolve(&pack_bytes, nr_objects, args.fix_thin)?;
+
+    // --strict: reject packs with duplicate objects.
+    if args.strict {
+        let mut seen = std::collections::HashSet::new();
+        for obj in &resolved {
+            if !seen.insert(obj.oid) {
+                bail!("duplicate object {} found in pack", obj.oid.to_hex());
+            }
+        }
+    }
 
     // Determine output paths.
     let (pack_path, idx_path) = if args.stdin {

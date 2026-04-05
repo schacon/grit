@@ -1656,6 +1656,8 @@ pub fn get_urlmatch_all_in_section(
 }
 
 /// Parse a Git path value (expand `~/` to home directory).
+/// Parse a path value. Returns the resolved path string.
+/// Does NOT handle :(optional) prefix — use `parse_path_optional` for that.
 pub fn parse_path(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
         if let Some(home) = home_dir() {
@@ -1663,6 +1665,23 @@ pub fn parse_path(s: &str) -> String {
         }
     }
     s.to_owned()
+}
+
+/// Parse a path value that may have an `:(optional)` prefix.
+///
+/// Returns `Some(path)` if the path should be used, `None` if the path
+/// is optional and does not exist (meaning the entry should be skipped).
+pub fn parse_path_optional(s: &str) -> Option<String> {
+    if let Some(rest) = s.strip_prefix(":(optional)") {
+        let resolved = parse_path(rest);
+        if std::path::Path::new(&resolved).exists() {
+            Some(resolved)
+        } else {
+            None // optional and missing → skip
+        }
+    } else {
+        Some(parse_path(s))
+    }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

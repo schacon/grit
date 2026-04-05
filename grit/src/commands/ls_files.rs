@@ -166,6 +166,7 @@ pub fn run(args: Args) -> Result<()> {
         None
     };
 
+    let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
         // Filter by pathspec
         if !pathspec_filter.is_empty() {
@@ -182,7 +183,7 @@ pub fn run(args: Args) -> Result<()> {
         if args.unmerged && entry.stage() == 0 {
             continue;
         }
-        if show_cached && !args.unmerged && !args.stage && entry.stage() != 0 {
+        if show_cached && !args.unmerged && !args.stage && entry.stage() != 0 && !args.deduplicate {
             continue;
         }
 
@@ -207,24 +208,23 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // --deleted: only show entries whose file is missing from worktree
-        if args.deleted && !show_cached {
+        // --deleted / --modified: show entries that are deleted or modified.
+        // When both are set, show if EITHER condition is true.
+        if (args.deleted || args.modified) && !show_cached {
             if entry.skip_worktree() {
                 continue;
             }
             let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-            if full.exists() {
-                continue;
-            }
-        }
-
-        // --modified: only show entries that differ from worktree
-        if args.modified && !show_cached {
-            if entry.skip_worktree() {
-                continue;
-            }
-            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-            if !is_modified(entry, &full) {
+            let is_deleted = !full.exists();
+            let is_mod = is_modified(entry, &full);
+            let dominated = if args.deleted && args.modified {
+                !is_deleted && !is_mod
+            } else if args.deleted {
+                !is_deleted
+            } else {
+                !is_mod
+            };
+            if dominated {
                 continue;
             }
         }
@@ -301,6 +301,15 @@ pub fn run(args: Args) -> Result<()> {
             )?;
             out.write_all(&[term])?;
         } else if show_cached || args.deleted || args.modified {
+            // Deduplicate: skip if same path as last printed
+            if args.deduplicate {
+                if let Some(ref last) = last_dedup_path {
+                    if last == &entry.path {
+                        continue;
+                    }
+                }
+                last_dedup_path = Some(entry.path.clone());
+            }
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(display);
             let qname = maybe_quote(&name, use_nul);
@@ -847,7 +856,7 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
 
 fn status_tag(entry: &IndexEntry) -> char {
     if entry.stage() != 0 {
-        'M' // unmerged
+        'C' // unmerged (conflict)
     } else if entry.skip_worktree() {
         'S'
     } else if entry.assume_unchanged() {

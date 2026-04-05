@@ -616,6 +616,27 @@ fn cmd_get(
         std::process::exit(1);
     }
 
+    // For --path with :(optional) values, we need to check all values
+    // and find the last non-optional-missing one.
+    let has_path_type = args.type_path || args.type_name.as_deref() == Some("path");
+    if has_path_type {
+        let all_values = config.get_all(&get_args.key);
+        // Find the last value that isn't optional-missing
+        let last_valid = all_values.iter().rev()
+            .find(|v| !is_optional_missing_path(args, v));
+        if let Some(val) = last_valid {
+            let val = format_typed_value(args, val)?;
+            print!("{val}{terminator}");
+            return Ok(());
+        }
+        if let Some(ref default) = get_args.default {
+            let val = format_default_value(args, default)?;
+            print!("{val}{terminator}");
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
+
     match config.get(&get_args.key) {
         Some(val) => {
             let val = format_typed_value(args, &val)?;
@@ -1261,6 +1282,18 @@ fn format_default_value(args: &Args, val: &str) -> Result<String> {
     format_typed_value(args, val).context("failed to format default config value")
 }
 
+/// Check if a value with --path type is an optional path that doesn't exist.
+/// Returns true if the value should be skipped.
+fn is_optional_missing_path(args: &Args, val: &str) -> bool {
+    let type_name = args.type_name.as_deref();
+    if args.type_path || type_name == Some("path") {
+        if val.starts_with(":(optional)") {
+            return grit_lib::config::parse_path_optional(val).is_none();
+        }
+    }
+    false
+}
+
 fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     let type_name = args.type_name.as_deref();
 
@@ -1285,7 +1318,10 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     }
 
     if args.type_path || type_name == Some("path") {
-        return Ok(parse_path(val));
+        return match grit_lib::config::parse_path_optional(val) {
+            Some(p) => Ok(p),
+            None => Ok(String::new()), // optional path missing — caller should check is_optional_missing_path
+        };
     }
 
     if args.type_bool_or_int || type_name == Some("bool-or-int") {

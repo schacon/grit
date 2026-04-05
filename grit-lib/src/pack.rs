@@ -563,15 +563,22 @@ pub fn verify_pack_and_collect(idx_path: &Path) -> Result<Vec<VerifyObjectRecord
 pub fn read_alternates_recursive(objects_dir: &Path) -> Result<Vec<PathBuf>> {
     let mut visited = HashSet::new();
     let mut out = Vec::new();
-    read_alternates_inner(objects_dir, &mut visited, &mut out)?;
+    read_alternates_inner(objects_dir, &mut visited, &mut out, 0)?;
     Ok(out)
 }
+
+/// Maximum alternate chain depth (git uses 5).
+const MAX_ALTERNATE_DEPTH: usize = 5;
 
 fn read_alternates_inner(
     objects_dir: &Path,
     visited: &mut HashSet<PathBuf>,
     out: &mut Vec<PathBuf>,
+    depth: usize,
 ) -> Result<()> {
+    if depth > MAX_ALTERNATE_DEPTH {
+        return Ok(());
+    }
     let canonical = canonical_or_self(objects_dir);
     let alt_file = canonical.join("info").join("alternates");
     let text = match fs::read_to_string(&alt_file) {
@@ -593,7 +600,7 @@ fn read_alternates_inner(
         let candidate = canonical_or_self(&candidate);
         if visited.insert(candidate.clone()) {
             out.push(candidate.clone());
-            read_alternates_inner(&candidate, visited, out)?;
+            read_alternates_inner(&candidate, visited, out, depth + 1)?;
         }
     }
     Ok(())

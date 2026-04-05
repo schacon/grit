@@ -146,6 +146,9 @@ pub fn run(args: Args) -> Result<()> {
     let _is_path_remote: bool;
 
     if let Some(ref r) = args.remote {
+        if r.is_empty() {
+            bail!("bad repository ''");
+        }
         if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
             // Path-based remote: use directly as URL
             _is_path_remote = true;
@@ -387,7 +390,7 @@ fn push_to_url(
                     }
                 }
                 // Copy symbolic refs matching the glob pattern
-                copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, src_clean, &dst)?;
+                copy_symrefs_push(&repo.git_dir, &remote_repo.git_dir, spec_clean, &dst)?;
                 continue;
             }
 
@@ -1140,13 +1143,21 @@ fn resolve_push_src(git_dir: &Path, src: &str) -> Result<(String, ObjectId)> {
             return Ok((src.to_owned(), oid));
         }
     }
+    let mut matches: Vec<(String, ObjectId)> = Vec::new();
     for prefix in &["refs/heads/", "refs/tags/", "refs/remotes/"] {
         let full = format!("{prefix}{src}");
         if let Ok(oid) = refs::resolve_ref(git_dir, &full) {
-            return Ok((full, oid));
+            matches.push((full, oid));
         }
     }
-    bail!("ref not found: {}", src)
+    match matches.len() {
+        0 => bail!("ref not found: {}", src),
+        1 => Ok(matches.into_iter().next().unwrap()),
+        _ => {
+            eprintln!("error: src refspec {} matches more than one", src);
+            bail!("failed to push some refs");
+        }
+    }
 }
 
 /// Write branch tracking config.

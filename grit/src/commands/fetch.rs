@@ -253,6 +253,61 @@ fn fetch_remote(
             false
         };
 
+        // Pre-check: detect conflicting CLI refspec mappings
+        {
+            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
+            for spec in cli_refspecs {
+                if spec.starts_with('^') {
+                    continue;
+                }
+                let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
+                let (src, dst) = if let Some(idx) = spec_clean.find(':') {
+                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
+                } else {
+                    continue;
+                };
+                if dst.is_empty() {
+                    continue;
+                }
+                if src.contains('*') {
+                    for (refname, _) in &remote_all_refs {
+                        if is_excluded(refname) {
+                            continue;
+                        }
+                        if let Some(matched) = match_glob_pattern(&src, refname) {
+                            let local_ref = dst.replacen('*', matched, 1);
+                            if let Some(prev_src) = dst_to_src.get(&local_ref) {
+                                if prev_src != refname {
+                                    bail!("Cannot fetch both {} and {} to {}", prev_src, refname, local_ref);
+                                }
+                            } else {
+                                dst_to_src.insert(local_ref, refname.clone());
+                            }
+                        }
+                    }
+                } else {
+                    let remote_ref = if src.starts_with("refs/") {
+                        src.clone()
+                    } else {
+                        format!("refs/heads/{src}")
+                    };
+                    let local_ref = if dst.starts_with("refs/") {
+                        dst.clone()
+                    } else {
+                        format!("refs/heads/{dst}")
+                    };
+                    if let Some(prev_src) = dst_to_src.get(&local_ref) {
+                        if prev_src != &remote_ref {
+                            bail!("Cannot fetch both {} and {} to {}", prev_src, remote_ref, local_ref);
+                        }
+                    } else {
+                        dst_to_src.insert(local_ref, remote_ref);
+                    }
+                }
+            }
+        }
+
         // Process command-line refspecs directly.
         for spec in cli_refspecs {
             // Skip negative refspecs (already collected above)
@@ -395,6 +450,22 @@ fn fetch_remote(
             }
         }
     } else {
+        // Pre-check: detect conflicting refspec mappings (multiple src → same dst)
+        if !refspecs.is_empty() {
+            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            for (refname, _) in &remote_heads {
+                if let Some(local_ref) = map_ref_through_refspecs(refname, &refspecs) {
+                    if let Some(prev_src) = dst_to_src.get(&local_ref) {
+                        if prev_src != refname {
+                            bail!("Cannot fetch both {} and {} to {}", prev_src, refname, local_ref);
+                        }
+                    } else {
+                        dst_to_src.insert(local_ref, refname.clone());
+                    }
+                }
+            }
+        }
+
         // Standard path: update remote-tracking refs from remote heads
         for (refname, remote_oid) in &remote_heads {
             // refname is like "refs/heads/main"
