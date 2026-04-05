@@ -210,7 +210,8 @@ impl Index {
         }
         // feature.manyFiles implies version 4
         if let Some(val) = config_many_files {
-            let enabled = matches!(val.to_lowercase().as_str(), "true" | "yes" | "1" | "on");
+            let lowered = val.to_lowercase();
+            let enabled = matches!(lowered.as_str(), "true" | "yes" | "1" | "on");
             if enabled {
                 return Self { version: 4, entries: Vec::new() };
             }
@@ -312,9 +313,13 @@ impl Index {
 
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
-        // Always write v2 or v3 (we don't implement v4 serialization)
-        let write_version = if self.version >= 3 {
-            // If version >= 3, check if entries need extended flags; downgrade to v2 if not.
+        // Determine which version to write.
+        // Version 4 uses path compression (not yet implemented), but we still
+        // honour the requested version in the header for compatibility with
+        // `git update-index --show-index-version`.
+        let write_version = if self.version == 4 {
+            4
+        } else if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
