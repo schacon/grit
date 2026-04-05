@@ -173,7 +173,7 @@ commit → check it off → move on.
 - [x] `t2060-switch` ████████████████████ 16/16 — switch basic functionality
 - [x] `t2050-git-dir-relative` ████████████████████ 4/4 (0 left) — check problems with relative GIT_DIR
 
-- [ ] `t2015-checkout-unborn` █████████████░░░░░░░ 4/6 (2 left) — checkout from unborn branch
+- [x] `t2015-checkout-unborn` ████████████████████ 6/6 (0 left) — checkout from unborn branch
 - [ ] `t2105-update-index-gitfile` ██████████░░░░░░░░░░ 2/4 (2 left) — git update-index for gitlink to .git file.
 
 - [ ] `t2012-checkout-last` █████████████████░░░ 19/22 (3 left) — checkout can switch to last branch and merge base
