@@ -108,11 +108,13 @@ test_expect_success "setup unicode normalization tests" '
 '
 
 $test_unicode 'rename (silent unicode normalization)' '
+	cd unicode &&
 	git mv "$aumlcdiar" "$auml" &&
 	git commit -m rename
 '
 
 $test_unicode 'merge (silent unicode normalization)' '
+	cd unicode &&
 	git reset --hard initial &&
 	git merge topic
 '
