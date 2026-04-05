@@ -102,7 +102,7 @@ fn main() {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
-    let mut result = Vec::new();
+    let result = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut pid = std::process::id();

@@ -6,8 +6,9 @@
 //!
 //! # Format version
 //!
-//! This implementation supports index versions 2 and 3.  Version 4 (path
-//! compression) is not yet implemented.
+//! This implementation supports index versions 2 and 3. Requests for version 4
+//! currently fall back to a non-compressed index on write because path
+//! compression is not yet implemented.
 //!
 //! # References
 //!
@@ -145,7 +146,8 @@ pub struct Index {
 const INDEX_FORMAT_DEFAULT: u32 = 3;
 /// Minimum supported index version.
 const INDEX_FORMAT_LB: u32 = 2;
-/// Maximum supported index version (version 4 not yet supported, but accepted).
+/// Maximum supported index version (version 4 requests are accepted and
+/// downgraded on write).
 const INDEX_FORMAT_UB: u32 = 4;
 
 /// Read `GIT_INDEX_VERSION` and return the requested version.
@@ -192,13 +194,19 @@ impl Index {
     ) -> Self {
         // Env var takes highest priority
         if let Some(v) = get_index_format_from_env() {
-            return Self { version: v, entries: Vec::new() };
+            return Self {
+                version: v,
+                entries: Vec::new(),
+            };
         }
         // Config index.version
         if let Some(val) = config_index_version {
             if let Ok(v) = val.parse::<u32>() {
                 if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) {
-                    return Self { version: v, entries: Vec::new() };
+                    return Self {
+                        version: v,
+                        entries: Vec::new(),
+                    };
                 }
             }
             // Invalid config value
@@ -206,17 +214,26 @@ impl Index {
                 "warning: index.version set, but the value is invalid.\n\
                  Using version {INDEX_FORMAT_DEFAULT}"
             );
-            return Self { version: INDEX_FORMAT_DEFAULT, entries: Vec::new() };
+            return Self {
+                version: INDEX_FORMAT_DEFAULT,
+                entries: Vec::new(),
+            };
         }
         // feature.manyFiles implies version 4
         if let Some(val) = config_many_files {
             let lowered = val.to_lowercase();
             let enabled = matches!(lowered.as_str(), "true" | "yes" | "1" | "on");
             if enabled {
-                return Self { version: 4, entries: Vec::new() };
+                return Self {
+                    version: 4,
+                    entries: Vec::new(),
+                };
             }
         }
-        Self { version: 2, entries: Vec::new() }
+        Self {
+            version: 2,
+            entries: Vec::new(),
+        }
     }
 
     /// Load an index from the given file path.
@@ -314,12 +331,9 @@ impl Index {
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         // Determine which version to write.
-        // Version 4 uses path compression (not yet implemented), but we still
-        // honour the requested version in the header for compatibility with
-        // `git update-index --show-index-version`.
-        let write_version = if self.version == 4 {
-            4
-        } else if self.version >= 3 {
+        // Version 4 requires path compression, which we do not implement yet.
+        // Downgrade to the newest format we can serialize correctly.
+        let write_version = if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
@@ -719,5 +733,26 @@ mod tests {
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries[0].path, b"bar/baz.txt");
         assert_eq!(loaded.entries[1].path, b"foo.txt");
+    }
+
+    #[test]
+    fn requested_v4_writes_a_compatible_index_format() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("index");
+
+        let mut idx = Index {
+            version: 4,
+            ..Index::default()
+        };
+        idx.add_or_replace(make_entry("one"));
+        idx.add_or_replace(make_entry("two/one"));
+        idx.write(&path).unwrap();
+
+        let data = fs::read(&path).unwrap();
+        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+
+        let loaded = Index::load(&path).unwrap();
+        assert_eq!(loaded.entries[0].path, b"one");
+        assert_eq!(loaded.entries[1].path, b"two/one");
     }
 }

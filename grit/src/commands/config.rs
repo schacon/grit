@@ -5,9 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{
-    parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet,
-};
+use grit_lib::config::{parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -654,7 +652,9 @@ fn cmd_get(
     if has_path_type {
         let all_values = config.get_all(&get_args.key);
         // Find the last value that isn't optional-missing
-        let last_valid = all_values.iter().rev()
+        let last_valid = all_values
+            .iter()
+            .rev()
             .find(|v| !is_optional_missing_path(args, v));
         if let Some(val) = last_valid {
             let val = format_typed_value(args, val)?;

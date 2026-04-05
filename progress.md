@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |     9 |
+| Completed   |    10 |
 | In progress |     0 |
-| Remaining   |   756 |
+| Remaining   |   755 |
 | **Total**   |   765 |
 
 ## Recently completed
 
+- `t1003-read-tree-prefix` — 3/3 tests pass (`read-tree --prefix` no longer writes a bogus v4 index under `GIT_INDEX_VERSION=4`)
 - `t0213-trace2-ancestry` — 5/5 tests pass (`cmd_ancestry` trace2 coverage complete)
 - `t1310-config-default` — 5/5 tests pass (`git config --default` validation and typed fallback handling)
 - `t2060-switch` — 16/16 tests pass
@@ -25,4 +26,4 @@
 
 ## What Remains
 
-756 test files still pending. See `plan.md` for the full prioritized list.
+755 test files still pending. See `plan.md` for the full prioritized list.

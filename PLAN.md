@@ -65,7 +65,7 @@ commit → check it off → move on.
 - [x] `t0213-trace2-ancestry` ████████████████████ 5/5 (0 left) — test trace2 cmd_ancestry event
 - [x] `t1100-commit-tree-options` ████████████████████ 5/5 (0 left) — git commit-tree options test
 
-- [ ] `t1003-read-tree-prefix` █████████████░░░░░░░ 2/3 (1 left) — git read-tree --prefix test.
+- [x] `t1003-read-tree-prefix` ████████████████████ 3/3 (0 left) — git read-tree --prefix test.
 
 - [ ] `t1008-read-tree-overlay` ██████████░░░░░░░░░░ 1/2 (1 left) — test multi-tree read-tree without merging
 - [ ] `t0611-reftable-httpd` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — reftable HTTPD tests
