@@ -263,6 +263,7 @@ fn do_merge_or_rebase(
             no_squash: false,
             quit: false,
             autostash: false,
+            allow_unrelated_histories: false,
             cleanup: None,
             file: None,
         };

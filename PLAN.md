@@ -718,7 +718,7 @@ commit → check it off → move on.
 
 - [x] `t6005-rev-list-count` ████████████████████ 6/6 (0 left) — git rev-list --max-count and --skip test
 - [x] `t6439-merge-co-error-msgs` ████████████████████ 6/6 (0 left) — unpack-trees error messages
-- [ ] `t6010-merge-base` ██████████░░░░░░░░░░ 6/12 (6 left) — Merge base and parent list computation.
+- [x] `t6010-merge-base` ████████████████████ 12/12 (0 left) — Merge base and parent list computation.
 
 - [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands
 - [ ] `t6427-diff3-conflict-markers` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — recursive merge diff3 style conflict markers

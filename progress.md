@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    64 |
+| Completed   |    65 |
 | In progress |     0 |
-| Remaining   |   703 |
+| Remaining   |   702 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -51,7 +51,8 @@
 - `t6439-merge-co-error-msgs` — 6/6 tests pass (merge now performs fast-forward overwrite checks before mutating HEAD/index/worktree; merge overwrite diagnostics now combine local+untracked sections in Git-compatible order, include strategy-failure trailer for `GIT_MERGE_VERBOSITY=0`, and checkout diagnostics no longer include duplicated `error:` prefixes)
 - `t6004-rev-list-path-optim` — 7/7 tests pass (rev-list path limiting now supports `.` and glob pathspecs via wildmatch and performs merge-aware TREESAME simplification, fixing path-optimization and `d/*`/`d/[a-m]*` history selection)
 - `t6005-rev-list-count` — 6/6 tests pass (`rev-list` now accepts detached `--skip <n>` form and treats `-<n>foo` malformed shorthand values as integer-parse errors; integer diagnostics now include the expected `not an integer` wording for `--max-count`, `--skip`, and `-n`)
+- `t6010-merge-base` — 12/12 tests pass (`merge-base` now supports `--fork-point` using reflog-aware candidate selection, `show-branch` now supports `--merge-base` and `--independent`, and `merge` now supports `--allow-unrelated-histories` for criss-cross setup merges)
 
 ## What Remains
 
-703 test files still pending. See `plan.md` for the full prioritized list.
+702 test files still pending. See `plan.md` for the full prioritized list.

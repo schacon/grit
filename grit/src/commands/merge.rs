@@ -79,6 +79,10 @@ pub struct Args {
     #[arg(long = "no-progress")]
     pub no_progress: bool,
 
+    /// Allow merging histories that do not share a common ancestor.
+    #[arg(long = "allow-unrelated-histories")]
+    pub allow_unrelated_histories: bool,
+
     /// Suppress editor launch for the merge commit message.
     #[arg(long = "no-edit")]
     pub no_edit: bool,
@@ -642,6 +646,21 @@ fn create_virtual_merge_base(
     Ok(current)
 }
 
+fn create_empty_base_commit(repo: &Repository) -> Result<ObjectId> {
+    let empty_tree = repo.odb.write(ObjectKind::Tree, &[])?;
+    let commit_data = CommitData {
+        tree: empty_tree,
+        parents: vec![],
+        author: "virtual <virtual> 0 +0000".to_string(),
+        committer: "virtual <virtual> 0 +0000".to_string(),
+        encoding: None,
+        message: "virtual base".to_string(),
+        raw_message: None,
+    };
+    let commit_bytes = serialize_commit(&commit_data);
+    Ok(repo.odb.write(ObjectKind::Commit, &commit_bytes)?)
+}
+
 fn do_real_merge(
     repo: &Repository,
     head: &HeadState,
@@ -653,13 +672,15 @@ fn do_real_merge(
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
-    if bases.is_empty() {
+    if bases.is_empty() && !args.allow_unrelated_histories {
         bail!("refusing to merge unrelated histories");
     }
     // If multiple merge bases (criss-cross):
     // - resolve strategy: fail (doesn't support virtual merge bases)
     // - recursive/ort: create a virtual merge base
-    let base_oid = if bases.len() > 1 {
+    let base_oid = if bases.is_empty() {
+        create_empty_base_commit(repo)?
+    } else if bases.len() > 1 {
         if args.strategy.as_deref() == Some("resolve") {
             bail!("merge: warning: multiple common ancestors found");
         }
@@ -1328,10 +1349,14 @@ fn do_octopus_merge(
 
     for (i, merge_oid) in merge_oids.iter().enumerate() {
         let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[*merge_oid])?;
-        if bases.is_empty() {
+        if bases.is_empty() && !args.allow_unrelated_histories {
             bail!("refusing to merge unrelated histories");
         }
-        let base_oid = bases[0];
+        let base_oid = if bases.is_empty() {
+            create_empty_base_commit(repo)?
+        } else {
+            bases[0]
+        };
         let base_tree = commit_tree(repo, base_oid)?;
         let theirs_tree = commit_tree(repo, *merge_oid)?;
 

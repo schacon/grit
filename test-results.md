@@ -72,3 +72,8 @@
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (now fully passing).
 - `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (regression check after count/skip parser updates).
 - `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after count/skip parser updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6010-merge-base.sh`: 12/12 passing (direct validation after implementing `merge-base --fork-point`, `show-branch --merge-base`, `show-branch --independent`, and `merge --allow-unrelated-histories`).
+- `./scripts/run-tests.sh t6010-merge-base.sh`: 12/12 passing (now fully passing).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (regression check after `merge-base`/`show-branch` parser updates).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after merge unrelated-histories handling update).
+- `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (regression check after merge unrelated-histories handling update).

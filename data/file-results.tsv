@@ -681,7 +681,7 @@ t6006-rev-list-format	yes	80	63	17	ok	63	80	0
 t6007-rev-list-cherry-pick-file	yes	23	1	22	ok	1	23	0
 t6008-rev-list-submodule	yes	2	2	0	ok	2	2	0
 t6009-rev-list-parent	yes	15	3	12	ok	3	15	0
-t6010-merge-base	yes	12	6	6	ok	6	12	0
+t6010-merge-base	yes	12	12	0	ok	12	12	0
 t6011-rev-list-with-bad-commit	yes	6	6	0	ok	6	6	0
 t6012-rev-list-simplify	yes	42	1	41	ok	1	42	0
 t6013-rev-list-reverse-parents	yes	3	3	0	ok	3	3	0
