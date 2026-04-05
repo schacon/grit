@@ -135,10 +135,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.unresolve {
-        // --unresolve: not yet implemented (requires MERGE_HEAD / merge-base logic).
-        // Accept the flag silently so scripts that pass it don't hard-fail.
-        // If paths are given, just succeed; real git re-creates stage 1/2/3 entries.
-        eprintln!("warning: --unresolve is not yet fully implemented");
+        for input_path in &args.files {
+            let (rel_path, _) = resolve_repo_path(work_tree, &cwd, input_path)?;
+            let rel_bytes = path_to_bytes(&rel_path)?;
+            index.unresolve(&rel_bytes);
+        }
         index.write(&index_path).context("writing index")?;
         return Ok(());
     }

@@ -15,6 +15,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
@@ -270,7 +271,13 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
-        return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
+        return checkout_paths(
+            &repo,
+            target.as_deref(),
+            &paths,
+            args.no_overlay,
+            args.merge,
+        );
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -305,7 +312,7 @@ pub fn run(args: Args) -> Result<()> {
             let prev = resolve_nth_previous_branch(&repo, n)?;
             let branch_ref = format!("refs/heads/{prev}");
             if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-                return switch_branch(&repo, &prev, &branch_ref, args.force);
+                return switch_branch(&repo, &prev, &branch_ref, args.force, args.merge);
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
                 return detach_head(&repo, &oid, args.force);
@@ -319,7 +326,7 @@ pub fn run(args: Args) -> Result<()> {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-            return switch_branch(&repo, &prev, &branch_ref, args.force);
+            return switch_branch(&repo, &prev, &branch_ref, args.force, args.merge);
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
@@ -352,7 +359,7 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        return switch_branch(&repo, &target, &branch_ref, args.force);
+        return switch_branch(&repo, &target, &branch_ref, args.force, args.merge);
     }
 
     // Try as a commit (detached HEAD)
@@ -362,7 +369,7 @@ pub fn run(args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false) {
+            match checkout_paths(&repo, None, &paths, false, false) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -424,6 +431,7 @@ fn switch_branch(
     branch_name: &str,
     branch_ref: &str,
     force: bool,
+    merge: bool,
 ) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
@@ -458,7 +466,7 @@ fn switch_branch(
         let target_tree = commit_to_tree(repo, &target_oid)?;
 
         // Update working tree and index
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(repo, &head, &target_tree, force, merge)?;
     }
 
     // Write reflog entries before updating HEAD
@@ -512,7 +520,7 @@ fn create_and_switch_branch(
 
     // Update working tree if start point differs from current HEAD, or if force
     if head.oid() != Some(&start_oid) || force {
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(repo, &head, &target_tree, force, false)?;
     }
 
     // Create the branch ref
@@ -570,7 +578,7 @@ fn force_create_and_switch_branch(
 
     // Update working tree if start point differs from current HEAD, or if force
     if head.oid() != Some(&start_oid) || force {
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(repo, &head, &target_tree, force, false)?;
     }
 
     // Write reflog before updating refs
@@ -700,7 +708,7 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     let already_at_target = head.oid() == Some(oid);
     if !already_at_target || force {
         let target_tree = commit_to_tree(repo, oid)?;
-        switch_to_tree(repo, &head, &target_tree, force)?;
+        switch_to_tree(repo, &head, &target_tree, force, false)?;
     }
 
     // Write reflog entries
@@ -729,6 +737,7 @@ fn switch_to_tree(
     _head: &HeadState,
     target_tree_oid: &ObjectId,
     force: bool,
+    merge: bool,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -743,6 +752,10 @@ fn switch_to_tree(
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
+
+    if merge && !force {
+        return switch_to_tree_with_merge(repo, _head, &old_index, &new_index, &work_tree);
+    }
 
     // Dirty worktree safety check (unless forced)
     if !force {
@@ -818,6 +831,124 @@ fn switch_to_tree(
     new_index.write(&index_path).context("writing index")?;
 
     Ok(())
+}
+
+fn switch_to_tree_with_merge(
+    repo: &Repository,
+    head: &HeadState,
+    old_index: &Index,
+    new_index: &Index,
+    work_tree: &Path,
+) -> Result<()> {
+    let index_path = repo.index_path();
+    let mut merged_index = new_index.clone();
+    let head_map = build_head_tree_map(repo, head);
+    let new_map: HashMap<Vec<u8>, IndexEntry> = new_index
+        .entries
+        .iter()
+        .filter(|entry| entry.stage() == 0)
+        .map(|entry| (entry.path.clone(), entry.clone()))
+        .collect();
+
+    for old_entry in old_index.entries.iter().filter(|entry| entry.stage() == 0) {
+        let abs_path = work_tree.join(String::from_utf8_lossy(&old_entry.path).as_ref());
+        if !abs_path.exists() && !abs_path.is_symlink() {
+            continue;
+        }
+        if !is_worktree_dirty(repo, old_entry, &abs_path)? {
+            continue;
+        }
+
+        let Some(base_entry) = head_map.get(&old_entry.path) else {
+            continue;
+        };
+        let Some(target_entry) = new_map.get(&old_entry.path) else {
+            continue;
+        };
+
+        let base_obj = repo.odb.read(&base_entry.oid)?;
+        let target_obj = repo.odb.read(&target_entry.oid)?;
+        let local_data = std::fs::read(&abs_path)
+            .with_context(|| format!("reading local modifications for '{}'", abs_path.display()))?;
+
+        let input = MergeInput {
+            base: &base_obj.data,
+            ours: &target_obj.data,
+            theirs: &local_data,
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+        };
+        let output = merge_file::merge(&input)?;
+        let rel_path = String::from_utf8_lossy(&old_entry.path).into_owned();
+
+        if output.conflicts == 0 {
+            write_to_worktree(work_tree, &rel_path, &output.content, target_entry.mode)?;
+            continue;
+        }
+
+        let local_oid = repo.odb.write(ObjectKind::Blob, &local_data)?;
+        write_to_worktree(work_tree, &rel_path, &output.content, target_entry.mode)?;
+        merged_index
+            .entries
+            .retain(|entry| entry.path != old_entry.path);
+        merged_index.entries.push(stage_entry_from(base_entry, 1));
+        merged_index.entries.push(stage_entry_from(target_entry, 2));
+        merged_index.entries.push(index_entry_from_blob(
+            &old_entry.path,
+            target_entry.mode,
+            local_oid,
+            3,
+        ));
+    }
+
+    merged_index.sort();
+    checkout_index_to_worktree(repo, old_index, &merged_index, work_tree, false)?;
+    merged_index.write(&index_path).context("writing index")?;
+    Ok(())
+}
+
+fn build_head_tree_map(repo: &Repository, head: &HeadState) -> HashMap<Vec<u8>, IndexEntry> {
+    (|| -> Result<HashMap<Vec<u8>, IndexEntry>> {
+        let head_oid = head.oid().ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+        let head_tree = commit_to_tree(repo, head_oid)?;
+        let entries = tree_to_flat_entries(repo, &head_tree, "")?;
+        Ok(entries
+            .into_iter()
+            .filter(|entry| entry.stage() == 0)
+            .map(|entry| (entry.path.clone(), entry))
+            .collect())
+    })()
+    .unwrap_or_default()
+}
+
+fn stage_entry_from(entry: &IndexEntry, stage: u8) -> IndexEntry {
+    let mut staged = entry.clone();
+    staged.flags = (staged.flags & 0x0FFF) | ((stage as u16) << 12);
+    staged
+}
+
+fn index_entry_from_blob(path: &[u8], mode: u32, oid: ObjectId, stage: u8) -> IndexEntry {
+    IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid,
+        flags: (path.len().min(0xFFF) as u16) | ((stage as u16) << 12),
+        flags_extended: None,
+        path: path.to_vec(),
+    }
 }
 
 /// Check if any tracked files have uncommitted changes that would be overwritten
@@ -1082,6 +1213,7 @@ fn checkout_paths(
     source: Option<&str>,
     paths: &[String],
     no_overlay: bool,
+    merge: bool,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1094,7 +1226,20 @@ fn checkout_paths(
         None => {
             // checkout -- <paths>: restore from index
             let index_path = repo.index_path();
-            let index = Index::load(&index_path).context("loading index")?;
+            let mut index = Index::load(&index_path).context("loading index")?;
+
+            if merge {
+                let mut modified = false;
+                for path_str in paths {
+                    let rel = resolve_pathspec(path_str, work_tree, &cwd);
+                    restore_conflicted_path(repo, work_tree, &mut index, &rel)?;
+                    modified = true;
+                }
+                if modified {
+                    index.write(&index_path).context("writing index")?;
+                }
+                return Ok(());
+            }
 
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
@@ -1373,6 +1518,56 @@ fn checkout_paths(
         }
     }
 
+    Ok(())
+}
+
+fn restore_conflicted_path(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+    rel: &str,
+) -> Result<()> {
+    let path_bytes = rel.as_bytes();
+    if index.get(path_bytes, 1).is_none()
+        && index.get(path_bytes, 2).is_none()
+        && index.get(path_bytes, 3).is_none()
+        && !index.unresolve(path_bytes)
+    {
+        bail!(
+            "error: path '{}' does not have resolve-undo information",
+            rel
+        );
+    }
+
+    let base = index.get(path_bytes, 1).cloned();
+    let ours = index
+        .get(path_bytes, 2)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("path '{}' does not have necessary versions", rel))?;
+    let theirs = index
+        .get(path_bytes, 3)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("path '{}' does not have necessary versions", rel))?;
+    let base_data = match base {
+        Some(ref entry) => repo.odb.read(&entry.oid)?.data,
+        None => Vec::new(),
+    };
+    let ours_data = repo.odb.read(&ours.oid)?.data;
+    let theirs_data = repo.odb.read(&theirs.oid)?.data;
+    let input = MergeInput {
+        base: &base_data,
+        ours: &ours_data,
+        theirs: &theirs_data,
+        label_ours: "ours",
+        label_base: "base",
+        label_theirs: "theirs",
+        favor: MergeFavor::None,
+        style: ConflictStyle::Merge,
+        marker_size: 7,
+        diff_algorithm: None,
+    };
+    let output = merge_file::merge(&input)?;
+    write_to_worktree(work_tree, rel, &output.content, ours.mode)?;
     Ok(())
 }
 

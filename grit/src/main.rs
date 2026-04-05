@@ -381,6 +381,93 @@ fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
+    if rest.len() != 1 {
+        bail!("usage: test-tool online-cpus");
+    }
+    let cpus = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    println!("{cpus}");
+    Ok(())
+}
+
+fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
+    #[derive(Default)]
+    struct LazyInitNameHashArgs {
+        single: bool,
+        multi: bool,
+        count: usize,
+        dump: bool,
+    }
+
+    let mut args = LazyInitNameHashArgs { count: 1, ..Default::default() };
+    let mut i = 1usize;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "-s" | "--single" => {
+                args.single = true;
+                i += 1;
+            }
+            "-m" | "--multi" => {
+                args.multi = true;
+                i += 1;
+            }
+            "-d" | "--dump" => {
+                args.dump = true;
+                i += 1;
+            }
+            "-c" | "--count" => {
+                let Some(value) = rest.get(i + 1) else {
+                    bail!("usage: test-tool lazy-init-name-hash (-s | -m) [-c <count>]");
+                };
+                args.count = value.parse()?;
+                i += 2;
+            }
+            value if value.starts_with("--count=") => {
+                args.count = value[8..].parse()?;
+                i += 1;
+            }
+            "-p" | "--perf" | "-a" | "--analyze" | "--step" => {
+                bail!("test-tool lazy-init-name-hash: unsupported mode");
+            }
+            other => bail!("test-tool lazy-init-name-hash: unknown argument '{other}'"),
+        }
+    }
+
+    if !args.single && !args.multi {
+        bail!("test-tool lazy-init-name-hash: require either -s or -m or both");
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    for _ in 0..args.count {
+        let index = grit_lib::index::Index::load(&repo.index_path())?;
+        let mut dirs = std::collections::BTreeSet::new();
+        for entry in &index.entries {
+            let path = String::from_utf8_lossy(&entry.path);
+            let mut prefix = String::new();
+            for component in path.split('/').filter(|component| !component.is_empty()) {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                dirs.insert(prefix.clone());
+            }
+        }
+
+        if args.dump {
+            for dir in &dirs {
+                println!("dir {dir}");
+            }
+            for entry in &index.entries {
+                println!("name {}", String::from_utf8_lossy(&entry.path));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
     value
         .parse::<usize>()
