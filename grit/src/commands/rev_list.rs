@@ -64,6 +64,8 @@ pub fn run(args: Args) -> Result<()> {
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
                 "--boundary" => options.boundary = true,
+                "--in-commit-order" => options.in_commit_order = true,
+                "--no-kept-objects" => options.no_kept_objects = true,
                 "--full-history" => options.full_history = true,
                 "--sparse" => options.sparse = true,
                 "--dense" => { /* default behavior, no-op */ }
@@ -374,58 +376,75 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    for oid in &result.commits {
-        let mut prefix = String::new();
-        if options.left_right {
-            if let Some(&is_left) = result.left_right_map.get(oid) {
-                if is_left {
-                    prefix.push('<');
-                } else {
-                    prefix.push('>');
-                }
-            }
+    let print_object = |oid: &grit_lib::objects::ObjectId, path: &str| {
+        if options.no_object_names {
+            println!("{oid}");
+        } else if path.is_empty() {
+            println!("{oid} ");
+        } else {
+            println!("{oid} {path}");
         }
-        if options.cherry_mark {
-            if result.cherry_equivalent.contains(oid) {
-                prefix = "=".to_owned();
-            } else if !prefix.is_empty() {
-                prefix = "+".to_owned();
-            }
-        }
-        match &options.output_mode {
-            OutputMode::Format(fmt) => {
-                let is_oneline = fmt == "oneline";
-                let is_named_format = matches!(fmt.as_str(), "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw");
-                if !no_commit_header && !is_oneline {
-                    println!("commit {prefix}{oid}");
-                }
-                let rendered = render_commit_with_color(&repo, *oid, &options.output_mode, abbrev_len, use_color)?;
-                if is_named_format {
-                    // Named formats handle their own trailing newlines
-                    print!("{rendered}");
-                    if !rendered.ends_with('\n') {
-                        println!();
-                    }
-                } else {
-                    println!("{rendered}");
-                }
-            }
-            _ => {
-                let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
-                println!("{prefix}{rendered}");
-            }
-        }
-    }
+    };
 
-    // Print reachable objects if --objects
-    if options.objects {
-        for (oid, path) in &result.objects {
-            if options.no_object_names {
-                println!("{oid}");
-            } else if path.is_empty() {
-                println!("{oid} ");
-            } else {
-                println!("{oid} {path}");
+    {
+        let mut obj_offset = 0usize;
+        for (ci, oid) in result.commits.iter().enumerate() {
+            let mut prefix = String::new();
+            if options.left_right {
+                if let Some(&is_left) = result.left_right_map.get(oid) {
+                    if is_left {
+                        prefix.push('<');
+                    } else {
+                        prefix.push('>');
+                    }
+                }
+            }
+            if options.cherry_mark {
+                if result.cherry_equivalent.contains(oid) {
+                    prefix = "=".to_owned();
+                } else if !prefix.is_empty() {
+                    prefix = "+".to_owned();
+                }
+            }
+            match &options.output_mode {
+                OutputMode::Format(fmt) => {
+                    let is_oneline = fmt == "oneline";
+                    let is_named_format = matches!(fmt.as_str(), "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw");
+                    if !no_commit_header && !is_oneline {
+                        println!("commit {prefix}{oid}");
+                    }
+                    let rendered = render_commit_with_color(&repo, *oid, &options.output_mode, abbrev_len, use_color)?;
+                    if is_named_format {
+                        print!("{rendered}");
+                        if !rendered.ends_with('\n') {
+                            println!();
+                        }
+                    } else {
+                        println!("{rendered}");
+                    }
+                }
+                _ => {
+                    let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
+                    println!("{prefix}{rendered}");
+                }
+            }
+
+            // In --in-commit-order mode, emit this commit's objects right after it
+            if !result.per_commit_object_counts.is_empty() {
+                let count = result.per_commit_object_counts.get(ci).copied().unwrap_or(0);
+                for j in obj_offset..obj_offset + count {
+                    if let Some((obj_oid, path)) = result.objects.get(j) {
+                        print_object(obj_oid, path);
+                    }
+                }
+                obj_offset += count;
+            }
+        }
+
+        // Print remaining objects (non-in-commit-order mode, or leftovers)
+        if options.objects && result.per_commit_object_counts.is_empty() {
+            for (oid, path) in &result.objects {
+                print_object(oid, path);
             }
         }
     }

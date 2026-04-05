@@ -847,6 +847,13 @@ fn write_patch_entry(
         _ => {}
     }
 
+    // For rename/copy with 100% similarity, skip the diff content entirely
+    if (entry.status == DiffStatus::Renamed || entry.status == DiffStatus::Copied)
+        && entry.old_oid == entry.new_oid
+    {
+        return Ok(());
+    }
+
     // Read raw bytes for binary detection
     let old_raw = read_blob_raw(odb, &entry.old_oid);
     let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {

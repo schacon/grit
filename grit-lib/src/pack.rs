@@ -806,3 +806,9 @@ fn read_u64_be(bytes: &[u8], pos: &mut usize) -> Result<u64> {
     *pos += 8;
     Ok(v)
 }
+
+/// Read all object IDs from a `.idx` file.
+pub fn read_idx_object_ids(idx_path: &Path) -> Result<Vec<ObjectId>> {
+    let index = read_pack_index(idx_path)?;
+    Ok(index.entries.into_iter().map(|e| e.oid).collect())
+}

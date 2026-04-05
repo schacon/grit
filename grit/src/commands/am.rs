@@ -1741,6 +1741,41 @@ fn parse_patches(
 
 /// Unquote mboxrd format: lines starting with >From (or >>From, etc.) are unquoted.
 /// In mboxrd, "From " lines inside messages are escaped by prepending ">".
+/// Un-flow format=flowed lines (RFC 3676).
+/// Lines ending with a trailing space are "flowed" — joined with the next line.
+/// Also handles space-unstuffing: one leading space is removed from lines
+/// that start with a space (to undo the space-stuffing required by RFC 3676).
+fn unflow_format_flowed(lines: &[&str]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+
+    for line in lines {
+        // Space-unstuffing: remove one leading space
+        let unstuffed = if line.starts_with(' ') {
+            &line[1..]
+        } else {
+            line
+        };
+
+        if unstuffed.ends_with(' ') {
+            // Flowed line: keep the trailing space (it's content), join with next
+            current.push_str(unstuffed);
+        } else {
+            if !current.is_empty() {
+                current.push_str(unstuffed);
+                result.push(current.clone());
+                current.clear();
+            } else {
+                result.push(unstuffed.to_string());
+            }
+        }
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
 fn unquote_mboxrd(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut in_body = false;
@@ -1839,6 +1874,7 @@ fn parse_mbox_with_opts(
         // Parse headers
         _in_headers = true;
         let mut last_header = String::new();
+        let mut is_format_flowed = false;
 
         while let Some(&line) = lines.peek() {
             if line.is_empty() {
@@ -1880,6 +1916,11 @@ fn parse_mbox_with_opts(
             {
                 message_id = value.trim().to_string();
                 last_header = "message-id".to_string();
+            } else if let Some(value) = line.strip_prefix("Content-Type: ").or_else(|| line.strip_prefix("Content-type: ")) {
+                if value.to_lowercase().contains("format=flowed") {
+                    is_format_flowed = true;
+                }
+                last_header = "content-type".to_string();
             } else {
                 last_header = String::new();
             }
@@ -1946,7 +1987,12 @@ fn parse_mbox_with_opts(
         }
 
         // Build message from subject + body
-        let mut body_str = body_lines.join("\n").trim().to_string();
+        let effective_body_lines: Vec<String> = if is_format_flowed {
+            unflow_format_flowed(&body_lines)
+        } else {
+            body_lines.iter().map(|l| l.to_string()).collect()
+        };
+        let mut body_str = effective_body_lines.join("\n").trim().to_string();
 
         // Handle --scissors: trim at scissors line, potentially replace subject
         if scissors && !no_scissors {
@@ -1964,7 +2010,15 @@ fn parse_mbox_with_opts(
         // Parse author into "Name <email>" format and extract date
         let author_ident = parse_author_ident(&author, &date);
 
-        let mut diff_section = diff_lines.join("\n");
+        // Un-flow format=flowed content
+        let effective_diff_lines: Vec<String> = if is_format_flowed {
+            eprintln!("warning: Patch sent with format=flowed; space at the end of lines might be lost.");
+            unflow_format_flowed(&diff_lines)
+        } else {
+            diff_lines.iter().map(|l| l.to_string()).collect()
+        };
+
+        let mut diff_section = effective_diff_lines.join("\n");
         if !diff_section.is_empty() {
             diff_section.push('\n');
         }

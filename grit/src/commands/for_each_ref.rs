@@ -68,6 +68,10 @@ pub fn run(args: Args) -> Result<()> {
                 eprintln!("fatal: missing object {oid} for {refname}");
                 std::process::exit(1);
             }
+            Err(FormatError::Fatal(message)) => {
+                eprintln!("fatal: {message}");
+                std::process::exit(1);
+            }
             Err(FormatError::Other(message)) => bail!(message),
         }
     }
@@ -113,6 +117,7 @@ struct Options {
 #[derive(Debug)]
 enum FormatError {
     MissingObject(ObjectId, String),
+    Fatal(String),
     Other(String),
 }
 
@@ -841,6 +846,26 @@ fn atom_value(
                 _ => Ok(String::new()),
             }
         }
+        "ahead-behind" => {
+            match modifier {
+                None => Err(FormatError::Fatal(
+                    "expected format: %(ahead-behind:<committish>)".to_owned(),
+                )),
+                Some(committish) => {
+                    // Resolve the base committish
+                    let base_oid = grit_lib::rev_parse::resolve_revision(repo, committish)
+                        .map_err(|_| FormatError::Fatal(format!("failed to find '{}'", committish)))?;
+                    // Peel the ref's target to a commit
+                    let ref_oid = match peel_to_commit(repo, entry.oid) {
+                        Ok(oid) => oid,
+                        Err(_) => return Ok(String::new()),
+                    };
+                    // Compute ahead/behind counts
+                    let (ahead, behind) = compute_ahead_behind(repo, ref_oid, base_oid);
+                    Ok(format!("{ahead} {behind}"))
+                }
+            }
+        }
         _ => Err(FormatError::Other(format!(
             "unsupported format atom: {atom}"
         ))),
@@ -1563,4 +1588,37 @@ fn wildcard_match_bytes(name: &[u8], pattern: &[u8]) -> bool {
 
 fn is_zero_oid(oid: &ObjectId) -> bool {
     oid.as_bytes().iter().all(|b| *b == 0)
+}
+
+/// Compute ahead/behind counts between two commits.
+/// Returns (ahead, behind) where ahead = commits reachable from `oid` but not `base`,
+/// and behind = commits reachable from `base` but not `oid`.
+fn compute_ahead_behind(repo: &Repository, oid: ObjectId, base: ObjectId) -> (usize, usize) {
+    use std::collections::{HashSet, VecDeque};
+
+    fn walk_ancestors(repo: &Repository, start: ObjectId) -> HashSet<ObjectId> {
+        let mut seen = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start);
+        while let Some(oid) = queue.pop_front() {
+            if !seen.insert(oid) {
+                continue;
+            }
+            if let Ok(obj) = repo.odb.read(&oid) {
+                if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {
+                    for parent in commit.parents {
+                        queue.push_back(parent);
+                    }
+                }
+            }
+        }
+        seen
+    }
+
+    let oid_ancestors = walk_ancestors(repo, oid);
+    let base_ancestors = walk_ancestors(repo, base);
+
+    let ahead = oid_ancestors.difference(&base_ancestors).count();
+    let behind = base_ancestors.difference(&oid_ancestors).count();
+    (ahead, behind)
 }

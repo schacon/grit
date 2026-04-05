@@ -116,8 +116,9 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
-    // In porcelain mode, always show the branch header.
-    if args.porcelain.is_some() {
+    // In porcelain v2 mode, always show branch headers.
+    // In porcelain v1, the branch header is only shown with --branch.
+    if args.porcelain.as_deref() == Some("v2") {
         args.branch = true;
     }
     let repo = Repository::discover(None).context("not a git repository")?;

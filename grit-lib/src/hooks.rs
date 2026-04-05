@@ -80,6 +80,17 @@ pub fn run_hook(
         Err(_) => return HookResult::NotFound,
     };
     if meta.permissions().mode() & 0o111 == 0 {
+        // Warn that the hook exists but is not executable (like git does)
+        let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+        let show_warning = config
+            .as_ref()
+            .and_then(|c| c.get("advice.ignoredHook"))
+            .map(|v| !matches!(v.to_lowercase().as_str(), "false" | "no" | "off" | "0"))
+            .unwrap_or(true);
+        if show_warning {
+            eprintln!("hint: The '{}' hook was ignored because it's not set as executable.", hook_name);
+            eprintln!("hint: You can disable this warning with `git config advice.ignoredHook false`.");
+        }
         return HookResult::NotFound;
     }
 

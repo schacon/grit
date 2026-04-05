@@ -197,6 +197,7 @@ fn optimize_refs(_repo: &Repository) -> Result<()> {
     // Delegate to pack-refs --all
     crate::commands::pack_refs::run(crate::commands::pack_refs::Args {
         all: true,
+        prune: false,
         no_prune: false,
     })
 }

@@ -229,11 +229,17 @@ pub fn run(args: Args) -> Result<()> {
     let prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
 
     // Determine whether to number patches.
+    let config_numbered_val = config.get("format.numbered").map(|v| v.to_string());
+    let config_numbered = match config_numbered_val.as_deref() {
+        Some("true") | Some("yes") | Some("1") => true,
+        _ => false,
+    };
     let use_numbering = if args.no_numbered {
         false
-    } else if args.numbered || args.cover_letter {
+    } else if args.numbered || args.cover_letter || config_numbered {
         true
     } else {
+        // Default behavior (and format.numbered=auto): number if multiple patches
         total > 1
     };
 
@@ -623,6 +629,25 @@ fn format_cover_letter(
     Ok(out)
 }
 
+/// Get the signoff identity, preferring GIT_COMMITTER_NAME/EMAIL env vars.
+fn get_signoff_identity(committer_ident: &str) -> (String, String) {
+    let env_name = std::env::var("GIT_COMMITTER_NAME").ok();
+    let env_email = std::env::var("GIT_COMMITTER_EMAIL").ok();
+
+    let name = env_name.unwrap_or_else(|| {
+        if let Some(bracket) = committer_ident.find('<') {
+            committer_ident[..bracket].trim().to_string()
+        } else {
+            "Unknown".to_string()
+        }
+    });
+    let email = env_email.unwrap_or_else(|| {
+        extract_email(committer_ident).unwrap_or("unknown").to_string()
+    });
+
+    (name, email)
+}
+
 /// Extract the email portion from an ident string like "Name <email> ts tz".
 fn extract_email(ident: &str) -> Option<&str> {
     let start = ident.find('<')?;
@@ -765,13 +790,28 @@ fn format_single_patch(
         write_folded_header(&mut out, "To", &encoded);
     }
 
-    // MIME headers for --attach / --inline
-    if use_mime {
+    // Check if body/signoff will contain non-ASCII (need MIME headers)
+    let signoff_has_non_ascii = if opts.signoff {
+        let (name, _email) = get_signoff_identity(&commit.committer);
+        name.bytes().any(|b| b > 127)
+    } else {
+        false
+    };
+    let body_has_non_ascii = commit.message.bytes().any(|b| b > 127) || signoff_has_non_ascii;
+    let needs_mime = use_mime || body_has_non_ascii;
+
+    // MIME headers for --attach / --inline or non-ASCII body
+    if needs_mime {
         out.push_str("MIME-Version: 1.0\n");
-        out.push_str(&format!(
-            "Content-Type: multipart/mixed; boundary=\"{}\"\n",
-            boundary
-        ));
+        if use_mime {
+            out.push_str(&format!(
+                "Content-Type: multipart/mixed; boundary=\"{}\"\n",
+                boundary
+            ));
+        } else {
+            out.push_str("Content-Type: text/plain; charset=UTF-8\n");
+            out.push_str("Content-Transfer-Encoding: 8bit\n");
+        }
     }
 
     out.push('\n');
@@ -798,12 +838,7 @@ fn format_single_patch(
 
         // Signoff in body part
         if opts.signoff {
-            let email = extract_email(&commit.committer).unwrap_or("unknown");
-            let name = if let Some(bracket) = commit.committer.find('<') {
-                commit.committer[..bracket].trim()
-            } else {
-                "Unknown"
-            };
+            let (name, email) = get_signoff_identity(&commit.committer);
             out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
         }
 
@@ -837,12 +872,7 @@ fn format_single_patch(
 
         // Signoff trailer
         if opts.signoff {
-            let email = extract_email(&commit.committer).unwrap_or("unknown");
-            let name = if let Some(bracket) = commit.committer.find('<') {
-                commit.committer[..bracket].trim()
-            } else {
-                "Unknown"
-            };
+            let (name, email) = get_signoff_identity(&commit.committer);
             out.push_str(&format!("\nSigned-off-by: {name} <{email}>\n"));
         }
 

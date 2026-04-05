@@ -964,47 +964,63 @@ pub fn detect_copies(
     find_copies_harder: bool,
     source_tree_entries: &[(String, String, ObjectId)],
 ) -> Vec<DiffEntry> {
-    // First, run rename detection to pair Delete+Add.
-    let entries = detect_renames(odb, entries, threshold);
+    use std::collections::{HashMap, HashSet};
 
-    // Split into added (remaining) and others.
+    // Separate entries by status.
+    let mut deleted: Vec<DiffEntry> = Vec::new();
     let mut added: Vec<DiffEntry> = Vec::new();
     let mut others: Vec<DiffEntry> = Vec::new();
 
     for entry in entries {
         match entry.status {
+            DiffStatus::Deleted => deleted.push(entry),
             DiffStatus::Added => added.push(entry),
             _ => others.push(entry),
         }
     }
 
     if added.is_empty() {
-        return others;
+        let mut result = others;
+        result.extend(deleted);
+        result.sort_by(|a, b| a.path().cmp(b.path()));
+        return result;
     }
 
-    // Build copy source candidates.
-    let mut sources: Vec<(String, ObjectId)> = Vec::new();
+    // Build source candidates: deleted files, modified files, and optionally tree entries.
+    // Track which sources are from deleted files (can become renames).
+    let mut sources: Vec<(String, ObjectId, bool)> = Vec::new(); // (path, oid, is_deleted)
+    let mut deleted_source_idx: HashMap<String, usize> = HashMap::new();
+
+    for entry in &deleted {
+        if let Some(ref path) = entry.old_path {
+            deleted_source_idx.insert(path.clone(), sources.len());
+            sources.push((path.clone(), entry.old_oid, true));
+        }
+    }
 
     // Modified files are always candidates for -C.
     for entry in &others {
         if entry.status == DiffStatus::Modified {
             if let Some(ref old_path) = entry.old_path {
-                sources.push((old_path.clone(), entry.old_oid));
+                if !sources.iter().any(|(p, _, _)| p == old_path) {
+                    sources.push((old_path.clone(), entry.old_oid, false));
+                }
             }
         }
     }
 
-    // With find_copies_harder, also add all source tree entries.
+    // With find_copies_harder, add all source tree entries.
     if find_copies_harder {
         for (path, _mode, oid) in source_tree_entries {
-            if !sources.iter().any(|(p, _)| p == path) {
-                sources.push((path.clone(), *oid));
+            if !sources.iter().any(|(p, _, _)| p == path) {
+                sources.push((path.clone(), *oid, false));
             }
         }
     }
 
     if sources.is_empty() {
         let mut result = others;
+        result.extend(deleted);
         result.extend(added);
         result.sort_by(|a, b| a.path().cmp(b.path()));
         return result;
@@ -1013,7 +1029,7 @@ pub fn detect_copies(
     // Read content for sources.
     let source_contents: Vec<Option<Vec<u8>>> = sources
         .iter()
-        .map(|(_, oid)| odb.read(oid).ok().map(|obj| obj.data))
+        .map(|(_, oid, _)| odb.read(oid).ok().map(|obj| obj.data))
         .collect();
 
     // Read content for added blobs.
@@ -1022,9 +1038,9 @@ pub fn detect_copies(
         .map(|a| odb.read(&a.new_oid).ok().map(|obj| obj.data))
         .collect();
 
-    // Build score matrix.
+    // Build score matrix: (score, source_idx, added_idx)
     let mut scores: Vec<(u32, usize, usize)> = Vec::new();
-    for (si, (_, src_oid)) in sources.iter().enumerate() {
+    for (si, (_, src_oid, _)) in sources.iter().enumerate() {
         for (ai, add) in added.iter().enumerate() {
             if *src_oid == add.new_oid {
                 scores.push((100, si, ai));
@@ -1043,40 +1059,104 @@ pub fn detect_copies(
     // Sort by score descending.
     scores.sort_by(|a, b| b.0.cmp(&a.0));
 
+    // Build source->added mappings, each added file assigned to best source.
     let mut used_added = vec![false; added.len()];
-    let mut copies: Vec<DiffEntry> = Vec::new();
-
-    for (score, si, ai) in &scores {
-        if used_added[*ai] {
+    let mut source_to_added: HashMap<usize, Vec<(usize, u32)>> = HashMap::new();
+    for &(score, si, ai) in &scores {
+        if used_added[ai] {
             continue;
         }
-        used_added[*ai] = true;
+        used_added[ai] = true;
+        source_to_added.entry(si).or_default().push((ai, score));
+    }
 
-        let (ref src_path, _) = sources[*si];
-        let add = &added[*ai];
+    // Determine which become Rename vs Copy.
+    // For each deleted source, at most one assignment becomes a Rename;
+    // the rest become Copies. Pick the last alphabetically as rename target.
+    let mut used_added2 = vec![false; added.len()];
+    let mut result_entries: Vec<DiffEntry> = Vec::new();
 
-        let src_mode = source_tree_entries
-            .iter()
-            .find(|(p, _, _)| p == src_path)
-            .map(|(_, m, _)| m.clone())
-            .unwrap_or_else(|| add.old_mode.clone());
+    // Track which deleted sources got a rename.
+    let mut renamed_deleted: HashSet<usize> = HashSet::new();
 
-        copies.push(DiffEntry {
-            status: DiffStatus::Copied,
-            old_path: Some(src_path.clone()),
-            new_path: add.new_path.clone(),
-            old_mode: src_mode,
-            new_mode: add.new_mode.clone(),
-            old_oid: sources[*si].1,
-            new_oid: add.new_oid,
-            score: Some(*score),
-        });
+    // For each deleted source, pick one assignment as Rename, rest as Copy.
+    for (&si, assignments_for_src) in &source_to_added {
+        let (_, _, is_deleted) = &sources[si];
+        if *is_deleted && !assignments_for_src.is_empty() {
+            // Pick the last one (by path) as the rename target.
+            // Git tends to pick the rename as the last alphabetically.
+            let rename_ai = assignments_for_src
+                .iter()
+                .max_by_key(|(ai, _score)| added[*ai].path().to_string())
+                .map(|(ai, _)| *ai);
+
+            for &(ai, score) in assignments_for_src {
+                let (ref src_path, _, _) = sources[si];
+                let add = &added[ai];
+                let src_mode = source_tree_entries
+                    .iter()
+                    .find(|(p, _, _)| p == src_path)
+                    .map(|(_, m, _)| m.clone())
+                    .unwrap_or_else(|| add.old_mode.clone());
+
+                let is_rename = Some(ai) == rename_ai;
+                result_entries.push(DiffEntry {
+                    status: if is_rename { DiffStatus::Renamed } else { DiffStatus::Copied },
+                    old_path: Some(src_path.clone()),
+                    new_path: add.new_path.clone(),
+                    old_mode: src_mode,
+                    new_mode: add.new_mode.clone(),
+                    old_oid: sources[si].1,
+                    new_oid: add.new_oid,
+                    score: Some(score),
+                });
+                used_added2[ai] = true;
+            }
+            renamed_deleted.insert(si);
+        } else {
+            // Non-deleted source: all assignments are copies.
+            for &(ai, score) in assignments_for_src {
+                let (ref src_path, _, _) = sources[si];
+                let add = &added[ai];
+                let src_mode = source_tree_entries
+                    .iter()
+                    .find(|(p, _, _)| p == src_path)
+                    .map(|(_, m, _)| m.clone())
+                    .unwrap_or_else(|| add.old_mode.clone());
+
+                result_entries.push(DiffEntry {
+                    status: DiffStatus::Copied,
+                    old_path: Some(src_path.clone()),
+                    new_path: add.new_path.clone(),
+                    old_mode: src_mode,
+                    new_mode: add.new_mode.clone(),
+                    old_oid: sources[si].1,
+                    new_oid: add.new_oid,
+                    score: Some(score),
+                });
+                used_added2[ai] = true;
+            }
+        }
+    }
+
+    // Keep deleted entries that weren't consumed by a rename.
+    for entry in deleted.into_iter() {
+        if let Some(ref path) = entry.old_path {
+            if let Some(&si) = deleted_source_idx.get(path) {
+                if renamed_deleted.contains(&si) {
+                    // This deletion was consumed by a rename; skip it.
+                    continue;
+                }
+            }
+        }
+        result_entries.push(entry);
     }
 
     let mut result = others;
-    result.extend(copies);
+    result.extend(result_entries);
+    // Keep unmatched added entries.
     for (i, entry) in added.into_iter().enumerate() {
-        if !used_added[i] {
+        if !used_added2[i] {
             result.push(entry);
         }
     }
@@ -1643,6 +1723,7 @@ pub fn anchored_unified_diff(
 /// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line
 /// before line 8 in the old content that looks like a function header
 /// (starts with a non-whitespace character, like Git's default).
+
 fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> {
     // Parse the old start line number from "@@ -<start>,<count> ..."
     let at_pos = header.find("-")?;
@@ -1668,10 +1749,10 @@ fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> 
             // or certain other non-whitespace chars. We use a simpler heuristic:
             // any line that doesn't start with whitespace.
             if first != b' ' && first != b'\t' {
-                // Truncate to ~40 chars like Git does, respecting
+                // Truncate to 80 bytes like Git does, respecting
                 // character boundaries.
-                let truncated = if line.len() > 40 {
-                    let mut end = 40;
+                let truncated = if line.len() > 80 {
+                    let mut end = 80;
                     while end > 0 && !line.is_char_boundary(end) {
                         end -= 1;
                     }

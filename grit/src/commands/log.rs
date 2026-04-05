@@ -1008,12 +1008,18 @@ fn walk_commits(
     let shallow_boundaries = load_shallow_boundaries(git_dir);
 
     let mut visited: HashSet<ObjectId> = excluded.clone();
-    let mut queue: Vec<ObjectId> = start.to_vec();
+    // Use a priority queue sorted by commit date (descending) for correct traversal order.
+    // Each entry is (timestamp, oid) so BinaryHeap gives us highest timestamp first.
+    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> = std::collections::BinaryHeap::new();
+    for oid in start {
+        let ts = read_commit_timestamp(odb, oid);
+        queue.push((ts, *oid));
+    }
     let mut result = Vec::new();
     let mut skipped = 0;
     let skip_n = skip.unwrap_or(0);
 
-    while let Some(oid) = queue.pop() {
+    while let Some((_ts, oid)) = queue.pop() {
         if !visited.insert(oid) {
             continue;
         }
@@ -1034,12 +1040,14 @@ fn walk_commits(
         if !shallow_boundaries.contains(&oid) {
             if first_parent {
                 if let Some(parent) = commit.parents.first() {
-                    queue.push(*parent);
+                    let ts = read_commit_timestamp(odb, parent);
+                    queue.push((ts, *parent));
                 }
             } else {
-                for parent in commit.parents.iter().rev() {
+                for parent in &commit.parents {
                     if !visited.contains(parent) {
-                        queue.push(*parent);
+                        let ts = read_commit_timestamp(odb, parent);
+                        queue.push((ts, *parent));
                     }
                 }
             }
@@ -1086,12 +1094,7 @@ fn walk_commits(
         }
     }
 
-    // Sort by commit timestamp (committer date) — descending
-    result.sort_by(|a, b| {
-        let ts_a = extract_timestamp(&a.1.committer);
-        let ts_b = extract_timestamp(&b.1.committer);
-        ts_b.cmp(&ts_a)
-    });
+    // Results are already in correct order from the priority queue walk.
 
     Ok(result)
 }
@@ -1128,6 +1131,17 @@ fn path_matches(path: &str, pathspec: &str) -> bool {
 }
 
 /// Extract unix timestamp from an author/committer line.
+/// Read the committer timestamp from a commit object for priority queue ordering.
+fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
+    match odb.read(oid) {
+        Ok(obj) => match parse_commit(&obj.data) {
+            Ok(commit) => extract_timestamp(&commit.committer),
+            Err(_) => 0,
+        },
+        Err(_) => 0,
+    }
+}
+
 fn extract_timestamp(ident: &str) -> i64 {
     // Format: "Name <email> timestamp offset"
     let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();

@@ -428,6 +428,13 @@ fn show_commit(
         // Print the diff header
         write_diff_header(out, entry)?;
 
+        // Skip diff content for rename/copy with 100% similarity
+        if (entry.status == grit_lib::diff::DiffStatus::Renamed || entry.status == grit_lib::diff::DiffStatus::Copied)
+            && entry.old_oid == entry.new_oid
+        {
+            continue;
+        }
+
         let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
             String::new()
         } else {

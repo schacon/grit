@@ -15781,67 +15781,67 @@ t7704-repack-cruft::repack-write-midx-excludes-cruft-where-possible	t7704-repack
 t7704-repack-cruft::repack-write-midx-includes-cruft-when-instructed	t7704-repack-cruft	repack --write-midx includes cruft when instructed	repack	partial
 t7704-repack-cruft::repack-write-midx-includes-cruft-when-necessary	t7704-repack-cruft	repack --write-midx includes cruft when necessary	repack	partial
 t7704-repack-cruft::repack-write-midx-includes-cruft-when-already-geometric	t7704-repack-cruft	repack --write-midx includes cruft when already geometric	repack	partial
-t7800-difftool::basic-usage-requires-no-repo	t7800-difftool	basic usage requires no repo	difftool	partial
-t7800-difftool::setup	t7800-difftool	setup	difftool	partial
-t7800-difftool::custom-commands	t7800-difftool	custom commands	difftool	partial
-t7800-difftool::custom-tool-commands-override-built-ins	t7800-difftool	custom tool commands override built-ins	difftool	partial
-t7800-difftool::difftool-ignores-bad-tool-values	t7800-difftool	difftool ignores bad --tool values	difftool	partial
-t7800-difftool::difftool-forwards-arguments-to-diff	t7800-difftool	difftool forwards arguments to diff	difftool	partial
-t7800-difftool::difftool-honors-gui	t7800-difftool	difftool honors --gui	difftool	partial
-t7800-difftool::difftool-with-guidefault-auto-selects-gui-tool-when-there-is-display	t7800-difftool	difftool with guiDefault auto selects gui tool when there is DISPLAY	difftool	partial
-t7800-difftool::difftool-with-guidefault-auto-selects-regular-tool-when-no-display	t7800-difftool	difftool with guiDefault auto selects regular tool when no DISPLAY	difftool	partial
-t7800-difftool::difftool-with-guidefault-true-selects-gui-tool	t7800-difftool	difftool with guiDefault true selects gui tool	difftool	partial
-t7800-difftool::difftool-no-gui-trumps-config-guidefault	t7800-difftool	difftool --no-gui trumps config guiDefault	difftool	partial
-t7800-difftool::difftool-gui-last-setting-wins	t7800-difftool	difftool --gui last setting wins	difftool	partial
-t7800-difftool::difftool-gui-works-without-configured-diff-guitool	t7800-difftool	difftool --gui works without configured diff.guitool	difftool	partial
-t7800-difftool::git-diff-tool-variable	t7800-difftool	GIT_DIFF_TOOL variable	difftool	partial
-t7800-difftool::git-diff-tool-overrides	t7800-difftool	GIT_DIFF_TOOL overrides	difftool	partial
-t7800-difftool::git-difftool-no-prompt-variable	t7800-difftool	GIT_DIFFTOOL_NO_PROMPT variable	difftool	partial
-t7800-difftool::git-difftool-prompt-variable	t7800-difftool	GIT_DIFFTOOL_PROMPT variable	difftool	partial
-t7800-difftool::difftool-prompt-config-variable-is-false	t7800-difftool	difftool.prompt config variable is false	difftool	partial
-t7800-difftool::difftool-merge-prompt-false	t7800-difftool	difftool merge.prompt = false	difftool	partial
-t7800-difftool::difftool-prompt-can-overridden-with-y	t7800-difftool	difftool.prompt can overridden with -y	difftool	partial
-t7800-difftool::difftool-prompt-can-overridden-with-prompt	t7800-difftool	difftool.prompt can overridden with --prompt	difftool	partial
-t7800-difftool::difftool-last-flag-wins	t7800-difftool	difftool last flag wins	difftool	partial
-t7800-difftool::difftool-mergetool-config-variables	t7800-difftool	difftool + mergetool config variables	difftool	partial
-t7800-difftool::difftool-tool-path	t7800-difftool	difftool.<tool>.path	difftool	partial
-t7800-difftool::difftool-extcmd-cat	t7800-difftool	difftool --extcmd=cat	difftool	partial
-t7800-difftool::difftool-extcmd-cat-2	t7800-difftool	difftool --extcmd cat	difftool	partial
-t7800-difftool::difftool-x-cat	t7800-difftool	difftool -x cat	difftool	partial
-t7800-difftool::difftool-extcmd-echo-arg1	t7800-difftool	difftool --extcmd echo arg1	difftool	partial
-t7800-difftool::difftool-extcmd-cat-arg1	t7800-difftool	difftool --extcmd cat arg1	difftool	partial
-t7800-difftool::difftool-extcmd-cat-arg2	t7800-difftool	difftool --extcmd cat arg2	difftool	partial
-t7800-difftool::setup-with-2-files-different	t7800-difftool	setup with 2 files different	difftool	partial
-t7800-difftool::say-no-to-the-first-file	t7800-difftool	say no to the first file	difftool	partial
-t7800-difftool::say-no-to-the-second-file	t7800-difftool	say no to the second file	difftool	partial
-t7800-difftool::ending-prompt-input-with-eof	t7800-difftool	ending prompt input with EOF	difftool	partial
-t7800-difftool::difftool-tool-help	t7800-difftool	difftool --tool-help	difftool	partial
-t7800-difftool::setup-change-in-subdirectory	t7800-difftool	setup change in subdirectory	difftool	partial
-t7800-difftool::difftool-d-with-growing-paths	t7800-difftool	difftool -d with growing paths	difftool	partial
-t7800-difftool::difftool-dir-diff-symlinks-without-unstaged-changes	t7800-difftool	difftool --dir-diff --symlinks without unstaged changes	difftool	partial
-t7800-difftool::difftool-no-symlinks-does-not-overwrite-working-tree-file	t7800-difftool	difftool --no-symlinks does not overwrite working tree file	difftool	partial
-t7800-difftool::difftool-no-symlinks-detects-conflict	t7800-difftool	difftool --no-symlinks detects conflict	difftool	partial
-t7800-difftool::difftool-properly-honors-gitlink-and-core-worktree	t7800-difftool	difftool properly honors gitlink and core.worktree	difftool	partial
-t7800-difftool::difftool-dir-diff-symlinked-directories	t7800-difftool	difftool --dir-diff symlinked directories	difftool	partial
-t7800-difftool::difftool-dir-diff-handles-modified-symlinks	t7800-difftool	difftool --dir-diff handles modified symlinks	difftool	partial
-t7800-difftool::difftool-dir-diff-writes-symlinks-as-raw-text	t7800-difftool	difftool --dir-diff writes symlinks as raw text	difftool	partial
-t7800-difftool::add-n-and-difftool-d	t7800-difftool	add -N and difftool -d	difftool	partial
-t7800-difftool::difftool-cached-with-unmerged-files	t7800-difftool	difftool --cached with unmerged files	difftool	partial
-t7800-difftool::outside-worktree	t7800-difftool	outside worktree	difftool	partial
-t7800-difftool::difftool-gui-tool-and-extcmd-are-mutually-exclusive	t7800-difftool	difftool --gui, --tool and --extcmd are mutually exclusive	difftool	partial
-t7800-difftool::difftool-rotate-to	t7800-difftool	difftool --rotate-to	difftool	partial
-t7800-difftool::difftool-skip-to	t7800-difftool	difftool --skip-to	difftool	partial
-t7800-difftool::difftool-rotate-skip-to-error-condition	t7800-difftool	difftool --rotate/skip-to error condition	difftool	partial
-t7800-difftool::difftool-opt-without-options-ignores-exit-code	t7800-difftool	difftool ${opt:-without options} ignores exit code	difftool	partial
-t7800-difftool::difftool-opt-without-options-forwards-exit-code-with-trust-exit-code	t7800-difftool	difftool ${opt:-without options} forwards exit code with --trust-exit-code	difftool	partial
-t7800-difftool::difftool-opt-without-options-forwards-exit-code-with-trust-exit-code-for-built-i	t7800-difftool	difftool ${opt:-without options} forwards exit code with --trust-exit-code for built-ins	difftool	partial
-t7800-difftool::difftool-opt-without-options-honors-difftool-trustexitcode-true	t7800-difftool	difftool ${opt:-without options} honors difftool.trustExitCode = true	difftool	partial
-t7800-difftool::difftool-opt-without-options-honors-difftool-trustexitcode-false	t7800-difftool	difftool ${opt:-without options} honors difftool.trustExitCode = false	difftool	partial
-t7800-difftool::difftool-opt-without-options-ignores-exit-code-with-no-trust-exit-code	t7800-difftool	difftool ${opt:-without options} ignores exit code with --no-trust-exit-code	difftool	partial
-t7800-difftool::difftool-opt-without-options-stops-on-error-with-trust-exit-code	t7800-difftool	difftool ${opt:-without options} stops on error with --trust-exit-code	difftool	partial
-t7800-difftool::difftool-opt-without-options-honors-exit-status-if-command-not-found	t7800-difftool	difftool ${opt:-without options} honors exit status if command not found	difftool	partial
-t7800-difftool::1-no-symlinks	t7800-difftool	$1 --no-symlinks	difftool	partial
-t7800-difftool::1-symlinks	t7800-difftool	$1 --symlinks	difftool	partial
+t7800-difftool::basic-usage-requires-no-repo	t7800-difftool	basic usage requires no repo	difftool	not_ported
+t7800-difftool::setup	t7800-difftool	setup	difftool	not_ported
+t7800-difftool::custom-commands	t7800-difftool	custom commands	difftool	not_ported
+t7800-difftool::custom-tool-commands-override-built-ins	t7800-difftool	custom tool commands override built-ins	difftool	not_ported
+t7800-difftool::difftool-ignores-bad-tool-values	t7800-difftool	difftool ignores bad --tool values	difftool	not_ported
+t7800-difftool::difftool-forwards-arguments-to-diff	t7800-difftool	difftool forwards arguments to diff	difftool	not_ported
+t7800-difftool::difftool-honors-gui	t7800-difftool	difftool honors --gui	difftool	not_ported
+t7800-difftool::difftool-with-guidefault-auto-selects-gui-tool-when-there-is-display	t7800-difftool	difftool with guiDefault auto selects gui tool when there is DISPLAY	difftool	not_ported
+t7800-difftool::difftool-with-guidefault-auto-selects-regular-tool-when-no-display	t7800-difftool	difftool with guiDefault auto selects regular tool when no DISPLAY	difftool	not_ported
+t7800-difftool::difftool-with-guidefault-true-selects-gui-tool	t7800-difftool	difftool with guiDefault true selects gui tool	difftool	not_ported
+t7800-difftool::difftool-no-gui-trumps-config-guidefault	t7800-difftool	difftool --no-gui trumps config guiDefault	difftool	not_ported
+t7800-difftool::difftool-gui-last-setting-wins	t7800-difftool	difftool --gui last setting wins	difftool	not_ported
+t7800-difftool::difftool-gui-works-without-configured-diff-guitool	t7800-difftool	difftool --gui works without configured diff.guitool	difftool	not_ported
+t7800-difftool::git-diff-tool-variable	t7800-difftool	GIT_DIFF_TOOL variable	difftool	not_ported
+t7800-difftool::git-diff-tool-overrides	t7800-difftool	GIT_DIFF_TOOL overrides	difftool	not_ported
+t7800-difftool::git-difftool-no-prompt-variable	t7800-difftool	GIT_DIFFTOOL_NO_PROMPT variable	difftool	not_ported
+t7800-difftool::git-difftool-prompt-variable	t7800-difftool	GIT_DIFFTOOL_PROMPT variable	difftool	not_ported
+t7800-difftool::difftool-prompt-config-variable-is-false	t7800-difftool	difftool.prompt config variable is false	difftool	not_ported
+t7800-difftool::difftool-merge-prompt-false	t7800-difftool	difftool merge.prompt = false	difftool	not_ported
+t7800-difftool::difftool-prompt-can-overridden-with-y	t7800-difftool	difftool.prompt can overridden with -y	difftool	not_ported
+t7800-difftool::difftool-prompt-can-overridden-with-prompt	t7800-difftool	difftool.prompt can overridden with --prompt	difftool	not_ported
+t7800-difftool::difftool-last-flag-wins	t7800-difftool	difftool last flag wins	difftool	not_ported
+t7800-difftool::difftool-mergetool-config-variables	t7800-difftool	difftool + mergetool config variables	difftool	not_ported
+t7800-difftool::difftool-tool-path	t7800-difftool	difftool.<tool>.path	difftool	not_ported
+t7800-difftool::difftool-extcmd-cat	t7800-difftool	difftool --extcmd=cat	difftool	not_ported
+t7800-difftool::difftool-extcmd-cat-2	t7800-difftool	difftool --extcmd cat	difftool	not_ported
+t7800-difftool::difftool-x-cat	t7800-difftool	difftool -x cat	difftool	not_ported
+t7800-difftool::difftool-extcmd-echo-arg1	t7800-difftool	difftool --extcmd echo arg1	difftool	not_ported
+t7800-difftool::difftool-extcmd-cat-arg1	t7800-difftool	difftool --extcmd cat arg1	difftool	not_ported
+t7800-difftool::difftool-extcmd-cat-arg2	t7800-difftool	difftool --extcmd cat arg2	difftool	not_ported
+t7800-difftool::setup-with-2-files-different	t7800-difftool	setup with 2 files different	difftool	not_ported
+t7800-difftool::say-no-to-the-first-file	t7800-difftool	say no to the first file	difftool	not_ported
+t7800-difftool::say-no-to-the-second-file	t7800-difftool	say no to the second file	difftool	not_ported
+t7800-difftool::ending-prompt-input-with-eof	t7800-difftool	ending prompt input with EOF	difftool	not_ported
+t7800-difftool::difftool-tool-help	t7800-difftool	difftool --tool-help	difftool	not_ported
+t7800-difftool::setup-change-in-subdirectory	t7800-difftool	setup change in subdirectory	difftool	not_ported
+t7800-difftool::difftool-d-with-growing-paths	t7800-difftool	difftool -d with growing paths	difftool	not_ported
+t7800-difftool::difftool-dir-diff-symlinks-without-unstaged-changes	t7800-difftool	difftool --dir-diff --symlinks without unstaged changes	difftool	not_ported
+t7800-difftool::difftool-no-symlinks-does-not-overwrite-working-tree-file	t7800-difftool	difftool --no-symlinks does not overwrite working tree file	difftool	not_ported
+t7800-difftool::difftool-no-symlinks-detects-conflict	t7800-difftool	difftool --no-symlinks detects conflict	difftool	not_ported
+t7800-difftool::difftool-properly-honors-gitlink-and-core-worktree	t7800-difftool	difftool properly honors gitlink and core.worktree	difftool	not_ported
+t7800-difftool::difftool-dir-diff-symlinked-directories	t7800-difftool	difftool --dir-diff symlinked directories	difftool	not_ported
+t7800-difftool::difftool-dir-diff-handles-modified-symlinks	t7800-difftool	difftool --dir-diff handles modified symlinks	difftool	not_ported
+t7800-difftool::difftool-dir-diff-writes-symlinks-as-raw-text	t7800-difftool	difftool --dir-diff writes symlinks as raw text	difftool	not_ported
+t7800-difftool::add-n-and-difftool-d	t7800-difftool	add -N and difftool -d	difftool	not_ported
+t7800-difftool::difftool-cached-with-unmerged-files	t7800-difftool	difftool --cached with unmerged files	difftool	not_ported
+t7800-difftool::outside-worktree	t7800-difftool	outside worktree	difftool	not_ported
+t7800-difftool::difftool-gui-tool-and-extcmd-are-mutually-exclusive	t7800-difftool	difftool --gui, --tool and --extcmd are mutually exclusive	difftool	not_ported
+t7800-difftool::difftool-rotate-to	t7800-difftool	difftool --rotate-to	difftool	not_ported
+t7800-difftool::difftool-skip-to	t7800-difftool	difftool --skip-to	difftool	not_ported
+t7800-difftool::difftool-rotate-skip-to-error-condition	t7800-difftool	difftool --rotate/skip-to error condition	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-ignores-exit-code	t7800-difftool	difftool ${opt:-without options} ignores exit code	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-forwards-exit-code-with-trust-exit-code	t7800-difftool	difftool ${opt:-without options} forwards exit code with --trust-exit-code	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-forwards-exit-code-with-trust-exit-code-for-built-i	t7800-difftool	difftool ${opt:-without options} forwards exit code with --trust-exit-code for built-ins	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-honors-difftool-trustexitcode-true	t7800-difftool	difftool ${opt:-without options} honors difftool.trustExitCode = true	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-honors-difftool-trustexitcode-false	t7800-difftool	difftool ${opt:-without options} honors difftool.trustExitCode = false	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-ignores-exit-code-with-no-trust-exit-code	t7800-difftool	difftool ${opt:-without options} ignores exit code with --no-trust-exit-code	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-stops-on-error-with-trust-exit-code	t7800-difftool	difftool ${opt:-without options} stops on error with --trust-exit-code	difftool	not_ported
+t7800-difftool::difftool-opt-without-options-honors-exit-status-if-command-not-found	t7800-difftool	difftool ${opt:-without options} honors exit status if command not found	difftool	not_ported
+t7800-difftool::1-no-symlinks	t7800-difftool	$1 --no-symlinks	difftool	not_ported
+t7800-difftool::1-symlinks	t7800-difftool	$1 --symlinks	difftool	not_ported
 t7810-grep::grep-should-not-segfault-with-a-bad-input	t7810-grep	grep should not segfault with a bad input	grep	partial
 t7810-grep::grep-exactly-one-char-in-single-char-multibyte-file	t7810-grep	grep exactly one char in single-char multibyte file	grep	partial
 t7810-grep::grep-two-chars-in-single-char-multibyte-file	t7810-grep	grep two chars in single-char multibyte file	grep	partial

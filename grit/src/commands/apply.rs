@@ -149,6 +149,10 @@ struct FilePatch {
     similarity_index: Option<u32>,
     /// Dissimilarity index for rewrites.
     dissimilarity_index: Option<u32>,
+    /// Old blob OID from the index header (abbreviated).
+    old_oid: Option<String>,
+    /// New blob OID from the index header (abbreviated).
+    new_oid: Option<String>,
     /// Hunks to apply.
     hunks: Vec<Hunk>,
 }
@@ -203,7 +207,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_rename: false,
                 is_copy: false,
                 similarity_index: None,
-                dissimilarity_index: None,
+                dissimilarity_index: None, old_oid: None, new_oid: None,
                 hunks: Vec::new(),
             };
 
@@ -248,8 +252,15 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                     fp.similarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("dissimilarity index ") {
                     fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
+                } else if let Some(val) = line.strip_prefix("index ") {
+                    // Parse "index abc123..def456 100644" or "index abc123..def456"
+                    let hash_part = val.split_whitespace().next().unwrap_or("");
+                    if let Some((old, new)) = hash_part.split_once("..") {
+                        fp.old_oid = Some(old.to_string());
+                        fp.new_oid = Some(new.to_string());
+                    }
                 }
-                // skip other extended headers (index, etc.)
+                // skip other extended headers
                 i += 1;
             }
 
@@ -288,7 +299,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_rename: false,
                 is_copy: false,
                 similarity_index: None,
-                dissimilarity_index: None,
+                dissimilarity_index: None, old_oid: None, new_oid: None,
                 hunks: Vec::new(),
             };
 
@@ -898,6 +909,13 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
             if wt_oid != entry.oid {
                 bail!("{adjusted}: does not match index");
+            }
+            // Also verify the patch's expected old OID matches the index
+            if let Some(ref expected_oid) = fp.old_oid {
+                let index_hex = entry.oid.to_hex();
+                if !index_hex.starts_with(expected_oid.as_str()) {
+                    bail!("{adjusted}: does not match index");
+                }
             }
         }
     }

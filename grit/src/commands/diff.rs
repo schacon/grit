@@ -909,7 +909,23 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
-    let diff_output = if !args.anchored.is_empty() {
+    // Determine the effective diff algorithm: last-specified algorithm flag wins.
+    let use_anchored = if !args.anchored.is_empty() {
+        // Check if a non-anchored algorithm flag appears after --anchored in args
+        let raw_args: Vec<String> = std::env::args().collect();
+        let last_anchored_pos = raw_args.iter().rposition(|a| a.starts_with("--anchored"));
+        let last_other_algo_pos = raw_args.iter().rposition(|a| {
+            a == "--patience" || a == "--histogram" || a == "--minimal" || a.starts_with("--diff-algorithm")
+        });
+        match (last_anchored_pos, last_other_algo_pos) {
+            (Some(a), Some(o)) => a > o, // anchored wins only if it's last
+            (Some(_), None) => true,
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let diff_output = if use_anchored {
         anchored_unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines, &args.anchored)
     } else {
         unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)

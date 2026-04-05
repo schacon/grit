@@ -492,9 +492,9 @@ pub fn run(args: Args) -> Result<()> {
         let short_oid = &commit_oid.to_hex()[..7];
         let first_line = commit_data.message.lines().next().unwrap_or("");
         if head.is_unborn() {
-            eprintln!("[{branch} (root-commit) {short_oid}] {first_line}");
+            println!("[{branch} (root-commit) {short_oid}] {first_line}");
         } else {
-            eprintln!("[{branch} {short_oid}] {first_line}");
+            println!("[{branch} {short_oid}] {first_line}");
         }
 
         // Print diff stat summary line
@@ -554,7 +554,7 @@ pub fn run(args: Args) -> Result<()> {
                         if total_del == 1 { "" } else { "s" }
                     ));
                 }
-                eprintln!("{summary}");
+                println!("{summary}");
             }
         }
     }

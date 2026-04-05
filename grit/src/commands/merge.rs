@@ -183,7 +183,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Handle -s help early (before commit check)
     if args.strategy.as_deref() == Some("help") {
         eprintln!("Could not find merge strategy 'help'.");
-        eprintln!("Available strategies are: octopus ours recursive resolve subtree.");
+        eprintln!("Available strategies are: octopus ours recursive resolve subtree theirs.");
         std::process::exit(1);
     }
 
@@ -266,8 +266,9 @@ pub fn run(mut args: Args) -> Result<()> {
             "octopus" => {
                 // Octopus is handled separately when multiple commits are given.
             }
-            "ours" | "subtree" => {
+            "ours" | "theirs" | "subtree" => {
                 // "ours" strategy: keep our tree, just make a merge commit.
+                // "theirs" strategy: keep their tree, just make a merge commit.
                 // "subtree" strategy: variant of recursive.
                 // We handle this specially below.
             }
@@ -325,7 +326,25 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Handle -s ours: keep our tree, just create merge commit
     if args.strategy.as_deref() == Some("ours") {
+        // Even with -s ours, if merge target is ancestor of HEAD, already up-to-date
+        if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
+            if !args.quiet {
+                eprintln!("Already up to date.");
+            }
+            return Ok(());
+        }
         return do_strategy_ours(&repo, &head, head_oid, merge_oid, &args);
+    }
+
+    // Handle -s theirs: keep their tree, just create merge commit
+    if args.strategy.as_deref() == Some("theirs") {
+        if merge_oid == head_oid || is_ancestor(&repo, merge_oid, head_oid)? {
+            if !args.quiet {
+                eprintln!("Already up to date.");
+            }
+            return Ok(());
+        }
+        return do_strategy_theirs(&repo, &head, head_oid, merge_oid, &args);
     }
 
     // Already up-to-date?
@@ -518,13 +537,17 @@ fn do_real_merge(
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
         }
 
-        // Print per-file conflict messages
+        // Print per-file conflict messages to stdout (git sends these to stdout)
         for (ctype, cpath) in &merge_result.conflict_descriptions {
-            eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+            if ctype == "rename/delete" || ctype == "modify/delete" {
+                println!("CONFLICT ({ctype}): {cpath}");
+            } else {
+                println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+            }
         }
+        println!("Automatic merge failed; fix conflicts and then commit the result.");
         eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
-        // Return error to signal failure (exit code 1)
-        bail!("Automatic merge failed; fix conflicts and then commit the result.");
+        std::process::exit(1);
     }
 
     if args.squash {
@@ -603,6 +626,10 @@ fn do_real_merge(
         let first_line = commit_data.message.lines().next().unwrap_or("");
         eprintln!("[{branch} {short}] {first_line}");
 
+        // Print strategy message (to stdout, as git does)
+        let strategy_name = args.strategy.as_deref().unwrap_or("ort");
+        println!("Merge made by the '{}' strategy.", strategy_name);
+
         // Show diffstat unless suppressed
         let show_stat = args.stat || args.summary || !args.no_stat;
         if show_stat {
@@ -665,6 +692,21 @@ fn do_octopus_merge(
         return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
     }
 
+    // Check if we can fast-forward: filter out merge targets that are ancestors
+    // of other merge targets (i.e., redundant). If only one remains, fast-forward.
+    if !args.no_ff {
+        let mut reduced = merge_oids.clone();
+        reduced.retain(|&oid| {
+            !merge_oids.iter().any(|&other| other != oid && is_ancestor(repo, oid, other).unwrap_or(false))
+        });
+        if reduced.len() == 1 {
+            let merge_oid = reduced[0];
+            if is_ancestor(repo, head_oid, merge_oid)? {
+                return do_fast_forward(repo, head, head_oid, merge_oid, args);
+            }
+        }
+    }
+
     // Save ORIG_HEAD
     fs::write(
         repo.git_dir.join("ORIG_HEAD"),
@@ -723,10 +765,15 @@ fn do_octopus_merge(
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
             for (ctype, cpath) in &merge_result.conflict_descriptions {
-                eprintln!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+                if ctype == "rename/delete" || ctype == "modify/delete" {
+                    println!("CONFLICT ({ctype}): {cpath}");
+                } else {
+                    println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+                }
             }
+            println!("Automatic merge failed; fix conflicts and then commit the result.");
             eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
-            bail!("Automatic merge failed; fix conflicts and then commit the result.");
+            std::process::exit(1);
         }
 
         // Advance current_tree_entries to the merged result
@@ -961,6 +1008,65 @@ fn do_strategy_ours(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
     update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if !args.quiet {
+        let short = &commit_oid.to_hex()[..7];
+        let branch = head.branch_name().unwrap_or("HEAD");
+        let first_line = commit_data.message.lines().next().unwrap_or("");
+        eprintln!("[{branch} {short}] {first_line}");
+    }
+
+    Ok(())
+}
+
+fn do_strategy_theirs(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    merge_oid: ObjectId,
+    args: &Args,
+) -> Result<()> {
+    // Save ORIG_HEAD
+    fs::write(
+        repo.git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
+    let tree_oid = commit_tree(repo, merge_oid)?;
+    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let now = OffsetDateTime::now_utc();
+    let author = resolve_ident(&config, "author", now)?;
+    let committer = resolve_ident(&config, "committer", now)?;
+
+    let commit_data = CommitData {
+        tree: tree_oid,
+        parents: vec![head_oid, merge_oid],
+        author,
+        committer,
+        encoding: None,
+        message: msg,
+        raw_message: None,
+    };
+
+    let commit_bytes = serialize_commit(&commit_data);
+    let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+    update_head(&repo.git_dir, head, &commit_oid)?;
+
+    // Update index and working tree to match theirs
+    let entries = tree_to_index_entries(repo, &tree_oid, "")?;
+    let mut new_index = Index::new();
+    new_index.entries = entries;
+    new_index.sort();
+
+    if let Some(ref wt) = repo.work_tree {
+        let old_tree = commit_tree(repo, head_oid)?;
+        let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
+        remove_deleted_files(wt, &old_entries, &new_index)?;
+        checkout_entries(repo, wt, &new_index)?;
+    }
+    new_index.write(&repo.index_path())?;
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -1348,6 +1454,15 @@ fn detect_merge_renames(
     theirs: &HashMap<Vec<u8>, IndexEntry>,
 ) -> (HashMap<Vec<u8>, Vec<u8>>, HashMap<Vec<u8>, Vec<u8>>) {
     let threshold = 50u32;
+    // Read merge.renamelimit or fall back to diff.renamelimit
+    let rename_limit: usize = {
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+        config.as_ref()
+            .and_then(|c| c.get("merge.renamelimit"))
+            .or_else(|| config.as_ref().and_then(|c| c.get("diff.renamelimit")))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1000)
+    };
     let zero_oid = ObjectId::from_bytes(&[0u8; 20]).unwrap();
 
     // Build diff entries from base to side, handling the "add-source" pattern:
@@ -1495,7 +1610,15 @@ fn detect_merge_renames(
 
         // Now do similarity-based rename detection for remaining unmatched deletions
         let diff_entries = build_diff(side);
-        let detected = detect_renames(&repo.odb, diff_entries, threshold);
+        // Check rename limit: count deleted and added entries
+        let n_deleted = diff_entries.iter().filter(|e| matches!(e.status, DiffStatus::Deleted)).count();
+        let n_added = diff_entries.iter().filter(|e| matches!(e.status, DiffStatus::Added)).count();
+        let detected = if n_deleted > rename_limit || n_added > rename_limit {
+            // Rename detection matrix too large, skip similarity detection
+            Vec::new()
+        } else {
+            detect_renames(&repo.odb, diff_entries, threshold)
+        };
         for e in detected {
             if matches!(e.status, DiffStatus::Renamed) {
                 if let (Some(old), Some(new)) = (&e.old_path, &e.new_path) {
@@ -1524,7 +1647,7 @@ fn merge_trees(
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
-    head: &HeadState,
+    _head: &HeadState,
     their_name: &str,
     favor: MergeFavor,
 ) -> Result<MergeResult> {
@@ -1545,7 +1668,7 @@ fn merge_trees(
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
-    let ours_label = head.branch_name().unwrap_or("HEAD");
+    let ours_label = "HEAD";
 
     // First pass: handle rename cases
     // Case 1: ours renamed base_path → ours_new_path; theirs may have modified base_path
@@ -1592,8 +1715,22 @@ fn merge_trees(
                     }
                 }
             } else {
-                // Theirs deleted the original — ours renamed it, so keep ours' rename
-                index.entries.push(oe.clone());
+                // Theirs deleted the original — ours renamed it → rename/delete conflict
+                has_conflicts = true;
+                let base_path_str = String::from_utf8_lossy(base_path).to_string();
+                let new_path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                // Stage the base and ours versions
+                let mut be_at_new = be.clone();
+                be_at_new.path = ours_new_path.clone();
+                stage_entry(&mut index, &be_at_new, 1);
+                stage_entry(&mut index, oe, 2);
+                // Write ours' content to the working tree
+                if let Ok(obj) = repo.odb.read(&oe.oid) {
+                    conflict_files.push((new_path_str.clone(), obj.data));
+                }
+                conflict_descriptions.push(("rename/delete".to_string(), format!(
+                    "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
+                )));
             }
 
             // If theirs also has a NEW file at ours_new_path (add/add at rename target)
@@ -1711,8 +1848,22 @@ fn merge_trees(
                     }
                 }
             } else {
-                // Ours deleted the original — theirs renamed it, so keep theirs' rename
-                index.entries.push(te.clone());
+                // Ours deleted the original — theirs renamed it → rename/delete conflict
+                has_conflicts = true;
+                let base_path_str = String::from_utf8_lossy(base_path).to_string();
+                let new_path_str = String::from_utf8_lossy(theirs_new_path).to_string();
+                // Stage the base and theirs versions
+                let mut be_at_new = be.clone();
+                be_at_new.path = theirs_new_path.clone();
+                stage_entry(&mut index, &be_at_new, 1);
+                stage_entry(&mut index, te, 3);
+                // Write theirs' content to the working tree
+                if let Ok(obj) = repo.odb.read(&te.oid) {
+                    conflict_files.push((new_path_str.clone(), obj.data));
+                }
+                conflict_descriptions.push(("rename/delete".to_string(), format!(
+                    "{base_path_str} deleted in {ours_label} and renamed to {new_path_str} in {their_name}. Version {their_name} of {new_path_str} left in tree."
+                )));
             }
 
             // If ours also has a NEW file at theirs_new_path (add/add at rename target)
@@ -1922,13 +2073,39 @@ fn try_content_merge(
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
 
-    // If any is binary, conflict
-    if merge_file::is_binary(&base_obj.data)
+    // Check .gitattributes for binary marking
+    let path_str = String::from_utf8_lossy(&ours.path).to_string();
+    let is_attr_binary = {
+        let wt_path = repo.work_tree.as_deref().unwrap_or(std::path::Path::new("."));
+        let attrs = grit_lib::crlf::load_gitattributes(wt_path);
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, &path_str, &config);
+            file_attrs.text == grit_lib::crlf::TextAttr::Unset
+        } else {
+            false
+        }
+    };
+
+    // If any is binary (by content or attribute), conflict (unless -X ours/theirs resolves it)
+    if is_attr_binary
+        || merge_file::is_binary(&base_obj.data)
         || merge_file::is_binary(&ours_obj.data)
         || merge_file::is_binary(&theirs_obj.data)
     {
-        // Binary conflict — keep ours in working tree
-        return Ok(ContentMergeResult::Conflict(ours_obj.data.clone()));
+        match favor {
+            MergeFavor::Ours => {
+                let oid = repo.odb.write(ObjectKind::Blob, &ours_obj.data)?;
+                return Ok(ContentMergeResult::Clean(oid, ours.mode));
+            }
+            MergeFavor::Theirs => {
+                let oid = repo.odb.write(ObjectKind::Blob, &theirs_obj.data)?;
+                return Ok(ContentMergeResult::Clean(oid, theirs.mode));
+            }
+            MergeFavor::None | MergeFavor::Union => {
+                // Binary conflict — keep ours in working tree
+                return Ok(ContentMergeResult::Conflict(ours_obj.data.clone()));
+            }
+        }
     }
 
     let input = MergeInput {

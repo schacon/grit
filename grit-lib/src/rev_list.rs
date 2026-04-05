@@ -219,6 +219,10 @@ pub struct RevListOptions {
     pub filter: Option<ObjectFilter>,
     /// Print omitted objects prefixed with `~`.
     pub filter_print_omitted: bool,
+    /// Emit objects interleaved with their introducing commit.
+    pub in_commit_order: bool,
+    /// Exclude objects in `.keep` pack files.
+    pub no_kept_objects: bool,
 }
 
 impl Default for RevListOptions {
@@ -253,6 +257,8 @@ impl Default for RevListOptions {
             sparse: false,
             filter: None,
             filter_print_omitted: false,
+            in_commit_order: false,
+            no_kept_objects: false,
         }
     }
 }
@@ -273,6 +279,10 @@ pub struct RevListResult {
     pub left_right_map: HashMap<ObjectId, bool>,
     /// For `--cherry-mark`: set of commits that are equivalent (patch-id match).
     pub cherry_equivalent: HashSet<ObjectId>,
+    /// Per-commit object counts (parallel to `commits`) for `--in-commit-order`.
+    /// When non-empty, `objects[sum(counts[..i])..sum(counts[..=i])]` are the objects
+    /// introduced by `commits[i]`.
+    pub per_commit_object_counts: Vec<usize>,
 }
 
 /// Resolve and walk revisions for the requested options.
@@ -421,20 +431,60 @@ pub fn rev_list(
         ordered.reverse();
     }
 
-    // Collect reachable objects if --objects
-    let (objects, omitted_objects) = if options.objects {
-        collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?
+    // Collect boundary commits: parents of included commits that are in the excluded set
+    let boundary_commits = if options.boundary {
+        let included_set: HashSet<ObjectId> = ordered.iter().copied().collect();
+        let mut boundary = Vec::new();
+        let mut boundary_seen = HashSet::new();
+        for &oid in &ordered {
+            if let Ok(parents) = graph.parents_of(oid).map(|p| p.to_vec()) {
+                for parent in parents {
+                    if !included_set.contains(&parent) && boundary_seen.insert(parent) {
+                        boundary.push(parent);
+                    }
+                }
+            }
+        }
+        boundary
     } else {
-        (Vec::new(), Vec::new())
+        Vec::new()
+    };
+
+    // Filter kept objects when --no-kept-objects is set
+    let kept_set = if options.no_kept_objects {
+        kept_object_ids(repo).unwrap_or_default()
+    } else {
+        HashSet::new()
+    };
+
+    if options.no_kept_objects {
+        ordered.retain(|oid| !kept_set.contains(oid));
+    }
+
+    // Collect reachable objects if --objects
+    let (objects, omitted_objects, per_commit_object_counts) = if options.objects {
+        let (mut objs, omit, counts) = if options.in_commit_order {
+            collect_reachable_objects_in_commit_order(repo, &mut graph, &ordered, options.filter.as_ref())?
+        } else {
+            let (objs, omit) = collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?;
+            (objs, omit, Vec::new())
+        };
+        if options.no_kept_objects {
+            objs.retain(|(oid, _)| !kept_set.contains(oid));
+        }
+        (objs, omit, counts)
+    } else {
+        (Vec::new(), Vec::new(), Vec::new())
     };
 
     Ok(RevListResult {
         commits: ordered,
         objects,
         omitted_objects,
-        boundary_commits: Vec::new(),
+        boundary_commits,
         left_right_map,
         cherry_equivalent,
+        per_commit_object_counts,
     })
 }
 
@@ -447,7 +497,9 @@ pub fn rev_list(
 #[must_use]
 pub fn split_revision_token(token: &str) -> (Vec<String>, Vec<String>) {
     if let Some((lhs, rhs)) = token.split_once("..") {
-        return (vec![rhs.to_owned()], vec![lhs.to_owned()]);
+        let positive = if rhs.is_empty() { "HEAD".to_owned() } else { rhs.to_owned() };
+        let negative = if lhs.is_empty() { "HEAD".to_owned() } else { lhs.to_owned() };
+        return (vec![positive], vec![negative]);
     }
     if let Some(rest) = token.strip_prefix('^') {
         return (Vec::new(), vec![rest.to_owned()]);
@@ -1686,6 +1738,53 @@ fn collect_tree_objects_filtered(
         }
     }
     Ok(())
+}
+
+/// Collect reachable objects in commit order: objects for each commit are emitted
+/// right after that commit, rather than all objects after all commits.
+/// Returns (objects, omitted, per_commit_counts).
+fn collect_reachable_objects_in_commit_order(
+    repo: &Repository,
+    _graph: &mut CommitGraph<'_>,
+    commits: &[ObjectId],
+    filter: Option<&ObjectFilter>,
+) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<usize>)> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    let mut omitted = Vec::new();
+    let mut counts = Vec::with_capacity(commits.len());
+    for &commit_oid in commits {
+        let commit = load_commit(repo, commit_oid)?;
+        let before = result.len();
+        collect_tree_objects_filtered(
+            repo, commit.tree, "", 0, &mut seen, &mut result, &mut omitted, filter,
+        )?;
+        counts.push(result.len() - before);
+    }
+    Ok((result, omitted, counts))
+}
+
+/// Collect OIDs of all objects in packs that have a `.keep` file.
+fn kept_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
+    let pack_dir = repo.git_dir.join("objects/pack");
+    let mut kept = HashSet::new();
+    if !pack_dir.is_dir() {
+        return Ok(kept);
+    }
+    for entry in std::fs::read_dir(&pack_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().map_or(false, |ext| ext == "keep") {
+            // Find the corresponding .idx file
+            let idx_path = path.with_extension("idx");
+            if idx_path.exists() {
+                if let Ok(oids) = crate::pack::read_idx_object_ids(&idx_path) {
+                    kept.extend(oids);
+                }
+            }
+        }
+    }
+    Ok(kept)
 }
 
 /// Compute a simple patch-id for each commit.
