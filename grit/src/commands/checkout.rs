@@ -372,6 +372,15 @@ pub fn run(args: Args) -> Result<()> {
     match resolve_to_commit(&repo, &target) {
         Ok(oid) => detach_head(&repo, &oid, args.force),
         Err(_) => {
+            let remote_matches = remote_tracking_matches(&repo, &target);
+            if remote_matches.len() > 1 {
+                emit_ambiguous_tracking_hint(&target, &remote_matches);
+                bail!(
+                    "error: '{}' matched multiple remote tracking branches",
+                    target
+                );
+            }
+
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
@@ -384,6 +393,46 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     }
+}
+
+/// Find remote-tracking refs whose branch name matches `target`.
+///
+/// For target `foo`, this returns short names like `origin/foo`,
+/// `upstream/foo`, etc.
+fn remote_tracking_matches(repo: &Repository, target: &str) -> Vec<String> {
+    let suffix = format!("/{target}");
+    let mut matches: Vec<String> = refs::list_refs(&repo.git_dir, "refs/remotes/")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(full_ref, _)| {
+            let short = full_ref.strip_prefix("refs/remotes/")?;
+            if short.ends_with("/HEAD") {
+                return None;
+            }
+            if short.ends_with(&suffix) {
+                Some(short.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect();
+    matches.sort();
+    matches.dedup();
+    matches
+}
+
+/// Print checkout guidance when a short branch name matches multiple
+/// remote-tracking branches.
+fn emit_ambiguous_tracking_hint(target: &str, matches: &[String]) {
+    eprintln!(
+        "hint: '{}' could refer to more than one remote-tracking branch:",
+        target
+    );
+    for m in matches {
+        eprintln!("hint:   {}", m);
+    }
+    eprintln!("hint: If you meant to check out one of these branches, use:");
+    eprintln!("hint:   git checkout --track <remote>/{}", target);
 }
 
 /// Split positional arguments into (target, paths) around `--`.

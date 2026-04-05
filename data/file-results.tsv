@@ -193,7 +193,7 @@ t2023-checkout-m	yes	5	5	0	ok	5	5	0
 t2024-checkout-dwim	yes	23	10	13	ok	10	23	0
 t2025-checkout-no-overlay	yes	6	1	5	ok	1	6	0
 t2026-checkout-pathspec-file	yes	11	1	10	ok	1	11	0
-t2027-checkout-track	yes	5	4	1	ok	4	5	0
+t2027-checkout-track	yes	5	5	0	ok	5	5	0
 t2030-checkout-index-basic	yes	27	27	0	ok	27	27	0
 t2030-unresolve-info	yes	14	2	12	ok	2	14	0
 t2031-checkout-index-symlink	yes	25	25	0	ok	25	25	0

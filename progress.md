@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    62 |
+| Completed   |    63 |
 | In progress |     0 |
-| Remaining   |   705 |
+| Remaining   |   704 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2027-checkout-track` — 5/5 tests pass (added checkout/switch ambiguous remote-tracking branch hints including `git switch --track` guidance)
 - `t2023-checkout-m` — 5/5 tests pass (implemented checkout `-m` conflict restoration for both path mode and branch-switch mode, including correct stage-2/stage-3 ordering)
 - `t2104-update-index-skip-worktree` — 7/7 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2010-checkout-ambiguous` — 10/10 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
@@ -56,4 +57,4 @@
 
 ## What Remains
 
-705 test files still pending. See `plan.md` for the full prioritized list.
+704 test files still pending. See `plan.md` for the full prioritized list.

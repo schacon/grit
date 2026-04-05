@@ -181,7 +181,7 @@ commit → check it off → move on.
 - [x] `t2104-update-index-skip-worktree` ████████████████████ 7/7 (0 left) — skip-worktree bit test
 - [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
 
-- [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
+- [x] `t2027-checkout-track` ████████████████████ 5/5 (0 left) — tests for git branch --track
 - [ ] `t2202-add-addremove` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git add --all
 - [ ] `t2018-checkout-branch` ████████████████░░░░ 21/25 (4 left) — checkout
 - [ ] `t2006-checkout-index-basic` ███████████░░░░░░░░░ 5/9 (4 left) — basic checkout-index tests
