@@ -953,7 +953,7 @@ t9211-scalar-clone	yes	14	14	0	ok	14	14	0
 t9300-fast-import	yes	0	0	0	timeout	0	0	0
 t9301-fast-import-notes	yes	17	17	0	ok	17	17	0
 t9302-fast-import-unpack-limit	yes	3	3	0	ok	3	3	0
-t9303-fast-import-compression	yes	16	0	16	ok	0	16	0
+t9303-fast-import-compression	yes	16	16	0	ok	16	16	0
 t9304-fast-import-marks	yes	8	8	0	ok	8	8	0
 t9305-fast-import-signatures	yes	21	21	0	ok	21	21	0
 t9306-fast-import-signed-tags	yes	10	10	0	ok	10	10	0

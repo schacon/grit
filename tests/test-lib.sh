@@ -1112,6 +1112,15 @@ test_line_count () {
 	fi
 }
 
+test_file_size () {
+	if test "$#" -ne 1
+	then
+		echo >&2 "test_file_size: expected 1 argument"
+		return 1
+	fi
+	wc -c <"$1" | tr -d '[:space:]'
+}
+
 # Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.
 test_copy_bytes () {
 	dd ibs=1 count="$1" 2>/dev/null
