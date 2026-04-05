@@ -99,6 +99,12 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
+	# Write a 'test-tool' wrapper for shell tests invoking it directly
+	cat >"$BIN_DIRECTORY/test-tool" <<EOF
+#!/bin/sh
+exec "$TEST_DIRECTORY/test-tool" "\$@"
+EOF
+	chmod +x "$BIN_DIRECTORY/test-tool"
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh

@@ -38,23 +38,7 @@ case "$1" in
     esac ;;
   env-helper)
     shift
-    # test-tool env-helper --type=bool --default=0 GIT_TEST_SOMETHING
-    val=""
-    default=""
-    type=""
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --type=*) type="${1#--type=}"; shift ;;
-        --default=*) default="${1#--default=}"; shift ;;
-        --exit-code) shift ;;
-        *) val=$(eval echo "\$$1"); shift ;;
-      esac
-    done
-    [ -z "$val" ] && val="$default"
-    case "$type" in
-      bool) [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] && exit 0; exit 1 ;;
-      *) echo "$val"; exit 0 ;;
-    esac ;;
+    exec git test-tool env-helper "$@" ;;
   path-utils)
     shift
     case "$1" in

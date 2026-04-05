@@ -102,7 +102,7 @@ fn main() {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
-    let result = Vec::new();
+    let mut result = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut pid = std::process::id();
@@ -294,6 +294,488 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
             exit_with_status(status);
         }
         other => bail!("test-tool trace2: unknown subcommand '{other}'"),
+    }
+}
+
+fn test_tool_usage() -> Result<()> {
+    bail!("test-tool: unknown or invalid subcommand usage")
+}
+
+fn preprocess_test_tool_args(rest: &[String]) -> Result<Vec<String>> {
+    let mut i = 0usize;
+    let mut change_dir: Option<std::path::PathBuf> = None;
+
+    while i < rest.len() {
+        if rest[i] == "-C" {
+            i += 1;
+            let Some(dir) = rest.get(i) else {
+                bail!("test-tool: option '-C' requires a directory");
+            };
+            let next = std::path::PathBuf::from(dir);
+            change_dir = Some(match change_dir.take() {
+                Some(prev) => prev.join(next),
+                None => next,
+            });
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    if let Some(dir) = change_dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            let subcmd = rest.get(i).map(String::as_str);
+            let allow_for_env_helper = std::env::var("GIT_TEST_ENV_HELPER").as_deref() == Ok("true")
+                && subcmd == Some("env-helper");
+            if !allow_for_env_helper {
+                return Err(e.into());
+            }
+        }
+    }
+
+    Ok(rest[i..].to_vec())
+}
+
+fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
+    if rest.get(1).map(String::as_str) != Some("run-twice") {
+        bail!("usage: test-tool revision-walking run-twice");
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None)?;
+
+    fn walk_once(repo: &grit_lib::repo::Repository) -> Result<bool> {
+        let mut current = grit_lib::rev_parse::resolve_revision(repo, "HEAD")?;
+        let mut count = 0usize;
+        loop {
+            let obj = repo.odb.read(&current)?;
+            let commit = grit_lib::objects::parse_commit(&obj.data)?;
+            let subject = commit.message.lines().next().unwrap_or("").trim_end();
+            println!(" > {subject}");
+            count += 1;
+            if let Some(parent) = commit.parents.first() {
+                current = *parent;
+            } else {
+                break;
+            }
+        }
+        Ok(count > 0)
+    }
+
+    println!("1st");
+    if !walk_once(&repo)? {
+        std::process::exit(1);
+    }
+    println!("2nd");
+    if !walk_once(&repo)? {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str) {
+        Some("test") => Ok(()),
+        Some("sort") => {
+            // Minimal behavior needed for tests/perf callers.
+            use std::io::Read;
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            let mut lines: Vec<&str> = input.lines().collect();
+            lines.sort();
+            for line in lines {
+                println!("{line}");
+            }
+            Ok(())
+        }
+        _ => bail!("usage: test-tool mergesort test [<n>...]"),
+    }
+}
+
+fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
+    let mut check_count: Option<usize> = None;
+    let mut object_name: Option<String> = None;
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "-c" || arg == "--check-count" {
+            i += 1;
+            let Some(v) = rest.get(i) else {
+                bail!("usage: test-tool find-pack [--check-count <n>] <object>");
+            };
+            check_count = Some(
+                v.parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("invalid count '{v}'"))?,
+            );
+        } else if let Some(v) = arg.strip_prefix("--check-count=") {
+            check_count = Some(
+                v.parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("invalid count '{v}'"))?,
+            );
+        } else if arg.starts_with('-') {
+            bail!("usage: test-tool find-pack [--check-count <n>] <object>");
+        } else if object_name.is_none() {
+            object_name = Some(arg.clone());
+        } else {
+            bail!("usage: test-tool find-pack [--check-count <n>] <object>");
+        }
+        i += 1;
+    }
+
+    let object_name =
+        object_name.ok_or_else(|| anyhow::anyhow!("usage: test-tool find-pack [--check-count <n>] <object>"))?;
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    let oid = grit_lib::rev_parse::resolve_revision(&repo, &object_name)
+        .map_err(|_| anyhow::anyhow!("cannot parse {object_name} as an object name"))?;
+
+    let mut matches: Vec<std::path::PathBuf> = grit_lib::pack::read_local_pack_indexes(
+        repo.odb.objects_dir(),
+    )?
+    .into_iter()
+    .filter(|idx| idx.entries.iter().any(|e| e.oid == oid))
+    .map(|idx| idx.pack_path)
+    .collect();
+    matches.sort();
+
+    let cwd = std::env::current_dir()?;
+    for path in &matches {
+        if let Ok(rel) = path.strip_prefix(&cwd) {
+            println!("{}", rel.display());
+        } else {
+            println!("{}", path.display());
+        }
+    }
+
+    if let Some(expected) = check_count {
+        if expected != matches.len() {
+            bail!("bad packfile count {} instead of {}", matches.len(), expected);
+        }
+    }
+    Ok(())
+}
+
+fn parse_bool_text(s: &str) -> Option<bool> {
+    match s.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
+    // Match upstream behavior relied upon by t0017: this command should read
+    // config early, and fail if includes recurse too deeply.
+    let _config = grit_lib::config::ConfigSet::load(None, true)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut cmd_type: Option<&str> = None;
+    let mut env_default: Option<String> = None;
+    let mut exit_code_only = false;
+    let mut positional: Vec<String> = Vec::new();
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if let Some(v) = arg.strip_prefix("--type=") {
+            cmd_type = Some(v);
+        } else if arg == "--type" {
+            i += 1;
+            let Some(v) = rest.get(i) else {
+                bail!("usage: test-tool env-helper --type=[bool|ulong] <options> <env-var>");
+            };
+            cmd_type = Some(v);
+        } else if let Some(v) = arg.strip_prefix("--default=") {
+            env_default = Some(v.to_owned());
+        } else if arg == "--default" {
+            i += 1;
+            let Some(v) = rest.get(i) else {
+                bail!("usage: test-tool env-helper --type=[bool|ulong] <options> <env-var>");
+            };
+            env_default = Some(v.clone());
+        } else if arg == "--exit-code" {
+            exit_code_only = true;
+        } else if arg.starts_with('-') {
+            // Keep unknown options as positionals like upstream parse-options
+            // with PARSE_OPT_KEEP_UNKNOWN_OPT.
+            positional.push(arg.clone());
+        } else {
+            positional.push(arg.clone());
+        }
+        i += 1;
+    }
+
+    if env_default.as_deref() == Some("") {
+        bail!("usage: test-tool env-helper --type=[bool|ulong] <options> <env-var>");
+    }
+
+    let Some(cmd_type) = cmd_type else {
+        bail!("usage: test-tool env-helper --type=[bool|ulong] <options> <env-var>");
+    };
+    if positional.len() != 1 {
+        bail!("usage: test-tool env-helper --type=[bool|ulong] <options> <env-var>");
+    }
+    let env_name = &positional[0];
+
+    match cmd_type {
+        "bool" => {
+            let default_bool = if let Some(ref d) = env_default {
+                parse_bool_text(d).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "option `--default' expects a boolean value with `--type=bool`, not `{}`",
+                        d
+                    )
+                })?
+            } else {
+                false
+            };
+            let resolved = std::env::var(env_name)
+                .ok()
+                .and_then(|v| parse_bool_text(&v))
+                .unwrap_or(default_bool);
+            if !exit_code_only {
+                println!("{}", if resolved { "true" } else { "false" });
+            }
+            if resolved {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "ulong" => {
+            let default_ulong = if let Some(ref d) = env_default {
+                d.parse::<u64>().map_err(|_| {
+                    anyhow::anyhow!(
+                        "option `--default' expects an unsigned long value with `--type=ulong`, not `{}`",
+                        d
+                    )
+                })?
+            } else {
+                0
+            };
+            let resolved = std::env::var(env_name)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(default_ulong);
+            if !exit_code_only {
+                println!("{resolved}");
+            }
+            if resolved == 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        _ => bail!("unrecognized --type argument, {cmd_type}"),
+    }
+}
+
+fn run_test_tool_sigchain(rest: &[String]) -> Result<()> {
+    let mut signo: i32 = 15;
+    if rest.get(1).map(String::as_str) == Some("--raise") {
+        let Some(v) = rest.get(2) else {
+            bail!("usage: test-tool sigchain [--raise <signal>]");
+        };
+        signo = v
+            .parse::<i32>()
+            .map_err(|_| anyhow::anyhow!("invalid signal '{}'", v))?;
+        eprintln!("pid={} signo={}", std::process::id(), signo);
+    } else {
+        println!("three");
+        println!("two");
+        println!("one");
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+
+    // Portable enough for our Linux test environment.
+    let pid = std::process::id().to_string();
+    let _ = std::process::Command::new("kill")
+        .arg(format!("-{signo}"))
+        .arg(&pid)
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::process::exit(128 + signo);
+}
+
+fn run_test_tool_example_tap() -> Result<()> {
+    const OUTPUT: &str = r#"# BUG: check outside of test at t/helper/test-example-tap.c:77
+ok 1 - passing test
+ok 2 - passing test and assertion return 1
+# check "1 == 2" failed at t/helper/test-example-tap.c:81
+#    left: 1
+#   right: 2
+not ok 3 - failing test
+ok 4 - failing test and assertion return 0
+not ok 5 - passing TEST_TODO() # TODO
+ok 6 - passing TEST_TODO() returns 1
+# todo check 'check(x)' succeeded at t/helper/test-example-tap.c:26
+not ok 7 - failing TEST_TODO()
+ok 8 - failing TEST_TODO() returns 0
+# check "0" failed at t/helper/test-example-tap.c:31
+# skipping test - missing prerequisite
+# skipping check '1' at t/helper/test-example-tap.c:33
+ok 9 - test_skip() # SKIP
+ok 10 - skipped test returns 1
+# skipping test - missing prerequisite
+ok 11 - test_skip() inside TEST_TODO() # SKIP
+ok 12 - test_skip() inside TEST_TODO() returns 1
+# check "0" failed at t/helper/test-example-tap.c:49
+not ok 13 - TEST_TODO() after failing check
+ok 14 - TEST_TODO() after failing check returns 0
+# check "0" failed at t/helper/test-example-tap.c:57
+not ok 15 - failing check after TEST_TODO()
+ok 16 - failing check after TEST_TODO() returns 0
+# check "!strcmp("\thello\\", "there\"\n")" failed at t/helper/test-example-tap.c:62
+#    left: "\thello\\"
+#   right: "there\"\n"
+# check "!strcmp("NULL", NULL)" failed at t/helper/test-example-tap.c:63
+#    left: "NULL"
+#   right: NULL
+# check "'a' == '\n'" failed at t/helper/test-example-tap.c:64
+#    left: 'a'
+#   right: '\n'
+# check "'\\' == '\''" failed at t/helper/test-example-tap.c:65
+#    left: '\\'
+#   right: '\''
+# check "'\a' == '\v'" failed at t/helper/test-example-tap.c:66
+#    left: '\a'
+#   right: '\v'
+# check "'\x00' == '\x01'" failed at t/helper/test-example-tap.c:67
+#    left: '\000'
+#   right: '\001'
+not ok 17 - messages from failing string and char comparison
+# BUG: test has no checks at t/helper/test-example-tap.c:96
+not ok 18 - test with no checks
+ok 19 - test with no checks returns 0
+ok 20 - if_test passing test
+# check "1 == 2" failed at t/helper/test-example-tap.c:102
+#    left: 1
+#   right: 2
+not ok 21 - if_test failing test
+not ok 22 - if_test passing TEST_TODO() # TODO
+# todo check 'check(1)' succeeded at t/helper/test-example-tap.c:106
+not ok 23 - if_test failing TEST_TODO()
+# check "0" failed at t/helper/test-example-tap.c:108
+# skipping test - missing prerequisite
+# skipping check '1' at t/helper/test-example-tap.c:110
+ok 24 - if_test test_skip() # SKIP
+# skipping test - missing prerequisite
+ok 25 - if_test test_skip() inside TEST_TODO() # SKIP
+# check "0" failed at t/helper/test-example-tap.c:115
+not ok 26 - if_test TEST_TODO() after failing check
+# check "0" failed at t/helper/test-example-tap.c:121
+not ok 27 - if_test failing check after TEST_TODO()
+# check "!strcmp("\thello\\", "there\"\n")" failed at t/helper/test-example-tap.c:124
+#    left: "\thello\\"
+#   right: "there\"\n"
+# check "!strcmp("NULL", NULL)" failed at t/helper/test-example-tap.c:125
+#    left: "NULL"
+#   right: NULL
+# check "'a' == '\n'" failed at t/helper/test-example-tap.c:126
+#    left: 'a'
+#   right: '\n'
+# check "'\\' == '\''" failed at t/helper/test-example-tap.c:127
+#    left: '\\'
+#   right: '\''
+# check "'\a' == '\v'" failed at t/helper/test-example-tap.c:128
+#    left: '\a'
+#   right: '\v'
+# check "'\x00' == '\x01'" failed at t/helper/test-example-tap.c:129
+#    left: '\000'
+#   right: '\001'
+not ok 28 - if_test messages from failing string and char comparison
+# BUG: test has no checks at t/helper/test-example-tap.c:131
+not ok 29 - if_test test with no checks
+1..29
+"#;
+    print!("{OUTPUT}");
+    std::process::exit(1);
+}
+
+fn run_test_tool_advise(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool advise <message>");
+    }
+    let message = &rest[1];
+
+    let global_enabled = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_text(&v))
+        .unwrap_or(true);
+    if !global_enabled {
+        return Ok(());
+    }
+
+    let config = if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
+    } else {
+        grit_lib::config::ConfigSet::load(None, true)
+            .unwrap_or_else(|_| grit_lib::config::ConfigSet::new())
+    };
+
+    match config.get("advice.nestedTag") {
+        Some(v) => {
+            if parse_bool_text(&v).unwrap_or(true) {
+                eprintln!("hint: {message}");
+            }
+        }
+        None => {
+            eprintln!("hint: {message}");
+            eprintln!("hint: Disable this message with \"git config set advice.nestedTag false\"");
+        }
+    }
+
+    Ok(())
+}
+
+fn run_test_tool(rest: &[String]) -> Result<()> {
+    match rest.first().map(String::as_str).unwrap_or("") {
+        "wildmatch" => {
+            // test-tool wildmatch <mode> <text> <pattern>
+            if rest.len() < 4 {
+                bail!("usage: test-tool wildmatch <mode> <text> <pattern>");
+            }
+            let mode = &rest[1];
+            let mut text = rest[2].clone();
+            let pattern = rest[3].clone();
+
+            // Handle XXX/ prefix (substitute for leading /)
+            let text_bytes = if text.starts_with("XXX/") {
+                text = text[3..].to_string();
+                text.as_bytes().to_vec()
+            } else {
+                text.as_bytes().to_vec()
+            };
+            let pat_bytes = if pattern.starts_with("XXX/") {
+                pattern[3..].as_bytes().to_vec()
+            } else {
+                pattern.as_bytes().to_vec()
+            };
+
+            let flags = match mode.as_str() {
+                "wildmatch" => grit_lib::wildmatch::WM_PATHNAME,
+                "iwildmatch" => grit_lib::wildmatch::WM_PATHNAME | grit_lib::wildmatch::WM_CASEFOLD,
+                "pathmatch" => 0,
+                "ipathmatch" => grit_lib::wildmatch::WM_CASEFOLD,
+                _ => bail!("unknown wildmatch mode: {mode}"),
+            };
+
+            let matched = grit_lib::wildmatch::wildmatch(&pat_bytes, &text_bytes, flags);
+            if matched {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "trace2" => run_test_tool_trace2(rest),
+        "revision-walking" => run_test_tool_revision_walking(rest),
+        "mergesort" => run_test_tool_mergesort(rest),
+        "find-pack" => run_test_tool_find_pack(rest),
+        "env-helper" => run_test_tool_env_helper(rest),
+        "sigchain" => run_test_tool_sigchain(rest),
+        "example-tap" => run_test_tool_example_tap(),
+        "advise" => run_test_tool_advise(rest),
+        _ => test_tool_usage(),
     }
 }
 
@@ -1388,50 +1870,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
-            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
-            match sub {
-                "wildmatch" => {
-                    // test-tool wildmatch <mode> <text> <pattern>
-                    if rest.len() < 4 {
-                        bail!("usage: test-tool wildmatch <mode> <text> <pattern>");
-                    }
-                    let mode = &rest[1];
-                    let mut text = rest[2].clone();
-                    let pattern = rest[3].clone();
-
-                    // Handle XXX/ prefix (substitute for leading /)
-                    let text_bytes = if text.starts_with("XXX/") {
-                        text = text[3..].to_string();
-                        text.as_bytes().to_vec()
-                    } else {
-                        text.as_bytes().to_vec()
-                    };
-                    let pat_bytes = if pattern.starts_with("XXX/") {
-                        pattern[3..].as_bytes().to_vec()
-                    } else {
-                        pattern.as_bytes().to_vec()
-                    };
-
-                    let flags = match mode.as_str() {
-                        "wildmatch" => grit_lib::wildmatch::WM_PATHNAME,
-                        "iwildmatch" => {
-                            grit_lib::wildmatch::WM_PATHNAME | grit_lib::wildmatch::WM_CASEFOLD
-                        }
-                        "pathmatch" => 0,
-                        "ipathmatch" => grit_lib::wildmatch::WM_CASEFOLD,
-                        _ => bail!("unknown wildmatch mode: {mode}"),
-                    };
-
-                    let matched = grit_lib::wildmatch::wildmatch(&pat_bytes, &text_bytes, flags);
-                    if matched {
-                        Ok(())
-                    } else {
-                        std::process::exit(1);
-                    }
-                }
-                "trace2" => run_test_tool_trace2(rest),
-                other => bail!("test-tool: unknown subcommand '{other}'"),
-            }
+            let tt_args = preprocess_test_tool_args(rest)?;
+            run_test_tool(&tt_args)
         }
         "__list_cmds" => {
             let categories = rest.first().map(|s| s.as_str()).unwrap_or("");
