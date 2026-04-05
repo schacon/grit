@@ -6,11 +6,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::process::Command;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{
-    parse_tree, serialize_commit, serialize_tree, CommitData, ObjectId, ObjectKind, TreeEntry,
+    parse_tree, serialize_commit, serialize_tree, tree_entry_cmp, CommitData, ObjectId, ObjectKind,
+    TreeEntry,
 };
 use grit_lib::refs::{resolve_ref, write_ref};
 use grit_lib::repo::Repository;
@@ -227,9 +230,71 @@ fn resolve_object(repo: &Repository, spec: Option<&str>) -> Result<ObjectId> {
     }
 }
 
+#[derive(Clone)]
+struct NotesTreeEntry {
+    mode: u32,
+    path: Vec<u8>,
+    oid: ObjectId,
+}
+
+enum NotesTreeChild {
+    Blob { mode: u32, oid: ObjectId },
+    Tree(Vec<NotesTreeEntry>),
+}
+
+fn note_object_name(path: &[u8]) -> Option<String> {
+    let compact: Vec<u8> = path.iter().copied().filter(|byte| *byte != b'/').collect();
+    if compact.len() != 40 || !compact.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    String::from_utf8(compact)
+        .ok()
+        .map(|name| name.to_ascii_lowercase())
+}
+
+fn display_note_path(entry: &NotesTreeEntry) -> Cow<'_, str> {
+    if let Some(name) = note_object_name(&entry.path) {
+        Cow::Owned(name)
+    } else {
+        String::from_utf8_lossy(&entry.path)
+    }
+}
+
+fn collect_notes_tree_entries(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: &[u8],
+    out: &mut Vec<NotesTreeEntry>,
+) -> Result<()> {
+    let tree_obj = repo.odb.read(tree_oid)?;
+    if tree_obj.kind != ObjectKind::Tree {
+        bail!("notes commit has invalid tree");
+    }
+
+    for entry in parse_tree(&tree_obj.data)? {
+        let mut path = prefix.to_vec();
+        if !path.is_empty() {
+            path.push(b'/');
+        }
+        path.extend_from_slice(&entry.name);
+
+        if entry.mode == 0o040000 {
+            collect_notes_tree_entries(repo, &entry.oid, &path, out)?;
+        } else {
+            out.push(NotesTreeEntry {
+                mode: entry.mode,
+                path,
+                oid: entry.oid,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 /// Read the notes tree entries from the notes ref.  Returns an empty vec if
 /// the ref doesn't exist yet.
-fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<TreeEntry>> {
+fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<NotesTreeEntry>> {
     let commit_oid = match resolve_ref(&repo.git_dir, notes_ref) {
         Ok(oid) => oid,
         Err(_) => return Ok(Vec::new()),
@@ -240,25 +305,110 @@ fn read_notes_tree(repo: &Repository, notes_ref: &str) -> Result<Vec<TreeEntry>>
         bail!("{notes_ref} does not point to a commit");
     }
     let commit = grit_lib::objects::parse_commit(&commit_obj.data)?;
+    let mut entries = Vec::new();
+    collect_notes_tree_entries(repo, &commit.tree, b"", &mut entries)?;
+    Ok(entries)
+}
 
-    let tree_obj = repo.odb.read(&commit.tree)?;
-    if tree_obj.kind != ObjectKind::Tree {
-        bail!("notes commit has invalid tree");
+fn notes_fanout(entries: &[NotesTreeEntry]) -> usize {
+    let mut note_count = entries
+        .iter()
+        .filter(|entry| note_object_name(&entry.path).is_some())
+        .count();
+    let mut fanout = 0usize;
+    while note_count > 0xff {
+        note_count >>= 8;
+        fanout += 1;
+    }
+    fanout
+}
+
+fn path_with_fanout(hex: &str, fanout: usize) -> Vec<u8> {
+    let mut path = Vec::with_capacity(hex.len() + fanout);
+    let bytes = hex.as_bytes();
+    let split = fanout.min(bytes.len() / 2);
+    for idx in 0..split {
+        let start = idx * 2;
+        path.extend_from_slice(&bytes[start..start + 2]);
+        path.push(b'/');
+    }
+    path.extend_from_slice(&bytes[split * 2..]);
+    path
+}
+
+fn write_notes_subtree(repo: &Repository, entries: &[NotesTreeEntry]) -> Result<ObjectId> {
+    let mut children: BTreeMap<Vec<u8>, NotesTreeChild> = BTreeMap::new();
+
+    for entry in entries {
+        if let Some(slash_pos) = entry.path.iter().position(|byte| *byte == b'/') {
+            let child_name = entry.path[..slash_pos].to_vec();
+            let child_entry = NotesTreeEntry {
+                mode: entry.mode,
+                path: entry.path[slash_pos + 1..].to_vec(),
+                oid: entry.oid,
+            };
+            children
+                .entry(child_name)
+                .or_insert_with(|| NotesTreeChild::Tree(Vec::new()));
+            if let Some(NotesTreeChild::Tree(tree_entries)) =
+                children.get_mut(&entry.path[..slash_pos])
+            {
+                tree_entries.push(child_entry);
+            }
+        } else {
+            children.insert(
+                entry.path.clone(),
+                NotesTreeChild::Blob {
+                    mode: entry.mode,
+                    oid: entry.oid,
+                },
+            );
+        }
     }
 
-    parse_tree(&tree_obj.data).map_err(Into::into)
+    let mut tree_entries = Vec::with_capacity(children.len());
+    for (name, child) in children {
+        match child {
+            NotesTreeChild::Blob { mode, oid } => tree_entries.push(TreeEntry { mode, name, oid }),
+            NotesTreeChild::Tree(child_entries) => {
+                let oid = write_notes_subtree(repo, &child_entries)?;
+                tree_entries.push(TreeEntry {
+                    mode: 0o040000,
+                    name,
+                    oid,
+                });
+            }
+        }
+    }
+
+    tree_entries
+        .sort_by(|a, b| tree_entry_cmp(&a.name, a.mode == 0o040000, &b.name, b.mode == 0o040000));
+
+    let tree_data = serialize_tree(&tree_entries);
+    repo.odb
+        .write(ObjectKind::Tree, &tree_data)
+        .map_err(Into::into)
 }
 
 /// Write a new notes tree and commit, updating the notes ref.
 fn write_notes_commit(
     repo: &Repository,
     notes_ref: &str,
-    entries: &[TreeEntry],
+    entries: &[NotesTreeEntry],
     message: &str,
 ) -> Result<()> {
-    // Write the tree
-    let tree_data = serialize_tree(entries);
-    let tree_oid = repo.odb.write(ObjectKind::Tree, &tree_data)?;
+    let fanout = notes_fanout(entries);
+    let rewritten_entries: Vec<_> = entries
+        .iter()
+        .map(|entry| NotesTreeEntry {
+            mode: entry.mode,
+            path: note_object_name(&entry.path)
+                .map(|name| path_with_fanout(&name, fanout))
+                .unwrap_or_else(|| entry.path.clone()),
+            oid: entry.oid,
+        })
+        .collect();
+    let tree_oid = write_notes_subtree(repo, &rewritten_entries)?;
 
     // Get existing notes commit as parent (if any)
     let parent = resolve_ref(&repo.git_dir, notes_ref).ok();
@@ -319,8 +469,7 @@ fn list_all_notes(repo: &Repository, notes_ref: &str) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        writeln!(out, "{} {}", entry.oid.to_hex(), name)?;
+        writeln!(out, "{} {}", entry.oid.to_hex(), display_note_path(entry))?;
     }
     Ok(())
 }
@@ -332,8 +481,7 @@ fn list_note_for_object(repo: &Repository, notes_ref: &str, object: &str) -> Res
     let entries = read_notes_tree(repo, notes_ref)?;
 
     for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        if *name == hex {
+        if note_object_name(&entry.path).as_deref() == Some(hex.as_str()) {
             println!("{}", entry.oid.to_hex());
             return Ok(());
         }
@@ -407,7 +555,7 @@ fn add_note(
     // Get existing note content (if any)
     let existing_content = entries
         .iter()
-        .find(|e| String::from_utf8_lossy(&e.name) == hex)
+        .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
         .and_then(|e| repo.odb.read(&e.oid).ok())
         .map(|obj| String::from_utf8_lossy(&obj.data).to_string());
 
@@ -456,7 +604,7 @@ fn add_note(
     };
 
     // Remove existing note entry (will re-add below)
-    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
 
     // Write the note blob (or reuse existing blob OID from -C)
     let note_oid = if let Some(oid) = direct_note_oid {
@@ -466,14 +614,11 @@ fn add_note(
     };
 
     // Add entry
-    entries.push(TreeEntry {
+    entries.push(NotesTreeEntry {
         mode: 0o100644,
-        name: hex.as_bytes().to_vec(),
+        path: hex.as_bytes().to_vec(),
         oid: note_oid,
     });
-
-    // Sort entries by name
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes add'")?;
 
@@ -489,7 +634,7 @@ fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     // Get existing note content if any
     let existing = entries
         .iter()
-        .find(|e| String::from_utf8_lossy(&e.name) == hex)
+        .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
         .and_then(|e| repo.odb.read(&e.oid).ok())
         .map(|obj| String::from_utf8_lossy(&obj.data).to_string())
         .unwrap_or_default();
@@ -497,7 +642,7 @@ fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     let msg = launch_editor(repo, &existing)?;
     if msg.trim().is_empty() {
         // Remove the note if the editor content is empty
-        entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+        entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
         write_notes_commit(
             repo,
             notes_ref,
@@ -508,14 +653,13 @@ fn edit_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     }
 
     // Remove existing and add new
-    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
     let note_oid = repo.odb.write(ObjectKind::Blob, msg.as_bytes())?;
-    entries.push(TreeEntry {
+    entries.push(NotesTreeEntry {
         mode: 0o100644,
-        name: hex.as_bytes().to_vec(),
+        path: hex.as_bytes().to_vec(),
         oid: note_oid,
     });
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes edit'")?;
     Ok(())
@@ -528,8 +672,7 @@ fn show_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Result
     let entries = read_notes_tree(repo, notes_ref)?;
 
     for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        if *name == hex {
+        if note_object_name(&entry.path).as_deref() == Some(hex.as_str()) {
             let blob = repo.odb.read(&entry.oid)?;
             if blob.kind != ObjectKind::Blob {
                 bail!("note entry is not a blob");
@@ -551,7 +694,7 @@ fn remove_note(repo: &Repository, notes_ref: &str, object: Option<&str>) -> Resu
     let mut entries = read_notes_tree(repo, notes_ref)?;
 
     let len_before = entries.len();
-    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
 
     if entries.len() == len_before {
         bail!("Object {hex} has no note to remove");
@@ -602,14 +745,14 @@ fn append_note(
     // Find existing note content
     let existing_content = entries
         .iter()
-        .find(|e| String::from_utf8_lossy(&e.name) == hex)
+        .find(|e| note_object_name(&e.path).as_deref() == Some(hex.as_str()))
         .and_then(|e| {
             let blob = repo.odb.read(&e.oid).ok()?;
             Some(String::from_utf8_lossy(&blob.data).into_owned())
         });
 
     // Remove old entry if present
-    entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
+    entries.retain(|e| note_object_name(&e.path).as_deref() != Some(hex.as_str()));
 
     // Build new content
     let new_content = match existing_content {
@@ -628,13 +771,11 @@ fn append_note(
     // Write new blob
     let note_oid = repo.odb.write(ObjectKind::Blob, new_content.as_bytes())?;
 
-    entries.push(TreeEntry {
+    entries.push(NotesTreeEntry {
         mode: 0o100644,
-        name: hex.as_bytes().to_vec(),
+        path: hex.as_bytes().to_vec(),
         oid: note_oid,
     });
-
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     write_notes_commit(
         repo,
@@ -658,14 +799,14 @@ fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bo
     // Find the source note
     let source_entry = entries
         .iter()
-        .find(|e| String::from_utf8_lossy(&e.name) == from_hex)
+        .find(|e| note_object_name(&e.path).as_deref() == Some(from_hex.as_str()))
         .ok_or_else(|| anyhow::anyhow!("missing notes on source object {from_hex}"))?;
     let note_blob_oid = source_entry.oid;
 
     // Check if target already has a note
     if entries
         .iter()
-        .any(|e| String::from_utf8_lossy(&e.name) == to_hex)
+        .any(|e| note_object_name(&e.path).as_deref() == Some(to_hex.as_str()))
     {
         if !force {
             bail!(
@@ -673,16 +814,14 @@ fn copy_note(repo: &Repository, notes_ref: &str, from: &str, to: &str, force: bo
                 to_hex
             );
         }
-        entries.retain(|e| String::from_utf8_lossy(&e.name) != to_hex);
+        entries.retain(|e| note_object_name(&e.path).as_deref() != Some(to_hex.as_str()));
     }
 
-    entries.push(TreeEntry {
+    entries.push(NotesTreeEntry {
         mode: 0o100644,
-        name: to_hex.as_bytes().to_vec(),
+        path: to_hex.as_bytes().to_vec(),
         oid: note_blob_oid,
     });
-
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     write_notes_commit(repo, notes_ref, &entries, "Notes added by 'git notes copy'")?;
 
@@ -714,14 +853,14 @@ fn merge_notes(repo: &Repository, notes_ref: &str, source_ref: Option<&str>) -> 
     let mut dst_entries = read_notes_tree(repo, notes_ref)?;
 
     let dst_names: std::collections::HashSet<Vec<u8>> =
-        dst_entries.iter().map(|e| e.name.clone()).collect();
+        dst_entries.iter().map(|e| e.path.clone()).collect();
 
     let mut added = 0usize;
     for entry in &src_entries {
-        if !dst_names.contains(&entry.name) {
-            dst_entries.push(TreeEntry {
+        if !dst_names.contains(&entry.path) {
+            dst_entries.push(NotesTreeEntry {
                 mode: entry.mode,
-                name: entry.name.clone(),
+                path: entry.path.clone(),
                 oid: entry.oid,
             });
             added += 1;
@@ -729,7 +868,6 @@ fn merge_notes(repo: &Repository, notes_ref: &str, source_ref: Option<&str>) -> 
     }
 
     if added > 0 {
-        dst_entries.sort_by(|a, b| a.name.cmp(&b.name));
         write_notes_commit(
             repo,
             notes_ref,
@@ -748,7 +886,7 @@ fn prune_notes(repo: &Repository, notes_ref: &str, dry_run: bool, verbose: bool)
     let mut pruned = false;
 
     for entry in &entries {
-        let name = String::from_utf8_lossy(&entry.name);
+        let name = display_note_path(entry);
         // The note name is the hex OID of the annotated object
         let obj_exists = if let Ok(oid) = ObjectId::from_hex(&name) {
             repo.odb.read(&oid).is_ok()

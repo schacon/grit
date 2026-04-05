@@ -8,7 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
@@ -1400,7 +1400,6 @@ fn parse_tz_offset(offset: &str) -> i64 {
 /// Returns a map from commit OID to the notes blob OID.
 fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<u8>> {
     use grit_lib::config::ConfigSet;
-    use grit_lib::objects::parse_tree;
     use grit_lib::refs::resolve_ref;
 
     let mut map = std::collections::HashMap::new();
@@ -1436,27 +1435,37 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
         _ => return map,
     };
 
-    let tree_obj = match repo.odb.read(&tree_oid) {
-        Ok(o) => o,
-        Err(_) => return map,
-    };
+    collect_notes_recursive(repo, &tree_oid, String::new(), &mut map);
 
+    map
+}
+
+fn collect_notes_recursive(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: String,
+    map: &mut std::collections::HashMap<ObjectId, Vec<u8>>,
+) {
+    let tree_obj = match repo.odb.read(tree_oid) {
+        Ok(o) => o,
+        Err(_) => return,
+    };
     let entries = match parse_tree(&tree_obj.data) {
         Ok(e) => e,
-        Err(_) => return map,
+        Err(_) => return,
     };
 
     for entry in entries {
         let name = String::from_utf8_lossy(&entry.name);
-        if let Ok(commit_oid) = name.parse::<ObjectId>() {
-            // Read the blob to get note content
+        let full_hex = format!("{prefix}{name}");
+        if entry.mode == 0o040000 {
+            collect_notes_recursive(repo, &entry.oid, full_hex, map);
+        } else if let Ok(commit_oid) = full_hex.parse::<ObjectId>() {
             if let Ok(blob) = repo.odb.read(&entry.oid) {
                 map.insert(commit_oid, blob.data);
             }
         }
     }
-
-    map
 }
 
 /// Write notes for a commit if any exist.

@@ -257,7 +257,7 @@ commit → check it off → move on.
 - [x] `t3423-rebase-reword` ████████████████████ 3/3 (0 left) — git rebase interactive with rewording
 - [x] `t3702-add-edit` ████████████████████ 3/3 (0 left) — add -e basic tests
 - [x] `t3450-history` ████████████████████ 2/2 (0 left) — tests for git-history command
-- [ ] `t3305-notes-fanout` ███████████░░░░░░░░░ 4/7 (3 left) — Test that adding/removing many notes triggers automatic fanout restructuring
+- [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
 - [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
 
 - [ ] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
@@ -372,9 +372,9 @@ commit → check it off → move on.
 
 ## 5. Diff (132 files)
 
-- [ ] `t4204-patch-id` ███████████████████░ 25/26 (1 left) — git patch-id
-- [ ] `t4021-format-patch-numbered` ██████████████████░░ 13/14 (1 left) — Format-patch numbering options
-- [ ] `t4065-diff-anchored` █████████████████░░░ 6/7 (1 left) — anchored diff algorithm
+- [x] `t4204-patch-id` ████████████████████ 26/26 (done) — git patch-id
+- [x] `t4021-format-patch-numbered` ████████████████████ 14/14 (done) — Format-patch numbering options
+- [x] `t4065-diff-anchored` ████████████████████ 7/7 (done) — anchored diff algorithm
 - [x] `t4036-format-patch-signer-mime` ████████████████████ 5/5 (done) — format-patch -s should force MIME encoding as needed
 - [x] `t4004-diff-rename-symlink` ████████████████████ 4/4 (done) — More rename detection tests.
 
@@ -382,7 +382,7 @@ commit → check it off → move on.
 - [x] `t4043-diff-rename-binary` ████████████████████ 3/3 (done) — Move a binary file
 - [x] `t4113-apply-ending` ████████████████████ 3/3 (done) — git apply trying to add an ending line.
 
-- [ ] `t4025-hunk-header` ██████████░░░░░░░░░░ 1/2 (1 left) — diff hunk header truncation
+- [x] `t4025-hunk-header` ████████████████████ 2/2 (done) — diff hunk header truncation
 - [ ] `t4066-diff-emit-delay` ██████████░░░░░░░░░░ 1/2 (1 left) — test combined/stat/moved interaction
 - [ ] `t4123-apply-shrink` ██████████░░░░░░░░░░ 1/2 (1 left) — apply a patch that is larger than the preimage
 - [ ] `t4134-apply-submodule` ██████████░░░░░░░░░░ 1/2 (1 left) — git apply submodule tests

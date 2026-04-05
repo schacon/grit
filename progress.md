@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    75 |
+| Completed   |    80 |
 | In progress |     0 |
-| Remaining   |   691 |
+| Remaining   |   686 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t3305-notes-fanout` — 7/7 tests pass (`git notes` now rewrites note trees with automatic `2/38` fanout once the note count crosses the threshold, preserves mixed non-note entries while reading and writing nested notes trees, and `git log` now loads fanout notes recursively for display)
+- `t4065-diff-anchored` — 7/7 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored bash scripts/run-upstream-tests.sh t4065-diff-anchored 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t4204-patch-id` — 26/26 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already passes the full patch-id upstream file, so the remaining `PLAN.md` entry was stale and no Rust code changes were required)
+- `t4025-hunk-header` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already produced the expected truncated multibyte hunk headers, so the remaining `plan.md` entry was stale and no Rust code changes were required)
+- `t4021-format-patch-numbered` — 14/14 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already matched the numbered `format-patch` subject behavior, so the `plan.md` entry was stale and no Rust code changes were required)
 - `t4043-diff-rename-binary` — 3/3 tests pass (`git show -C -C --raw --binary --numstat` now matches the upstream binary-rename expectation because `show` lets `--numstat` win over `--raw` while `--binary` still keeps the patch output)
 - `t4113-apply-ending` — 3/3 tests pass (`git apply --index` now rejects a start-of-file hunk that only matches after sliding forward, so it fails cleanly instead of duplicating the first line as in upstream `t4113`)
 - `t4005-diff-rename-2` — 4/4 tests pass (re-ran the requested upstream verification against a fresh `/tmp/grit-build-t4005` release build; `scripts/run-upstream-tests.sh` actually executes `target/release/grit`, so repointing that path at the fresh binary confirmed the remaining `plan.md` entry was stale rather than a missing Rust implementation)
@@ -68,4 +73,4 @@
 
 ## What Remains
 
-691 test files still pending. See `PLAN.md` for the full prioritized list.
+686 test files still pending. See `PLAN.md` for the full prioritized list.

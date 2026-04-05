@@ -2,7 +2,28 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout bash scripts/run-upstream-tests.sh t3305-notes-fanout 2>&1 | tail -40`: initial run reported 6/7 passing with notes fanout never switching to `2/38`; after teaching `git notes` to flatten and rewrite nested note trees with automatic fanout and making `git log` read fanout notes recursively, the rerun completed with 7/7 passing against `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo test -p grit-lib --lib`: 97/97 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored bash scripts/run-upstream-tests.sh t4065-diff-anchored 2>&1 | tail -40`: 7/7 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4204-patch-id bash scripts/run-upstream-tests.sh t4204-patch-id 2>&1 | tail -40`: 26/26 passing against `target/release/grit`; the remaining `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4204-patch-id cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4025-hunk-header bash scripts/run-upstream-tests.sh t4025-hunk-header 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4025-hunk-header cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4043 bash scripts/run-upstream-tests.sh t4043-diff-rename-binary 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after fixing `grit show` so `--numstat` suppresses raw diff-tree lines while `--binary` still keeps patch output.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4021-format-patch-numbered bash scripts/run-upstream-tests.sh t4021-format-patch-numbered 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 14/14 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4021-format-patch-numbered cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4043 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
