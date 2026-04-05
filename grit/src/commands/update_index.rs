@@ -6,7 +6,8 @@ use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
-use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
+use grit_lib::config::ConfigSet;
+use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry, MODE_SYMLINK};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -116,6 +117,7 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
+    let core_symlinks = core_symlinks_enabled(&repo.git_dir);
 
     let work_tree = repo
         .work_tree
@@ -352,6 +354,23 @@ pub fn run(args: Args) -> Result<()> {
         let mode = {
             use std::os::unix::fs::MetadataExt;
             normalize_mode(meta.mode())
+        };
+        // On filesystems/configs without symlink support, symlinks are
+        // represented in the worktree as regular files containing the link
+        // target. If this path is already tracked as a symlink, keep the
+        // index mode as MODE_SYMLINK even though `lstat` reports a file.
+        let mode = if !core_symlinks && mode != MODE_SYMLINK {
+            if index
+                .get(&rel_bytes, 0)
+                .map(|e| e.mode == MODE_SYMLINK)
+                .unwrap_or(false)
+            {
+                MODE_SYMLINK
+            } else {
+                mode
+            }
+        } else {
+            mode
         };
 
         let data = if meta.file_type().is_symlink() {
@@ -593,6 +612,14 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     } else {
         Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
     }
+}
+
+fn core_symlinks_enabled(git_dir: &Path) -> bool {
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.symlinks"))
+        .and_then(|v| v.ok())
+        .unwrap_or(true)
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
