@@ -68,3 +68,7 @@
 - `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after pathspec/path-optimization changes).
 - `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (pathspec/revision regression check after rev-list pathspec matching update).
 - `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (merge+rev-list regression check after rev-list pathspec matching update).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6005-rev-list-count.sh`: 6/6 passing (direct validation after rev-list `--skip <n>` parsing and integer diagnostics alignment with upstream).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (now fully passing).
+- `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (regression check after count/skip parser updates).
+- `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after count/skip parser updates).

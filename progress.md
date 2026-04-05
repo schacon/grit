@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    63 |
+| Completed   |    64 |
 | In progress |     0 |
-| Remaining   |   704 |
+| Remaining   |   703 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -50,7 +50,8 @@
 - `t6404-recursive-merge` — 6/6 tests pass (virtual merge-base construction now reuses conflict-marker blobs from higher-stage entries to preserve nested virtual-base stage-1 OIDs; merge now emits Git-compatible binary conflict diagnostic `Cannot merge binary files: <path> (HEAD vs. <branch>)`)
 - `t6439-merge-co-error-msgs` — 6/6 tests pass (merge now performs fast-forward overwrite checks before mutating HEAD/index/worktree; merge overwrite diagnostics now combine local+untracked sections in Git-compatible order, include strategy-failure trailer for `GIT_MERGE_VERBOSITY=0`, and checkout diagnostics no longer include duplicated `error:` prefixes)
 - `t6004-rev-list-path-optim` — 7/7 tests pass (rev-list path limiting now supports `.` and glob pathspecs via wildmatch and performs merge-aware TREESAME simplification, fixing path-optimization and `d/*`/`d/[a-m]*` history selection)
+- `t6005-rev-list-count` — 6/6 tests pass (`rev-list` now accepts detached `--skip <n>` form and treats `-<n>foo` malformed shorthand values as integer-parse errors; integer diagnostics now include the expected `not an integer` wording for `--max-count`, `--skip`, and `-n`)
 
 ## What Remains
 
-704 test files still pending. See `plan.md` for the full prioritized list.
+703 test files still pending. See `plan.md` for the full prioritized list.

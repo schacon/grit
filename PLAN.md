@@ -716,7 +716,7 @@ commit → check it off → move on.
 - [x] `t6415-merge-dir-to-symlink` ████████████████████ 24/24 (0 left) — merging when a directory was replaced with a symlink
 - [x] `t6004-rev-list-path-optim` ████████████████████ 7/7 (0 left) — git rev-list trivial path optimization test
 
-- [ ] `t6005-rev-list-count` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git rev-list --max-count and --skip test
+- [x] `t6005-rev-list-count` ████████████████████ 6/6 (0 left) — git rev-list --max-count and --skip test
 - [x] `t6439-merge-co-error-msgs` ████████████████████ 6/6 (0 left) — unpack-trees error messages
 - [ ] `t6010-merge-base` ██████████░░░░░░░░░░ 6/12 (6 left) — Merge base and parent list computation.
 

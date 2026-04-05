@@ -103,6 +103,13 @@ pub fn run(args: Args) -> Result<()> {
                     options.max_count = Some(parse_non_negative(value, "-n")?);
                     i += 1;
                 }
+                "--skip" => {
+                    let Some(value) = args.args.get(i + 1) else {
+                        bail!("--skip requires an argument");
+                    };
+                    options.skip = parse_non_negative(value, "--skip")?;
+                    i += 1;
+                }
                 _ if arg.starts_with("--max-count=") => {
                     let value = arg.trim_start_matches("--max-count=");
                     options.max_count = Some(parse_non_negative(value, "--max-count")?);
@@ -135,7 +142,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 _ if arg.starts_with('-')
                     && arg.len() > 1
-                    && arg[1..].chars().all(|ch| ch.is_ascii_digit()) =>
+                    && arg.as_bytes().get(1).is_some_and(u8::is_ascii_digit) =>
                 {
                     options.max_count = Some(parse_non_negative(&arg[1..], "-<n>")?);
                 }
@@ -537,7 +544,7 @@ pub fn run(args: Args) -> Result<()> {
 fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
     let value = text
         .parse::<isize>()
-        .with_context(|| format!("{flag} requires an integer"))?;
+        .map_err(|_| anyhow::anyhow!("{flag}: '{text}' is not an integer"))?;
     if value < 0 {
         return Ok(usize::MAX);
     }
