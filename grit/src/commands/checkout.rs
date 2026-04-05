@@ -9,7 +9,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
@@ -355,6 +355,9 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
+    if args.detach && !paths.is_empty() {
+        bail!("--detach does not take a path argument");
+    }
     if !paths.is_empty() {
         if !has_separator {
             if let Some(ref t) = target {
@@ -420,7 +423,7 @@ pub fn run(args: Args) -> Result<()> {
                 // `checkout --detach` with no target: detach at current HEAD
                 match resolve_head(&repo.git_dir)? {
                     HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-                        return detach_head(&repo, &oid, args.force);
+                        return detach_head(&repo, &oid, args.force, "HEAD", true);
                     }
                     _ => bail!("cannot detach HEAD on unborn branch"),
                 }
@@ -438,7 +441,7 @@ pub fn run(args: Args) -> Result<()> {
                 return switch_branch(&repo, &prev, &branch_ref, args.force);
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-                return detach_head(&repo, &oid, args.force);
+                return detach_head(&repo, &oid, args.force, &prev, false);
             }
             bail!("error: previous branch '{}' not found", prev);
         }
@@ -453,9 +456,17 @@ pub fn run(args: Args) -> Result<()> {
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-            return detach_head(&repo, &oid, args.force);
+            return detach_head(&repo, &oid, args.force, &prev, false);
         }
         bail!("error: previous branch '{}' not found", prev);
+    }
+
+    // Handle "checkout @" — no-op when on a branch (don't detach)
+    if target == "@" && !args.detach {
+        if args.force {
+            return force_reset_to_head(&repo);
+        }
+        return Ok(());
     }
 
     // Handle "checkout HEAD" — no-op when on a branch (don't detach)
@@ -474,7 +485,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("--detach does not take a path argument");
         }
         match resolve_to_commit(&repo, &target) {
-            Ok(oid) => return detach_head(&repo, &oid, args.force),
+            Ok(oid) => return detach_head(&repo, &oid, args.force, &target, true),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
     }
@@ -501,7 +512,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
-        Ok(oid) => detach_head(&repo, &oid, args.force),
+        Ok(oid) => detach_head(&repo, &oid, args.force, &target, false),
         Err(_) => {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
@@ -706,6 +717,10 @@ fn switch_branch(
     // Update HEAD to point to the branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
     cleanup_unborn_branch_reflog(repo, leaving_unborn.as_deref());
+    if let HeadState::Detached { oid } = head {
+        print_detached_head_departure(repo, &oid, &target_oid)?;
+    }
+    print_tracking_status(repo, branch_name, &target_oid)?;
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
@@ -1032,14 +1047,20 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
             checkout_eprintln!("Already on '{}'", branch_name);
         }
         _ => {
-            print_detached_head_message(repo, &head_oid)?;
+            print_detached_head_message(repo, &head, &head_oid, "HEAD", true)?;
         }
     }
     Ok(())
 }
 
 /// Detach HEAD at a specific commit.
-fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
+fn detach_head(
+    repo: &Repository,
+    oid: &ObjectId,
+    force: bool,
+    target_spec: &str,
+    explicit_detach: bool,
+) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
     let already_at_target = head.oid() == Some(oid);
@@ -1065,7 +1086,7 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     // Write detached HEAD
     std::fs::write(repo.git_dir.join("HEAD"), format!("{oid}\n"))?;
 
-    print_detached_head_message(repo, oid)?;
+    print_detached_head_message(repo, &head, oid, target_spec, explicit_detach)?;
     Ok(())
 }
 
@@ -2244,18 +2265,32 @@ fn apply_accepted_hunks(
 // ---------------------------------------------------------------------------
 
 /// Print detached HEAD message.
-fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> {
+fn print_detached_head_message(
+    repo: &Repository,
+    previous_head: &HeadState,
+    oid: &ObjectId,
+    target_spec: &str,
+    explicit_detach: bool,
+) -> Result<()> {
     let obj = repo.odb.read(oid)?;
     if obj.kind != ObjectKind::Commit {
         return Ok(());
     }
     let commit = parse_commit(&obj.data)?;
     let subject = commit.message.lines().next().unwrap_or("").trim();
-    let abbrev =
-        abbreviate_object_id(repo, *oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_owned());
+    let abbrev = abbreviated_head_oid(repo, *oid);
+
+    if let HeadState::Detached { oid: old_oid } = previous_head {
+        if *old_oid != *oid {
+            print_detached_head_departure(repo, old_oid, oid)?;
+        }
+        checkout_eprintln!("HEAD is now at {} {}", abbrev, subject);
+        return Ok(());
+    }
 
     // Print detached HEAD advice unless advice.detachedHead is false
-    let show_advice = match ConfigSet::load(Some(&repo.git_dir), true) {
+    let show_advice = !explicit_detach
+        && match ConfigSet::load(Some(&repo.git_dir), true) {
         Ok(config) => match config.get_bool("advice.detachedHead") {
             Some(Ok(val)) => val,
             _ => true, // default: show advice
@@ -2265,27 +2300,255 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
     if show_advice {
         checkout_eprintln!(
             "Note: switching to '{}'.\n\
-             \n\
-             You are in 'detached HEAD' state. You can look around, make experimental\n\
-             changes and commit them, and you can discard any commits you make in this\n\
-             state without impacting any branches by switching back to a branch.\n\
-             \n\
-             If you want to create a new branch to retain commits you create, you may\n\
-             do so (now or later) by using -c with the switch command. Example:\n\
-             \n\
-               git switch -c <new-branch-name>\n\
-             \n\
-             Or undo this operation with:\n\
-             \n\
-               git switch -\n\
-             \n\
-             Turn off this advice by setting config variable advice.detachedHead to false\n",
-            oid
+\n\
+You are in 'detached HEAD' state. You can look around, make experimental\n\
+changes and commit them, and you can discard any commits you make in this\n\
+state without impacting any branches by switching back to a branch.\n\
+\n\
+If you want to create a new branch to retain commits you create, you may\n\
+do so (now or later) by using -c with the switch command. Example:\n\
+\n\
+\x20\x20git switch -c <new-branch-name>\n\
+\n\
+Or undo this operation with:\n\
+\n\
+\x20\x20git switch -\n\
+\n\
+Turn off this advice by setting config variable advice.detachedHead to false\n",
+            target_spec
         );
     }
 
     checkout_eprintln!("HEAD is now at {} {}", abbrev, subject);
     Ok(())
+}
+
+fn print_detached_head_departure(
+    repo: &Repository,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+) -> Result<()> {
+    let orphan_count = count_orphaned_detached_commits(repo, *old_oid, *new_oid)?;
+    if orphan_count > 0 {
+        let noun = if orphan_count == 1 {
+            "commit"
+        } else {
+            "commits"
+        };
+        checkout_eprintln!(
+            "Warning: you are leaving {} {} behind, not connected to any of your branches:",
+            orphan_count,
+            noun
+        );
+    } else {
+        let prev = describe_detached_head(repo, old_oid)?;
+        checkout_eprintln!("Previous HEAD position was {}", prev);
+    }
+    Ok(())
+}
+
+fn print_tracking_status(repo: &Repository, branch_name: &str, local_oid: &ObjectId) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let remote = config
+        .get(&format!("branch.{branch_name}.remote"))
+        .unwrap_or_default();
+    let merge = config
+        .get(&format!("branch.{branch_name}.merge"))
+        .unwrap_or_default();
+    if remote.is_empty() || merge.is_empty() {
+        return Ok(());
+    }
+
+    let upstream_ref = if remote == "." {
+        merge.clone()
+    } else if let Some(short) = merge.strip_prefix("refs/heads/") {
+        format!("refs/remotes/{remote}/{short}")
+    } else {
+        merge.clone()
+    };
+
+    let upstream_oid = match refs::resolve_ref(&repo.git_dir, &upstream_ref) {
+        Ok(oid) => oid,
+        Err(_) => return Ok(()),
+    };
+
+    let ahead = count_commits_exclusive(repo, *local_oid, upstream_oid)?;
+    let behind = count_commits_exclusive(repo, upstream_oid, *local_oid)?;
+
+    if ahead == 0 && behind > 0 {
+        let noun = if behind == 1 { "commit" } else { "commits" };
+        let upstream_name = if remote == "." {
+            merge
+                .strip_prefix("refs/heads/")
+                .unwrap_or(&merge)
+                .to_string()
+        } else if let Some(short) = merge.strip_prefix("refs/heads/") {
+            format!("{remote}/{short}")
+        } else {
+            merge.clone()
+        };
+        println!(
+            "Your branch is behind '{}' by {} {}, and can be fast-forwarded.",
+            upstream_name, behind, noun
+        );
+        println!("  (use \"git pull\" to update your local branch)");
+    }
+
+    Ok(())
+}
+
+fn collect_ancestors(repo: &Repository, start: ObjectId) -> Result<HashSet<ObjectId>> {
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::from([start]);
+    while let Some(oid) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        for parent in commit.parents {
+            queue.push_back(parent);
+        }
+    }
+    Ok(seen)
+}
+
+fn count_orphaned_detached_commits(repo: &Repository, old_oid: ObjectId, new_oid: ObjectId) -> Result<usize> {
+    if commit_reachable_from_any_ref(repo, old_oid)? {
+        return Ok(0);
+    }
+    let reachable_from_new = collect_ancestors(repo, new_oid)?;
+    let mut count = 0usize;
+    let mut current = old_oid;
+    loop {
+        if reachable_from_new.contains(&current) {
+            break;
+        }
+        count += 1;
+        let obj = match repo.odb.read(&current) {
+            Ok(obj) => obj,
+            Err(_) => break,
+        };
+        if obj.kind != ObjectKind::Commit {
+            break;
+        }
+        let commit = parse_commit(&obj.data)?;
+        let Some(parent) = commit.parents.first().copied() else {
+            break;
+        };
+        current = parent;
+    }
+    Ok(count)
+}
+
+fn count_commits_exclusive(repo: &Repository, from: ObjectId, other: ObjectId) -> Result<usize> {
+    let other_ancestors = collect_ancestors(repo, other)?;
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::from([from]);
+    let mut count = 0usize;
+    while let Some(oid) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if other_ancestors.contains(&oid) {
+            continue;
+        }
+        count += 1;
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        for parent in commit.parents {
+            queue.push_back(parent);
+        }
+    }
+    Ok(count)
+}
+
+fn commit_reachable_from_any_ref(repo: &Repository, target: ObjectId) -> Result<bool> {
+    for (_name, tip) in refs::list_refs(&repo.git_dir, "refs/")? {
+        if is_ancestor(repo, target, tip)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_ancestor(repo: &Repository, anc: ObjectId, desc: ObjectId) -> Result<bool> {
+    let mut seen = HashSet::new();
+    let mut queue = VecDeque::from([desc]);
+    while let Some(oid) = queue.pop_front() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if oid == anc {
+            return Ok(true);
+        }
+        let obj = match repo.odb.read(&oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = parse_commit(&obj.data)?;
+        for parent in commit.parents {
+            queue.push_back(parent);
+        }
+    }
+    Ok(false)
+}
+
+fn describe_detached_head(repo: &Repository, oid: &ObjectId) -> Result<String> {
+    let obj = repo.odb.read(oid)?;
+    if obj.kind != ObjectKind::Commit {
+        return Ok(abbreviated_head_oid(repo, *oid));
+    }
+    let commit = parse_commit(&obj.data)?;
+    let subject = commit.message.lines().next().unwrap_or("").trim();
+    Ok(format!("{} {}", abbreviated_head_oid(repo, *oid), subject))
+}
+
+fn abbreviated_head_oid(repo: &Repository, oid: ObjectId) -> String {
+    let len = detached_abbrev_len(repo);
+    let mut abbrev = abbreviate_object_id(repo, oid, len)
+        .unwrap_or_else(|_| oid.to_hex()[..len.min(40)].to_owned());
+    if print_sha1_ellipsis() {
+        abbrev.push_str("...");
+    }
+    abbrev
+}
+
+fn detached_abbrev_len(repo: &Repository) -> usize {
+    let default_len = 7usize;
+    let config = match ConfigSet::load(Some(&repo.git_dir), true) {
+        Ok(cfg) => cfg,
+        Err(_) => return default_len,
+    };
+    let Some(val) = config.get("core.abbrev") else {
+        return default_len;
+    };
+    val.parse::<usize>()
+        .ok()
+        .map(|n| n.clamp(4, 40))
+        .unwrap_or(default_len)
+}
+
+fn print_sha1_ellipsis() -> bool {
+    matches!(
+        std::env::var("GIT_PRINT_SHA1_ELLIPSIS"),
+        Ok(v) if v.eq_ignore_ascii_case("yes")
+    )
 }
 
 // ---------------------------------------------------------------------------
