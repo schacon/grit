@@ -701,7 +701,7 @@ commit → check it off → move on.
 - [x] `t6114-keep-packs` ████████████████████ 3/3 (0 left) — rev-list with .keep packs
 - [x] `t6134-pathspec-in-submodule` ████████████████████ 3/3 (0 left) — test case exclude pathspec
 - [x] `t6136-pathspec-in-bare` ████████████████████ 3/3 (0 left) — diagnosing out-of-scope pathspec
-- [ ] `t6413-merge-crlf` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — merge conflict in crlf repo
+- [x] `t6413-merge-crlf` ████████████████████ 3/3 (0 left) — merge conflict in crlf repo
 
 - [ ] `t6428-merge-conflicts-sparse` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge cases
 - [ ] `t6431-merge-criscross` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge-recursive backend test

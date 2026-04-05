@@ -12,5 +12,3 @@
 - `./scripts/run-tests.sh t6114-keep-packs.sh`: 3/3 passing (fully passing; stale plan entry corrected).
 - `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (fully passing after unpopulated submodule `git add -C` handling fix).
 - `./scripts/run-tests.sh t6136-pathspec-in-bare.sh`: 3/3 passing (fully passing after bare-repo pathspec diagnostics fixes in `log` and `ls-files`).
-- `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (now fully passing after `git add` unpopulated-submodule handling fix).
-- `./scripts/run-tests.sh t6136-pathspec-in-bare.sh`: 1/3 passing (unchanged baseline; useful adjacent regression signal).
