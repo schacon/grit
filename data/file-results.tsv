@@ -238,7 +238,7 @@ t3008-ls-files-lazy-init-name-hash	yes	1	0	1	ok	0	1	0
 t3009-ls-files-others-nonsubmodule	yes	2	2	0	ok	2	2	0
 t3010-ls-files-killed-modified	yes	6	1	5	ok	1	6	0
 t3011-common-prefixes-and-directory-traversal	yes	21	7	14	ok	6	20	1
-t3012-ls-files-dedup	yes	3	1	2	ok	1	3	0
+t3012-ls-files-dedup	yes	3	3	0	ok	3	3	0
 t3013-ls-files-format	yes	20	8	12	ok	8	20	0
 t3020-ls-files-error-unmatch	yes	3	3	0	ok	3	3	0
 t3040-subprojects-basic	yes	11	6	5	ok	6	11	0
@@ -530,7 +530,7 @@ t5326-multi-pack-bitmaps	yes	357	29	328	ok	29	357	0
 t5327-multi-pack-bitmaps-rev	yes	314	14	300	ok	14	314	0
 t5328-commit-graph-64bit-time	yes	0	0	0	ok	0	0	0
 t5329-pack-objects-cruft	yes	25	3	22	ok	3	25	0
-t5330-no-lazy-fetch-with-commit-graph	yes	4	3	1	ok	3	4	0
+t5330-no-lazy-fetch-with-commit-graph	yes	4	4	0	ok	4	4	0
 t5331-pack-objects-stdin	yes	16	0	16	ok	0	16	0
 t5332-multi-pack-reuse	yes	14	1	13	ok	1	14	0
 t5333-pseudo-merge-bitmaps	yes	18	2	16	ok	2	18	0
@@ -610,7 +610,7 @@ t5561-http-backend	yes	0	0	0	ok	0	0	0
 t5562-http-backend-content-length	yes	0	0	0	ok	0	0	0
 t5563-simple-http-auth	yes	0	0	0	ok	0	0	0
 t5564-http-proxy	yes	8	3	5	ok	3	8	0
-t5565-push-multiple	yes	2	0	2	ok	0	2	0
+t5565-push-multiple	yes	2	2	0	ok	2	2	0
 t5570-git-daemon	yes	0	0	0	ok	0	0	0
 t5571-pre-push-hook	yes	11	4	7	ok	4	11	0
 t5572-pull-submodule	yes	69	10	59	ok	10	69	0
@@ -635,7 +635,7 @@ t5611-clone-config	yes	13	3	10	ok	3	13	0
 t5612-clone-refspec	yes	13	1	12	ok	1	13	0
 t5613-info-alternate	yes	13	12	1	ok	12	13	0
 t5614-clone-submodules-shallow	yes	9	4	5	ok	4	9	0
-t5615-alternate-env	yes	9	7	2	ok	7	9	0
+t5615-alternate-env	yes	9	9	0	ok	9	9	0
 t5616-partial-clone	yes	47	9	38	ok	9	47	0
 t5617-clone-submodules-remote	yes	9	2	7	ok	2	9	0
 t5618-alternate-refs	yes	6	2	4	ok	2	6	0
