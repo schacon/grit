@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    44 |
+| Completed   |    45 |
 | In progress |     0 |
-| Remaining   |   723 |
+| Remaining   |   722 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3908-stash-in-worktree` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3500-cherry` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3102-ls-tree-wildcards` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -38,4 +39,4 @@
 
 ## What Remains
 
-723 test files still pending. See `plan.md` for the full prioritized list.
+722 test files still pending. See `plan.md` for the full prioritized list.

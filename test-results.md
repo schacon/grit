@@ -9,3 +9,4 @@
 - `./scripts/run-tests.sh t3102-ls-tree-wildcards.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t3500-cherry.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t3009-ls-files-others-nonsubmodule.sh`: 2/2 passing.
+- `./scripts/run-tests.sh t3908-stash-in-worktree.sh`: 2/2 passing.

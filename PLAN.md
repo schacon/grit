@@ -249,7 +249,7 @@ commit → check it off → move on.
 
 - [x] `t3009-ls-files-others-nonsubmodule` ████████████████████ 2/2 (0 left) — test git ls-files --others with non-submodule repositories
 
-- [ ] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
+- [x] `t3908-stash-in-worktree` ████████████████████ 2/2 (0 left) — Test git stash in a worktree
 - [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
 - [ ] `t3205-branch-color` ██████████░░░░░░░░░░ 2/4 (2 left) — basic branch output coloring
 - [ ] `t3012-ls-files-dedup` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git ls-files --deduplicate test
