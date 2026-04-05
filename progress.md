@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    63 |
-| In progress |     0 |
-| Remaining   |   702 |
+| In progress |     1 |
+| Remaining   |   701 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -57,4 +57,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress; 702 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4131-apply-fake-ancestor`) and 701 remain pending. See `plan.md` for the full prioritized list.
