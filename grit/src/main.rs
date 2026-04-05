@@ -576,6 +576,9 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
             let _ = e.print();
+            if matches!(subcmd, "tag" | "branch") {
+                eprintln!("usage: git {subcmd}");
+            }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
                     std::process::exit(129)
