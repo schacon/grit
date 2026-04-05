@@ -324,12 +324,23 @@ pub fn run(args: Args) -> Result<()> {
         Some(StashCommand::Show {
             patch,
             stat: _,
+            name_status,
+            name_only,
             patience: _,
             args: show_args,
         }) => {
             // Parse stash ref from trailing args (non-flag args)
             let stash_ref = show_args.iter().find(|a| !a.starts_with('-')).cloned();
-            do_show(stash_ref, patch)
+            let mode = if name_status {
+                ShowMode::NameStatus
+            } else if name_only {
+                ShowMode::NameOnly
+            } else if patch {
+                ShowMode::Patch
+            } else {
+                ShowMode::Stat
+            };
+            do_show(stash_ref, mode)
         }
         Some(StashCommand::Pop {
             index,
@@ -899,15 +910,63 @@ fn do_list(extra_args: Vec<String>) -> Result<()> {
 // Show
 // ---------------------------------------------------------------------------
 
-fn do_show(stash_ref: Option<String>, patch: bool) -> Result<()> {
+#[derive(Clone, Copy, PartialEq)]
+enum ShowMode {
+    Stat,
+    Patch,
+    NameStatus,
+    NameOnly,
+}
+
+fn do_show(stash_ref: Option<String>, mode: ShowMode) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let stash_oid = resolve_stash_ref(&repo, stash_ref.as_deref())?;
 
-    if patch {
-        show_stash_diff(&repo, &stash_oid, true)?;
-    } else {
-        // Default: --stat format
-        show_stash_stat(&repo, &stash_oid)?;
+    match mode {
+        ShowMode::Patch => show_stash_diff(&repo, &stash_oid, true)?,
+        ShowMode::NameStatus => show_stash_name_status(&repo, &stash_oid, true)?,
+        ShowMode::NameOnly => show_stash_name_status(&repo, &stash_oid, false)?,
+        ShowMode::Stat => show_stash_stat(&repo, &stash_oid)?,
+    }
+
+    Ok(())
+}
+
+fn show_stash_name_status(repo: &Repository, stash_oid: &ObjectId, with_status: bool) -> Result<()> {
+    let obj = repo.odb.read(stash_oid)?;
+    let stash_commit = parse_commit(&obj.data)?;
+    let parent_oid = stash_commit.parents.first()
+        .ok_or_else(|| anyhow::anyhow!("corrupt stash commit: no parents"))?;
+    let parent_obj = repo.odb.read(parent_oid)?;
+    let parent_commit = parse_commit(&parent_obj.data)?;
+
+    let old_entries = flatten_tree_full(&repo.odb, &parent_commit.tree, "")?;
+    let new_entries = flatten_tree_full(&repo.odb, &stash_commit.tree, "")?;
+
+    use std::collections::BTreeMap;
+    let mut old_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &old_entries { old_map.insert(&e.path, e); }
+    let mut new_map: BTreeMap<&str, &FlatTreeEntry> = BTreeMap::new();
+    for e in &new_entries { new_map.insert(&e.path, e); }
+
+    let mut all_paths: BTreeSet<&str> = BTreeSet::new();
+    for e in &old_entries { all_paths.insert(&e.path); }
+    for e in &new_entries { all_paths.insert(&e.path); }
+
+    for path in &all_paths {
+        let old = old_map.get(path);
+        let new = new_map.get(path);
+        let status = match (old, new) {
+            (None, Some(_)) => 'A',
+            (Some(_), None) => 'D',
+            (Some(o), Some(n)) if o.oid != n.oid || o.mode != n.mode => 'M',
+            _ => continue,
+        };
+        if with_status {
+            println!("{}\t{}", status, path);
+        } else {
+            println!("{}", path);
+        }
     }
 
     Ok(())
@@ -1398,6 +1457,7 @@ fn apply_stash_impl(
                             favor: MergeFavor::None,
                             style: ConflictStyle::Merge,
                             marker_size: 7,
+            diff_algorithm: None,
                         };
                         let output = merge(&input)?;
                         fs::write(&file_path, &output.content)?;

@@ -1117,6 +1117,7 @@ fn content_merge_or_conflict(
         favor,
         style: Default::default(),
         marker_size: 7,
+            diff_algorithm: None,
     };
 
     let result = merge(&input)?;

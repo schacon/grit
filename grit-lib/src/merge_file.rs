@@ -65,6 +65,8 @@ pub struct MergeInput<'a> {
     pub style: ConflictStyle,
     /// Width of conflict markers in characters (0 → use default of 7).
     pub marker_size: usize,
+    /// Diff algorithm.
+    pub diff_algorithm: Option<String>,
 }
 
 /// Result of a three-way merge.
@@ -85,8 +87,14 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let ours_lines = split_lines(input.ours);
     let theirs_lines = split_lines(input.theirs);
 
-    let ours_ops = diff_ops(&base_lines, &ours_lines);
-    let theirs_ops = diff_ops(&base_lines, &theirs_lines);
+    let algo = input.diff_algorithm.as_deref()
+        .map(|name| match name.to_lowercase().as_str() {
+            "histogram" | "patience" => similar::Algorithm::Patience,
+            _ => similar::Algorithm::Myers,
+        })
+        .unwrap_or(similar::Algorithm::Myers);
+    let ours_ops = similar::capture_diff_slices(algo, &base_lines, &ours_lines);
+    let theirs_ops = similar::capture_diff_slices(algo, &base_lines, &theirs_lines);
 
     let hunks = compute_hunks(
         &base_lines,
@@ -538,6 +546,7 @@ mod tests {
             favor: MergeFavor::None,
             style: ConflictStyle::Merge,
             marker_size: 7,
+            diff_algorithm: None,
         };
         let out = merge(&input).unwrap();
         (String::from_utf8(out.content).unwrap(), out.conflicts)
@@ -594,6 +603,7 @@ mod tests {
             favor: MergeFavor::Ours,
             style: ConflictStyle::Merge,
             marker_size: 7,
+            diff_algorithm: None,
         };
         let out = merge(&input).unwrap();
         assert_eq!(out.content, b"a\nX\nc\n");
@@ -612,6 +622,7 @@ mod tests {
             favor: MergeFavor::Union,
             style: ConflictStyle::Merge,
             marker_size: 7,
+            diff_algorithm: None,
         };
         let out = merge(&input).unwrap();
         // union: line3x\nline3y (newline inserted between no-LF lines)
