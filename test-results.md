@@ -53,6 +53,9 @@
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2018-checkout-branch.sh`: 25/25 passing.
 - `./scripts/run-tests.sh t2018-checkout-branch.sh`: 25/25 passing.
 - `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing `git repo structure` table/progress compatibility fixes).
+- `./scripts/run-tests.sh t1901-repo-structure.sh`: 4/4 passing.
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1901-repo-structure.sh`: 4/4 passing (with 2 SHA1-gated cases skipped by harness prereq).
 - `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
 - `cargo fmt && cargo build --release -p grit-rs`: success (after implementing checkout `-m` branch/path conflict restoration behavior and stage ordering fixes).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2023-checkout-m.sh`: 5/5 passing.

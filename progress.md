@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    65 |
+| Completed   |    66 |
 | In progress |     0 |
-| Remaining   |   702 |
+| Remaining   |   701 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1901-repo-structure` — 4/4 tests pass (implemented `git repo structure` output/progress compatibility for empty repositories and progress-meter behavior used by upstream tests)
 - `t2018-checkout-branch` — 25/25 tests pass (fixed checkout compatibility for `@{-1}` branch names, clone `--no-checkout` population behavior, sparse-checkout branch creation, and canonical branch/path argument errors)
 - `t2202-add-addremove` — 3/3 tests pass (added global `--literal-pathspecs` handling so `git add --all` setup and no-op semantics match upstream tests)
 - `t2027-checkout-track` — 5/5 tests pass (added checkout/switch ambiguous remote-tracking branch hints including `git switch --track` guidance)
@@ -59,4 +60,4 @@
 
 ## What Remains
 
-702 test files still pending. See `plan.md` for the full prioritized list.
+701 test files still pending. See `plan.md` for the full prioritized list.
