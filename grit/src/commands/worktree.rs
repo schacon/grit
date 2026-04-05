@@ -11,9 +11,11 @@ use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 /// Arguments for `grit worktree`.
 #[derive(Debug, ClapArgs)]
@@ -130,6 +132,12 @@ pub struct PruneArgs {
     /// Report pruned entries.
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Only prune stale entries older than this time.
+    ///
+    /// Accepts values like "now" or "2.days.ago".
+    #[arg(long = "expire")]
+    pub expire: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -894,53 +902,166 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
+    let expire_before = parse_prune_expire(args.expire.as_deref())?;
+    let main_gitdir = common.canonicalize().unwrap_or(common.clone());
 
     if !worktrees_dir.is_dir() {
         return Ok(());
     }
 
-    for entry in fs::read_dir(&worktrees_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
+    let mut entries: Vec<fs::DirEntry> = fs::read_dir(&worktrees_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
+    let mut seen_gitdirs: HashMap<PathBuf, String> = HashMap::new();
+
+    for entry in entries {
+        let file_type = entry.file_type()?;
         let admin = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        let rel_name = format!("worktrees/{name}");
 
-        // A worktree is stale if its gitdir target no longer exists
-        let gitdir_file = admin.join("gitdir");
-        let is_stale = if gitdir_file.exists() {
-            let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-            let target = PathBuf::from(raw.trim());
-            !target.exists()
-        } else {
-            true // No gitdir file at all — stale
-        };
-
-        if !is_stale {
+        if file_type.is_dir() && admin.join("locked").exists() {
             continue;
         }
 
-        // Skip locked worktrees
-        if admin.join("locked").exists() {
-            if args.verbose {
-                eprintln!("worktree '{}' is locked; not pruning", name);
-            }
+        let prune_reason = if !file_type.is_dir() {
+            Some("not a valid directory".to_string())
+        } else {
+            classify_prune_reason(&admin, &name, &main_gitdir, &mut seen_gitdirs)?
+        };
+
+        let Some(reason) = prune_reason else {
+            continue;
+        };
+
+        if !is_older_than_expire(&admin, expire_before) {
             continue;
         }
 
         if args.verbose || args.dry_run {
-            eprintln!("Removing worktrees/{}", name);
+            eprintln!("Removing {rel_name}: {reason}");
         }
 
         if !args.dry_run {
-            fs::remove_dir_all(&admin)
-                .with_context(|| format!("cannot remove '{}'", admin.display()))?;
+            if file_type.is_dir() {
+                fs::remove_dir_all(&admin)
+                    .with_context(|| format!("cannot remove '{}'", admin.display()))?;
+            } else {
+                fs::remove_file(&admin)
+                    .with_context(|| format!("cannot remove '{}'", admin.display()))?;
+            }
         }
     }
 
+    remove_dir_if_empty(&worktrees_dir);
     Ok(())
+}
+
+fn classify_prune_reason(
+    admin: &Path,
+    name: &str,
+    main_gitdir: &Path,
+    seen_gitdirs: &mut HashMap<PathBuf, String>,
+) -> Result<Option<String>> {
+    let gitdir_file = admin.join("gitdir");
+    if !gitdir_file.exists() {
+        return Ok(Some("gitdir file does not exist".to_string()));
+    }
+
+    let raw = match fs::read_to_string(&gitdir_file) {
+        Ok(raw) => raw,
+        Err(_) => return Ok(Some("unable to read gitdir file".to_string())),
+    };
+    let target = match parse_gitdir_target(admin, raw.trim()) {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Ok(Some("invalid gitdir file".to_string())),
+    };
+
+    if !target.exists() {
+        return Ok(Some(
+            "gitdir file points to non-existent location".to_string(),
+        ));
+    }
+
+    let target_key = target.canonicalize().unwrap_or(target);
+    if target_key == main_gitdir {
+        return Ok(Some("duplicate entry".to_string()));
+    }
+    if let Some(_first_name) = seen_gitdirs.get(&target_key) {
+        return Ok(Some("duplicate entry".to_string()));
+    }
+    seen_gitdirs.insert(target_key, name.to_string());
+    Ok(None)
+}
+
+fn parse_gitdir_target(admin: &Path, text: &str) -> Option<PathBuf> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(admin.join(path))
+    }
+}
+
+fn parse_prune_expire(expire: Option<&str>) -> Result<Option<SystemTime>> {
+    match expire {
+        None => Ok(None),
+        Some("now") => Ok(Some(SystemTime::now())),
+        Some(s) => {
+            if let Some(threshold) = parse_relative_time(s) {
+                Ok(Some(threshold))
+            } else {
+                bail!("unsupported --expire value: {s:?}");
+            }
+        }
+    }
+}
+
+fn parse_relative_time(s: &str) -> Option<SystemTime> {
+    let s = s.trim();
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() == 3 && parts[2] == "ago" {
+        let n: u64 = parts[0].parse().ok()?;
+        let unit = parts[1];
+        let secs = match unit {
+            "second" | "seconds" => n,
+            "minute" | "minutes" => n * 60,
+            "hour" | "hours" => n * 3600,
+            "day" | "days" => n * 86400,
+            "week" | "weeks" => n * 7 * 86400,
+            "month" | "months" => n * 30 * 86400,
+            "year" | "years" => n * 365 * 86400,
+            _ => return None,
+        };
+        return SystemTime::now().checked_sub(Duration::from_secs(secs));
+    }
+    None
+}
+
+fn is_older_than_expire(path: &Path, expire_before: Option<SystemTime>) -> bool {
+    let Some(threshold) = expire_before else {
+        return true;
+    };
+    match fs::metadata(path).and_then(|m| m.modified()) {
+        Ok(mtime) => mtime <= threshold,
+        Err(_) => true,
+    }
+}
+
+fn remove_dir_if_empty(path: &Path) {
+    let is_empty = fs::read_dir(path)
+        .ok()
+        .and_then(|mut it| it.next().map(|_| false))
+        .unwrap_or(true);
+    if is_empty {
+        let _ = fs::remove_dir(path);
+    }
 }
 
 // ---------------------------------------------------------------------------
