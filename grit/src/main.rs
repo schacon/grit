@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod commands;
 pub mod pathspec;
@@ -441,6 +441,137 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     for path in packs {
         println!("{path}");
     }
+    Ok(())
+}
+
+fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "ENOENT",
+        std::io::ErrorKind::NotADirectory => "ENOTDIR",
+        _ => "ESOMETHINGELSE",
+    }
+}
+
+fn walk_dir_iterator(
+    root_abs: &Path,
+    root_display: &str,
+    rel: &Path,
+    pedantic: bool,
+) -> std::result::Result<(), ()> {
+    let current = if rel.as_os_str().is_empty() {
+        root_abs.to_path_buf()
+    } else {
+        root_abs.join(rel)
+    };
+
+    let read_dir = match std::fs::read_dir(&current) {
+        Ok(it) => it,
+        Err(_) => {
+            return if pedantic { Err(()) } else { Ok(()) };
+        }
+    };
+
+    let mut entries = Vec::new();
+    for entry in read_dir {
+        match entry {
+            Ok(e) => entries.push(e),
+            Err(_) => {
+                if pedantic {
+                    return Err(());
+                }
+            }
+        }
+    }
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let basename = entry.file_name();
+        let basename_display = basename.to_string_lossy().to_string();
+        let child_rel = if rel.as_os_str().is_empty() {
+            PathBuf::from(&basename)
+        } else {
+            rel.join(&basename)
+        };
+        let child_abs = root_abs.join(&child_rel);
+
+        let meta = match std::fs::symlink_metadata(&child_abs) {
+            Ok(m) => m,
+            Err(_) => {
+                if pedantic {
+                    return Err(());
+                }
+                continue;
+            }
+        };
+        let ft = meta.file_type();
+        let kind = if ft.is_dir() {
+            'd'
+        } else if ft.is_file() {
+            'f'
+        } else if ft.is_symlink() {
+            's'
+        } else {
+            '?'
+        };
+
+        let path_display = Path::new(root_display).join(&child_rel);
+        println!(
+            "[{kind}] ({}) [{}] {}",
+            child_rel.to_string_lossy(),
+            basename_display,
+            path_display.display()
+        );
+
+        if ft.is_dir() && walk_dir_iterator(root_abs, root_display, &child_rel, pedantic).is_err()
+        {
+            return Err(());
+        }
+    }
+
+    Ok(())
+}
+
+fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
+    let mut pedantic = false;
+    let mut path_arg: Option<String> = None;
+
+    for arg in rest.iter().skip(1) {
+        if arg == "--pedantic" {
+            pedantic = true;
+            continue;
+        }
+        if arg.starts_with("--") {
+            bail!("invalid option '{arg}'");
+        }
+        if path_arg.is_some() {
+            bail!("dir-iterator needs exactly one non-option argument");
+        }
+        path_arg = Some(arg.clone());
+    }
+
+    let Some(path_arg) = path_arg else {
+        bail!("dir-iterator needs exactly one non-option argument");
+    };
+
+    let root_abs = PathBuf::from(&path_arg);
+    let root_meta = match std::fs::symlink_metadata(&root_abs) {
+        Ok(m) => m,
+        Err(e) => {
+            println!("dir_iterator_begin failure: {}", dir_iterator_error_name(e.kind()));
+            std::process::exit(1);
+        }
+    };
+
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        println!("dir_iterator_begin failure: ENOTDIR");
+        std::process::exit(1);
+    }
+
+    if walk_dir_iterator(&root_abs, &path_arg, Path::new(""), pedantic).is_err() {
+        println!("dir_iterator_advance failure");
+        std::process::exit(1);
+    }
+
     Ok(())
 }
 
@@ -1821,6 +1952,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "example-tap" => run_test_tool_example_tap(rest),
                 "advise" => run_test_tool_advise(rest),
                 "env-helper" => run_test_tool_env_helper(rest),
+                "dir-iterator" => run_test_tool_dir_iterator(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
