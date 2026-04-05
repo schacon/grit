@@ -455,6 +455,97 @@ pub fn split_revision_token(token: &str) -> (Vec<String>, Vec<String>) {
     (vec![token.to_owned()], Vec::new())
 }
 
+fn ansi_color_from_name(name: &str) -> String {
+    match name {
+        "red" => "\x1b[31m".to_owned(),
+        "green" => "\x1b[32m".to_owned(),
+        "yellow" => "\x1b[33m".to_owned(),
+        "blue" => "\x1b[34m".to_owned(),
+        "magenta" => "\x1b[35m".to_owned(),
+        "cyan" => "\x1b[36m".to_owned(),
+        "white" => "\x1b[37m".to_owned(),
+        "bold" => "\x1b[1m".to_owned(),
+        "dim" => "\x1b[2m".to_owned(),
+        "ul" | "underline" => "\x1b[4m".to_owned(),
+        "blink" => "\x1b[5m".to_owned(),
+        "reverse" => "\x1b[7m".to_owned(),
+        "reset" => "\x1b[m".to_owned(),
+        _ => String::new(),
+    }
+}
+
+fn color_name_to_code(name: &str) -> Option<u8> {
+    match name {
+        "black" => Some(0), "red" => Some(1), "green" => Some(2),
+        "yellow" => Some(3), "blue" => Some(4), "magenta" => Some(5),
+        "cyan" => Some(6), "white" => Some(7), "default" => Some(9),
+        _ => None,
+    }
+}
+
+fn ansi_color_from_spec(spec: &str) -> String {
+    if spec == "reset" {
+        return "\x1b[m".to_owned();
+    }
+    let mut codes = Vec::new();
+    let mut fg_set = false;
+    for part in spec.split_whitespace() {
+        match part {
+            "bold" => codes.push("1".to_owned()),
+            "dim" => codes.push("2".to_owned()),
+            "italic" => codes.push("3".to_owned()),
+            "ul" | "underline" => codes.push("4".to_owned()),
+            "blink" => codes.push("5".to_owned()),
+            "reverse" => codes.push("7".to_owned()),
+            "strike" => codes.push("9".to_owned()),
+            "nobold" | "nodim" => codes.push("22".to_owned()),
+            "noitalic" => codes.push("23".to_owned()),
+            "noul" | "nounderline" => codes.push("24".to_owned()),
+            "noblink" => codes.push("25".to_owned()),
+            "noreverse" => codes.push("27".to_owned()),
+            "nostrike" => codes.push("29".to_owned()),
+            _ => {
+                if let Some(code) = color_name_to_code(part) {
+                    if !fg_set {
+                        codes.push(format!("{}", 30 + code));
+                        fg_set = true;
+                    } else {
+                        codes.push(format!("{}", 40 + code));
+                    }
+                }
+            }
+        }
+    }
+    if codes.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{}m", codes.join(";"))
+    }
+}
+
+fn format_relative_date(diff: i64) -> String {
+    if diff < 0 {
+        "in the future".to_owned()
+    } else if diff < 60 {
+        format!("{} seconds ago", diff)
+    } else if diff < 3600 {
+        let m = diff / 60;
+        if m == 1 { "1 minute ago".to_owned() } else { format!("{m} minutes ago") }
+    } else if diff < 86400 {
+        let h = diff / 3600;
+        if h == 1 { "1 hour ago".to_owned() } else { format!("{h} hours ago") }
+    } else if diff < 86400 * 30 {
+        let d = diff / 86400;
+        if d == 1 { "1 day ago".to_owned() } else { format!("{d} days ago") }
+    } else if diff < 86400 * 365 {
+        let months = diff / (86400 * 30);
+        if months == 1 { "1 month ago".to_owned() } else { format!("{months} months ago") }
+    } else {
+        let years = diff / (86400 * 365);
+        if years == 1 { "1 year ago".to_owned() } else { format!("{years} years ago") }
+    }
+}
+
 /// Render one commit according to the selected output mode.
 ///
 /// # Errors
@@ -465,6 +556,17 @@ pub fn render_commit(
     oid: ObjectId,
     mode: &OutputMode,
     abbrev_len: usize,
+) -> Result<String> {
+    render_commit_with_color(repo, oid, mode, abbrev_len, false)
+}
+
+/// Render one commit, optionally with ANSI color for `%C` placeholders.
+pub fn render_commit_with_color(
+    repo: &Repository,
+    oid: ObjectId,
+    mode: &OutputMode,
+    abbrev_len: usize,
+    use_color: bool,
 ) -> Result<String> {
     match mode {
         OutputMode::OidOnly => Ok(format!("{oid}")),
@@ -478,6 +580,97 @@ pub fn render_commit(
             Ok(out)
         }
         OutputMode::Format(fmt) => {
+            let commit = load_commit(repo, oid)?;
+            let subject = commit.message.lines().next().unwrap_or_default();
+            let hex = oid.to_hex();
+
+            // Handle named pretty formats
+            match fmt.as_str() {
+                "oneline" => {
+                    return Ok(format!("{} {}", hex, subject));
+                }
+                "short" => {
+                    fn fmt_ident(ident: &str) -> String {
+                        let name = if let Some(bracket) = ident.find('<') {
+                            ident[..bracket].trim()
+                        } else {
+                            ident.trim()
+                        };
+                        let email = if let Some(start) = ident.find('<') {
+                            if let Some(end) = ident.find('>') {
+                                &ident[start..=end]
+                            } else { "" }
+                        } else { "" };
+                        format!("{} {}", name, email)
+                    }
+                    let mut out = String::new();
+                    out.push_str(&format!("Author: {}\n", fmt_ident(&commit.author)));
+                    out.push('\n');
+                    out.push_str(&format!("    {}\n", subject));
+                    out.push('\n');
+                    return Ok(out);
+                }
+                "medium" => {
+                    fn extract_ident_display(ident: &str) -> String {
+                        let name = if let Some(bracket) = ident.find('<') {
+                            ident[..bracket].trim()
+                        } else {
+                            ident.trim()
+                        };
+                        let email = if let Some(start) = ident.find('<') {
+                            if let Some(end) = ident.find('>') {
+                                &ident[start..=end]
+                            } else { "" }
+                        } else { "" };
+                        format!("{} {}", name, email)
+                    }
+                    fn format_default_date(ident: &str) -> String {
+                        let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
+                        if parts.len() < 2 { return String::new(); }
+                        let ts_str = parts[1];
+                        let offset_str = parts[0];
+                        let ts: i64 = match ts_str.parse() { Ok(v) => v, Err(_) => return format!("{ts_str} {offset_str}") };
+                        let tz_bytes = offset_str.as_bytes();
+                        let tz_secs: i64 = if tz_bytes.len() >= 5 {
+                            let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
+                            let h: i64 = offset_str[1..3].parse().unwrap_or(0);
+                            let m: i64 = offset_str[3..5].parse().unwrap_or(0);
+                            sign * (h * 3600 + m * 60)
+                        } else { 0 };
+                        let adjusted = ts + tz_secs;
+                        let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                            .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                        let weekday = match dt.weekday() {
+                            time::Weekday::Monday => "Mon", time::Weekday::Tuesday => "Tue",
+                            time::Weekday::Wednesday => "Wed", time::Weekday::Thursday => "Thu",
+                            time::Weekday::Friday => "Fri", time::Weekday::Saturday => "Sat",
+                            time::Weekday::Sunday => "Sun",
+                        };
+                        let month = match dt.month() {
+                            time::Month::January => "Jan", time::Month::February => "Feb",
+                            time::Month::March => "Mar", time::Month::April => "Apr",
+                            time::Month::May => "May", time::Month::June => "Jun",
+                            time::Month::July => "Jul", time::Month::August => "Aug",
+                            time::Month::September => "Sep", time::Month::October => "Oct",
+                            time::Month::November => "Nov", time::Month::December => "Dec",
+                        };
+                        format!("{} {} {} {:02}:{:02}:{:02} {} {}",
+                            weekday, month, dt.day(),
+                            dt.hour(), dt.minute(), dt.second(),
+                            dt.year(), offset_str)
+                    }
+                    let mut out = String::new();
+                    out.push_str(&format!("Author: {}\n", extract_ident_display(&commit.author)));
+                    out.push_str(&format!("Date:   {}\n", format_default_date(&commit.author)));
+                    out.push('\n');
+                    for line in commit.message.lines() {
+                        out.push_str(&format!("    {}\n", line));
+                    }
+                    return Ok(out);
+                }
+                _ => {}
+            }
+
             let raw_fmt = if let Some(t) = fmt.strip_prefix("format:") {
                 t
             } else if let Some(t) = fmt.strip_prefix("tformat:") {
@@ -485,8 +678,6 @@ pub fn render_commit(
             } else {
                 fmt.as_str()
             };
-            let commit = load_commit(repo, oid)?;
-            let subject = commit.message.lines().next().unwrap_or_default();
             // Body: everything after the first line (skip blank separator line)
             let body = {
                 let mut lines = commit.message.lines();
@@ -530,42 +721,172 @@ pub fn render_commit(
                 let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
                 if parts.len() >= 2 { parts[1] } else { "" }
             }
-            fn extract_date_default(ident: &str) -> String {
+            fn parse_ident_date(ident: &str) -> Option<(i64, &str)> {
                 let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                if parts.len() < 2 { return String::new(); }
-                let ts_str = parts[1];
-                let offset_str = parts[0];
-                let ts: i64 = match ts_str.parse() { Ok(v) => v, Err(_) => return format!("{ts_str} {offset_str}") };
+                if parts.len() < 2 { return None; }
+                let ts: i64 = parts[1].parse().ok()?;
+                Some((ts, parts[0]))
+            }
+            fn parse_tz(offset_str: &str) -> i64 {
                 let tz_bytes = offset_str.as_bytes();
-                let tz_secs: i64 = if tz_bytes.len() >= 5 {
+                if tz_bytes.len() >= 5 {
                     let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
                     let h: i64 = offset_str[1..3].parse().unwrap_or(0);
                     let m: i64 = offset_str[3..5].parse().unwrap_or(0);
                     sign * (h * 3600 + m * 60)
-                } else { 0 };
-                let adjusted = ts + tz_secs;
-                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
-                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                let weekday = match dt.weekday() {
+                } else { 0 }
+            }
+            fn weekday_str(dt: &time::OffsetDateTime) -> &'static str {
+                match dt.weekday() {
                     time::Weekday::Monday => "Mon", time::Weekday::Tuesday => "Tue",
                     time::Weekday::Wednesday => "Wed", time::Weekday::Thursday => "Thu",
                     time::Weekday::Friday => "Fri", time::Weekday::Saturday => "Sat",
                     time::Weekday::Sunday => "Sun",
-                };
-                let month = match dt.month() {
+                }
+            }
+            fn month_str(dt: &time::OffsetDateTime) -> &'static str {
+                match dt.month() {
                     time::Month::January => "Jan", time::Month::February => "Feb",
                     time::Month::March => "Mar", time::Month::April => "Apr",
                     time::Month::May => "May", time::Month::June => "Jun",
                     time::Month::July => "Jul", time::Month::August => "Aug",
                     time::Month::September => "Sep", time::Month::October => "Oct",
                     time::Month::November => "Nov", time::Month::December => "Dec",
-                };
-                format!("{} {} {:>2} {:02}:{:02}:{:02} {} {}",
-                    weekday, month, dt.day(),
+                }
+            }
+            fn extract_email_local(ident: &str) -> &str {
+                let email = extract_email(ident);
+                if let Some(at) = email.find('@') {
+                    &email[..at]
+                } else {
+                    email
+                }
+            }
+            fn extract_date_default(ident: &str) -> String {
+                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let adjusted = ts + parse_tz(offset_str);
+                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                format!("{} {} {} {:02}:{:02}:{:02} {} {}",
+                    weekday_str(&dt), month_str(&dt), dt.day(),
                     dt.hour(), dt.minute(), dt.second(),
                     dt.year(), offset_str)
             }
+            fn extract_date_rfc2822(ident: &str) -> String {
+                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let adjusted = ts + parse_tz(offset_str);
+                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                format!("{}, {} {} {} {:02}:{:02}:{:02} {}",
+                    weekday_str(&dt), dt.day(), month_str(&dt), dt.year(),
+                    dt.hour(), dt.minute(), dt.second(), offset_str)
+            }
+            fn extract_date_short(ident: &str) -> String {
+                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let adjusted = ts + parse_tz(offset_str);
+                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
+            }
+            fn extract_date_iso(ident: &str) -> String {
+                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let adjusted = ts + parse_tz(offset_str);
+                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+                    dt.year(), dt.month() as u8, dt.day(),
+                    dt.hour(), dt.minute(), dt.second(), offset_str)
+            }
 
+            // Alignment/truncation state for %<(N), %>(N), %><(N) directives
+            #[derive(Clone, Copy)]
+            enum Align { Left, Right, Center }
+            #[derive(Clone, Copy)]
+            enum Trunc { None, Trunc, LTrunc, MTrunc }
+            struct ColSpec { width: usize, align: Align, trunc: Trunc }
+            fn apply_col(spec: &ColSpec, s: &str) -> String {
+                let char_len = s.chars().count();
+                if char_len > spec.width {
+                    match spec.trunc {
+                        Trunc::None => s.to_owned(),
+                        Trunc::Trunc => {
+                            let mut out: String = s.chars().take(spec.width.saturating_sub(2)).collect();
+                            out.push_str("..");
+                            out
+                        }
+                        Trunc::LTrunc => {
+                            let skip = char_len - spec.width + 2;
+                            let mut out = String::from("..");
+                            out.extend(s.chars().skip(skip));
+                            out
+                        }
+                        Trunc::MTrunc => {
+                            let keep = spec.width.saturating_sub(2);
+                            let left_half = keep / 2;
+                            let right_half = keep - left_half;
+                            let mut out: String = s.chars().take(left_half).collect();
+                            out.push_str("..");
+                            out.extend(s.chars().skip(char_len - right_half));
+                            out
+                        }
+                    }
+                } else {
+                    let pad = spec.width - char_len;
+                    match spec.align {
+                        Align::Left => {
+                            let mut out = s.to_owned();
+                            for _ in 0..pad { out.push(' '); }
+                            out
+                        }
+                        Align::Right => {
+                            let mut out = String::new();
+                            for _ in 0..pad { out.push(' '); }
+                            out.push_str(s);
+                            out
+                        }
+                        Align::Center => {
+                            let left = pad / 2;
+                            let right = pad - left;
+                            let mut out = String::new();
+                            for _ in 0..left { out.push(' '); }
+                            out.push_str(s);
+                            for _ in 0..right { out.push(' '); }
+                            out
+                        }
+                    }
+                }
+            }
+            fn parse_col_spec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, align: Align) -> Option<ColSpec> {
+                // Consume '('
+                if chars.peek() != Some(&'(') { return None; }
+                chars.next();
+                let mut num_str = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c.is_ascii_digit() { num_str.push(c); chars.next(); } else { break; }
+                }
+                let width: usize = num_str.parse().ok()?;
+                let trunc = if chars.peek() == Some(&',') {
+                    chars.next(); // consume comma
+                    let mut mode = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c == ')' { break; }
+                        mode.push(c); chars.next();
+                    }
+                    match mode.as_str() {
+                        "trunc" => Trunc::Trunc,
+                        "ltrunc" => Trunc::LTrunc,
+                        "mtrunc" => Trunc::MTrunc,
+                        _ => Trunc::None,
+                    }
+                } else {
+                    Trunc::None
+                };
+                // Consume ')'
+                if chars.peek() == Some(&')') { chars.next(); }
+                Some(ColSpec { width, align, trunc })
+            }
+
+            let mut pending_col: Option<ColSpec> = None;
             let mut rendered = String::new();
             let mut chars = raw_fmt.chars().peekable();
             while let Some(ch) = chars.next() {
@@ -573,123 +894,238 @@ pub fn render_commit(
                     rendered.push(ch);
                     continue;
                 }
+                // Check for alignment directives: %<(...), %>(...), %><(...)
+                if chars.peek() == Some(&'<') {
+                    chars.next();
+                    if let Some(spec) = parse_col_spec(&mut chars, Align::Left) {
+                        pending_col = Some(spec);
+                    }
+                    continue;
+                }
+                if chars.peek() == Some(&'>') {
+                    chars.next();
+                    if chars.peek() == Some(&'<') {
+                        chars.next(); // %><(...)
+                        if let Some(spec) = parse_col_spec(&mut chars, Align::Center) {
+                            pending_col = Some(spec);
+                        }
+                    } else if chars.peek() == Some(&'>') {
+                        chars.next(); // %>>(...)
+                        if let Some(spec) = parse_col_spec(&mut chars, Align::Right) {
+                            pending_col = Some(spec);
+                        }
+                    } else if let Some(spec) = parse_col_spec(&mut chars, Align::Right) {
+                        pending_col = Some(spec);
+                    }
+                    continue;
+                }
+
+                // Helper macro-like: expand the placeholder, then apply pending_col
+                let mut expanded = String::new();
+                let target = if pending_col.is_some() { &mut expanded } else { &mut rendered };
                 match chars.peek() {
-                    Some('%') => { chars.next(); rendered.push('%'); }
-                    Some('H') => { chars.next(); rendered.push_str(&oid.to_hex()); }
+                    Some('%') => { chars.next(); target.push('%'); }
+                    Some('H') => { chars.next(); target.push_str(&oid.to_hex()); }
                     Some('h') => {
                         chars.next();
                         let hex = oid.to_hex();
                         let n = abbrev_len.clamp(4, 40).min(hex.len());
-                        rendered.push_str(&hex[..n]);
+                        target.push_str(&hex[..n]);
                     }
-                    Some('T') => { chars.next(); rendered.push_str(&tree_hex); }
+                    Some('T') => { chars.next(); target.push_str(&tree_hex); }
                     Some('t') => {
                         chars.next();
                         let n = abbrev_len.clamp(4, 40).min(tree_hex.len());
-                        rendered.push_str(&tree_hex[..n]);
+                        target.push_str(&tree_hex[..n]);
                     }
-                    Some('P') => { chars.next(); rendered.push_str(&parent_hexes.join(" ")); }
-                    Some('p') => { chars.next(); rendered.push_str(&parent_abbrevs.join(" ")); }
-                    Some('n') => { chars.next(); rendered.push('\n'); }
-                    Some('s') => { chars.next(); rendered.push_str(subject); }
-                    Some('b') => { chars.next(); rendered.push_str(&body); if !body.is_empty() { rendered.push('\n'); } }
-                    Some('B') => { chars.next(); rendered.push_str(&commit.message); }
+                    Some('P') => { chars.next(); target.push_str(&parent_hexes.join(" ")); }
+                    Some('p') => { chars.next(); target.push_str(&parent_abbrevs.join(" ")); }
+                    Some('n') => { chars.next(); target.push('\n'); }
+                    Some('s') => { chars.next(); target.push_str(subject); }
+                    Some('b') => { chars.next(); target.push_str(&body); if !body.is_empty() { target.push('\n'); } }
+                    Some('B') => { chars.next(); target.push_str(&commit.message); }
                     Some('a') => {
                         chars.next();
                         match chars.next() {
-                            Some('n') => rendered.push_str(extract_name(&commit.author)),
-                            Some('N') => rendered.push_str(extract_name(&commit.author)),
-                            Some('e') => rendered.push_str(extract_email(&commit.author)),
-                            Some('E') => rendered.push_str(extract_email(&commit.author)),
-                            Some('d') => rendered.push_str(&extract_date_default(&commit.author)),
-                            Some('D') => rendered.push_str(&extract_date_default(&commit.author)),
-                            Some('t') => rendered.push_str(extract_timestamp(&commit.author)),
-                            Some('i') => {
-                                // ISO date
-                                let parts: Vec<&str> = commit.author.rsplitn(3, ' ').collect();
-                                if parts.len() >= 2 {
-                                    let ts: i64 = parts[1].parse().unwrap_or(0);
-                                    let offset = parts[0];
-                                    let tz_bytes = offset.as_bytes();
-                                    let tz_secs: i64 = if tz_bytes.len() >= 5 {
-                                        let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
-                                        let h: i64 = offset[1..3].parse().unwrap_or(0);
-                                        let m: i64 = offset[3..5].parse().unwrap_or(0);
-                                        sign * (h * 3600 + m * 60)
-                                    } else { 0 };
-                                    let adjusted = ts + tz_secs;
-                                    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
-                                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                                    rendered.push_str(&format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
-                                        dt.year(), dt.month() as u8, dt.day(),
-                                        dt.hour(), dt.minute(), dt.second(), offset));
-                                }
+                            Some('n') => target.push_str(extract_name(&commit.author)),
+                            Some('N') => target.push_str(extract_name(&commit.author)),
+                            Some('e') => target.push_str(extract_email(&commit.author)),
+                            Some('E') => target.push_str(extract_email(&commit.author)),
+                            Some('l') => target.push_str(extract_email_local(&commit.author)),
+                            Some('d') => target.push_str(&extract_date_default(&commit.author)),
+                            Some('D') => target.push_str(&extract_date_rfc2822(&commit.author)),
+                            Some('t') => target.push_str(extract_timestamp(&commit.author)),
+                            Some('s') => target.push_str(&extract_date_short(&commit.author)),
+                            Some('i') => target.push_str(&extract_date_iso(&commit.author)),
+                            Some('I') => {
+                                let Some((ts, offset_str)) = parse_ident_date(&commit.author) else { break };
+                                let adjusted = ts + parse_tz(offset_str);
+                                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                                let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
+                                let abs_off = parse_tz(offset_str).unsigned_abs();
+                                target.push_str(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                                    dt.year(), dt.month() as u8, dt.day(),
+                                    dt.hour(), dt.minute(), dt.second(),
+                                    sign_ch, abs_off / 3600, (abs_off % 3600) / 60));
                             }
-                            Some(other) => { rendered.push('%'); rendered.push('a'); rendered.push(other); }
-                            None => { rendered.push('%'); rendered.push('a'); }
+                            Some('r') => {
+                                let Some((ts, _)) = parse_ident_date(&commit.author) else { break };
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default().as_secs() as i64;
+                                target.push_str(&format_relative_date(now - ts));
+                            }
+                            Some(other) => { target.push('%'); target.push('a'); target.push(other); }
+                            None => { target.push('%'); target.push('a'); }
                         }
                     }
                     Some('c') => {
                         chars.next();
                         match chars.next() {
-                            Some('n') => rendered.push_str(extract_name(&commit.committer)),
-                            Some('N') => rendered.push_str(extract_name(&commit.committer)),
-                            Some('e') => rendered.push_str(extract_email(&commit.committer)),
-                            Some('E') => rendered.push_str(extract_email(&commit.committer)),
-                            Some('d') => rendered.push_str(&extract_date_default(&commit.committer)),
-                            Some('D') => rendered.push_str(&extract_date_default(&commit.committer)),
-                            Some('t') => rendered.push_str(extract_timestamp(&commit.committer)),
-                            Some('i') => {
-                                let parts: Vec<&str> = commit.committer.rsplitn(3, ' ').collect();
-                                if parts.len() >= 2 {
-                                    let ts: i64 = parts[1].parse().unwrap_or(0);
-                                    let offset = parts[0];
-                                    let tz_bytes = offset.as_bytes();
-                                    let tz_secs: i64 = if tz_bytes.len() >= 5 {
-                                        let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
-                                        let h: i64 = offset[1..3].parse().unwrap_or(0);
-                                        let m: i64 = offset[3..5].parse().unwrap_or(0);
-                                        sign * (h * 3600 + m * 60)
-                                    } else { 0 };
-                                    let adjusted = ts + tz_secs;
-                                    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
-                                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                                    rendered.push_str(&format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
-                                        dt.year(), dt.month() as u8, dt.day(),
-                                        dt.hour(), dt.minute(), dt.second(), offset));
-                                }
+                            Some('n') => target.push_str(extract_name(&commit.committer)),
+                            Some('N') => target.push_str(extract_name(&commit.committer)),
+                            Some('e') => target.push_str(extract_email(&commit.committer)),
+                            Some('E') => target.push_str(extract_email(&commit.committer)),
+                            Some('l') => target.push_str(extract_email_local(&commit.committer)),
+                            Some('d') => target.push_str(&extract_date_default(&commit.committer)),
+                            Some('D') => target.push_str(&extract_date_rfc2822(&commit.committer)),
+                            Some('t') => target.push_str(extract_timestamp(&commit.committer)),
+                            Some('s') => target.push_str(&extract_date_short(&commit.committer)),
+                            Some('i') => target.push_str(&extract_date_iso(&commit.committer)),
+                            Some('I') => {
+                                let Some((ts, offset_str)) = parse_ident_date(&commit.committer) else { break };
+                                let adjusted = ts + parse_tz(offset_str);
+                                let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+                                    .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                                let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
+                                let abs_off = parse_tz(offset_str).unsigned_abs();
+                                target.push_str(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                                    dt.year(), dt.month() as u8, dt.day(),
+                                    dt.hour(), dt.minute(), dt.second(),
+                                    sign_ch, abs_off / 3600, (abs_off % 3600) / 60));
                             }
-                            Some(other) => { rendered.push('%'); rendered.push('c'); rendered.push(other); }
-                            None => { rendered.push('%'); rendered.push('c'); }
+                            Some('r') => {
+                                let Some((ts, _)) = parse_ident_date(&commit.committer) else { break };
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default().as_secs() as i64;
+                                target.push_str(&format_relative_date(now - ts));
+                            }
+                            Some(other) => { target.push('%'); target.push('c'); target.push(other); }
+                            None => { target.push('%'); target.push('c'); }
                         }
                     }
                     Some('x') => {
                         // Hex escape: %xNN
                         chars.next();
-                        let mut hex = String::new();
-                        if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex.push(c1); chars.next(); } }
-                        if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex.push(c2); chars.next(); } }
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            rendered.push(byte as char);
+                        let mut hex_str = String::new();
+                        if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex_str.push(c1); chars.next(); } }
+                        if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex_str.push(c2); chars.next(); } }
+                        if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                            target.push(byte as char);
                         }
                     }
                     Some('C') => {
-                        // Color codes: %Cred, %Creset, %C(...) — strip them (no color support)
                         chars.next();
                         if chars.peek() == Some(&'(') {
-                            // Skip until closing )
+                            chars.next();
+                            let mut spec = String::new();
+                            while let Some(c) = chars.next() {
+                                if c == ')' { break; }
+                                spec.push(c);
+                            }
+                            let (force, color_spec) = if let Some(rest) = spec.strip_prefix("always,") {
+                                (true, rest)
+                            } else if let Some(rest) = spec.strip_prefix("auto,") {
+                                (false, rest)
+                            } else if spec == "auto" {
+                                if use_color { target.push_str("\x1b[m"); }
+                                continue;
+                            } else {
+                                (false, spec.as_str())
+                            };
+                            if use_color || force {
+                                target.push_str(&ansi_color_from_spec(color_spec));
+                            }
+                        } else {
+                            // Named colors: %Cred, %Cgreen, %Cblue, %Creset, %Cbold
+                            // Must match known names only, not consume trailing text
+                            let remaining: String = chars.clone().collect();
+                            let known = ["reset", "red", "green", "blue", "yellow", "magenta", "cyan", "white", "bold", "dim", "ul"];
+                            let mut matched = false;
+                            for name in &known {
+                                if remaining.starts_with(name) {
+                                    for _ in 0..name.len() { chars.next(); }
+                                    if use_color {
+                                        target.push_str(&ansi_color_from_name(name));
+                                    }
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                            if !matched {
+                                // Unknown color name — consume alphanumerics
+                                while let Some(&c) = chars.peek() {
+                                    if c.is_alphanumeric() { chars.next(); }
+                                    else { break; }
+                                }
+                            }
+                        }
+                    }
+                    Some('w') => {
+                        // %w(...) — wrapping directive, consume and ignore for now
+                        chars.next();
+                        if chars.peek() == Some(&'(') {
                             chars.next();
                             while let Some(c) = chars.next() {
                                 if c == ')' { break; }
                             }
-                        } else {
-                            // Named colors: Cred, Cgreen, Cblue, Creset, Cbold
-                            let mut name = String::new();
-                            while let Some(&c) = chars.peek() {
-                                if c.is_alphanumeric() { name.push(c); chars.next(); }
-                                else { break; }
+                        }
+                    }
+                    Some('+') => {
+                        // %+x — conditional newline: if next placeholder is non-empty, prepend newline
+                        chars.next();
+                        // Expand the following placeholder
+                        if chars.peek() == Some(&'%') {
+                            // The %+ applies to the NEXT expanded value
+                            // For simplicity, treat %+x as: if %x is non-empty, emit '\n' + value
+                            // This needs the *next* placeholder's value
+                        }
+                        // Simple: consume the next char as a format code; prepend \n if non-empty
+                        let mut sub = String::new();
+                        if let Some(&nc) = chars.peek() {
+                            match nc {
+                                'b' => {
+                                    chars.next();
+                                    sub.push_str(&body);
+                                    if !body.is_empty() { sub.push('\n'); }
+                                }
+                                's' => { chars.next(); sub.push_str(subject); }
+                                _ => { chars.next(); sub.push('%'); sub.push('+'); sub.push(nc); }
                             }
-                            // Just strip it — no color output
+                        }
+                        if !sub.is_empty() {
+                            target.push('\n');
+                            target.push_str(&sub);
+                        }
+                    }
+                    Some('-') => {
+                        // %-x — conditional: suppress newline before placeholder if empty
+                        chars.next();
+                        // Consume the next format code
+                        if let Some(&nc) = chars.peek() {
+                            match nc {
+                                'b' => {
+                                    chars.next();
+                                    if !body.is_empty() {
+                                        target.push_str(&body);
+                                        target.push('\n');
+                                    }
+                                }
+                                's' => { chars.next(); target.push_str(subject); }
+                                _ => { chars.next(); target.push('%'); target.push('-'); target.push(nc); }
+                            }
                         }
                     }
                     Some('d') => {
@@ -704,12 +1140,25 @@ pub fn render_commit(
                         // Encoding
                         chars.next();
                     }
+                    Some('g') => {
+                        // Reflog placeholders: %gD, %gd, %gs, %gn, %ge, etc.
+                        chars.next();
+                        if let Some(&_nc) = chars.peek() {
+                            chars.next(); // consume the sub-specifier
+                            // For non-reflog commits, these expand to empty
+                        }
+                    }
                     Some(&other) => {
                         chars.next();
-                        rendered.push('%');
-                        rendered.push(other);
+                        target.push('%');
+                        target.push(other);
                     }
-                    None => rendered.push('%'),
+                    None => target.push('%'),
+                }
+                // Apply pending column formatting
+                if let Some(spec) = pending_col.take() {
+                    let formatted = apply_col(&spec, &expanded);
+                    rendered.push_str(&formatted);
                 }
             }
             Ok(rendered)

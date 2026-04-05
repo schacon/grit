@@ -316,6 +316,30 @@ pub struct Args {
     #[arg(long = "check")]
     pub check: bool,
 
+    /// Set the source prefix (default: "a/").
+    #[arg(long = "src-prefix", value_name = "PREFIX")]
+    pub src_prefix: Option<String>,
+
+    /// Set the destination prefix (default: "b/").
+    #[arg(long = "dst-prefix", value_name = "PREFIX")]
+    pub dst_prefix: Option<String>,
+
+    /// Do not show any source or destination prefix.
+    #[arg(long = "no-prefix")]
+    pub no_prefix: bool,
+
+    /// Override config and use the default "a/"/"b/" prefix.
+    #[arg(long = "default-prefix")]
+    pub default_prefix: bool,
+
+    /// Line prefix for every line of output.
+    #[arg(long = "line-prefix", value_name = "PREFIX")]
+    pub line_prefix: Option<String>,
+
+    /// Disable rename detection (must not be abbreviated).
+    #[arg(long = "no-renames")]
+    pub no_renames: bool,
+
     /// Commits or paths. Use `--` to separate revisions from paths.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
@@ -358,6 +382,9 @@ pub fn run(mut args: Args) -> Result<()> {
     let (mut revs, paths) = parse_rev_and_paths(&args.args, has_separator);
 
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Resolve diff prefixes from config and command-line options
+    let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
 
     // Expand A...B (symmetric diff) → merge-base(A,B)..B
     // Expand A..B → A B (two-rev diff)
@@ -417,6 +444,18 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
                 s if s.starts_with("-O") && s.len() > 2 => {
                     args.order_file = Some(s[2..].to_string());
+                }
+                "--no-prefix" => { args.no_prefix = true; }
+                "--default-prefix" => { args.default_prefix = true; }
+                "--no-renames" => { args.no_renames = true; }
+                s if s.starts_with("--src-prefix=") => {
+                    args.src_prefix = Some(s.strip_prefix("--src-prefix=").unwrap_or("").to_owned());
+                }
+                s if s.starts_with("--dst-prefix=") => {
+                    args.dst_prefix = Some(s.strip_prefix("--dst-prefix=").unwrap_or("").to_owned());
+                }
+                s if s.starts_with("--line-prefix=") => {
+                    args.line_prefix = Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
                 }
                 _ => { extra_revs.push(r.clone()); continue; }
             }
@@ -762,7 +801,7 @@ pub fn run(mut args: Args) -> Result<()> {
             } else {
                 7
             };
-            write_patch(
+            write_patch_with_prefix(
                 &mut out,
                 &entries,
                 &repo.odb,
@@ -774,6 +813,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 patch_abbrev,
                 args.inter_hunk_context,
                 args.binary,
+                &src_prefix,
+                &dst_prefix,
             )?;
         }
     }
@@ -1355,7 +1396,12 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
     write_diff_header_with_abbrev(out, entry, use_color, 7)
 }
 
+#[allow(dead_code)]
 fn write_diff_header_with_abbrev(out: &mut impl Write, entry: &DiffEntry, use_color: bool, abbrev_len: usize) -> Result<()> {
+    write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/")
+}
+
+fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_color: bool, abbrev_len: usize, src_prefix: &str, dst_prefix: &str) -> Result<()> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -1366,7 +1412,7 @@ fn write_diff_header_with_abbrev(out: &mut impl Write, entry: &DiffEntry, use_co
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
     let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
-    writeln!(out, "{b}diff --git a/{old_path} b/{new_path}{r}")?;
+    writeln!(out, "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}")?;
 
     let abbr = |oid: &ObjectId| -> String {
         let hex = oid.to_hex();
@@ -1427,11 +1473,7 @@ fn write_diff_header_with_abbrev(out: &mut impl Write, entry: &DiffEntry, use_co
     Ok(())
 }
 
-/// Write full unified diff output with `diff --git` headers.
-///
-/// `work_tree` is provided when one side of the diff is the working tree,
-/// so we can read file content from disk when the blob is not in the ODB.
-fn write_patch(
+fn write_patch_with_prefix(
     out: &mut impl Write,
     entries: &[DiffEntry],
     odb: &Odb,
@@ -1443,12 +1485,14 @@ fn write_patch(
     abbrev_len: usize,
     _inter_hunk_context: Option<usize>,
     show_binary: bool,
+    src_prefix: &str,
+    dst_prefix: &str,
 ) -> Result<()> {
     for entry in entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
-        write_diff_header_with_abbrev(out, entry, use_color, abbrev_len)?;
+        write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
@@ -1462,8 +1506,8 @@ fn write_patch(
             } else {
                 writeln!(
                     out,
-                    "Binary files a/{} and b/{} differ",
-                    old_path, new_path
+                    "Binary files {}{} and {}{} differ",
+                    src_prefix, old_path, dst_prefix, new_path
                 )?;
             }
             continue;
@@ -1499,12 +1543,14 @@ fn write_patch(
                 write!(out, "{patch}")?;
             }
         } else {
-            let patch = unified_diff(
+            let patch = grit_lib::diff::unified_diff_with_prefix(
                 &old_content,
                 &new_content,
                 display_old,
                 display_new,
                 context_lines,
+                src_prefix,
+                dst_prefix,
             );
             let patch = if suppress_blank_empty { strip_blank_context_trailing_space(&patch) } else { patch };
 
@@ -2170,4 +2216,56 @@ fn check_whitespace_errors(
         }
     }
     Ok(has_errors)
+}
+
+/// Resolve the source and destination prefixes for diff output, considering
+/// command-line flags and config options.
+fn resolve_diff_prefixes(args: &Args, repo: &Repository) -> (String, String) {
+    if args.default_prefix {
+        return ("a/".to_owned(), "b/".to_owned());
+    }
+    if args.no_prefix {
+        return (String::new(), String::new());
+    }
+    let explicit_src = args.src_prefix.is_some();
+    let explicit_dst = args.dst_prefix.is_some();
+    if explicit_src && explicit_dst {
+        return (
+            args.src_prefix.clone().unwrap_or_default(),
+            args.dst_prefix.clone().unwrap_or_default(),
+        );
+    }
+
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+
+    if let Some(ref cfg) = config {
+        if let Some(ref val) = cfg.get("diff.noprefix") {
+            if val == "true" || val == "yes" || val == "on" || val == "1" {
+                return (String::new(), String::new());
+            }
+        }
+        if let Some(ref val) = cfg.get("diff.mnemonicprefix") {
+            if val == "true" || val == "yes" || val == "on" || val == "1" {
+                return ("i/".to_owned(), "w/".to_owned());
+            }
+        }
+    }
+
+    let src = if explicit_src {
+        args.src_prefix.clone().unwrap_or_default()
+    } else if let Some(ref cfg) = config {
+        cfg.get("diff.srcprefix").unwrap_or_else(|| "a/".to_owned())
+    } else {
+        "a/".to_owned()
+    };
+
+    let dst = if explicit_dst {
+        args.dst_prefix.clone().unwrap_or_default()
+    } else if let Some(ref cfg) = config {
+        cfg.get("diff.dstprefix").unwrap_or_else(|| "b/".to_owned())
+    } else {
+        "b/".to_owned()
+    };
+
+    (src, dst)
 }

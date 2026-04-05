@@ -4,7 +4,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
-    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit, rev_list,
+    collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
+    render_commit_with_color, rev_list,
     split_symmetric_diff, tag_targets, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 
@@ -27,6 +28,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut end_of_options = false;
     let mut path_mode = false;
     let mut no_commit_header = false;
+    let mut use_color = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -239,8 +241,12 @@ pub fn run(args: Args) -> Result<()> {
                 "--filter-print-omitted" => options.filter_print_omitted = true,
                 "--no-commit-header" => no_commit_header = true,
                 "--commit-header" => no_commit_header = false,
-                "--color" | "--no-color" => { /* silently accept */ }
-                _ if arg.starts_with("--color=") => { /* silently accept */ }
+                "--color" => { use_color = true; }
+                "--no-color" => { use_color = false; }
+                _ if arg.starts_with("--color=") => {
+                    let val = arg.trim_start_matches("--color=");
+                    use_color = val == "always" || val == "true";
+                }
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
                 _ if arg.starts_with("--filter=") => {
@@ -256,6 +262,20 @@ pub fn run(args: Args) -> Result<()> {
         }
         revision_specs.push(arg.clone());
         i += 1;
+    }
+
+    // Check config for color settings if not explicitly set via --color/--no-color
+    if !use_color {
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("color.diff") {
+                if val == "always" || val == "true" { use_color = true; }
+            }
+            if !use_color {
+                if let Some(val) = config.get("color.ui") {
+                    if val == "always" || val == "true" { use_color = true; }
+                }
+            }
+        }
     }
 
     if options.simplify_by_decoration {
@@ -351,12 +371,22 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
         match &options.output_mode {
-            OutputMode::Format(_) => {
-                if !no_commit_header {
+            OutputMode::Format(fmt) => {
+                let is_oneline = fmt == "oneline";
+                let is_named_format = matches!(fmt.as_str(), "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw");
+                if !no_commit_header && !is_oneline {
                     println!("commit {prefix}{oid}");
                 }
-                let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
-                println!("{rendered}");
+                let rendered = render_commit_with_color(&repo, *oid, &options.output_mode, abbrev_len, use_color)?;
+                if is_named_format {
+                    // Named formats handle their own trailing newlines
+                    print!("{rendered}");
+                    if !rendered.ends_with('\n') {
+                        println!();
+                    }
+                } else {
+                    println!("{rendered}");
+                }
             }
             _ => {
                 let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;

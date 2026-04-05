@@ -1302,6 +1302,19 @@ pub fn unified_diff(
     new_path: &str,
     context_lines: usize,
 ) -> String {
+    unified_diff_with_prefix(old_content, new_content, old_path, new_path, context_lines, "a/", "b/")
+}
+
+/// Same as `unified_diff` but with configurable source/destination prefixes.
+pub fn unified_diff_with_prefix(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+) -> String {
     use similar::TextDiff;
 
     let diff = TextDiff::from_lines(old_content, new_content);
@@ -1310,12 +1323,12 @@ pub fn unified_diff(
     if old_path == "/dev/null" {
         output.push_str("--- /dev/null\n");
     } else {
-        output.push_str(&format!("--- a/{old_path}\n"));
+        output.push_str(&format!("--- {src_prefix}{old_path}\n"));
     }
     if new_path == "/dev/null" {
         output.push_str("+++ /dev/null\n");
     } else {
-        output.push_str(&format!("+++ b/{new_path}\n"));
+        output.push_str(&format!("+++ {dst_prefix}{new_path}\n"));
     }
 
     let old_lines: Vec<&str> = old_content.lines().collect();

@@ -179,9 +179,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 // Silently accept diff options we don't fully implement yet
                 "-w" | "--ignore-all-space" | "-b" | "--ignore-space-change"
                 | "--ignore-space-at-eol" | "--ignore-blank-lines"
-                | "--diff-filter" | "--full-index" | "--no-ext-diff" => {}
+                | "--diff-filter" | "--full-index" | "--no-ext-diff"
+                | "--no-prefix" | "--no-renames" | "--no-abbrev" => {}
                 _ if arg.starts_with("--diff-filter=") || arg.starts_with("-G")
-                    || arg.starts_with("-S") || arg.starts_with("-O") => {}
+                    || arg.starts_with("-S") || arg.starts_with("-O")
+                    || arg.starts_with("--src-prefix=") || arg.starts_with("--dst-prefix=") => {}
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;

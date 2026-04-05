@@ -65,6 +65,70 @@ pub struct Args {
     /// Show names and status of changed files.
     #[arg(long = "name-status")]
     pub name_status: bool,
+
+    /// Show a summary of extended header information (renames, mode changes).
+    #[arg(long = "summary")]
+    pub summary: bool,
+
+    /// Show the patch (diff) output together with the diffstat.
+    #[arg(long = "patch-with-stat")]
+    pub patch_with_stat: bool,
+
+    /// Show the patch (diff) output together with the raw output.
+    #[arg(long = "patch-with-raw")]
+    pub patch_with_raw: bool,
+
+    /// Generate a patch.
+    #[arg(short = 'p', long = "patch")]
+    pub patch: bool,
+
+    /// Show abbreviated OIDs.
+    #[arg(long = "abbrev", value_name = "N", default_missing_value = "7", num_args = 0..=1, require_equals = true)]
+    pub abbrev: Option<String>,
+
+    /// Show full OIDs.
+    #[arg(long = "no-abbrev")]
+    pub no_abbrev: bool,
+
+    /// Detect renames.
+    #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1)]
+    pub find_renames: Option<String>,
+
+    /// Show the full diff (for merge commits).
+    #[arg(short = 'm')]
+    pub diff_merges: bool,
+
+    /// Date format for display.
+    #[arg(long = "date")]
+    pub date: Option<String>,
+
+    /// Don't show external diff helper.
+    #[arg(long = "no-ext-diff")]
+    pub no_ext_diff: bool,
+
+    /// Show notes.
+    #[arg(long = "notes", num_args = 0..=1, default_missing_value = "", require_equals = true)]
+    pub notes: Option<String>,
+
+    /// Full diff index hashes.
+    #[arg(long = "full-index")]
+    pub full_index: bool,
+
+    /// Colorize the output.
+    #[arg(long = "color", value_name = "WHEN", default_missing_value = "always", num_args = 0..=1)]
+    pub color: Option<String>,
+
+    /// Disable color.
+    #[arg(long = "no-color")]
+    pub no_color: bool,
+
+    /// Show short stat summary.
+    #[arg(long = "shortstat")]
+    pub shortstat: bool,
+
+    /// Disable textconv.
+    #[arg(long = "no-textconv")]
+    pub no_textconv: bool,
 }
 
 /// Run the `show` command.
@@ -396,14 +460,17 @@ fn write_diffstat(
     }
 
     let max_name_len = stats.iter().map(|(p, _, _)| p.len()).max().unwrap_or(0);
+    let max_total = stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
+    let num_width = format!("{}", max_total).len();
 
     for (path, ins, del) in &stats {
         let total = ins + del;
         let bar: String = "+".repeat(*ins).to_string() + &"-".repeat(*del);
         writeln!(
             out,
-            " {path:<width$} | {total:>4} {bar}",
-            width = max_name_len
+            " {path:<width$} | {total:>nw$} {bar}",
+            width = max_name_len,
+            nw = num_width,
         )?;
     }
 

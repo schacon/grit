@@ -172,6 +172,10 @@ GIT_COMMITTER_NAME="C O Mitter"
 GIT_COMMITTER_EMAIL="committer@example.com"
 GIT_AUTHOR_DATE="1112354055 +0200"
 GIT_COMMITTER_DATE="1112354055 +0200"
+TEST_AUTHOR_LOCALNAME=author
+TEST_AUTHOR_DOMAIN=example.com
+TEST_COMMITTER_LOCALNAME=committer
+TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
@@ -330,8 +334,13 @@ test_decode_color () {
 		-e 's/\x1b\[[0-9;]*m//g'
 }
 
-OID_REGEX='[0-9a-f]{40,}'
-export OID_REGEX
+_x05='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+_x35="$_x05$_x05$_x05$_x05$_x05$_x05$_x05"
+_x40="$_x35$_x05"
+OID_REGEX="$_x40"
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
+EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
 # test_oid helpers — support SHA-1 only for now
 test_oid () {

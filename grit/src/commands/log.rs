@@ -213,6 +213,10 @@ pub struct Args {
     #[arg(long = "no-graph")]
     pub no_graph: bool,
 
+    /// Show a visual break between non-linear sections.
+    #[arg(long = "show-linear-break", default_missing_value = "", num_args = 0..=1, require_equals = true)]
+    pub show_linear_break: Option<String>,
+
     /// Show GPG signature.
     #[arg(long = "show-signature")]
     pub show_signature: bool,
@@ -232,6 +236,30 @@ pub struct Args {
     /// Case insensitive grep.
     #[arg(short = 'i', long = "regexp-ignore-case")]
     pub regexp_ignore_case: bool,
+
+    /// All --grep patterns must match.
+    #[arg(long = "all-match")]
+    pub all_match: bool,
+
+    /// Use basic regexp for --grep.
+    #[arg(short = 'G', long = "basic-regexp")]
+    pub basic_regexp: bool,
+
+    /// Use extended regexp for --grep.
+    #[arg(short = 'E', long = "extended-regexp")]
+    pub extended_regexp: bool,
+
+    /// Use fixed strings for --grep.
+    #[arg(short = 'F', long = "fixed-strings")]
+    pub fixed_strings: bool,
+
+    /// Use Perl regexp for --grep.
+    #[arg(short = 'P', long = "perl-regexp")]
+    pub perl_regexp: bool,
+
+    /// End of options marker (everything after is a revision/path).
+    #[arg(long = "end-of-options")]
+    pub end_of_options: bool,
 
     /// Date ordering.
     #[arg(long = "date-order")]
@@ -262,6 +290,48 @@ pub struct Args {
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    // Determine color mode
+    let use_color = if args.no_color {
+        false
+    } else if let Some(ref c) = args.color {
+        c == "always" || c == "true" || c.is_empty()
+    } else {
+        // Check config for color.diff / color.ui
+        let mut c = false;
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("color.diff") {
+                if val == "always" || val == "true" { c = true; }
+            }
+            if !c {
+                if let Some(val) = config.get("color.ui") {
+                    if val == "always" || val == "true" { c = true; }
+                }
+            }
+        }
+        c
+    };
+
+    // --no-graph overrides --graph
+    if args.no_graph {
+        args.graph = false;
+    }
+
+    // Detect conflicting flag combinations
+    if args.graph {
+        if args.reverse {
+            anyhow::bail!("options '--reverse' and '--graph' cannot be used together");
+        }
+        if args.no_walk.is_some() {
+            anyhow::bail!("options '--no-walk' and '--graph' cannot be used together");
+        }
+        if args.walk_reflogs {
+            anyhow::bail!("options '--walk-reflogs' and '--graph' cannot be used together");
+        }
+        if args.show_linear_break.is_some() {
+            anyhow::bail!("options '--show-linear-break' and '--graph' cannot be used together");
+        }
+    }
+
     // Resolve pretty format aliases from config
     if let Some(ref fmt) = args.format {
         let resolved = resolve_pretty_alias_with_config(fmt, &repo);
@@ -289,7 +359,9 @@ pub fn run(mut args: Args) -> Result<()> {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
             Some(oid) => (vec![*oid], Vec::new()),
-            None => return Ok(()), // Unborn branch — nothing to show
+            None => {
+                anyhow::bail!("your current branch 'main' does not have any commits yet");
+            }
         }
     } else {
         let mut oids = Vec::new();
@@ -345,7 +417,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .as_ref()
         .map(|p| {
             let pattern = p.replace(r"\|", "|");
-            RegexBuilder::new(&pattern).case_insensitive(true).build()
+            RegexBuilder::new(&pattern).case_insensitive(args.regexp_ignore_case).build()
         })
         .transpose()
         .context("invalid --grep regex")?;
@@ -475,7 +547,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
-            writeln!(out)?;
+            if args.null_terminator {
+                write!(out, "\0")?;
+            } else {
+                writeln!(out)?;
+            }
         }
         // Show --source annotation if available
         if args.source {
@@ -488,7 +564,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 write!(out, "{}\t", short_src)?;
             }
         }
-        format_commit(&mut out, oid, commit_data, &args, decorations.as_ref())?;
+        format_commit(&mut out, oid, commit_data, &args, decorations.as_ref(), use_color)?;
 
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
@@ -563,7 +639,7 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
-        format_commit(&mut out, oid, commit_data, args, decorations.as_ref())?;
+        format_commit(&mut out, oid, commit_data, args, decorations.as_ref(), false)?;
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
@@ -961,6 +1037,7 @@ fn format_commit(
     info: &CommitInfo,
     args: &Args,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    use_color: bool,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = parse_abbrev(&args.abbrev);
@@ -983,9 +1060,13 @@ fn format_commit(
             } else {
                 &fmt[8..]
             };
-            let formatted = apply_format_string(template, oid, info, decorations, date_format, abbrev_len);
+            let formatted = apply_format_string(template, oid, info, decorations, date_format, abbrev_len, use_color);
             if is_tformat {
-                writeln!(out, "{formatted}")?;
+                if args.null_terminator {
+                    write!(out, "{formatted}\0")?;
+                } else {
+                    writeln!(out, "{formatted}")?;
+                }
             } else {
                 write!(out, "{formatted}")?;
             }
@@ -1066,7 +1147,7 @@ fn format_commit(
         }
         Some(other) => {
             // Try as a format string directly
-            let formatted = apply_format_string(other, oid, info, decorations, date_format, abbrev_len);
+            let formatted = apply_format_string(other, oid, info, decorations, date_format, abbrev_len, use_color);
             writeln!(out, "{formatted}")?;
         }
     }
@@ -1082,13 +1163,113 @@ fn apply_format_string(
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     date_format: Option<&str>,
     abbrev_len: usize,
+    use_color: bool,
 ) -> String {
     let hex = oid.to_hex();
+
+    // Alignment/truncation helpers
+    #[derive(Clone, Copy)]
+    enum Align { Left, Right, Center }
+    #[derive(Clone, Copy)]
+    enum Trunc { None, Trunc, LTrunc, MTrunc }
+    struct ColSpec { width: usize, align: Align, trunc: Trunc, absolute: bool }
+    fn apply_col(spec: &ColSpec, s: &str) -> String {
+        let char_len = s.chars().count();
+        if char_len > spec.width {
+            match spec.trunc {
+                Trunc::None => s.to_owned(),
+                Trunc::Trunc => {
+                    let mut out: String = s.chars().take(spec.width.saturating_sub(2)).collect();
+                    out.push_str("..");
+                    out
+                }
+                Trunc::LTrunc => {
+                    let skip = char_len - spec.width + 2;
+                    let mut out = String::from("..");
+                    out.extend(s.chars().skip(skip));
+                    out
+                }
+                Trunc::MTrunc => {
+                    let keep = spec.width.saturating_sub(2);
+                    let left = keep / 2;
+                    let right = keep - left;
+                    let mut out: String = s.chars().take(left).collect();
+                    out.push_str("..");
+                    out.extend(s.chars().skip(char_len - right));
+                    out
+                }
+            }
+        } else {
+            let pad = spec.width - char_len;
+            match spec.align {
+                Align::Left => { let mut o = s.to_owned(); for _ in 0..pad { o.push(' '); } o }
+                Align::Right => { let mut o = String::new(); for _ in 0..pad { o.push(' '); } o.push_str(s); o }
+                Align::Center => { let l = pad/2; let r = pad-l; let mut o = String::new(); for _ in 0..l { o.push(' '); } o.push_str(s); for _ in 0..r { o.push(' '); } o }
+            }
+        }
+    }
+    fn parse_col_spec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, align: Align) -> Option<ColSpec> {
+        // Check for | (absolute column) variant
+        let absolute = if chars.peek() == Some(&'|') { chars.next(); true } else { false };
+        if chars.peek() != Some(&'(') { return None; }
+        chars.next();
+        // Parse number (may be negative)
+        let negative = if chars.peek() == Some(&'-') { chars.next(); true } else { false };
+        let mut num_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() { num_str.push(c); chars.next(); } else { break; }
+        }
+        let mut width: usize = num_str.parse().ok()?;
+        if negative {
+            // Negative means COLUMNS - N; default terminal width is 80
+            let columns = std::env::var("COLUMNS").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(80);
+            width = columns.saturating_sub(width);
+        }
+        let trunc = if chars.peek() == Some(&',') {
+            chars.next();
+            let mut mode = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ')' { break; }
+                mode.push(c); chars.next();
+            }
+            match mode.as_str() {
+                "trunc" => Trunc::Trunc, "ltrunc" => Trunc::LTrunc, "mtrunc" => Trunc::MTrunc,
+                _ => Trunc::None,
+            }
+        } else { Trunc::None };
+        if chars.peek() == Some(&')') { chars.next(); }
+        Some(ColSpec { width, align, trunc, absolute })
+    }
+
+    let mut pending_col: Option<ColSpec> = None;
     let mut result = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
 
     while let Some(ch) = chars.next() {
         if ch == '%' {
+            // Check alignment directives
+            if chars.peek() == Some(&'<') {
+                chars.next();
+                if let Some(spec) = parse_col_spec(&mut chars, Align::Left) {
+                    pending_col = Some(spec);
+                }
+                continue;
+            }
+            if chars.peek() == Some(&'>') {
+                chars.next();
+                if chars.peek() == Some(&'<') {
+                    chars.next();
+                    if let Some(spec) = parse_col_spec(&mut chars, Align::Center) { pending_col = Some(spec); }
+                } else if chars.peek() == Some(&'>') {
+                    chars.next();
+                    if let Some(spec) = parse_col_spec(&mut chars, Align::Right) { pending_col = Some(spec); }
+                } else if let Some(spec) = parse_col_spec(&mut chars, Align::Right) {
+                    pending_col = Some(spec);
+                }
+                continue;
+            }
+
+            let col_start = if pending_col.is_some() { result.len() } else { 0 };
             match chars.peek() {
                 Some('H') => {
                     chars.next();
@@ -1131,18 +1312,37 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&extract_name(&info.author));
                         }
+                        Some('N') => {
+                            chars.next();
+                            result.push_str(&extract_name(&info.author));
+                        }
                         Some('e') => {
                             chars.next();
                             result.push_str(&extract_email(&info.author));
+                        }
+                        Some('E') => {
+                            chars.next();
+                            result.push_str(&extract_email(&info.author));
+                        }
+                        Some('l') => {
+                            chars.next();
+                            result.push_str(&extract_email_local(&info.author));
                         }
                         Some('d') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.author, date_format));
                         }
+                        Some('D') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.author, Some("rfc")));
+                        }
                         Some('t') => {
                             chars.next();
-                            // %at — author timestamp (unix)
                             result.push_str(&format!("{}", extract_timestamp(&info.author)));
+                        }
+                        Some('s') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.author, Some("short")));
                         }
                         Some('i') => {
                             chars.next();
@@ -1154,7 +1354,6 @@ fn apply_format_string(
                         }
                         Some('r') => {
                             chars.next();
-                            // %ar — author relative date
                             result.push_str(&format_date_with_mode(&info.author, Some("relative")));
                         }
                         _ => result.push_str("%a"),
@@ -1167,18 +1366,37 @@ fn apply_format_string(
                             chars.next();
                             result.push_str(&extract_name(&info.committer));
                         }
+                        Some('N') => {
+                            chars.next();
+                            result.push_str(&extract_name(&info.committer));
+                        }
                         Some('e') => {
                             chars.next();
                             result.push_str(&extract_email(&info.committer));
+                        }
+                        Some('E') => {
+                            chars.next();
+                            result.push_str(&extract_email(&info.committer));
+                        }
+                        Some('l') => {
+                            chars.next();
+                            result.push_str(&extract_email_local(&info.committer));
                         }
                         Some('d') => {
                             chars.next();
                             result.push_str(&format_date_with_mode(&info.committer, date_format));
                         }
+                        Some('D') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.committer, Some("rfc")));
+                        }
                         Some('t') => {
                             chars.next();
-                            // %ct — committer timestamp (unix)
                             result.push_str(&format!("{}", extract_timestamp(&info.committer)));
+                        }
+                        Some('s') => {
+                            chars.next();
+                            result.push_str(&format_date_with_mode(&info.committer, Some("short")));
                         }
                         Some('i') => {
                             chars.next();
@@ -1190,7 +1408,6 @@ fn apply_format_string(
                         }
                         Some('r') => {
                             chars.next();
-                            // %cr — committer relative date
                             result.push_str(&format_date_with_mode(&info.committer, Some("relative")));
                         }
                         _ => result.push_str("%c"),
@@ -1231,7 +1448,99 @@ fn apply_format_string(
                     chars.next();
                     result.push('%');
                 }
+                Some('C') => {
+                    chars.next();
+                    if chars.peek() == Some(&'(') {
+                        chars.next();
+                        let mut spec = String::new();
+                        while let Some(c) = chars.next() {
+                            if c == ')' { break; }
+                            spec.push(c);
+                        }
+                        let (force, color_spec) = if let Some(rest) = spec.strip_prefix("always,") {
+                            (true, rest)
+                        } else if let Some(rest) = spec.strip_prefix("auto,") {
+                            (false, rest)
+                        } else if spec == "auto" {
+                            if use_color { result.push_str("\x1b[m"); }
+                            continue;
+                        } else {
+                            (false, spec.as_str())
+                        };
+                        if use_color || force {
+                            result.push_str(&format_ansi_color_spec(color_spec));
+                        }
+                    } else {
+                        let remaining: String = chars.clone().collect();
+                        let known = ["reset", "red", "green", "blue", "yellow", "magenta", "cyan", "white", "bold", "dim", "ul"];
+                        let mut matched = false;
+                        for name in &known {
+                            if remaining.starts_with(name) {
+                                for _ in 0..name.len() { chars.next(); }
+                                if use_color {
+                                    result.push_str(&format_ansi_color_name(name));
+                                }
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if !matched {
+                            while let Some(&c) = chars.peek() {
+                                if c.is_alphanumeric() { chars.next(); }
+                                else { break; }
+                            }
+                        }
+                    }
+                }
+                Some('x') => {
+                    // Hex escape: %xNN
+                    chars.next();
+                    let mut hex_str = String::new();
+                    if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex_str.push(c1); chars.next(); } }
+                    if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex_str.push(c2); chars.next(); } }
+                    if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                        result.push(byte as char);
+                    }
+                }
+                Some('w') => {
+                    // %w(...) wrapping directive — consume and ignore
+                    chars.next();
+                    if chars.peek() == Some(&'(') {
+                        chars.next();
+                        while let Some(c) = chars.next() {
+                            if c == ')' { break; }
+                        }
+                    }
+                }
+                Some('e') => {
+                    // Encoding
+                    chars.next();
+                }
+                Some('g') => {
+                    // Reflog placeholders (%gD, %gd, %gs, etc.) — empty for non-reflog
+                    chars.next();
+                    if let Some(&_nc) = chars.peek() {
+                        chars.next();
+                    }
+                }
                 _ => result.push('%'),
+            }
+            // Apply pending column formatting
+            if let Some(spec) = pending_col.take() {
+                let added = result[col_start..].to_owned();
+                result.truncate(col_start);
+                if spec.absolute {
+                    // Absolute column: pad from start of current line to target column
+                    let line_start = result.rfind('\n').map(|p| p + 1).unwrap_or(0);
+                    let current_col = result[line_start..].chars().count();
+                    let target_width = spec.width.saturating_sub(current_col);
+                    let mut adjusted_spec = ColSpec { width: target_width, align: spec.align, trunc: spec.trunc, absolute: false };
+                    // For absolute positioning, ensure minimum width matches the value length
+                    if target_width < added.chars().count() { adjusted_spec.width = added.chars().count(); }
+                    result.push_str(&apply_col(&adjusted_spec, &added));
+                } else {
+                    result.push_str(&apply_col(&spec, &added));
+                }
             }
         } else {
             result.push(ch);
@@ -1285,6 +1594,76 @@ fn extract_email(ident: &str) -> String {
         }
     }
     String::new()
+}
+
+fn format_ansi_color_name(name: &str) -> String {
+    match name {
+        "red" => "\x1b[31m".to_owned(),
+        "green" => "\x1b[32m".to_owned(),
+        "yellow" => "\x1b[33m".to_owned(),
+        "blue" => "\x1b[34m".to_owned(),
+        "magenta" => "\x1b[35m".to_owned(),
+        "cyan" => "\x1b[36m".to_owned(),
+        "white" => "\x1b[37m".to_owned(),
+        "bold" => "\x1b[1m".to_owned(),
+        "dim" => "\x1b[2m".to_owned(),
+        "ul" | "underline" => "\x1b[4m".to_owned(),
+        "reset" => "\x1b[m".to_owned(),
+        _ => String::new(),
+    }
+}
+
+fn format_ansi_color_spec(spec: &str) -> String {
+    if spec == "reset" { return "\x1b[m".to_owned(); }
+    fn color_code(name: &str) -> Option<u8> {
+        match name {
+            "black" => Some(0), "red" => Some(1), "green" => Some(2),
+            "yellow" => Some(3), "blue" => Some(4), "magenta" => Some(5),
+            "cyan" => Some(6), "white" => Some(7), "default" => Some(9),
+            _ => None,
+        }
+    }
+    let mut codes = Vec::new();
+    let mut fg_set = false;
+    for part in spec.split_whitespace() {
+        match part {
+            "bold" => codes.push("1".to_owned()),
+            "dim" => codes.push("2".to_owned()),
+            "italic" => codes.push("3".to_owned()),
+            "ul" | "underline" => codes.push("4".to_owned()),
+            "blink" => codes.push("5".to_owned()),
+            "reverse" => codes.push("7".to_owned()),
+            "strike" => codes.push("9".to_owned()),
+            "nobold" | "nodim" => codes.push("22".to_owned()),
+            "noitalic" => codes.push("23".to_owned()),
+            "noul" | "nounderline" => codes.push("24".to_owned()),
+            "noblink" => codes.push("25".to_owned()),
+            "noreverse" => codes.push("27".to_owned()),
+            "nostrike" => codes.push("29".to_owned()),
+            _ => {
+                if let Some(c) = color_code(part) {
+                    if !fg_set {
+                        codes.push(format!("{}", 30 + c));
+                        fg_set = true;
+                    } else {
+                        codes.push(format!("{}", 40 + c));
+                    }
+                }
+            }
+        }
+    }
+    if codes.is_empty() { String::new() }
+    else { format!("\x1b[{}m", codes.join(";")) }
+}
+
+/// Extract the local part (before @) of the email from a Git ident string.
+fn extract_email_local(ident: &str) -> String {
+    let email = extract_email(ident);
+    if let Some(at) = email.find('@') {
+        email[..at].to_owned()
+    } else {
+        email
+    }
 }
 
 /// Format ident for display: "Name <email>".
@@ -1454,7 +1833,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 time::Month::December => "Dec",
             };
             format!(
-                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                "{} {} {} {:02}:{:02}:{:02} {} {}",
                 weekday, month, dt.day(),
                 dt.hour(), dt.minute(), dt.second(),
                 dt.year(), offset_str
