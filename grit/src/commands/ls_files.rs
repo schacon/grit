@@ -781,10 +781,12 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
     // Compare mtime seconds (and nanoseconds if available)
     let mtime_sec = meta.mtime() as u32;
     let mtime_nsec = meta.mtime_nsec() as u32;
-    if mtime_sec != entry.mtime_sec {
-        return true;
-    }
-    if entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec {
+    if mtime_sec != entry.mtime_sec || (entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec) {
+        // Stat differs — fall back to content hash comparison
+        if let Ok(data) = std::fs::read(path) {
+            let hash = grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            return hash != entry.oid;
+        }
         return true;
     }
 

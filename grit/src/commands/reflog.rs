@@ -198,18 +198,19 @@ fn run_show(args: ShowArgs) -> Result<()> {
 fn run_expire(args: ExpireArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let expire_secs = if args.expire == "all" || args.expire == "0" {
-        None // expire all
-    } else {
-        let expire_days: u64 = args
-            .expire
-            .parse()
-            .with_context(|| format!("invalid expire value: '{}'", args.expire))?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
-            .as_secs() as i64;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!("system time error: {e}"))?
+        .as_secs() as i64;
+
+    let expire_secs = if args.expire == "all" || args.expire == "0" || args.expire == "now" {
+        Some(now) // expire all entries (now = everything is old enough)
+    } else if let Ok(expire_days) = args.expire.parse::<u64>() {
         Some(now - (expire_days as i64 * 86400))
+    } else if let Ok(ts) = args.expire.parse::<i64>() {
+        Some(ts) // raw epoch
+    } else {
+        bail!("invalid expire value: '{}'", args.expire)
     };
 
     let refs_to_expire: Vec<String> = if args.all {
