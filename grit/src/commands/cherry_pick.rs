@@ -244,6 +244,59 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     }
     let commit = parse_commit(&commit_obj.data)?;
 
+    let commit_tree_oid = commit.tree;
+
+    let head = resolve_head(git_dir)?;
+    let head_oid_opt = head.oid().map(|o| o.to_owned());
+
+    // Check for fast-forward possibility with --ff
+    if args.ff {
+        let ff_parent = if let Some(m) = args.mainline {
+            if m == 0 || m > commit.parents.len() {
+                bail!("commit {} does not have parent {}", commit_oid, m);
+            }
+            Some(commit.parents[m - 1])
+        } else if commit.parents.len() > 1 {
+            // Merge commit without -m: fall through to normal error handling
+            bail!(
+                "commit {} is a merge but no -m option was given",
+                commit_oid
+            );
+        } else {
+            commit.parents.first().copied()
+        };
+
+        let can_ff = match (&head_oid_opt, ff_parent) {
+            // Unborn branch: always fast-forward
+            (None, _) => true,
+            // Root commit (no parent): fast-forward
+            (Some(_), None) => true,
+            // Normal: parent matches HEAD
+            (Some(head_oid), Some(parent)) => parent == *head_oid,
+        };
+
+        if can_ff {
+            update_head(git_dir, &head, &commit_oid)?;
+            let entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
+            let old_index = load_index(repo)?;
+            let mut new_index = Index::new();
+            new_index.entries = entries;
+            new_index.sort();
+            new_index
+                .write(&repo.index_path())
+                .context("writing index")?;
+            if let Some(wt) = &repo.work_tree {
+                checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
+            }
+
+            let short = &commit_oid.to_hex()[..7];
+            let branch = branch_name(&head);
+            let first_line = commit.message.lines().next().unwrap_or("");
+            eprintln!("[{branch} {short}] {first_line}");
+            return Ok(());
+        }
+    }
+
     // Determine parent (base for the change).
     let parent_oid = if let Some(m) = args.mainline {
         if m == 0 || m > commit.parents.len() {
@@ -266,38 +319,11 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     let parent_commit = parse_commit(&parent_obj.data)?;
     let parent_tree_oid = parent_commit.tree;
 
-    let commit_tree_oid = commit.tree;
-
-    let head = resolve_head(git_dir)?;
-    let head_oid = head
-        .oid()
-        .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick: HEAD does not point to a commit"))?
-        .to_owned();
+    let head_oid = head_oid_opt
+        .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick: HEAD does not point to a commit"))?;
     let head_obj = repo.odb.read(&head_oid)?;
     let head_commit = parse_commit(&head_obj.data)?;
     let head_tree_oid = head_commit.tree;
-
-    // Check for fast-forward possibility
-    if args.ff && commit.parents.len() == 1 && commit.parents[0] == head_oid {
-        update_head(git_dir, &head, &commit_oid)?;
-        let entries = tree_to_index_entries(repo, &commit_tree_oid, "")?;
-        let old_index = load_index(repo)?;
-        let mut new_index = Index::new();
-        new_index.entries = entries;
-        new_index.sort();
-        new_index
-            .write(&repo.index_path())
-            .context("writing index")?;
-        if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
-        }
-
-        let short = &commit_oid.to_hex()[..7];
-        let branch = branch_name(&head);
-        let first_line = commit.message.lines().next().unwrap_or("");
-        eprintln!("[{branch} {short}] {first_line}");
-        return Ok(());
-    }
 
     // Three-way merge
     let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);

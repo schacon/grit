@@ -14,6 +14,7 @@ use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKin
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 /// Arguments for `grit show`.
@@ -156,6 +157,8 @@ pub fn run(args: Args) -> Result<()> {
         args.objects.iter().map(|s| s.as_str()).collect()
     };
 
+    let notes_map = load_notes_map(&repo);
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -170,10 +173,10 @@ pub fn run(args: Args) -> Result<()> {
 
         match obj.kind {
             ObjectKind::Commit => {
-                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args)?;
+                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tag => {
-                show_tag(&mut out, &repo.odb, &obj.data, &args)?;
+                show_tag(&mut out, &repo.odb, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tree => {
                 show_tree(&mut out, &obj.data)?;
@@ -194,6 +197,7 @@ fn show_commit(
     oid: &ObjectId,
     data: &[u8],
     args: &Args,
+    notes_map: &HashMap<ObjectId, Vec<u8>>,
 ) -> Result<()> {
     let commit = parse_commit(data).context("parsing commit")?;
     let hex = oid.to_hex();
@@ -265,7 +269,16 @@ fn show_commit(
             for line in commit.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            writeln!(out)?;
+            if let Some(note_data) = notes_map.get(oid) {
+                let note_text = String::from_utf8_lossy(note_data);
+                writeln!(out)?;
+                writeln!(out, "Notes:")?;
+                for line in note_text.lines() {
+                    writeln!(out, "    {line}")?;
+                }
+            } else {
+                writeln!(out)?;
+            }
         }
         Some("email") => {
             writeln!(out, "From {} Mon Sep 17 00:00:00 2001", hex)?;
@@ -716,7 +729,7 @@ fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) ->
 }
 
 /// Show a tag object: tag header, then the tagged object.
-fn show_tag(out: &mut impl Write, odb: &Odb, data: &[u8], args: &Args) -> Result<()> {
+fn show_tag(out: &mut impl Write, odb: &Odb, data: &[u8], args: &Args, notes_map: &HashMap<ObjectId, Vec<u8>>) -> Result<()> {
     let tag = parse_tag(data).context("parsing tag")?;
 
     writeln!(out, "tag {}", tag.tag)?;
@@ -736,10 +749,10 @@ fn show_tag(out: &mut impl Write, odb: &Odb, data: &[u8], args: &Args) -> Result
     let tagged_obj = odb.read(&tag.object).context("reading tagged object")?;
     match tagged_obj.kind {
         ObjectKind::Commit => {
-            show_commit(out, odb, &tag.object, &tagged_obj.data, args)?;
+            show_commit(out, odb, &tag.object, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tag => {
-            show_tag(out, odb, &tagged_obj.data, args)?;
+            show_tag(out, odb, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tree => {
             show_tree(out, &tagged_obj.data)?;
@@ -1179,6 +1192,73 @@ fn collect_tree_entries_recursive(
             collect_tree_entries_recursive(odb, &entry.oid, &path, result);
         } else {
             result.push((path, format!("{:06o}", entry.mode), entry.oid));
+        }
+    }
+}
+
+/// Load notes from the configured notes ref (or `refs/notes/commits` default).
+fn load_notes_map(repo: &Repository) -> HashMap<ObjectId, Vec<u8>> {
+    use grit_lib::config::ConfigSet;
+    use grit_lib::refs::resolve_ref;
+
+    let mut map = HashMap::new();
+
+    let notes_ref = std::env::var("GIT_NOTES_REF")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            config
+                .get("core.notesRef")
+                .unwrap_or_else(|| "refs/notes/commits".to_string())
+        });
+
+    let notes_oid = match resolve_ref(&repo.git_dir, &notes_ref) {
+        Ok(oid) => oid,
+        Err(_) => return map,
+    };
+
+    let obj = match repo.odb.read(&notes_oid) {
+        Ok(o) => o,
+        Err(_) => return map,
+    };
+
+    let tree_oid = match obj.kind {
+        ObjectKind::Commit => match parse_commit(&obj.data) {
+            Ok(c) => c.tree,
+            Err(_) => return map,
+        },
+        ObjectKind::Tree => notes_oid,
+        _ => return map,
+    };
+
+    collect_notes_recursive(repo, &tree_oid, String::new(), &mut map);
+    map
+}
+
+fn collect_notes_recursive(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    prefix: String,
+    map: &mut HashMap<ObjectId, Vec<u8>>,
+) {
+    let tree_obj = match repo.odb.read(tree_oid) {
+        Ok(o) => o,
+        Err(_) => return,
+    };
+    let entries = match parse_tree(&tree_obj.data) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        let full_hex = format!("{prefix}{name}");
+        if entry.mode == 0o040000 {
+            collect_notes_recursive(repo, &entry.oid, full_hex, map);
+        } else if let Ok(commit_oid) = full_hex.parse::<ObjectId>() {
+            if let Ok(blob) = repo.odb.read(&entry.oid) {
+                map.insert(commit_oid, blob.data);
+            }
         }
     }
 }

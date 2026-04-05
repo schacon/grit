@@ -290,7 +290,7 @@ fn fetch_remote(
                             let local_ref = dst.replacen('*', matched, 1);
                             if let Some(prev_src) = dst_to_src.get(&local_ref) {
                                 if prev_src != refname {
-                                    bail!("Cannot fetch both {} and {} to {}", prev_src, refname, local_ref);
+                                    { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
                                 }
                             } else {
                                 dst_to_src.insert(local_ref, refname.clone());
@@ -310,7 +310,7 @@ fn fetch_remote(
                     };
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != &remote_ref {
-                            bail!("Cannot fetch both {} and {} to {}", prev_src, remote_ref, local_ref);
+                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, remote_ref, local_ref); std::process::exit(128); }
                         }
                     } else {
                         dst_to_src.insert(local_ref, remote_ref);
@@ -468,7 +468,7 @@ fn fetch_remote(
                 if let Some(local_ref) = map_ref_through_refspecs(refname, &refspecs) {
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != refname {
-                            bail!("Cannot fetch both {} and {} to {}", prev_src, refname, local_ref);
+                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
                         }
                     } else {
                         dst_to_src.insert(local_ref, refname.clone());

@@ -355,11 +355,16 @@ fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
             continue;
         }
         if chars.peek() == Some(&'"') {
+            // Try quoted parsing; if EOF is hit without closing quote,
+            // fall back to treating the whole segment as a raw path.
+            let saved: Vec<char> = chars.clone().collect();
             chars.next();
             let mut path = String::new();
+            let mut properly_closed = false;
             loop {
                 match chars.next() {
-                    None | Some('"') => break,
+                    None => break,
+                    Some('"') => { properly_closed = true; break; }
                     Some('\\') => match chars.peek() {
                         Some(c) if c.is_ascii_digit() => {
                             let mut oct = String::new();
@@ -394,7 +399,25 @@ fn parse_alternate_env(val: &str) -> Vec<PathBuf> {
                     Some(c) => path.push(c),
                 }
             }
-            if !path.is_empty() {
+            if !properly_closed {
+                // Broken quoting: fall back to treating raw value (with leading ")
+                // as a literal path.
+                let raw: String = std::iter::once('"').chain(saved.into_iter()).collect();
+                // Extract up to ':' or end
+                let raw_path = raw.split(':').next().unwrap_or(&raw);
+                if !raw_path.is_empty() {
+                    result.push(PathBuf::from(raw_path));
+                }
+                // Advance past the ':' in the original chars (we consumed the saved copy)
+                // Since chars is now at EOF, we need to handle remaining items.
+                // Actually, we consumed chars fully. Let's reconstruct from raw.
+                let remainder = &raw[raw_path.len()..];
+                if let Some(rest) = remainder.strip_prefix(':') {
+                    // Parse remaining entries
+                    result.extend(parse_alternate_env(rest));
+                }
+                return result;
+            } else if !path.is_empty() {
                 result.push(PathBuf::from(path));
             }
         } else {

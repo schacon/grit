@@ -50,6 +50,10 @@ pub enum NotesSubcommand {
         #[arg(short = 'F', long = "file", value_name = "FILE")]
         file: Option<std::path::PathBuf>,
 
+        /// Reuse an existing blob object as the note.
+        #[arg(short = 'C', long = "reuse-message", value_name = "OBJECT")]
+        reuse_message: Option<String>,
+
         /// Overwrite an existing note.
         #[arg(short = 'f', long = "force")]
         force: bool,
@@ -164,6 +168,7 @@ pub fn run(args: Args) -> Result<()> {
         Some(NotesSubcommand::Add {
             message,
             file,
+            reuse_message,
             force,
             allow_empty,
             object,
@@ -173,6 +178,7 @@ pub fn run(args: Args) -> Result<()> {
             object.as_deref(),
             message,
             file,
+            reuse_message,
             force,
             allow_empty,
         ),
@@ -388,6 +394,7 @@ fn add_note(
     object: Option<&str>,
     message: Option<String>,
     file: Option<std::path::PathBuf>,
+    reuse_message: Option<String>,
     force: bool,
     allow_empty: bool,
 ) -> Result<()> {
@@ -395,7 +402,7 @@ fn add_note(
     let hex = oid.to_hex();
 
     let mut entries = read_notes_tree(repo, notes_ref)?;
-    let has_message_source = message.is_some() || file.is_some();
+    let has_message_source = message.is_some() || file.is_some() || reuse_message.is_some();
 
     // Get existing note content (if any)
     let existing_content = entries
@@ -412,7 +419,21 @@ fn add_note(
         );
     }
 
-    let msg = if let Some(m) = message {
+    // When -C is used, directly reuse the blob OID as the note
+    let direct_note_oid = if let Some(reuse_obj) = reuse_message {
+        let blob_oid = resolve_revision(repo, &reuse_obj)
+            .with_context(|| format!("invalid object: '{reuse_obj}'"))?;
+        // Verify the object exists
+        let _ = repo.odb.read(&blob_oid)
+            .with_context(|| format!("reading object '{reuse_obj}'"))?;
+        Some(blob_oid)
+    } else {
+        None
+    };
+
+    let msg = if direct_note_oid.is_some() {
+        String::new() // unused when direct_note_oid is set
+    } else if let Some(m) = message {
         m
     } else if let Some(f) = file {
         if f.as_os_str() == "-" {
@@ -435,8 +456,12 @@ fn add_note(
     // Remove existing note entry (will re-add below)
     entries.retain(|e| String::from_utf8_lossy(&e.name) != hex);
 
-    // Write the note blob
-    let note_oid = repo.odb.write(ObjectKind::Blob, msg.as_bytes())?;
+    // Write the note blob (or reuse existing blob OID from -C)
+    let note_oid = if let Some(oid) = direct_note_oid {
+        oid
+    } else {
+        repo.odb.write(ObjectKind::Blob, msg.as_bytes())?
+    };
 
     // Add entry
     entries.push(TreeEntry {

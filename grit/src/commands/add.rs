@@ -141,7 +141,11 @@ pub fn run(mut args: Args) -> Result<()> {
         .unwrap_or(true);
 
     let index_path = repo.index_path();
-    let mut index = if index_path.exists() {
+    let idx_exists = index_path.exists();
+    let cfg_ver = config.get("index.version");
+    let cfg_many = config.get("feature.manyFiles");
+    eprintln!("DEBUG: index exists={idx_exists}, cfg_ver={cfg_ver:?}, cfg_many={cfg_many:?}");
+    let mut index = if idx_exists {
         Index::load(&index_path)?
     } else {
         Index::new_with_config(

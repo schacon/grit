@@ -144,6 +144,50 @@ pub fn run(args: Args) -> Result<()> {
         return run_bundle_clone(args);
     }
 
+    // --no-local with custom upload-pack: use transport instead of direct copy
+    if args.no_local {
+        if let Some(ref upload_pack) = args.upload_pack {
+            let source_path = PathBuf::from(&args.repository);
+            let target_name = args.directory.clone().unwrap_or_else(|| {
+                let base = source_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                base.strip_suffix(".git")
+                    .unwrap_or(&base)
+                    .trim_end_matches('/')
+                    .to_string()
+            });
+            let target_path = PathBuf::from(&target_name);
+            if target_path.exists() {
+                bail!(
+                    "destination path '{}' already exists and is not an empty directory",
+                    target_path.display()
+                );
+            }
+            if !args.quiet {
+                eprintln!("Cloning into '{}'...", target_name);
+            }
+            fs::create_dir_all(&target_path)?;
+            let repo_path_arg = source_path.to_string_lossy().to_string();
+            let status = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("{} '{}'", upload_pack, repo_path_arg))
+                .status();
+            match status {
+                Ok(s) if s.success() => {
+                    eprintln!("done.");
+                    return Ok(());
+                }
+                _ => {
+                    let _ = fs::remove_dir_all(&target_path);
+                    bail!("clone failed: upload-pack command failed");
+                }
+            }
+        }
+    }
+
     // Check protocol.file.allow before local clone
     crate::protocol::check_protocol_allowed("file", None)?;
 

@@ -1,25 +1,24 @@
-//! `grit history` — show commit history.
+//! `grit history` — placeholder subcommand-based history browser.
 //!
-//! An alias-like command that delegates to `log` with different defaults.
-//! Equivalent to `grit log` but intended as a more user-friendly entry
-//! point for browsing commit history.
-//!
-//!     grit history [<options>] [<revision>...]
+//! Currently has no subcommands and exits with an error asking for one.
 
-use crate::commands::git_passthrough;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 
 /// Arguments for `grit history`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show commit history")]
 pub struct Args {
-    /// Raw arguments forwarded to `git log`.
-    #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
+    /// Subcommand or arguments.
+    #[arg(value_name = "ARG", num_args = 0..)]
     pub args: Vec<String>,
 }
 
-/// Run `grit history` by delegating to `git log`.
+/// Run `grit history`.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("log", &args.args)
+    if args.args.is_empty() {
+        bail!("need a subcommand");
+    }
+    let sub = &args.args[0];
+    bail!("unknown subcommand: '{sub}'");
 }

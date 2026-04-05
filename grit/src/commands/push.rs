@@ -147,7 +147,8 @@ pub fn run(args: Args) -> Result<()> {
 
     if let Some(ref r) = args.remote {
         if r.is_empty() {
-            bail!("bad repository ''");
+            eprintln!("fatal: bad repository ''");
+            std::process::exit(128);
         }
         if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
             // Path-based remote: use directly as URL
