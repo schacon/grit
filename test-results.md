@@ -14,3 +14,4 @@
 - `cargo build --release -p grit-rs`: success (rebuilt after test-tool changes).
 - `./scripts/run-tests.sh t3008-ls-files-lazy-init-name-hash.sh`: 1/1 passing.
 - `./scripts/run-tests.sh t3205-branch-color.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t3012-ls-files-dedup.sh`: 3/3 passing.
