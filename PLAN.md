@@ -397,7 +397,7 @@ commit → check it off → move on.
 - [x] `t4006-diff-mode` ████████████████████ 7/7 (0 left) — Test mode change diffs.
 
 - [x] `t4073-diff-stat-name-width` ████████████████████ 6/6 (0 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
-- [ ] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
+- [~] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
 - [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (0 left) — format-patch mime headers and extra headers do not conflict
 - [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (0 left) — Pickaxe options
 - [ ] `t4131-apply-fake-ancestor` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git apply --build-fake-ancestor handling.

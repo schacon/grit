@@ -18,3 +18,4 @@
 - `cargo build --release`: passes (rebuild after `diff-files` copy-detection/reverse wiring changes).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4007-rename-3.sh`: 13/13 passing.
 - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
+- `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 2/4 passing (baseline for next in-progress Diff target).

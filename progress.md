@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    62 |
-| In progress |     0 |
-| Remaining   |   704 |
+| In progress |     1 |
+| Remaining   |   703 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -56,4 +56,4 @@
 
 ## What Remains
 
-No test file is currently marked in progress and 704 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4125-apply-ws-fuzz`) and 703 remain pending. See `plan.md` for the full prioritized list.
