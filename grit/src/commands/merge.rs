@@ -293,11 +293,24 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Parse -X strategy options
     let mut favor = MergeFavor::None;
+    let mut diff_algorithm: Option<String> = None;
     for xopt in &args.strategy_option {
-        match xopt.as_str() {
-            "ours" => favor = MergeFavor::Ours,
-            "theirs" => favor = MergeFavor::Theirs,
-            other => bail!("unknown strategy option: -X {other}"),
+        if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
+            diff_algorithm = Some(algo.to_string());
+        } else {
+            match xopt.as_str() {
+                "ours" => favor = MergeFavor::Ours,
+                "theirs" => favor = MergeFavor::Theirs,
+                other => bail!("unknown strategy option: -X {other}"),
+            }
+        }
+    }
+    // Also read diff.algorithm from config if not set via -X
+    if diff_algorithm.is_none() {
+        if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(algo) = config.get("diff.algorithm") {
+                diff_algorithm = Some(algo);
+            }
         }
     }
     let head = resolve_head(&repo.git_dir)?;
@@ -330,7 +343,7 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("Not possible to fast-forward, aborting.");
         }
-        return do_octopus_merge(&repo, &head, head_oid, &args, favor);
+        return do_octopus_merge(&repo, &head, head_oid, &args, favor, diff_algorithm.as_deref());
     }
 
     // Resolve merge target
@@ -371,7 +384,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff && !args.ff_only {
             // Force a merge commit even though we could fast-forward
-            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor);
+            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref());
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
@@ -389,7 +402,7 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
-    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor)
+    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref())
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -519,7 +532,7 @@ fn create_virtual_merge_base(
 
         // Create a dummy head state for merge_trees
         let head = HeadState::Detached { oid: current };
-        let merge_result = merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, &head, "virtual", favor)?;
+        let merge_result = merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, &head, "virtual", favor, None)?;
 
         // Build a tree from the merged index (use stage-0 entries, or for conflicts pick ours)
         let mut final_entries: Vec<IndexEntry> = Vec::new();
@@ -569,6 +582,7 @@ fn do_real_merge(
     merge_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -612,6 +626,7 @@ fn do_real_merge(
         head,
         &args.commits[0],
         favor,
+        diff_algorithm,
     )?;
 
     // Write index
@@ -790,6 +805,7 @@ fn do_octopus_merge(
     head_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -820,12 +836,12 @@ fn do_octopus_merge(
     if merge_oids.len() == 1 {
         let merge_oid = merge_oids[0];
         if args.no_ff && !args.ff_only {
-            return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
+            return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
         }
         if is_ancestor(repo, head_oid, merge_oid)? {
             return do_fast_forward(repo, head, head_oid, merge_oid, args);
         }
-        return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
+        return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
     }
 
     // Check if we can fast-forward: filter out merge targets that are ancestors
@@ -878,6 +894,7 @@ fn do_octopus_merge(
             head,
             &args.commits[i],
             favor,
+            diff_algorithm,
         )?;
 
         if merge_result.has_conflicts {
@@ -1819,6 +1836,7 @@ fn merge_trees(
     _head: &HeadState,
     their_name: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
@@ -1861,7 +1879,7 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
                             entry.oid = merged_oid;
@@ -1997,7 +2015,7 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
                             entry.oid = merged_oid;
@@ -2117,7 +2135,7 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor)? {
+                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2191,7 +2209,7 @@ fn merge_trees(
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor)? {
+                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor, diff_algorithm)? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2238,6 +2256,7 @@ fn try_content_merge(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -2312,6 +2331,7 @@ fn try_content_merge_add_add(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
