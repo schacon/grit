@@ -154,6 +154,18 @@ pub fn run(args: Args) -> Result<()> {
     // Track which pathspecs matched at least one entry (for --error-unmatch).
     let mut matched: Vec<bool> = vec![false; pathspec_filter.len()];
 
+    // Build exclude/ignore matcher if needed (before cached loop so -i -c works)
+    let has_excludes = args.exclude_standard
+        || !args.exclude.is_empty()
+        || !args.exclude_from.is_empty()
+        || args.exclude_per_directory.is_some();
+    let use_standard_ignores = args.exclude_standard || args.ignored;
+    let mut matcher = if use_standard_ignores {
+        Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
+    } else {
+        None
+    };
+
     for entry in &index.entries {
         // Filter by pathspec
         if !pathspec_filter.is_empty() {
@@ -172,6 +184,27 @@ pub fn run(args: Args) -> Result<()> {
         }
         if show_cached && !args.unmerged && !args.stage && entry.stage() != 0 {
             continue;
+        }
+
+        // --ignored with --cached: only show tracked files that are ignored
+        if args.ignored && show_cached && !args.others {
+            let path_str = String::from_utf8_lossy(&entry.path);
+            // Pass None for index so tracked files aren't auto-skipped
+            let std_ignored = if let Some(ref mut m) = matcher {
+                let (ignored, _) = m
+                    .check_path(&repo, None, &path_str, false)
+                    .unwrap_or((false, None));
+                ignored
+            } else {
+                false
+            };
+            let cli_excluded = args
+                .exclude
+                .iter()
+                .any(|pat| match_simple_pattern(pat, &path_str));
+            if !std_ignored && !cli_excluded {
+                continue;
+            }
         }
 
         // --deleted: only show entries whose file is missing from worktree
@@ -279,22 +312,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Build exclude/ignore matcher if needed
-    let has_excludes = args.exclude_standard
-        || !args.exclude.is_empty()
-        || !args.exclude_from.is_empty()
-        || args.exclude_per_directory.is_some();
-    // Load standard ignores for --exclude-standard or --ignored
-    let use_standard_ignores = args.exclude_standard || args.ignored;
-    let mut matcher = if use_standard_ignores {
-        Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
-    } else {
-        None
-    };
-
     // --others: list untracked files
     // --ignored: show only ignored untracked files (implies --others)
-    let show_others = args.others || args.ignored;
+    // --ignored implies --others only when --cached is not explicitly set
+    let show_others = args.others || (args.ignored && !args.cached);
     if show_others {
         let indexed_paths: BTreeSet<Vec<u8>> =
             index.entries.iter().map(|e| e.path.clone()).collect();
@@ -448,14 +469,8 @@ fn walk_worktree(
         } else if ft.is_dir() {
             let dot_git = path.join(".git");
             if dot_git.exists() {
-                continue;
-            }
-            let before = out.len();
-            walk_worktree(root, &path, indexed, out)?;
-            // If directory produced no untracked entries and no tracked
-            // files exist inside it, emit the directory itself as an
-            // untracked entry so --directory can report empty dirs.
-            if out.len() == before {
+                // Untracked git repository: emit as a directory entry
+                // (git treats these as opaque and doesn't recurse into them)
                 let dir_prefix_str = format!("{}/", String::from_utf8_lossy(&rel_bytes));
                 let has_tracked = indexed.iter().any(|t| {
                     let t_str = String::from_utf8_lossy(t);
@@ -466,7 +481,9 @@ fn walk_worktree(
                     dir_entry.push(b'/');
                     out.push(dir_entry);
                 }
+                continue;
             }
+            walk_worktree(root, &path, indexed, out)?;
         }
     }
     Ok(())

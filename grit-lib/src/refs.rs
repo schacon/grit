@@ -263,7 +263,7 @@ fn remove_packed_ref(git_dir: &Path, refname: &str) -> Result<()> {
 
         // Write fresh header before the first data line
         if !header_written {
-            out.insert_str(0, "# pack-refs with: peeled fully-peeled sorted \n");
+            out.insert_str(0, "# pack-refs with: peeled fully-peeled sorted\n");
             header_written = true;
         }
 

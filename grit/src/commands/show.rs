@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{anchored_unified_diff, diff_trees, unified_diff};
+use grit_lib::diff::{anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -94,6 +94,10 @@ pub struct Args {
     #[arg(short = 'M', long = "find-renames", value_name = "N", default_missing_value = "50", num_args = 0..=1)]
     pub find_renames: Option<String>,
 
+    /// Detect copies (use twice for harder).
+    #[arg(short = 'C', long = "find-copies", value_name = "N", default_missing_value = "50", num_args = 0..=1, action = clap::ArgAction::Append)]
+    pub find_copies: Vec<String>,
+
     /// Show the full diff (for merge commits).
     #[arg(short = 'm')]
     pub diff_merges: bool,
@@ -129,6 +133,14 @@ pub struct Args {
     /// Disable textconv.
     #[arg(long = "no-textconv")]
     pub no_textconv: bool,
+
+    /// Show binary diff in git binary format.
+    #[arg(long = "binary")]
+    pub binary: bool,
+
+    /// Show numstat summary.
+    #[arg(long = "numstat")]
+    pub numstat: bool,
 }
 
 /// Run the `show` command.
@@ -308,6 +320,9 @@ fn show_commit(
     let diff_entries =
         diff_trees(odb, old_tree_oid.as_ref(), new_tree, "").context("computing diff")?;
 
+    // Apply rename/copy detection if -M or -C flags are set.
+    let diff_entries = apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref());
+
     // --name-only: just print file names
     if args.name_only {
         for entry in &diff_entries {
@@ -343,19 +358,17 @@ fn show_commit(
         return Ok(());
     }
 
+    // Determine what sections to show. Multiple can be active simultaneously.
+    let show_raw = args.raw;
+    let show_numstat = args.numstat;
+    let show_stat = args.stat;
+    let show_patch = !args.quiet && !args.no_patch && !args.name_only && !args.name_status;
+
     // --raw: raw diff-tree output format
-    if args.raw {
+    if show_raw {
         for entry in &diff_entries {
-            let old_path = entry
-                .old_path
-                .as_deref()
-                .or(entry.new_path.as_deref())
-                .unwrap_or("");
-            let new_path = entry
-                .new_path
-                .as_deref()
-                .or(entry.old_path.as_deref())
-                .unwrap_or("");
+            let old_path = entry.old_path.as_deref().or(entry.new_path.as_deref()).unwrap_or("");
+            let new_path = entry.new_path.as_deref().or(entry.old_path.as_deref()).unwrap_or("");
             let status_char = match entry.status {
                 grit_lib::diff::DiffStatus::Added => 'A',
                 grit_lib::diff::DiffStatus::Deleted => 'D',
@@ -365,26 +378,45 @@ fn show_commit(
                 grit_lib::diff::DiffStatus::TypeChanged => 'T',
                 grit_lib::diff::DiffStatus::Unmerged => 'U',
             };
-            writeln!(
-                out,
-                ":{} {} {} {} {status_char}\t{}",
-                entry.old_mode,
-                entry.new_mode,
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7],
-                if entry.status == grit_lib::diff::DiffStatus::Renamed {
-                    format!("{old_path}\t{new_path}")
-                } else {
-                    new_path.to_string()
+            let status_str = match entry.status {
+                grit_lib::diff::DiffStatus::Renamed | grit_lib::diff::DiffStatus::Copied => {
+                    let score = entry.score.unwrap_or(0);
+                    format!("{status_char}{score:03}")
                 }
+                _ => format!("{status_char}"),
+            };
+            let paths = match entry.status {
+                grit_lib::diff::DiffStatus::Renamed | grit_lib::diff::DiffStatus::Copied => {
+                    format!("{old_path}\t{new_path}")
+                }
+                _ => new_path.to_string(),
+            };
+            writeln!(out, ":{} {} {} {} {status_str}\t{paths}",
+                entry.old_mode, entry.new_mode,
+                &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7],
             )?;
         }
-        return Ok(());
+    }
+
+    // --numstat
+    if show_numstat {
+        for entry in &diff_entries {
+            write_numstat_line(out, odb, entry)?;
+        }
+    }
+
+    // Blank line separator before patch when raw or numstat was shown
+    if (show_raw || show_numstat) && show_patch {
+        writeln!(out)?;
     }
 
     // --stat: show diffstat summary
-    if args.stat {
+    if show_stat && !show_raw && !show_numstat {
         write_diffstat(out, odb, &diff_entries)?;
+        if !show_patch { return Ok(()); }
+    }
+
+    if !show_patch {
         return Ok(());
     }
 
@@ -433,6 +465,48 @@ fn show_commit(
 }
 
 /// Write a diffstat summary for the given diff entries.
+/// Write a single numstat line for an entry.
+fn write_numstat_line(
+    out: &mut impl Write,
+    odb: &Odb,
+    entry: &grit_lib::diff::DiffEntry,
+) -> Result<()> {
+    let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
+        String::new()
+    } else {
+        odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+    };
+    let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
+        String::new()
+    } else {
+        odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+    };
+
+    let is_binary = old_content.bytes().any(|b| b == 0) || new_content.bytes().any(|b| b == 0);
+    let path_str = format_rename_path(entry);
+
+    if is_binary {
+        writeln!(out, "-\t-\t{path_str}")?;
+    } else {
+        let (ins, del) = grit_lib::diff::count_changes(&old_content, &new_content);
+        writeln!(out, "{ins}\t{del}\t{path_str}")?;
+    }
+    Ok(())
+}
+
+/// Format path for numstat/stat display (with rename arrow notation).
+fn format_rename_path(entry: &grit_lib::diff::DiffEntry) -> String {
+    let old_path = entry.old_path.as_deref().unwrap_or("");
+    let new_path = entry.new_path.as_deref().unwrap_or("");
+    match entry.status {
+        grit_lib::diff::DiffStatus::Renamed | grit_lib::diff::DiffStatus::Copied => {
+            // Use compact rename format: common_prefix/{old => new}/common_suffix
+            grit_lib::diff::format_rename_path(old_path, new_path)
+        }
+        _ => new_path.to_string(),
+    }
+}
+
 fn write_diffstat(
     out: &mut impl Write,
     odb: &Odb,
@@ -991,4 +1065,78 @@ fn format_date(ident: &str) -> String {
         dt.year(),
         offset_str
     )
+}
+
+/// Apply rename and/or copy detection to diff entries based on CLI flags.
+fn apply_rename_copy_detection(
+    odb: &Odb,
+    entries: Vec<DiffEntry>,
+    args: &Args,
+    old_tree_oid: Option<&ObjectId>,
+) -> Vec<DiffEntry> {
+    let has_copies = !args.find_copies.is_empty();
+    let has_renames = args.find_renames.is_some();
+
+    if has_copies {
+        let threshold = args.find_copies.last()
+            .and_then(|v| v.parse::<u32>().ok())
+            .or_else(|| args.find_renames.as_ref().and_then(|v| v.parse::<u32>().ok()))
+            .unwrap_or(50);
+        let find_copies_harder = args.find_copies.len() > 1;
+
+        // Build source tree entries for copy detection.
+        let source_tree_entries = if let Some(tree_oid) = old_tree_oid {
+            collect_tree_entries_for_copies(odb, tree_oid)
+        } else {
+            vec![]
+        };
+
+        detect_copies(odb, entries, threshold, find_copies_harder, &source_tree_entries)
+    } else if has_renames {
+        let threshold = args.find_renames.as_ref()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(50);
+        detect_renames(odb, entries, threshold)
+    } else {
+        entries
+    }
+}
+
+/// Collect all tree entries as (path, mode_str, oid) for copy detection.
+fn collect_tree_entries_for_copies(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+) -> Vec<(String, String, ObjectId)> {
+    let mut result = Vec::new();
+    collect_tree_entries_recursive(odb, tree_oid, "", &mut result);
+    result
+}
+
+fn collect_tree_entries_recursive(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &str,
+    result: &mut Vec<(String, String, ObjectId)>,
+) {
+    let obj = match odb.read(tree_oid) {
+        Ok(obj) => obj,
+        Err(_) => return,
+    };
+    let tree = match parse_tree(&obj.data) {
+        Ok(tree) => tree,
+        Err(_) => return,
+    };
+    for entry in &tree {
+        let name_str = String::from_utf8_lossy(&entry.name);
+        let path = if prefix.is_empty() {
+            name_str.into_owned()
+        } else {
+            format!("{prefix}/{name_str}")
+        };
+        if entry.mode == 0o040000 {
+            collect_tree_entries_recursive(odb, &entry.oid, &path, result);
+        } else {
+            result.push((path, format!("{:06o}", entry.mode), entry.oid));
+        }
+    }
 }

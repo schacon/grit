@@ -125,10 +125,20 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         let remote_name = args.remote.as_deref().unwrap_or("origin");
         // Detect path-based remote: contains '/' or starts with '.'
+        // Also check if it's a local directory path (for `git fetch <dir> ...`)
         if remote_name.contains('/') || remote_name.starts_with('.') {
             fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
         } else {
-            fetch_remote(&git_dir, &config, remote_name, None, &args)
+            // Check if it's a configured remote name first
+            let url_key = format!("remote.{remote_name}.url");
+            if config.get(&url_key).is_some() {
+                fetch_remote(&git_dir, &config, remote_name, None, &args)
+            } else if std::path::Path::new(remote_name).is_dir() {
+                // Treat as a local directory path
+                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
+            } else {
+                fetch_remote(&git_dir, &config, remote_name, None, &args)
+            }
         }
     }
 }

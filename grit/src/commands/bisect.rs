@@ -533,13 +533,7 @@ fn bisect_next(repo: &Repository) -> Result<()> {
         return Ok(());
     }
 
-    // If only one candidate remains, we found it.
-    if unskipped.len() == 1 {
-        print_bisect_result(repo, bad_oid)?;
-        return Ok(());
-    }
-
-    // Pick the midpoint.
+    // Pick the midpoint (or the sole candidate if only 1 remains).
     let mid_idx = unskipped.len() / 2;
     let mid_oid = unskipped[mid_idx];
 
@@ -562,7 +556,11 @@ fn bisect_next(repo: &Repository) -> Result<()> {
     }
 
     let remaining = unskipped.len() - 1; // excluding the midpoint itself
-    let steps = (remaining as f64).log2().ceil() as usize;
+    let steps = if remaining == 0 {
+        0
+    } else {
+        (remaining as f64).log2().ceil() as usize
+    };
     println!(
         "Bisecting: {} revision{} left to test after this (roughly {} step{}).",
         remaining,
@@ -570,7 +568,17 @@ fn bisect_next(repo: &Repository) -> Result<()> {
         steps,
         if steps == 1 { "" } else { "s" },
     );
-    println!("[{}]", mid_oid);
+    // Print the commit subject alongside the OID
+    let subject = if let Ok(obj) = repo.odb.read(&mid_oid) {
+        if let Ok(commit) = parse_commit(&obj.data) {
+            commit.message.lines().next().unwrap_or("").to_string()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    println!("[{}] {}", mid_oid, subject);
 
     Ok(())
 }

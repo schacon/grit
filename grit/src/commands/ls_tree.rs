@@ -47,8 +47,33 @@ pub struct Args {
 }
 
 /// Run `grit ls-tree`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Resolve pathspecs relative to cwd within the work tree, then express
+    // them as repo-root-relative paths so the tree walk can match correctly.
+    if !args.paths.is_empty() {
+        if let Some(ref wt) = repo.work_tree {
+            let cwd = std::env::current_dir().context("resolving cwd")?;
+            let prefix = cwd.strip_prefix(wt).unwrap_or(std::path::Path::new(""));
+            if !prefix.as_os_str().is_empty() {
+                let mut resolved = Vec::with_capacity(args.paths.len());
+                for p in &args.paths {
+                    let combined = prefix.join(p);
+                    let mut norm = Vec::new();
+                    for comp in combined.components() {
+                        match comp {
+                            std::path::Component::ParentDir => { norm.pop(); }
+                            std::path::Component::CurDir => {}
+                            other => norm.push(other.as_os_str().to_string_lossy().into_owned()),
+                        }
+                    }
+                    resolved.push(norm.join("/"));
+                }
+                args.paths = resolved;
+            }
+        }
+    }
 
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
     let obj = repo.odb.read(&oid)?;
@@ -78,9 +103,37 @@ pub fn run(args: Args) -> Result<()> {
     let mut out = stdout.lock();
     let term = if args.null_terminated { b'\0' } else { b'\n' };
 
-    list_tree(&repo, &obj.data, "", &args, &mut out, term)?;
+    // Compute cwd prefix for display path adjustment
+    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cwd.strip_prefix(wt)
+            .ok()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+
+    list_tree(&repo, &obj.data, "", &args, &mut out, term, cwd_prefix.as_deref())?;
 
     Ok(())
+}
+
+/// Make a repo-root-relative path display-relative to the cwd prefix.
+/// E.g., if cwd_prefix is "aa" and path is "a[a]/three", return "../a[a]/three".
+fn make_cwd_relative(path: &str, cwd_prefix: Option<&str>) -> String {
+    let prefix = match cwd_prefix {
+        Some(p) if !p.is_empty() => p,
+        _ => return path.to_string(),
+    };
+    // Count depth of cwd_prefix
+    let depth = prefix.split('/').count();
+    let mut result = String::new();
+    for _ in 0..depth {
+        result.push_str("../");
+    }
+    result.push_str(path);
+    result
 }
 
 fn list_tree(
@@ -90,6 +143,7 @@ fn list_tree(
     args: &Args,
     out: &mut impl Write,
     term: u8,
+    cwd_prefix: Option<&str>,
 ) -> Result<()> {
     let entries = parse_tree(data)?;
 
@@ -130,18 +184,19 @@ fn list_tree(
                 });
             if is_tree && is_ancestor && !args.recursive {
                 let sub_obj = repo.odb.read(&entry.oid)?;
-                list_tree(repo, &sub_obj.data, &full_name, args, out, term)?;
+                list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
                 continue;
             }
         }
 
         if args.recursive && is_tree {
             if args.show_trees {
-                print_entry(repo, entry, &full_name, args, out, term)?;
+                let display_name = make_cwd_relative(&full_name, cwd_prefix);
+                print_entry(repo, entry, &display_name, args, out, term)?;
             }
             // Recurse
             let sub_obj = repo.odb.read(&entry.oid)?;
-            list_tree(repo, &sub_obj.data, &full_name, args, out, term)?;
+            list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
             continue;
         }
 
@@ -149,7 +204,8 @@ fn list_tree(
             continue;
         }
 
-        print_entry(repo, entry, &full_name, args, out, term)?;
+        let display_name = make_cwd_relative(&full_name, cwd_prefix);
+        print_entry(repo, entry, &display_name, args, out, term)?;
     }
     Ok(())
 }

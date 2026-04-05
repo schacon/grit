@@ -185,6 +185,14 @@ pub struct Args {
     #[arg(long = "no-diff-merges")]
     pub no_diff_merges: bool,
 
+    /// Produce dense combined diff for merge commits.
+    #[arg(long = "cc")]
+    pub cc: bool,
+
+    /// Color moved lines differently.
+    #[arg(long = "color-moved", default_missing_value = "default", num_args = 0..=1, require_equals = true)]
+    pub color_moved: Option<String>,
+
     /// Abbreviate commit hashes in output.
     #[arg(long = "abbrev-commit")]
     pub abbrev_commit: bool,
@@ -559,7 +567,9 @@ pub fn run(mut args: Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
-    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw || args.cc;
+
+    let notes_map = load_notes_map(&repo);
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -580,7 +590,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 write!(out, "{}\t", short_src)?;
             }
         }
-        format_commit(&mut out, oid, commit_data, &args, decorations.as_ref(), use_color)?;
+        format_commit(&mut out, oid, commit_data, &args, decorations.as_ref(), use_color, &notes_map, &repo.odb)?;
 
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
@@ -649,13 +659,14 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
-    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw;
+    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw || args.cc;
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
-        format_commit(&mut out, oid, commit_data, args, decorations.as_ref(), false)?;
+        let notes_map = load_notes_map(repo);
+        format_commit(&mut out, oid, commit_data, args, decorations.as_ref(), false, &notes_map, &repo.odb)?;
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
@@ -1139,6 +1150,89 @@ fn parse_tz_offset(offset: &str) -> i64 {
     sign * (hours * 3600 + minutes * 60)
 }
 
+/// Load notes from the configured notes ref (or `refs/notes/commits` default).
+/// Returns a map from commit OID to the notes blob OID.
+fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<u8>> {
+    use grit_lib::config::ConfigSet;
+    use grit_lib::objects::parse_tree;
+    use grit_lib::refs::resolve_ref;
+
+    let mut map = std::collections::HashMap::new();
+
+    // Determine notes ref: check core.notesRef, GIT_NOTES_REF env, or default
+    let notes_ref = std::env::var("GIT_NOTES_REF")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            config
+                .get("core.notesRef")
+                .unwrap_or_else(|| "refs/notes/commits".to_string())
+        });
+
+    // Resolve notes ref to a commit, then get its tree
+    let notes_oid = match resolve_ref(&repo.git_dir, &notes_ref) {
+        Ok(oid) => oid,
+        Err(_) => return map,
+    };
+
+    let obj = match repo.odb.read(&notes_oid) {
+        Ok(o) => o,
+        Err(_) => return map,
+    };
+
+    let tree_oid = match obj.kind {
+        grit_lib::objects::ObjectKind::Commit => {
+            match parse_commit(&obj.data) {
+                Ok(c) => c.tree,
+                Err(_) => return map,
+            }
+        }
+        grit_lib::objects::ObjectKind::Tree => notes_oid,
+        _ => return map,
+    };
+
+    let tree_obj = match repo.odb.read(&tree_oid) {
+        Ok(o) => o,
+        Err(_) => return map,
+    };
+
+    let entries = match parse_tree(&tree_obj.data) {
+        Ok(e) => e,
+        Err(_) => return map,
+    };
+
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name);
+        if let Ok(commit_oid) = name.parse::<ObjectId>() {
+            // Read the blob to get note content
+            if let Ok(blob) = repo.odb.read(&entry.oid) {
+                map.insert(commit_oid, blob.data);
+            }
+        }
+    }
+
+    map
+}
+
+/// Write notes for a commit if any exist.
+fn write_notes(
+    out: &mut impl Write,
+    oid: &ObjectId,
+    notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
+    _odb: &Odb,
+) -> Result<()> {
+    if let Some(note_data) = notes_map.get(oid) {
+        let note_text = String::from_utf8_lossy(note_data);
+        writeln!(out)?;
+        writeln!(out, "Notes:")?;
+        for line in note_text.lines() {
+            writeln!(out, "    {line}")?;
+        }
+    }
+    Ok(())
+}
+
 /// Format and print a single commit.
 fn format_commit(
     out: &mut impl Write,
@@ -1147,6 +1241,8 @@ fn format_commit(
     args: &Args,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     use_color: bool,
+    notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
+    odb: &Odb,
 ) -> Result<()> {
     let hex = oid.to_hex();
     let abbrev_len = parse_abbrev(&args.abbrev);
@@ -1214,6 +1310,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
+            write_notes(out, oid, notes_map, odb)?;
             writeln!(out)?;
         }
         Some("full") => {
@@ -1232,6 +1329,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
+            write_notes(out, oid, notes_map, odb)?;
             writeln!(out)?;
         }
         Some("fuller") => {
@@ -1252,6 +1350,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
+            write_notes(out, oid, notes_map, odb)?;
             writeln!(out)?;
         }
         Some(other) => {
@@ -2090,6 +2189,36 @@ fn format_decoration_no_parens(
 
 // ── Diff output for log ──────────────────────────────────────────────
 
+/// Compute combined diff entries: only files that differ from ALL parents.
+fn compute_combined_diff_entries(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
+    use std::collections::HashSet;
+    // For each parent, find files that are different from that parent
+    let mut changed_per_parent: Vec<HashSet<String>> = Vec::new();
+    for parent_oid in &info.parents {
+        let parent_obj = odb.read(parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        let entries = diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?;
+        let paths: HashSet<String> = entries.iter().map(|e| e.path().to_string()).collect();
+        changed_per_parent.push(paths);
+    }
+    // Intersection: only files changed from ALL parents
+    if changed_per_parent.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut common = changed_per_parent[0].clone();
+    for other in &changed_per_parent[1..] {
+        common = common.intersection(other).cloned().collect();
+    }
+    if common.is_empty() {
+        return Ok(vec![]);
+    }
+    // Get entries from first-parent diff that are in common set
+    let first_parent_obj = odb.read(&info.parents[0])?;
+    let first_parent_commit = parse_commit(&first_parent_obj.data)?;
+    let entries = diff_trees(odb, Some(&first_parent_commit.tree), Some(&info.tree), "")?;
+    Ok(entries.into_iter().filter(|e| common.contains(e.path())).collect())
+}
+
 /// Compute diff entries for a commit against its first parent (or empty tree for root commits).
 fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
     if info.parents.is_empty() {
@@ -2109,6 +2238,7 @@ fn write_commit_diff(
     info: &CommitInfo,
     args: &Args,
 ) -> Result<()> {
+    let is_merge = info.parents.len() > 1;
     let mut entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
@@ -2119,33 +2249,57 @@ fn write_commit_diff(
         entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
     }
 
+    // For --cc mode on merge commits, compute combined diff entries
+    // (only files that differ from ALL parents).
+    let combined_entries = if args.cc && is_merge {
+        compute_combined_diff_entries(odb, info)?
+    } else {
+        entries.clone()
+    };
+
+    // Determine if patch content will be shown (for --- separator logic)
+    let has_patch = (args.patch || args.patch_u || args.cc) && {
+        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        !show_entries.is_empty()
+    };
+
     if args.raw {
-        for entry in &entries {
+        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        for entry in show_entries {
             writeln!(out, "{}", format_raw(entry))?;
         }
         writeln!(out)?;
     }
 
+    // Print --- separator when stat + patch are both shown
     if args.stat {
-        log_print_stat_summary(out, odb, &entries)?;
+        if has_patch {
+            writeln!(out, "---")?;
+        } else {
+            writeln!(out)?;
+        }
+        log_print_stat_summary(out, odb, &entries, has_patch)?;
     }
 
     if args.name_only {
-        for entry in &entries {
+        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        for entry in show_entries {
             writeln!(out, "{}", entry.path())?;
         }
         writeln!(out)?;
     }
 
     if args.name_status {
-        for entry in &entries {
+        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        for entry in show_entries {
             writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
         }
         writeln!(out)?;
     }
 
-    if args.patch || args.patch_u {
-        for entry in &entries {
+    if args.patch || args.patch_u || args.cc {
+        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        for entry in show_entries {
             log_write_patch_entry(out, odb, entry, 3)?;
         }
     }
@@ -2253,7 +2407,7 @@ fn log_write_patch_entry(
 }
 
 /// Write a `--stat` summary for log.
-fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<()> {
+fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry], trailing_blank: bool) -> Result<()> {
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
@@ -2271,17 +2425,29 @@ fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]
     }
 
     let n = entries.len();
-    writeln!(
-        out,
-        " {} file{} changed, {} insertion{}(+), {} deletion{}(-)",
+    let mut summary = format!(
+        " {} file{} changed",
         n,
         if n == 1 { "" } else { "s" },
-        total_ins,
-        if total_ins == 1 { "" } else { "s" },
-        total_del,
-        if total_del == 1 { "" } else { "s" },
-    )?;
-    writeln!(out)?;
+    );
+    if total_ins > 0 {
+        summary.push_str(&format!(
+            ", {} insertion{}(+)",
+            total_ins,
+            if total_ins == 1 { "" } else { "s" },
+        ));
+    }
+    if total_del > 0 {
+        summary.push_str(&format!(
+            ", {} deletion{}(-)",
+            total_del,
+            if total_del == 1 { "" } else { "s" },
+        ));
+    }
+    writeln!(out, "{summary}")?;
+    if trailing_blank {
+        writeln!(out)?;
+    }
 
     Ok(())
 }

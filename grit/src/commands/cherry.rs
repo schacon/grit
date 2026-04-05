@@ -116,8 +116,7 @@ pub fn run(args: Args) -> Result<()> {
             _ => '+',
         };
 
-        // First 7 hex chars as the abbreviated OID (git's default minimum).
-        let abbrev = &commit_oid.to_hex()[..7];
+        let oid_hex = commit_oid.to_hex();
 
         if args.verbose {
             let obj = repo
@@ -127,9 +126,9 @@ pub fn run(args: Args) -> Result<()> {
             let commit_data =
                 parse_commit(&obj.data).with_context(|| format!("parsing commit {commit_oid}"))?;
             let subject = commit_data.message.lines().next().unwrap_or("").trim_end();
-            writeln!(out, "{sign} {abbrev} {subject}")?;
+            writeln!(out, "{sign} {oid_hex} {subject}")?;
         } else {
-            writeln!(out, "{sign} {abbrev}")?;
+            writeln!(out, "{sign} {oid_hex}")?;
         }
     }
 

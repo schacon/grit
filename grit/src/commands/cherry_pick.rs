@@ -98,6 +98,13 @@ pub struct Args {
 
 /// Run the `cherry-pick` command.
 pub fn run(args: Args) -> Result<()> {
+    // Validate -m value early: 0 is invalid (1-based), exit 129 like git.
+    if let Some(m) = args.mainline {
+        if m == 0 {
+            eprintln!("error: invalid mainline parent number: 0 (must be >= 1)");
+            std::process::exit(129);
+        }
+    }
     if args.abort {
         return do_abort();
     }

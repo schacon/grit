@@ -627,7 +627,8 @@ fn add_path(
         )));
     }
 
-    if !abs_path.exists() {
+    // Use symlink_metadata to detect dangling symlinks (exists() follows symlinks)
+    if fs::symlink_metadata(&abs_path).is_err() {
         let path_bytes = path.as_bytes();
         // Check if it's an index entry that needs to be removed
         if index.get(path_bytes, 0).is_some() {

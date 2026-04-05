@@ -844,7 +844,7 @@ fn check_dirty_worktree(
             })()
             .unwrap_or_default();
 
-        if !head_tree_map.is_empty() {
+        {
             let mut staged_conflicts = Vec::new();
             for old_entry in &old_index.entries {
                 if old_entry.stage() != 0 {
