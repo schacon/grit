@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |     7 |
+| Completed   |     8 |
 | In progress |     0 |
-| Remaining   |   758 |
+| Remaining   |   757 |
 | **Total**   |   765 |
 
 ## Recently completed
 
+- `t1310-config-default` — 5/5 tests pass (`git config --default` validation and typed fallback handling)
 - `t2060-switch` — 16/16 tests pass
 - `t1303-wacky-config` — 11/11 tests pass (stale plan entry corrected after upstream verification)
 - `t1402-check-ref-format` — 99/99 tests passing (was 97/99)
@@ -23,4 +24,4 @@
 
 ## What Remains
 
-758 test files still pending. See `plan.md` for the full prioritized list.
+757 test files still pending. See `plan.md` for the full prioritized list.

@@ -295,6 +295,10 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_blob(&args, blob_spec);
     }
 
+    if args.default_value.is_some() && !default_supported(&args) {
+        bail!("--default is only applicable to --get, --get-all, --get-regexp, and lookup forms");
+    }
+
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
@@ -1257,6 +1261,23 @@ fn global_config_path() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".gitconfig"))
 }
 
+/// Returns whether `--default` is valid for the selected operation.
+fn default_supported(args: &Args) -> bool {
+    if matches!(args.subcommand, Some(ConfigSubcommand::Get(_))) {
+        return true;
+    }
+
+    args.get_key.is_some()
+        || args.get_all_key.is_some()
+        || args.get_regexp.is_some()
+        || args.positional.len() == 1
+}
+
+/// Formats a default value and adds Git-compatible context on failure.
+fn format_default_value(args: &Args, val: &str) -> Result<String> {
+    format_typed_value(args, val).context("failed to format default config value")
+}
+
 /// Canonicalize a value for writing based on type flags.
 ///
 /// When `--bool` is used, the value is validated and written as "true"/"false".
@@ -1374,40 +1395,28 @@ fn format_typed_value(args: &Args, val: &str) -> Result<String> {
     }
 
     if type_name == Some("expiry-date") {
-        match parse_expiry_date(val) {
-            Ok(ts) => return Ok(ts.to_string()),
-            Err(e) => bail!("{}", e),
-        }
+        return format_expiry_date(val);
     }
 
     Ok(val.to_owned())
 }
 
-/// Parse an expiry date string into a Unix timestamp.
-///
-/// Accepts:
-/// - "now" → current time
-/// - "never" → 0
-/// - Pure numeric string → epoch timestamp
-/// - Git-format dates: "<epoch> <tz>" (e.g. "1112912053 -0700")
-/// - ISO 8601 dates: "2024-01-15T10:30:00+02:00" or "2024-01-15 10:30:00"
-fn parse_expiry_date(val: &str) -> Result<i64> {
+/// Formats an expiry-date value as an epoch timestamp.
+fn format_expiry_date(val: &str) -> Result<String> {
     let trimmed = val.trim();
-    if trimmed.eq_ignore_ascii_case("now") {
-        return Ok(time::OffsetDateTime::now_utc().unix_timestamp());
-    }
+
     if trimmed.eq_ignore_ascii_case("never") {
-        return Ok(0);
+        return Ok("0".to_owned());
     }
-    // Pure epoch timestamp
-    if let Ok(ts) = trimmed.parse::<i64>() {
-        return Ok(ts);
+
+    if let Ok(n) = parse_i64(trimmed) {
+        return Ok(n.to_string());
     }
-    // Git internal format: "<epoch> <tz>"
-    if let Some((epoch_str, _tz)) = trimmed.split_once(' ') {
-        if let Ok(ts) = epoch_str.parse::<i64>() {
-            return Ok(ts);
-        }
+
+    if let Some(ts) = super::commit::parse_date_to_git_timestamp(trimmed) {
+        let epoch = ts.split_whitespace().next().unwrap_or(&ts);
+        return Ok(epoch.to_owned());
     }
-    bail!("invalid expiry date: '{}'", val)
+
+    bail!("invalid expiry date '{}'", val);
 }
