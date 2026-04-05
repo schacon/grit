@@ -29,3 +29,4 @@
 - `./scripts/run-tests.sh t6301-for-each-ref-errors.sh`: 6/6 passing (regression check after `t6435` fixes).
 - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (regression check after `t6435` fixes).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after `t6435` fixes).
+- `./scripts/run-tests.sh t6401-merge-criss-cross.sh`: 4/4 passing (fully passing; stale plan entry corrected after direct and harness re-verification).

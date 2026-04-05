@@ -709,7 +709,7 @@ commit → check it off → move on.
 - [x] `t6400-merge-df` ████████████████████ 7/7 (0 left) — Test merge with directory/file conflicts
 - [x] `t6301-for-each-ref-errors` ████████████████████ 6/6 (0 left) — for-each-ref errors for broken refs
 - [x] `t6435-merge-sparse` ████████████████████ 6/6 (0 left) — merge with sparse files
-- [ ] `t6401-merge-criss-cross` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test criss-cross merge
+- [x] `t6401-merge-criss-cross` ████████████████████ 4/4 (0 left) — Test criss-cross merge
 - [ ] `t6421-merge-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — limiting blob downloads when merging with partial clones
 - [ ] `t6133-pathspec-rev-dwim` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test dwim of revs versus pathspecs in revision parser
 - [ ] `t6404-recursive-merge` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test merge without common ancestors
