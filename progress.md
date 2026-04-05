@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    91 |
+| Completed   |    96 |
 | In progress |     0 |
-| Remaining   |   675 |
+| Remaining   |   670 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4073-diff-stat-name-width` — 6/6 tests pass (`git diff` now reparses trailing `--stat-name-width`, `--stat-width`, `--stat-count`, and `--stat-graph-width` options correctly instead of collapsing them into plain `--stat`, and UTF-8 diffstat truncation now preserves the Git-compatible suffix/padding behavior the upstream test expects; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4073 bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width 2>&1 | tail -40` against rebuilt `target/release/grit`)
+- `t4125-apply-ws-fuzz` — 4/4 tests pass (`git apply --whitespace=fix` now uses whitespace-fixed comparisons when matching old-side hunk lines, rewrites hunk context/add lines to the fixed postimage, and leaves untouched lines outside the hunk alone; verified with `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4125 bash scripts/run-upstream-tests.sh t4125-apply-ws-fuzz 2>&1 | tail -40` against rebuilt `target/release/grit`)
+- `t4006-diff-mode` — 7/7 tests pass (`git diff --stat` now treats binary mode-only changes as `Bin` entries and widens mixed binary/text zero-count output so the count column matches upstream spacing; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4006 bash scripts/run-upstream-tests.sh t4006-diff-mode 2>&1 | tail -40` against rebuilt `target/release/grit`)
+- `t4028-format-patch-mime-headers` — 3/3 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4028 bash scripts/run-upstream-tests.sh t4028-format-patch-mime-headers 2>&1 | tail -40` against rebuilt `target/release/grit`; the remaining `PLAN.md` entry was stale and no Rust code changes were required)
+- `t4062-diff-pickaxe` — 3/3 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4062 bash scripts/run-upstream-tests.sh t4062-diff-pickaxe 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t4007-rename-3` — 13/13 tests pass (`diff-files` now accepts `-C`, `--find-copies-harder`, and `-R`, builds reverse diff entries against the worktree snapshots, and reuses copy detection so the upstream copy-to-index cases emit the expected `C100` raw diff; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4007 bash scripts/run-upstream-tests.sh t4007-rename-3 2>&1 | tail -40` against rebuilt `target/release/grit`)
 - `t4256-am-format-flowed` — 2/2 tests pass (re-ran `CARGO_TARGET_DIR=/tmp/grit-build-t4256 bash scripts/run-upstream-tests.sh t4256-am-format-flowed 2>&1 | tail -40` against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required)
 - `t3427-rebase-subtree` — 3/3 tests pass (`merge -s ours --no-commit --allow-unrelated-histories` now leaves the expected in-progress merge state for subtree setup, `read-tree --prefix` now accepts the upstream no-trailing-slash form with `-u`, and `rebase` now handles `-Xsubtree`, `--empty=ask`, `--rebase-merges`, and `--root`, stopping only for commits that become empty while preserving intentional empty commits)
@@ -84,4 +89,4 @@
 
 ## What Remains
 
-675 test files still pending. See `PLAN.md` for the full prioritized list.
+670 test files still pending. See `PLAN.md` for the full prioritized list.

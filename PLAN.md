@@ -393,12 +393,12 @@ commit → check it off → move on.
 - [x] `t4007-rename-3` ████████████████████ 13/13 (0 left) — Rename interaction with pathspec.
 
 - [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
-- [ ] `t4006-diff-mode` ██████████████░░░░░░ 5/7 (2 left) — Test mode change diffs.
+- [x] `t4006-diff-mode` ████████████████████ 7/7 (done) — Test mode change diffs.
 
-- [ ] `t4073-diff-stat-name-width` █████████████░░░░░░░ 4/6 (2 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
-- [ ] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
-- [ ] `t4028-format-patch-mime-headers` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — format-patch mime headers and extra headers do not conflict
-- [ ] `t4062-diff-pickaxe` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Pickaxe options
+- [x] `t4073-diff-stat-name-width` ████████████████████ 6/6 (0 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
+- [x] `t4125-apply-ws-fuzz` ████████████████████ 4/4 (done) — applying patch that has broken whitespaces in context
+- [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (done) — format-patch mime headers and extra headers do not conflict
+- [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (done) — Pickaxe options
 - [ ] `t4131-apply-fake-ancestor` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git apply --build-fake-ancestor handling.
 - [ ] `t4217-log-limit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git log with filter options limiting the output
 - [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 

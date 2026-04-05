@@ -2,7 +2,31 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after fixing `git diff` trailing `--stat*` option reparsing and UTF-8 diffstat name truncation.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4073 bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width 2>&1 | tail -40`: initial reproduction reported 4/6 passing; after fixing `--stat-name-width` reparsing and Git-compatible UTF-8 suffix truncation, the rerun completed with 6/6 passing against rebuilt `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4073 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `cargo build --release`: completed after wiring `git apply --whitespace=fix` into old-side hunk matching and fixed-line output.
+- `cargo test -p grit-rs --bin grit whitespace_fix -- --nocapture`: 2/2 passing.
+- `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4125 bash scripts/run-upstream-tests.sh t4125-apply-ws-fuzz 2>&1 | tail -40`: initial reruns showed 2/4 and then 3/4 passing; after fixing `--whitespace=fix` context rewriting, the final rerun completed with 4/4 passing against rebuilt `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4125 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4006 bash scripts/run-upstream-tests.sh t4006-diff-mode 2>&1 | tail -40`: initial reproduction was 6/7 passing; after fixing `git diff --stat` binary classification and mixed `Bin`/`0` column alignment for mode-only changes, the rerun completed with 7/7 passing against rebuilt `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4006 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4028 bash scripts/run-upstream-tests.sh t4028-format-patch-mime-headers 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against rebuilt `target/release/grit`; the remaining `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4028 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4256 bash scripts/run-upstream-tests.sh t4256-am-format-flowed 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4062 bash scripts/run-upstream-tests.sh t4062-diff-pickaxe 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4062 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4256 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.

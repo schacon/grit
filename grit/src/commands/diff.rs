@@ -429,7 +429,31 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--shortstat" => args.shortstat = true,
                 "--summary" => args.summary = true,
                 "--quiet" | "-q" => args.quiet = true,
-                s if s.starts_with("--stat") => {
+                s if s.starts_with("--stat-name-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-name-width=") {
+                        args.stat_name_width = val.parse().ok();
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-width=") {
+                        args.stat_width = val.parse().ok();
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-count=") => {
+                    if let Some(val) = s.strip_prefix("--stat-count=") {
+                        args.stat_count = val.parse().ok();
+                    }
+                    stat_enabled = true;
+                }
+                s if s.starts_with("--stat-graph-width=") => {
+                    if let Some(val) = s.strip_prefix("--stat-graph-width=") {
+                        args.stat_graph_width = val.parse().ok();
+                    }
+                    stat_enabled = true;
+                }
+                s if s == "--stat" || s.starts_with("--stat=") => {
                     if s == "--stat" {
                         if args.stat.is_none() {
                             args.stat = Some(String::new());
@@ -2211,6 +2235,32 @@ fn format_stat_line_git(
     }
 }
 
+fn truncate_stat_path(path: &str, max_width: usize) -> std::borrow::Cow<'_, str> {
+    if UnicodeWidthStr::width(path) <= max_width {
+        return std::borrow::Cow::Borrowed(path);
+    }
+
+    if max_width <= 3 {
+        return std::borrow::Cow::Borrowed("...");
+    }
+
+    let suffix_width_budget = max_width - 3;
+    let mut kept_width = 0usize;
+    let mut suffix_start = path.len();
+
+    for (idx, ch) in path.char_indices().rev() {
+        let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if kept_width + char_width > suffix_width_budget {
+            break;
+        }
+        kept_width += char_width;
+        suffix_start = idx;
+    }
+
+    let suffix = &path[suffix_start..];
+    std::borrow::Cow::Owned(format!("...{suffix}"))
+}
+
 /// Write a stat summary for each entry, followed by a totals line.
 fn write_stat(
     out: &mut impl Write,
@@ -2237,31 +2287,50 @@ fn write_stat(
             _ => quote_c_style(e.path()),
         })
         .collect();
-    let max_path_len = display_paths
+    let widest_path = display_paths
         .iter()
         .map(|p| UnicodeWidthStr::width(p.as_str()))
         .max()
         .unwrap_or(0);
 
     // Collect per-file stats first so we can compute the count column width
-    let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
+    let mut file_stats: Vec<(&str, usize, usize, bool)> = Vec::new();
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
 
     for (i, entry) in entries.iter().enumerate() {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
-        file_stats.push((&display_paths[i], ins, del));
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let binary = is_binary(&old_raw) || is_binary(&new_raw);
+        let (ins, del) = if binary {
+            (0, 0)
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            count_changes(&old_content, &new_content)
+        };
+        file_stats.push((&display_paths[i], ins, del, binary));
         total_ins += ins;
         total_del += del;
         files_changed += 1;
     }
 
     // Compute the width for the count column (like git does)
-    let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    let count_width = format!("{}", max_count).len();
+    let max_count = file_stats
+        .iter()
+        .map(|(_, i, d, _)| i + d)
+        .max()
+        .unwrap_or(0);
+    let count_width = file_stats
+        .iter()
+        .fold(format!("{}", max_count).len(), |width, stat| {
+            if stat.3 {
+                width.max(3)
+            } else {
+                width
+            }
+        });
 
     // Compute layout widths from total width, like git.
     // Line format: " {name:<N} | {count:>C} {bar}"
@@ -2273,18 +2342,18 @@ fn write_stat(
     // line_budget = name_len + bar_len
 
     // Apply stat_name_width if set, or truncate to fit terminal width
-    let max_path_len = if let Some(nw) = stat_name_width {
-        max_path_len.min(nw)
-    } else if max_path_len > line_budget.saturating_sub(1) {
+    let name_width = if let Some(nw) = stat_name_width {
+        widest_path.min(nw)
+    } else if widest_path > line_budget.saturating_sub(1) {
         // Name too long for the budget — truncate, leaving at least 1 char for bar
         line_budget.saturating_sub(1)
     } else {
-        max_path_len
+        widest_path
     };
 
-    let max_bar = line_budget.saturating_sub(max_path_len).max(10);
+    let max_bar = line_budget.saturating_sub(name_width).max(10);
 
-    let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
+    let display_stats: &[(&str, usize, usize, bool)] = if let Some(limit) = stat_count {
         if file_stats.len() > limit {
             &file_stats[..limit]
         } else {
@@ -2293,37 +2362,23 @@ fn write_stat(
     } else {
         &file_stats
     };
-    for (path, ins, del) in display_stats {
-        // Truncate path if its display width exceeds max_path_len
-        let path_width = UnicodeWidthStr::width(*path);
-        let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
-            // Git truncates with "..." prefix, keeping as much of the suffix as fits
-            let target_suffix_width = max_path_len.saturating_sub(3);
-            // Walk from the end, accumulating display width
-            let mut width_acc = 0usize;
-            let mut cut_idx = path.len();
-            for (idx, ch) in path.char_indices().rev() {
-                let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-                if width_acc + cw > target_suffix_width {
-                    break;
-                }
-                width_acc += cw;
-                cut_idx = idx;
-            }
-            let suffix = &path[cut_idx..];
-            std::borrow::Cow::Owned(format!("...{}", suffix))
+    for (path, ins, del, binary) in display_stats {
+        let display_path = truncate_stat_path(path, name_width);
+        let line = if *binary {
+            let display_width = UnicodeWidthStr::width(display_path.as_ref());
+            let padding = name_width.saturating_sub(display_width);
+            format!(" {}{} | Bin", display_path, " ".repeat(padding))
         } else {
-            std::borrow::Cow::Borrowed(*path)
+            format_stat_line_git(
+                &display_path,
+                *ins,
+                *del,
+                name_width,
+                count_width,
+                max_count,
+                max_bar,
+            )
         };
-        let line = format_stat_line_git(
-            &display_path,
-            *ins,
-            *del,
-            max_path_len,
-            count_width,
-            max_count,
-            max_bar,
-        );
         writeln!(out, "{line}")?;
     }
     if let Some(limit) = stat_count {
