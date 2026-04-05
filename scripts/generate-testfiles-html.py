@@ -10,6 +10,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TESTS_DIR = os.path.join(REPO, "tests")
 RESULTS_CSV = "/tmp/grit-testfile-results.csv"
 INFO_TSV = "/tmp/grit-testfile-info.tsv"
+DATA_TSV = os.path.join(REPO, "data", "test-results.tsv")
 OUT = os.path.join(REPO, "docs", "testfiles.html")
 
 CATEGORIES = [
@@ -44,6 +45,19 @@ def load_info():
                     desc = parts[2] if len(parts) > 2 else ""
                     info[fname] = {"static_count": count, "desc": desc}
     return info
+
+def load_canonical_counts():
+    """Load per-file test counts from data/test-results.tsv (canonical 18,097 set)."""
+    counts = {}
+    if os.path.exists(DATA_TSV):
+        with open(DATA_TSV) as f:
+            f.readline()  # skip header
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 2:
+                    fname = parts[1]  # e.g. 't0000-basic'
+                    counts[fname] = counts.get(fname, 0) + 1
+    return counts
 
 def load_results():
     """Load live run results: file, total, pass, fail, skip."""
@@ -82,6 +96,8 @@ def generate():
     info = load_info()
     results = load_results()
     
+    canonical = load_canonical_counts()
+    
     # Merge: get all test files
     all_files = sorted(set(list(info.keys()) + list(results.keys())))
     
@@ -94,12 +110,17 @@ def generate():
         r = results.get(fname, {})
         cat_prefix, cat_name = get_category(fname)
         
+        # Use runtime results directly (ground truth)
         total = r.get("total", 0)
         passing = r.get("pass", 0)
         failing = r.get("fail", 0)
         skip = r.get("skip", 0)
         desc = i.get("desc", "")
-        static_count = i.get("static_count", total)
+        
+        # Track if this is a canonical upstream test
+        basename = fname.replace('.sh', '')
+        is_canonical = basename in canonical
+        
         p = pct(passing, total) if total > 0 else -1
         
         rows.append({
@@ -107,7 +128,8 @@ def generate():
             "cat_prefix": cat_prefix,
             "cat_name": cat_name,
             "desc": desc,
-            "static_count": static_count,
+            "static_count": i.get("static_count", total),
+            "is_canonical": is_canonical,
             "total": total,
             "pass": passing,
             "fail": failing,
@@ -115,13 +137,17 @@ def generate():
             "pct": p,
         })
 
-    # Compute summary stats
+    # Summary stats from runtime results
     total_tests = sum(r["total"] for r in rows)
     total_pass = sum(r["pass"] for r in rows)
     total_fail = sum(r["fail"] for r in rows)
     total_files = len([r for r in rows if r["total"] > 0])
     pass_files = len([r for r in rows if r["total"] > 0 and r["fail"] == 0])
     has_results = total_tests > 0
+    
+    # Canonical upstream stats for comparison
+    canon_files = len(canonical)
+    canon_total = sum(canonical.values())  # 18,097
     
     # Category stats
     cat_stats = {}
@@ -213,12 +239,13 @@ tr:hover td {{ background: #161b22; }}
 </p>
 
 <div class="summary-cards">
-  <div class="card"><div class="num">{total_files:,}</div><div class="label">Test Files</div></div>
+  <div class="card"><div class="num">{total_files:,}</div><div class="label">Test Files Run</div></div>
   <div class="card"><div class="num" style="color:#3fb950">{pass_files:,}</div><div class="label">Fully Passing</div></div>
   <div class="card"><div class="num">{total_pass:,}</div><div class="label">Tests Passing</div></div>
-  <div class="card"><div class="num">{total_tests:,}</div><div class="label">Total Tests</div></div>
+  <div class="card"><div class="num">{total_tests:,}</div><div class="label">Total Tests Run</div></div>
   <div class="card"><div class="num" style="color:{'#3fb950' if total_tests else '#7d8590'}">{pct(total_pass, total_tests):.1f}%</div><div class="label">Pass Rate</div></div>
 </div>
+<p style="color:#7d8590;font-size:0.82rem;margin-bottom:1.5rem;">Counts are from actually running each test file. The <a href="index.html" style="color:#58a6ff">dashboard</a> uses static counts ({canon_total:,} upstream test cases across {canon_files} files).</p>
 """
 
     # Category summary
