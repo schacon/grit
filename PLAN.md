@@ -418,7 +418,7 @@ commit → check it off → move on.
 - [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check
 - [~] `t4257-am-interactive` ██████████░░░░░░░░░░ 2/4 (2 left) — am --interactive tests (upstream harness 4/4; remaining local mismatches come from simplified test helper semantics around `test_commit`/`reset --hard base`)
 - [x] `t4258-am-quoted-cr` ████████████████████ 4/4 (0 left) — test am --quoted-cr=<action>
-- [ ] `t4072-diff-max-depth` ██████████████████░░ 72/76 (4 left) — check that diff --max-depth will limit recursion
+- [x] `t4072-diff-max-depth` ████████████████████ 76/76 (0 left) — check that diff --max-depth will limit recursion
 - [ ] `t4040-whitespace-status` ████████████░░░░░░░░ 7/11 (4 left) — diff --exit-code with whitespace
 - [ ] `t4107-apply-ignore-whitespace` ████████████░░░░░░░░ 7/11 (4 left) — git-apply --ignore-whitespace.
 - [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename

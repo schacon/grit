@@ -315,6 +315,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-r" => {
                     // recursive - default behavior for diff-index
                 }
+                _ if arg.starts_with("--max-depth=") => {
+                    let val = &arg["--max-depth=".len()..];
+                    let parsed = val
+                        .parse::<i32>()
+                        .with_context(|| format!("invalid --max-depth value: `{val}`"))?;
+                    if parsed != -1 {
+                        bail!("unsupported option: {arg}");
+                    }
+                }
                 _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
                     context_lines = arg[2..].parse::<usize>().unwrap();
                 }

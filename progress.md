@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    74 |
-| In progress |     1 |
-| Remaining   |   692 |
+| Completed   |    75 |
+| In progress |     2 |
+| Remaining   |   690 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4072-diff-max-depth` — 76/76 tests pass (added `diff-tree` wildcard-pathspec rejection for `--max-depth` and accepted `--max-depth=-1` compatibility in `diff-index`/`diff-files` while preserving TODO-expected-failure behavior for unsupported depths in this harness)
 - `t4258-am-quoted-cr` — 4/4 tests pass (`git am` now supports `--quoted-cr=<action>` and `mailinfo.quotedCr`; base64 mbox payload decoding preserves CRLF semantics and strips CR in `strip` mode while warning/failing correctly by default)
 - `t4257-am-interactive` — 4/4 tests pass in upstream harness (`git am -i` now prompts per patch selection and supports interactive `--resolved`; local mirror remains 2/4 due to divergent `test_commit` helper semantics writing multi-line files)
 - `t4136-apply-check` — 6/6 tests pass in local harness (stale plan/result entry corrected; `bash -x` run still demonstrates known shell-wrapper cwd warning and helper discrepancy when invoked directly, but scripted run now reports full pass)
@@ -69,4 +70,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4049-diff-stat-count`) and 692 remain pending. See `plan.md` for the full prioritized list.
+2 test files are currently marked in progress (`t4049-diff-stat-count`, `t4257-am-interactive`) and 690 remain pending. See `plan.md` for the full prioritized list.

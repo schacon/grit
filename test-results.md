@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `diff-tree`/`diff-index`/`diff-files` `--max-depth` parsing adjustments for `t4072`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4072-diff-max-depth.sh` (from `tests/`): 76/76 passing.
+- `./scripts/run-tests.sh t4072-diff-max-depth.sh`: 76/76 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4072-diff-max-depth`: 50 pass / 26 fail in upstream TAP aggregate, matching this file’s 26 `test_expect_failure` TODO cases (no unexpected non-TODO regressions observed).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `grit am` interactive selection, `--quoted-cr` handling, CRLF-aware patch parsing, and state round-trip fixes).
 - `bash scripts/run-upstream-tests.sh t4257-am-interactive`: 4/4 passing.
 - `bash scripts/run-upstream-tests.sh t4258-am-quoted-cr`: 4/4 passing.

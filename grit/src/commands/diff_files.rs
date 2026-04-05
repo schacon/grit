@@ -240,6 +240,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     find_copies = true;
                     find_copies_harder = true;
                 }
+                _ if arg.starts_with("--max-depth=") => {
+                    let val = &arg["--max-depth=".len()..];
+                    let parsed = val
+                        .parse::<i32>()
+                        .with_context(|| format!("invalid --max-depth value: `{val}`"))?;
+                    if parsed != -1 {
+                        bail!("unsupported option: {arg}");
+                    }
+                }
                 "--patch-with-raw" => {
                     format = OutputFormat::Patch;
                     suppress_diff = false;

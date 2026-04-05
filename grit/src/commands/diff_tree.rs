@@ -308,6 +308,14 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 /// Run `grit diff-tree`.
 pub fn run(args: Args) -> Result<()> {
     let opts = parse_options(&args.args)?;
+    if opts.max_depth.is_some()
+        && opts
+            .pathspecs
+            .iter()
+            .any(|spec| spec.contains('*') || spec.contains('?') || spec.contains('['))
+    {
+        bail!("--max-depth does not support wildcard pathspecs");
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let stdout = io::stdout();
@@ -569,39 +577,37 @@ fn filter_max_depth(
     }
     let max_depth = max_depth as usize;
 
-    // For each entry, find the matching pathspec and compute relative depth.
-    // Depth 0 means the entry is directly in the pathspec root.
-    let prefix_depth = if pathspecs.is_empty() {
-        0usize
-    } else {
-        // Use the longest (most specific) matching prefix for each entry.
-        // For simplicity, use the minimum prefix depth across all pathspecs.
-        pathspecs
-            .iter()
-            .map(|p| {
-                let p = p.strip_suffix('/').unwrap_or(p);
-                if p.is_empty() {
-                    0
-                } else {
-                    p.split('/').count()
-                }
-            })
-            .min()
-            .unwrap_or(0)
-    };
-
-    // Maximum number of path components allowed in output.
-    let allowed_components = if prefix_depth > 0 {
-        prefix_depth + max_depth
-    } else {
-        max_depth + 1
-    };
-
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for entry in entries {
         let path = entry.path();
         let components: Vec<&str> = path.split('/').collect();
+        let match_prefix_depth = if pathspecs.is_empty() {
+            0usize
+        } else {
+            pathspecs
+                .iter()
+                .filter_map(|spec| {
+                    let prefix = spec.strip_suffix('/').unwrap_or(spec);
+                    if path == prefix || path.starts_with(&format!("{prefix}/")) {
+                        Some(if prefix.is_empty() {
+                            0
+                        } else {
+                            prefix.split('/').count()
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap_or(0)
+        };
+
+        let allowed_components = if match_prefix_depth > 0 {
+            match_prefix_depth + max_depth
+        } else {
+            max_depth + 1
+        };
 
         if components.len() <= allowed_components {
             result.push(entry);
