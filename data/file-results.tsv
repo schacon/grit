@@ -1,5 +1,5 @@
 file	ported	total_tests	passing	failing	status	real_pass	real_total	expect_failure
-t0000-basic	yes	92	23	69	ok	15	84	8
+t0000-basic	yes	92	26	66	ok	18	84	8
 t0001-init	yes	102	54	48	ok	54	102	0
 t0002-gitfile	yes	14	8	6	ok	8	14	0
 t0003-attributes	yes	55	15	40	ok	15	55	0
@@ -411,7 +411,7 @@ t4062-diff-pickaxe	yes	3	1	2	ok	1	3	0
 t4063-diff-blobs	yes	18	2	16	ok	2	18	0
 t4064-diff-oidfind	yes	10	5	5	ok	5	10	0
 t4065-diff-anchored	yes	7	7	0	ok	7	7	0
-t4066-diff-emit-delay	yes	2	1	1	ok	1	2	0
+t4066-diff-emit-delay	yes	2	2	0	ok	2	2	0
 t4067-diff-partial-clone	yes	9	0	9	ok	0	9	0
 t4068-diff-symmetric-merge-base	yes	36	1	35	ok	1	36	0
 t4069-remerge-diff	yes	16	1	15	ok	1	16	0

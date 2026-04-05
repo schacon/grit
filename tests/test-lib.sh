@@ -682,7 +682,7 @@ test_commit () {
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s' "$contents" >"$file" &&
+		printf '%s\n' "$contents" >"$file" &&
 		git add "$file" &&
 		if test -z "$notick"; then
 			test_tick
