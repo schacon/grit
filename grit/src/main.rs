@@ -66,8 +66,13 @@ fn main() {
             exit_code = 0;
         }
         Err(e) => {
-            eprintln!("error: {e:#}");
-            exit_code = 1;
+            if is_broken_pipe_error(&e) {
+                // Match shell signal convention for SIGPIPE.
+                exit_code = 128 + 13;
+            } else {
+                eprintln!("error: {e:#}");
+                exit_code = 1;
+            }
         }
     }
 
@@ -98,6 +103,25 @@ fn main() {
     }
 
     std::process::exit(exit_code);
+}
+
+fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
+    use std::io::ErrorKind;
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+        if let Some(lib_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = lib_err {
+                if ioe.kind() == ErrorKind::BrokenPipe {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Get process ancestry by walking parent PIDs on Linux.
@@ -243,6 +267,13 @@ fn chrono_now() -> String {
 }
 
 fn exit_with_status(status: std::process::ExitStatus) -> ! {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            std::process::exit(128 + sig);
+        }
+    }
     std::process::exit(status.code().unwrap_or(1));
 }
 
@@ -627,6 +658,13 @@ fn run() -> Result<()> {
                 trace_cmd,
             );
             write_git_trace(&trace_val, &trace_line);
+        }
+    }
+
+    // Expand configured aliases when the subcommand is not a built-in.
+    if !KNOWN_COMMANDS.contains(&subcmd.as_str()) {
+        if let Some(alias) = get_alias_definition(&subcmd) {
+            return run_alias(&subcmd, &alias, &rest, &opts);
         }
     }
 
@@ -1115,6 +1153,53 @@ fn get_autocorrect_setting() -> Option<String> {
         }
     }
     None
+}
+
+/// Read an alias definition from config (`alias.<name>`).
+fn get_alias_definition(name: &str) -> Option<String> {
+    let key = format!("alias.{name}");
+    if let Some(val) = protocol::check_config_param(&key) {
+        return Some(val);
+    }
+    let git_dir = std::env::var("GIT_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            grit_lib::repo::Repository::discover(None)
+                .ok()
+                .map(|r| r.git_dir)
+        });
+    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
+        return config.get(&key);
+    }
+    None
+}
+
+#[allow(dead_code)]
+fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if let Some(shell_cmd) = alias.strip_prefix('!') {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(shell_cmd)
+            .arg(format!("git-{name}"))
+            .args(rest)
+            .status()?;
+        exit_with_status(status);
+    }
+
+    let mut parts: Vec<String> = alias
+        .split_whitespace()
+        .map(|s| s.to_owned())
+        .collect();
+    if parts.is_empty() {
+        bail!("alias '{name}' expands to an empty command");
+    }
+    let next_subcmd = parts.remove(0);
+    if next_subcmd == name {
+        bail!("recursive alias '{name}'");
+    }
+    parts.extend(rest.iter().cloned());
+    dispatch(&next_subcmd, &parts, opts)
 }
 
 fn strsim_distance(a: &str, b: &str) -> usize {

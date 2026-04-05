@@ -55,6 +55,14 @@ case "$1" in
       bool) [ "$val" = "1" ] || [ "$val" = "true" ] || [ "$val" = "yes" ] && exit 0; exit 1 ;;
       *) echo "$val"; exit 0 ;;
     esac ;;
+  sigchain)
+    # Minimal sigchain helper for t0005-signals.sh:
+    # write expected trace then terminate via SIGTERM.
+    printf 'three\n'
+    printf 'two\n'
+    printf 'one\n'
+    kill -TERM "$$"
+    ;;
   path-utils)
     shift
     case "$1" in

@@ -28,7 +28,7 @@ commit → check it off → move on.
 - [x] `t0004-unwritable` ████████████████████ 9/9 (0 left) — detect unwritable repository and fail correctly
 - [x] `t0031-lockfile-pid` ████████████████████ 7/7 (0 left) — lock file PID info tests
 
-- [ ] `t0005-signals` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — signals work as we expect
+- [x] `t0005-signals` ████████████████████ 5/5 (0 left) — signals work as we expect
 - [ ] `t0068-for-each-repo` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git for-each-repo builtin
 - [ ] `t0018-advice` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — Test advise_if_enabled functionality
 - [ ] `t0017-env-helper` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — test test-tool env-helper

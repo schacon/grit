@@ -1008,6 +1008,13 @@ test_expect_code () {
 	fi
 }
 
+test_match_signal () {
+	local sig="$1"
+	local code="$2"
+	local expected=$((128 + sig))
+	test "$code" = "$expected"
+}
+
 test_must_be_empty () {
 	if test -s "$1"
 	then
@@ -1046,6 +1053,17 @@ test_stdout_line_count () {
 	local rc=$?
 	rm -f "$tmp"
 	return $rc
+}
+
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
+	then
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
+	fi
+	return 1
 }
 
 # Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.
