@@ -139,6 +139,12 @@ pub enum StashCommand {
         /// Show stat (default).
         #[arg(long = "stat")]
         stat: bool,
+        /// Show name and status only.
+        #[arg(long = "name-status")]
+        name_status: bool,
+        /// Show name only.
+        #[arg(long = "name-only")]
+        name_only: bool,
         /// Patience diff algorithm.
         #[arg(long = "patience")]
         patience: bool,

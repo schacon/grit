@@ -582,7 +582,7 @@ fn do_real_merge(
     merge_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
-    _diff_algorithm: Option<&str>,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -805,7 +805,7 @@ fn do_octopus_merge(
     head_oid: ObjectId,
     args: &Args,
     favor: MergeFavor,
-    _diff_algorithm: Option<&str>,
+    diff_algorithm: Option<&str>,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -1836,7 +1836,7 @@ fn merge_trees(
     _head: &HeadState,
     their_name: &str,
     favor: MergeFavor,
-    _diff_algorithm: Option<&str>,
+    diff_algorithm: Option<&str>,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
@@ -2256,7 +2256,7 @@ fn try_content_merge(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
-    _diff_algorithm: Option<&str>,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -2310,6 +2310,7 @@ fn try_content_merge(
         favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
+        diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
     let output = merge_file::merge(&input)?;
@@ -2331,7 +2332,7 @@ fn try_content_merge_add_add(
     ours_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
-    _diff_algorithm: Option<&str>,
+    diff_algorithm: Option<&str>,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -2350,6 +2351,7 @@ fn try_content_merge_add_add(
         favor,
         style: ConflictStyle::Merge,
         marker_size: 7,
+        diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
     let output = merge_file::merge(&input)?;
