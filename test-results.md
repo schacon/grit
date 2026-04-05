@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-05
 
+- `cargo build --release`: passes (rebuild after `git apply` rename/copy source-target path handling updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4112-apply-renames.sh`: 2/2 passing.
+- `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing; `data/file-results.tsv` refreshed.
+- `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 3/3 passing (regression check after apply path changes).
+- `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing (regression check after apply path changes).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+- `./scripts/run-tests.sh t4117-apply-reject.sh`: 5/8 passing (baseline for next in-progress Diff target).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4117-apply-reject.sh`: fails in reject-mode cases (`--reject` currently unsupported; 3 failing tests).
+
 - `cargo build --release`: passes (rebuild after diff trailing-stat option parsing fix).
 - `bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width`: 6/6 passing.
 - `./scripts/run-tests.sh t4073-diff-stat-name-width.sh`: 6/6 passing; `data/file-results.tsv` refreshed.

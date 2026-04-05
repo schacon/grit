@@ -18,6 +18,7 @@ use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -186,6 +187,36 @@ impl FilePatch {
             .as_deref()
             .filter(|p| *p != "/dev/null")
             .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"))
+    }
+
+    /// Source path to read preimage content from.
+    ///
+    /// For rename/copy patches this is the old path, otherwise this is the
+    /// effective path.
+    fn source_path(&self) -> Option<&str> {
+        if self.is_rename || self.is_copy {
+            self.old_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
+                .or(self.effective_path())
+        } else {
+            self.effective_path()
+        }
+    }
+
+    /// Destination path to write postimage content to.
+    ///
+    /// For additions/renames/copies this is the new path, otherwise this is
+    /// the effective path.
+    fn target_path(&self) -> Option<&str> {
+        if self.is_new || self.is_rename || self.is_copy {
+            self.new_path
+                .as_deref()
+                .filter(|p| *p != "/dev/null")
+                .or(self.effective_path())
+        } else {
+            self.effective_path()
+        }
     }
 }
 
@@ -1062,7 +1093,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             continue;
         }
         let path_str = fp
-            .effective_path()
+            .source_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
         let path = PathBuf::from(&adjusted);
@@ -1109,11 +1140,32 @@ fn remove_empty_dirs_up(dir: &Path) {
 
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
     let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
+    // Snapshot source-side file contents used by cross-path rename/copy patches
+    // so later modifications/removals do not affect subsequent patch sections.
+    let mut source_snapshots: HashMap<String, String> = HashMap::new();
+    for fp in patches {
+        let Some(source) = fp.source_path() else {
+            continue;
+        };
+        let Some(target) = fp.target_path() else {
+            continue;
+        };
+        let source_adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+        let target_adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+        if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&source_adjusted) {
+            source_snapshots.insert(source_adjusted, content);
+        }
+    }
+
     for fp in patches {
         let path_str = fp
-            .effective_path()
+            .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
+        let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
             // Delete the file (or directory for submodules)
@@ -1159,19 +1211,24 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        // Modify existing file — read from old_path if it differs from new_path
-        let read_path = if let Some(old_p) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
-            let adj = PathBuf::from(adjust_path(old_p, args.strip, args.directory.as_deref()));
-            if adj != path && adj.exists() {
-                adj
+        // Modify existing file — read preimage from source side (important
+        // for rename/copy patches where target may not exist yet).
+        let source_adjusted = fp
+            .source_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_else(|| path_adjusted.clone());
+        let read_path = PathBuf::from(&source_adjusted);
+        let old_content = if source_adjusted != path_adjusted {
+            if let Some(snapshot) = source_snapshots.get(&source_adjusted) {
+                snapshot.clone()
             } else {
-                path.clone()
+                fs::read_to_string(&read_path)
+                    .with_context(|| format!("failed to read {}", read_path.display()))?
             }
         } else {
-            path.clone()
+            fs::read_to_string(&read_path)
+                .with_context(|| format!("failed to read {}", read_path.display()))?
         };
-        let old_content = fs::read_to_string(&read_path)
-            .with_context(|| format!("failed to read {}", read_path.display()))?;
 
         if fp.hunks.is_empty() {
             // Mode-only change
@@ -1186,8 +1243,23 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
 
         let new_content = apply_hunks(&old_content, &fp.hunks, whitespace_fix)
             .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
         fs::write(&path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
+
+        if fp.is_rename && read_path != path {
+            if read_path.exists() {
+                fs::remove_file(&read_path)
+                    .with_context(|| format!("failed to remove {}", read_path.display()))?;
+            }
+            if let Some(parent) = read_path.parent() {
+                remove_empty_dirs_up(parent);
+            }
+        }
     }
 
     Ok(())
@@ -1200,6 +1272,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
+    let original_index = index.clone();
     // CWD prefix for subdir apply
     let cwd_prefix = if let Some(ref wt) = repo.work_tree {
         if let Ok(cwd) = std::env::current_dir() {
@@ -1221,14 +1294,19 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
     };
 
     for fp in patches {
-        let path_str = fp
-            .effective_path()
+        let target_path_str = fp
+            .target_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let raw = adjust_path(path_str, args.strip, args.directory.as_deref());
-        let adjusted = format!("{cwd_prefix}{raw}");
+        let target_raw = adjust_path(target_path_str, args.strip, args.directory.as_deref());
+        let target_adjusted = format!("{cwd_prefix}{target_raw}");
+        let source_adjusted = fp
+            .source_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .map(|raw| format!("{cwd_prefix}{raw}"))
+            .unwrap_or_else(|| target_adjusted.clone());
 
         if fp.is_deleted {
-            index.remove(adjusted.as_bytes());
+            index.remove(source_adjusted.as_bytes());
             continue;
         }
 
@@ -1263,9 +1341,9 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
                 gid: 0,
                 size: 0,
                 oid,
-                flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
-                path: adjusted.into_bytes(),
+                path: target_adjusted.into_bytes(),
             };
             index.add_or_replace(entry);
             continue;
@@ -1275,9 +1353,14 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         let old_content = if fp.is_new {
             String::new()
         } else {
-            let entry = index
-                .get(adjusted.as_bytes(), 0)
-                .ok_or_else(|| anyhow::anyhow!("{adjusted} not found in index"))?;
+            let source_index = if source_adjusted != target_adjusted {
+                &original_index
+            } else {
+                &index
+            };
+            let entry = source_index
+                .get(source_adjusted.as_bytes(), 0)
+                .ok_or_else(|| anyhow::anyhow!("{source_adjusted} not found in index"))?;
             let obj = repo.odb.read(&entry.oid)?;
             String::from_utf8_lossy(&obj.data).into_owned()
         };
@@ -1286,7 +1369,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
             old_content.clone()
         } else {
             apply_hunks(&old_content, &fp.hunks, false)
-                .with_context(|| format!("failed to apply patch to {adjusted}"))?
+                .with_context(|| format!("failed to apply patch to {target_adjusted}"))?
         };
 
         // Write new blob to ODB
@@ -1295,7 +1378,12 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         // Determine mode
         let mode = if let Some(m) = fp.new_mode.as_deref() {
             parse_mode(m)
-        } else if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+        } else if source_adjusted != target_adjusted {
+            original_index
+                .get(source_adjusted.as_bytes(), 0)
+                .map(|entry| entry.mode)
+                .unwrap_or(0o100644)
+        } else if let Some(entry) = index.get(source_adjusted.as_bytes(), 0) {
             entry.mode
         } else {
             0o100644
@@ -1315,10 +1403,14 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
             gid: 0,
             size,
             oid: new_oid,
-            flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
             flags_extended: None,
-            path: adjusted.into_bytes(),
+            path: target_adjusted.clone().into_bytes(),
         };
+
+        if fp.is_rename && source_adjusted != target_adjusted {
+            index.remove(source_adjusted.as_bytes());
+        }
         index.add_or_replace(entry);
     }
 
@@ -1356,8 +1448,12 @@ fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        let old_content = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+        let read_path = fp
+            .source_path()
+            .map(|p| PathBuf::from(adjust_path(p, args.strip, args.directory.as_deref())))
+            .unwrap_or_else(|| path.clone());
+        let old_content = fs::read_to_string(&read_path)
+            .with_context(|| format!("failed to read {}", read_path.display()))?;
         apply_hunks(&old_content, &fp.hunks, whitespace_fix)
             .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }

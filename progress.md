@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    65 |
+| Completed   |    66 |
 | In progress |     1 |
-| Remaining   |   698 |
+| Remaining   |   700 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -56,7 +56,8 @@
 - `t4125-apply-ws-fuzz` — 4/4 tests pass (`git apply --whitespace=fix` now normalizes context/remove matching and writes whitespace-fixed added lines)
 - `t4131-apply-fake-ancestor` — 3/3 tests pass (`git apply --build-fake-ancestor=<file>` now writes a synthetic index from patch `index` headers and respects subdirectory invocation)
 - `t4217-log-limit` — 3/3 tests pass (`git log --since-as-filter` now interprets non-epoch ident dates and uses end-of-day date thresholds)
+- `t4112-apply-renames` — 2/2 tests pass (`git apply` now distinguishes source vs target paths for rename/copy hunks and snapshots preimage sources across multi-file patches)
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4044-diff-index-unique-abbrev`) and 698 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4117-apply-reject`) and 700 remain pending. See `plan.md` for the full prioritized list.
