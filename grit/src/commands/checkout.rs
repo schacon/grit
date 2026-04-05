@@ -236,28 +236,62 @@ pub fn run(args: Args) -> Result<()> {
         return create_orphan_branch(&repo, orphan_name);
     }
 
+    // Compatibility: allow `git checkout <start-point> -b/-B <branch>`.
+    if args.new_branch.is_none() && args.force_branch.is_none() && args.orphan.is_none() {
+        if args.rest.len() >= 3 && (args.rest[1] == "-b" || args.rest[1] == "-B") {
+            let start_point = args.rest[0].as_str();
+            let branch_name = args.rest[2].as_str();
+            if args.rest.len() > 3 {
+                bail!("Cannot update paths and switch to branch '{}'", branch_name);
+            }
+            if args.rest[1] == "-b" {
+                let result = create_and_switch_branch(&repo, branch_name, Some(start_point), args.force);
+                if result.is_ok() && !args.no_track {
+                    maybe_setup_tracking(&repo, branch_name, Some(start_point), args.track.as_deref())?;
+                }
+                return result;
+            }
+            let result =
+                force_create_and_switch_branch(&repo, branch_name, Some(start_point), args.force);
+            if result.is_ok() && !args.no_track {
+                maybe_setup_tracking(&repo, branch_name, Some(start_point), args.track.as_deref())?;
+            }
+            return result;
+        }
+    }
+
     // Case: checkout -B <name> [<start_point>] (force create/reset)
-    if let Some(ref force_branch_name) = args.force_branch {
+    if let Some(ref force_branch_name_raw) = args.force_branch {
+        let force_branch_name =
+            resolve_at_minus(&repo, force_branch_name_raw).unwrap_or_else(|_| force_branch_name_raw.clone());
         // -B takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
-            bail!("too many arguments for -B");
+            bail!(
+                "Cannot update paths and switch to branch '{}'",
+                force_branch_name
+            );
         }
         let result =
-            force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+            force_create_and_switch_branch(&repo, &force_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, force_branch_name, target.as_deref(), args.track.as_deref())?;
+            maybe_setup_tracking(&repo, &force_branch_name, target.as_deref(), args.track.as_deref())?;
         }
         return result;
     }
 
     // Case 1: checkout -b <new_branch> [<start_point>]
-    if let Some(ref new_branch_name) = args.new_branch {
+    if let Some(ref new_branch_name_raw) = args.new_branch {
+        let new_branch_name =
+            resolve_at_minus(&repo, new_branch_name_raw).unwrap_or_else(|_| new_branch_name_raw.clone());
         // -b takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
             if args.track.is_some() {
                 bail!("'--track' cannot be used with updating paths");
             }
-            bail!("too many arguments for -b");
+            bail!(
+                "Cannot update paths and switch to branch '{}'",
+                new_branch_name
+            );
         }
         // Capture the current HEAD branch before checkout (for tracking setup)
         let pre_head_branch = if target.is_none() && args.track.is_some() {
@@ -270,9 +304,9 @@ pub fn run(args: Args) -> Result<()> {
         };
         let effective_target = target.as_deref().or(pre_head_branch.as_deref());
         let result =
-            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
+            create_and_switch_branch(&repo, &new_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
-            maybe_setup_tracking(&repo, new_branch_name, effective_target, args.track.as_deref())?;
+            maybe_setup_tracking(&repo, &new_branch_name, effective_target, args.track.as_deref())?;
         }
         return result;
     }
@@ -588,7 +622,8 @@ fn create_and_switch_branch(
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        bail!("a branch named '{}' already exists", name);
+        eprintln!("fatal: a branch named '{}' already exists", name);
+        std::process::exit(1);
     }
 
     // Resolve start point (default: HEAD)
@@ -610,8 +645,16 @@ fn create_and_switch_branch(
 
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD, or if force
-    if head.oid() != Some(&start_oid) || force {
+    // Update working tree/index when:
+    // - switching to a different start commit,
+    // - forced,
+    // - current index/worktree does not match the start tree (e.g. clone --no-checkout).
+    if head.oid() != Some(&start_oid)
+        || force
+        || index_matches_tree(repo, &target_tree)
+            .map(|matches| !matches)
+            .unwrap_or(true)
+    {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -2216,6 +2259,34 @@ fn tree_to_flat_entries(
         }
     }
     Ok(result)
+}
+
+fn index_matches_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<bool> {
+    let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let mut index_entries: Vec<(&[u8], ObjectId, u32)> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e.oid, e.mode))
+        .collect();
+    index_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    let tree_entries = tree_to_flat_entries(repo, tree_oid, "")?;
+    let mut flat_entries: Vec<(&[u8], ObjectId, u32)> = tree_entries
+        .iter()
+        .map(|e| (e.path.as_slice(), e.oid, e.mode))
+        .collect();
+    flat_entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    if index_entries.len() != flat_entries.len() {
+        return Ok(false);
+    }
+    for (idx_entry, tree_entry) in index_entries.iter().zip(flat_entries.iter()) {
+        if idx_entry != tree_entry {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Walk a tree to find the blob (OID, mode) at `path` (slash-separated).

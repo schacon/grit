@@ -160,6 +160,10 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         "sha1".to_owned()
     };
 
+    let test_no_template = std::env::var("TEST_CREATE_REPO_NO_TEMPLATE")
+        .ok()
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "on"));
+
     // Determine template directory:
     // --template=<path> → use that path
     // --template= (empty string) → skip templates
@@ -168,6 +172,9 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         Some(t) if t.is_empty() => None, // explicitly empty → skip
         Some(t) => Some(PathBuf::from(t)),
         None => {
+            if test_no_template {
+                None
+            } else
             // Check GIT_TEMPLATE_DIR env var first
             if let Ok(tdir) = std::env::var("GIT_TEMPLATE_DIR") {
                 if !tdir.is_empty() {
@@ -187,7 +194,8 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
-    let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty());
+    let skip_default_templates =
+        matches!(&args.template, Some(t) if t.is_empty()) || test_no_template;
 
     // Determine ref format
     let ref_format = args.ref_format.as_deref().unwrap_or("files");
