@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    48 |
+| Completed   |    49 |
 | In progress |     0 |
-| Remaining   |   719 |
+| Remaining   |   718 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1601-index-bogus` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3012-ls-files-dedup` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3205-branch-color` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3008-ls-files-lazy-init-name-hash` — 1/1 tests pass (implemented missing `test-tool online-cpus` and `test-tool lazy-init-name-hash` subcommands in grit)
@@ -42,4 +43,4 @@
 
 ## What Remains
 
-719 test files still pending. See `plan.md` for the full prioritized list.
+718 test files still pending. See `plan.md` for the full prioritized list.
