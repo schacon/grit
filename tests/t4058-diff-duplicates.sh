@@ -190,7 +190,7 @@ test_expect_success 'switch to base branch and force status to be clean' '
 	test_must_be_empty actual
 '
 
-test_expect_failure 'fast-forward from duplicate entries to non-duplicate' '
+test_expect_success 'fast-forward from duplicate entries to non-duplicate' '
 	git merge update
 '
 

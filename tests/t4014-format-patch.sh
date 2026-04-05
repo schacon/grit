@@ -175,7 +175,7 @@ test_expect_success 'additional command line cc (ascii)' '
 	grep "^ *S E Cipient <scipient@example.com>\$" hdrs5
 '
 
-test_expect_failure 'additional command line cc (rfc822)' '
+test_expect_success 'additional command line cc (rfc822)' '
 	git config --replace-all format.headers "Cc: R E Cipient <rcipient@example.com>" &&
 	git format-patch --cc="S. E. Cipient <scipient@example.com>" --stdout main..side >patch5 &&
 	sed -e "/^\$/q" patch5 >hdrs5 &&
@@ -205,13 +205,13 @@ test_expect_success 'command line To: header (ascii)' '
 	grep "^To: R E Cipient <rcipient@example.com>\$" hdrs8
 '
 
-test_expect_failure 'command line To: header (rfc822)' '
+test_expect_success 'command line To: header (rfc822)' '
 	git format-patch --to="R. E. Cipient <rcipient@example.com>" --stdout main..side >patch8 &&
 	sed -e "/^\$/q" patch8 >hdrs8 &&
 	grep "^To: \"R. E. Cipient\" <rcipient@example.com>\$" hdrs8
 '
 
-test_expect_failure 'command line To: header (rfc2047)' '
+test_expect_success 'command line To: header (rfc2047)' '
 	git format-patch --to="R Ä Cipient <rcipient@example.com>" --stdout main..side >patch8 &&
 	sed -e "/^\$/q" patch8 >hdrs8 &&
 	grep "^To: =?UTF-8?q?R=20=C3=84=20Cipient?= <rcipient@example.com>\$" hdrs8
@@ -224,14 +224,14 @@ test_expect_success 'configuration To: header (ascii)' '
 	grep "^To: R E Cipient <rcipient@example.com>\$" hdrs9
 '
 
-test_expect_failure 'configuration To: header (rfc822)' '
+test_expect_success 'configuration To: header (rfc822)' '
 	git config format.to "R. E. Cipient <rcipient@example.com>" &&
 	git format-patch --stdout main..side >patch9 &&
 	sed -e "/^\$/q" patch9 >hdrs9 &&
 	grep "^To: \"R. E. Cipient\" <rcipient@example.com>\$" hdrs9
 '
 
-test_expect_failure 'configuration To: header (rfc2047)' '
+test_expect_success 'configuration To: header (rfc2047)' '
 	git config format.to "R Ä Cipient <rcipient@example.com>" &&
 	git format-patch --stdout main..side >patch9 &&
 	sed -e "/^\$/q" patch9 >hdrs9 &&

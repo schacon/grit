@@ -117,7 +117,7 @@ test_setup_break_detection_1 () {
 	)
 }
 
-test_expect_failure 'conflict caused if rename not detected' '
+test_expect_success 'conflict caused if rename not detected' '
 	test_setup_break_detection_1 &&
 	(
 		cd break-detection-1 &&
