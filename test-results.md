@@ -47,6 +47,11 @@
 - `./scripts/run-tests.sh t2023-checkout-m.sh`: 5/5 passing.
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2027-checkout-track.sh`: 5/5 passing.
 - `./scripts/run-tests.sh t2027-checkout-track.sh`: 5/5 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after checkout branch-mode compatibility updates: `<start> -b <name>` ordering, branch-name `@{-N}` resolution, clone `--no-checkout` initial materialization, sparse-checkout preservation, and message compatibility).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2202-add-addremove.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t2202-add-addremove.sh`: 3/3 passing.
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2018-checkout-branch.sh`: 25/25 passing.
+- `./scripts/run-tests.sh t2018-checkout-branch.sh`: 25/25 passing.
 - `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).
 - `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
 - `cargo fmt && cargo build --release -p grit-rs`: success (after implementing checkout `-m` branch/path conflict restoration behavior and stage ordering fixes).

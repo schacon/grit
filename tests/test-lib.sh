@@ -114,6 +114,10 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
+		if test -n "${TEST_CREATE_REPO_NO_TEMPLATE:-}"
+		then
+			export TEST_CREATE_REPO_NO_TEMPLATE
+		fi
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
@@ -123,6 +127,13 @@ PATH="$TEST_DIRECTORY:$PATH"
 }
 
 setup_trash
+
+# Some upstream tests rely on this marker to ask `git init` not to populate
+# default template files (notably `.git/info/exclude`).
+if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+then
+	export TEST_CREATE_REPO_NO_TEMPLATE
+fi
 
 # Persist test_tick across subshell boundaries via a state file.
 # Store inside .git/ so the file is never tracked by git.

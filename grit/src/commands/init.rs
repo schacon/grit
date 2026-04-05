@@ -187,7 +187,16 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
-    let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty());
+    let test_no_template = std::env::var("TEST_CREATE_REPO_NO_TEMPLATE")
+        .ok()
+        .map(|v| {
+            let trimmed = v.trim();
+            !trimmed.is_empty() && trimmed != "0" && !trimmed.eq_ignore_ascii_case("false")
+        })
+        .unwrap_or(false);
+    let skip_default_templates =
+        matches!(&args.template, Some(t) if t.is_empty()) || test_no_template;
+    let template_dir = if test_no_template { None } else { template_dir };
 
     // Determine ref format
     let ref_format = args.ref_format.as_deref().unwrap_or("files");

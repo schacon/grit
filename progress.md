@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    64 |
+| Completed   |    65 |
 | In progress |     0 |
-| Remaining   |   703 |
+| Remaining   |   702 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t2018-checkout-branch` — 25/25 tests pass (fixed checkout compatibility for `@{-1}` branch names, clone `--no-checkout` population behavior, sparse-checkout branch creation, and canonical branch/path argument errors)
 - `t2202-add-addremove` — 3/3 tests pass (added global `--literal-pathspecs` handling so `git add --all` setup and no-op semantics match upstream tests)
 - `t2027-checkout-track` — 5/5 tests pass (added checkout/switch ambiguous remote-tracking branch hints including `git switch --track` guidance)
 - `t2023-checkout-m` — 5/5 tests pass (implemented checkout `-m` conflict restoration for both path mode and branch-switch mode, including correct stage-2/stage-3 ordering)
@@ -58,4 +59,4 @@
 
 ## What Remains
 
-704 test files still pending. See `plan.md` for the full prioritized list.
+702 test files still pending. See `plan.md` for the full prioritized list.

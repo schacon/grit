@@ -185,6 +185,36 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Compatibility: support `git checkout <start> -b <name>` and
+    // `git checkout <start> -B <name>` argument order.
+    if args.new_branch.is_none() && args.force_branch.is_none() && !has_separator {
+        if let Some((is_force, start_token, branch_token)) =
+            extract_inline_branch_creation(&args.rest)
+        {
+            let start = resolve_at_minus(&repo, &start_token).unwrap_or(start_token);
+            let branch_name = resolve_at_minus(&repo, &branch_token).unwrap_or(branch_token);
+            let result = if is_force {
+                force_create_and_switch_branch(
+                    &repo,
+                    &branch_name,
+                    Some(start.as_str()),
+                    args.force,
+                )
+            } else {
+                create_and_switch_branch(&repo, &branch_name, Some(start.as_str()), args.force)
+            };
+            if result.is_ok() && !args.no_track {
+                maybe_setup_tracking(
+                    &repo,
+                    &branch_name,
+                    Some(start.as_str()),
+                    args.track.as_deref(),
+                )?;
+            }
+            return result;
+        }
+    }
+
     // Parse rest into (target, paths) handling `--` separator
     let (target, paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
 
@@ -203,16 +233,21 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
     if let Some(ref force_branch_name) = args.force_branch {
+        let resolved_branch = resolve_at_minus(&repo, force_branch_name)
+            .unwrap_or_else(|_| force_branch_name.clone());
         // -B takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
-            bail!("too many arguments for -B");
+            bail!(
+                "Cannot update paths and switch to branch '{}'",
+                resolved_branch
+            );
         }
         let result =
-            force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
+            force_create_and_switch_branch(&repo, &resolved_branch, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
-                force_branch_name,
+                &resolved_branch,
                 target.as_deref(),
                 args.track.as_deref(),
             )?;
@@ -222,12 +257,17 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case 1: checkout -b <new_branch> [<start_point>]
     if let Some(ref new_branch_name) = args.new_branch {
+        let resolved_branch =
+            resolve_at_minus(&repo, new_branch_name).unwrap_or_else(|_| new_branch_name.clone());
         // -b takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
             if args.track.is_some() {
                 bail!("'--track' cannot be used with updating paths");
             }
-            bail!("too many arguments for -b");
+            bail!(
+                "Cannot update paths and switch to branch '{}'",
+                resolved_branch
+            );
         }
         // Capture the current HEAD branch before checkout (for tracking setup)
         let pre_head_branch = if target.is_none() && args.track.is_some() {
@@ -240,11 +280,11 @@ pub fn run(args: Args) -> Result<()> {
         };
         let effective_target = target.as_deref().or(pre_head_branch.as_deref());
         let result =
-            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
+            create_and_switch_branch(&repo, &resolved_branch, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
-                new_branch_name,
+                &resolved_branch,
                 effective_target,
                 args.track.as_deref(),
             )?;
@@ -473,6 +513,20 @@ fn split_target_and_paths(
         (Some(rest[0].clone()), vec![])
     } else {
         (Some(rest[0].clone()), rest[1..].to_vec())
+    }
+}
+
+fn extract_inline_branch_creation(rest: &[String]) -> Option<(bool, String, String)> {
+    if rest.len() != 3 {
+        return None;
+    }
+    let start = rest[0].clone();
+    let flag = rest[1].as_str();
+    let branch = rest[2].clone();
+    match flag {
+        "-b" => Some((false, start, branch)),
+        "-B" => Some((true, start, branch)),
+        _ => None,
     }
 }
 
@@ -774,7 +828,8 @@ fn create_and_switch_branch(
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        bail!("a branch named '{}' already exists", name);
+        eprintln!("fatal: a branch named '{}' already exists", name);
+        std::process::exit(128);
     }
 
     // Resolve start point (default: HEAD)
@@ -796,8 +851,14 @@ fn create_and_switch_branch(
 
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD, or if force
-    if head.oid() != Some(&start_oid) || force {
+    // Update working tree when:
+    // - start point differs from current HEAD, or
+    // - force is requested, or
+    // - repository was cloned with --no-checkout (index/worktree not populated).
+    if head.oid() != Some(&start_oid)
+        || force
+        || should_populate_worktree_for_target(repo, &target_tree)?
+    {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -852,8 +913,14 @@ fn force_create_and_switch_branch(
     let head = resolve_head(&repo.git_dir)?;
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD, or if force
-    if head.oid() != Some(&start_oid) || force {
+    // Update working tree when:
+    // - start point differs from current HEAD, or
+    // - force is requested, or
+    // - repository was cloned with --no-checkout (index/worktree not populated).
+    if head.oid() != Some(&start_oid)
+        || force
+        || should_populate_worktree_for_target(repo, &target_tree)?
+    {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
@@ -2359,6 +2426,34 @@ fn commit_to_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> 
     }
     let commit = parse_commit(&obj.data)?;
     Ok(commit.tree)
+}
+
+/// Return `true` when the current checkout likely needs an initial population
+/// of index/worktree even if HEAD already points at the target commit.
+fn should_populate_worktree_for_target(repo: &Repository, target_tree: &ObjectId) -> Result<bool> {
+    let target_entries = tree_to_flat_entries(repo, target_tree, "")?;
+    if target_entries.is_empty() {
+        return Ok(false);
+    }
+
+    let index = Index::load(&repo.index_path()).unwrap_or_default();
+    let has_stage0_entries = index.entries.iter().any(|e| e.stage() == 0);
+    if !has_stage0_entries {
+        return Ok(true);
+    }
+
+    let Some(work_tree) = &repo.work_tree else {
+        return Ok(false);
+    };
+
+    // Detect clone --no-checkout style state: no tracked files materialized.
+    let any_materialized = target_entries.iter().any(|e| {
+        let rel = String::from_utf8_lossy(&e.path);
+        let abs = work_tree.join(rel.as_ref());
+        abs.exists() || abs.is_symlink()
+    });
+
+    Ok(!any_materialized)
 }
 
 /// Recursively flatten a tree object into a list of [`IndexEntry`] values.

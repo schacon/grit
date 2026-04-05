@@ -183,7 +183,7 @@ commit → check it off → move on.
 
 - [x] `t2027-checkout-track` ████████████████████ 5/5 (0 left) — tests for git branch --track
 - [x] `t2202-add-addremove` ████████████████████ 3/3 (0 left) — git add --all
-- [ ] `t2018-checkout-branch` ████████████████░░░░ 21/25 (4 left) — checkout
+- [x] `t2018-checkout-branch` ████████████████████ 25/25 (0 left) — checkout
 - [ ] `t2006-checkout-index-basic` ███████████░░░░░░░░░ 5/9 (4 left) — basic checkout-index tests
 
 - [ ] `t2019-checkout-ambiguous-ref` ███████████░░░░░░░░░ 5/9 (4 left) — checkout handling of ambiguous (branch/tag) refs
