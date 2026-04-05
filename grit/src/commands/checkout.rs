@@ -10,6 +10,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use crate::protocol;
@@ -339,6 +340,7 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        warn_ambiguous_branch_or_tag(&repo, &target);
         return switch_branch(&repo, &target, &branch_ref, args.force);
     }
 
@@ -1859,6 +1861,16 @@ fn maybe_setup_tracking(
     Ok(())
 }
 
+fn warn_ambiguous_branch_or_tag(repo: &Repository, name: &str) {
+    let branch_ref = format!("refs/heads/{name}");
+    let tag_ref = format!("refs/tags/{name}");
+    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok()
+        && refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok()
+    {
+        eprintln!("warning: refname '{name}' is ambiguous.");
+    }
+}
+
 struct DwimRemoteBranch {
     start_point: String,
 }
@@ -2199,12 +2211,19 @@ fn write_blob_to_worktree(
         obj.data
     };
 
-    // Skip writing if the file already has the same content (preserves mtime)
+    // Skip writing if the file already has the same content *and* mode.
+    // We must still rewrite when only mode differs (e.g. 100644 <-> 100755)
+    // so that branch switches correctly update executable bits.
     if mode != MODE_SYMLINK {
         let abs_path = work_tree.join(rel_path);
         if let Ok(existing) = std::fs::read(&abs_path) {
             if existing == *data {
-                return Ok(());
+                let current_mode = std::fs::symlink_metadata(&abs_path)
+                    .ok()
+                    .map(|m| if m.permissions().mode() & 0o111 != 0 { MODE_EXECUTABLE } else { grit_lib::index::MODE_REGULAR });
+                if current_mode == Some(mode) {
+                    return Ok(());
+                }
             }
         }
     }

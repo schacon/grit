@@ -242,12 +242,28 @@ fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
                             }
                         }
                         Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e2)
+                            if e2.kind() == std::io::ErrorKind::IsADirectory
+                                || e2.kind() == std::io::ErrorKind::NotADirectory
+                                || e2.raw_os_error() == Some(21)
+                                || e2.raw_os_error() == Some(20) => {}
                         Err(e2) => return Err(Error::Io(e2)),
                     }
                     // Try packed-refs in common dir
                     return resolve_packed_ref(&common, refname);
                 }
             }
+            Ok(None)
+        }
+        Err(e)
+            if e.kind() == std::io::ErrorKind::IsADirectory
+                || e.kind() == std::io::ErrorKind::NotADirectory
+                || e.raw_os_error() == Some(21)
+                || e.raw_os_error() == Some(20) =>
+        {
+            // Directory/file conflicts in refs (e.g. HEAD points at
+            // refs/heads/outer while refs/heads/outer/inner exists) should be
+            // treated like a missing ref, not a hard I/O failure.
             Ok(None)
         }
         Err(e) => Err(Error::Io(e)),

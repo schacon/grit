@@ -177,7 +177,7 @@ t2007-checkout-symlink	yes	4	4	0	ok	4	4	0
 t2008-checkout-subdir	yes	9	9	0	ok	9	9	0
 t2009-checkout-statinfo	yes	3	3	0	ok	3	3	0
 t2010-checkout-ambiguous	yes	10	10	0	ok	10	10	0
-t2011-checkout-invalid-head	yes	10	8	2	ok	8	10	0
+t2011-checkout-invalid-head	yes	10	10	0	ok	10	10	0
 t2012-checkout-last	yes	22	22	0	ok	22	22	0
 t2013-checkout-submodule	yes	74	14	60	ok	14	74	0
 t2014-checkout-switch	yes	4	4	0	ok	4	4	0
@@ -185,7 +185,7 @@ t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
 t2016-checkout-patch	yes	19	7	12	ok	7	19	0
 t2017-checkout-orphan	yes	13	6	7	ok	6	13	0
 t2018-checkout-branch	yes	25	21	4	ok	21	25	0
-t2019-checkout-ambiguous-ref	yes	9	7	2	ok	7	9	0
+t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
 t2020-checkout-detach	yes	26	16	10	ok	16	26	0
 t2021-checkout-overwrite	yes	9	6	3	ok	6	9	0
 t2022-checkout-paths	yes	5	4	1	ok	4	5	0
@@ -198,7 +198,7 @@ t2030-checkout-index-basic	yes	27	27	0	ok	27	27	0
 t2030-unresolve-info	yes	14	2	12	ok	2	14	0
 t2031-checkout-index-symlink	yes	25	25	0	ok	25	25	0
 t2032-checkout-index-parallel	yes	28	28	0	ok	28	28	0
-t2040-checkout-file-modes	yes	28	26	2	ok	26	28	0
+t2040-checkout-file-modes	yes	28	28	0	ok	28	28	0
 t2045-checkout-conflict	yes	29	29	0	ok	29	29	0
 t2050-checkout	yes	80	80	0	ok	80	80	0
 t2050-git-dir-relative	yes	4	4	0	ok	4	4	0
