@@ -8,3 +8,4 @@
 - `./scripts/run-tests.sh t6408-merge-up-to-date.sh`: 7/7 passing (fully passing).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (now fully passing).
 - `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (fully passing; stale plan entry corrected).
+- `./scripts/run-tests.sh t6425-merge-rename-delete.sh`: 1/1 passing (fully passing; stale plan entry corrected).

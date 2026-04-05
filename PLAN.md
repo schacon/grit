@@ -695,7 +695,7 @@ commit → check it off → move on.
 - [x] `t6100-rev-list-in-order` ████████████████████ 3/3 (0 left) — rev-list testing in-commit-order
 - [x] `t6414-merge-rename-nocruft` ████████████████████ 3/3 (0 left) — Merge-recursive merging renames
 - [x] `t6110-rev-list-sparse` ████████████████████ 2/2 (0 left) — operations that cull histories in unusual ways
-- [ ] `t6425-merge-rename-delete` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Merge-recursive rename/delete conflict message
+- [x] `t6425-merge-rename-delete` ████████████████████ 1/1 (0 left) — Merge-recursive rename/delete conflict message
 - [x] `t6408-merge-up-to-date` ████████████████████ 7/7 (0 left) — merge fast-forward and up to date
 - [x] `t6417-merge-ours-theirs` ████████████████████ 7/7 (0 left) — Merge-recursive ours and theirs variants
 - [ ] `t6114-keep-packs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — rev-list with .keep packs
