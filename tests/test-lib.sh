@@ -258,6 +258,28 @@ test_write_lines () {
 	done
 }
 
+test_detect_hash () {
+	case "${GIT_TEST_DEFAULT_HASH:-${GIT_TEST_BUILTIN_HASH:-sha1}}" in
+	*:*)
+		test_hash_algo="${GIT_TEST_DEFAULT_HASH%%:*}"
+		;;
+	sha256)
+		test_hash_algo=sha256
+		;;
+	*)
+		test_hash_algo=sha1
+		;;
+	esac
+}
+
+test_oid_to_path () {
+	test -n "${test_hash_algo:-}" || test_detect_hash
+	oid="$1"
+	prefix="${oid%${oid#??}}"
+	suffix="${oid#??}"
+	echo "${prefix}/${suffix}"
+}
+
 test_set_editor () {
 	FAKE_EDITOR="$1"
 	export FAKE_EDITOR
@@ -674,7 +696,7 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= signoff= indir= tag=yes message= file= contents= author= append=
 	while test $# != 0
 	do
 		case "$1" in
@@ -683,7 +705,7 @@ test_commit () {
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
 		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
@@ -693,7 +715,11 @@ test_commit () {
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
+		if test -n "$append"; then
+			printf '%s\n' "$contents" >>"$file"
+		else
+			printf '%s\n' "$contents" >"$file"
+		fi &&
 		git add "$file" &&
 		if test -z "$notick"; then
 			test_tick

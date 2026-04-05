@@ -1018,6 +1018,30 @@ fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>>
     Ok(matches)
 }
 
+/// Enumerate loose object IDs that match a hexadecimal prefix.
+///
+/// The returned list is sorted and deduplicated. This scans only loose
+/// objects (not pack indexes), matching the scope currently used by
+/// abbreviated-hex lookup in this module.
+///
+/// # Errors
+///
+/// Returns an I/O error when the loose object directory cannot be read.
+pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
+    if !is_hex_prefix(prefix) || !(4..=40).contains(&prefix.len()) {
+        return Ok(Vec::new());
+    }
+    let mut matches = Vec::new();
+    for candidate in collect_loose_object_ids(repo)? {
+        if candidate.starts_with(prefix) {
+            matches.push(candidate.parse::<ObjectId>()?);
+        }
+    }
+    matches.sort();
+    matches.dedup();
+    Ok(matches)
+}
+
 fn collect_loose_object_ids(repo: &Repository) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     let objects_dir = repo.odb.objects_dir();

@@ -6,13 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    67 |
+| Completed   |    69 |
 | In progress |     0 |
-| Remaining   |   700 |
+| Remaining   |   698 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1512-rev-parse-disambiguation` — 3/3 tests pass (implemented rev-parse ambiguous-short-id diagnostics with candidate hints/bad-object handling, added `test-tool` hash/zlib compatibility helpers, and restored missing test-lib helper functions used by loose-object fixtures)
+- `t1412-reflog-loop` — 3/3 tests pass (restored branch-creation reflog entries for checkout-created branches and fixed append semantics in test helper commits so reflog walk history matches upstream)
 - `t1407-worktree-ref-store` — 4/4 tests pass (implemented `test-tool ref-store` worktree backend for `resolve-ref` and `create-symref` operations used by upstream API coverage)
 - `t1901-repo-structure` — 4/4 tests pass (implemented `git repo structure` output/progress compatibility for empty repositories and progress-meter behavior used by upstream tests)
 - `t2018-checkout-branch` — 25/25 tests pass (fixed checkout compatibility for `@{-1}` branch names, clone `--no-checkout` population behavior, sparse-checkout branch creation, and canonical branch/path argument errors)
@@ -61,4 +63,4 @@
 
 ## What Remains
 
-700 test files still pending. See `plan.md` for the full prioritized list.
+698 test files still pending. See `plan.md` for the full prioritized list.

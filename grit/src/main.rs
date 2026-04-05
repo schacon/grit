@@ -7,6 +7,9 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
+use sha1::Digest;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -606,6 +609,30 @@ fn run_test_tool_hexdump(rest: &[String]) -> Result<()> {
         write!(out, "{:02x}", b)?;
     }
     writeln!(out)?;
+    Ok(())
+}
+
+fn run_test_tool_default_hash(rest: &[String]) -> Result<()> {
+    if rest.len() > 1 {
+        bail!("usage: test-tool <sha1|sha256|...>");
+    }
+    let mut data = Vec::new();
+    std::io::stdin().read_to_end(&mut data)?;
+    let digest = sha1::Sha1::digest(&data);
+    println!("{}", hex::encode(digest));
+    Ok(())
+}
+
+fn run_test_tool_zlib(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 || rest[1] != "deflate" {
+        bail!("usage: test-tool zlib deflate");
+    }
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&input)?;
+    let compressed = encoder.finish()?;
+    std::io::stdout().write_all(&compressed)?;
     Ok(())
 }
 
@@ -2544,6 +2571,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "test-tool" => {
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
+                "" => run_test_tool_default_hash(rest),
                 "wildmatch" => {
                     // test-tool wildmatch <mode> <text> <pattern>
                     if rest.len() < 4 {
@@ -2597,6 +2625,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mktemp" => run_test_tool_mktemp(rest),
                 "regex" => run_test_tool_regex(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
+                "zlib" => run_test_tool_zlib(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
                 "pkt-line" => run_test_tool_pkt_line(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),

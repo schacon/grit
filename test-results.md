@@ -69,3 +69,10 @@
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2202-add-addremove.sh`: 3/3 passing.
 - `./scripts/run-tests.sh t2202-add-addremove.sh`: 3/3 passing.
 - `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding `test-tool` fallbacks for default hash and `zlib deflate`, exposing loose-abbrev lookup, and enhancing `rev-parse` ambiguous short-OID diagnostics/candidate listing).
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1512-rev-parse-disambiguation.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1512-rev-parse-disambiguation.sh`: 3/3 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after writing branch-creation reflog entries for `checkout -b/-B`).
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1412-reflog-loop.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check after the above changes).
