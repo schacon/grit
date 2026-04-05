@@ -258,7 +258,7 @@ commit → check it off → move on.
 - [x] `t3702-add-edit` ████████████████████ 3/3 (0 left) — add -e basic tests
 - [x] `t3450-history` ████████████████████ 2/2 (0 left) — tests for git-history command
 - [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
-- [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
+- [x] `t3005-ls-files-relative` ████████████████████ 4/4 (0 left) — ls-files tests with relative paths
 
 - [~] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
 
