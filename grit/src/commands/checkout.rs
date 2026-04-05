@@ -204,6 +204,9 @@ pub fn run(args: Args) -> Result<()> {
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
 
     // Case: checkout -p (interactive patch mode)
+    if args.patch && args.overlay {
+        bail!("fatal: options '-p' and '--overlay' cannot be used together");
+    }
     if args.patch {
         return checkout_patch(&repo, target.as_deref(), &paths);
     }
@@ -328,7 +331,14 @@ pub fn run(args: Args) -> Result<()> {
                     let mut all_paths = Vec::with_capacity(paths.len() + 1);
                     all_paths.push(t.clone());
                     all_paths.extend(paths.clone());
-                    return checkout_paths(&repo, None, &all_paths, args.no_overlay);
+                    return checkout_paths(
+                        &repo,
+                        None,
+                        &all_paths,
+                        args.no_overlay,
+                        args.ours,
+                        args.theirs,
+                    );
                 }
 
                 let is_rev = resolve_revision(&repo, t).is_ok()
@@ -343,7 +353,14 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
-        return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
+        return checkout_paths(
+            &repo,
+            target.as_deref(),
+            &paths,
+            args.no_overlay,
+            args.ours,
+            args.theirs,
+        );
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -449,7 +466,7 @@ pub fn run(args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false) {
+            match checkout_paths(&repo, None, &paths, false, false, false) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -1339,6 +1356,8 @@ fn checkout_paths(
     source: Option<&str>,
     paths: &[String],
     no_overlay: bool,
+    ours: bool,
+    theirs: bool,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1349,6 +1368,14 @@ fn checkout_paths(
 
     match source {
         None => {
+            let selected_stage = if theirs {
+                Some(3)
+            } else if ours {
+                Some(2)
+            } else {
+                None
+            };
+
             // checkout -- <paths>: restore from index
             let index_path = repo.index_path();
             let index = Index::load(&index_path).context("loading index")?;
@@ -1356,6 +1383,27 @@ fn checkout_paths(
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
                 let path_bytes = rel.as_bytes();
+
+                // --ours/--theirs selects stage 2/3 from unmerged index entries.
+                if let Some(stage) = selected_stage {
+                    if let Some(entry) = index.get(path_bytes, stage) {
+                        write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
+                        continue;
+                    }
+                    // If the selected stage does not exist and --no-overlay is set,
+                    // remove the path from the working tree.
+                    if no_overlay {
+                        let abs = work_tree.join(&rel);
+                        let _ = std::fs::remove_file(&abs);
+                        let _ = std::fs::remove_dir_all(&abs);
+                        remove_empty_parent_dirs(work_tree, &abs);
+                        continue;
+                    }
+                    bail!(
+                        "error: pathspec '{}' did not match any file(s) known to git",
+                        path_str
+                    );
+                }
 
                 // Handle glob pathspecs
                 if is_glob_pattern(&rel) {
@@ -1584,13 +1632,53 @@ fn checkout_paths(
                         );
                     }
                 } else {
-                    let (blob_oid, mode) =
-                        find_in_tree(repo, tree_oid, &rel)?.ok_or_else(|| {
-                            anyhow::anyhow!(
+                    let tree_entry = find_in_tree(repo, tree_oid, &rel)?;
+                    if tree_entry.is_none() && no_overlay {
+                        let prefix = format!("{rel}/");
+                        let mut removed_any = false;
+
+                        // Remove matching stage-0 entries from index.
+                        let before_len = index.entries.len();
+                        index.entries.retain(|e| {
+                            if e.stage() != 0 {
+                                return true;
+                            }
+                            let p = String::from_utf8_lossy(&e.path);
+                            if p == rel || p.starts_with(&prefix) {
+                                removed_any = true;
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        if index.entries.len() != before_len {
+                            index_modified = true;
+                        }
+
+                        // Remove worktree file/directory.
+                        let abs = work_tree.join(&rel);
+                        let file_removed = std::fs::remove_file(&abs).is_ok();
+                        let dir_removed = std::fs::remove_dir_all(&abs).is_ok();
+                        if file_removed || dir_removed {
+                            removed_any = true;
+                        }
+                        remove_empty_parent_dirs(work_tree, &abs);
+
+                        if !removed_any {
+                            bail!(
                                 "error: pathspec '{}' did not match any file(s) known to git",
                                 path_str
-                            )
-                        })?;
+                            );
+                        }
+                        continue;
+                    }
+
+                    let (blob_oid, mode) = tree_entry.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "error: pathspec '{}' did not match any file(s) known to git",
+                            path_str
+                        )
+                    })?;
 
                     // Write to working tree with CRLF conversion
                     write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode)?;
@@ -2611,6 +2699,20 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
         if pi < pattern.len() && pattern[pi] == b'?' && path[si] != b'/' {
             pi += 1;
             si += 1;
+        } else if pi < pattern.len()
+            && pattern[pi] == b'*'
+            && (pi + 1 >= pattern.len() || pattern[pi + 1] != b'*')
+            && !pattern[pi + 1..].contains(&b'/')
+        {
+            // A trailing single-segment wildcard (e.g. "*file3") can match
+            // across directory separators in git pathspec behavior.
+            let rest = &pattern[pi + 1..];
+            for i in si..=path.len() {
+                if glob_matches_inner(rest, &path[i..]) {
+                    return true;
+                }
+            }
+            return false;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
             if pi + 1 < pattern.len() && pattern[pi + 1] == b'*' {
                 // "**" matches everything including '/'
