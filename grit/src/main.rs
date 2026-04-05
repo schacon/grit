@@ -1142,6 +1142,153 @@ fn run_test_tool_regex(rest: &[String]) -> Result<()> {
     bail!("usage: test-tool regex --bug")
 }
 
+fn parse_c_style_quoted_pathspec(input: &str) -> Result<Vec<u8>> {
+    let bytes = input.as_bytes();
+    if bytes.len() < 2 || bytes[0] != b'"' || *bytes.last().unwrap_or(&0) != b'"' {
+        bail!("invalid quoted pathspec: {input}");
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 1usize;
+    while i + 1 < bytes.len() {
+        let b = bytes[i];
+        if b != b'\\' {
+            out.push(b);
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+        if i + 1 > bytes.len() {
+            bail!("invalid trailing escape in pathspec: {input}");
+        }
+        let esc = bytes[i];
+        match esc {
+            b'\\' => {
+                out.push(b'\\');
+                i += 1;
+            }
+            b'"' => {
+                out.push(b'"');
+                i += 1;
+            }
+            b'a' => {
+                out.push(0x07);
+                i += 1;
+            }
+            b'b' => {
+                out.push(0x08);
+                i += 1;
+            }
+            b'f' => {
+                out.push(0x0c);
+                i += 1;
+            }
+            b'n' => {
+                out.push(b'\n');
+                i += 1;
+            }
+            b'r' => {
+                out.push(b'\r');
+                i += 1;
+            }
+            b't' => {
+                out.push(b'\t');
+                i += 1;
+            }
+            b'v' => {
+                out.push(0x0b);
+                i += 1;
+            }
+            b'0'..=b'7' => {
+                let mut val: u16 = (esc - b'0') as u16;
+                let mut consumed = 1usize;
+                while consumed < 3 && i + consumed < bytes.len() - 1 {
+                    let n = bytes[i + consumed];
+                    if !(b'0'..=b'7').contains(&n) {
+                        break;
+                    }
+                    val = (val << 3) | ((n - b'0') as u16);
+                    consumed += 1;
+                }
+                out.push((val & 0xff) as u8);
+                i += consumed;
+            }
+            _ => bail!("invalid C-style escape in pathspec: {input}"),
+        }
+    }
+
+    Ok(out)
+}
+
+fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
+    let mut pathspec_from_file: Option<String> = None;
+    let mut pathspec_file_nul = false;
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if arg == "--pathspec-file-nul" {
+            pathspec_file_nul = true;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--pathspec-from-file=") {
+            pathspec_from_file = Some(v.to_string());
+            i += 1;
+            continue;
+        }
+        if arg == "--pathspec-from-file" {
+            i += 1;
+            let Some(v) = rest.get(i) else {
+                bail!("usage: test-tool parse-pathspec-file --pathspec-from-file=<file|-> [--pathspec-file-nul]");
+            };
+            pathspec_from_file = Some(v.clone());
+            i += 1;
+            continue;
+        }
+        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file=<file|-> [--pathspec-file-nul]");
+    }
+
+    let Some(source) = pathspec_from_file else {
+        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file=<file|-> [--pathspec-file-nul]");
+    };
+
+    let input_bytes = if source == "-" {
+        let mut buf = Vec::new();
+        std::io::stdin().read_to_end(&mut buf)?;
+        buf
+    } else {
+        std::fs::read(&source)
+            .map_err(|e| anyhow::anyhow!("cannot read pathspec file '{source}': {e}"))?
+    };
+
+    if pathspec_file_nul {
+        for chunk in input_bytes.split(|b: &u8| *b == 0u8) {
+            if chunk.is_empty() {
+                continue;
+            }
+            println!("{}", String::from_utf8_lossy(chunk));
+        }
+        return Ok(());
+    }
+
+    let text = String::from_utf8_lossy(&input_bytes);
+    for raw_line in text.lines() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('"') {
+            let decoded = parse_c_style_quoted_pathspec(line)?;
+            println!("{}", String::from_utf8_lossy(&decoded));
+        } else {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
 fn format_dir_iterator_entry(path: &std::path::Path, root: &std::path::Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     let rel_str = rel.to_string_lossy().replace('\\', "/");
@@ -1316,6 +1463,7 @@ fn run_test_tool(rest: &[String]) -> Result<()> {
         "json-writer" => run_test_tool_json_writer(rest),
         "mktemp" => run_test_tool_mktemp(rest),
         "regex" => run_test_tool_regex(rest),
+        "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
         "dir-iterator" => run_test_tool_dir_iterator(rest),
         _ => test_tool_usage(),
     }
