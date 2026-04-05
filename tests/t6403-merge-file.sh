@@ -162,12 +162,12 @@ test_expect_success "merge without conflict (--quiet)" '
 	git merge-file --quiet test.txt orig.txt new2.txt
 '
 
-test_expect_failure "merge without conflict (missing LF at EOF)" '
+test_expect_success "merge without conflict (missing LF at EOF)" '
 	cp new1.txt test2.txt &&
 	git merge-file test2.txt orig.txt new4.txt
 '
 
-test_expect_failure "merge result added missing LF" '
+test_expect_success "merge result added missing LF" '
 	test_cmp test.txt test2.txt
 '
 
