@@ -126,6 +126,7 @@ fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
+    #[allow(unused_mut)]
     let mut result = Vec::new();
     #[cfg(target_os = "linux")]
     {

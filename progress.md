@@ -6,13 +6,17 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    36 |
+| Completed   |    40 |
 | In progress |     0 |
-| Remaining   |   731 |
+| Remaining   |   727 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
+- `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
+- `t3211-peel-ref` — 8/8 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected)
+- `t3003-ls-files-exclude` — 7/7 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t1311-config-optional` — 3/3 tests pass (`:(optional)` config-path handling was already implemented; upstream re-verification showed the plan entry was stale)
 - `t0009-git-dir-validation` — 6/6 tests pass (upstream verification on `main`; stale conflicted `plan.md` entry corrected)
 - `t1003-read-tree-prefix` — 3/3 tests pass (`read-tree --prefix` no longer writes a bogus v4 index under `GIT_INDEX_VERSION=4`)
@@ -30,4 +34,4 @@
 
 ## What Remains
 
-731 test files still pending. See `plan.md` for the full prioritized list.
+727 test files still pending. See `plan.md` for the full prioritized list.

@@ -239,11 +239,11 @@ commit → check it off → move on.
 - [ ] `t3302-notes-index-expensive` ██████████████████░░ 11/12 (1 left) — Test commit notes index (expensive!)
 - [ ] `t3502-cherry-pick-merge` ██████████████████░░ 11/12 (1 left) — cherry picking and reverting a merge
 
-- [ ] `t3211-peel-ref` █████████████████░░░ 7/8 (1 left) — tests for the peel_ref optimization of packed-refs
-- [ ] `t3003-ls-files-exclude` █████████████████░░░ 6/7 (1 left) — ls-files --exclude does not affect index files
-- [ ] `t3004-ls-files-basic` ████████████████░░░░ 5/6 (1 left) — basic ls-files tests
+- [x] `t3211-peel-ref` ████████████████████ 8/8 (0 left) — tests for the peel_ref optimization of packed-refs
+- [x] `t3003-ls-files-exclude` ████████████████████ 7/7 (0 left) — ls-files --exclude does not affect index files
+- [x] `t3004-ls-files-basic` ████████████████████ 6/6 (0 left) — basic ls-files tests
 
-- [ ] `t3304-notes-mixed` ████████████████░░░░ 5/6 (1 left) — Test notes trees that also contain non-notes
+- [x] `t3304-notes-mixed` ████████████████████ 6/6 (0 left) — Test notes trees that also contain non-notes
 - [ ] `t3102-ls-tree-wildcards` ███████████████░░░░░ 3/4 (1 left) — ls-tree with(out) globs
 - [ ] `t3500-cherry` ███████████████░░░░░ 3/4 (1 left) — git cherry should detect patches integrated upstream
 
