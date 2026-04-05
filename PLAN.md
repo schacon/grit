@@ -245,7 +245,7 @@ commit → check it off → move on.
 
 - [x] `t3304-notes-mixed` ████████████████████ 6/6 (0 left) — Test notes trees that also contain non-notes
 - [x] `t3102-ls-tree-wildcards` ████████████████████ 4/4 (0 left) — ls-tree with(out) globs
-- [ ] `t3500-cherry` ███████████████░░░░░ 3/4 (1 left) — git cherry should detect patches integrated upstream
+- [x] `t3500-cherry` ████████████████████ 4/4 (0 left) — git cherry should detect patches integrated upstream
 
 - [ ] `t3009-ls-files-others-nonsubmodule` ██████████░░░░░░░░░░ 1/2 (1 left) — test git ls-files --others with non-submodule repositories
 

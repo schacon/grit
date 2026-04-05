@@ -7,3 +7,4 @@
 - `cargo build --release -p grit-rs`: success.
 - `./scripts/run-tests.sh t0050-filesystem.sh`: 13/13 passing.
 - `./scripts/run-tests.sh t3102-ls-tree-wildcards.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t3500-cherry.sh`: 4/4 passing.
