@@ -6,7 +6,7 @@ use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::index::{
     entry_from_stat, normalize_mode, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK,
     MODE_REGULAR, MODE_SYMLINK,
@@ -90,14 +90,18 @@ pub struct Args {
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
 
+    /// Set the index format version.
+    #[arg(long = "index-version", value_name = "N")]
+    pub index_version: Option<u32>,
+
     /// Add `<mode>,<object>,<path>` entry directly.
     /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub cacheinfo: Vec<String>,
 
-    /// Set the execute bit on tracked files (+x or -x).
-    #[arg(long = "chmod", value_name = "MODE")]
-    pub chmod: Option<String>,
+    /// Set the execute bit on tracked files (+x or -x). Can be repeated.
+    #[arg(long = "chmod", value_name = "MODE", action = clap::ArgAction::Append)]
+    pub chmod: Vec<String>,
 
     /// Replace the entire index (used with --index-info).
     #[arg(long = "replace")]
@@ -125,6 +129,15 @@ pub fn run(args: Args) -> Result<()> {
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
     let core_symlinks = core_symlinks_enabled(&repo.git_dir);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let config_index_version = config
+        .get("index.version")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|v| (2..=4).contains(v));
+    let effective_index_version =
+        config_index_version.unwrap_or_else(|| if index.version == 0 { 2 } else { index.version });
+    let mut verbose_lines: Vec<String> = Vec::new();
+    let mut chmod_apply_index = 0usize;
 
     let work_tree = repo
         .work_tree
@@ -133,8 +146,20 @@ pub fn run(args: Args) -> Result<()> {
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     if args.show_index_version {
-        println!("{}", index.version);
+        println!("{effective_index_version}");
         return Ok(());
+    }
+
+    if let Some(ver) = args.index_version {
+        if !(2..=4).contains(&ver) {
+            bail!("index-version {} not in range [2, 4]", ver);
+        }
+        let old = effective_index_version;
+        index.version = ver;
+        set_local_index_version(&repo.git_dir, ver)?;
+        if args.verbose {
+            verbose_lines.push(format!("index-version: was {}, set to {}", old, ver));
+        }
     }
 
     if args.index_info {
@@ -191,6 +216,16 @@ pub fn run(args: Args) -> Result<()> {
             let oid: ObjectId = oid_str
                 .parse()
                 .with_context(|| format!("invalid object id '{oid_str}'"))?;
+            if oid == grit_lib::diff::zero_oid() {
+                if args.verbose {
+                    println!("add '{}'", String::from_utf8_lossy(&path_bytes));
+                }
+                bail!(
+                    "error: cache entry has null sha1: {}\nfatal: Unable to write new index file",
+                    String::from_utf8_lossy(&path_bytes)
+                );
+            }
+            let display_path = String::from_utf8_lossy(&path_bytes).to_string();
             let entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -208,6 +243,9 @@ pub fn run(args: Args) -> Result<()> {
                 path: path_bytes,
             };
             index.add_or_replace(entry);
+            if args.verbose {
+                println!("add '{}'", display_path);
+            }
         }
     }
 
@@ -294,18 +332,35 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        let chmod_for_path = if !args.chmod.is_empty() {
+            let raw = args
+                .chmod
+                .get(chmod_apply_index)
+                .or_else(|| args.chmod.last())
+                .ok_or_else(|| anyhow::anyhow!("missing --chmod value"))?
+                .clone();
+            chmod_apply_index += 1;
+            let mode = match raw.as_str() {
+                "+x" => 0o100755u32,
+                "-x" => 0o100644u32,
+                other => bail!("--chmod param '{}' must be either +x or -x", other),
+            };
+            Some((raw, mode))
+        } else {
+            None
+        };
+
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
-        if let Some(ref chmod_val) = args.chmod {
+        if let Some((ref chmod_val, new_mode)) = chmod_for_path {
             if !args.add {
-                let new_mode = match chmod_val.as_str() {
-                    "+x" => 0o100755u32,
-                    "-x" => 0o100644u32,
-                    other => bail!("--chmod param '{}' must be either +x or -x", other),
-                };
                 if let Some(e) = index.get_mut(&rel_bytes, 0) {
                     e.mode = new_mode;
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
+                }
+                if args.verbose {
+                    verbose_lines.push(format!("add '{}'", input_path.display()));
+                    verbose_lines.push(format!("chmod {} '{}'", chmod_val, input_path.display()));
                 }
                 continue;
             }
@@ -413,14 +468,13 @@ pub fn run(args: Args) -> Result<()> {
         index.add_or_replace(entry);
 
         // Apply --chmod after adding the entry.
-        if let Some(ref chmod_val) = args.chmod {
-            let new_mode = match chmod_val.as_str() {
-                "+x" => 0o100755u32,
-                "-x" => 0o100644u32,
-                other => bail!("--chmod param '{}' must be either +x or -x", other),
-            };
+        if let Some((ref chmod_val, new_mode)) = chmod_for_path {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
+            }
+            if args.verbose {
+                verbose_lines.push(format!("add '{}'", input_path.display()));
+                verbose_lines.push(format!("chmod {} '{}'", chmod_val, input_path.display()));
             }
         }
     }
@@ -458,6 +512,22 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     index.write(&index_path).context("writing index")?;
+    if args.verbose {
+        for line in verbose_lines {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn set_local_index_version(git_dir: &Path, version: u32) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(f) => f,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    file.set("index.version", &version.to_string())?;
+    file.write()?;
     Ok(())
 }
 
