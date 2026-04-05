@@ -1142,6 +1142,130 @@ fn run_test_tool_regex(rest: &[String]) -> Result<()> {
     bail!("usage: test-tool regex --bug")
 }
 
+fn format_dir_iterator_entry(path: &std::path::Path, root: &std::path::Path) -> Option<String> {
+    let rel = path.strip_prefix(root).ok()?;
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    if rel_str.is_empty() {
+        return None;
+    }
+    let basename = path.file_name()?.to_string_lossy();
+    let root_display = root
+        .to_string_lossy()
+        .trim_start_matches("./")
+        .to_string();
+    let display = format!("./{}/{}", root_display, rel_str);
+    let kind = match std::fs::symlink_metadata(path).ok()?.file_type() {
+        ft if ft.is_dir() => "d",
+        ft if ft.is_symlink() => "s",
+        _ => "f",
+    };
+    Some(format!("[{kind}] ({rel_str}) [{basename}] {display}"))
+}
+
+fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
+    let mut pedantic = false;
+    let mut path_arg: Option<String> = None;
+
+    for arg in rest.iter().skip(1) {
+        if arg == "--pedantic" {
+            pedantic = true;
+        } else if path_arg.is_none() {
+            path_arg = Some(arg.clone());
+        } else {
+            bail!("usage: test-tool dir-iterator [--pedantic] <path>");
+        }
+    }
+
+    let Some(path_arg) = path_arg else {
+        bail!("usage: test-tool dir-iterator [--pedantic] <path>");
+    };
+    let root = std::path::PathBuf::from(&path_arg);
+
+    if !root.exists() {
+        println!("dir_iterator_begin failure: ENOENT");
+        std::process::exit(1);
+    }
+    if !root.is_dir() {
+        println!("dir_iterator_begin failure: ENOTDIR");
+        std::process::exit(1);
+    }
+    if std::fs::symlink_metadata(&root)
+        .ok()
+        .is_some_and(|m| m.file_type().is_symlink())
+    {
+        println!("dir_iterator_begin failure: ENOTDIR");
+        std::process::exit(1);
+    }
+
+    fn walk(path: &std::path::Path, root: &std::path::Path, pedantic: bool) -> Result<()> {
+        if let Some(line) = format_dir_iterator_entry(path, root) {
+            println!("{line}");
+        }
+
+        let meta = std::fs::symlink_metadata(path)?;
+        if !meta.is_dir() {
+            return Ok(());
+        }
+
+        let rd = match std::fs::read_dir(path) {
+            Ok(rd) => rd,
+            Err(_) => {
+                if pedantic {
+                    println!("dir_iterator_advance failure");
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+        };
+
+        let mut entries: Vec<std::path::PathBuf> =
+            rd.filter_map(|e| e.ok().map(|x| x.path())).collect();
+        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        for child in entries {
+            // Probe metadata first to surface permission errors for --pedantic.
+            let child_meta = match std::fs::symlink_metadata(&child) {
+                Ok(m) => m,
+                Err(err) => {
+                    if pedantic {
+                        println!("dir_iterator_advance failure");
+                        std::process::exit(1);
+                    }
+                    if err.kind() == std::io::ErrorKind::PermissionDenied {
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            };
+
+            // Do not follow symlink directories.
+            if child_meta.file_type().is_symlink() {
+                if let Some(line) = format_dir_iterator_entry(&child, root) {
+                    println!("{line}");
+                }
+                continue;
+            }
+            if let Err(err) = walk(&child, root, pedantic) {
+                if pedantic {
+                    println!("dir_iterator_advance failure");
+                    std::process::exit(1);
+                }
+                if err
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied)
+                {
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
+    walk(&root, &root, pedantic)?;
+    Ok(())
+}
+
 fn run_test_tool(rest: &[String]) -> Result<()> {
     match rest.first().map(String::as_str).unwrap_or("") {
         "wildmatch" => {
@@ -1192,6 +1316,7 @@ fn run_test_tool(rest: &[String]) -> Result<()> {
         "json-writer" => run_test_tool_json_writer(rest),
         "mktemp" => run_test_tool_mktemp(rest),
         "regex" => run_test_tool_regex(rest),
+        "dir-iterator" => run_test_tool_dir_iterator(rest),
         _ => test_tool_usage(),
     }
 }
