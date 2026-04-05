@@ -931,11 +931,11 @@ commit → check it off → move on.
 - [x] `t9305-fast-import-signatures` ████████████████████ 21/21 (0 left) — git fast-import --signed-commits=<mode>
 - [x] `t9306-fast-import-signed-tags` ████████████████████ 10/10 (0 left) — git fast-import --signed-tags=<mode>
 - [x] `t9351-fast-export-anonymize` ████████████████████ 17/17 (0 left) — basic tests for fast-export --anonymize
-- [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
+- [x] `t9210-scalar` ████████████████████ 22/22 (0 left) — test the `scalar` command
 - [x] `t9301-fast-import-notes` ████████████████████ 17/17 (0 left) — test git fast-import of notes objects
 - [x] `t9003-help-autocorrect` ████████████████████ 10/10 (0 left) — help.autocorrect finding a match
 - [x] `t9002-column` ████████████████████ 16/16 (0 left) — git column
-- [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
+- [x] `t9211-scalar-clone` ████████████████████ 14/14 (0 left) — test the `scalar clone` subcommand
 - [ ] `t9303-fast-import-compression` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — compression setting of fast-import utility
 - [ ] `t9350-fast-export` ██████████████░░░░░░ 53/73 (20 left) — git fast-export
 - [x] `t9903-bash-prompt` ████████████████████ 67/67 (0 left) — test git-specific bash prompt functions

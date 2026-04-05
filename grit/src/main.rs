@@ -346,6 +346,32 @@ fn run_test_tool_genzeros(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_crontab(rest: &[String]) -> Result<()> {
+    // Usage: test-tool crontab <file> -l|<input>
+    if rest.len() != 3 {
+        bail!("usage: test-tool crontab <file> -l|<input>");
+    }
+
+    let file = &rest[1];
+    let mode = &rest[2];
+
+    if mode == "-l" {
+        // If file doesn't exist, succeed with empty output.
+        let data = match std::fs::read(file) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        use std::io::Write;
+        std::io::stdout().write_all(&data)?;
+        return Ok(());
+    }
+
+    let input = std::fs::read(mode)?;
+    std::fs::write(file, input)?;
+    Ok(())
+}
+
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
 struct GlobalOpts {
@@ -1559,7 +1585,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             commands::reset::run(parse_cmd_args(subcmd, &filtered))
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
-        "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
+        "rev-list" => {
+            let is_hex_oid = |s: &str| s.len() == 40 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit());
+            let needs_passthrough = rest.iter().any(|a| a.starts_with("--missing="))
+                || rest.iter().any(|a| !a.starts_with('-') && is_hex_oid(a));
+            if needs_passthrough {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::rev_list::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
@@ -1643,6 +1678,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 }
                 "trace2" => run_test_tool_trace2(rest),
                 "genzeros" => run_test_tool_genzeros(rest),
+                "crontab" => run_test_tool_crontab(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

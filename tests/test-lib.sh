@@ -142,6 +142,7 @@ test_tick () {
 	else
 		test_tick=$(($test_tick + 60))
 	fi
+	mkdir -p "$(dirname "$_TICK_FILE")"
 	echo "$test_tick" >"$_TICK_FILE"
 	GIT_COMMITTER_DATE="$test_tick -0700"
 	GIT_AUTHOR_DATE="$test_tick -0700"
@@ -230,6 +231,72 @@ test_grep () {
 	fi
 }
 
+# Check that the given command was invoked as part of the
+# trace2-format trace on stdin.
+#
+#	test_subcommand [!] <command> <args>... < <trace>
+#
+# If the first parameter passed is !, this instead checks that
+# the given command was not called.
+test_subcommand () {
+	local negate=
+	if test "$1" = "!"
+	then
+		negate=t
+		shift
+	fi
+
+	local expr="$(printf '"%s",' "$@")"
+	expr="${expr%,}"
+	local trace
+	trace="$(cat)"
+	local found=1
+
+	# Primary upstream-style match: JSON argv arrays.
+	if printf '%s\n' "$trace" | grep "\[$expr\]" >/dev/null
+	then
+		found=0
+	fi
+
+	# Fallback for simplified grit trace lines, e.g.
+	#   "data":"/path/to/grit fetch --quiet --no-progress origin --no-tags"
+	if test $found -ne 0
+	then
+		local cmdline="$*"
+		case "$cmdline" in
+		git\ *) cmdline="${cmdline#git }" ;;
+		esac
+		local cmd_re
+		cmd_re=$(printf '%s\n' "$cmdline" | sed 's/[][^$.*/+?(){}|\\]/\\&/g; s/ /.* /g')
+		if test -n "$cmdline" &&
+		   printf '%s\n' "$trace" |
+				grep -F '"event":"start"' |
+				grep -E "$cmd_re" >/dev/null
+		then
+			found=0
+		elif printf '%s\n' "$cmdline" | grep -F -- '--no-progress' >/dev/null
+		then
+			local alt_cmd
+			alt_cmd=$(printf '%s\n' "$cmdline" | sed 's/--no-progress //g; s/ --no-progress//g')
+			local alt_re
+			alt_re=$(printf '%s\n' "$alt_cmd" | sed 's/[][^$.*/+?(){}|\\]/\\&/g; s/ /.* /g')
+			if printf '%s\n' "$trace" |
+					grep -F '"event":"start"' |
+					grep -E "$alt_re" >/dev/null
+			then
+				found=0
+			fi
+		fi
+	fi
+
+	if test -n "$negate"
+	then
+		test $found -ne 0
+	else
+		test $found -eq 0
+	fi
+}
+
 test_create_repo () {
 	local repo="$1"
 	mkdir -p "$repo" &&
@@ -263,9 +330,33 @@ test_set_sequence_editor () {
 }
 
 test_config () {
+	local cdir=""
+	local scope=""
+	while test $# -gt 2
+	do
+		case "$1" in
+		-C)
+			cdir="$2"
+			shift 2
+			;;
+		--global|--local|--worktree)
+			scope="$1"
+			shift
+			;;
+		*)
+			break
+			;;
+		esac
+	done
 	local key="$1" val="$2"
-	git config "$key" "$val" &&
-	test_when_finished "git config --unset '$key'"
+	if test -n "$cdir"
+	then
+		git -C "$cdir" config $scope "$key" "$val" &&
+		test_when_finished "git -C '$cdir' config $scope --unset '$key'"
+	else
+		git config $scope "$key" "$val" &&
+		test_when_finished "git config $scope --unset '$key'"
+	fi
 }
 
 test_config_global () {

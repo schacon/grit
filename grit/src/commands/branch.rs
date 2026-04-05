@@ -938,8 +938,18 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let new_ref = format!("refs/heads/{new_name}");
 
     // Resolve old branch - check both loose and packed refs
-    let old_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &old_ref)
-        .map_err(|_| anyhow::anyhow!("branch '{old_name}' not found."))?;
+    let old_oid = if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, &old_ref) {
+        oid
+    } else if head.branch_name() == Some(old_name) && head.oid().is_none() {
+        // Allow renaming an unborn current branch (e.g. immediately after init).
+        let head_path = repo.git_dir.join("HEAD");
+        let head_content = format!("ref: refs/heads/{new_name}\n");
+        fs::write(head_path, head_content)?;
+        rename_branch_config(repo, old_name, new_name)?;
+        return Ok(());
+    } else {
+        return Err(anyhow::anyhow!("branch '{old_name}' not found."));
+    };
 
     // Check if new name already exists (unless force; -M or -m -f)
     let force = args.force_rename || args.force;

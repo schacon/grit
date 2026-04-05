@@ -298,8 +298,18 @@ pub fn run(args: Args) -> Result<()> {
         }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
-        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
-            .context("copying refs")?;
+        copy_refs_as_remote(
+            &source.git_dir,
+            &dest.git_dir,
+            remote_name,
+            args.no_tags,
+            if args.single_branch {
+                head_branch.as_deref()
+            } else {
+                None
+            },
+        )
+        .context("copying refs")?;
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
@@ -775,12 +785,18 @@ fn copy_refs_as_remote(
     dst_git_dir: &Path,
     remote_name: &str,
     no_tags: bool,
+    single_branch: Option<&str>,
 ) -> Result<()> {
     // Use the library ref-listing API which handles both files and reftable
     let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     for (refname, oid) in &heads {
         let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
+        if let Some(single) = single_branch {
+            if branch != single {
+                continue;
+            }
+        }
         let dst_ref = dst_git_dir
             .join("refs/remotes")
             .join(remote_name)
@@ -820,6 +836,11 @@ fn copy_refs_as_remote(
                 };
 
                 if let Some(branch) = refname.strip_prefix("refs/heads/") {
+                    if let Some(single) = single_branch {
+                        if branch != single {
+                            continue;
+                        }
+                    }
                     let dst_ref = dst_remotes.join(branch);
                     if let Some(parent) = dst_ref.parent() {
                         fs::create_dir_all(parent)?;

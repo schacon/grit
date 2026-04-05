@@ -948,8 +948,8 @@ t9167-git-svn-cmd-branch-subproject	yes	0	0	0	ok	0	0	0
 t9168-git-svn-partially-globbed-names	yes	0	0	0	ok	0	0	0
 t9169-git-svn-dcommit-crlf	yes	0	0	0	ok	0	0	0
 t9200-git-cvsexportcommit	yes	0	0	0	ok	0	0	0
-t9210-scalar	yes	22	15	7	ok	15	22	0
-t9211-scalar-clone	yes	14	1	13	ok	1	14	0
+t9210-scalar	yes	22	22	0	ok	22	22	0
+t9211-scalar-clone	yes	14	14	0	ok	14	14	0
 t9300-fast-import	yes	0	0	0	timeout	0	0	0
 t9301-fast-import-notes	yes	17	17	0	ok	17	17	0
 t9302-fast-import-unpack-limit	yes	3	3	0	ok	3	3	0
