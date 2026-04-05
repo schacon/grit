@@ -49,15 +49,10 @@ pub fn run(args: Args) -> Result<()> {
 
     // Filter refs if specific ones were requested
     let requested_refs: Vec<(String, ObjectId)> = if args.refs.is_empty() {
-        remote_heads
-            .into_iter()
-            .chain(remote_tags)
-            .collect()
+        remote_heads.into_iter().chain(remote_tags).collect()
     } else {
-        let all_refs: Vec<(String, ObjectId)> = remote_heads
-            .into_iter()
-            .chain(remote_tags)
-            .collect();
+        let all_refs: Vec<(String, ObjectId)> =
+            remote_heads.into_iter().chain(remote_tags).collect();
         all_refs
             .into_iter()
             .filter(|(name, _)| {
@@ -123,10 +118,9 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists()
-                    && fs::hard_link(entry.path(), &dst_file).is_err() {
-                        fs::copy(entry.path(), &dst_file)?;
-                    }
+                if !dst_file.exists() && fs::hard_link(entry.path(), &dst_file).is_err() {
+                    fs::copy(entry.path(), &dst_file)?;
+                }
             }
         }
     }

@@ -74,9 +74,7 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => false,
             ObjectFilter::BlobLimit(limit) => size <= *limit,
             ObjectFilter::TreeDepth(_) => true,
-            ObjectFilter::Combine(filters) => {
-                filters.iter().all(|f| f.includes_blob(size))
-            }
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_blob(size)),
         }
     }
 
@@ -86,9 +84,7 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => true,
             ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
-            ObjectFilter::Combine(filters) => {
-                filters.iter().all(|f| f.includes_tree(depth))
-            }
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tree(depth)),
         }
     }
 }
@@ -114,7 +110,7 @@ fn split_combine(spec: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut chars = spec.chars().peekable();
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         if ch == '+' {
             if !current.is_empty() {
                 parts.push(url_decode(&current));
@@ -357,15 +353,19 @@ pub fn rev_list(
     // Path filtering: keep only commits that modify given paths
     if !options.paths.is_empty() && !options.sparse {
         let paths = &options.paths;
-        ordered.retain(|oid| {
-            commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false)
-        });
+        ordered.retain(|oid| commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false));
     }
 
     // Left-right classification for symmetric diffs
     let mut left_right_map = HashMap::new();
-    if options.left_right || options.left_only || options.right_only || options.cherry_mark || options.cherry_pick {
-        if let (Some(left_oid), Some(right_oid)) = (options.symmetric_left, options.symmetric_right) {
+    if options.left_right
+        || options.left_only
+        || options.right_only
+        || options.cherry_mark
+        || options.cherry_pick
+    {
+        if let (Some(left_oid), Some(right_oid)) = (options.symmetric_left, options.symmetric_right)
+        {
             let left_closure = walk_closure(&mut graph, &[left_oid])?;
             let right_closure = walk_closure(&mut graph, &[right_oid])?;
             for &oid in &ordered {
@@ -386,12 +386,22 @@ pub fn rev_list(
     let mut cherry_equivalent = HashSet::new();
     if options.cherry_pick || options.cherry_mark {
         let patch_ids = compute_patch_ids(repo, &mut graph, &ordered)?;
-        let left_commits: Vec<_> = ordered.iter().filter(|o| left_right_map.get(o) == Some(&true)).copied().collect();
-        let right_commits: Vec<_> = ordered.iter().filter(|o| left_right_map.get(o) == Some(&false)).copied().collect();
-        let left_patches: HashMap<&str, ObjectId> = left_commits.iter()
+        let left_commits: Vec<_> = ordered
+            .iter()
+            .filter(|o| left_right_map.get(o) == Some(&true))
+            .copied()
+            .collect();
+        let right_commits: Vec<_> = ordered
+            .iter()
+            .filter(|o| left_right_map.get(o) == Some(&false))
+            .copied()
+            .collect();
+        let left_patches: HashMap<&str, ObjectId> = left_commits
+            .iter()
             .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
             .collect();
-        let right_patches: HashMap<&str, ObjectId> = right_commits.iter()
+        let right_patches: HashMap<&str, ObjectId> = right_commits
+            .iter()
             .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
             .collect();
         for (&pid, &oid) in &left_patches {
@@ -464,9 +474,15 @@ pub fn rev_list(
     // Collect reachable objects if --objects
     let (objects, omitted_objects, per_commit_object_counts) = if options.objects {
         let (mut objs, omit, counts) = if options.in_commit_order {
-            collect_reachable_objects_in_commit_order(repo, &mut graph, &ordered, options.filter.as_ref())?
+            collect_reachable_objects_in_commit_order(
+                repo,
+                &mut graph,
+                &ordered,
+                options.filter.as_ref(),
+            )?
         } else {
-            let (objs, omit) = collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?;
+            let (objs, omit) =
+                collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?;
             (objs, omit, Vec::new())
         };
         if options.no_kept_objects {
@@ -497,8 +513,16 @@ pub fn rev_list(
 #[must_use]
 pub fn split_revision_token(token: &str) -> (Vec<String>, Vec<String>) {
     if let Some((lhs, rhs)) = token.split_once("..") {
-        let positive = if rhs.is_empty() { "HEAD".to_owned() } else { rhs.to_owned() };
-        let negative = if lhs.is_empty() { "HEAD".to_owned() } else { lhs.to_owned() };
+        let positive = if rhs.is_empty() {
+            "HEAD".to_owned()
+        } else {
+            rhs.to_owned()
+        };
+        let negative = if lhs.is_empty() {
+            "HEAD".to_owned()
+        } else {
+            lhs.to_owned()
+        };
         return (vec![positive], vec![negative]);
     }
     if let Some(rest) = token.strip_prefix('^') {
@@ -528,9 +552,15 @@ fn ansi_color_from_name(name: &str) -> String {
 
 fn color_name_to_code(name: &str) -> Option<u8> {
     match name {
-        "black" => Some(0), "red" => Some(1), "green" => Some(2),
-        "yellow" => Some(3), "blue" => Some(4), "magenta" => Some(5),
-        "cyan" => Some(6), "white" => Some(7), "default" => Some(9),
+        "black" => Some(0),
+        "red" => Some(1),
+        "green" => Some(2),
+        "yellow" => Some(3),
+        "blue" => Some(4),
+        "magenta" => Some(5),
+        "cyan" => Some(6),
+        "white" => Some(7),
+        "default" => Some(9),
         _ => None,
     }
 }
@@ -582,19 +612,39 @@ fn format_relative_date(diff: i64) -> String {
         format!("{} seconds ago", diff)
     } else if diff < 3600 {
         let m = diff / 60;
-        if m == 1 { "1 minute ago".to_owned() } else { format!("{m} minutes ago") }
+        if m == 1 {
+            "1 minute ago".to_owned()
+        } else {
+            format!("{m} minutes ago")
+        }
     } else if diff < 86400 {
         let h = diff / 3600;
-        if h == 1 { "1 hour ago".to_owned() } else { format!("{h} hours ago") }
+        if h == 1 {
+            "1 hour ago".to_owned()
+        } else {
+            format!("{h} hours ago")
+        }
     } else if diff < 86400 * 30 {
         let d = diff / 86400;
-        if d == 1 { "1 day ago".to_owned() } else { format!("{d} days ago") }
+        if d == 1 {
+            "1 day ago".to_owned()
+        } else {
+            format!("{d} days ago")
+        }
     } else if diff < 86400 * 365 {
         let months = diff / (86400 * 30);
-        if months == 1 { "1 month ago".to_owned() } else { format!("{months} months ago") }
+        if months == 1 {
+            "1 month ago".to_owned()
+        } else {
+            format!("{months} months ago")
+        }
     } else {
         let years = diff / (86400 * 365);
-        if years == 1 { "1 year ago".to_owned() } else { format!("{years} years ago") }
+        if years == 1 {
+            "1 year ago".to_owned()
+        } else {
+            format!("{years} years ago")
+        }
     }
 }
 
@@ -651,8 +701,12 @@ pub fn render_commit_with_color(
                         let email = if let Some(start) = ident.find('<') {
                             if let Some(end) = ident.find('>') {
                                 &ident[start..=end]
-                            } else { "" }
-                        } else { "" };
+                            } else {
+                                ""
+                            }
+                        } else {
+                            ""
+                        };
                         format!("{} {}", name, email)
                     }
                     let mut out = String::new();
@@ -672,48 +726,81 @@ pub fn render_commit_with_color(
                         let email = if let Some(start) = ident.find('<') {
                             if let Some(end) = ident.find('>') {
                                 &ident[start..=end]
-                            } else { "" }
-                        } else { "" };
+                            } else {
+                                ""
+                            }
+                        } else {
+                            ""
+                        };
                         format!("{} {}", name, email)
                     }
                     fn format_default_date(ident: &str) -> String {
                         let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                        if parts.len() < 2 { return String::new(); }
+                        if parts.len() < 2 {
+                            return String::new();
+                        }
                         let ts_str = parts[1];
                         let offset_str = parts[0];
-                        let ts: i64 = match ts_str.parse() { Ok(v) => v, Err(_) => return format!("{ts_str} {offset_str}") };
+                        let ts: i64 = match ts_str.parse() {
+                            Ok(v) => v,
+                            Err(_) => return format!("{ts_str} {offset_str}"),
+                        };
                         let tz_bytes = offset_str.as_bytes();
                         let tz_secs: i64 = if tz_bytes.len() >= 5 {
                             let sign = if tz_bytes[0] == b'-' { -1i64 } else { 1i64 };
                             let h: i64 = offset_str[1..3].parse().unwrap_or(0);
                             let m: i64 = offset_str[3..5].parse().unwrap_or(0);
                             sign * (h * 3600 + m * 60)
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                         let adjusted = ts + tz_secs;
                         let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                             .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                         let weekday = match dt.weekday() {
-                            time::Weekday::Monday => "Mon", time::Weekday::Tuesday => "Tue",
-                            time::Weekday::Wednesday => "Wed", time::Weekday::Thursday => "Thu",
-                            time::Weekday::Friday => "Fri", time::Weekday::Saturday => "Sat",
+                            time::Weekday::Monday => "Mon",
+                            time::Weekday::Tuesday => "Tue",
+                            time::Weekday::Wednesday => "Wed",
+                            time::Weekday::Thursday => "Thu",
+                            time::Weekday::Friday => "Fri",
+                            time::Weekday::Saturday => "Sat",
                             time::Weekday::Sunday => "Sun",
                         };
                         let month = match dt.month() {
-                            time::Month::January => "Jan", time::Month::February => "Feb",
-                            time::Month::March => "Mar", time::Month::April => "Apr",
-                            time::Month::May => "May", time::Month::June => "Jun",
-                            time::Month::July => "Jul", time::Month::August => "Aug",
-                            time::Month::September => "Sep", time::Month::October => "Oct",
-                            time::Month::November => "Nov", time::Month::December => "Dec",
+                            time::Month::January => "Jan",
+                            time::Month::February => "Feb",
+                            time::Month::March => "Mar",
+                            time::Month::April => "Apr",
+                            time::Month::May => "May",
+                            time::Month::June => "Jun",
+                            time::Month::July => "Jul",
+                            time::Month::August => "Aug",
+                            time::Month::September => "Sep",
+                            time::Month::October => "Oct",
+                            time::Month::November => "Nov",
+                            time::Month::December => "Dec",
                         };
-                        format!("{} {} {} {:02}:{:02}:{:02} {} {}",
-                            weekday, month, dt.day(),
-                            dt.hour(), dt.minute(), dt.second(),
-                            dt.year(), offset_str)
+                        format!(
+                            "{} {} {} {:02}:{:02}:{:02} {} {}",
+                            weekday,
+                            month,
+                            dt.day(),
+                            dt.hour(),
+                            dt.minute(),
+                            dt.second(),
+                            dt.year(),
+                            offset_str
+                        )
                     }
                     let mut out = String::new();
-                    out.push_str(&format!("Author: {}\n", extract_ident_display(&commit.author)));
-                    out.push_str(&format!("Date:   {}\n", format_default_date(&commit.author)));
+                    out.push_str(&format!(
+                        "Author: {}\n",
+                        extract_ident_display(&commit.author)
+                    ));
+                    out.push_str(&format!(
+                        "Date:   {}\n",
+                        format_default_date(&commit.author)
+                    ));
                     out.push('\n');
                     for line in commit.message.lines() {
                         out.push_str(&format!("    {}\n", line));
@@ -734,12 +821,15 @@ pub fn render_commit_with_color(
             let body = {
                 let mut lines = commit.message.lines();
                 lines.next(); // skip subject
-                // Skip optional blank line after subject
+                              // Skip optional blank line after subject
                 if let Some(blank) = lines.next() {
                     if blank.is_empty() {
                         lines.collect::<Vec<_>>().join("\n")
                     } else {
-                        std::iter::once(blank).chain(lines).collect::<Vec<_>>().join("\n")
+                        std::iter::once(blank)
+                            .chain(lines)
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     }
                 } else {
                     String::new()
@@ -747,11 +837,15 @@ pub fn render_commit_with_color(
             };
             let tree_hex = commit.tree.to_hex();
             let parent_hexes: Vec<String> = commit.parents.iter().map(|p| p.to_hex()).collect();
-            let parent_abbrevs: Vec<String> = commit.parents.iter().map(|p| {
-                let hex = p.to_hex();
-                let n = abbrev_len.clamp(4, 40).min(hex.len());
-                hex[..n].to_string()
-            }).collect();
+            let parent_abbrevs: Vec<String> = commit
+                .parents
+                .iter()
+                .map(|p| {
+                    let hex = p.to_hex();
+                    let n = abbrev_len.clamp(4, 40).min(hex.len());
+                    hex[..n].to_string()
+                })
+                .collect();
 
             // Extract name/email components from ident strings
             fn extract_name(ident: &str) -> &str {
@@ -771,11 +865,17 @@ pub fn render_commit_with_color(
             }
             fn extract_timestamp(ident: &str) -> &str {
                 let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                if parts.len() >= 2 { parts[1] } else { "" }
+                if parts.len() >= 2 {
+                    parts[1]
+                } else {
+                    ""
+                }
             }
             fn parse_ident_date(ident: &str) -> Option<(i64, &str)> {
                 let parts: Vec<&str> = ident.rsplitn(3, ' ').collect();
-                if parts.len() < 2 { return None; }
+                if parts.len() < 2 {
+                    return None;
+                }
                 let ts: i64 = parts[1].parse().ok()?;
                 Some((ts, parts[0]))
             }
@@ -786,24 +886,35 @@ pub fn render_commit_with_color(
                     let h: i64 = offset_str[1..3].parse().unwrap_or(0);
                     let m: i64 = offset_str[3..5].parse().unwrap_or(0);
                     sign * (h * 3600 + m * 60)
-                } else { 0 }
+                } else {
+                    0
+                }
             }
             fn weekday_str(dt: &time::OffsetDateTime) -> &'static str {
                 match dt.weekday() {
-                    time::Weekday::Monday => "Mon", time::Weekday::Tuesday => "Tue",
-                    time::Weekday::Wednesday => "Wed", time::Weekday::Thursday => "Thu",
-                    time::Weekday::Friday => "Fri", time::Weekday::Saturday => "Sat",
+                    time::Weekday::Monday => "Mon",
+                    time::Weekday::Tuesday => "Tue",
+                    time::Weekday::Wednesday => "Wed",
+                    time::Weekday::Thursday => "Thu",
+                    time::Weekday::Friday => "Fri",
+                    time::Weekday::Saturday => "Sat",
                     time::Weekday::Sunday => "Sun",
                 }
             }
             fn month_str(dt: &time::OffsetDateTime) -> &'static str {
                 match dt.month() {
-                    time::Month::January => "Jan", time::Month::February => "Feb",
-                    time::Month::March => "Mar", time::Month::April => "Apr",
-                    time::Month::May => "May", time::Month::June => "Jun",
-                    time::Month::July => "Jul", time::Month::August => "Aug",
-                    time::Month::September => "Sep", time::Month::October => "Oct",
-                    time::Month::November => "Nov", time::Month::December => "Dec",
+                    time::Month::January => "Jan",
+                    time::Month::February => "Feb",
+                    time::Month::March => "Mar",
+                    time::Month::April => "Apr",
+                    time::Month::May => "May",
+                    time::Month::June => "Jun",
+                    time::Month::July => "Jul",
+                    time::Month::August => "Aug",
+                    time::Month::September => "Sep",
+                    time::Month::October => "Oct",
+                    time::Month::November => "Nov",
+                    time::Month::December => "Dec",
                 }
             }
             fn extract_email_local(ident: &str) -> &str {
@@ -815,54 +926,98 @@ pub fn render_commit_with_color(
                 }
             }
             fn extract_date_default(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                    return String::new();
+                };
                 let adjusted = ts + parse_tz(offset_str);
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                format!("{} {} {} {:02}:{:02}:{:02} {} {}",
-                    weekday_str(&dt), month_str(&dt), dt.day(),
-                    dt.hour(), dt.minute(), dt.second(),
-                    dt.year(), offset_str)
+                format!(
+                    "{} {} {} {:02}:{:02}:{:02} {} {}",
+                    weekday_str(&dt),
+                    month_str(&dt),
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second(),
+                    dt.year(),
+                    offset_str
+                )
             }
             fn extract_date_rfc2822(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                    return String::new();
+                };
                 let adjusted = ts + parse_tz(offset_str);
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                format!("{}, {} {} {} {:02}:{:02}:{:02} {}",
-                    weekday_str(&dt), dt.day(), month_str(&dt), dt.year(),
-                    dt.hour(), dt.minute(), dt.second(), offset_str)
+                format!(
+                    "{}, {} {} {} {:02}:{:02}:{:02} {}",
+                    weekday_str(&dt),
+                    dt.day(),
+                    month_str(&dt),
+                    dt.year(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second(),
+                    offset_str
+                )
             }
             fn extract_date_short(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                    return String::new();
+                };
                 let adjusted = ts + parse_tz(offset_str);
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                 format!("{:04}-{:02}-{:02}", dt.year(), dt.month() as u8, dt.day())
             }
             fn extract_date_iso(ident: &str) -> String {
-                let Some((ts, offset_str)) = parse_ident_date(ident) else { return String::new() };
+                let Some((ts, offset_str)) = parse_ident_date(ident) else {
+                    return String::new();
+                };
                 let adjusted = ts + parse_tz(offset_str);
                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
-                format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
-                    dt.year(), dt.month() as u8, dt.day(),
-                    dt.hour(), dt.minute(), dt.second(), offset_str)
+                format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
+                    dt.year(),
+                    dt.month() as u8,
+                    dt.day(),
+                    dt.hour(),
+                    dt.minute(),
+                    dt.second(),
+                    offset_str
+                )
             }
 
             // Alignment/truncation state for %<(N), %>(N), %><(N) directives
             #[derive(Clone, Copy)]
-            enum Align { Left, Right, Center }
+            enum Align {
+                Left,
+                Right,
+                Center,
+            }
             #[derive(Clone, Copy)]
-            enum Trunc { None, Trunc, LTrunc, MTrunc }
-            struct ColSpec { width: usize, align: Align, trunc: Trunc }
+            enum Trunc {
+                None,
+                Trunc,
+                LTrunc,
+                MTrunc,
+            }
+            struct ColSpec {
+                width: usize,
+                align: Align,
+                trunc: Trunc,
+            }
             fn apply_col(spec: &ColSpec, s: &str) -> String {
                 let char_len = s.chars().count();
                 if char_len > spec.width {
                     match spec.trunc {
                         Trunc::None => s.to_owned(),
                         Trunc::Trunc => {
-                            let mut out: String = s.chars().take(spec.width.saturating_sub(2)).collect();
+                            let mut out: String =
+                                s.chars().take(spec.width.saturating_sub(2)).collect();
                             out.push_str("..");
                             out
                         }
@@ -887,12 +1042,16 @@ pub fn render_commit_with_color(
                     match spec.align {
                         Align::Left => {
                             let mut out = s.to_owned();
-                            for _ in 0..pad { out.push(' '); }
+                            for _ in 0..pad {
+                                out.push(' ');
+                            }
                             out
                         }
                         Align::Right => {
                             let mut out = String::new();
-                            for _ in 0..pad { out.push(' '); }
+                            for _ in 0..pad {
+                                out.push(' ');
+                            }
                             out.push_str(s);
                             out
                         }
@@ -900,29 +1059,46 @@ pub fn render_commit_with_color(
                             let left = pad / 2;
                             let right = pad - left;
                             let mut out = String::new();
-                            for _ in 0..left { out.push(' '); }
+                            for _ in 0..left {
+                                out.push(' ');
+                            }
                             out.push_str(s);
-                            for _ in 0..right { out.push(' '); }
+                            for _ in 0..right {
+                                out.push(' ');
+                            }
                             out
                         }
                     }
                 }
             }
-            fn parse_col_spec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, align: Align) -> Option<ColSpec> {
+            fn parse_col_spec(
+                chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+                align: Align,
+            ) -> Option<ColSpec> {
                 // Consume '('
-                if chars.peek() != Some(&'(') { return None; }
+                if chars.peek() != Some(&'(') {
+                    return None;
+                }
                 chars.next();
                 let mut num_str = String::new();
                 while let Some(&c) = chars.peek() {
-                    if c.is_ascii_digit() { num_str.push(c); chars.next(); } else { break; }
+                    if c.is_ascii_digit() {
+                        num_str.push(c);
+                        chars.next();
+                    } else {
+                        break;
+                    }
                 }
                 let width: usize = num_str.parse().ok()?;
                 let trunc = if chars.peek() == Some(&',') {
                     chars.next(); // consume comma
                     let mut mode = String::new();
                     while let Some(&c) = chars.peek() {
-                        if c == ')' { break; }
-                        mode.push(c); chars.next();
+                        if c == ')' {
+                            break;
+                        }
+                        mode.push(c);
+                        chars.next();
                     }
                     match mode.as_str() {
                         "trunc" => Trunc::Trunc,
@@ -934,8 +1110,14 @@ pub fn render_commit_with_color(
                     Trunc::None
                 };
                 // Consume ')'
-                if chars.peek() == Some(&')') { chars.next(); }
-                Some(ColSpec { width, align, trunc })
+                if chars.peek() == Some(&')') {
+                    chars.next();
+                }
+                Some(ColSpec {
+                    width,
+                    align,
+                    trunc,
+                })
             }
 
             let mut pending_col: Option<ColSpec> = None;
@@ -974,28 +1156,62 @@ pub fn render_commit_with_color(
 
                 // Helper macro-like: expand the placeholder, then apply pending_col
                 let mut expanded = String::new();
-                let target = if pending_col.is_some() { &mut expanded } else { &mut rendered };
+                let target = if pending_col.is_some() {
+                    &mut expanded
+                } else {
+                    &mut rendered
+                };
                 match chars.peek() {
-                    Some('%') => { chars.next(); target.push('%'); }
-                    Some('H') => { chars.next(); target.push_str(&oid.to_hex()); }
+                    Some('%') => {
+                        chars.next();
+                        target.push('%');
+                    }
+                    Some('H') => {
+                        chars.next();
+                        target.push_str(&oid.to_hex());
+                    }
                     Some('h') => {
                         chars.next();
                         let hex = oid.to_hex();
                         let n = abbrev_len.clamp(4, 40).min(hex.len());
                         target.push_str(&hex[..n]);
                     }
-                    Some('T') => { chars.next(); target.push_str(&tree_hex); }
+                    Some('T') => {
+                        chars.next();
+                        target.push_str(&tree_hex);
+                    }
                     Some('t') => {
                         chars.next();
                         let n = abbrev_len.clamp(4, 40).min(tree_hex.len());
                         target.push_str(&tree_hex[..n]);
                     }
-                    Some('P') => { chars.next(); target.push_str(&parent_hexes.join(" ")); }
-                    Some('p') => { chars.next(); target.push_str(&parent_abbrevs.join(" ")); }
-                    Some('n') => { chars.next(); target.push('\n'); }
-                    Some('s') => { chars.next(); target.push_str(subject); }
-                    Some('b') => { chars.next(); target.push_str(&body); if !body.is_empty() { target.push('\n'); } }
-                    Some('B') => { chars.next(); target.push_str(&commit.message); }
+                    Some('P') => {
+                        chars.next();
+                        target.push_str(&parent_hexes.join(" "));
+                    }
+                    Some('p') => {
+                        chars.next();
+                        target.push_str(&parent_abbrevs.join(" "));
+                    }
+                    Some('n') => {
+                        chars.next();
+                        target.push('\n');
+                    }
+                    Some('s') => {
+                        chars.next();
+                        target.push_str(subject);
+                    }
+                    Some('b') => {
+                        chars.next();
+                        target.push_str(&body);
+                        if !body.is_empty() {
+                            target.push('\n');
+                        }
+                    }
+                    Some('B') => {
+                        chars.next();
+                        target.push_str(&commit.message);
+                    }
                     Some('a') => {
                         chars.next();
                         match chars.next() {
@@ -1010,26 +1226,47 @@ pub fn render_commit_with_color(
                             Some('s') => target.push_str(&extract_date_short(&commit.author)),
                             Some('i') => target.push_str(&extract_date_iso(&commit.author)),
                             Some('I') => {
-                                let Some((ts, offset_str)) = parse_ident_date(&commit.author) else { break };
+                                let Some((ts, offset_str)) = parse_ident_date(&commit.author)
+                                else {
+                                    break;
+                                };
                                 let adjusted = ts + parse_tz(offset_str);
                                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                                 let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
                                 let abs_off = parse_tz(offset_str).unsigned_abs();
-                                target.push_str(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-                                    dt.year(), dt.month() as u8, dt.day(),
-                                    dt.hour(), dt.minute(), dt.second(),
-                                    sign_ch, abs_off / 3600, (abs_off % 3600) / 60));
+                                target.push_str(&format!(
+                                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                                    dt.year(),
+                                    dt.month() as u8,
+                                    dt.day(),
+                                    dt.hour(),
+                                    dt.minute(),
+                                    dt.second(),
+                                    sign_ch,
+                                    abs_off / 3600,
+                                    (abs_off % 3600) / 60
+                                ));
                             }
                             Some('r') => {
-                                let Some((ts, _)) = parse_ident_date(&commit.author) else { break };
+                                let Some((ts, _)) = parse_ident_date(&commit.author) else {
+                                    break;
+                                };
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default().as_secs() as i64;
+                                    .unwrap_or_default()
+                                    .as_secs() as i64;
                                 target.push_str(&format_relative_date(now - ts));
                             }
-                            Some(other) => { target.push('%'); target.push('a'); target.push(other); }
-                            None => { target.push('%'); target.push('a'); }
+                            Some(other) => {
+                                target.push('%');
+                                target.push('a');
+                                target.push(other);
+                            }
+                            None => {
+                                target.push('%');
+                                target.push('a');
+                            }
                         }
                     }
                     Some('c') => {
@@ -1046,34 +1283,65 @@ pub fn render_commit_with_color(
                             Some('s') => target.push_str(&extract_date_short(&commit.committer)),
                             Some('i') => target.push_str(&extract_date_iso(&commit.committer)),
                             Some('I') => {
-                                let Some((ts, offset_str)) = parse_ident_date(&commit.committer) else { break };
+                                let Some((ts, offset_str)) = parse_ident_date(&commit.committer)
+                                else {
+                                    break;
+                                };
                                 let adjusted = ts + parse_tz(offset_str);
                                 let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
                                     .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
                                 let sign_ch = if parse_tz(offset_str) >= 0 { '+' } else { '-' };
                                 let abs_off = parse_tz(offset_str).unsigned_abs();
-                                target.push_str(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
-                                    dt.year(), dt.month() as u8, dt.day(),
-                                    dt.hour(), dt.minute(), dt.second(),
-                                    sign_ch, abs_off / 3600, (abs_off % 3600) / 60));
+                                target.push_str(&format!(
+                                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}{:02}:{:02}",
+                                    dt.year(),
+                                    dt.month() as u8,
+                                    dt.day(),
+                                    dt.hour(),
+                                    dt.minute(),
+                                    dt.second(),
+                                    sign_ch,
+                                    abs_off / 3600,
+                                    (abs_off % 3600) / 60
+                                ));
                             }
                             Some('r') => {
-                                let Some((ts, _)) = parse_ident_date(&commit.committer) else { break };
+                                let Some((ts, _)) = parse_ident_date(&commit.committer) else {
+                                    break;
+                                };
                                 let now = std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default().as_secs() as i64;
+                                    .unwrap_or_default()
+                                    .as_secs() as i64;
                                 target.push_str(&format_relative_date(now - ts));
                             }
-                            Some(other) => { target.push('%'); target.push('c'); target.push(other); }
-                            None => { target.push('%'); target.push('c'); }
+                            Some(other) => {
+                                target.push('%');
+                                target.push('c');
+                                target.push(other);
+                            }
+                            None => {
+                                target.push('%');
+                                target.push('c');
+                            }
                         }
                     }
                     Some('x') => {
                         // Hex escape: %xNN
                         chars.next();
                         let mut hex_str = String::new();
-                        if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex_str.push(c1); chars.next(); } }
-                        if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex_str.push(c2); chars.next(); } }
+                        if let Some(&c1) = chars.peek() {
+                            if c1.is_ascii_hexdigit() {
+                                hex_str.push(c1);
+                                chars.next();
+                            }
+                        }
+                        if let Some(&c2) = chars.peek() {
+                            if c2.is_ascii_hexdigit() {
+                                hex_str.push(c2);
+                                chars.next();
+                            }
+                        }
                         if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
                             target.push(byte as char);
                         }
@@ -1083,20 +1351,25 @@ pub fn render_commit_with_color(
                         if chars.peek() == Some(&'(') {
                             chars.next();
                             let mut spec = String::new();
-                            while let Some(c) = chars.next() {
-                                if c == ')' { break; }
+                            for c in chars.by_ref() {
+                                if c == ')' {
+                                    break;
+                                }
                                 spec.push(c);
                             }
-                            let (force, color_spec) = if let Some(rest) = spec.strip_prefix("always,") {
-                                (true, rest)
-                            } else if let Some(rest) = spec.strip_prefix("auto,") {
-                                (false, rest)
-                            } else if spec == "auto" {
-                                if use_color { target.push_str("\x1b[m"); }
-                                continue;
-                            } else {
-                                (false, spec.as_str())
-                            };
+                            let (force, color_spec) =
+                                if let Some(rest) = spec.strip_prefix("always,") {
+                                    (true, rest)
+                                } else if let Some(rest) = spec.strip_prefix("auto,") {
+                                    (false, rest)
+                                } else if spec == "auto" {
+                                    if use_color {
+                                        target.push_str("\x1b[m");
+                                    }
+                                    continue;
+                                } else {
+                                    (false, spec.as_str())
+                                };
                             if use_color || force {
                                 target.push_str(&ansi_color_from_spec(color_spec));
                             }
@@ -1104,11 +1377,16 @@ pub fn render_commit_with_color(
                             // Named colors: %Cred, %Cgreen, %Cblue, %Creset, %Cbold
                             // Must match known names only, not consume trailing text
                             let remaining: String = chars.clone().collect();
-                            let known = ["reset", "red", "green", "blue", "yellow", "magenta", "cyan", "white", "bold", "dim", "ul"];
+                            let known = [
+                                "reset", "red", "green", "blue", "yellow", "magenta", "cyan",
+                                "white", "bold", "dim", "ul",
+                            ];
                             let mut matched = false;
                             for name in &known {
                                 if remaining.starts_with(name) {
-                                    for _ in 0..name.len() { chars.next(); }
+                                    for _ in 0..name.len() {
+                                        chars.next();
+                                    }
                                     if use_color {
                                         target.push_str(&ansi_color_from_name(name));
                                     }
@@ -1119,8 +1397,11 @@ pub fn render_commit_with_color(
                             if !matched {
                                 // Unknown color name — consume alphanumerics
                                 while let Some(&c) = chars.peek() {
-                                    if c.is_alphanumeric() { chars.next(); }
-                                    else { break; }
+                                    if c.is_alphanumeric() {
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1130,8 +1411,10 @@ pub fn render_commit_with_color(
                         chars.next();
                         if chars.peek() == Some(&'(') {
                             chars.next();
-                            while let Some(c) = chars.next() {
-                                if c == ')' { break; }
+                            for c in chars.by_ref() {
+                                if c == ')' {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1151,10 +1434,20 @@ pub fn render_commit_with_color(
                                 'b' => {
                                     chars.next();
                                     sub.push_str(&body);
-                                    if !body.is_empty() { sub.push('\n'); }
+                                    if !body.is_empty() {
+                                        sub.push('\n');
+                                    }
                                 }
-                                's' => { chars.next(); sub.push_str(subject); }
-                                _ => { chars.next(); sub.push('%'); sub.push('+'); sub.push(nc); }
+                                's' => {
+                                    chars.next();
+                                    sub.push_str(subject);
+                                }
+                                _ => {
+                                    chars.next();
+                                    sub.push('%');
+                                    sub.push('+');
+                                    sub.push(nc);
+                                }
                             }
                         }
                         if !sub.is_empty() {
@@ -1175,8 +1468,16 @@ pub fn render_commit_with_color(
                                         target.push('\n');
                                     }
                                 }
-                                's' => { chars.next(); target.push_str(subject); }
-                                _ => { chars.next(); target.push('%'); target.push('-'); target.push(nc); }
+                                's' => {
+                                    chars.next();
+                                    target.push_str(subject);
+                                }
+                                _ => {
+                                    chars.next();
+                                    target.push('%');
+                                    target.push('-');
+                                    target.push(nc);
+                                }
                             }
                         }
                     }
@@ -1197,7 +1498,7 @@ pub fn render_commit_with_color(
                         chars.next();
                         if let Some(&_nc) = chars.peek() {
                             chars.next(); // consume the sub-specifier
-                            // For non-reflog commits, these expand to empty
+                                          // For non-reflog commits, these expand to empty
                         }
                     }
                     Some(&other) => {
@@ -1276,7 +1577,10 @@ fn walk_closure(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<Hash
 }
 
 /// BFS walk that returns both the set and the discovery order.
-fn walk_closure_ordered(graph: &mut CommitGraph<'_>, starts: &[ObjectId]) -> Result<(HashSet<ObjectId>, Vec<ObjectId>)> {
+fn walk_closure_ordered(
+    graph: &mut CommitGraph<'_>,
+    starts: &[ObjectId],
+) -> Result<(HashSet<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
     let mut order = Vec::new();
     let mut queue = VecDeque::new();
@@ -1438,7 +1742,6 @@ fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::Commi
     }
     parse_commit(&object.data)
 }
-
 
 fn parse_signature_time(sig: &str) -> i64 {
     let mut parts = sig.split_whitespace().collect::<Vec<_>>();
@@ -1643,7 +1946,9 @@ pub fn is_symmetric_diff(token: &str) -> bool {
 /// Split a symmetric diff token into (lhs, rhs).
 #[must_use]
 pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
-    token.split_once("...").map(|(l, r)| (l.to_owned(), r.to_owned()))
+    token
+        .split_once("...")
+        .map(|(l, r)| (l.to_owned(), r.to_owned()))
 }
 
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
@@ -1661,7 +1966,14 @@ fn collect_reachable_objects(
     for &commit_oid in commits {
         let commit = load_commit(repo, commit_oid)?;
         collect_tree_objects_filtered(
-            repo, commit.tree, "", 0, &mut seen, &mut result, &mut omitted, filter,
+            repo,
+            commit.tree,
+            "",
+            0,
+            &mut seen,
+            &mut result,
+            &mut omitted,
+            filter,
         )?;
     }
     Ok((result, omitted))
@@ -1682,7 +1994,7 @@ fn collect_tree_objects_filtered(
         return Ok(());
     }
     // Check if this tree passes the filter
-    let tree_included = filter.map_or(true, |f| f.includes_tree(depth));
+    let tree_included = filter.is_none_or(|f| f.includes_tree(depth));
     if tree_included {
         result.push((tree_oid, prefix.to_owned()));
     } else {
@@ -1726,9 +2038,8 @@ fn collect_tree_objects_filtered(
             }
             _ => {
                 // Blob: check filter
-                let blob_included = filter.map_or(true, |f| {
-                    f.includes_blob(child_obj.data.len() as u64)
-                });
+                let blob_included =
+                    filter.is_none_or(|f| f.includes_blob(child_obj.data.len() as u64));
                 if blob_included {
                     result.push((entry.oid, path));
                 } else {
@@ -1757,7 +2068,14 @@ fn collect_reachable_objects_in_commit_order(
         let commit = load_commit(repo, commit_oid)?;
         let before = result.len();
         collect_tree_objects_filtered(
-            repo, commit.tree, "", 0, &mut seen, &mut result, &mut omitted, filter,
+            repo,
+            commit.tree,
+            "",
+            0,
+            &mut seen,
+            &mut result,
+            &mut omitted,
+            filter,
         )?;
         counts.push(result.len() - before);
     }
@@ -1774,7 +2092,7 @@ fn kept_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
     for entry in std::fs::read_dir(&pack_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "keep") {
+        if path.extension().is_some_and(|ext| ext == "keep") {
             // Find the corresponding .idx file
             let idx_path = path.with_extension("idx");
             if idx_path.exists() {
@@ -1810,11 +2128,7 @@ fn compute_patch_ids(
 }
 
 #[allow(dead_code)]
-fn compute_tree_diff_id(
-    repo: &Repository,
-    tree_a: ObjectId,
-    tree_b: ObjectId,
-) -> Result<String> {
+fn compute_tree_diff_id(repo: &Repository, tree_a: ObjectId, tree_b: ObjectId) -> Result<String> {
     use std::collections::BTreeMap;
     let entries_a = flatten_tree(repo, tree_a, "")?;
     let entries_b = flatten_tree(repo, tree_b, "")?;
@@ -1891,7 +2205,9 @@ pub fn merge_bases(
     let mut bases = Vec::new();
     for &c in &common {
         let is_dominated = common.iter().any(|&other| {
-            if other == c { return false; }
+            if other == c {
+                return false;
+            }
             let other_anc = walk_closure(&mut graph, &[other]).unwrap_or_default();
             other_anc.contains(&c)
         });

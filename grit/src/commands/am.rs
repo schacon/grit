@@ -519,10 +519,9 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
             }
 
             // Run pre-applypatch hook
-            if !opts.no_verify
-                && !run_hook(git_dir, "pre-applypatch", &[])? {
-                    bail!("pre-applypatch hook rejected the patch");
-                }
+            if !opts.no_verify && !run_hook(git_dir, "pre-applypatch", &[])? {
+                bail!("pre-applypatch hook rejected the patch");
+            }
 
             // Create empty commit
             let index = load_index(repo)?;
@@ -597,10 +596,9 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
     }
 
     // Run pre-applypatch hook
-    if !opts.no_verify
-        && !run_hook(git_dir, "pre-applypatch", &[])? {
-            bail!("pre-applypatch hook rejected the patch");
-        }
+    if !opts.no_verify && !run_hook(git_dir, "pre-applypatch", &[])? {
+        bail!("pre-applypatch hook rejected the patch");
+    }
 
     create_am_commit(repo, &index, patch, opts)?;
 
@@ -1099,9 +1097,9 @@ fn add_trailer(message: &str, trailer: &str) -> String {
     let lines: Vec<&str> = trimmed.lines().collect();
 
     // Check if there's already a trailer block
-    let has_trailer_block = lines.last().is_some_and(|l| {
-        l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
-    });
+    let has_trailer_block = lines
+        .last()
+        .is_some_and(|l| l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t'));
 
     if has_trailer_block {
         format!("{}\n{}\n", trimmed, trailer)
@@ -1124,9 +1122,9 @@ fn add_signoff(message: &str, sob_line: &str) -> String {
     }
 
     // Check if there's already a trailer block (lines matching "Key: value")
-    let has_trailer_block = lines.last().is_some_and(|l| {
-        l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t')
-    });
+    let has_trailer_block = lines
+        .last()
+        .is_some_and(|l| l.contains(": ") && !l.starts_with(' ') && !l.starts_with('\t'));
 
     if has_trailer_block {
         // Append to existing trailer block
@@ -1760,14 +1758,12 @@ fn unflow_format_flowed(lines: &[&str]) -> Vec<String> {
         if unstuffed.ends_with(' ') {
             // Flowed line: keep the trailing space (it's content), join with next
             current.push_str(unstuffed);
+        } else if !current.is_empty() {
+            current.push_str(unstuffed);
+            result.push(current.clone());
+            current.clear();
         } else {
-            if !current.is_empty() {
-                current.push_str(unstuffed);
-                result.push(current.clone());
-                current.clear();
-            } else {
-                result.push(unstuffed.to_string());
-            }
+            result.push(unstuffed.to_string());
         }
     }
     if !current.is_empty() {
@@ -1916,7 +1912,10 @@ fn parse_mbox_with_opts(
             {
                 message_id = value.trim().to_string();
                 last_header = "message-id".to_string();
-            } else if let Some(value) = line.strip_prefix("Content-Type: ").or_else(|| line.strip_prefix("Content-type: ")) {
+            } else if let Some(value) = line
+                .strip_prefix("Content-Type: ")
+                .or_else(|| line.strip_prefix("Content-type: "))
+            {
                 if value.to_lowercase().contains("format=flowed") {
                     is_format_flowed = true;
                 }
@@ -2012,7 +2011,9 @@ fn parse_mbox_with_opts(
 
         // Un-flow format=flowed content
         let effective_diff_lines: Vec<String> = if is_format_flowed {
-            eprintln!("warning: Patch sent with format=flowed; space at the end of lines might be lost.");
+            eprintln!(
+                "warning: Patch sent with format=flowed; space at the end of lines might be lost."
+            );
             unflow_format_flowed(&diff_lines)
         } else {
             diff_lines.iter().map(|l| l.to_string()).collect()
@@ -2155,10 +2156,9 @@ fn parse_date_to_epoch(date: &str) -> String {
 
     // Already in "epoch offset" format?
     let parts: Vec<&str> = date.split_whitespace().collect();
-    if parts.len() == 2
-        && parts[0].parse::<i64>().is_ok() {
-            return date.to_string();
-        }
+    if parts.len() == 2 && parts[0].parse::<i64>().is_ok() {
+        return date.to_string();
+    }
 
     // Try RFC 2822-like: "Thu, 07 Apr 2005 22:14:13 -0700"
     if let Some(parsed) = parse_rfc2822_date(date) {

@@ -429,10 +429,9 @@ fn dir_has_any_ignored(
         if ignored {
             return Ok(true);
         }
-        if is_dir
-            && dir_has_any_ignored(&path, work_tree, matcher, repo, index)? {
-                return Ok(true);
-            }
+        if is_dir && dir_has_any_ignored(&path, work_tree, matcher, repo, index)? {
+            return Ok(true);
+        }
     }
     Ok(false)
 }

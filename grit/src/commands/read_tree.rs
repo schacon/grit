@@ -91,13 +91,12 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
     }
 
     // HFS / NTFS case-insensitive ".git" check
-    if (prot.protect_hfs || prot.protect_ntfs)
-        && name.len() == 4 && name[0] == b'.' {
-            let rest = &name[1..];
-            if rest.eq_ignore_ascii_case(b"git") {
-                bail!("invalid path '{}'", String::from_utf8_lossy(name));
-            }
+    if (prot.protect_hfs || prot.protect_ntfs) && name.len() == 4 && name[0] == b'.' {
+        let rest = &name[1..];
+        if rest.eq_ignore_ascii_case(b"git") {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
         }
+    }
 
     // NTFS short-name check: "git~1" (case-insensitive)
     if prot.protect_ntfs && name.eq_ignore_ascii_case(b"git~1") {

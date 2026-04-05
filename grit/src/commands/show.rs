@@ -7,7 +7,9 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry};
+use grit_lib::diff::{
+    anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry,
+};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -367,8 +369,16 @@ fn show_commit(
     // --raw: raw diff-tree output format
     if show_raw {
         for entry in &diff_entries {
-            let old_path = entry.old_path.as_deref().or(entry.new_path.as_deref()).unwrap_or("");
-            let new_path = entry.new_path.as_deref().or(entry.old_path.as_deref()).unwrap_or("");
+            let old_path = entry
+                .old_path
+                .as_deref()
+                .or(entry.new_path.as_deref())
+                .unwrap_or("");
+            let new_path = entry
+                .new_path
+                .as_deref()
+                .or(entry.old_path.as_deref())
+                .unwrap_or("");
             let status_char = match entry.status {
                 grit_lib::diff::DiffStatus::Added => 'A',
                 grit_lib::diff::DiffStatus::Deleted => 'D',
@@ -391,9 +401,13 @@ fn show_commit(
                 }
                 _ => new_path.to_string(),
             };
-            writeln!(out, ":{} {} {} {} {status_str}\t{paths}",
-                entry.old_mode, entry.new_mode,
-                &entry.old_oid.to_hex()[..7], &entry.new_oid.to_hex()[..7],
+            writeln!(
+                out,
+                ":{} {} {} {} {status_str}\t{paths}",
+                entry.old_mode,
+                entry.new_mode,
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7],
             )?;
         }
     }
@@ -413,7 +427,9 @@ fn show_commit(
     // --stat: show diffstat summary
     if show_stat && !show_raw && !show_numstat {
         write_diffstat(out, odb, &diff_entries)?;
-        if !show_patch { return Ok(()); }
+        if !show_patch {
+            return Ok(());
+        }
     }
 
     if !show_patch {
@@ -429,7 +445,8 @@ fn show_commit(
         write_diff_header(out, entry)?;
 
         // Skip diff content for rename/copy with 100% similarity
-        if (entry.status == grit_lib::diff::DiffStatus::Renamed || entry.status == grit_lib::diff::DiffStatus::Copied)
+        if (entry.status == grit_lib::diff::DiffStatus::Renamed
+            || entry.status == grit_lib::diff::DiffStatus::Copied)
             && entry.old_oid == entry.new_oid
         {
             continue;
@@ -481,12 +498,16 @@ fn write_numstat_line(
     let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
         String::new()
     } else {
-        odb.read(&entry.old_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        odb.read(&entry.old_oid)
+            .map(|o| String::from_utf8_lossy(&o.data).into_owned())
+            .unwrap_or_default()
     };
     let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
         String::new()
     } else {
-        odb.read(&entry.new_oid).map(|o| String::from_utf8_lossy(&o.data).into_owned()).unwrap_or_default()
+        odb.read(&entry.new_oid)
+            .map(|o| String::from_utf8_lossy(&o.data).into_owned())
+            .unwrap_or_default()
     };
 
     let is_binary = old_content.bytes().any(|b| b == 0) || new_content.bytes().any(|b| b == 0);
@@ -1085,9 +1106,15 @@ fn apply_rename_copy_detection(
     let has_renames = args.find_renames.is_some();
 
     if has_copies {
-        let threshold = args.find_copies.last()
+        let threshold = args
+            .find_copies
+            .last()
             .and_then(|v| v.parse::<u32>().ok())
-            .or_else(|| args.find_renames.as_ref().and_then(|v| v.parse::<u32>().ok()))
+            .or_else(|| {
+                args.find_renames
+                    .as_ref()
+                    .and_then(|v| v.parse::<u32>().ok())
+            })
             .unwrap_or(50);
         let find_copies_harder = args.find_copies.len() > 1;
 
@@ -1098,9 +1125,17 @@ fn apply_rename_copy_detection(
             vec![]
         };
 
-        detect_copies(odb, entries, threshold, find_copies_harder, &source_tree_entries)
+        detect_copies(
+            odb,
+            entries,
+            threshold,
+            find_copies_harder,
+            &source_tree_entries,
+        )
     } else if has_renames {
-        let threshold = args.find_renames.as_ref()
+        let threshold = args
+            .find_renames
+            .as_ref()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(50);
         detect_renames(odb, entries, threshold)

@@ -642,7 +642,9 @@ fn get_signoff_identity(committer_ident: &str) -> (String, String) {
         }
     });
     let email = env_email.unwrap_or_else(|| {
-        extract_email(committer_ident).unwrap_or("unknown").to_string()
+        extract_email(committer_ident)
+            .unwrap_or("unknown")
+            .to_string()
     });
 
     (name, email)

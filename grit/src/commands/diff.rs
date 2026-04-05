@@ -13,11 +13,11 @@
 //! differences.
 
 use anyhow::{bail, Context, Result};
-use unicode_width::UnicodeWidthStr;
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
-    anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree, diff_index_to_worktree,
-    diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry, DiffStatus,
+    anchored_unified_diff, count_changes, detect_renames, diff_index_to_tree,
+    diff_index_to_worktree, diff_tree_to_worktree, diff_trees, unified_diff, zero_oid, DiffEntry,
+    DiffStatus,
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -27,6 +27,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
 const RESET: &str = "\x1b[m";
@@ -69,11 +70,10 @@ impl WhitespaceMode {
         let mut s = line.to_owned();
 
         // --ignore-cr-at-eol: strip trailing CR
-        if self.ignore_cr_at_eol {
-            if s.ends_with('\r') {
+        if self.ignore_cr_at_eol
+            && s.ends_with('\r') {
                 s.truncate(s.len() - 1);
             }
-        }
 
         // -w / --ignore-all-space: remove all whitespace
         if self.ignore_all_space {
@@ -287,7 +287,12 @@ pub struct Args {
     pub patch: bool,
 
     /// Number of context lines in unified diff output (default: 3).
-    #[arg(short = 'U', long = "unified", value_name = "N", allow_hyphen_values = true)]
+    #[arg(
+        short = 'U',
+        long = "unified",
+        value_name = "N",
+        allow_hyphen_values = true
+    )]
     pub unified: Option<usize>,
 
     /// Detect renames.
@@ -403,7 +408,9 @@ pub fn run(mut args: Args) -> Result<()> {
                 "--quiet" | "-q" => args.quiet = true,
                 s if s.starts_with("--stat") => {
                     if s == "--stat" {
-                        if args.stat.is_none() { args.stat = Some(String::new()); }
+                        if args.stat.is_none() {
+                            args.stat = Some(String::new());
+                        }
                     } else if let Some(val) = s.strip_prefix("--stat=") {
                         args.stat = Some(val.to_owned());
                     }
@@ -412,7 +419,9 @@ pub fn run(mut args: Args) -> Result<()> {
                         if !val.is_empty() {
                             let parts: Vec<&str> = val.split(',').collect();
                             if let Some(w) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
-                                if args.stat_width.is_none() { args.stat_width = Some(w); }
+                                if args.stat_width.is_none() {
+                                    args.stat_width = Some(w);
+                                }
                             }
                         }
                     }
@@ -433,9 +442,15 @@ pub fn run(mut args: Args) -> Result<()> {
                         args.inter_hunk_context = val.parse().ok();
                     }
                 }
-                "--no-ext-diff" => { args.no_ext_diff = true; }
-                "--no-textconv" => { args.no_textconv = true; }
-                "--check" => { args.check = true; }
+                "--no-ext-diff" => {
+                    args.no_ext_diff = true;
+                }
+                "--no-textconv" => {
+                    args.no_textconv = true;
+                }
+                "--check" => {
+                    args.check = true;
+                }
                 s if s.starts_with("--ignore-submodules") => {
                     args.ignore_submodules = Some("all".to_owned());
                 }
@@ -445,19 +460,31 @@ pub fn run(mut args: Args) -> Result<()> {
                 s if s.starts_with("-O") && s.len() > 2 => {
                     args.order_file = Some(s[2..].to_string());
                 }
-                "--no-prefix" => { args.no_prefix = true; }
-                "--default-prefix" => { args.default_prefix = true; }
-                "--no-renames" => { args.no_renames = true; }
+                "--no-prefix" => {
+                    args.no_prefix = true;
+                }
+                "--default-prefix" => {
+                    args.default_prefix = true;
+                }
+                "--no-renames" => {
+                    args.no_renames = true;
+                }
                 s if s.starts_with("--src-prefix=") => {
-                    args.src_prefix = Some(s.strip_prefix("--src-prefix=").unwrap_or("").to_owned());
+                    args.src_prefix =
+                        Some(s.strip_prefix("--src-prefix=").unwrap_or("").to_owned());
                 }
                 s if s.starts_with("--dst-prefix=") => {
-                    args.dst_prefix = Some(s.strip_prefix("--dst-prefix=").unwrap_or("").to_owned());
+                    args.dst_prefix =
+                        Some(s.strip_prefix("--dst-prefix=").unwrap_or("").to_owned());
                 }
                 s if s.starts_with("--line-prefix=") => {
-                    args.line_prefix = Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
+                    args.line_prefix =
+                        Some(s.strip_prefix("--line-prefix=").unwrap_or("").to_owned());
                 }
-                _ => { extra_revs.push(r.clone()); continue; }
+                _ => {
+                    extra_revs.push(r.clone());
+                    continue;
+                }
             }
         } else {
             extra_revs.push(r.clone());
@@ -500,10 +527,10 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Determine whether worktree is involved (for content fallback)
     let wt_for_content: Option<&Path> = match (args.cached, revs.len()) {
-        (true, _) => None,           // --cached: index vs tree, no worktree
-        (false, 0) => work_tree,     // unstaged: index vs worktree
-        (false, 1) => work_tree,     // one rev: tree vs worktree
-        (_, 2) => None,              // two revs: tree vs tree
+        (true, _) => None,       // --cached: index vs tree, no worktree
+        (false, 0) => work_tree, // unstaged: index vs worktree
+        (false, 1) => work_tree, // one rev: tree vs worktree
+        (_, 2) => None,          // two revs: tree vs tree
         _ => None,
     };
 
@@ -582,8 +609,8 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         // Check diff.renames config.
         use grit_lib::config::ConfigSet;
-        let config = ConfigSet::load(Some(&repo.git_dir), false)
-            .unwrap_or_else(|_| ConfigSet::new());
+        let config =
+            ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
         match config.get("diff.renames") {
             Some(val) => {
                 let val_lower = val.to_lowercase();
@@ -681,8 +708,14 @@ pub fn run(mut args: Args) -> Result<()> {
                 .into_iter()
                 .filter_map(|mut e| {
                     // Filter: at least one path must be under the prefix
-                    let old_match = e.old_path.as_ref().map_or(false, |p| p.starts_with(pfx.as_str()));
-                    let new_match = e.new_path.as_ref().map_or(false, |p| p.starts_with(pfx.as_str()));
+                    let old_match = e
+                        .old_path
+                        .as_ref()
+                        .is_some_and(|p| p.starts_with(pfx.as_str()));
+                    let new_match = e
+                        .new_path
+                        .as_ref()
+                        .is_some_and(|p| p.starts_with(pfx.as_str()));
                     if !old_match && !new_match {
                         return None;
                     }
@@ -732,9 +765,10 @@ pub fn run(mut args: Args) -> Result<()> {
     // Check diff.suppressBlankEmpty config
     let suppress_blank_empty = {
         use grit_lib::config::ConfigSet;
-        let config = ConfigSet::load(Some(&repo.git_dir), false)
-            .unwrap_or_else(|_| ConfigSet::new());
-        config.get("diff.suppressBlankEmpty")
+        let config =
+            ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+        config
+            .get("diff.suppressBlankEmpty")
             .map(|v| v == "true")
             .unwrap_or(false)
     };
@@ -743,9 +777,10 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.stat_name_width.is_none() {
         let snw_config = {
             use grit_lib::config::ConfigSet;
-            let cfg = ConfigSet::load(Some(&repo.git_dir), false)
-                .unwrap_or_else(|_| ConfigSet::new());
-            cfg.get("diff.statNameWidth").and_then(|v| v.parse::<usize>().ok())
+            let cfg =
+                ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_else(|_| ConfigSet::new());
+            cfg.get("diff.statNameWidth")
+                .and_then(|v| v.parse::<usize>().ok())
         };
         if snw_config.is_some() {
             args.stat_name_width = snw_config;
@@ -768,8 +803,21 @@ pub fn run(mut args: Args) -> Result<()> {
         let context_lines = args.unified.unwrap_or(3);
         if args.shortstat {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
-        } else if stat_enabled || args.stat_count.is_some() || args.stat_width.is_some() || args.stat_graph_width.is_some() || args.stat_name_width.is_some() {
-            write_stat(&mut out, &entries, &repo.odb, wt_for_content, args.stat_count, args.stat_width, args.stat_name_width)?;
+        } else if stat_enabled
+            || args.stat_count.is_some()
+            || args.stat_width.is_some()
+            || args.stat_graph_width.is_some()
+            || args.stat_name_width.is_some()
+        {
+            write_stat(
+                &mut out,
+                &entries,
+                &repo.odb,
+                wt_for_content,
+                args.stat_count,
+                args.stat_width,
+                args.stat_name_width,
+            )?;
             if args.summary {
                 write_diff_summary(&mut out, &entries)?;
             }
@@ -828,7 +876,11 @@ pub fn run(mut args: Args) -> Result<()> {
 /// Run `diff --no-index <path_a> <path_b>` — compare two files outside a repo.
 fn run_no_index(args: &Args) -> Result<()> {
     // Collect paths (skip "--" separators and unrecognized flags)
-    let paths: Vec<&String> = args.args.iter().filter(|a| a.as_str() != "--" && !a.starts_with('-')).collect();
+    let paths: Vec<&String> = args
+        .args
+        .iter()
+        .filter(|a| a.as_str() != "--" && !a.starts_with('-'))
+        .collect();
     if paths.len() != 2 {
         bail!("diff --no-index requires exactly two paths");
     }
@@ -841,10 +893,8 @@ fn run_no_index(args: &Args) -> Result<()> {
         return run_no_index_dirs(args, path_a, path_b);
     }
 
-    let data_a = std::fs::read(path_a)
-        .with_context(|| format!("could not read '{}'", paths[0]))?;
-    let data_b = std::fs::read(path_b)
-        .with_context(|| format!("could not read '{}'", paths[1]))?;
+    let data_a = std::fs::read(path_a).with_context(|| format!("could not read '{}'", paths[0]))?;
+    let data_b = std::fs::read(path_b).with_context(|| format!("could not read '{}'", paths[1]))?;
 
     if data_a == data_b {
         return Ok(());
@@ -889,8 +939,7 @@ fn run_no_index(args: &Args) -> Result<()> {
             let total = adds + dels;
             writeln!(out, " {} | {}", display, total)?;
         }
-        let mut summary = format!(
-            " 1 file changed");
+        let mut summary = " 1 file changed".to_string();
         if adds > 0 {
             summary.push_str(&format!(
                 ", {} insertion{}(+)",
@@ -915,7 +964,10 @@ fn run_no_index(args: &Args) -> Result<()> {
         let raw_args: Vec<String> = std::env::args().collect();
         let last_anchored_pos = raw_args.iter().rposition(|a| a.starts_with("--anchored"));
         let last_other_algo_pos = raw_args.iter().rposition(|a| {
-            a == "--patience" || a == "--histogram" || a == "--minimal" || a.starts_with("--diff-algorithm")
+            a == "--patience"
+                || a == "--histogram"
+                || a == "--minimal"
+                || a.starts_with("--diff-algorithm")
         });
         match (last_anchored_pos, last_other_algo_pos) {
             (Some(a), Some(o)) => a > o, // anchored wins only if it's last
@@ -926,7 +978,14 @@ fn run_no_index(args: &Args) -> Result<()> {
         false
     };
     let diff_output = if use_anchored {
-        anchored_unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines, &args.anchored)
+        anchored_unified_diff(
+            &text_a,
+            &text_b,
+            paths[0],
+            paths[1],
+            context_lines,
+            &args.anchored,
+        )
     } else {
         unified_diff(&text_a, &text_b, paths[0], paths[1], context_lines)
     };
@@ -947,7 +1006,10 @@ fn run_no_index(args: &Args) -> Result<()> {
                 writeln!(out, "{GREEN}{line}{RESET}")?;
             } else if line.starts_with('-') && !line.starts_with("---") {
                 writeln!(out, "{RED}{line}{RESET}")?;
-            } else if line.starts_with("diff ") || line.starts_with("---") || line.starts_with("+++") {
+            } else if line.starts_with("diff ")
+                || line.starts_with("---")
+                || line.starts_with("+++")
+            {
                 writeln!(out, "{BOLD}{line}{RESET}")?;
             } else {
                 writeln!(out, "{line}")?;
@@ -1000,8 +1062,16 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     for rel in &all_files {
         let fa = dir_a.join(rel);
         let fb = dir_b.join(rel);
-        let data_a = if fa.is_file() { std::fs::read(&fa).ok() } else { None };
-        let data_b = if fb.is_file() { std::fs::read(&fb).ok() } else { None };
+        let data_a = if fa.is_file() {
+            std::fs::read(&fa).ok()
+        } else {
+            None
+        };
+        let data_b = if fb.is_file() {
+            std::fs::read(&fb).ok()
+        } else {
+            None
+        };
 
         match (&data_a, &data_b) {
             (Some(a), Some(b)) if a == b => continue,
@@ -1026,18 +1096,33 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
 
-        let text_a = data_a.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
-        let text_b = data_b.as_ref().map(|d| String::from_utf8_lossy(d).to_string()).unwrap_or_default();
+        let text_a = data_a
+            .as_ref()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .unwrap_or_default();
+        let text_b = data_b
+            .as_ref()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .unwrap_or_default();
 
-        let old_label = if data_a.is_some() { format!("a/{}", rel) } else { "/dev/null".to_string() };
-        let new_label = if data_b.is_some() { format!("b/{}", rel) } else { "/dev/null".to_string() };
+        let old_label = if data_a.is_some() {
+            format!("a/{}", rel)
+        } else {
+            "/dev/null".to_string()
+        };
+        let new_label = if data_b.is_some() {
+            format!("b/{}", rel)
+        } else {
+            "/dev/null".to_string()
+        };
         writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
         if data_a.is_none() {
             writeln!(out, "new file mode 100644")?;
         } else if data_b.is_none() {
             writeln!(out, "deleted file mode 100644")?;
         }
-        let patch = grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
+        let patch =
+            grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
         write!(out, "{}", patch)?;
     }
 
@@ -1069,7 +1154,12 @@ fn apply_orderfile(mut entries: Vec<DiffEntry>, order_path: &str) -> Vec<DiffEnt
 
     // Assign a sort key to each entry based on which pattern it matches first
     let sort_key = |entry: &DiffEntry| -> usize {
-        let path = entry.new_path.as_ref().or(entry.old_path.as_ref()).cloned().unwrap_or_default();
+        let path = entry
+            .new_path
+            .as_ref()
+            .or(entry.old_path.as_ref())
+            .cloned()
+            .unwrap_or_default();
         for (i, pat) in patterns.iter().enumerate() {
             if orderfile_pattern_matches(pat, &path) {
                 return i;
@@ -1240,7 +1330,9 @@ fn filter_by_paths(entries: Vec<DiffEntry>, paths: &[String]) -> Vec<DiffEntry> 
         .into_iter()
         .filter(|e| {
             let path = e.path();
-            paths.iter().any(|spec| crate::pathspec::pathspec_matches(spec, path))
+            paths
+                .iter()
+                .any(|spec| crate::pathspec::pathspec_matches(spec, path))
         })
         .collect()
 }
@@ -1349,7 +1441,8 @@ fn write_git_binary_patch(
 
 /// Encode bytes in git's base85 format.
 fn base85_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
+    const CHARS: &[u8] =
+        b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
     let mut result = String::new();
     for chunk in data.chunks(4) {
         let mut acc: u32 = 0;
@@ -1381,7 +1474,7 @@ fn base85_encode(data: &[u8]) -> String {
 fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
     let at_pos = header.find('-')?;
     let rest = &header[at_pos + 1..];
-    let comma_or_space = rest.find(|c: char| c == ',' || c == ' ')?;
+    let comma_or_space = rest.find([',', ' '])?;
     let start_str = &rest[..comma_or_space];
     let start_line: usize = start_str.parse().ok()?;
     if start_line <= 1 {
@@ -1415,11 +1508,23 @@ fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -
 }
 
 #[allow(dead_code)]
-fn write_diff_header_with_abbrev(out: &mut impl Write, entry: &DiffEntry, use_color: bool, abbrev_len: usize) -> Result<()> {
+fn write_diff_header_with_abbrev(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    use_color: bool,
+    abbrev_len: usize,
+) -> Result<()> {
     write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/")
 }
 
-fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_color: bool, abbrev_len: usize, src_prefix: &str, dst_prefix: &str) -> Result<()> {
+fn write_diff_header_with_prefix(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    use_color: bool,
+    abbrev_len: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+) -> Result<()> {
     let old_path = entry
         .old_path
         .as_deref()
@@ -1430,7 +1535,10 @@ fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_co
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
 
     let (b, r) = if use_color { (BOLD, RESET) } else { ("", "") };
-    writeln!(out, "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}")?;
+    writeln!(
+        out,
+        "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}"
+    )?;
 
     let abbr = |oid: &ObjectId| -> String {
         let hex = oid.to_hex();
@@ -1441,11 +1549,21 @@ fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_co
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "{b}new file mode {}{r}", entry.new_mode)?;
-            writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
+            writeln!(
+                out,
+                "{b}index {}..{}{r}",
+                abbr(&entry.old_oid),
+                abbr(&entry.new_oid)
+            )?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "{b}deleted file mode {}{r}", entry.old_mode)?;
-            writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
+            writeln!(
+                out,
+                "{b}index {}..{}{r}",
+                abbr(&entry.old_oid),
+                abbr(&entry.new_oid)
+            )?;
         }
         DiffStatus::Modified => {
             if entry.old_mode != entry.new_mode {
@@ -1456,11 +1574,17 @@ fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_co
                 writeln!(
                     out,
                     "{b}index {}..{} {}{r}",
-                    abbr(&entry.old_oid), abbr(&entry.new_oid),
+                    abbr(&entry.old_oid),
+                    abbr(&entry.new_oid),
                     entry.old_mode
                 )?;
             } else {
-                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
+                writeln!(
+                    out,
+                    "{b}index {}..{}{r}",
+                    abbr(&entry.old_oid),
+                    abbr(&entry.new_oid)
+                )?;
             }
         }
         DiffStatus::Renamed => {
@@ -1469,7 +1593,12 @@ fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_co
             writeln!(out, "{b}rename from {old_path}{r}")?;
             writeln!(out, "{b}rename to {new_path}{r}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
+                writeln!(
+                    out,
+                    "{b}index {}..{}{r}",
+                    abbr(&entry.old_oid),
+                    abbr(&entry.new_oid)
+                )?;
             }
         }
         DiffStatus::Copied => {
@@ -1478,7 +1607,12 @@ fn write_diff_header_with_prefix(out: &mut impl Write, entry: &DiffEntry, use_co
             writeln!(out, "{b}copy from {old_path}{r}")?;
             writeln!(out, "{b}copy to {new_path}{r}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "{b}index {}..{}{r}", abbr(&entry.old_oid), abbr(&entry.new_oid))?;
+                writeln!(
+                    out,
+                    "{b}index {}..{}{r}",
+                    abbr(&entry.old_oid),
+                    abbr(&entry.new_oid)
+                )?;
             }
         }
         DiffStatus::TypeChanged => {
@@ -1520,7 +1654,13 @@ fn write_patch_with_prefix(
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
             if show_binary {
                 // --binary: output a "GIT binary patch" block
-                write_git_binary_patch(out, &old_content_raw, &new_content_raw, old_path, new_path)?;
+                write_git_binary_patch(
+                    out,
+                    &old_content_raw,
+                    &new_content_raw,
+                    old_path,
+                    new_path,
+                )?;
             } else {
                 writeln!(
                     out,
@@ -1554,7 +1694,11 @@ fn write_patch_with_prefix(
                 display_new,
                 context_lines,
             );
-            let patch = if suppress_blank_empty { strip_blank_context_trailing_space(&patch) } else { patch };
+            let patch = if suppress_blank_empty {
+                strip_blank_context_trailing_space(&patch)
+            } else {
+                patch
+            };
             if use_color {
                 write_colored_patch(out, &patch)?;
             } else {
@@ -1570,7 +1714,11 @@ fn write_patch_with_prefix(
                 src_prefix,
                 dst_prefix,
             );
-            let patch = if suppress_blank_empty { strip_blank_context_trailing_space(&patch) } else { patch };
+            let patch = if suppress_blank_empty {
+                strip_blank_context_trailing_space(&patch)
+            } else {
+                patch
+            };
 
             if use_color {
                 write_colored_patch(out, &patch)?;
@@ -1740,8 +1888,7 @@ fn word_diff_output(
                         output.push('\n');
                     } else {
                         // Word-level diff
-                        let word_diff =
-                            TextDiff::from_words(&del_text, &ins_text);
+                        let word_diff = TextDiff::from_words(&del_text, &ins_text);
                         for word_change in word_diff.iter_all_changes() {
                             let val = word_change.value();
                             match word_change.tag() {
@@ -1851,7 +1998,7 @@ fn terminal_width() -> usize {
         .output()
     {
         let s = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = s.trim().split_whitespace().collect();
+        let parts: Vec<&str> = s.split_whitespace().collect();
         if parts.len() == 2 {
             if let Ok(w) = parts[1].parse::<usize>() {
                 if w > 0 {
@@ -1961,7 +2108,11 @@ fn write_stat(
             _ => e.path().to_owned(),
         })
         .collect();
-    let max_path_len = display_paths.iter().map(|p| UnicodeWidthStr::width(p.as_str())).max().unwrap_or(0);
+    let max_path_len = display_paths
+        .iter()
+        .map(|p| UnicodeWidthStr::width(p.as_str()))
+        .max()
+        .unwrap_or(0);
 
     // Collect per-file stats first so we can compute the count column width
     let mut file_stats: Vec<(&str, usize, usize)> = Vec::new();
@@ -2005,7 +2156,11 @@ fn write_stat(
     let max_bar = line_budget.saturating_sub(max_path_len).max(10);
 
     let display_stats: &[(&str, usize, usize)] = if let Some(limit) = stat_count {
-        if file_stats.len() > limit { &file_stats[..limit] } else { &file_stats }
+        if file_stats.len() > limit {
+            &file_stats[..limit]
+        } else {
+            &file_stats
+        }
     } else {
         &file_stats
     };
@@ -2031,7 +2186,15 @@ fn write_stat(
         } else {
             std::borrow::Cow::Borrowed(*path)
         };
-        let line = format_stat_line_git(&display_path, *ins, *del, max_path_len, count_width, max_count, max_bar);
+        let line = format_stat_line_git(
+            &display_path,
+            *ins,
+            *del,
+            max_path_len,
+            count_width,
+            max_count,
+            max_bar,
+        );
         writeln!(out, "{line}")?;
     }
     if let Some(limit) = stat_count {
@@ -2129,7 +2292,11 @@ fn write_raw(out: &mut impl Write, entries: &[DiffEntry], abbrev_len: usize) -> 
                 writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}{score:03}\t{old_path}\t{new_path}")?;
             }
             _ => {
-                writeln!(out, ":{old_mode} {new_mode} {old_oid} {new_oid} {status}\t{}", entry.path())?;
+                writeln!(
+                    out,
+                    ":{old_mode} {new_mode} {old_oid} {new_oid} {status}\t{}",
+                    entry.path()
+                )?;
             }
         }
     }
@@ -2188,7 +2355,12 @@ fn check_whitespace_errors(
         let old_content = if entry.old_oid == zero_oid() {
             String::new()
         } else {
-            read_content(odb, &entry.old_oid, work_tree, entry.old_path.as_deref().unwrap_or(path))
+            read_content(
+                odb,
+                &entry.old_oid,
+                work_tree,
+                entry.old_path.as_deref().unwrap_or(path),
+            )
         };
         let new_content = if entry.new_oid == zero_oid() {
             String::new()

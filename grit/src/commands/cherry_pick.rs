@@ -630,7 +630,12 @@ fn save_orig_head(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-fn save_sequencer_state(git_dir: &Path, head_oid: &ObjectId, remaining: &[ObjectId], args: &Args) -> Result<()> {
+fn save_sequencer_state(
+    git_dir: &Path,
+    head_oid: &ObjectId,
+    remaining: &[ObjectId],
+    args: &Args,
+) -> Result<()> {
     let seq_dir = git_dir.join("sequencer");
     fs::create_dir_all(&seq_dir)?;
 

@@ -158,7 +158,11 @@ fn apply_mergeoptions(args: &mut Args, opts: &str) {
             "--no-commit" if !cli_commit => args.no_commit = true,
             "--stat" if !cli_no_stat => args.stat = true,
             "--no-stat" | "-n" if !cli_stat && !cli_summary => args.no_stat = true,
-            "--log" => { if args.log.is_none() { args.log = Some(20); } }
+            "--log" => {
+                if args.log.is_none() {
+                    args.log = Some(20);
+                }
+            }
             "--no-log" => args.no_log = true,
             "--signoff" | "-S" if !args.no_signoff => args.signoff = true,
             "--no-signoff" if !args.signoff => args.no_signoff = true,
@@ -399,10 +403,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     index.write(&repo.index_path())?;
 
     if !args.quiet {
-        eprintln!(
-            "Updating to {}",
-            &merge_oid.to_hex()[..7]
-        );
+        eprintln!("Updating to {}", &merge_oid.to_hex()[..7]);
     }
     Ok(())
 }
@@ -495,8 +496,15 @@ fn do_real_merge(
     )?;
 
     // Merge trees
-    let merge_result =
-        merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, head, &args.commits[0], favor)?;
+    let merge_result = merge_trees(
+        repo,
+        &base_entries,
+        &ours_entries,
+        &theirs_entries,
+        head,
+        &args.commits[0],
+        favor,
+    )?;
 
     // Write index
     merge_result.index.write(&repo.index_path())?;
@@ -532,7 +540,7 @@ fn do_real_merge(
                 repo.git_dir.join("MERGE_HEAD"),
                 format!("{}\n", merge_oid.to_hex()),
             )?;
-            let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+            let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
         }
@@ -562,7 +570,7 @@ fn do_real_merge(
             repo.git_dir.join("MERGE_HEAD"),
             format!("{}\n", merge_oid.to_hex()),
         )?;
-        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+        let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
 
@@ -574,7 +582,7 @@ fn do_real_merge(
 
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
-    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+    let mut msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
 
     // Append merge log if --log is set
     if let Some(max_log) = args.log {
@@ -613,7 +621,7 @@ fn do_real_merge(
         committer,
         encoding: None,
         message: msg,
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -697,7 +705,9 @@ fn do_octopus_merge(
     if !args.no_ff {
         let mut reduced = merge_oids.clone();
         reduced.retain(|&oid| {
-            !merge_oids.iter().any(|&other| other != oid && is_ancestor(repo, oid, other).unwrap_or(false))
+            !merge_oids
+                .iter()
+                .any(|&other| other != oid && is_ancestor(repo, oid, other).unwrap_or(false))
         });
         if reduced.len() == 1 {
             let merge_oid = reduced[0];
@@ -761,7 +771,8 @@ fn do_octopus_merge(
                 .map(|oid| format!("{}\n", oid.to_hex()))
                 .collect();
             fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
-            let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
+            let msg =
+                build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
             for (ctype, cpath) in &merge_result.conflict_descriptions {
@@ -832,7 +843,7 @@ fn do_octopus_merge(
         committer,
         encoding: None,
         message: msg,
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -909,7 +920,12 @@ fn build_merge_log(
 }
 
 /// Build merge message for octopus merges.
-fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom: Option<&str>, repo: &Repository) -> String {
+fn build_octopus_merge_message(
+    head: &HeadState,
+    branch_names: &[String],
+    custom: Option<&str>,
+    repo: &Repository,
+) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
@@ -938,7 +954,10 @@ fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom
             _ => "branches",
         };
         if branch_names.len() == 2 {
-            format!("Merge {kind_plural} '{}' and '{}'", branch_names[0], branch_names[1])
+            format!(
+                "Merge {kind_plural} '{}' and '{}'",
+                branch_names[0], branch_names[1]
+            )
         } else {
             let last = branch_names.last().unwrap();
             let rest: Vec<String> = branch_names[..branch_names.len() - 1]
@@ -949,7 +968,9 @@ fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom
         }
     } else {
         // Mixed kinds
-        let parts: Vec<String> = branch_names.iter().zip(kinds.iter())
+        let parts: Vec<String> = branch_names
+            .iter()
+            .zip(kinds.iter())
             .map(|(n, k)| format!("{k} '{n}'"))
             .collect();
         if parts.len() == 2 {
@@ -988,7 +1009,7 @@ fn do_strategy_ours(
     )?;
 
     let tree_oid = commit_tree(repo, head_oid)?;
-    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), &repo);
+    let msg = build_merge_message(head, &args.commits[0], args.message.as_deref(), repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -1002,7 +1023,7 @@ fn do_strategy_ours(
         committer,
         encoding: None,
         message: msg,
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1079,7 +1100,11 @@ fn do_strategy_theirs(
 }
 
 /// Build SQUASH_MSG by walking commits reachable from merge targets but not from HEAD.
-fn build_squash_msg(repo: &Repository, head_oid: ObjectId, merge_oids: &[ObjectId]) -> Result<String> {
+fn build_squash_msg(
+    repo: &Repository,
+    head_oid: ObjectId,
+    merge_oids: &[ObjectId],
+) -> Result<String> {
     let mut msg = String::from("Squashed commit of the following:\n");
 
     // Collect all commits reachable from merge_oids but not from head_oid (no merges).
@@ -1143,8 +1168,14 @@ fn build_squash_msg(repo: &Repository, head_oid: ObjectId, merge_oids: &[ObjectI
     for (i, (oid, commit)) in commits_to_show.iter().enumerate() {
         msg.push('\n');
         msg.push_str(&format!("commit {}\n", oid.to_hex()));
-        msg.push_str(&format!("Author: {}\n", format_author_for_log(&commit.author)));
-        msg.push_str(&format!("Date:   {}\n", format_date_for_log(&commit.author)));
+        msg.push_str(&format!(
+            "Author: {}\n",
+            format_author_for_log(&commit.author)
+        ));
+        msg.push_str(&format!(
+            "Date:   {}\n",
+            format_date_for_log(&commit.author)
+        ));
         msg.push('\n');
         for line in commit.message.trim_end().lines() {
             msg.push_str(&format!("    {}\n", line));
@@ -1407,7 +1438,7 @@ fn merge_continue(message: Option<String>) -> Result<()> {
         committer,
         encoding: None,
         message: msg.clone(),
-    raw_message: None,
+        raw_message: None,
     };
 
     let commit_bytes = serialize_commit(&commit_data);
@@ -1457,7 +1488,8 @@ fn detect_merge_renames(
     // Read merge.renamelimit or fall back to diff.renamelimit
     let rename_limit: usize = {
         let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-        config.as_ref()
+        config
+            .as_ref()
             .and_then(|c| c.get("merge.renamelimit"))
             .or_else(|| config.as_ref().and_then(|c| c.get("diff.renamelimit")))
             .and_then(|v| v.parse().ok())
@@ -1587,7 +1619,10 @@ fn detect_merge_renames(
                 // Content at base_path changed. Check if original content moved.
                 if let Some(side_paths) = side_oid_to_paths.get(&base_entry.oid) {
                     for sp in side_paths {
-                        if sp != base_path && !base.contains_key(sp) && !matched_targets.contains(sp) {
+                        if sp != base_path
+                            && !base.contains_key(sp)
+                            && !matched_targets.contains(sp)
+                        {
                             map.insert(base_path.clone(), sp.clone());
                             matched_targets.insert(sp.clone());
                             break;
@@ -1611,8 +1646,14 @@ fn detect_merge_renames(
         // Now do similarity-based rename detection for remaining unmatched deletions
         let diff_entries = build_diff(side);
         // Check rename limit: count deleted and added entries
-        let n_deleted = diff_entries.iter().filter(|e| matches!(e.status, DiffStatus::Deleted)).count();
-        let n_added = diff_entries.iter().filter(|e| matches!(e.status, DiffStatus::Added)).count();
+        let n_deleted = diff_entries
+            .iter()
+            .filter(|e| matches!(e.status, DiffStatus::Deleted))
+            .count();
+        let n_added = diff_entries
+            .iter()
+            .filter(|e| matches!(e.status, DiffStatus::Added))
+            .count();
         let detected = if n_deleted > rename_limit || n_added > rename_limit {
             // Rename detection matrix too large, skip similarity detection
             Vec::new()
@@ -1654,7 +1695,6 @@ fn merge_trees(
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
 
-
     // Track which paths are handled via rename logic so we don't double-process
     let mut handled_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
 
@@ -1679,7 +1719,7 @@ fn merge_trees(
 
         let be = base.get(base_path);
         let oe = ours.get(ours_new_path); // The renamed file in ours
-        let te = theirs.get(base_path);   // Theirs' version at original path
+        let te = theirs.get(base_path); // Theirs' version at original path
 
         if let (Some(be), Some(oe)) = (be, oe) {
             if let Some(te) = te {
@@ -1754,7 +1794,7 @@ fn merge_trees(
         // And since ours' version at base_path was used for the merge at the
         // rename target, ours doesn't also get a file at base_path.
         if let Some(te_at_base) = theirs.get(base_path) {
-            if be.map_or(true, |b| te_at_base.oid != b.oid) {
+            if be.is_none_or(|b| te_at_base.oid != b.oid) {
                 // Theirs has a new/different file at the old path (add-source)
                 if let Some(oe_at_base) = ours.get(base_path) {
                     // Ours also has something at this path — but ours' version
@@ -1797,7 +1837,10 @@ fn merge_trees(
                             conflict_descriptions.push(("rename/rename".to_string(), path_str));
                             // Also add the theirs version to the working tree
                             if let Ok(obj) = repo.odb.read(&te.oid) {
-                                conflict_files.push((String::from_utf8_lossy(theirs_new_path).to_string(), obj.data));
+                                conflict_files.push((
+                                    String::from_utf8_lossy(theirs_new_path).to_string(),
+                                    obj.data,
+                                ));
                             }
                         }
                     }
@@ -1810,7 +1853,7 @@ fn merge_trees(
 
         let be = base.get(base_path);
         let te = theirs.get(theirs_new_path); // The renamed file in theirs
-        let oe = ours.get(base_path);          // Ours' version at original path
+        let oe = ours.get(base_path); // Ours' version at original path
 
         if let (Some(be), Some(te)) = (be, te) {
             if let Some(oe) = oe {
@@ -1868,15 +1911,14 @@ fn merge_trees(
 
             // If ours also has a NEW file at theirs_new_path (add/add at rename target)
             if let Some(oe_at_new) = ours.get(theirs_new_path) {
-                if !base.contains_key(theirs_new_path) {
-                    if te.oid != oe_at_new.oid || te.mode != oe_at_new.mode {
+                if !base.contains_key(theirs_new_path)
+                    && (te.oid != oe_at_new.oid || te.mode != oe_at_new.mode) {
                         let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
                         has_conflicts = true;
                         stage_entry(&mut index, oe_at_new, 2);
                         stage_entry(&mut index, te, 3);
                         conflict_descriptions.push(("rename/add".to_string(), path_str));
                     }
-                }
             }
 
             // Handle "add-source": theirs renamed base_path away, but theirs may also
@@ -2076,7 +2118,10 @@ fn try_content_merge(
     // Check .gitattributes for binary marking
     let path_str = String::from_utf8_lossy(&ours.path).to_string();
     let is_attr_binary = {
-        let wt_path = repo.work_tree.as_deref().unwrap_or(std::path::Path::new("."));
+        let wt_path = repo
+            .work_tree
+            .as_deref()
+            .unwrap_or(std::path::Path::new("."));
         let attrs = grit_lib::crlf::load_gitattributes(wt_path);
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
             let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, &path_str, &config);
@@ -2148,7 +2193,7 @@ fn try_content_merge_add_add(
     }
 
     let input = MergeInput {
-        base: &[],  // empty base for add/add
+        base: &[], // empty base for add/add
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
         label_ours: ours_label,
@@ -2203,7 +2248,9 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
     let mut total_del = 0usize;
 
     for entry in entries {
-        let path = entry.new_path.as_deref()
+        let path = entry
+            .new_path
+            .as_deref()
             .or(entry.old_path.as_deref())
             .unwrap_or("unknown");
         let is_new = entry.old_oid == grit_lib::diff::zero_oid();
@@ -2211,12 +2258,18 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
 
         // Read blob contents to compute changes
         let old_content = if !is_new {
-            repo.odb.read(&entry.old_oid).ok().map(|o| String::from_utf8_lossy(&o.data).to_string())
+            repo.odb
+                .read(&entry.old_oid)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.data).to_string())
         } else {
             None
         };
         let new_content = if !is_deleted {
-            repo.odb.read(&entry.new_oid).ok().map(|o| String::from_utf8_lossy(&o.data).to_string())
+            repo.odb
+                .read(&entry.new_oid)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.data).to_string())
         } else {
             None
         };
@@ -2241,42 +2294,72 @@ fn print_diffstat(repo: &Repository, entries: &[DiffEntry], compact: bool) {
     }
 
     // Build display names with compact annotations
-    let display_names: Vec<String> = stats.iter().map(|s| {
-        if compact {
-            let mut name = s.path.clone();
-            if s.is_new {
-                name.push_str(" (new)");
-            } else if s.is_deleted {
-                name.push_str(" (gone)");
+    let display_names: Vec<String> = stats
+        .iter()
+        .map(|s| {
+            if compact {
+                let mut name = s.path.clone();
+                if s.is_new {
+                    name.push_str(" (new)");
+                } else if s.is_deleted {
+                    name.push_str(" (gone)");
+                }
+                // Could also add mode changes here
+                name
+            } else {
+                s.path.clone()
             }
-            // Could also add mode changes here
-            name
-        } else {
-            s.path.clone()
-        }
-    }).collect();
+        })
+        .collect();
 
     let max_path_len = display_names.iter().map(|s| s.len()).max().unwrap_or(0);
-    let max_change = stats.iter().map(|s| s.insertions + s.deletions).max().unwrap_or(0);
-    let count_width = if max_change == 0 { 1 } else { format!("{}", max_change).len() };
+    let max_change = stats
+        .iter()
+        .map(|s| s.insertions + s.deletions)
+        .max()
+        .unwrap_or(0);
+    let count_width = if max_change == 0 {
+        1
+    } else {
+        format!("{}", max_change).len()
+    };
 
     for (i, s) in stats.iter().enumerate() {
         let total = s.insertions + s.deletions;
         let plus = "+".repeat(s.insertions.min(50));
         let minus = "-".repeat(s.deletions.min(50));
-        println!(" {:<width$} | {:>cw$} {}{}", display_names[i], total, plus, minus,
-            width = max_path_len, cw = count_width);
+        println!(
+            " {:<width$} | {:>cw$} {}{}",
+            display_names[i],
+            total,
+            plus,
+            minus,
+            width = max_path_len,
+            cw = count_width
+        );
     }
 
     // Summary line
     let files_changed = stats.len();
     let mut parts = Vec::new();
-    parts.push(format!("{} file{} changed", files_changed, if files_changed != 1 { "s" } else { "" }));
+    parts.push(format!(
+        "{} file{} changed",
+        files_changed,
+        if files_changed != 1 { "s" } else { "" }
+    ));
     if total_ins > 0 {
-        parts.push(format!("{} insertion{}", total_ins, if total_ins != 1 { "s(+)" } else { "(+)" }));
+        parts.push(format!(
+            "{} insertion{}",
+            total_ins,
+            if total_ins != 1 { "s(+)" } else { "(+)" }
+        ));
     }
     if total_del > 0 {
-        parts.push(format!("{} deletion{}", total_del, if total_del != 1 { "s(-)" } else { "(-)" }));
+        parts.push(format!(
+            "{} deletion{}",
+            total_del,
+            if total_del != 1 { "s(-)" } else { "(-)" }
+        ));
     }
     println!(" {}", parts.join(", "));
 
@@ -2367,7 +2450,12 @@ fn append_signoff(msg: &str, name: &str, email: &str) -> String {
     format!("{}\n\n{}\n", trimmed, trailer)
 }
 
-fn build_merge_message(head: &HeadState, branch_name: &str, custom: Option<&str>, repo: &Repository) -> String {
+fn build_merge_message(
+    head: &HeadState,
+    branch_name: &str,
+    custom: Option<&str>,
+    repo: &Repository,
+) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
@@ -2535,8 +2623,9 @@ fn parse_date_to_git_ts(date_str: &str) -> Option<String> {
             let tz_secs = sign * (h * 3600 + m * 60);
             if let Ok(offset) = time::UtcOffset::from_whole_seconds(tz_secs as i32) {
                 let fmt = time::format_description::parse(
-                    "[year]-[month]-[day] [hour]:[minute]:[second]"
-                ).ok()?;
+                    "[year]-[month]-[day] [hour]:[minute]:[second]",
+                )
+                .ok()?;
                 if let Ok(naive) = time::PrimitiveDateTime::parse(datetime, &fmt) {
                     let dt = naive.assume_offset(offset);
                     return Some(format!("{} {}", dt.unix_timestamp(), tz));

@@ -718,7 +718,9 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
     // Resolve pathspecs relative to the current directory
     let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
     // Canonicalize work_tree to resolve symlinks for proper prefix stripping
-    let canon_work_tree = work_tree.canonicalize().unwrap_or_else(|_| work_tree.to_path_buf());
+    let canon_work_tree = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
 
     for spec in pathspecs {
         // Resolve the pathspec relative to cwd
@@ -733,7 +735,9 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
             .strip_prefix(&canon_work_tree)
             .unwrap_or_else(|_| {
                 // Fallback: try stripping non-canonical work_tree
-                abs_path.strip_prefix(work_tree).unwrap_or(std::path::Path::new(spec))
+                abs_path
+                    .strip_prefix(work_tree)
+                    .unwrap_or(std::path::Path::new(spec))
             });
         let rel_str = rel_path.to_string_lossy().to_string();
         if canon_path.exists() {
@@ -923,7 +927,10 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
     let squash_msg_path = repo.git_dir.join("SQUASH_MSG");
     if let Ok(msg) = std::fs::read_to_string(&squash_msg_path) {
         if !msg.is_empty() {
-            return Ok(MessageResult { message: ensure_trailing_newline(&msg), raw_bytes: None });
+            return Ok(MessageResult {
+                message: ensure_trailing_newline(&msg),
+                raw_bytes: None,
+            });
         }
     }
 

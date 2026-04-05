@@ -207,7 +207,9 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_rename: false,
                 is_copy: false,
                 similarity_index: None,
-                dissimilarity_index: None, old_oid: None, new_oid: None,
+                dissimilarity_index: None,
+                old_oid: None,
+                new_oid: None,
                 hunks: Vec::new(),
             };
 
@@ -299,7 +301,9 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 is_rename: false,
                 is_copy: false,
                 similarity_index: None,
-                dissimilarity_index: None, old_oid: None, new_oid: None,
+                dissimilarity_index: None,
+                old_oid: None,
+                new_oid: None,
                 hunks: Vec::new(),
             };
 
@@ -622,7 +626,10 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     if old_idx < old_lines.len() {
         if let Some(last_hunk) = hunks.last() {
             let last_line = last_hunk.lines.iter().rev().find(|hl| {
-                matches!(hl, HunkLine::Context(_) | HunkLine::Remove(_) | HunkLine::Add(_))
+                matches!(
+                    hl,
+                    HunkLine::Context(_) | HunkLine::Remove(_) | HunkLine::Add(_)
+                )
             });
             if matches!(last_line, Some(HunkLine::Add(_))) {
                 bail!("patch does not apply");
@@ -892,7 +899,8 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         if fp.old_mode.as_deref() == Some("160000") || fp.new_mode.as_deref() == Some("160000") {
             continue;
         }
-        let path_str = fp.effective_path()
+        let path_str = fp
+            .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
         let path = PathBuf::from(&adjusted);
@@ -1042,12 +1050,17 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         }
 
         // Handle submodule (gitlink) entries specially
-        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000")) && fp.is_new {
-            let commit_hash = fp.hunks.iter()
+        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
+            && fp.is_new
+        {
+            let commit_hash = fp
+                .hunks
+                .iter()
                 .flat_map(|h| h.lines.iter())
                 .find_map(|l| {
                     if let HunkLine::Add(s) = l {
-                        s.strip_prefix("Subproject commit ").map(|h| h.trim().to_string())
+                        s.strip_prefix("Subproject commit ")
+                            .map(|h| h.trim().to_string())
                     } else {
                         None
                     }
@@ -1056,9 +1069,17 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
             let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
             let mode = grit_lib::index::MODE_GITLINK;
             let entry = grit_lib::index::IndexEntry {
-                ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
-                dev: 0, ino: 0, mode, uid: 0, gid: 0,
-                size: 0, oid,
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid,
                 flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
                 flags_extended: None,
                 path: adjusted.into_bytes(),

@@ -324,11 +324,15 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut c = false;
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
             if let Some(val) = config.get("color.diff") {
-                if val == "always" || val == "true" { c = true; }
+                if val == "always" || val == "true" {
+                    c = true;
+                }
             }
             if !c {
                 if let Some(val) = config.get("color.ui") {
-                    if val == "always" || val == "true" { c = true; }
+                    if val == "always" || val == "true" {
+                        c = true;
+                    }
                 }
             }
         }
@@ -441,7 +445,9 @@ pub fn run(mut args: Args) -> Result<()> {
         .as_ref()
         .map(|p| {
             let pattern = p.replace(r"\|", "|");
-            RegexBuilder::new(&pattern).case_insensitive(args.regexp_ignore_case).build()
+            RegexBuilder::new(&pattern)
+                .case_insensitive(args.regexp_ignore_case)
+                .build()
         })
         .transpose()
         .context("invalid --grep regex")?;
@@ -458,11 +464,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 full = false;
             } else if arg.starts_with("--decorate") {
                 show = true;
-                if arg == "--decorate=full" {
-                    full = true;
-                } else {
-                    full = false;
-                }
+                full = arg == "--decorate=full";
             }
         }
         if args.decorate.is_some() {
@@ -480,7 +482,11 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Walk commits
-    let effective_pathspecs = if args.follow { &[][..] } else { &args.pathspecs[..] };
+    let effective_pathspecs = if args.follow {
+        &[][..]
+    } else {
+        &args.pathspecs[..]
+    };
     let commits = walk_commits(
         &repo.odb,
         &repo.git_dir,
@@ -510,10 +516,7 @@ pub fn run(mut args: Args) -> Result<()> {
         commits
             .into_iter()
             .filter(|(_oid, info)| {
-                match commit_has_diff_status(&repo.odb, info, &filter_chars) {
-                    Ok(has) => has,
-                    Err(_) => true, // include on error
-                }
+                commit_has_diff_status(&repo.odb, info, &filter_chars).unwrap_or(true)
             })
             .collect::<Vec<_>>()
     } else {
@@ -525,12 +528,9 @@ pub fn run(mut args: Args) -> Result<()> {
         let find_oid = resolve_revision(&repo, find_obj_rev)?;
         commits
             .into_iter()
-            .filter(|(_oid, info)| {
-                match commit_has_object(&repo.odb, info, &find_oid) {
-                    Ok(has) => has,
-                    Err(_) => false,
-                }
-            })
+            .filter(
+                |(_oid, info)| commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default(),
+            )
             .collect::<Vec<_>>()
     } else {
         commits
@@ -539,12 +539,10 @@ pub fn run(mut args: Args) -> Result<()> {
     // Apply --simplify-by-decoration: only show commits with decorations
     let commits = if args.simplify_by_decoration {
         match &decorations {
-            Some(dec_map) => {
-                commits
-                    .into_iter()
-                    .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
-                    .collect::<Vec<_>>()
-            }
+            Some(dec_map) => commits
+                .into_iter()
+                .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
+                .collect::<Vec<_>>(),
             None => commits,
         }
     } else {
@@ -567,7 +565,13 @@ pub fn run(mut args: Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
-    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw || args.cc;
+    let show_diff = args.patch
+        || args.patch_u
+        || args.stat
+        || args.name_only
+        || args.name_status
+        || args.raw
+        || args.cc;
 
     let notes_map = load_notes_map(&repo);
 
@@ -590,7 +594,16 @@ pub fn run(mut args: Args) -> Result<()> {
                 write!(out, "{}\t", short_src)?;
             }
         }
-        format_commit(&mut out, oid, commit_data, &args, decorations.as_ref(), use_color, &notes_map, &repo.odb)?;
+        format_commit(
+            &mut out,
+            oid,
+            commit_data,
+            &args,
+            decorations.as_ref(),
+            use_color,
+            &notes_map,
+            &repo.odb,
+        )?;
 
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
@@ -659,14 +672,29 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
 
-    let show_diff = args.patch || args.patch_u || args.stat || args.name_only || args.name_status || args.raw || args.cc;
+    let show_diff = args.patch
+        || args.patch_u
+        || args.stat
+        || args.name_only
+        || args.name_status
+        || args.raw
+        || args.cc;
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
         let notes_map = load_notes_map(repo);
-        format_commit(&mut out, oid, commit_data, args, decorations.as_ref(), false, &notes_map, &repo.odb)?;
+        format_commit(
+            &mut out,
+            oid,
+            commit_data,
+            args,
+            decorations.as_ref(),
+            false,
+            &notes_map,
+            &repo.odb,
+        )?;
         if show_diff {
             write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
@@ -700,8 +728,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         &refname
     };
 
-    let entries = read_reflog(&repo.git_dir, &refname)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if entries.is_empty() {
         return Ok(());
@@ -772,7 +799,11 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
                 "medium" => {
                     writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-                    writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+                    writeln!(
+                        out,
+                        "Author: {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
                     let date = format_date_for_header(&commit_data.author);
                     writeln!(out, "Date:   {}", date)?;
                     writeln!(out)?;
@@ -783,8 +814,16 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
                 "full" => {
                     writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-                    writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
-                    writeln!(out, "Commit: {}", format_ident_for_header(&commit_data.committer))?;
+                    writeln!(
+                        out,
+                        "Author: {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
+                    writeln!(
+                        out,
+                        "Commit: {}",
+                        format_ident_for_header(&commit_data.committer)
+                    )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
                         writeln!(out, "    {}", line)?;
@@ -793,10 +832,26 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
                 "fuller" => {
                     writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-                    writeln!(out, "Author:     {}", format_ident_for_header(&commit_data.author))?;
-                    writeln!(out, "AuthorDate: {}", format_date_for_header(&commit_data.author))?;
-                    writeln!(out, "Commit:     {}", format_ident_for_header(&commit_data.committer))?;
-                    writeln!(out, "CommitDate: {}", format_date_for_header(&commit_data.committer))?;
+                    writeln!(
+                        out,
+                        "Author:     {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
+                    writeln!(
+                        out,
+                        "AuthorDate: {}",
+                        format_date_for_header(&commit_data.author)
+                    )?;
+                    writeln!(
+                        out,
+                        "Commit:     {}",
+                        format_ident_for_header(&commit_data.committer)
+                    )?;
+                    writeln!(
+                        out,
+                        "CommitDate: {}",
+                        format_date_for_header(&commit_data.committer)
+                    )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines() {
                         writeln!(out, "    {}", line)?;
@@ -804,8 +859,16 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 "email" => {
-                    writeln!(out, "From {} Mon Sep 17 00:00:00 2001", entry.new_oid.to_hex())?;
-                    writeln!(out, "From: {}", format_ident_for_header(&commit_data.author))?;
+                    writeln!(
+                        out,
+                        "From {} Mon Sep 17 00:00:00 2001",
+                        entry.new_oid.to_hex()
+                    )?;
+                    writeln!(
+                        out,
+                        "From: {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
                     let date = format_date_for_header(&commit_data.author);
                     writeln!(out, "Date: {}", date)?;
                     let subject = commit_data.message.lines().next().unwrap_or("");
@@ -832,7 +895,10 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 _ => {
-                    let fmt_str = fmt.strip_prefix("tformat:").or_else(|| fmt.strip_prefix("format:")).unwrap_or(fmt);
+                    let fmt_str = fmt
+                        .strip_prefix("tformat:")
+                        .or_else(|| fmt.strip_prefix("format:"))
+                        .unwrap_or(fmt);
                     if is_format_separator && shown > 0 {
                         writeln!(out)?;
                     }
@@ -850,16 +916,28 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         } else if args.oneline {
             let abbrev = &entry.new_oid.to_hex()[..7];
             if args.null_terminator {
-                write!(out, "{} {}@{{{}}}: {}\0", abbrev, display_name, i, entry.message)?;
+                write!(
+                    out,
+                    "{} {}@{{{}}}: {}\0",
+                    abbrev, display_name, i, entry.message
+                )?;
             } else {
-                writeln!(out, "{} {}@{{{}}}: {}", abbrev, display_name, i, entry.message)?;
+                writeln!(
+                    out,
+                    "{} {}@{{{}}}: {}",
+                    abbrev, display_name, i, entry.message
+                )?;
             }
         } else {
             // Full format with Reflog headers
             writeln!(out, "commit {}", entry.new_oid.to_hex())?;
             writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
             writeln!(out, "Reflog message: {}", entry.message)?;
-            writeln!(out, "Author: {}", format_ident_for_header(&commit_data.author))?;
+            writeln!(
+                out,
+                "Author: {}",
+                format_ident_for_header(&commit_data.author)
+            )?;
             let date = format_date_for_header(&commit_data.author);
             writeln!(out, "Date:   {}", date)?;
             writeln!(out)?;
@@ -897,39 +975,89 @@ fn apply_reflog_format_string(
     while let Some(ch) = chars.next() {
         if ch == '%' {
             match chars.peek() {
-                Some('H') => { chars.next(); result.push_str(&hex); }
-                Some('h') => { chars.next(); result.push_str(short); }
-                Some('s') => { chars.next(); result.push_str(subject); }
-                Some('B') => { chars.next(); result.push_str(commit.message.trim()); }
-                Some('b') => { chars.next(); result.push_str(&body); }
-                Some('n') => { chars.next(); result.push('\n'); }
+                Some('H') => {
+                    chars.next();
+                    result.push_str(&hex);
+                }
+                Some('h') => {
+                    chars.next();
+                    result.push_str(short);
+                }
+                Some('s') => {
+                    chars.next();
+                    result.push_str(subject);
+                }
+                Some('B') => {
+                    chars.next();
+                    result.push_str(commit.message.trim());
+                }
+                Some('b') => {
+                    chars.next();
+                    result.push_str(&body);
+                }
+                Some('n') => {
+                    chars.next();
+                    result.push('\n');
+                }
                 Some('g') => {
                     chars.next();
                     match chars.peek() {
-                        Some('d') => { chars.next(); result.push_str(selector); }
-                        Some('s') => { chars.next(); result.push_str(reflog_msg); }
-                        Some('n') => { chars.next(); result.push_str(&reflog_name); }
-                        Some('e') => { chars.next(); result.push_str(&reflog_email); }
-                        _ => { result.push_str("%g"); }
+                        Some('d') => {
+                            chars.next();
+                            result.push_str(selector);
+                        }
+                        Some('s') => {
+                            chars.next();
+                            result.push_str(reflog_msg);
+                        }
+                        Some('n') => {
+                            chars.next();
+                            result.push_str(&reflog_name);
+                        }
+                        Some('e') => {
+                            chars.next();
+                            result.push_str(&reflog_email);
+                        }
+                        _ => {
+                            result.push_str("%g");
+                        }
                     }
                 }
                 Some('a') => {
                     chars.next();
                     match chars.peek() {
-                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.author)); }
-                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.author)); }
-                        _ => { result.push_str("%a"); }
+                        Some('n') => {
+                            chars.next();
+                            result.push_str(&extract_name(&commit.author));
+                        }
+                        Some('e') => {
+                            chars.next();
+                            result.push_str(&extract_email(&commit.author));
+                        }
+                        _ => {
+                            result.push_str("%a");
+                        }
                     }
                 }
                 Some('c') => {
                     chars.next();
                     match chars.peek() {
-                        Some('n') => { chars.next(); result.push_str(&extract_name(&commit.committer)); }
-                        Some('e') => { chars.next(); result.push_str(&extract_email(&commit.committer)); }
-                        _ => { result.push_str("%c"); }
+                        Some('n') => {
+                            chars.next();
+                            result.push_str(&extract_name(&commit.committer));
+                        }
+                        Some('e') => {
+                            chars.next();
+                            result.push_str(&extract_email(&commit.committer));
+                        }
+                        _ => {
+                            result.push_str("%c");
+                        }
                     }
                 }
-                _ => { result.push('%'); }
+                _ => {
+                    result.push('%');
+                }
             }
         } else {
             result.push(ch);
@@ -1010,7 +1138,8 @@ fn walk_commits(
     let mut visited: HashSet<ObjectId> = excluded.clone();
     // Use a priority queue sorted by commit date (descending) for correct traversal order.
     // Each entry is (timestamp, oid) so BinaryHeap gives us highest timestamp first.
-    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> = std::collections::BinaryHeap::new();
+    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
+        std::collections::BinaryHeap::new();
     for oid in start {
         let ts = read_commit_timestamp(odb, oid);
         queue.push((ts, *oid));
@@ -1076,11 +1205,10 @@ fn walk_commits(
                 continue;
             }
         }
-        if !pathspecs.is_empty() {
-            if !commit_touches_paths(odb, &info, pathspecs)? {
+        if !pathspecs.is_empty()
+            && !commit_touches_paths(odb, &info, pathspecs)? {
                 continue;
             }
-        }
 
         if skipped < skip_n {
             skipped += 1;
@@ -1196,12 +1324,10 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
     };
 
     let tree_oid = match obj.kind {
-        grit_lib::objects::ObjectKind::Commit => {
-            match parse_commit(&obj.data) {
-                Ok(c) => c.tree,
-                Err(_) => return map,
-            }
-        }
+        grit_lib::objects::ObjectKind::Commit => match parse_commit(&obj.data) {
+            Ok(c) => c.tree,
+            Err(_) => return map,
+        },
         grit_lib::objects::ObjectKind::Tree => notes_oid,
         _ => return map,
     };
@@ -1264,7 +1390,13 @@ fn format_commit(
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
         let dec = format_decoration(&hex, decorations);
-        writeln!(out, "{}{} {}", &hex[..abbrev_len.min(hex.len())], dec, first_line)?;
+        writeln!(
+            out,
+            "{}{} {}",
+            &hex[..abbrev_len.min(hex.len())],
+            dec,
+            first_line
+        )?;
         return Ok(());
     }
 
@@ -1279,7 +1411,15 @@ fn format_commit(
             } else {
                 &fmt[8..]
             };
-            let formatted = apply_format_string(template, oid, info, decorations, date_format, abbrev_len, use_color);
+            let formatted = apply_format_string(
+                template,
+                oid,
+                info,
+                decorations,
+                date_format,
+                abbrev_len,
+                use_color,
+            );
             if is_tformat {
                 if args.null_terminator {
                     write!(out, "{formatted}\0")?;
@@ -1294,10 +1434,14 @@ fn format_commit(
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
-                    let h = p.to_hex();
-                    h[..abbrev_len.min(h.len())].to_string()
-                }).collect();
+                let parent_abbrevs: Vec<String> = info
+                    .parents
+                    .iter()
+                    .map(|p| {
+                        let h = p.to_hex();
+                        h[..abbrev_len.min(h.len())].to_string()
+                    })
+                    .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
             let author_name = extract_name(&info.author);
@@ -1312,14 +1456,22 @@ fn format_commit(
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
-                    let h = p.to_hex();
-                    h[..abbrev_len.min(h.len())].to_string()
-                }).collect();
+                let parent_abbrevs: Vec<String> = info
+                    .parents
+                    .iter()
+                    .map(|p| {
+                        let h = p.to_hex();
+                        h[..abbrev_len.min(h.len())].to_string()
+                    })
+                    .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
-            writeln!(out, "Date:   {}", format_date_with_mode(&info.author, date_format))?;
+            writeln!(
+                out,
+                "Date:   {}",
+                format_date_with_mode(&info.author, date_format)
+            )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
@@ -1331,10 +1483,14 @@ fn format_commit(
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
-                    let h = p.to_hex();
-                    h[..abbrev_len.min(h.len())].to_string()
-                }).collect();
+                let parent_abbrevs: Vec<String> = info
+                    .parents
+                    .iter()
+                    .map(|p| {
+                        let h = p.to_hex();
+                        h[..abbrev_len.min(h.len())].to_string()
+                    })
+                    .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
             writeln!(out, "Author: {}", format_ident_display(&info.author))?;
@@ -1350,16 +1506,28 @@ fn format_commit(
             let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
-                let parent_abbrevs: Vec<String> = info.parents.iter().map(|p| {
-                    let h = p.to_hex();
-                    h[..abbrev_len.min(h.len())].to_string()
-                }).collect();
+                let parent_abbrevs: Vec<String> = info
+                    .parents
+                    .iter()
+                    .map(|p| {
+                        let h = p.to_hex();
+                        h[..abbrev_len.min(h.len())].to_string()
+                    })
+                    .collect();
                 writeln!(out, "Merge: {}", parent_abbrevs.join(" "))?;
             }
             writeln!(out, "Author:     {}", format_ident_display(&info.author))?;
-            writeln!(out, "AuthorDate: {}", format_date_with_mode(&info.author, date_format))?;
+            writeln!(
+                out,
+                "AuthorDate: {}",
+                format_date_with_mode(&info.author, date_format)
+            )?;
             writeln!(out, "Commit:     {}", format_ident_display(&info.committer))?;
-            writeln!(out, "CommitDate: {}", format_date_with_mode(&info.committer, date_format))?;
+            writeln!(
+                out,
+                "CommitDate: {}",
+                format_date_with_mode(&info.committer, date_format)
+            )?;
             writeln!(out)?;
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
@@ -1369,7 +1537,15 @@ fn format_commit(
         }
         Some(other) => {
             // Try as a format string directly
-            let formatted = apply_format_string(other, oid, info, decorations, date_format, abbrev_len, use_color);
+            let formatted = apply_format_string(
+                other,
+                oid,
+                info,
+                decorations,
+                date_format,
+                abbrev_len,
+                use_color,
+            );
             writeln!(out, "{formatted}")?;
         }
     }
@@ -1391,10 +1567,24 @@ fn apply_format_string(
 
     // Alignment/truncation helpers
     #[derive(Clone, Copy)]
-    enum Align { Left, Right, Center }
+    enum Align {
+        Left,
+        Right,
+        Center,
+    }
     #[derive(Clone, Copy)]
-    enum Trunc { None, Trunc, LTrunc, MTrunc }
-    struct ColSpec { width: usize, align: Align, trunc: Trunc, absolute: bool }
+    enum Trunc {
+        None,
+        Trunc,
+        LTrunc,
+        MTrunc,
+    }
+    struct ColSpec {
+        width: usize,
+        align: Align,
+        trunc: Trunc,
+        absolute: bool,
+    }
     fn apply_col(spec: &ColSpec, s: &str) -> String {
         let char_len = s.chars().count();
         if char_len > spec.width {
@@ -1424,43 +1614,105 @@ fn apply_format_string(
         } else {
             let pad = spec.width - char_len;
             match spec.align {
-                Align::Left => { let mut o = s.to_owned(); for _ in 0..pad { o.push(' '); } o }
-                Align::Right => { let mut o = String::new(); for _ in 0..pad { o.push(' '); } o.push_str(s); o }
-                Align::Center => { let l = pad/2; let r = pad-l; let mut o = String::new(); for _ in 0..l { o.push(' '); } o.push_str(s); for _ in 0..r { o.push(' '); } o }
+                Align::Left => {
+                    let mut o = s.to_owned();
+                    for _ in 0..pad {
+                        o.push(' ');
+                    }
+                    o
+                }
+                Align::Right => {
+                    let mut o = String::new();
+                    for _ in 0..pad {
+                        o.push(' ');
+                    }
+                    o.push_str(s);
+                    o
+                }
+                Align::Center => {
+                    let l = pad / 2;
+                    let r = pad - l;
+                    let mut o = String::new();
+                    for _ in 0..l {
+                        o.push(' ');
+                    }
+                    o.push_str(s);
+                    for _ in 0..r {
+                        o.push(' ');
+                    }
+                    o
+                }
             }
         }
     }
-    fn parse_col_spec(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, align: Align) -> Option<ColSpec> {
+    fn parse_col_spec(
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        align: Align,
+    ) -> Option<ColSpec> {
         // Check for | (absolute column) variant
-        let absolute = if chars.peek() == Some(&'|') { chars.next(); true } else { false };
-        if chars.peek() != Some(&'(') { return None; }
+        let absolute = if chars.peek() == Some(&'|') {
+            chars.next();
+            true
+        } else {
+            false
+        };
+        if chars.peek() != Some(&'(') {
+            return None;
+        }
         chars.next();
         // Parse number (may be negative)
-        let negative = if chars.peek() == Some(&'-') { chars.next(); true } else { false };
+        let negative = if chars.peek() == Some(&'-') {
+            chars.next();
+            true
+        } else {
+            false
+        };
         let mut num_str = String::new();
         while let Some(&c) = chars.peek() {
-            if c.is_ascii_digit() { num_str.push(c); chars.next(); } else { break; }
+            if c.is_ascii_digit() {
+                num_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
         }
         let mut width: usize = num_str.parse().ok()?;
         if negative {
             // Negative means COLUMNS - N; default terminal width is 80
-            let columns = std::env::var("COLUMNS").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(80);
+            let columns = std::env::var("COLUMNS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(80);
             width = columns.saturating_sub(width);
         }
         let trunc = if chars.peek() == Some(&',') {
             chars.next();
             let mut mode = String::new();
             while let Some(&c) = chars.peek() {
-                if c == ')' { break; }
-                mode.push(c); chars.next();
+                if c == ')' {
+                    break;
+                }
+                mode.push(c);
+                chars.next();
             }
             match mode.as_str() {
-                "trunc" => Trunc::Trunc, "ltrunc" => Trunc::LTrunc, "mtrunc" => Trunc::MTrunc,
+                "trunc" => Trunc::Trunc,
+                "ltrunc" => Trunc::LTrunc,
+                "mtrunc" => Trunc::MTrunc,
                 _ => Trunc::None,
             }
-        } else { Trunc::None };
-        if chars.peek() == Some(&')') { chars.next(); }
-        Some(ColSpec { width, align, trunc, absolute })
+        } else {
+            Trunc::None
+        };
+        if chars.peek() == Some(&')') {
+            chars.next();
+        }
+        Some(ColSpec {
+            width,
+            align,
+            trunc,
+            absolute,
+        })
     }
 
     let mut pending_col: Option<ColSpec> = None;
@@ -1481,17 +1733,25 @@ fn apply_format_string(
                 chars.next();
                 if chars.peek() == Some(&'<') {
                     chars.next();
-                    if let Some(spec) = parse_col_spec(&mut chars, Align::Center) { pending_col = Some(spec); }
+                    if let Some(spec) = parse_col_spec(&mut chars, Align::Center) {
+                        pending_col = Some(spec);
+                    }
                 } else if chars.peek() == Some(&'>') {
                     chars.next();
-                    if let Some(spec) = parse_col_spec(&mut chars, Align::Right) { pending_col = Some(spec); }
+                    if let Some(spec) = parse_col_spec(&mut chars, Align::Right) {
+                        pending_col = Some(spec);
+                    }
                 } else if let Some(spec) = parse_col_spec(&mut chars, Align::Right) {
                     pending_col = Some(spec);
                 }
                 continue;
             }
 
-            let col_start = if pending_col.is_some() { result.len() } else { 0 };
+            let col_start = if pending_col.is_some() {
+                result.len()
+            } else {
+                0
+            };
             match chars.peek() {
                 Some('H') => {
                     chars.next();
@@ -1572,7 +1832,8 @@ fn apply_format_string(
                         }
                         Some('I') => {
                             chars.next();
-                            result.push_str(&format_date_with_mode(&info.author, Some("iso-strict")));
+                            result
+                                .push_str(&format_date_with_mode(&info.author, Some("iso-strict")));
                         }
                         Some('r') => {
                             chars.next();
@@ -1626,11 +1887,17 @@ fn apply_format_string(
                         }
                         Some('I') => {
                             chars.next();
-                            result.push_str(&format_date_with_mode(&info.committer, Some("iso-strict")));
+                            result.push_str(&format_date_with_mode(
+                                &info.committer,
+                                Some("iso-strict"),
+                            ));
                         }
                         Some('r') => {
                             chars.next();
-                            result.push_str(&format_date_with_mode(&info.committer, Some("relative")));
+                            result.push_str(&format_date_with_mode(
+                                &info.committer,
+                                Some("relative"),
+                            ));
                         }
                         _ => result.push_str("%c"),
                     }
@@ -1675,8 +1942,10 @@ fn apply_format_string(
                     if chars.peek() == Some(&'(') {
                         chars.next();
                         let mut spec = String::new();
-                        while let Some(c) = chars.next() {
-                            if c == ')' { break; }
+                        for c in chars.by_ref() {
+                            if c == ')' {
+                                break;
+                            }
                             spec.push(c);
                         }
                         let (force, color_spec) = if let Some(rest) = spec.strip_prefix("always,") {
@@ -1684,7 +1953,9 @@ fn apply_format_string(
                         } else if let Some(rest) = spec.strip_prefix("auto,") {
                             (false, rest)
                         } else if spec == "auto" {
-                            if use_color { result.push_str("\x1b[m"); }
+                            if use_color {
+                                result.push_str("\x1b[m");
+                            }
                             continue;
                         } else {
                             (false, spec.as_str())
@@ -1694,11 +1965,16 @@ fn apply_format_string(
                         }
                     } else {
                         let remaining: String = chars.clone().collect();
-                        let known = ["reset", "red", "green", "blue", "yellow", "magenta", "cyan", "white", "bold", "dim", "ul"];
+                        let known = [
+                            "reset", "red", "green", "blue", "yellow", "magenta", "cyan", "white",
+                            "bold", "dim", "ul",
+                        ];
                         let mut matched = false;
                         for name in &known {
                             if remaining.starts_with(name) {
-                                for _ in 0..name.len() { chars.next(); }
+                                for _ in 0..name.len() {
+                                    chars.next();
+                                }
                                 if use_color {
                                     result.push_str(&format_ansi_color_name(name));
                                 }
@@ -1708,8 +1984,11 @@ fn apply_format_string(
                         }
                         if !matched {
                             while let Some(&c) = chars.peek() {
-                                if c.is_alphanumeric() { chars.next(); }
-                                else { break; }
+                                if c.is_alphanumeric() {
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1718,8 +1997,18 @@ fn apply_format_string(
                     // Hex escape: %xNN
                     chars.next();
                     let mut hex_str = String::new();
-                    if let Some(&c1) = chars.peek() { if c1.is_ascii_hexdigit() { hex_str.push(c1); chars.next(); } }
-                    if let Some(&c2) = chars.peek() { if c2.is_ascii_hexdigit() { hex_str.push(c2); chars.next(); } }
+                    if let Some(&c1) = chars.peek() {
+                        if c1.is_ascii_hexdigit() {
+                            hex_str.push(c1);
+                            chars.next();
+                        }
+                    }
+                    if let Some(&c2) = chars.peek() {
+                        if c2.is_ascii_hexdigit() {
+                            hex_str.push(c2);
+                            chars.next();
+                        }
+                    }
                     if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
                         result.push(byte as char);
                     }
@@ -1729,8 +2018,10 @@ fn apply_format_string(
                     chars.next();
                     if chars.peek() == Some(&'(') {
                         chars.next();
-                        while let Some(c) = chars.next() {
-                            if c == ')' { break; }
+                        for c in chars.by_ref() {
+                            if c == ')' {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1756,9 +2047,16 @@ fn apply_format_string(
                     let line_start = result.rfind('\n').map(|p| p + 1).unwrap_or(0);
                     let current_col = result[line_start..].chars().count();
                     let target_width = spec.width.saturating_sub(current_col);
-                    let mut adjusted_spec = ColSpec { width: target_width, align: spec.align, trunc: spec.trunc, absolute: false };
+                    let mut adjusted_spec = ColSpec {
+                        width: target_width,
+                        align: spec.align,
+                        trunc: spec.trunc,
+                        absolute: false,
+                    };
                     // For absolute positioning, ensure minimum width matches the value length
-                    if target_width < added.chars().count() { adjusted_spec.width = added.chars().count(); }
+                    if target_width < added.chars().count() {
+                        adjusted_spec.width = added.chars().count();
+                    }
                     result.push_str(&apply_col(&adjusted_spec, &added));
                 } else {
                     result.push_str(&apply_col(&spec, &added));
@@ -1836,12 +2134,20 @@ fn format_ansi_color_name(name: &str) -> String {
 }
 
 fn format_ansi_color_spec(spec: &str) -> String {
-    if spec == "reset" { return "\x1b[m".to_owned(); }
+    if spec == "reset" {
+        return "\x1b[m".to_owned();
+    }
     fn color_code(name: &str) -> Option<u8> {
         match name {
-            "black" => Some(0), "red" => Some(1), "green" => Some(2),
-            "yellow" => Some(3), "blue" => Some(4), "magenta" => Some(5),
-            "cyan" => Some(6), "white" => Some(7), "default" => Some(9),
+            "black" => Some(0),
+            "red" => Some(1),
+            "green" => Some(2),
+            "yellow" => Some(3),
+            "blue" => Some(4),
+            "magenta" => Some(5),
+            "cyan" => Some(6),
+            "white" => Some(7),
+            "default" => Some(9),
             _ => None,
         }
     }
@@ -1874,8 +2180,11 @@ fn format_ansi_color_spec(spec: &str) -> String {
             }
         }
     }
-    if codes.is_empty() { String::new() }
-    else { format!("\x1b[{}m", codes.join(";")) }
+    if codes.is_empty() {
+        String::new()
+    } else {
+        format!("\x1b[{}m", codes.join(";"))
+    }
 }
 
 /// Extract the local part (before @) of the email from a Git ident string.
@@ -1972,19 +2281,39 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 format!("{} seconds ago", diff)
             } else if diff < 3600 {
                 let m = diff / 60;
-                if m == 1 { "1 minute ago".to_owned() } else { format!("{m} minutes ago") }
+                if m == 1 {
+                    "1 minute ago".to_owned()
+                } else {
+                    format!("{m} minutes ago")
+                }
             } else if diff < 86400 {
                 let h = diff / 3600;
-                if h == 1 { "1 hour ago".to_owned() } else { format!("{h} hours ago") }
+                if h == 1 {
+                    "1 hour ago".to_owned()
+                } else {
+                    format!("{h} hours ago")
+                }
             } else if diff < 86400 * 30 {
                 let d = diff / 86400;
-                if d == 1 { "1 day ago".to_owned() } else { format!("{d} days ago") }
+                if d == 1 {
+                    "1 day ago".to_owned()
+                } else {
+                    format!("{d} days ago")
+                }
             } else if diff < 86400 * 365 {
                 let months = diff / (86400 * 30);
-                if months == 1 { "1 month ago".to_owned() } else { format!("{months} months ago") }
+                if months == 1 {
+                    "1 month ago".to_owned()
+                } else {
+                    format!("{months} months ago")
+                }
             } else {
                 let years = diff / (86400 * 365);
-                if years == 1 { "1 year ago".to_owned() } else { format!("{years} years ago") }
+                if years == 1 {
+                    "1 year ago".to_owned()
+                } else {
+                    format!("{years} years ago")
+                }
             }
         }
         Some("rfc") | Some("rfc2822") => {
@@ -2017,8 +2346,13 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
             };
             format!(
                 "{}, {} {} {} {:02}:{:02}:{:02} {}",
-                weekday, dt.day(), month, dt.year(),
-                dt.hour(), dt.minute(), dt.second(),
+                weekday,
+                dt.day(),
+                month,
+                dt.year(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
                 offset_str
             )
         }
@@ -2056,9 +2390,14 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
             };
             format!(
                 "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
-                weekday, month, dt.day(),
-                dt.hour(), dt.minute(), dt.second(),
-                dt.year(), offset_str
+                weekday,
+                month,
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+                dt.year(),
+                offset_str
             )
         }
     }
@@ -2098,11 +2437,35 @@ fn collect_decorations(
     }
 
     if full {
-        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "refs/heads/", &mut map)?;
-        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: refs/tags/", &mut map)?;
+        collect_refs_from_dir(
+            &repo.odb,
+            &repo.git_dir.join("refs/heads"),
+            "refs/heads/",
+            "refs/heads/",
+            &mut map,
+        )?;
+        collect_refs_from_dir(
+            &repo.odb,
+            &repo.git_dir.join("refs/tags"),
+            "refs/tags/",
+            "tag: refs/tags/",
+            &mut map,
+        )?;
     } else {
-        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/heads"), "refs/heads/", "", &mut map)?;
-        collect_refs_from_dir(&repo.odb, &repo.git_dir.join("refs/tags"), "refs/tags/", "tag: ", &mut map)?;
+        collect_refs_from_dir(
+            &repo.odb,
+            &repo.git_dir.join("refs/heads"),
+            "refs/heads/",
+            "",
+            &mut map,
+        )?;
+        collect_refs_from_dir(
+            &repo.odb,
+            &repo.git_dir.join("refs/tags"),
+            "refs/tags/",
+            "tag: ",
+            &mut map,
+        )?;
     }
 
     Ok(map)
@@ -2230,7 +2593,10 @@ fn compute_combined_diff_entries(odb: &Odb, info: &CommitInfo) -> Result<Vec<Dif
     let first_parent_obj = odb.read(&info.parents[0])?;
     let first_parent_commit = parse_commit(&first_parent_obj.data)?;
     let entries = diff_trees(odb, Some(&first_parent_commit.tree), Some(&info.tree), "")?;
-    Ok(entries.into_iter().filter(|e| common.contains(e.path())).collect())
+    Ok(entries
+        .into_iter()
+        .filter(|e| common.contains(e.path()))
+        .collect())
 }
 
 /// Compute diff entries for a commit against its first parent (or empty tree for root commits).
@@ -2241,7 +2607,12 @@ fn compute_commit_diff(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
     } else {
         let parent_obj = odb.read(&info.parents[0])?;
         let parent_commit = parse_commit(&parent_obj.data)?;
-        Ok(diff_trees(odb, Some(&parent_commit.tree), Some(&info.tree), "")?)
+        Ok(diff_trees(
+            odb,
+            Some(&parent_commit.tree),
+            Some(&info.tree),
+            "",
+        )?)
     }
 }
 
@@ -2273,12 +2644,20 @@ fn write_commit_diff(
 
     // Determine if patch content will be shown (for --- separator logic)
     let has_patch = (args.patch || args.patch_u || args.cc) && {
-        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        let show_entries = if args.cc && is_merge {
+            &combined_entries
+        } else {
+            &entries
+        };
         !show_entries.is_empty()
     };
 
     if args.raw {
-        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        let show_entries = if args.cc && is_merge {
+            &combined_entries
+        } else {
+            &entries
+        };
         for entry in show_entries {
             writeln!(out, "{}", format_raw(entry))?;
         }
@@ -2296,7 +2675,11 @@ fn write_commit_diff(
     }
 
     if args.name_only {
-        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        let show_entries = if args.cc && is_merge {
+            &combined_entries
+        } else {
+            &entries
+        };
         for entry in show_entries {
             writeln!(out, "{}", entry.path())?;
         }
@@ -2304,7 +2687,11 @@ fn write_commit_diff(
     }
 
     if args.name_status {
-        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        let show_entries = if args.cc && is_merge {
+            &combined_entries
+        } else {
+            &entries
+        };
         for entry in show_entries {
             writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
         }
@@ -2312,7 +2699,11 @@ fn write_commit_diff(
     }
 
     if args.patch || args.patch_u || args.cc {
-        let show_entries = if args.cc && is_merge { &combined_entries } else { &entries };
+        let show_entries = if args.cc && is_merge {
+            &combined_entries
+        } else {
+            &entries
+        };
         for entry in show_entries {
             log_write_patch_entry(out, odb, entry, 3)?;
         }
@@ -2421,7 +2812,12 @@ fn log_write_patch_entry(
 }
 
 /// Write a `--stat` summary for log.
-fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry], trailing_blank: bool) -> Result<()> {
+fn log_print_stat_summary(
+    out: &mut impl Write,
+    odb: &Odb,
+    entries: &[DiffEntry],
+    trailing_blank: bool,
+) -> Result<()> {
     let max_path_len = entries.iter().map(|e| e.path().len()).max().unwrap_or(0);
     let mut total_ins = 0usize;
     let mut total_del = 0usize;
@@ -2439,11 +2835,7 @@ fn log_print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]
     }
 
     let n = entries.len();
-    let mut summary = format!(
-        " {} file{} changed",
-        n,
-        if n == 1 { "" } else { "s" },
-    );
+    let mut summary = format!(" {} file{} changed", n, if n == 1 { "" } else { "s" },);
     if total_ins > 0 {
         summary.push_str(&format!(
             ", {} insertion{}(+)",
@@ -2551,9 +2943,8 @@ fn collect_oids_from_dir(
         } else if ft.is_file() {
             if let Ok(content) = fs::read_to_string(entry.path()) {
                 let raw = content.trim();
-                if raw.starts_with("ref: ") {
+                if let Some(target) = raw.strip_prefix("ref: ") {
                     // Symbolic ref — resolve it
-                    let target = &raw[5..];
                     if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
                         if seen.insert(oid) {
                             oids.push(oid);
@@ -2571,11 +2962,7 @@ fn collect_oids_from_dir(
 }
 
 /// Check if a commit has any changes matching the specified diff-filter status letters.
-fn commit_has_diff_status(
-    odb: &Odb,
-    info: &CommitInfo,
-    filter_chars: &[char],
-) -> Result<bool> {
+fn commit_has_diff_status(odb: &Odb, info: &CommitInfo, filter_chars: &[char]) -> Result<bool> {
     let parent_tree = if let Some(parent) = info.parents.first() {
         let pobj = odb.read(parent)?;
         let pc = parse_commit(&pobj.data)?;
@@ -2595,11 +2982,7 @@ fn commit_has_diff_status(
 }
 
 /// Check whether a commit's diff introduces or removes a specific object.
-fn commit_has_object(
-    odb: &Odb,
-    info: &CommitInfo,
-    target: &ObjectId,
-) -> Result<bool> {
+fn commit_has_object(odb: &Odb, info: &CommitInfo, target: &ObjectId) -> Result<bool> {
     let parent_tree = if let Some(parent) = info.parents.first() {
         let pobj = odb.read(parent)?;
         let pc = parse_commit(&pobj.data)?;
@@ -2693,7 +3076,8 @@ fn build_source_map(
     git_dir: &std::path::Path,
     first_parent: bool,
 ) -> Result<std::collections::HashMap<ObjectId, String>> {
-    let mut source_map: std::collections::HashMap<ObjectId, String> = std::collections::HashMap::new();
+    let mut source_map: std::collections::HashMap<ObjectId, String> =
+        std::collections::HashMap::new();
 
     // Collect refs with names
     let refs = collect_all_refs_with_names(git_dir)?;
@@ -2705,7 +3089,9 @@ fn build_source_map(
             if !visited.insert(commit_oid) {
                 continue;
             }
-            source_map.entry(commit_oid).or_insert_with(|| ref_name.clone());
+            source_map
+                .entry(commit_oid)
+                .or_insert_with(|| ref_name.clone());
             if let Ok(obj) = odb.read(&commit_oid) {
                 if let Ok(commit) = parse_commit(&obj.data) {
                     if first_parent {
@@ -2728,9 +3114,7 @@ fn build_source_map(
 }
 
 /// Collect all refs with their names from the repository.
-fn collect_all_refs_with_names(
-    git_dir: &std::path::Path,
-) -> Result<Vec<(ObjectId, String)>> {
+fn collect_all_refs_with_names(git_dir: &std::path::Path) -> Result<Vec<(ObjectId, String)>> {
     let mut refs = Vec::new();
 
     // HEAD
@@ -2778,9 +3162,8 @@ fn collect_named_refs_from_dir(
             collect_named_refs_from_dir(git_dir, &path, refs)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let raw = content.trim();
-            if raw.starts_with("ref: ") {
+            if let Some(target) = raw.strip_prefix("ref: ") {
                 // Symbolic ref — resolve
-                let target = &raw[5..];
                 if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
                     let full_path = path.to_string_lossy();
                     if let Some(idx) = full_path.find("refs/") {
@@ -2828,7 +3211,8 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
 fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
     // Known built-in formats — no resolution needed
     match fmt {
-        "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+        "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw"
+        | "mboxrd" => {
             return fmt.to_string();
         }
         _ => {}
@@ -2853,7 +3237,8 @@ fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
         let key = format!("pretty.{}", current);
         if let Some(value) = config.get(&key) {
             match value.as_str() {
-                "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email" | "raw" | "mboxrd" => {
+                "oneline" | "short" | "medium" | "full" | "fuller" | "reference" | "email"
+                | "raw" | "mboxrd" => {
                     return value;
                 }
                 v if v.starts_with("format:") || v.starts_with("tformat:") => {

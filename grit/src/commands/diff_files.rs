@@ -6,7 +6,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK};
+use grit_lib::index::{
+    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
+};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -153,17 +155,41 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
-                "--raw" => { format = OutputFormat::Raw; suppress_diff = false; }
-                "-p" | "--patch" | "-u" => { format = OutputFormat::Patch; suppress_diff = false; }
-                "--stat" => { format = OutputFormat::Stat; suppress_diff = false; }
-                "--numstat" => { format = OutputFormat::NumStat; suppress_diff = false; }
-                "--name-only" => { format = OutputFormat::NameOnly; suppress_diff = false; }
-                "--name-status" => { format = OutputFormat::NameStatus; suppress_diff = false; }
+                "--raw" => {
+                    format = OutputFormat::Raw;
+                    suppress_diff = false;
+                }
+                "-p" | "--patch" | "-u" => {
+                    format = OutputFormat::Patch;
+                    suppress_diff = false;
+                }
+                "--stat" => {
+                    format = OutputFormat::Stat;
+                    suppress_diff = false;
+                }
+                "--numstat" => {
+                    format = OutputFormat::NumStat;
+                    suppress_diff = false;
+                }
+                "--name-only" => {
+                    format = OutputFormat::NameOnly;
+                    suppress_diff = false;
+                }
+                "--name-status" => {
+                    format = OutputFormat::NameStatus;
+                    suppress_diff = false;
+                }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
                 "-s" | "--no-patch" => suppress_diff = true,
-                "--patch-with-raw" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show raw
-                "--patch-with-stat" => { format = OutputFormat::Patch; suppress_diff = false; } // TODO: also show stat
+                "--patch-with-raw" => {
+                    format = OutputFormat::Patch;
+                    suppress_diff = false;
+                } // TODO: also show raw
+                "--patch-with-stat" => {
+                    format = OutputFormat::Patch;
+                    suppress_diff = false;
+                } // TODO: also show stat
                 "-0" => stage = 0,
                 "-1" => stage = 1,
                 "-2" => stage = 2,
@@ -177,13 +203,24 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     abbrev = Some(parsed);
                 }
                 // Silently accept diff options we don't fully implement yet
-                "-w" | "--ignore-all-space" | "-b" | "--ignore-space-change"
-                | "--ignore-space-at-eol" | "--ignore-blank-lines"
-                | "--diff-filter" | "--full-index" | "--no-ext-diff"
-                | "--no-prefix" | "--no-renames" | "--no-abbrev" => {}
-                _ if arg.starts_with("--diff-filter=") || arg.starts_with("-G")
-                    || arg.starts_with("-S") || arg.starts_with("-O")
-                    || arg.starts_with("--src-prefix=") || arg.starts_with("--dst-prefix=") => {}
+                "-w"
+                | "--ignore-all-space"
+                | "-b"
+                | "--ignore-space-change"
+                | "--ignore-space-at-eol"
+                | "--ignore-blank-lines"
+                | "--diff-filter"
+                | "--full-index"
+                | "--no-ext-diff"
+                | "--no-prefix"
+                | "--no-renames"
+                | "--no-abbrev" => {}
+                _ if arg.starts_with("--diff-filter=")
+                    || arg.starts_with("-G")
+                    || arg.starts_with("-S")
+                    || arg.starts_with("-O")
+                    || arg.starts_with("--src-prefix=")
+                    || arg.starts_with("--dst-prefix=") => {}
                 _ => bail!("unsupported option: {arg}"),
             }
             idx += 1;
@@ -471,7 +508,10 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
     } else if change.status == 'A' {
         header.push_str(&format!("\nnew file mode {:06o}", change.new_mode));
     } else if change.old_mode != change.new_mode {
-        header.push_str(&format!("\nold mode {:06o}\nnew mode {:06o}", change.old_mode, change.new_mode));
+        header.push_str(&format!(
+            "\nold mode {:06o}\nnew mode {:06o}",
+            change.old_mode, change.new_mode
+        ));
     }
 
     if old_content == new_content && change.old_mode != change.new_mode {

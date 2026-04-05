@@ -67,13 +67,12 @@ fn check_worktree_conflict(args: &[String]) -> std::result::Result<(), String> {
             continue;
         }
         // Flags that consume the next argument (skip it)
-        if a == "-c" || a == "-C" || a == "--create" || a == "--force-create" {
-            if i + 1 < args.len() {
+        if (a == "-c" || a == "-C" || a == "--create" || a == "--force-create")
+            && i + 1 < args.len() {
                 branch = Some(args[i + 1].clone());
                 i += 2;
                 continue;
             }
-        }
         // Combined form: -c<branch>, -C<branch>
         if let Some(rest) = a.strip_prefix("-c").or_else(|| a.strip_prefix("-C")) {
             if !rest.is_empty() && !rest.starts_with('-') {
@@ -85,13 +84,25 @@ fn check_worktree_conflict(args: &[String]) -> std::result::Result<(), String> {
         // Skip known flags
         if a.starts_with('-') {
             // Some flags take a value
-            if a == "-d" || a == "--detach" || a == "-f" || a == "--force"
-                || a == "--no-guess" || a == "--guess" || a == "-q" || a == "--quiet"
-                || a == "--progress" || a == "--no-progress"
-                || a == "--no-track" || a == "-t" || a == "--track"
-                || a == "--recurse-submodules" || a == "--no-recurse-submodules"
+            if a == "-d"
+                || a == "--detach"
+                || a == "-f"
+                || a == "--force"
+                || a == "--no-guess"
+                || a == "--guess"
+                || a == "-q"
+                || a == "--quiet"
+                || a == "--progress"
+                || a == "--no-progress"
+                || a == "--no-track"
+                || a == "-t"
+                || a == "--track"
+                || a == "--recurse-submodules"
+                || a == "--no-recurse-submodules"
                 || a == "--ignore-other-worktrees"
-                || a == "--discard-changes" || a == "-m" || a == "--merge"
+                || a == "--discard-changes"
+                || a == "-m"
+                || a == "--merge"
                 || a == "--conflict"
             {
                 i += 1;
@@ -134,7 +145,10 @@ fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
         if std::path::Path::new(common).is_absolute() {
             std::path::PathBuf::from(common)
         } else {
-            git_dir.join(common).canonicalize().unwrap_or_else(|_| git_dir.clone())
+            git_dir
+                .join(common)
+                .canonicalize()
+                .unwrap_or_else(|_| git_dir.clone())
         }
     } else {
         git_dir.clone()
@@ -147,7 +161,9 @@ fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
     if main_head_path != git_dir.join("HEAD") {
         if let Ok(head_content) = std::fs::read_to_string(&main_head_path) {
             let head_trimmed = head_content.trim();
-            if head_trimmed == branch_ref_no_nl || head_trimmed == format!("ref: refs/heads/{branch}") {
+            if head_trimmed == branch_ref_no_nl
+                || head_trimmed == format!("ref: refs/heads/{branch}")
+            {
                 // Find the main worktree path
                 let wt_path = main_git_dir.parent().unwrap_or(&main_git_dir);
                 return Err(format!(
@@ -166,7 +182,9 @@ fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
             for entry in entries.flatten() {
                 let wt_git_dir = entry.path();
                 // Skip our own worktree
-                if wt_git_dir.canonicalize().unwrap_or_else(|_| wt_git_dir.clone())
+                if wt_git_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| wt_git_dir.clone())
                     == git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone())
                 {
                     continue;

@@ -63,7 +63,9 @@ pub fn run(mut args: Args) -> Result<()> {
                     let mut norm = Vec::new();
                     for comp in combined.components() {
                         match comp {
-                            std::path::Component::ParentDir => { norm.pop(); }
+                            std::path::Component::ParentDir => {
+                                norm.pop();
+                            }
                             std::path::Component::CurDir => {}
                             other => norm.push(other.as_os_str().to_string_lossy().into_owned()),
                         }
@@ -114,7 +116,15 @@ pub fn run(mut args: Args) -> Result<()> {
         None
     };
 
-    list_tree(&repo, &obj.data, "", &args, &mut out, term, cwd_prefix.as_deref())?;
+    list_tree(
+        &repo,
+        &obj.data,
+        "",
+        &args,
+        &mut out,
+        term,
+        cwd_prefix.as_deref(),
+    )?;
 
     Ok(())
 }

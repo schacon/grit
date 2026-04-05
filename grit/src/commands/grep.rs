@@ -326,9 +326,7 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             // submodule.recurse config: enable --recurse-submodules if not explicitly set
             if !args.recurse_submodules && !args.no_recurse_submodules {
-                if let Some(val) = c
-                    .get("submodule.recurse")
-                {
+                if let Some(val) = c.get("submodule.recurse") {
                     if val == "true" || val == "1" || val == "yes" {
                         args.recurse_submodules = true;
                     }
@@ -523,9 +521,7 @@ fn grep_cached(
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty()
-            && !any_pathspec_matches(&display_path, pathspecs, is_submodule)
-        {
+        if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, is_submodule) {
             continue;
         }
 
@@ -647,9 +643,7 @@ fn grep_worktree(
 
         // Pathspec filtering is relative to the superproject
         let is_submodule = entry.mode == MODE_GITLINK;
-        if !pathspecs.is_empty()
-            && !any_pathspec_matches(&display_path, pathspecs, is_submodule)
-        {
+        if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, is_submodule) {
             continue;
         }
 
@@ -767,7 +761,7 @@ fn matches_pathspec(path: &str, pathspec: &str, is_dir: bool) -> bool {
             // Use a simple check: see if pathspec starts with the dir
             // path literally (before any glob chars).
             let literal_prefix = pathspec
-                .find(|c: char| matches!(c, '*' | '?' | '[' | '\\'))
+                .find(['*', '?', '[', '\\'])
                 .map(|pos| &pathspec[..pos])
                 .unwrap_or(pathspec);
             // If the literal prefix starts with path/ then this dir is needed
@@ -818,7 +812,7 @@ enum BinaryOverride {
 struct DiffAttrRule {
     pattern: String,
     is_negated: bool, // "-diff" → treat as binary
-    // If not negated, treat as text
+                      // If not negated, treat as text
 }
 
 /// Load diff attribute rules from .gitattributes files.
@@ -981,13 +975,11 @@ fn grep_filesystem(
             }
         } else if ft.is_file() {
             // Apply pathspec filter
-            if !pathspecs.is_empty()
-                && !any_pathspec_matches(&display_path, pathspecs, false)
-            {
+            if !pathspecs.is_empty() && !any_pathspec_matches(&display_path, pathspecs, false) {
                 continue;
             }
 
-            let content = match std::fs::read(&entry.path()) {
+            let content = match std::fs::read(entry.path()) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
@@ -1028,23 +1020,28 @@ fn open_submodule_repo(sub_path: &Path) -> Result<Repository> {
     let git_path = sub_path.join(".git");
     if git_path.is_dir() {
         // Regular .git directory
-        Repository::open(&git_path, Some(sub_path))
-            .map_err(|e| anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e))
+        Repository::open(&git_path, Some(sub_path)).map_err(|e| {
+            anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e)
+        })
     } else if git_path.is_file() {
         // gitdir: file pointing to the actual git directory
         let content = std::fs::read_to_string(&git_path)
             .with_context(|| format!("failed to read {}", git_path.display()))?;
-        let gitdir = content.trim().strip_prefix("gitdir: ")
+        let gitdir = content
+            .trim()
+            .strip_prefix("gitdir: ")
             .ok_or_else(|| anyhow::anyhow!("invalid .git file in {}", sub_path.display()))?;
         let gitdir_path = if Path::new(gitdir).is_absolute() {
             std::path::PathBuf::from(gitdir)
         } else {
             sub_path.join(gitdir)
         };
-        let gitdir_path = gitdir_path.canonicalize()
+        let gitdir_path = gitdir_path
+            .canonicalize()
             .with_context(|| format!("failed to resolve gitdir {}", gitdir_path.display()))?;
-        Repository::open(&gitdir_path, Some(sub_path))
-            .map_err(|e| anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e))
+        Repository::open(&gitdir_path, Some(sub_path)).map_err(|e| {
+            anyhow::anyhow!("failed to open submodule at {}: {}", sub_path.display(), e)
+        })
     } else {
         anyhow::bail!("no .git directory in {}", sub_path.display())
     }
@@ -1671,11 +1668,10 @@ fn grep_tree(
         let is_gitlink = entry.mode == 0o160000;
 
         // Apply pathspec filter
-        if !pathspecs.is_empty() {
-            if !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink) {
+        if !pathspecs.is_empty()
+            && !any_pathspec_matches(&full_name, pathspecs, is_tree || is_gitlink) {
                 continue;
             }
-        }
 
         // Submodule (gitlink) in tree: recurse if --recurse-submodules
         if is_gitlink {

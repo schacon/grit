@@ -89,13 +89,13 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Handle scissors: discard everything before `-- >8 --`
-        if args.scissors && !past_scissors
-            && (line.contains("-- >8 --") || line.contains("-->8--")) {
-                body_lines.clear();
-                patch_lines.clear();
-                past_scissors = true;
-                continue;
-            }
+        if args.scissors && !past_scissors && (line.contains("-- >8 --") || line.contains("-->8--"))
+        {
+            body_lines.clear();
+            patch_lines.clear();
+            past_scissors = true;
+            continue;
+        }
 
         if !in_patch {
             // Detect the start of the patch

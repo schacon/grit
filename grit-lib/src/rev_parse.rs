@@ -778,7 +778,8 @@ fn approxidate(s: &str) -> Option<i64> {
             let rest = &input[i..];
             if rest.len() >= 10 {
                 let bytes = rest.as_bytes();
-                if bytes[4] == b'-' && bytes[7] == b'-'
+                if bytes[4] == b'-'
+                    && bytes[7] == b'-'
                     && bytes[0..4].iter().all(|b| b.is_ascii_digit())
                     && bytes[5..7].iter().all(|b| b.is_ascii_digit())
                     && bytes[8..10].iter().all(|b| b.is_ascii_digit())
@@ -790,7 +791,8 @@ fn approxidate(s: &str) -> Option<i64> {
                         year,
                         time::Month::try_from(month).ok()?,
                         day,
-                    ).ok()?;
+                    )
+                    .ok()?;
                     let dt = date.with_hms(0, 0, 0).ok()?;
                     let odt = dt.assume_utc();
                     return Some(odt.unix_timestamp());
@@ -833,7 +835,8 @@ fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
 fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Result<ObjectId> {
     use crate::index::Index;
     let index_path = repo.index_path();
-    let index = Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
+    let index =
+        Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
     match index.get(path.as_bytes(), stage) {
         Some(entry) => Ok(entry.oid),
         None => Err(Error::ObjectNotFound(format!(":{stage}:{path}"))),

@@ -94,7 +94,7 @@ fn main() {
 
 /// Get process ancestry by walking parent PIDs on Linux.
 fn get_process_ancestry() -> Vec<String> {
-    let mut result = Vec::new();
+    let result = Vec::new();
     #[cfg(target_os = "linux")]
     {
         let mut pid = std::process::id();
@@ -1305,9 +1305,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     // Simple helper that returns the given exit code,
                     // triggering trace2 events in the process.
                     if rest.len() >= 3 && rest[1].starts_with("001return") {
-                        let code: i32 = rest.get(2)
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
+                        let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
                         std::process::exit(code);
                     }
                     Ok(())

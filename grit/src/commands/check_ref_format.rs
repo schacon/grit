@@ -136,7 +136,8 @@ fn resolve_at_minus_for_branch(n: usize) -> Option<String> {
                         return Some(from_branch.to_string());
                     }
                     // Try to expand abbreviated SHA to full SHA
-                    if from_branch.len() >= 4 && from_branch.chars().all(|c| c.is_ascii_hexdigit()) {
+                    if from_branch.len() >= 4 && from_branch.chars().all(|c| c.is_ascii_hexdigit())
+                    {
                         if let Ok(oid) = grit_lib::rev_parse::resolve_revision(&repo, from_branch) {
                             return Some(oid.to_hex());
                         }
