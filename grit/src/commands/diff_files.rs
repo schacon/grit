@@ -287,7 +287,10 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
+                    if wt_oid != *idx_oid
+                        || wt_mode != idx_canonical
+                        || is_stat_smudged(idx_entry)
+                    {
                         changes.insert(
                             path.clone(),
                             Change {
@@ -369,6 +372,17 @@ fn collect_changes(
     }
 
     Ok(changes.into_values().collect())
+}
+
+/// `read-tree`-style entries carry zeroed stat data and are considered dirty
+/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
+fn is_stat_smudged(entry: &IndexEntry) -> bool {
+    entry.ctime_sec == 0
+        && entry.ctime_nsec == 0
+        && entry.mtime_sec == 0
+        && entry.mtime_nsec == 0
+        && entry.dev == 0
+        && entry.ino == 0
 }
 
 // ── Worktree probing ─────────────────────────────────────────────────

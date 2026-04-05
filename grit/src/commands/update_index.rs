@@ -6,6 +6,7 @@ use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -116,6 +117,7 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
+    let symlinks_enabled = core_symlinks_enabled(&repo);
 
     let work_tree = repo
         .work_tree
@@ -349,10 +351,19 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
-        let mode = {
+        let mut mode = {
             use std::os::unix::fs::MetadataExt;
             normalize_mode(meta.mode())
         };
+        let existing_mode = index.get(&rel_bytes, 0).map(|e| e.mode);
+        // On filesystems without symlink support (core.symlinks=false), keep
+        // an existing symlink entry's mode even if the worktree stores it
+        // as a plain file containing the link target.
+        if !symlinks_enabled && !meta.file_type().is_symlink() {
+            if existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
+                mode = grit_lib::index::MODE_SYMLINK;
+            }
+        }
 
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;
@@ -598,4 +609,12 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
     err.to_string().contains("Permission denied")
         || err.to_string().contains("permission denied")
+}
+
+fn core_symlinks_enabled(repo: &Repository) -> bool {
+    ConfigSet::load(Some(repo.git_dir.as_path()), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.symlinks"))
+        .and_then(|v| v.ok())
+        .unwrap_or(true)
 }
