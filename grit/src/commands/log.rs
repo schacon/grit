@@ -16,7 +16,7 @@ use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -363,6 +363,7 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    validate_pathspec_scope(&repo, &args.pathspecs)?;
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -714,6 +715,62 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Ensure pathspecs are within the repository worktree scope.
+///
+/// Git rejects pathspecs that escape the worktree (e.g. `..`) as
+/// "outside repository", and also rejects pathspecs provided while running in
+/// an unqualified `.git` context.
+fn validate_pathspec_scope(repo: &Repository, pathspecs: &[String]) -> Result<()> {
+    if pathspecs.is_empty() {
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        anyhow::bail!("pathspec '{}' is outside repository", pathspecs[0]);
+    };
+
+    let cwd_norm = normalize_path(&cwd);
+    let work_tree_norm = normalize_path(work_tree);
+    let git_dir_norm = normalize_path(&repo.git_dir);
+    if cwd_norm.starts_with(&git_dir_norm) {
+        anyhow::bail!("pathspec '{}' is outside repository", pathspecs[0]);
+    }
+
+    for pathspec in pathspecs {
+        if pathspec.starts_with(':') {
+            continue;
+        }
+        let as_path = Path::new(pathspec);
+        let candidate = if as_path.is_absolute() {
+            as_path.to_path_buf()
+        } else {
+            cwd_norm.join(as_path)
+        };
+        let candidate_norm = normalize_path(&candidate);
+        if !candidate_norm.starts_with(&work_tree_norm) {
+            anyhow::bail!("pathspec '{}' is outside repository", pathspec);
+        }
+    }
+
+    Ok(())
+}
+
+/// Normalize a path lexically by removing `.` and resolving `..`.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.

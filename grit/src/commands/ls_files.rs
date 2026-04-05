@@ -115,12 +115,19 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("cannot change to directory '{}'", target.display()))?;
     }
 
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("cannot ls-files in bare repository"))?;
     let cwd = std::env::current_dir().context("resolving current directory")?;
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let work_tree = if let Some(wt) = repo.work_tree.as_deref() {
+        wt
+    } else {
+        if let Some(outside) = args.pathspecs.iter().find(|p| pathspec_escapes_repo(p)) {
+            anyhow::bail!(
+                "pathspec '{}' is outside repository",
+                outside.to_string_lossy()
+            );
+        }
+        anyhow::bail!("cannot ls-files in bare repository");
+    };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
@@ -726,6 +733,31 @@ fn normalize_path(path: &std::path::Path) -> PathBuf {
         }
     }
     out
+}
+
+/// Check if a pathspec lexically escapes the repository context.
+///
+/// This is used when no working tree is available (bare repo or running in
+/// `.git`) to produce the expected "outside repository" diagnostic for
+/// pathspecs such as `..`.
+fn pathspec_escapes_repo(pathspec: &std::path::Path) -> bool {
+    let mut depth = 0usize;
+    for component in pathspec.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(_) => {
+                depth = depth.saturating_add(1);
+            }
+            Component::ParentDir => {
+                if depth == 0 {
+                    return true;
+                }
+                depth -= 1;
+            }
+            Component::RootDir | Component::Prefix(_) => return true,
+        }
+    }
+    false
 }
 
 fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {

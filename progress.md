@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    47 |
+| Completed   |    48 |
 | In progress |     0 |
-| Remaining   |   720 |
+| Remaining   |   719 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6136-pathspec-in-bare` — 3/3 tests pass (`log` and `ls-files` now reject out-of-repo `..` pathspecs in bare/.git contexts with the expected "outside repository" diagnostics)
 - `t6134-pathspec-in-submodule` — 3/3 tests pass (`git add` now detects `git -C <submodule> add` in unpopulated submodules and reports the expected fatal message)
 - `t6114-keep-packs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6425-merge-rename-delete` — 1/1 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -38,4 +39,4 @@
 
 ## What Remains
 
-720 test files still pending. See `plan.md` for the full prioritized list.
+719 test files still pending. See `plan.md` for the full prioritized list.
