@@ -373,11 +373,24 @@ fn show_commit(
         return Ok(());
     }
 
-    // Determine what sections to show. Multiple can be active simultaneously.
-    let show_raw = args.raw;
+    // Determine what sections to show. Summary formats suppress the default
+    // patch unless an option explicitly re-enables it.
+    let show_raw = args.patch_with_raw || (args.raw && !args.numstat);
     let show_numstat = args.numstat;
-    let show_stat = args.stat;
-    let show_patch = !args.quiet && !args.no_patch && !args.name_only && !args.name_status;
+    let show_stat = args.patch_with_stat || (args.stat && !show_numstat && !show_raw);
+    let show_patch = !args.quiet
+        && !args.no_patch
+        && (args.patch
+            || args.binary
+            || args.patch_with_raw
+            || args.patch_with_stat
+            || (!args.raw
+                && !args.stat
+                && !args.shortstat
+                && !args.summary
+                && !args.numstat
+                && !args.name_only
+                && !args.name_status));
 
     // --raw: raw diff-tree output format
     if show_raw {

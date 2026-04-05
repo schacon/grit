@@ -2,6 +2,30 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4043 bash scripts/run-upstream-tests.sh t4043-diff-rename-binary 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after fixing `grit show` so `--numstat` suppresses raw diff-tree lines while `--binary` still keeps patch output.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4043 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+
+- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 bash scripts/run-upstream-tests.sh t4113-apply-ending 2>&1 | tail -40`: initial run reported 2/3 passing with `apply at the beginning` failing; after tightening `grit apply` hunk anchoring for start-of-file insertions, the rerun completed with 3/3 passing against `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo test -p grit-lib --lib`: 97/97 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4005 cargo build --release -p grit-rs`: completed to produce the fresh binary for this task.
+- `rm -f target/release/grit && ln -s /tmp/grit-build-t4005/release/grit target/release/grit && CARGO_TARGET_DIR=/tmp/grit-build-t4005 bash scripts/run-upstream-tests.sh t4005-diff-rename-2 2>&1 | tail -40`: 4/4 passing; the runner hardcodes `target/release/grit`, so repointing it at the fresh `/tmp/grit-build-t4005` binary confirmed the remaining `plan.md` entry was stale and no Rust code changes were required.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4005 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4004 bash scripts/run-upstream-tests.sh t4004-diff-rename-symlink 2>&1 | tail -40`: 4/4 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4004 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4036 bash scripts/run-upstream-tests.sh t4036-format-patch-signer-mime 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 5/5 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4036 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2202 bash scripts/run-upstream-tests.sh t2202 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after accepting Git's pathspec-mode global flags before subcommand dispatch, which unblocked `git --literal-pathspecs add --all` in the upstream setup.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo fmt --all 2>/dev/null; true`: completed.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo test -p grit-lib --lib`: 97/97 passing.

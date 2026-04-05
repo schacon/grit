@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    70 |
+| Completed   |    75 |
 | In progress |     0 |
-| Remaining   |   696 |
+| Remaining   |   691 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4043-diff-rename-binary` — 3/3 tests pass (`git show -C -C --raw --binary --numstat` now matches the upstream binary-rename expectation because `show` lets `--numstat` win over `--raw` while `--binary` still keeps the patch output)
+- `t4113-apply-ending` — 3/3 tests pass (`git apply --index` now rejects a start-of-file hunk that only matches after sliding forward, so it fails cleanly instead of duplicating the first line as in upstream `t4113`)
+- `t4005-diff-rename-2` — 4/4 tests pass (re-ran the requested upstream verification against a fresh `/tmp/grit-build-t4005` release build; `scripts/run-upstream-tests.sh` actually executes `target/release/grit`, so repointing that path at the fresh binary confirmed the remaining `plan.md` entry was stale rather than a missing Rust implementation)
+- `t4004-diff-rename-symlink` — 4/4 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already produced the expected symlink rename/copy patch output for `git diff-index -C -p`, so the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t4036-format-patch-signer-mime` — 5/5 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already forced MIME headers when a non-ASCII signoff name was present and emitted a single `MIME-Version` header with `--attach`, so the `plan.md` entry was stale and no Rust code changes were required)
 - `t2202-add-addremove` — 3/3 tests pass (`git --literal-pathspecs add --all` now works because the top-level parser accepts Git's pathspec-mode global flags before dispatch, and the upstream `t2202` rerun completed green against the refreshed release binary)
 - `t3450-history` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already matched the two placeholder `git history` failure cases, so the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t3307-notes-man` — 3/3 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already matched the manpage examples for text notes and binary notes, so the remaining `PLAN.md` entry was stale and no Rust code changes were required)
@@ -63,4 +68,4 @@
 
 ## What Remains
 
-696 test files still pending. See `PLAN.md` for the full prioritized list.
+691 test files still pending. See `PLAN.md` for the full prioritized list.

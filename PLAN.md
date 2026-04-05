@@ -375,12 +375,12 @@ commit → check it off → move on.
 - [ ] `t4204-patch-id` ███████████████████░ 25/26 (1 left) — git patch-id
 - [ ] `t4021-format-patch-numbered` ██████████████████░░ 13/14 (1 left) — Format-patch numbering options
 - [ ] `t4065-diff-anchored` █████████████████░░░ 6/7 (1 left) — anchored diff algorithm
-- [ ] `t4036-format-patch-signer-mime` ████████████████░░░░ 4/5 (1 left) — format-patch -s should force MIME encoding as needed
-- [ ] `t4004-diff-rename-symlink` ███████████████░░░░░ 3/4 (1 left) — More rename detection tests.
+- [x] `t4036-format-patch-signer-mime` ████████████████████ 5/5 (done) — format-patch -s should force MIME encoding as needed
+- [x] `t4004-diff-rename-symlink` ████████████████████ 4/4 (done) — More rename detection tests.
 
-- [ ] `t4005-diff-rename-2` ███████████████░░░░░ 3/4 (1 left) — Same rename detection as t4003 but testing diff-raw.
-- [ ] `t4043-diff-rename-binary` █████████████░░░░░░░ 2/3 (1 left) — Move a binary file
-- [ ] `t4113-apply-ending` █████████████░░░░░░░ 2/3 (1 left) — git apply trying to add an ending line.
+- [x] `t4005-diff-rename-2` ████████████████████ 4/4 (done) — Same rename detection as t4003 but testing diff-raw.
+- [x] `t4043-diff-rename-binary` ████████████████████ 3/3 (done) — Move a binary file
+- [x] `t4113-apply-ending` ████████████████████ 3/3 (done) — git apply trying to add an ending line.
 
 - [ ] `t4025-hunk-header` ██████████░░░░░░░░░░ 1/2 (1 left) — diff hunk header truncation
 - [ ] `t4066-diff-emit-delay` ██████████░░░░░░░░░░ 1/2 (1 left) — test combined/stat/moved interaction

@@ -620,6 +620,20 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
         // If context at hunk_start doesn't match, scan nearby to find it
         let actual_start = find_hunk_start(&old_lines, hunk, hunk_start);
 
+        // A hunk anchored at the start of the file cannot slide forward if it
+        // begins by inserting new content. Doing so would silently preserve the
+        // original first line and duplicate the inserted line.
+        if hunk_start == 0
+            && actual_start > 0
+            && hunk
+                .lines
+                .iter()
+                .find(|hl| !matches!(hl, HunkLine::NoNewline))
+                .is_some_and(|hl| matches!(hl, HunkLine::Add(_)))
+        {
+            bail!("patch does not apply");
+        }
+
         // Copy lines before this hunk
         while old_idx < actual_start && old_idx < old_lines.len() {
             result.push(old_lines[old_idx].to_string());
