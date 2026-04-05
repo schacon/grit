@@ -54,3 +54,7 @@
 - `./scripts/run-tests.sh t2023-checkout-m.sh`: 5/5 passing.
 - `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after checkout changes; reverted unrelated clippy edits in non-target files).
 - `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding global `--literal-pathspecs` passthrough and improving `switch` ambiguous remote-tracking diagnostics).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2202-add-addremove.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t2202-add-addremove.sh`: 3/3 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).

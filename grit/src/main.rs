@@ -1307,6 +1307,7 @@ struct GlobalOpts {
     config_overrides: Vec<String>,
     bare: bool,
     no_advice: bool,
+    literal_pathspecs: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1391,6 +1392,13 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --literal-pathspecs
+        if arg == "--literal-pathspecs" {
+            opts.literal_pathspecs = true;
+            i += 1;
+            continue;
+        }
+
         // --list-cmds=<categories>
         if let Some(val) = arg.strip_prefix("--list-cmds=") {
             return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
@@ -1446,6 +1454,9 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
+    }
+    if opts.literal_pathspecs {
+        std::env::set_var("GIT_LITERAL_PATHSPECS", "1");
     }
     Ok(())
 }
