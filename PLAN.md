@@ -929,7 +929,7 @@ commit → check it off → move on.
 - [x] `t9304-fast-import-marks` ████████████████████ 8/8 (0 left) — test exotic situations with marks
 - [x] `t9850-shell` ████████████████████ 5/5 (0 left) — git shell tests
 - [x] `t9305-fast-import-signatures` ████████████████████ 21/21 (0 left) — git fast-import --signed-commits=<mode>
-- [ ] `t9306-fast-import-signed-tags` ████████████░░░░░░░░ 6/10 (4 left) — git fast-import --signed-tags=<mode>
+- [x] `t9306-fast-import-signed-tags` ████████████████████ 10/10 (0 left) — git fast-import --signed-tags=<mode>
 - [ ] `t9351-fast-export-anonymize` ██████████████░░░░░░ 12/17 (5 left) — basic tests for fast-export --anonymize
 - [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
 - [x] `t9301-fast-import-notes` ████████████████████ 17/17 (0 left) — test git fast-import of notes objects

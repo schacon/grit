@@ -37,6 +37,15 @@ enum SignedCommitsMode {
 }
 
 #[derive(Debug, Clone)]
+enum SignedTagsMode {
+    Verbatim,
+    WarnVerbatim,
+    Strip,
+    WarnStrip,
+    Abort,
+}
+
+#[derive(Debug, Clone)]
 struct SignatureCommand {
     algo: String,
     format: String,
@@ -62,14 +71,24 @@ struct ParsedUnsignedCommit {
 
 /// Run `grit fast-import`.
 pub fn run(args: Args) -> Result<()> {
-    let (signed_mode, mut passthrough_args) = extract_signed_commits_mode(&args.args)?;
-    if signed_mode.is_none() {
+    let (signed_commit_mode, signed_tag_mode, mut passthrough_args) =
+        extract_signature_modes(&args.args)?;
+    if signed_commit_mode.is_none() && signed_tag_mode.is_none() {
         return crate::commands::git_passthrough::run("fast-import", &passthrough_args);
     }
-    let signed_mode = signed_mode.unwrap_or(SignedCommitsMode::Strip);
 
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input)?;
+
+    if let Some(tag_mode) = &signed_tag_mode {
+        input = process_tag_signatures(&input, tag_mode)?;
+    }
+
+    if signed_commit_mode.is_none() {
+        run_system_fast_import(&passthrough_args, &input)?;
+        return Ok(());
+    }
+    let signed_mode = signed_commit_mode.unwrap_or(SignedCommitsMode::Strip);
     let (stripped, commit_infos) = strip_signature_commands(&input)?;
 
     if matches!(signed_mode, SignedCommitsMode::Abort)
@@ -148,8 +167,11 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn extract_signed_commits_mode(args: &[String]) -> Result<(Option<SignedCommitsMode>, Vec<String>)> {
-    let mut mode = None;
+fn extract_signature_modes(
+    args: &[String],
+) -> Result<(Option<SignedCommitsMode>, Option<SignedTagsMode>, Vec<String>)> {
+    let mut commit_mode = None;
+    let mut tag_mode = None;
     let mut rest = Vec::new();
     for arg in args {
         if let Some(raw) = arg.strip_prefix("--signed-commits=") {
@@ -174,12 +196,141 @@ fn extract_signed_commits_mode(args: &[String]) -> Result<(Option<SignedCommitsM
             } else {
                 bail!("invalid value for --signed-commits: {raw}");
             };
-            mode = Some(parsed);
+            commit_mode = Some(parsed);
+        } else if let Some(raw) = arg.strip_prefix("--signed-tags=") {
+            let parsed = match raw {
+                "verbatim" => SignedTagsMode::Verbatim,
+                "warn-verbatim" => SignedTagsMode::WarnVerbatim,
+                "strip" => SignedTagsMode::Strip,
+                "warn-strip" => SignedTagsMode::WarnStrip,
+                "abort" => SignedTagsMode::Abort,
+                _ => bail!("invalid value for --signed-tags: {raw}"),
+            };
+            tag_mode = Some(parsed);
         } else {
             rest.push(arg.clone());
         }
     }
-    Ok((mode, rest))
+    Ok((commit_mode, tag_mode, rest))
+}
+
+fn process_tag_signatures(input: &[u8], mode: &SignedTagsMode) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut pos = 0usize;
+
+    while let Some(line) = read_line(input, &mut pos) {
+        if let Some(name_raw) = line.strip_prefix(b"tag ") {
+            out.extend_from_slice(line);
+            let tag_name = String::from_utf8_lossy(name_raw).trim().to_owned();
+
+            while let Some(tag_line) = read_line(input, &mut pos) {
+                if tag_line == b"\n" {
+                    out.extend_from_slice(tag_line);
+                    break;
+                }
+
+                if let Some(data_len) = parse_data_len(tag_line) {
+                    let payload = read_exact(input, &mut pos, data_len)?;
+                    let payload_text = String::from_utf8_lossy(payload).to_string();
+                    let (processed, _had_signature) =
+                        process_tag_message_payload(&payload_text, mode, &tag_name)?;
+                    out.extend_from_slice(format!("data {}\n", processed.len()).as_bytes());
+                    out.extend_from_slice(processed.as_bytes());
+                    if pos < input.len() && input[pos] == b'\n' {
+                        out.push(b'\n');
+                        pos += 1;
+                    }
+                } else {
+                    out.extend_from_slice(tag_line);
+                }
+            }
+            continue;
+        }
+
+        out.extend_from_slice(line);
+        if let Some(data_len) = parse_data_len(line) {
+            let payload = read_exact(input, &mut pos, data_len)?;
+            out.extend_from_slice(payload);
+            if pos < input.len() && input[pos] == b'\n' {
+                out.push(b'\n');
+                pos += 1;
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn process_tag_message_payload(
+    payload: &str,
+    mode: &SignedTagsMode,
+    tag_name: &str,
+) -> Result<(String, bool)> {
+    let (stripped, had_signature) = strip_tag_signature_blocks(payload);
+    if !had_signature {
+        return Ok((payload.to_owned(), false));
+    }
+
+    match mode {
+        SignedTagsMode::Abort => {
+            bail!("encountered signed tag '{}'; use --signed-tags=<mode> to handle it", tag_name);
+        }
+        SignedTagsMode::Verbatim => Ok((payload.to_owned(), true)),
+        SignedTagsMode::WarnVerbatim => {
+            eprintln!("importing a tag signature verbatim for tag '{}'", tag_name);
+            Ok((payload.to_owned(), true))
+        }
+        SignedTagsMode::Strip => Ok((stripped, true)),
+        SignedTagsMode::WarnStrip => {
+            eprintln!("stripping a tag signature for tag '{}'", tag_name);
+            Ok((stripped, true))
+        }
+    }
+}
+
+fn strip_tag_signature_blocks(payload: &str) -> (String, bool) {
+    let mut out = Vec::new();
+    let mut in_block = false;
+    let mut had_signature = false;
+    let had_trailing_nl = payload.ends_with('\n');
+
+    for line in payload.lines() {
+        if !in_block
+            && line.starts_with("-----BEGIN ")
+            && (line.contains("SIGNATURE") || line.contains("SIGNED MESSAGE"))
+        {
+            in_block = true;
+            had_signature = true;
+            continue;
+        }
+        if in_block {
+            if line.starts_with("-----END ")
+                && (line.contains("SIGNATURE") || line.contains("SIGNED MESSAGE"))
+            {
+                in_block = false;
+            }
+            continue;
+        }
+        out.push(line);
+    }
+
+    // Collapse excess blank lines left behind from removed signature blocks.
+    let mut compact = Vec::new();
+    let mut prev_blank = false;
+    for line in out {
+        let blank = line.trim().is_empty();
+        if blank && prev_blank {
+            continue;
+        }
+        compact.push(line);
+        prev_blank = blank;
+    }
+
+    let mut result = compact.join("\n");
+    if had_trailing_nl {
+        result.push('\n');
+    }
+    (result, had_signature)
 }
 
 fn strip_signature_commands(input: &[u8]) -> Result<(Vec<u8>, Vec<CommitInfo>)> {
