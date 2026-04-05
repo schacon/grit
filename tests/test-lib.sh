@@ -127,6 +127,7 @@ setup_trash
 # Persist test_tick across subshell boundaries via a state file.
 # Store inside .git/ so the file is never tracked by git.
 _TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+TEST_OID_CACHE_FILE="$TRASH_DIRECTORY/.test_oid_cache"
 
 test_tick () {
 	if test -z "${test_tick+set}"
@@ -344,6 +345,19 @@ export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
 # test_oid helpers — support SHA-1 only for now
 test_oid () {
+	local hash_algo=
+	if test "${1#--hash=}" != "$1"
+	then
+		hash_algo="${1#--hash=}"
+		shift
+	fi
+	# We only implement SHA-1 in this test harness.
+	if test -n "$hash_algo" && test "$hash_algo" != "sha1" && test "$hash_algo" != "builtin"
+	then
+		echo "unknown-oid"
+		return
+	fi
+
 	case "$1" in
 	numeric) echo "1234567890123456789012345678901234567890" ;;
 	oid_version) echo "1" ;;
@@ -351,13 +365,32 @@ test_oid () {
 	hexsz) echo "40" ;;
 	algo) echo "sha1" ;;
 	zero) echo "$ZERO_OID" ;;
-	*) echo "unknown-oid" ;;
+	*)
+		if test -n "$TEST_OID_CACHE_FILE" && test -f "$TEST_OID_CACHE_FILE"
+		then
+			oid=$(awk -v key="$1" '$1 == key { print $2; exit }' "$TEST_OID_CACHE_FILE")
+			if test -n "$oid"
+			then
+				echo "$oid"
+				return
+			fi
+		fi
+		echo "unknown-oid"
+		;;
 	esac
 }
 
 test_oid_cache () {
-	# consume and ignore stdin
-	cat >/dev/null
+	: >"$TEST_OID_CACHE_FILE"
+	while read -r name value
+	do
+		test -z "$name" && continue
+		case "$value" in
+		sha1:*)
+			echo "$name ${value#sha1:}" >>"$TEST_OID_CACHE_FILE"
+			;;
+		esac
+	done
 }
 
 # CR/LF helpers

@@ -712,7 +712,7 @@ commit → check it off → move on.
 - [x] `t6401-merge-criss-cross` ████████████████████ 4/4 (0 left) — Test criss-cross merge
 - [x] `t6421-merge-partial-clone` ████████████████████ 3/3 (0 left) — limiting blob downloads when merging with partial clones
 - [x] `t6133-pathspec-rev-dwim` ████████████████████ 6/6 (0 left) — test dwim of revs versus pathspecs in revision parser
-- [ ] `t6404-recursive-merge` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test merge without common ancestors
+- [x] `t6404-recursive-merge` ████████████████████ 6/6 (0 left) — Test merge without common ancestors
 - [x] `t6415-merge-dir-to-symlink` ████████████████████ 24/24 (0 left) — merging when a directory was replaced with a symlink
 - [ ] `t6004-rev-list-path-optim` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git rev-list trivial path optimization test
 

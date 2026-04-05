@@ -46,6 +46,12 @@
 - `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (rev-list/log regression after partial-clone marker integration).
 - `./scripts/run-tests.sh t6110-rev-list-sparse.sh`: 2/2 passing (rev-list regression check after `--missing=print` marker integration).
 - `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 2/7 passing (existing partial suite remains partial; used as compatibility snapshot after clone filter-state changes).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6404-recursive-merge.sh`: 6/6 passing (direct validation after virtual merge-base conflict-stage synthesis and binary conflict diagnostic alignment).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (now fully passing).
+- `./scripts/run-tests.sh t6415-merge-dir-to-symlink.sh`: 24/24 passing (regression check: still fully passing after virtual merge-base adjustments).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (regression check: still fully passing after merge-core updates).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check: still fully passing after merge-core updates).
+- `./scripts/run-tests.sh t3600-rm.sh`: 49/82 passing (snapshot sanity check after `rm --cached` symlink recursion guard updates; no new full-pass claim for this suite).
 - `./scripts/run-tests.sh t6415-merge-dir-to-symlink.sh`: 24/24 passing (fully passing after fixing `rm --cached` symlink recursion checks and merge preflight protection for untracked/dirty files during dir↔symlink transitions).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6415-merge-dir-to-symlink.sh`: 24/24 passing (direct validation from clean trash dir).
 - `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 3/3 passing (regression check after merge preflight updates).

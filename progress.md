@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    60 |
+| Completed   |    61 |
 | In progress |     0 |
-| Remaining   |   707 |
+| Remaining   |   706 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -47,7 +47,8 @@
 - `t6133-pathspec-rev-dwim` — 6/6 tests pass (`log` now DWIMs wildcard and `:/*.t` tokens to pathspecs when revision resolution fails; `rev-parse` now supports `^{/regex}` commit-message peel and `@{now ...}` reflog date selectors via approxidate `now`)
 - `t6421-merge-partial-clone` — 3/3 tests pass (added partial-clone promisor marker initialization for `clone --filter=blob:none`, `rev-list --missing=print` integration with promisor marker output, and merge-side simulated lazy-fetch trace batches with expected `fetch_count` accounting; fixed rename/rename(1to1) handling to avoid false rename/delete+rename/add conflicts in `B-many` case)
 - `t6415-merge-dir-to-symlink` — 24/24 tests pass (`rm --cached` now treats tracked symlink paths as non-directories by using `symlink_metadata` for recursion checks and removal dispatch; merge now aborts before overwriting untracked/dirty files in directory→symlink transitions, preserving local data and matching expected merge refusal behavior)
+- `t6404-recursive-merge` — 6/6 tests pass (virtual merge-base construction now reuses conflict-marker blobs from higher-stage entries to preserve nested virtual-base stage-1 OIDs; merge now emits Git-compatible binary conflict diagnostic `Cannot merge binary files: <path> (HEAD vs. <branch>)`)
 
 ## What Remains
 
-708 test files still pending. See `plan.md` for the full prioritized list.
+706 test files still pending. See `plan.md` for the full prioritized list.

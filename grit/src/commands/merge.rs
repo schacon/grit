@@ -527,9 +527,16 @@ fn create_virtual_merge_base(
         return Ok(bases[0]);
     }
 
+    let mut ordered_bases = bases.to_vec();
+    ordered_bases.sort_by(|a, b| {
+        let ta = commit_author_timestamp(repo, *a).unwrap_or(0);
+        let tb = commit_author_timestamp(repo, *b).unwrap_or(0);
+        tb.cmp(&ta).then_with(|| a.cmp(b))
+    });
+
     // Recursively merge bases pairwise
-    let mut current = bases[0];
-    for &next in &bases[1..] {
+    let mut current = ordered_bases[0];
+    for &next in &ordered_bases[1..] {
         // Find the merge base of current and next
         let sub_bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, current, &[next])?;
         let sub_base_oid = if sub_bases.is_empty() {
@@ -552,7 +559,10 @@ fn create_virtual_merge_base(
             sub_bases[0]
         };
 
-        // Merge current and next using sub_base_oid as base
+        // Merge current and next using sub_base_oid as base.
+        // Keep `current` as ours and `next` as theirs. Combined with
+        // timestamp ordering, this matches Git's virtual merge-base
+        // conflict marker orientation for criss-cross merges.
         let base_tree = commit_tree(repo, sub_base_oid)?;
         let ours_tree = commit_tree(repo, current)?;
         let theirs_tree = commit_tree(repo, next)?;
@@ -561,7 +571,11 @@ fn create_virtual_merge_base(
         let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
         let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
-        // Create a dummy head state for merge_trees
+        // Create a dummy head state for merge_trees.
+        // When constructing a virtual base, Git labels the two temporary
+        // branches opposite to the merge operands in a way that keeps
+        // conflict markers stable for t6404. Using `current` here matches
+        // that orientation.
         let head = HeadState::Detached { oid: current };
         let merge_result = merge_trees(
             repo,
@@ -569,25 +583,37 @@ fn create_virtual_merge_base(
             &ours_entries,
             &theirs_entries,
             &head,
-            "virtual",
+            "Temporary merge branch 2",
             favor,
             None,
         )?;
 
-        // Build a tree from the merged index (use stage-0 entries, or for conflicts pick ours)
+        // Build a tree from the merged index:
+        // - use stage-0 entries when clean
+        // - for conflicts (no stage-0), synthesize stage-0 entries from the
+        //   conflict marker content written to conflict_files.
         let mut final_entries: Vec<IndexEntry> = Vec::new();
         let mut seen_paths: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        let conflict_content_map: HashMap<Vec<u8>, Vec<u8>> = merge_result
+            .conflict_files
+            .iter()
+            .map(|(path, content)| (path.as_bytes().to_vec(), content.clone()))
+            .collect();
         // First collect stage 0 entries
         for entry in &merge_result.index.entries {
             if entry.stage() == 0 && seen_paths.insert(entry.path.clone()) {
                 final_entries.push(entry.clone());
             }
         }
-        // For conflicted paths (no stage 0), pick stage 2 (ours)
+        // For conflicted paths (no stage 0), synthesize from stage 2 and
+        // conflict marker blob content.
         for entry in &merge_result.index.entries {
             if entry.stage() == 2 && seen_paths.insert(entry.path.clone()) {
                 let mut e = entry.clone();
                 e.flags &= !0x3000; // Clear stage bits → stage 0
+                if let Some(content) = conflict_content_map.get(&entry.path) {
+                    e.oid = repo.odb.write(ObjectKind::Blob, content)?;
+                }
                 final_entries.push(e);
             }
         }
@@ -729,7 +755,9 @@ fn do_real_merge(
 
         // Print per-file conflict messages to stdout (git sends these to stdout)
         for (ctype, cpath) in &merge_result.conflict_descriptions {
-            if ctype == "rename/delete" || ctype == "modify/delete" {
+            if ctype == "binary" {
+                println!("Cannot merge binary files: {cpath}");
+            } else if ctype == "rename/delete" || ctype == "modify/delete" {
                 println!("CONFLICT ({ctype}): {cpath}");
             } else {
                 println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
@@ -2158,7 +2186,11 @@ fn merge_trees(
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
-    let ours_label = "HEAD";
+    let ours_label = if their_name == "Temporary merge branch 2" {
+        "Temporary merge branch 1"
+    } else {
+        "HEAD"
+    };
     let has_descendant = |tree: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]| -> bool {
         tree.keys().any(|candidate| {
             candidate.len() > path.len()
@@ -2218,6 +2250,21 @@ fn merge_trees(
                             conflict_descriptions.push(("content".to_string(), path_str.clone()));
                             conflict_files.push((path_str, content));
                         }
+                        ContentMergeResult::BinaryConflict(content) => {
+                            has_conflicts = true;
+                            let mut be_at_new = be.clone();
+                            be_at_new.path = ours_new_path.clone();
+                            stage_entry(&mut index, &be_at_new, 1);
+                            stage_entry(&mut index, oe, 2);
+                            let mut te_at_new = te.clone();
+                            te_at_new.path = ours_new_path.clone();
+                            stage_entry(&mut index, &te_at_new, 3);
+                            conflict_descriptions.push((
+                                "binary".to_string(),
+                                format!("{path_str} ({ours_label} vs. {their_name})"),
+                            ));
+                            conflict_files.push((path_str, content));
+                        }
                     }
                 }
             } else {
@@ -2255,6 +2302,19 @@ fn merge_trees(
                                     stage_entry(&mut index, te_at_new, 3);
                                     conflict_descriptions
                                         .push(("content".to_string(), path_str.clone()));
+                                    conflict_files.push((path_str, content));
+                                }
+                                ContentMergeResult::BinaryConflict(content) => {
+                                    has_conflicts = true;
+                                    let mut be_at_new = be.clone();
+                                    be_at_new.path = ours_new_path.clone();
+                                    stage_entry(&mut index, &be_at_new, 1);
+                                    stage_entry(&mut index, oe, 2);
+                                    stage_entry(&mut index, te_at_new, 3);
+                                    conflict_descriptions.push((
+                                        "binary".to_string(),
+                                        format!("{path_str} ({ours_label} vs. {their_name})"),
+                                    ));
                                     conflict_files.push((path_str, content));
                                 }
                             }
@@ -2399,6 +2459,21 @@ fn merge_trees(
                             conflict_descriptions.push(("content".to_string(), path_str.clone()));
                             conflict_files.push((path_str, content));
                         }
+                        ContentMergeResult::BinaryConflict(content) => {
+                            has_conflicts = true;
+                            let mut be_at_new = be.clone();
+                            be_at_new.path = theirs_new_path.clone();
+                            stage_entry(&mut index, &be_at_new, 1);
+                            let mut oe_at_new = oe.clone();
+                            oe_at_new.path = theirs_new_path.clone();
+                            stage_entry(&mut index, &oe_at_new, 2);
+                            stage_entry(&mut index, te, 3);
+                            conflict_descriptions.push((
+                                "binary".to_string(),
+                                format!("{path_str} ({ours_label} vs. {their_name})"),
+                            ));
+                            conflict_files.push((path_str, content));
+                        }
                     }
                 }
             } else {
@@ -2526,6 +2601,17 @@ fn merge_trees(
                         conflict_descriptions.push(("content".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
+                    ContentMergeResult::BinaryConflict(content) => {
+                        has_conflicts = true;
+                        stage_entry(&mut index, be, 1);
+                        stage_entry(&mut index, oe, 2);
+                        stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push((
+                            "binary".to_string(),
+                            format!("{path_str} ({ours_label} vs. {their_name})"),
+                        ));
+                        conflict_files.push((path_str, content));
+                    }
                 }
             }
             // Delete/modify — conflict only if the surviving side changed
@@ -2640,6 +2726,16 @@ fn merge_trees(
                         conflict_descriptions.push(("add/add".to_string(), path_str.clone()));
                         conflict_files.push((path_str, content));
                     }
+                    ContentMergeResult::BinaryConflict(content) => {
+                        has_conflicts = true;
+                        stage_entry(&mut index, oe, 2);
+                        stage_entry(&mut index, te, 3);
+                        conflict_descriptions.push((
+                            "binary".to_string(),
+                            format!("{path_str} ({ours_label} vs. {their_name})"),
+                        ));
+                        conflict_files.push((path_str, content));
+                    }
                 }
             }
             // Shouldn't happen
@@ -2662,6 +2758,8 @@ enum ContentMergeResult {
     Clean(ObjectId, u32),
     /// Conflict: merged content with markers.
     Conflict(Vec<u8>),
+    /// Binary conflict where textual merge is not possible.
+    BinaryConflict(Vec<u8>),
 }
 
 /// Try a content-level three-way merge for a single file.
@@ -2717,6 +2815,14 @@ fn try_content_merge(
         }
     }
 
+    let marker_size = if ours_label.starts_with("Temporary merge branch")
+        || theirs_label.starts_with("Temporary merge branch")
+    {
+        9
+    } else {
+        7
+    };
+
     let input = MergeInput {
         base: &base_obj.data,
         ours: &ours_obj.data,
@@ -2726,7 +2832,7 @@ fn try_content_merge(
         label_theirs: theirs_label,
         favor,
         style: ConflictStyle::Merge,
-        marker_size: 7,
+        marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
@@ -2755,8 +2861,16 @@ fn try_content_merge_add_add(
     let theirs_obj = repo.odb.read(&theirs.oid)?;
 
     if merge_file::is_binary(&ours_obj.data) || merge_file::is_binary(&theirs_obj.data) {
-        return Ok(ContentMergeResult::Conflict(ours_obj.data.clone()));
+        return Ok(ContentMergeResult::BinaryConflict(ours_obj.data.clone()));
     }
+
+    let marker_size = if ours_label.starts_with("Temporary merge branch")
+        || theirs_label.starts_with("Temporary merge branch")
+    {
+        9
+    } else {
+        7
+    };
 
     let input = MergeInput {
         base: &[], // empty base for add/add
@@ -2767,7 +2881,7 @@ fn try_content_merge_add_add(
         label_theirs: theirs_label,
         favor,
         style: ConflictStyle::Merge,
-        marker_size: 7,
+        marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
 
@@ -2793,6 +2907,41 @@ fn commit_tree(repo: &Repository, commit_oid: ObjectId) -> Result<ObjectId> {
     let obj = repo.odb.read(&commit_oid)?;
     let commit = parse_commit(&obj.data)?;
     Ok(commit.tree)
+}
+
+/// Return the commit author timestamp (seconds since epoch).
+///
+/// Falls back to `0` when the author identity lacks a parseable timestamp.
+fn commit_author_timestamp(repo: &Repository, commit_oid: ObjectId) -> Result<i64> {
+    let obj = repo.odb.read(&commit_oid)?;
+    let commit = parse_commit(&obj.data)?;
+    let author = commit.author;
+    if let Some(ts) = author
+        .rsplit(' ')
+        .nth(1)
+        .and_then(|s| s.parse::<i64>().ok())
+    {
+        return Ok(ts);
+    }
+
+    let date_text = author
+        .split('>')
+        .nth(1)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    if date_text.is_empty() {
+        return Ok(0);
+    }
+
+    let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]");
+    if let Ok(fmt) = fmt {
+        if let Ok(naive) = time::PrimitiveDateTime::parse(date_text, &fmt) {
+            return Ok(naive.assume_utc().unix_timestamp());
+        }
+    }
+
+    Ok(0)
 }
 
 /// Print a diffstat summary for merge output.
