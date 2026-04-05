@@ -116,8 +116,6 @@ PATH="$TEST_DIRECTORY:$PATH"
 	then
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
-		"$GUST_BIN" config user.name "Test User" 2>/dev/null
-		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
 	fi
 }
@@ -160,6 +158,8 @@ DIFF="${DIFF:-diff}"
 HOME="$TRASH_DIRECTORY"
 XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
 export HOME XDG_CONFIG_HOME
+EDITOR=:
+export EDITOR
 
 # Prevent tests from discovering enclosing repositories
 GIT_CEILING_DIRECTORIES="$(dirname "$TRASH_DIRECTORY")"
@@ -205,6 +205,47 @@ fi
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
+test_path_is_executable () {
+	if test $# -ne 1
+	then
+		echo "test_path_is_executable: expected 1 argument" >&2
+		return 1
+	fi
+	if ! test -x "$1"
+	then
+		echo "$1 is not executable" >&2
+		return 1
+	fi
+}
+
+test_stdout_line_count () {
+	if test $# -le 3
+	then
+		echo "test_stdout_line_count: expected at least 4 arguments" >&2
+		return 1
+	fi
+	local op="$1" count="$2"
+	shift 2
+	local trashdir
+	trashdir="$(git rev-parse --git-dir 2>/dev/null)/trash" || {
+		echo "test_stdout_line_count: must run inside a repository" >&2
+		return 1
+	}
+	mkdir -p "$trashdir" &&
+	"$@" >"$trashdir/output" &&
+	test_line_count "$op" "$count" "$trashdir/output"
+}
+
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
+	then
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
+	fi
+	return 1
+}
 
 test_grep () {
 	local negate=""
@@ -764,6 +805,10 @@ test_expect_success () {
 		echo >&2 "BUG: test_expect_success requires 2 or 3 arguments, got $#"
 		return 1
 	fi
+	if test "$commands" = "-"
+	then
+		commands=$(cat)
+	fi
 	test_count=$(($test_count + 1))
 
 	# Check prerequisites (comma-separated)
@@ -857,6 +902,10 @@ test_expect_failure () {
 	else
 		echo >&2 "BUG: test_expect_failure requires 2 or 3 arguments, got $#"
 		return 1
+	fi
+	if test "$commands" = "-"
+	then
+		commands=$(cat)
 	fi
 	test_count=$(($test_count + 1))
 
