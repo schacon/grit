@@ -772,7 +772,7 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
             let _ = e.print();
-            if matches!(subcmd, "tag" | "branch") {
+            if matches!(subcmd, "tag" | "branch" | "bugreport") {
                 eprintln!("usage: git {subcmd}");
             }
             match e.kind() {
