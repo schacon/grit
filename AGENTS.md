@@ -83,3 +83,12 @@ run-tests.sh → data/file-results.tsv (source of truth)
 - Create stub/partial test files (use full upstream tests)
 - Skip tests by adding `SKIP` prereqs (fix the code instead)
 - Run `cargo build` in worktrees (build in main repo, copy binary)
+
+## Cursor Cloud specific instructions
+
+- **Rust toolchain**: The pre-installed Rust may be outdated. The update script runs `rustup update stable && rustup default stable` to ensure the latest stable toolchain is available, since newer workspace dependencies (e.g. `time-core`) require edition 2024 support (Rust ≥ 1.85).
+- **No external services**: Grit is a pure CLI tool with no databases, containers, or network services. Build and test entirely via Cargo and the Bash test runner.
+- **Unit tests**: Run `cargo test -p grit-lib --lib` (95 tests). The `grit-rs` crate has no lib target; use `cargo test --workspace` to run everything.
+- **Integration tests**: Use `./scripts/run-tests.sh <test-file>` (see TESTING.md). Many tests are expected to fail — Grit is a work-in-progress.
+- **Lint**: `cargo check -p grit-rs 2>&1 | grep warning` — there are 2 pre-existing unused-variable warnings in `grit/src/commands/add.rs`.
+- **Binary location**: After `cargo build --release`, the binary is at `target/release/grit`. The test harness expects this path.
