@@ -85,3 +85,6 @@
 - `GUST_BIN=/workspace/tests/grit bash tests/t1051-large-conversion.sh`: 12/12 passing (2 SHA1/size prereq cases skipped by harness as expected).
 - `./scripts/run-tests.sh t1051-large-conversion.sh`: 12/12 passing.
 - `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; retained only checkout/path-mode fix).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after preserving unmerged index stage entries during `read-tree -m -u` checkout updates).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1012-read-tree-df.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t1012-read-tree-df.sh`: 5/5 passing.

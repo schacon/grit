@@ -433,11 +433,30 @@ fn three_way_merge(
             out.entries.push(e.clone());
         }
     }
+    let df_roots = detect_df_conflict_roots(&all_paths);
 
     for path in all_paths {
         let b = base.get(&path);
         let o = ours.get(&path);
         let t = theirs.get(&path);
+
+        // Directory/file conflicts are represented as unmerged stages.
+        // For the conflicting root path we keep stage entries for whichever
+        // side(s) have the file. For descendants under the conflicting root,
+        // we also keep their side-specific stages, even when one side deleted
+        // the path, to match Git's read-tree conflict shape.
+        if is_df_conflict_path(&df_roots, &path) {
+            if let Some(be) = b {
+                stage_entry(&mut out, be, 1);
+            }
+            if let Some(oe) = o {
+                stage_entry(&mut out, oe, 2);
+            }
+            if let Some(te) = t {
+                stage_entry(&mut out, te, 3);
+            }
+            continue;
+        }
 
         match (b, o, t) {
             (_, Some(oe), Some(te)) if oe.oid == te.oid => {
@@ -490,6 +509,30 @@ fn three_way_merge(
 
     out.sort();
     out
+}
+
+fn detect_df_conflict_roots(all_paths: &BTreeSet<Vec<u8>>) -> HashSet<Vec<u8>> {
+    let mut roots = HashSet::new();
+    let paths: Vec<&Vec<u8>> = all_paths.iter().collect();
+    for path in &paths {
+        if paths
+            .iter()
+            .any(|other| is_descendant_path(other.as_slice(), path.as_slice()))
+        {
+            roots.insert((**path).clone());
+        }
+    }
+    roots
+}
+
+fn is_df_conflict_path(df_roots: &HashSet<Vec<u8>>, path: &[u8]) -> bool {
+    df_roots
+        .iter()
+        .any(|root| path == root.as_slice() || is_descendant_path(path, root.as_slice()))
+}
+
+fn is_descendant_path(path: &[u8], parent: &[u8]) -> bool {
+    path.len() > parent.len() && path.starts_with(parent) && path[parent.len()] == b'/'
 }
 
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
