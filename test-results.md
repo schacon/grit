@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1601 bash scripts/run-upstream-tests.sh t1601`: 4/4 passing against `target/release/grit`; the `plan.md` entry was stale.
+- `cargo fmt`: completed for the `t1601` verification pass.
+- `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1503 bash scripts/run-upstream-tests.sh t1503`: 12/12 passing against `target/release/grit`.
 - `cargo fmt`: completed for the `t1503` changes.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1503 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).

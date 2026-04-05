@@ -726,33 +726,65 @@ fn push_size_row(
 }
 
 fn humanize_count(value: usize) -> (Option<String>, Option<String>) {
-    if value < 1000 {
-        return (Some(value.to_string()), None);
+    if value >= 1_000_000_000 {
+        let x = value + 5_000_000;
+        return (
+            Some(format!("{}.{:02}", x / 1_000_000_000, (x % 1_000_000_000) / 10_000_000)),
+            Some("G".to_owned()),
+        );
     }
-    let (scaled, unit) = humanize_scaled(value as f64, 1000.0, &["k", "M", "G", "T"]);
-    (Some(scaled), Some(unit.to_owned()))
+    if value >= 1_000_000 {
+        let x = value + 5_000;
+        return (
+            Some(format!("{}.{:02}", x / 1_000_000, (x % 1_000_000) / 10_000)),
+            Some("M".to_owned()),
+        );
+    }
+    if value >= 1_000 {
+        let x = value + 5;
+        return (
+            Some(format!("{}.{:02}", x / 1_000, (x % 1_000) / 10)),
+            Some("k".to_owned()),
+        );
+    }
+    (Some(value.to_string()), None)
 }
 
 fn humanize_bytes(value: usize) -> (Option<String>, Option<String>) {
-    if value < 1024 {
+    if value > (1 << 30) {
+        return (
+            Some(format!(
+                "{}.{:02}",
+                value >> 30,
+                (value & ((1 << 30) - 1)) / 10_737_419
+            )),
+            Some("GiB".to_owned()),
+        );
+    }
+    if value > (1 << 20) {
+        let x = value + 5_243;
+        return (
+            Some(format!(
+                "{}.{:02}",
+                x >> 20,
+                ((x & ((1 << 20) - 1)) * 100) >> 20
+            )),
+            Some("MiB".to_owned()),
+        );
+    }
+    if value > (1 << 10) {
+        let x = value + 5;
+        return (
+            Some(format!(
+                "{}.{:02}",
+                x >> 10,
+                ((x & ((1 << 10) - 1)) * 100) >> 10
+            )),
+            Some("KiB".to_owned()),
+        );
+    }
+    if value <= 1024 {
         return (Some(value.to_string()), Some("B".to_owned()));
     }
-    let (scaled, unit) =
-        humanize_scaled(value as f64 / 1024.0, 1024.0, &["KiB", "MiB", "GiB", "TiB"]);
-    (Some(scaled), Some(unit.to_owned()))
-}
-
-fn humanize_scaled<'a>(mut value: f64, scale: f64, units: &'a [&'a str]) -> (String, &'a str) {
-    let mut unit = units
-        .first()
-        .copied()
-        .unwrap_or_else(|| panic!("units must not be empty"));
-    for candidate in units {
-        unit = candidate;
-        if value < 999.95 || *candidate == *units.last().unwrap_or(candidate) {
-            break;
-        }
-        value /= scale;
-    }
-    (format!("{value:.2}"), unit)
+    (Some(value.to_string()), Some("B".to_owned()))
 }

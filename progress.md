@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    45 |
+| Completed   |    46 |
 | In progress |     0 |
-| Remaining   |   722 |
+| Remaining   |   721 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1601-index-bogus` — 4/4 tests pass (upstream re-verification on `main`; the `plan.md` entry was stale and no Rust code changes were required)
 - `t1503-rev-parse-verify` — 12/12 tests pass (`reflog delete --rewrite` is accepted and date-based reflog verification now resolves selectors like `1.year.ago`)
 - `t1408-packed-refs` — 3/3 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected after rebuilding `target/release/grit`)
 - `t3102-ls-tree-wildcards` — 4/4 tests pass (`ls-tree` and `ls-files` now agree on negated pathspec handling for wildcard filters)
@@ -39,4 +40,4 @@
 
 ## What Remains
 
-722 test files still pending. See `PLAN.md` for the full prioritized list.
+721 test files still pending. See `PLAN.md` for the full prioritized list.

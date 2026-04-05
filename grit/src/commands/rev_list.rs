@@ -358,7 +358,13 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if let Some(human) = disk_usage {
-        return print_disk_usage(&repo, options.all_refs, &revision_specs, object_type_filter, human);
+        return print_disk_usage(
+            &repo,
+            options.all_refs,
+            &revision_specs,
+            object_type_filter,
+            human,
+        );
     }
 
     // Handle symmetric diff (A...B) tokens
@@ -631,9 +637,23 @@ fn accumulate_disk_usage(
     match object.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&object.data)?;
-            accumulate_disk_usage(repo, commit.tree, object_type_filter, pack_disk_sizes, seen, total)?;
+            accumulate_disk_usage(
+                repo,
+                commit.tree,
+                object_type_filter,
+                pack_disk_sizes,
+                seen,
+                total,
+            )?;
             for parent in commit.parents {
-                accumulate_disk_usage(repo, parent, object_type_filter, pack_disk_sizes, seen, total)?;
+                accumulate_disk_usage(
+                    repo,
+                    parent,
+                    object_type_filter,
+                    pack_disk_sizes,
+                    seen,
+                    total,
+                )?;
             }
         }
         ObjectKind::Tree => {
@@ -641,12 +661,26 @@ fn accumulate_disk_usage(
                 if entry.mode == 0o160000 {
                     continue;
                 }
-                accumulate_disk_usage(repo, entry.oid, object_type_filter, pack_disk_sizes, seen, total)?;
+                accumulate_disk_usage(
+                    repo,
+                    entry.oid,
+                    object_type_filter,
+                    pack_disk_sizes,
+                    seen,
+                    total,
+                )?;
             }
         }
         ObjectKind::Tag => {
             let tag = parse_tag(&object.data)?;
-            accumulate_disk_usage(repo, tag.object, object_type_filter, pack_disk_sizes, seen, total)?;
+            accumulate_disk_usage(
+                repo,
+                tag.object,
+                object_type_filter,
+                pack_disk_sizes,
+                seen,
+                total,
+            )?;
         }
         ObjectKind::Blob => {}
     }
@@ -666,15 +700,40 @@ fn object_disk_size(
 }
 
 fn humanize_bytes(value: usize) -> (Option<String>, Option<String>) {
-    if value < 1024 {
+    if value > (1 << 30) {
+        return (
+            Some(format!(
+                "{}.{:02}",
+                value >> 30,
+                (value & ((1 << 30) - 1)) / 10_737_419
+            )),
+            Some("GiB".to_owned()),
+        );
+    }
+    if value > (1 << 20) {
+        let x = value + 5_243;
+        return (
+            Some(format!(
+                "{}.{:02}",
+                x >> 20,
+                ((x & ((1 << 20) - 1)) * 100) >> 20
+            )),
+            Some("MiB".to_owned()),
+        );
+    }
+    if value > (1 << 10) {
+        let x = value + 5;
+        return (
+            Some(format!(
+                "{}.{:02}",
+                x >> 10,
+                ((x & ((1 << 10) - 1)) * 100) >> 10
+            )),
+            Some("KiB".to_owned()),
+        );
+    }
+    if value <= 1024 {
         return (Some(value.to_string()), Some("B".to_owned()));
     }
-    let mut scaled = value as f64 / 1024.0;
-    let units = ["KiB", "MiB", "GiB", "TiB"];
-    let mut index = 0usize;
-    while scaled >= 1023.95 && index + 1 < units.len() {
-        scaled /= 1024.0;
-        index += 1;
-    }
-    (Some(format!("{scaled:.2}")), Some(units[index].to_owned()))
+    (Some(value.to_string()), Some("B".to_owned()))
 }

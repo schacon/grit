@@ -77,7 +77,7 @@ commit → check it off → move on.
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
-- [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
+- [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
 - [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
 - [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
