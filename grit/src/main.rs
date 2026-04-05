@@ -401,7 +401,10 @@ fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
         dump: bool,
     }
 
-    let mut args = LazyInitNameHashArgs { count: 1, ..Default::default() };
+    let mut args = LazyInitNameHashArgs {
+        count: 1,
+        ..Default::default()
+    };
     let mut i = 1usize;
     while i < rest.len() {
         match rest[i].as_str() {
@@ -2184,6 +2187,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
+                "online-cpus" => run_test_tool_online_cpus(rest),
+                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "hexdump" => run_test_tool_hexdump(),
                 "sha1" => run_test_tool_sha1(),

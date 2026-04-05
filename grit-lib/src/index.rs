@@ -209,6 +209,7 @@ impl Index {
             return Self {
                 version: v,
                 entries: Vec::new(),
+                resolve_undo: BTreeMap::new(),
             };
         }
         // Config index.version
