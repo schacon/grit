@@ -161,7 +161,13 @@ fn run_commit_sequence(repo: &Repository, oids: &[ObjectId], args: &Args) -> Res
     let head = resolve_head(git_dir)?;
     let orig_head_oid = match head.oid() {
         Some(oid) => *oid,
-        None => bail!("cannot cherry-pick: HEAD does not point to a commit"),
+        None => {
+            if !args.ff {
+                bail!("cannot cherry-pick: HEAD does not point to a commit");
+            }
+            // For --ff on unborn branch, use a sentinel; sequencer state won't be needed
+            ObjectId::from_hex("0000000000000000000000000000000000000000").unwrap()
+        }
     };
 
     for (i, commit_oid) in oids.iter().enumerate() {
@@ -269,10 +275,10 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         let can_ff = match (&head_oid_opt, ff_parent) {
             // Unborn branch: always fast-forward
             (None, _) => true,
-            // Root commit (no parent): fast-forward
-            (Some(_), None) => true,
             // Normal: parent matches HEAD
             (Some(head_oid), Some(parent)) => parent == *head_oid,
+            // Root commit with existing HEAD: cannot ff
+            _ => false,
         };
 
         if can_ff {
@@ -309,15 +315,21 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             commit_oid
         );
     } else if commit.parents.is_empty() {
-        bail!("cannot cherry-pick a root commit (no parent)");
+        // Root commit: use empty tree as base (sentinel, handled below)
+        ObjectId::from_hex("0000000000000000000000000000000000000000").unwrap()
     } else {
         commit.parents[0]
     };
 
     // Read parent tree (base), commit tree (theirs), HEAD tree (ours).
-    let parent_obj = repo.odb.read(&parent_oid)?;
-    let parent_commit = parse_commit(&parent_obj.data)?;
-    let parent_tree_oid = parent_commit.tree;
+    let parent_tree_oid = if commit.parents.is_empty() {
+        // Root commit: base is empty tree
+        repo.odb.write(ObjectKind::Tree, &[])?
+    } else {
+        let parent_obj = repo.odb.read(&parent_oid)?;
+        let parent_commit = parse_commit(&parent_obj.data)?;
+        parent_commit.tree
+    };
 
     let head_oid = head_oid_opt
         .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick: HEAD does not point to a commit"))?;

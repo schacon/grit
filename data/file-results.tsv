@@ -376,7 +376,7 @@ t4025-hunk-header	yes	2	2	0	ok	2	2	0
 t4026-color	yes	34	15	19	ok	15	34	0
 t4027-diff-submodule	yes	20	1	19	ok	1	20	0
 t4028-format-patch-mime-headers	yes	3	3	0	ok	3	3	0
-t4029-diff-trailing-space	yes	1	0	1	ok	0	1	0
+t4029-diff-trailing-space	yes	1	1	0	ok	1	1	0
 t4030-diff-textconv	yes	19	2	17	ok	2	19	0
 t4031-diff-rewrite-binary	yes	8	3	5	ok	3	8	0
 t4032-diff-inter-hunk-context	yes	37	16	21	ok	16	37	0
