@@ -2,6 +2,26 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 cargo build --release -p grit-rs`: completed to rebuild `grit` after teaching patch `index <old>..<new>` headers to use repository-aware unique blob abbreviations.
+- `cp /tmp/grit-build-t4044/release/grit target/release/grit`: completed because `scripts/run-upstream-tests.sh` executes `target/release/grit`.
+- `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR="${TAR:-tar}" bash ./t4044-diff-index-unique-abbrev.sh`: direct isolated upstream rerun completed with 2/2 passing after the formatter change.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev 2>&1 | tail -40`: completed with 2/2 passing against refreshed `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after adding `git apply --build-fake-ancestor=<file>` support and aligning a few existing compile blockers in this worktree with the current toolchain.
+- `find /tmp/grit-upstream-workdir -depth -mindepth 1 -delete` and `find /tmp/grit-upstream-results -depth -mindepth 1 -delete`: completed to clear a stale upstream scratch tree after the harness cleanup left `/tmp/grit-upstream-workdir` partially populated in this sandbox.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 bash scripts/run-upstream-tests.sh t4131-apply-fake-ancestor 2>&1 | tail -40`: initial reproduction showed 1/3 passing; after implementing fake-ancestor index writing, repository-root path handling, and build-only semantics for `--build-fake-ancestor`, the rerun completed with 3/3 passing against refreshed `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo fmt --all 2>/dev/null; true`: completed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo test -p grit-lib --lib`: 97/97 passing.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 cargo build --release -p grit-rs`: completed to rebuild `grit` after teaching `git commit` to canonicalize `GIT_COMMITTER_DATE` values like `YYYY-MM-DD HH:MM`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 bash scripts/run-upstream-tests.sh t4217-log-limit 2>&1 | tail -40`: initial reproduction reported 1/3 passing; after canonicalizing committer dates, the rerun completed with 3/3 passing against refreshed `target/release/grit`.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after fixing `git diff` trailing `--stat*` option reparsing and UTF-8 diffstat name truncation.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4073 bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width 2>&1 | tail -40`: initial reproduction reported 4/6 passing; after fixing `--stat-name-width` reparsing and Git-compatible UTF-8 suffix truncation, the rerun completed with 6/6 passing against rebuilt `target/release/grit`.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t4073 cargo fmt --all 2>/dev/null; true`: completed.

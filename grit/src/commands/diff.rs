@@ -24,7 +24,7 @@ use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
@@ -1001,6 +1001,7 @@ pub fn run(mut args: Args) -> Result<()> {
             };
             write_patch_with_prefix(
                 &mut out,
+                &repo,
                 &entries,
                 &repo.odb,
                 context_lines,
@@ -1657,21 +1658,24 @@ fn find_func_context(header: &str, old_lines: &[&str]) -> Option<String> {
 
 #[allow(dead_code)]
 fn write_diff_header(out: &mut impl Write, entry: &DiffEntry, use_color: bool) -> Result<()> {
-    write_diff_header_with_abbrev(out, entry, use_color, 7)
+    let repo = Repository::discover(None).context("not a git repository")?;
+    write_diff_header_with_abbrev(out, &repo, entry, use_color, 7)
 }
 
 #[allow(dead_code)]
 fn write_diff_header_with_abbrev(
     out: &mut impl Write,
+    repo: &Repository,
     entry: &DiffEntry,
     use_color: bool,
     abbrev_len: usize,
 ) -> Result<()> {
-    write_diff_header_with_prefix(out, entry, use_color, abbrev_len, "a/", "b/")
+    write_diff_header_with_prefix(out, repo, entry, use_color, abbrev_len, "a/", "b/")
 }
 
 fn write_diff_header_with_prefix(
     out: &mut impl Write,
+    repo: &Repository,
     entry: &DiffEntry,
     use_color: bool,
     abbrev_len: usize,
@@ -1693,10 +1697,12 @@ fn write_diff_header_with_prefix(
         "{b}diff --git {src_prefix}{old_path} {dst_prefix}{new_path}{r}"
     )?;
 
-    let abbr = |oid: &ObjectId| -> String {
-        let hex = oid.to_hex();
-        let len = abbrev_len.min(hex.len());
-        hex[..len].to_owned()
+    let abbr = |oid: &ObjectId| -> Result<String> {
+        if *oid == zero_oid() {
+            return Ok("0".repeat(abbrev_len));
+        }
+
+        Ok(abbreviate_object_id(repo, *oid, abbrev_len)?)
     };
 
     match entry.status {
@@ -1705,8 +1711,8 @@ fn write_diff_header_with_prefix(
             writeln!(
                 out,
                 "{b}index {}..{}{r}",
-                abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&entry.old_oid)?,
+                abbr(&entry.new_oid)?
             )?;
         }
         DiffStatus::Deleted => {
@@ -1714,8 +1720,8 @@ fn write_diff_header_with_prefix(
             writeln!(
                 out,
                 "{b}index {}..{}{r}",
-                abbr(&entry.old_oid),
-                abbr(&entry.new_oid)
+                abbr(&entry.old_oid)?,
+                abbr(&entry.new_oid)?
             )?;
         }
         DiffStatus::Modified => {
@@ -1727,16 +1733,16 @@ fn write_diff_header_with_prefix(
                 writeln!(
                     out,
                     "{b}index {}..{} {}{r}",
-                    abbr(&entry.old_oid),
-                    abbr(&entry.new_oid),
+                    abbr(&entry.old_oid)?,
+                    abbr(&entry.new_oid)?,
                     entry.old_mode
                 )?;
             } else {
                 writeln!(
                     out,
                     "{b}index {}..{}{r}",
-                    abbr(&entry.old_oid),
-                    abbr(&entry.new_oid)
+                    abbr(&entry.old_oid)?,
+                    abbr(&entry.new_oid)?
                 )?;
             }
         }
@@ -1749,8 +1755,8 @@ fn write_diff_header_with_prefix(
                 writeln!(
                     out,
                     "{b}index {}..{}{r}",
-                    abbr(&entry.old_oid),
-                    abbr(&entry.new_oid)
+                    abbr(&entry.old_oid)?,
+                    abbr(&entry.new_oid)?
                 )?;
             }
         }
@@ -1763,8 +1769,8 @@ fn write_diff_header_with_prefix(
                 writeln!(
                     out,
                     "{b}index {}..{}{r}",
-                    abbr(&entry.old_oid),
-                    abbr(&entry.new_oid)
+                    abbr(&entry.old_oid)?,
+                    abbr(&entry.new_oid)?
                 )?;
             }
         }
@@ -1780,6 +1786,7 @@ fn write_diff_header_with_prefix(
 
 fn write_patch_with_prefix(
     out: &mut impl Write,
+    repo: &Repository,
     entries: &[DiffEntry],
     odb: &Odb,
     context_lines: usize,
@@ -1797,7 +1804,9 @@ fn write_patch_with_prefix(
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
-        write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
+        write_diff_header_with_prefix(
+            out, repo, entry, use_color, abbrev_len, src_prefix, dst_prefix,
+        )?;
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);

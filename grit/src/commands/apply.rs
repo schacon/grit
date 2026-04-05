@@ -14,10 +14,11 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -73,6 +74,10 @@ pub struct Args {
     /// Allow binary patches.
     #[arg(long = "allow-binary-replacement")]
     pub allow_binary_replacement: bool,
+
+    /// Build a temporary index containing the pre-image blobs referenced by the patch.
+    #[arg(long = "build-fake-ancestor", value_name = "FILE")]
+    pub build_fake_ancestor: Option<PathBuf>,
 
     /// Verbose output.
     #[arg(short = 'v', long = "verbose")]
@@ -203,6 +208,20 @@ impl FilePatch {
                 .filter(|p| *p != "/dev/null")
                 .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"));
         }
+        self.new_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
+            .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"))
+    }
+
+    fn source_path(&self) -> Option<&str> {
+        self.old_path
+            .as_deref()
+            .filter(|p| *p != "/dev/null")
+            .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"))
+    }
+
+    fn destination_path(&self) -> Option<&str> {
         self.new_path
             .as_deref()
             .filter(|p| *p != "/dev/null")
@@ -1009,6 +1028,11 @@ pub fn run(args: Args) -> Result<()> {
         reverse_patches(&mut patches);
     }
 
+    if let Some(path) = args.build_fake_ancestor.as_deref() {
+        build_fake_ancestor(&patches, &args, path)?;
+        return Ok(());
+    }
+
     // Info-only modes
     let info_only = args.stat || args.numstat || args.summary;
     if args.stat {
@@ -1039,6 +1063,129 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn build_fake_ancestor(patches: &[FilePatch], args: &Args, output_path: &Path) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let current_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let mut ancestor = Index::new();
+
+    for fp in patches {
+        let Some(path_str) = fp.effective_path() else {
+            continue;
+        };
+        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let mode = match (fp.old_mode.as_deref(), fp.new_mode.as_deref()) {
+            (Some(mode), _) => parse_mode(mode),
+            (None, Some(mode)) if fp.hunks.is_empty() => parse_mode(mode),
+            _ => current_index
+                .get(adjusted.as_bytes(), 0)
+                .map(|entry| entry.mode)
+                .unwrap_or(0o100644),
+        };
+
+        let oid = if let Some(old_oid) = fp.old_oid.as_deref() {
+            resolve_patch_oid(&repo, old_oid)?
+        } else if fp.hunks.is_empty() {
+            current_index
+                .get(adjusted.as_bytes(), 0)
+                .map(|entry| entry.oid)
+                .ok_or_else(|| anyhow::anyhow!("{adjusted} not found in index"))?
+        } else {
+            continue;
+        };
+
+        let entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags_extended: None,
+            path: adjusted.into_bytes(),
+        };
+        ancestor.add_or_replace(entry);
+    }
+
+    if let Some(parent) = output_path.parent() {
+        if parent.as_os_str().is_empty() {
+            ancestor.write(output_path)?;
+            return Ok(());
+        }
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    ancestor.write(output_path)?;
+    Ok(())
+}
+
+fn resolve_patch_oid(repo: &Repository, oid_text: &str) -> Result<grit_lib::objects::ObjectId> {
+    if oid_text.len() == 40 {
+        let oid = grit_lib::objects::ObjectId::from_hex(oid_text)?;
+        if repo.odb.exists(&oid) {
+            return Ok(oid);
+        }
+    }
+
+    let matches = collect_matching_object_ids(repo, oid_text)?;
+    match matches.as_slice() {
+        [oid] => Ok(*oid),
+        [] => bail!("object not found: {oid_text}"),
+        _ => bail!("ambiguous object name: {oid_text}"),
+    }
+}
+
+fn collect_matching_object_ids(
+    repo: &Repository,
+    prefix: &str,
+) -> Result<Vec<grit_lib::objects::ObjectId>> {
+    if !(4..=40).contains(&prefix.len()) || !prefix.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(Vec::new());
+    }
+
+    let mut matches = Vec::new();
+    let read_dir = fs::read_dir(repo.odb.objects_dir())?;
+    for dir_entry in read_dir {
+        let dir_entry = dir_entry?;
+        if !dir_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let prefix_name = dir_entry.file_name();
+        let Some(prefix_name) = prefix_name.to_str() else {
+            continue;
+        };
+        if prefix_name.len() != 2 || !prefix_name.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            continue;
+        }
+
+        for file_entry in fs::read_dir(dir_entry.path())? {
+            let file_entry = file_entry?;
+            if !file_entry.file_type()?.is_file() {
+                continue;
+            }
+            let suffix = file_entry.file_name();
+            let Some(suffix) = suffix.to_str() else {
+                continue;
+            };
+            if suffix.len() != 38 || !suffix.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                continue;
+            }
+
+            let candidate = format!("{prefix_name}{suffix}");
+            if candidate.starts_with(prefix) {
+                matches.push(grit_lib::objects::ObjectId::from_hex(&candidate)?);
+            }
+        }
+    }
+
+    Ok(matches)
 }
 
 /// Apply patches to the working tree.
@@ -1104,18 +1251,47 @@ fn remove_empty_dirs_up(dir: &Path) {
     }
 }
 
+fn adjusted_source_path(fp: &FilePatch, args: &Args) -> Result<PathBuf> {
+    let path = fp
+        .source_path()
+        .ok_or_else(|| anyhow::anyhow!("patch has no source path"))?;
+    Ok(PathBuf::from(adjust_path(
+        path,
+        args.strip,
+        args.directory.as_deref(),
+    )))
+}
+
+fn adjusted_destination_path(fp: &FilePatch, args: &Args) -> Result<PathBuf> {
+    let path = fp
+        .destination_path()
+        .ok_or_else(|| anyhow::anyhow!("patch has no destination path"))?;
+    Ok(PathBuf::from(adjust_path(
+        path,
+        args.strip,
+        args.directory.as_deref(),
+    )))
+}
+
 fn apply_to_worktree(
     patches: &[FilePatch],
     args: &Args,
     whitespace_mode: WhitespaceMode,
 ) -> Result<()> {
+    let mut original_sources: HashMap<PathBuf, String> = HashMap::new();
     for fp in patches {
-        let path_str = fp
-            .effective_path()
-            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
+        let source_path = adjusted_source_path(fp, args)?;
+        let destination_path = adjusted_destination_path(fp, args)?;
+        if destination_path != source_path && (fp.is_copy || fp.is_rename) {
+            let content = fs::read_to_string(&source_path)
+                .with_context(|| format!("failed to read {}", source_path.display()))?;
+            original_sources.insert(source_path, content);
+        }
+    }
 
+    for fp in patches {
         if fp.is_deleted {
+            let path = adjusted_source_path(fp, args)?;
             // Delete the file (or directory for submodules)
             if path.is_dir() {
                 fs::remove_dir_all(&path)
@@ -1132,6 +1308,7 @@ fn apply_to_worktree(
         }
 
         if fp.is_new {
+            let path = adjusted_destination_path(fp, args)?;
             // Submodule: create directory
             if fp.new_mode.as_deref() == Some("160000") {
                 fs::create_dir_all(&path)?;
@@ -1159,35 +1336,52 @@ fn apply_to_worktree(
             continue;
         }
 
-        // Modify existing file — read from old_path if it differs from new_path
-        let read_path = if let Some(old_p) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
-            let adj = PathBuf::from(adjust_path(old_p, args.strip, args.directory.as_deref()));
-            if adj != path && adj.exists() {
-                adj
-            } else {
-                path.clone()
-            }
+        let source_path = adjusted_source_path(fp, args)?;
+        let destination_path = adjusted_destination_path(fp, args)?;
+        let old_content = if destination_path != source_path && (fp.is_copy || fp.is_rename) {
+            original_sources
+                .get(&source_path)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("{} not found", source_path.display()))?
         } else {
-            path.clone()
+            fs::read_to_string(&source_path)
+                .with_context(|| format!("failed to read {}", source_path.display()))?
         };
-        let old_content = fs::read_to_string(&read_path)
-            .with_context(|| format!("failed to read {}", read_path.display()))?;
+        let new_content = if fp.hunks.is_empty() {
+            old_content.clone()
+        } else {
+            apply_hunks(&old_content, &fp.hunks, whitespace_mode).with_context(|| {
+                format!("failed to apply patch to {}", destination_path.display())
+            })?
+        };
 
-        if fp.hunks.is_empty() {
-            // Mode-only change
-            #[cfg(unix)]
-            if let Some(mode) = fp.new_mode.as_deref() {
-                use std::os::unix::fs::PermissionsExt;
-                let perm = if mode == "100755" { 0o755 } else { 0o644 };
-                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+        if destination_path != source_path {
+            if let Some(parent) = destination_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    fs::create_dir_all(parent)?;
+                }
             }
-            continue;
         }
 
-        let new_content = apply_hunks(&old_content, &fp.hunks, whitespace_mode)
-            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
-        fs::write(&path, new_content.as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        if !fp.hunks.is_empty() || destination_path != source_path {
+            fs::write(&destination_path, new_content.as_bytes())
+                .with_context(|| format!("failed to write {}", destination_path.display()))?;
+        }
+
+        if fp.is_rename && destination_path != source_path && source_path.exists() {
+            fs::remove_file(&source_path)
+                .with_context(|| format!("failed to remove {}", source_path.display()))?;
+            if let Some(parent) = source_path.parent() {
+                remove_empty_dirs_up(parent);
+            }
+        }
+
+        #[cfg(unix)]
+        if let Some(mode) = fp.new_mode.as_deref() {
+            use std::os::unix::fs::PermissionsExt;
+            let perm = if mode == "100755" { 0o755 } else { 0o644 };
+            fs::set_permissions(&destination_path, fs::Permissions::from_mode(perm))?;
+        }
     }
 
     Ok(())
@@ -1204,6 +1398,7 @@ fn apply_to_index(
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
+    let original_index = index.clone();
     // CWD prefix for subdir apply
     let cwd_prefix = if let Some(ref wt) = repo.work_tree {
         if let Ok(cwd) = std::env::current_dir() {
@@ -1225,14 +1420,10 @@ fn apply_to_index(
     };
 
     for fp in patches {
-        let path_str = fp
-            .effective_path()
-            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let raw = adjust_path(path_str, args.strip, args.directory.as_deref());
-        let adjusted = format!("{cwd_prefix}{raw}");
-
         if fp.is_deleted {
-            index.remove(adjusted.as_bytes());
+            let source_raw = adjusted_source_path(fp, args)?;
+            let source = format!("{cwd_prefix}{}", source_raw.to_string_lossy());
+            index.remove(source.as_bytes());
             continue;
         }
 
@@ -1240,6 +1431,8 @@ fn apply_to_index(
         if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
             && fp.is_new
         {
+            let destination_raw = adjusted_destination_path(fp, args)?;
+            let adjusted = format!("{cwd_prefix}{}", destination_raw.to_string_lossy());
             let commit_hash = fp
                 .hunks
                 .iter()
@@ -1275,15 +1468,29 @@ fn apply_to_index(
             continue;
         }
 
-        // Get old content from index (or empty for new files)
-        let old_content = if fp.is_new {
-            String::new()
+        let destination_raw = adjusted_destination_path(fp, args)?;
+        let adjusted = format!("{cwd_prefix}{}", destination_raw.to_string_lossy());
+        let source_adjusted = if fp.is_new {
+            None
         } else {
-            let entry = index
-                .get(adjusted.as_bytes(), 0)
-                .ok_or_else(|| anyhow::anyhow!("{adjusted} not found in index"))?;
+            let source_raw = adjusted_source_path(fp, args)?;
+            Some(format!("{cwd_prefix}{}", source_raw.to_string_lossy()))
+        };
+
+        // Get old content from index (or empty for new files)
+        let old_content = if let Some(source_adjusted) = source_adjusted.as_deref() {
+            let source_index = if adjusted != *source_adjusted && (fp.is_copy || fp.is_rename) {
+                &original_index
+            } else {
+                &index
+            };
+            let entry = source_index
+                .get(source_adjusted.as_bytes(), 0)
+                .ok_or_else(|| anyhow::anyhow!("{source_adjusted} not found in index"))?;
             let obj = repo.odb.read(&entry.oid)?;
             String::from_utf8_lossy(&obj.data).into_owned()
+        } else {
+            String::new()
         };
 
         let new_content = if fp.hunks.is_empty() {
@@ -1301,6 +1508,10 @@ fn apply_to_index(
             parse_mode(m)
         } else if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
             entry.mode
+        } else if let Some(source_adjusted) = source_adjusted.as_deref() {
+            index
+                .get(source_adjusted.as_bytes(), 0)
+                .map_or(0o100644, |entry| entry.mode)
         } else {
             0o100644
         };
@@ -1323,6 +1534,13 @@ fn apply_to_index(
             flags_extended: None,
             path: adjusted.into_bytes(),
         };
+        if fp.is_rename {
+            if let Some(source_adjusted) = source_adjusted.as_deref() {
+                if source_adjusted != String::from_utf8_lossy(&entry.path) {
+                    index.remove(source_adjusted.as_bytes());
+                }
+            }
+        }
         index.add_or_replace(entry);
     }
 
@@ -1337,12 +1555,8 @@ fn check_patches(
     whitespace_mode: WhitespaceMode,
 ) -> Result<()> {
     for fp in patches {
-        let path_str = fp
-            .effective_path()
-            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
-
         if fp.is_deleted {
+            let path = adjusted_source_path(fp, args)?;
             if !path.exists() {
                 bail!("{}: does not exist", path.display());
             }
@@ -1350,6 +1564,7 @@ fn check_patches(
         }
 
         if fp.is_new {
+            let path = adjusted_destination_path(fp, args)?;
             if path.exists() {
                 bail!("{}: already exists", path.display());
             }
@@ -1363,10 +1578,19 @@ fn check_patches(
             continue;
         }
 
-        let old_content = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        apply_hunks(&old_content, &fp.hunks, whitespace_mode)
-            .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
+        let source_path = adjusted_source_path(fp, args)?;
+        let destination_path = adjusted_destination_path(fp, args)?;
+        if destination_path != source_path && destination_path.exists() {
+            bail!("{}: already exists", destination_path.display());
+        }
+        let old_content = fs::read_to_string(&source_path)
+            .with_context(|| format!("failed to read {}", source_path.display()))?;
+        apply_hunks(&old_content, &fp.hunks, whitespace_mode).with_context(|| {
+            format!(
+                "patch does not apply cleanly to {}",
+                destination_path.display()
+            )
+        })?;
     }
 
     Ok(())

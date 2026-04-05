@@ -399,12 +399,12 @@ commit → check it off → move on.
 - [x] `t4125-apply-ws-fuzz` ████████████████████ 4/4 (done) — applying patch that has broken whitespaces in context
 - [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (done) — format-patch mime headers and extra headers do not conflict
 - [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (done) — Pickaxe options
-- [ ] `t4131-apply-fake-ancestor` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git apply --build-fake-ancestor handling.
-- [ ] `t4217-log-limit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git log with filter options limiting the output
-- [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
+- [x] `t4131-apply-fake-ancestor` ████████████████████ 3/3 (done) — git apply --build-fake-ancestor handling.
+- [x] `t4217-log-limit` ████████████████████ 3/3 (0 left) — git log with filter options limiting the output
+- [x] `t4044-diff-index-unique-abbrev` ████████████████████ 2/2 (0 left) — test unique sha1 abbreviation on 
 - [ ] `t4112-apply-renames` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git apply should not get confused with rename/copy.
 
-- [ ] `t4152-am-subjects` ███████████████░░░░░ 10/13 (3 left) — test subject preservation with format-patch | am
+- [~] `t4152-am-subjects` ███████████████░░░░░ 10/13 (3 left) — test subject preservation with format-patch | am
 - [ ] `t4117-apply-reject` ████████████░░░░░░░░ 5/8 (3 left) — git apply with rejects
 
 - [ ] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection

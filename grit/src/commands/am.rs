@@ -1833,6 +1833,7 @@ fn parse_mbox_with_opts(
         let mut author = String::new();
         let mut date = String::new();
         let mut subject = String::new();
+        let mut raw_subject = String::new();
         let mut message_id = String::new();
         let _body = String::new();
         let mut found_from = false;
@@ -1881,8 +1882,10 @@ fn parse_mbox_with_opts(
             // Continuation line (starts with whitespace)
             if (line.starts_with(' ') || line.starts_with('\t')) && !last_header.is_empty() {
                 if last_header == "subject" {
-                    subject.push(' ');
-                    subject.push_str(line.trim());
+                    if !raw_subject.is_empty() {
+                        raw_subject.push(' ');
+                    }
+                    raw_subject.push_str(line.trim());
                 }
                 lines.next();
                 continue;
@@ -1895,15 +1898,7 @@ fn parse_mbox_with_opts(
                 date = value.trim().to_string();
                 last_header = "date".to_string();
             } else if let Some(value) = line.strip_prefix("Subject: ") {
-                // Strip [PATCH ...] prefix unless --keep
-                let subj = if keep {
-                    value.trim().to_string()
-                } else if keep_non_patch {
-                    strip_patch_prefix_keep_non_patch(value.trim())
-                } else {
-                    strip_patch_prefix(value.trim())
-                };
-                subject = subj;
+                raw_subject = value.trim().to_string();
                 last_header = "subject".to_string();
             } else if let Some(value) = line
                 .strip_prefix("Message-ID: ")
@@ -1924,6 +1919,10 @@ fn parse_mbox_with_opts(
                 last_header = String::new();
             }
             lines.next();
+        }
+
+        if !raw_subject.is_empty() {
+            subject = parse_subject_header(&raw_subject, keep, keep_non_patch);
         }
 
         // Parse body (everything until "---" separator or diff start)
@@ -2066,6 +2065,111 @@ fn strip_patch_prefix_keep_non_patch(subject: &str) -> String {
         }
     }
     subject.to_string()
+}
+
+/// Decode and normalize a parsed `Subject:` header.
+fn parse_subject_header(raw_subject: &str, keep: bool, keep_non_patch: bool) -> String {
+    let decoded = decode_rfc2047_words(raw_subject);
+    if keep {
+        return decoded;
+    }
+
+    let normalized = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
+    if keep_non_patch {
+        strip_patch_prefix_keep_non_patch(&normalized)
+    } else {
+        strip_patch_prefix(&normalized)
+    }
+}
+
+/// Decode RFC 2047 encoded words in a header value.
+fn decode_rfc2047_words(value: &str) -> String {
+    let mut decoded = String::new();
+    let mut idx = 0;
+    let mut previous_was_encoded = false;
+
+    while idx < value.len() {
+        let remaining = &value[idx..];
+        let Some(relative_start) = remaining.find("=?") else {
+            let tail = &value[idx..];
+            if !(previous_was_encoded && tail.trim().is_empty()) {
+                decoded.push_str(tail);
+            }
+            break;
+        };
+
+        let start = idx + relative_start;
+        let plain = &value[idx..start];
+        if !(previous_was_encoded && plain.trim().is_empty()) {
+            decoded.push_str(plain);
+        }
+
+        if let Some((word, next_idx)) = decode_rfc2047_word(value, start) {
+            decoded.push_str(&word);
+            idx = next_idx;
+            previous_was_encoded = true;
+            continue;
+        }
+
+        decoded.push_str("=?");
+        idx = start + 2;
+        previous_was_encoded = false;
+    }
+
+    decoded
+}
+
+/// Decode one RFC 2047 encoded word starting at `start`.
+fn decode_rfc2047_word(value: &str, start: usize) -> Option<(String, usize)> {
+    let rest = value.get(start..)?;
+    let charset_end = rest.get(2..)?.find('?')? + 2;
+    let encoding_end = rest.get(charset_end + 1..)?.find('?')? + charset_end + 1;
+    let encoded_end = rest.get(encoding_end + 1..)?.find("?=")? + encoding_end + 1;
+
+    let charset = rest.get(2..charset_end)?;
+    let encoding = rest.get(charset_end + 1..encoding_end)?;
+    let encoded = rest.get(encoding_end + 1..encoded_end)?;
+    let next_idx = start + encoded_end + 2;
+
+    if !charset.eq_ignore_ascii_case("utf-8") {
+        return None;
+    }
+
+    if !encoding.eq_ignore_ascii_case("q") {
+        return None;
+    }
+
+    let bytes = decode_rfc2047_q(encoded)?;
+    let word = String::from_utf8(bytes).ok()?;
+    Some((word, next_idx))
+}
+
+/// Decode RFC 2047 Q-encoding into raw bytes.
+fn decode_rfc2047_q(encoded: &str) -> Option<Vec<u8>> {
+    let bytes = encoded.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'_' => {
+                out.push(b' ');
+                idx += 1;
+            }
+            b'=' if idx + 2 < bytes.len() => {
+                let hi = (bytes[idx + 1] as char).to_digit(16)?;
+                let lo = (bytes[idx + 2] as char).to_digit(16)?;
+                out.push(((hi << 4) | lo) as u8);
+                idx += 3;
+            }
+            byte => {
+                out.push(byte);
+                idx += 1;
+            }
+        }
+    }
+
+    Some(out)
 }
 
 /// Apply scissors to the full message (subject + body), replacing subject if needed.

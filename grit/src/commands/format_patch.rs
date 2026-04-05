@@ -342,15 +342,18 @@ pub fn run(args: Args) -> Result<()> {
 
     for (idx, (oid, commit)) in commits.iter().enumerate() {
         let patch_num = start + idx;
-        let subject_line = commit.message.lines().next().unwrap_or("");
+        let (subject_paragraph, _body) = split_commit_message(&commit.message);
+        let subject_line = subject_paragraph.lines().next().unwrap_or("");
 
         // Build the subject with optional numbering
         let subject = if opts.keep_subject {
-            subject_line.to_string()
+            subject_paragraph.clone()
         } else if use_numbering {
-            format!("[{prefix} {patch_num}/{display_total}] {subject_line}")
+            let unwrapped = unwrap_subject(&subject_paragraph);
+            format!("[{prefix} {patch_num}/{display_total}] {unwrapped}")
         } else {
-            format!("[{prefix}] {subject_line}")
+            let unwrapped = unwrap_subject(&subject_paragraph);
+            format!("[{prefix}] {unwrapped}")
         };
 
         // Format the patch — append base-commit info to last patch
@@ -783,7 +786,7 @@ fn format_single_patch(
     out.push_str(&format!("Date: {date}\n"));
 
     // Subject
-    out.push_str(&format!("Subject: {subject}\n"));
+    write_subject_header(&mut out, subject);
 
     // In-Reply-To / References headers
     if let Some(ref msg_id) = opts.in_reply_to {
@@ -838,14 +841,8 @@ fn format_single_patch(
 
     out.push('\n');
 
-    // Commit message body (skip first line which is in Subject)
-    let body: String = commit
-        .message
-        .lines()
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let body = body.trim_start_matches('\n');
+    // Commit message body excludes the first paragraph used for Subject.
+    let (_subject_paragraph, body) = split_commit_message(&commit.message);
 
     if use_mime {
         // MIME multipart: description part, then patch as attachment
@@ -854,7 +851,7 @@ fn format_single_patch(
         out.push_str("Content-Transfer-Encoding: 8bit\n");
         out.push('\n');
         if !body.is_empty() {
-            out.push_str(body);
+            out.push_str(&body);
             out.push('\n');
         }
 
@@ -888,7 +885,7 @@ fn format_single_patch(
     } else {
         // Standard (non-MIME) patch format
         if !body.is_empty() {
-            out.push_str(body);
+            out.push_str(&body);
             out.push('\n');
         }
 
@@ -1065,6 +1062,131 @@ fn rfc2047_encode(name: &str) -> String {
         }
     }
     format!("=?UTF-8?q?{encoded}?=")
+}
+
+/// RFC 2047 UTF-8 quoted-printable encoding for a subject line.
+fn rfc2047_encode_subject(subject: &str) -> String {
+    let mut encoded = String::new();
+    for byte in subject.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' => encoded.push(*byte as char),
+            b' ' => encoded.push_str("=20"),
+            b'\n' => encoded.push_str("=0A"),
+            b'!' | b'*' | b'+' | b'-' | b'/' => encoded.push(*byte as char),
+            b'=' | b'?' | b'_' => encoded.push_str(&format!("={:02X}", byte)),
+            _ if *byte < 0x80 => encoded.push(*byte as char),
+            _ => encoded.push_str(&format!("={:02X}", byte)),
+        }
+    }
+    encoded
+}
+
+/// Write the `Subject` header, folding or encoding as needed.
+fn write_subject_header(out: &mut String, subject: &str) {
+    if subject.contains('\n') {
+        out.push_str("Subject: ");
+        let encoded = rfc2047_encode_subject(subject);
+        let words = chunk_rfc2047_words(&encoded, 48);
+        if let Some((first, rest)) = words.split_first() {
+            out.push_str(first);
+            out.push('\n');
+            for word in rest {
+                out.push(' ');
+                out.push_str(word);
+                out.push('\n');
+            }
+        } else {
+            out.push('\n');
+        }
+        return;
+    }
+
+    write_wrapped_header_line(out, "Subject", subject);
+}
+
+/// Split a commit message into its subject paragraph and remaining body.
+fn split_commit_message(message: &str) -> (String, String) {
+    let mut subject_lines = Vec::new();
+    let mut body_lines = Vec::new();
+    let mut in_subject = true;
+
+    for line in message.lines() {
+        if in_subject {
+            if line.is_empty() {
+                in_subject = false;
+                continue;
+            }
+            subject_lines.push(line);
+        } else {
+            body_lines.push(line);
+        }
+    }
+
+    (subject_lines.join("\n"), body_lines.join("\n"))
+}
+
+/// Collapse a multi-line subject paragraph into a single line.
+fn unwrap_subject(subject: &str) -> String {
+    subject.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Fold a single-value header to roughly RFC 2822 line length limits.
+fn write_wrapped_header_line(out: &mut String, name: &str, value: &str) {
+    let prefix = format!("{name}: ");
+    let continuation = " ";
+    let max_width = 78;
+    let mut current = prefix.clone();
+
+    for word in value.split_whitespace() {
+        let separator = if current == prefix { "" } else { " " };
+        if current.len() + separator.len() + word.len() <= max_width {
+            current.push_str(separator);
+            current.push_str(word);
+            continue;
+        }
+
+        out.push_str(&current);
+        out.push('\n');
+        current.clear();
+        current.push_str(continuation);
+        current.push_str(word);
+    }
+
+    out.push_str(&current);
+    out.push('\n');
+}
+
+/// Split an RFC 2047 payload into encoded words that fit comfortably in one header line.
+fn chunk_rfc2047_words(encoded: &str, chunk_len: usize) -> Vec<String> {
+    if encoded.is_empty() {
+        return Vec::new();
+    }
+
+    let mut words = Vec::new();
+    let mut start = 0;
+
+    while start < encoded.len() {
+        let mut end = (start + chunk_len).min(encoded.len());
+        while end > start {
+            let chunk = &encoded[start..end];
+            let bytes = chunk.as_bytes();
+            let ends_with_escape_prefix =
+                bytes.last() == Some(&b'=') || (bytes.len() >= 2 && bytes[bytes.len() - 2] == b'=');
+            if !ends_with_escape_prefix {
+                break;
+            }
+            end -= 1;
+        }
+
+        if end == start {
+            end = (start + chunk_len).min(encoded.len());
+        }
+
+        words.push(format!("=?UTF-8?q?{}?=", &encoded[start..end]));
+        start = end;
+    }
+
+    words
 }
 
 /// Write a folded email header with multiple values.

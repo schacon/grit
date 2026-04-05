@@ -138,7 +138,7 @@ pub fn run(args: Args) -> Result<()> {
             let mut out = stdout.lock();
             let wt = repo.work_tree.as_deref();
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo.odb, entry, options.context_lines, wt)?;
+                write_patch_entry(&mut out, &repo, entry, options.context_lines, wt)?;
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -756,7 +756,7 @@ fn render_raw_diff_entry(
 /// Write a unified-diff block for one entry (diff-index -p).
 fn write_patch_entry(
     out: &mut impl std::io::Write,
-    odb: &Odb,
+    repo: &Repository,
     entry: &DiffEntry,
     context_lines: usize,
     work_tree: Option<&Path>,
@@ -771,46 +771,31 @@ fn write_patch_entry(
         .new_path
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
+    let old_patch_oid = patch_index_oid(repo, entry.old_oid)?;
+    let new_patch_oid = patch_index_oid(repo, entry.new_oid)?;
 
     writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
 
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "new file mode {}", entry.new_mode)?;
-            writeln!(
-                out,
-                "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7]
-            )?;
+            writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "deleted file mode {}", entry.old_mode)?;
-            writeln!(
-                out,
-                "index {}..{}",
-                &entry.old_oid.to_hex()[..7],
-                &entry.new_oid.to_hex()[..7]
-            )?;
+            writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
         }
         DiffStatus::Modified => {
             if entry.old_mode == entry.new_mode {
                 writeln!(
                     out,
                     "index {}..{} {}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7],
-                    entry.old_mode
+                    old_patch_oid, new_patch_oid, entry.old_mode
                 )?;
             } else {
                 writeln!(out, "old mode {}", entry.old_mode)?;
                 writeln!(out, "new mode {}", entry.new_mode)?;
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
             }
         }
         DiffStatus::Renamed => {
@@ -819,12 +804,7 @@ fn write_patch_entry(
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
             }
         }
         DiffStatus::Copied => {
@@ -833,12 +813,7 @@ fn write_patch_entry(
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(
-                    out,
-                    "index {}..{}",
-                    &entry.old_oid.to_hex()[..7],
-                    &entry.new_oid.to_hex()[..7]
-                )?;
+                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
             }
         }
         _ => {}
@@ -852,7 +827,7 @@ fn write_patch_entry(
     }
 
     // Read raw bytes for binary detection
-    let old_raw = read_blob_raw(odb, &entry.old_oid);
+    let old_raw = read_blob_raw(&repo.odb, &entry.old_oid);
     let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
         // Zero OID for non-deleted entries means worktree content
         if let Some(wt) = work_tree {
@@ -862,7 +837,7 @@ fn write_patch_entry(
             Vec::new()
         }
     } else {
-        read_blob_raw(odb, &entry.new_oid)
+        read_blob_raw(&repo.odb, &entry.new_oid)
     };
 
     // Check for binary content
@@ -923,6 +898,14 @@ fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     } else {
         odb.read(oid).map(|o| o.data).unwrap_or_default()
     }
+}
+
+fn patch_index_oid(repo: &Repository, oid: ObjectId) -> Result<String> {
+    if oid == zero_oid() {
+        return Ok("0".repeat(7));
+    }
+
+    Ok(abbreviate_object_id(repo, oid, 7)?)
 }
 
 /// Write --stat output for diff-index.

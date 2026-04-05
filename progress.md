@@ -6,13 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    96 |
-| In progress |     0 |
-| Remaining   |   670 |
+| Completed   |    99 |
+| In progress |     1 |
+| Remaining   |   666 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t4044-diff-index-unique-abbrev` — 2/2 tests pass (`git diff` and `git diff-index -p` now expand patch-header blob IDs to the shortest repository-unique abbreviation instead of slicing fixed 7-character prefixes, so ambiguous pairs render as `51d27384..51d2738e`; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4044 bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev 2>&1 | tail -40` against refreshed `target/release/grit`)
+- `t4131-apply-fake-ancestor` — 3/3 tests pass (`git apply` now accepts `--build-fake-ancestor=<file>`, writes a real temporary index from patch pre-image blobs using repository-root paths even from subdirectories, and exits after building the fake ancestor instead of mutating the worktree; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4131 bash scripts/run-upstream-tests.sh t4131-apply-fake-ancestor 2>&1 | tail -40` against refreshed `target/release/grit`)
+- `t4217-log-limit` — 3/3 tests pass (`git commit` now canonicalizes `GIT_COMMITTER_DATE` values like `YYYY-MM-DD HH:MM` to Git's `<epoch> <tz>` format, so `git log --since-as-filter` can compare commit dates correctly; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4217 bash scripts/run-upstream-tests.sh t4217-log-limit 2>&1 | tail -40` against refreshed `target/release/grit`)
 - `t4073-diff-stat-name-width` — 6/6 tests pass (`git diff` now reparses trailing `--stat-name-width`, `--stat-width`, `--stat-count`, and `--stat-graph-width` options correctly instead of collapsing them into plain `--stat`, and UTF-8 diffstat truncation now preserves the Git-compatible suffix/padding behavior the upstream test expects; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4073 bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width 2>&1 | tail -40` against rebuilt `target/release/grit`)
 - `t4125-apply-ws-fuzz` — 4/4 tests pass (`git apply --whitespace=fix` now uses whitespace-fixed comparisons when matching old-side hunk lines, rewrites hunk context/add lines to the fixed postimage, and leaves untouched lines outside the hunk alone; verified with `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4125 bash scripts/run-upstream-tests.sh t4125-apply-ws-fuzz 2>&1 | tail -40` against rebuilt `target/release/grit`)
 - `t4006-diff-mode` — 7/7 tests pass (`git diff --stat` now treats binary mode-only changes as `Bin` entries and widens mixed binary/text zero-count output so the count column matches upstream spacing; verified with `CARGO_TARGET_DIR=/tmp/grit-build-t4006 bash scripts/run-upstream-tests.sh t4006-diff-mode 2>&1 | tail -40` against rebuilt `target/release/grit`)
@@ -89,4 +92,4 @@
 
 ## What Remains
 
-670 test files still pending. See `PLAN.md` for the full prioritized list.
+666 test files still pending. See `PLAN.md` for the full prioritized list.

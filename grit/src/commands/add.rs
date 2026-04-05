@@ -554,6 +554,7 @@ fn run_edit(
         include: None,
         exclude: None,
         inaccurate_eof: false,
+        build_fake_ancestor: None,
         patches: vec![temp_path.clone()],
     });
 
