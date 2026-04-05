@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    53 |
+| Completed   |    54 |
 | In progress |     0 |
-| Remaining   |   714 |
+| Remaining   |   713 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6400-merge-df` — 7/7 tests pass (fixed modify/delete directory-file conflict handling to place conflict stages at side paths like `letters~modify`/`letters~HEAD`; `ls-files -o` now ignores transient `.stdout.*`/`.stderr.*` harness capture files)
 - `t6431-merge-criscross` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6412-merge-large-rename` — 10/10 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t6428-merge-conflicts-sparse` — 2/2 tests pass (sparse-checkout no-cone glob semantics fixed; merge conflict stages now preserved in index and shown as modified in `ls-files -t`)
@@ -43,4 +44,4 @@
 
 ## What Remains
 
-714 test files still pending. See `plan.md` for the full prioritized list.
+713 test files still pending. See `plan.md` for the full prioritized list.

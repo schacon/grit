@@ -16,3 +16,7 @@
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge conflict index stage handling changes).
 - `./scripts/run-tests.sh t6431-merge-criscross.sh`: 2/2 passing (fully passing; stale plan entry corrected).
 - `./scripts/run-tests.sh t6412-merge-large-rename.sh`: 10/10 passing (fully passing; stale plan entry corrected).
+- `./scripts/run-tests.sh t6400-merge-df.sh`: 7/7 passing (fully passing after directory/file modify-delete conflict staging fix and transient `.stdout.*`/`.stderr.*` untracked filtering for harness compatibility).
+- `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (regression check after merge/ls-files updates for `t6400`).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge/ls-files updates for `t6400`).
+- `./scripts/run-tests.sh t6412-merge-large-rename.sh`: 10/10 passing (regression check after merge/ls-files updates for `t6400`).

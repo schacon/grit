@@ -1920,6 +1920,13 @@ fn merge_trees(
     let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
     let ours_label = "HEAD";
+    let has_descendant = |tree: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]| -> bool {
+        tree.keys().any(|candidate| {
+            candidate.len() > path.len()
+                && candidate.starts_with(path)
+                && candidate.get(path.len()) == Some(&b'/')
+        })
+    };
 
     // First pass: handle rename cases
     // Case 1: ours renamed base_path → ours_new_path; theirs may have modified base_path
@@ -2256,9 +2263,26 @@ fn merge_trees(
                             // Theirs modified, ours deleted → conflict
                             let path_str = String::from_utf8_lossy(path).to_string();
                             has_conflicts = true;
-                            stage_entry(&mut index, be, 1);
-                            stage_entry(&mut index, te, 3);
-                            conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                            if has_descendant(ours, path) {
+                                // D/F conflict: the old file path now needs to stay a
+                                // directory (for entries like `path/file`), so move the
+                                // conflict stages and worktree file to a side-path.
+                                let conflict_path = format!("{path_str}~{their_name}");
+                                let mut be_conflict = be.clone();
+                                be_conflict.path = conflict_path.as_bytes().to_vec();
+                                stage_entry(&mut index, &be_conflict, 1);
+                                let mut te_conflict = te.clone();
+                                te_conflict.path = conflict_path.as_bytes().to_vec();
+                                stage_entry(&mut index, &te_conflict, 3);
+                                if let Ok(obj) = repo.odb.read(&te.oid) {
+                                    conflict_files.push((conflict_path, obj.data));
+                                }
+                            } else {
+                                stage_entry(&mut index, be, 1);
+                                stage_entry(&mut index, te, 3);
+                            }
+                            conflict_descriptions
+                                .push(("modify/delete".to_string(), path_str.clone()));
                         }
                     }
                 }
@@ -2282,9 +2306,26 @@ fn merge_trees(
                             // Ours modified, theirs deleted → conflict
                             let path_str = String::from_utf8_lossy(path).to_string();
                             has_conflicts = true;
-                            stage_entry(&mut index, be, 1);
-                            stage_entry(&mut index, oe, 2);
-                            conflict_descriptions.push(("modify/delete".to_string(), path_str));
+                            if has_descendant(theirs, path) {
+                                // D/F conflict: the old file path now needs to stay a
+                                // directory (for entries like `path/file`), so move the
+                                // conflict stages and worktree file to a side-path.
+                                let conflict_path = format!("{path_str}~{ours_label}");
+                                let mut be_conflict = be.clone();
+                                be_conflict.path = conflict_path.as_bytes().to_vec();
+                                stage_entry(&mut index, &be_conflict, 1);
+                                let mut oe_conflict = oe.clone();
+                                oe_conflict.path = conflict_path.as_bytes().to_vec();
+                                stage_entry(&mut index, &oe_conflict, 2);
+                                if let Ok(obj) = repo.odb.read(&oe.oid) {
+                                    conflict_files.push((conflict_path, obj.data));
+                                }
+                            } else {
+                                stage_entry(&mut index, be, 1);
+                                stage_entry(&mut index, oe, 2);
+                            }
+                            conflict_descriptions
+                                .push(("modify/delete".to_string(), path_str.clone()));
                         }
                     }
                 }

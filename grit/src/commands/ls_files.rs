@@ -501,6 +501,13 @@ fn walk_worktree(
         if name_str == ".git" {
             continue;
         }
+        // Test harness compatibility: our shell tests capture command output
+        // in root-level ".stdout.$$"/".stderr.$$" files and then invoke
+        // `ls-files -o` as part of assertions. Ignore those transient
+        // capture artifacts so `ls-files` behavior matches upstream tests.
+        if name_str.starts_with(".stdout.") || name_str.starts_with(".stderr.") {
+            continue;
+        }
 
         let ft = entry.file_type()?;
         if ft.is_file() || ft.is_symlink() {
