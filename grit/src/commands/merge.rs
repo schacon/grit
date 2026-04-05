@@ -676,6 +676,9 @@ fn do_real_merge(
         diff_algorithm,
     )?;
 
+    // Refuse merges that would overwrite local changes or untracked files.
+    bail_if_merge_would_overwrite_local_changes(repo, &ours_entries, &merge_result.index)?;
+
     // Write index
     merge_result.index.write(&repo.index_path())?;
 
@@ -847,6 +850,137 @@ fn do_real_merge(
     }
 
     Ok(())
+}
+
+fn bail_if_merge_would_overwrite_local_changes(
+    repo: &Repository,
+    old_entries: &HashMap<Vec<u8>, IndexEntry>,
+    new_index: &Index,
+) -> Result<()> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+
+    let new_map: HashMap<&[u8], &IndexEntry> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.as_slice(), e))
+        .collect();
+
+    let mut overwrite_local: BTreeSet<String> = BTreeSet::new();
+    for (path, old_entry) in old_entries {
+        let changed = match new_map.get(path.as_slice()) {
+            Some(new_entry) => new_entry.oid != old_entry.oid || new_entry.mode != old_entry.mode,
+            None => true,
+        };
+        if !changed {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(path).to_string();
+        let abs = work_tree.join(&rel);
+        if fs::symlink_metadata(&abs).is_err() {
+            continue;
+        }
+        if is_worktree_entry_dirty(repo, old_entry, &abs)? {
+            overwrite_local.insert(rel);
+        }
+    }
+
+    let mut overwrite_untracked: BTreeSet<String> = BTreeSet::new();
+    let old_tracked: BTreeSet<Vec<u8>> = old_entries.keys().cloned().collect();
+    for new_entry in &new_index.entries {
+        if new_entry.stage() != 0 {
+            continue;
+        }
+        if old_entries.contains_key(&new_entry.path) {
+            continue;
+        }
+
+        let mut prefix = new_entry.path.clone();
+        prefix.push(b'/');
+        let replaces_tracked_dir = old_entries.keys().any(|p| p.starts_with(&prefix));
+        if !replaces_tracked_dir {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(&new_entry.path).to_string();
+        let abs = work_tree.join(&rel);
+        let Ok(meta) = fs::symlink_metadata(&abs) else {
+            continue;
+        };
+        if !meta.file_type().is_dir() {
+            continue;
+        }
+
+        let mut stack = vec![(abs, rel)];
+        while let Some((dir_abs, dir_rel)) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir_abs) else {
+                continue;
+            };
+            for child in entries.flatten() {
+                let child_name = child.file_name().to_string_lossy().to_string();
+                let child_rel = format!("{dir_rel}/{child_name}");
+                let child_abs = child.path();
+                let Ok(child_meta) = fs::symlink_metadata(&child_abs) else {
+                    continue;
+                };
+                if child_meta.file_type().is_dir() {
+                    stack.push((child_abs, child_rel));
+                    continue;
+                }
+                if !old_tracked.contains(child_rel.as_bytes()) {
+                    overwrite_untracked.insert(child_rel);
+                }
+            }
+        }
+    }
+
+    if !overwrite_local.is_empty() {
+        let mut msg = String::from(
+            "error: Your local changes to the following files would be overwritten by merge:\n",
+        );
+        for path in &overwrite_local {
+            msg.push_str(&format!("\t{path}\n"));
+        }
+        msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
+        bail!("{msg}");
+    }
+
+    if !overwrite_untracked.is_empty() {
+        let mut msg = String::from(
+            "error: The following untracked working tree files would be overwritten by merge:\n",
+        );
+        for path in &overwrite_untracked {
+            msg.push_str(&format!("\t{path}\n"));
+        }
+        msg.push_str("Please move or remove them before you merge.\nAborting");
+        bail!("{msg}");
+    }
+
+    Ok(())
+}
+
+fn is_worktree_entry_dirty(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {
+    if entry.mode == MODE_SYMLINK {
+        match fs::read_link(abs_path) {
+            Ok(target) => {
+                let obj = repo.odb.read(&entry.oid)?;
+                let expected = String::from_utf8_lossy(&obj.data);
+                Ok(target.to_string_lossy() != expected.as_ref())
+            }
+            Err(_) => Ok(true),
+        }
+    } else {
+        match fs::read(abs_path) {
+            Ok(data) => {
+                let obj = repo.odb.read(&entry.oid)?;
+                Ok(data != obj.data)
+            }
+            Err(_) => Ok(true),
+        }
+    }
 }
 
 /// Simulate partial-clone lazy fetch batches for known merge scenarios.
