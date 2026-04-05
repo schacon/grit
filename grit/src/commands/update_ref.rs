@@ -28,6 +28,10 @@ pub struct Args {
     #[arg(short = 'z')]
     pub null_terminated: bool,
 
+    /// Create a reflog for this ref.
+    #[arg(long = "create-reflog")]
+    pub create_reflog: bool,
+
     /// Log message for reflog.
     #[arg(short = 'm', long = "message")]
     pub log_message: Option<String>,
