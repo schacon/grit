@@ -215,6 +215,10 @@ pub fn run(args: Args) -> Result<()> {
         let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
 
+        if args.add && has_df_conflict(&index, &rel_bytes) {
+            bail!("'{}' appears as both a file and as a directory", input_path.display());
+        }
+
         // Refuse to add a path that traverses through a symbolic link.
         // Check every *parent* component of the repo-relative path.
         if check_symlink_in_path(work_tree, &rel_path).is_some() {
@@ -625,4 +629,22 @@ fn core_symlinks_enabled(git_dir: &Path) -> bool {
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
     err.to_string().contains("Permission denied")
         || err.to_string().contains("permission denied")
+}
+
+fn has_df_conflict(index: &Index, path: &[u8]) -> bool {
+    index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.as_slice())
+        .any(|existing| {
+            existing != path
+                && (is_tree_prefix(existing, path) || is_tree_prefix(path, existing))
+        })
+}
+
+fn is_tree_prefix(prefix: &[u8], full: &[u8]) -> bool {
+    full.len() > prefix.len()
+        && full.starts_with(prefix)
+        && full.get(prefix.len()) == Some(&b'/')
 }
