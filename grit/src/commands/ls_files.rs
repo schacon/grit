@@ -231,22 +231,28 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        let tag = if args.show_tag {
-            // For -d/-m flags, override the tag based on worktree state
+        // For -d/-m with -t, compute tags. A deleted file with both -d and -m
+        // produces TWO output lines: 'R path' and 'C path'.
+        let (tag, extra_tag) = if args.show_tag {
             if (args.deleted || args.modified) && entry.stage() == 0 {
                 let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
                 if !full.exists() {
-                    Some('R') // removed from worktree
+                    if args.deleted && args.modified {
+                        // Both -d and -m: show R (deleted) and C (modified)
+                        (Some('R'), Some('C'))
+                    } else {
+                        (Some('R'), None)
+                    }
                 } else if is_modified(entry, &full) {
-                    Some('C') // changed in worktree
+                    (Some('C'), None)
                 } else {
-                    Some(status_tag(entry))
+                    (Some(status_tag(entry)), None)
                 }
             } else {
-                Some(status_tag(entry))
+                (Some(status_tag(entry)), None)
             }
         } else {
-            None
+            (None, None)
         };
 
         if args.eol {
@@ -335,6 +341,12 @@ pub fn run(args: Args) -> Result<()> {
             }
             write!(out, "{qname}")?;
             out.write_all(&[term])?;
+            // Output extra line for deleted files with both -d and -m and -t
+            if let Some(et) = extra_tag {
+                write!(out, "{} ", et)?;
+                write!(out, "{qname}")?;
+                out.write_all(&[term])?;
+            }
         }
     }
 
