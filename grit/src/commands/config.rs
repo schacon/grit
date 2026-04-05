@@ -1325,12 +1325,6 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
     Ok(val.to_owned())
 }
 
-/// Format a value according to the type flags.
-/// Format a default value, wrapping errors with a descriptive message.
-fn format_default_value(args: &Args, val: &str) -> Result<String> {
-    format_typed_value(args, val).context("failed to format default config value")
-}
-
 /// Check if a value with --path type is an optional path that doesn't exist.
 /// Returns true if the value should be skipped.
 fn is_optional_missing_path(args: &Args, val: &str) -> bool {
