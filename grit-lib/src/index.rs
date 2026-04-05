@@ -6,9 +6,7 @@
 //!
 //! # Format version
 //!
-//! This implementation supports index versions 2 and 3. Requests for version 4
-//! currently fall back to a non-compressed index on write because path
-//! compression is not yet implemented.
+//! This implementation supports index versions 2, 3, and 4.
 //!
 //! # References
 //!
@@ -137,7 +135,7 @@ impl IndexEntry {
 /// The in-memory representation of the Git index file.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
-    /// Index format version (2 or 3).
+    /// Index format version (2, 3, or 4).
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
@@ -267,7 +265,8 @@ impl Index {
         let mut hasher = Sha1::new();
         hasher.update(body);
         let computed = hasher.finalize();
-        if computed.as_slice() != checksum {
+        let checksum_is_zero = checksum.iter().all(|b| *b == 0);
+        if !checksum_is_zero && computed.as_slice() != checksum {
             return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
         }
 
@@ -315,9 +314,14 @@ impl Index {
         let mut body = Vec::new();
         self.serialize_into(&mut body)?;
 
-        let mut hasher = Sha1::new();
-        hasher.update(&body);
-        let checksum = hasher.finalize();
+        let skip_hash = index_skip_hash(path);
+        let checksum = if skip_hash {
+            [0u8; 20].to_vec()
+        } else {
+            let mut hasher = Sha1::new();
+            hasher.update(&body);
+            hasher.finalize().to_vec()
+        };
 
         let tmp_path = path.with_extension("lock");
         let pid_path = pid_path_for_lock(&tmp_path);
@@ -379,9 +383,9 @@ impl Index {
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         // Determine which version to write.
-        // Version 4 requires path compression, which we do not implement yet.
-        // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
+        let write_version = if self.version >= 4 {
+            4
+        } else if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
@@ -395,8 +399,10 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
+        let mut prev_path: Vec<u8> = Vec::new();
         for entry in &self.entries {
-            serialize_entry(entry, write_version, out);
+            serialize_entry(entry, write_version, &prev_path, out);
+            prev_path = entry.path.clone();
         }
         Ok(())
     }
@@ -475,6 +481,27 @@ fn lockfile_pid_enabled(index_path: &Path) -> bool {
     ConfigSet::load(Some(git_dir), true)
         .ok()
         .and_then(|cfg| cfg.get_bool("core.lockfilepid"))
+        .and_then(|res| res.ok())
+        .unwrap_or(false)
+}
+
+fn index_skip_hash(index_path: &Path) -> bool {
+    let git_dir = match index_path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    let config = match ConfigSet::load(Some(git_dir), true) {
+        Ok(cfg) => cfg,
+        Err(_) => return false,
+    };
+
+    if let Some(skip_hash) = config.get_bool("index.skipHash").and_then(|res| res.ok()) {
+        return skip_hash;
+    }
+
+    config
+        .get_bool("feature.manyFiles")
         .and_then(|res| res.ok())
         .unwrap_or(false)
 }
@@ -681,7 +708,7 @@ fn read_varint(data: &[u8]) -> (usize, usize) {
     (value, pos)
 }
 
-fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
+fn serialize_entry(entry: &IndexEntry, version: u32, prev_path: &[u8], out: &mut Vec<u8>) {
     let start = out.len();
 
     let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
@@ -716,16 +743,42 @@ fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
         }
     }
 
-    out.extend_from_slice(&entry.path);
-    out.push(0);
-
-    // Pad to 8-byte boundary
-    let entry_len = out.len() - start;
-    let padded = (entry_len + 7) & !7;
-    let padding = padded - entry_len;
-    for _ in 0..padding {
+    if version == 4 {
+        let common_prefix = shared_prefix_len(prev_path, &entry.path);
+        let strip_len = prev_path.len().saturating_sub(common_prefix);
+        write_varint(strip_len, out);
+        out.extend_from_slice(&entry.path[common_prefix..]);
         out.push(0);
+    } else {
+        out.extend_from_slice(&entry.path);
+        out.push(0);
+
+        // Pad to 8-byte boundary
+        let entry_len = out.len() - start;
+        let padded = (entry_len + 7) & !7;
+        let padding = padded - entry_len;
+        for _ in 0..padding {
+            out.push(0);
+        }
     }
+}
+
+fn write_varint(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn shared_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
 }
 
 /// Build an [`IndexEntry`] by stat-ing a file on disk.
@@ -869,7 +922,7 @@ mod tests {
     }
 
     #[test]
-    fn requested_v4_writes_a_compatible_index_format() {
+    fn requested_v4_writes_v4_index_format() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("index");
 
@@ -882,7 +935,7 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+        assert_eq!(&data[4..8], &4u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
         assert_eq!(loaded.entries[0].path, b"one");

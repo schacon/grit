@@ -6,14 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    59 |
+| Completed   |    60 |
 | In progress |     0 |
-| Remaining   |   708 |
+| Remaining   |   707 |
 | **Total**   |   767 |
 
 ## Recently completed
 
 - `t2010-checkout-ambiguous` — 10/10 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
+- `t1600-index` — 7/7 tests pass (implemented index v4 write/read support with path compression + `index.skipHash`/`feature.manyFiles` trailing-hash behavior, and added missing `test_trailing_hash` helper command in `tests/`)
 - `t2012-checkout-last` — 22/22 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2105-update-index-gitfile` — 4/4 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
 - `t2015-checkout-unborn` — 6/6 tests pass (upstream re-verification on current branch; stale `PLAN.md` entry corrected)
@@ -53,4 +54,4 @@
 
 ## What Remains
 
-708 test files still pending. See `plan.md` for the full prioritized list.
+707 test files still pending. See `plan.md` for the full prioritized list.

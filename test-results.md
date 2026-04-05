@@ -39,3 +39,6 @@
 - `./scripts/run-tests.sh t2105-update-index-gitfile.sh`: 4/4 passing (re-run confirmed stable full pass).
 - `./scripts/run-tests.sh t2012-checkout-last.sh`: 22/22 passing.
 - `./scripts/run-tests.sh t2010-checkout-ambiguous.sh`: 10/10 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after implementing index v4 write support, zero-checksum acceptance for skipHash, and `test-tool hexdump` helper; reverted unrelated clippy edits in non-target files).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1600-index.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t1600-index.sh`: 7/7 passing.

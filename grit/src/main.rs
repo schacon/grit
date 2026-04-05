@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod commands;
@@ -586,6 +587,25 @@ fn run_test_tool_regex(rest: &[String]) -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn run_test_tool_hexdump(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool hexdump");
+    }
+
+    let mut data = Vec::new();
+    std::io::stdin().read_to_end(&mut data)?;
+
+    let mut out = std::io::stdout().lock();
+    for (idx, b) in data.iter().enumerate() {
+        if idx > 0 {
+            write!(out, " ")?;
+        }
+        write!(out, "{:02x}", b)?;
+    }
+    writeln!(out)?;
     Ok(())
 }
 
@@ -2507,6 +2527,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "mktemp" => run_test_tool_mktemp(rest),
                 "regex" => run_test_tool_regex(rest),
+                "hexdump" => run_test_tool_hexdump(rest),
                 "pkt-line" => run_test_tool_pkt_line(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
