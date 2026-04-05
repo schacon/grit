@@ -229,7 +229,19 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Write tree from index
-    let tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
+        Ok(oid) => oid,
+        Err(e) => {
+            if e.to_string().contains("Permission denied") {
+                eprintln!(
+                    "error: insufficient permission for adding an object to repository database .git/objects"
+                );
+                eprintln!("error: Error building trees");
+                std::process::exit(1);
+            }
+            return Err(e.into());
+        }
+    };
 
     // Resolve HEAD for parent(s)
     let head = resolve_head(&repo.git_dir)?;

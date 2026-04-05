@@ -11,6 +11,26 @@ use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
+fn is_odb_permission_denied(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            return ioe.kind() == std::io::ErrorKind::PermissionDenied;
+        }
+        if let Some(lib_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            return matches!(
+                lib_err,
+                grit_lib::error::Error::Io(ioe)
+                    if ioe.kind() == std::io::ErrorKind::PermissionDenied
+            );
+        }
+        false
+    })
+}
+
+fn emit_unwritable_odb_message() {
+    eprintln!("error: insufficient permission for adding an object to repository database .git/objects");
+}
+
 /// Arguments for `grit update-index`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -362,10 +382,25 @@ pub fn run(args: Args) -> Result<()> {
                 .with_context(|| format!("cannot read '{}'", abs_path.display()))?
         };
 
-        let oid = repo
+        let oid = match repo
             .odb
             .write(grit_lib::objects::ObjectKind::Blob, &data)
-            .context("writing blob")?;
+            .context("writing blob")
+        {
+            Ok(oid) => oid,
+            Err(e) => {
+                if is_odb_permission_denied(&e) {
+                    emit_unwritable_odb_message();
+                    eprintln!(
+                        "error: {}: failed to insert into database",
+                        input_path.display()
+                    );
+                    eprintln!("fatal: Unable to process path {}", input_path.display());
+                    std::process::exit(128);
+                }
+                return Err(e);
+            }
+        };
 
         let entry = entry_from_stat(&abs_path, &rel_bytes, oid, mode)
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
