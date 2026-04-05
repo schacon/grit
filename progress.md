@@ -47,4 +47,4 @@
 
 ## What Remains
 
-712 test files still pending. See `plan.md` for the full prioritized list.
+710 test files still pending. See `plan.md` for the full prioritized list.

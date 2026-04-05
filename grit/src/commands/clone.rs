@@ -89,6 +89,10 @@ pub struct Args {
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
 
+    /// Initialize sparse-checkout in cone mode.
+    #[arg(long = "sparse")]
+    pub sparse: bool,
+
     /// Set up shared clone using alternates instead of copying objects.
     #[arg(short = 's', long = "shared")]
     pub shared: bool,

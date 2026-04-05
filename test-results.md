@@ -30,3 +30,6 @@
 - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (regression check after `t6435` fixes).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after `t6435` fixes).
 - `./scripts/run-tests.sh t6401-merge-criss-cross.sh`: 4/4 passing (fully passing; stale plan entry corrected after direct and harness re-verification).
+- `./scripts/run-tests.sh t8200-mv-rename.sh`: 30/30 passing (regression check after `mv` index stat refresh removal for branch-switch safety).
+- `./scripts/run-tests.sh t12120-mv-verbose-dryrun.sh`: 33/33 passing (regression check after `mv` index stat refresh removal for branch-switch safety).
+- `./scripts/run-tests.sh t6421-merge-partial-clone.sh`: 0/3 passing (currently blocked by missing support for `rev-list --missing=print`, `merge --no-progress`, and partial-clone lazy-fetch/trace accounting).
