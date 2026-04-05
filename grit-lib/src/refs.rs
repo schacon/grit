@@ -353,6 +353,10 @@ pub fn append_reflog(
         );
     }
     let log_path = git_dir.join("logs").join(refname);
+    let auto_create = refname == "HEAD" || reflog_auto_create_enabled(git_dir);
+    if !auto_create && !log_path.exists() {
+        return Ok(());
+    }
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -364,6 +368,56 @@ pub fn append_reflog(
     use io::Write;
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+/// Determine whether missing reflog files should be auto-created.
+///
+/// This follows Git's core.logAllRefUpdates behavior:
+/// - explicit true/always/on/1 => create logs
+/// - explicit false/never/off/0 => do not auto-create
+/// - unset => true for non-bare repos, false for bare repos
+fn reflog_auto_create_enabled(git_dir: &Path) -> bool {
+    let config_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let config_path = config_dir.join("config");
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+
+    let mut in_core = false;
+    let mut log_all_ref_updates: Option<bool> = None;
+    let mut bare = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_core = trimmed.to_ascii_lowercase().starts_with("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim().to_ascii_lowercase();
+        match key.as_str() {
+            "logallrefupdates" => {
+                log_all_ref_updates = match value.as_str() {
+                    "1" | "true" | "yes" | "on" | "always" => Some(true),
+                    "0" | "false" | "no" | "off" | "never" => Some(false),
+                    _ => None,
+                };
+            }
+            "bare" => {
+                bare = matches!(value.as_str(), "1" | "true" | "yes" | "on");
+            }
+            _ => {}
+        }
+    }
+
+    log_all_ref_updates.unwrap_or(!bare)
 }
 
 /// List all refs under a given prefix (e.g. `"refs/heads/"`).

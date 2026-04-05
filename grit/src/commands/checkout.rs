@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Create branch reflog.
+    #[arg(short = 'l')]
+    pub create_reflog: bool,
+
     /// Detach HEAD at the named commit (even if it is a branch).
     #[arg(long = "detach", short = 'd', conflicts_with_all = ["new_branch", "force_branch", "orphan"])]
     pub detach: bool,
@@ -234,9 +238,28 @@ pub fn run(args: Args) -> Result<()> {
         return git_passthrough::run("checkout", &passthrough_args);
     }
 
-    // Case: checkout --orphan <name>
+    // Case: checkout --orphan <name> [<start-point>]
     if let Some(ref orphan_name) = args.orphan {
-        return create_orphan_branch(&repo, orphan_name);
+        if args.new_branch.is_some()
+            || args.force_branch.is_some()
+            || args.track.is_some()
+            || args.no_track
+        {
+            bail!("'--orphan' cannot be used with -b/-B/-t/--track/--no-track");
+        }
+        if !paths.is_empty() {
+            bail!(
+                "Cannot update paths and switch to branch '{}'",
+                orphan_name
+            );
+        }
+        return create_orphan_branch(
+            &repo,
+            orphan_name,
+            target.as_deref(),
+            args.force,
+            args.create_reflog,
+        );
     }
 
     // Compatibility: allow `git checkout <start-point> -b/-B <branch>`.
@@ -526,6 +549,14 @@ fn switch_branch(
     force: bool,
 ) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
+    let leaving_unborn = match &head {
+        HeadState::Branch {
+            refname,
+            oid: None,
+            ..
+        } => Some(refname.clone()),
+        _ => None,
+    };
 
     // Fail gracefully when HEAD is corrupt (empty or garbage)
     if matches!(head, HeadState::Invalid) {
@@ -576,6 +607,7 @@ fn switch_branch(
 
     // Update HEAD to point to the branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+    cleanup_unborn_branch_reflog(repo, leaving_unborn.as_deref());
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
@@ -778,7 +810,13 @@ fn force_create_and_switch_branch(
 ///
 /// Sets HEAD to the new branch but does NOT create the ref (no commit yet).
 /// The index is preserved so the next commit will have the current content.
-fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
+fn create_orphan_branch(
+    repo: &Repository,
+    name: &str,
+    start: Option<&str>,
+    force: bool,
+    create_reflog: bool,
+) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
 
     // Check the branch doesn't already exist
@@ -786,8 +824,36 @@ fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
         bail!("a branch named '{}' already exists", name);
     }
 
+    let head = resolve_head(&repo.git_dir)?;
+    let start_oid = match start {
+        Some(spec) => Some(resolve_to_commit(repo, spec)?),
+        None => None,
+    };
+
+    // When a start-point is provided, behave like switching to it first.
+    if let Some(oid) = start_oid {
+        let target_tree = commit_to_tree(repo, &oid)?;
+        switch_to_tree(repo, &head, &target_tree, force)?;
+    }
+
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+    let new_oid = start_oid.unwrap_or(old_oid);
+    let from_desc = match &head {
+        HeadState::Branch { short_name, .. } => short_name.clone(),
+        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+        HeadState::Invalid => "unknown".to_string(),
+    };
+    let msg = format!("checkout: moving from {} to {}", from_desc, name);
+    write_checkout_reflog(repo, &head, &old_oid, &new_oid, &msg);
+
     // Point HEAD at the new branch (which doesn't exist yet = unborn)
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+    if create_reflog {
+        ensure_empty_reflog(repo, &branch_ref)?;
+    }
 
     checkout_eprintln!("Switched to a new branch '{}'", name);
     Ok(())
@@ -2910,4 +2976,54 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
     let hours = offset.whole_hours();
     let minutes = offset.minutes_past_hour().unsigned_abs();
     format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+fn ensure_empty_reflog(repo: &Repository, refname: &str) -> Result<()> {
+    let log_path = repo.git_dir.join("logs").join(refname);
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if !log_path.exists() {
+        std::fs::write(&log_path, b"")?;
+    }
+    Ok(())
+}
+
+fn cleanup_unborn_branch_reflog(repo: &Repository, refname: Option<&str>) {
+    let Some(refname) = refname else {
+        return;
+    };
+    // If the branch ref exists now, it's no longer an abandoned unborn branch.
+    if refs::resolve_ref(&repo.git_dir, refname).is_ok() {
+        return;
+    }
+    let logs_root = repo.git_dir.join("logs");
+    let log_path = logs_root.join(refname);
+    let meta = match std::fs::metadata(&log_path) {
+        Ok(meta) => meta,
+        Err(_) => return,
+    };
+    if meta.len() != 0 {
+        return;
+    }
+    if std::fs::remove_file(&log_path).is_err() {
+        return;
+    }
+    let mut cur = log_path.parent().map(|p| p.to_path_buf());
+    while let Some(dir) = cur {
+        if dir == logs_root {
+            break;
+        }
+        let empty = std::fs::read_dir(&dir)
+            .ok()
+            .and_then(|mut it| it.next().map(|_| false))
+            .unwrap_or(true);
+        if !empty {
+            break;
+        }
+        if std::fs::remove_dir(&dir).is_err() {
+            break;
+        }
+        cur = dir.parent().map(|p| p.to_path_buf());
+    }
 }
