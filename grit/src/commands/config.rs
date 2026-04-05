@@ -477,6 +477,7 @@ pub fn run(args: Args) -> Result<()> {
                 key: args.positional[0].clone(),
                 value: args.positional[1].clone(),
                 all: args.replace_all,
+                append: false,
             };
             cmd_set(&args, &set_args, scope, &file_path, None)
         }
@@ -487,6 +488,7 @@ pub fn run(args: Args) -> Result<()> {
                     key: args.positional[0].clone(),
                     value: args.positional[1].clone(),
                     all: true,
+                    append: false,
                 };
                 cmd_set(
                     &args,
@@ -501,6 +503,7 @@ pub fn run(args: Args) -> Result<()> {
                     key: args.positional[0].clone(),
                     value: args.positional[1].clone(),
                     all: false,
+                    append: false,
                 };
                 cmd_set(
                     &args,

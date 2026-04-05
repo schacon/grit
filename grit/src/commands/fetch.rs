@@ -94,6 +94,10 @@ pub struct Args {
     /// Only negotiate, do not fetch objects.
     #[arg(long)]
     pub negotiate_only: bool,
+
+    /// Allow updating the current branch head (normally refused).
+    #[arg(long)]
+    pub update_head_ok: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {

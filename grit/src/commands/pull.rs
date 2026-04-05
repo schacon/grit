@@ -176,6 +176,7 @@ pub fn run(args: Args) -> Result<()> {
         no_show_forced_updates: false,
         show_forced_updates: false,
         negotiate_only: false,
+        update_head_ok: false,
     };
     super::fetch::run(fetch_args)?;
 
