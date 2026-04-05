@@ -19,7 +19,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit apply`.
 #[derive(Debug, ClapArgs)]
@@ -606,6 +606,19 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
         let _ = (remove_no_newline, add_no_newline);
     }
 
+    // Verify: if the last hunk ends with an added line (no trailing context),
+    // and there are remaining old lines, reject the patch.
+    if old_idx < old_lines.len() {
+        if let Some(last_hunk) = hunks.last() {
+            let last_line = last_hunk.lines.iter().rev().find(|hl| {
+                matches!(hl, HunkLine::Context(_) | HunkLine::Remove(_) | HunkLine::Add(_))
+            });
+            if matches!(last_line, Some(HunkLine::Add(_))) {
+                bail!("patch does not apply");
+            }
+        }
+    }
+
     // Copy remaining lines after the last hunk
     while old_idx < old_lines.len() {
         result.push(old_lines[old_idx].to_string());
@@ -841,6 +854,7 @@ pub fn run(args: Args) -> Result<()> {
     } else if args.check {
         check_patches(&patches, &args)?;
     } else if args.index {
+        verify_worktree_matches_index(&patches, &args)?;
         apply_to_worktree(&patches, &args)?;
         apply_to_index(&patches, &args)?;
     } else {
@@ -851,6 +865,60 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Apply patches to the working tree.
+/// Verify that working tree files match the index (required for --index mode).
+fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let index = match Index::load(&repo.index_path()) {
+        Ok(idx) => idx,
+        Err(_) => return Ok(()),
+    };
+
+    for fp in patches {
+        if fp.is_new {
+            continue;
+        }
+        // Skip submodule entries
+        if fp.old_mode.as_deref() == Some("160000") || fp.new_mode.as_deref() == Some("160000") {
+            continue;
+        }
+        let path_str = fp.effective_path()
+            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path = PathBuf::from(&adjusted);
+
+        if !path.exists() {
+            continue;
+        }
+
+        // Read working tree content and compute hash
+        let wt_content = fs::read(&path)?;
+        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+
+        // Get index entry
+        if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+            if wt_oid != entry.oid {
+                bail!("{adjusted}: does not match index");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove empty directories upward from path.
+fn remove_empty_dirs_up(dir: &Path) {
+    let mut current = dir.to_path_buf();
+    while current.as_os_str() != "." && !current.as_os_str().is_empty() {
+        if fs::remove_dir(&current).is_err() {
+            break;
+        }
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => break,
+        }
+    }
+}
+
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
     for fp in patches {
         let path_str = fp
@@ -859,15 +927,27 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
         let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
 
         if fp.is_deleted {
-            // Delete the file
-            if path.exists() {
+            // Delete the file (or directory for submodules)
+            if path.is_dir() {
+                fs::remove_dir_all(&path)
+                    .with_context(|| format!("failed to remove directory {}", path.display()))?;
+            } else if path.exists() {
                 fs::remove_file(&path)
                     .with_context(|| format!("failed to remove {}", path.display()))?;
+            }
+            // Clean up empty parent directories
+            if let Some(parent) = path.parent() {
+                remove_empty_dirs_up(parent);
             }
             continue;
         }
 
         if fp.is_new {
+            // Submodule: create directory
+            if fp.new_mode.as_deref() == Some("160000") {
+                fs::create_dir_all(&path)?;
+                continue;
+            }
             // Create new file
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -940,6 +1020,32 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
 
         if fp.is_deleted {
             index.remove(adjusted.as_bytes());
+            continue;
+        }
+
+        // Handle submodule (gitlink) entries specially
+        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000")) && fp.is_new {
+            let commit_hash = fp.hunks.iter()
+                .flat_map(|h| h.lines.iter())
+                .find_map(|l| {
+                    if let HunkLine::Add(s) = l {
+                        s.strip_prefix("Subproject commit ").map(|h| h.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
+            let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
+            let mode = grit_lib::index::MODE_GITLINK;
+            let entry = grit_lib::index::IndexEntry {
+                ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
+                dev: 0, ino: 0, mode, uid: 0, gid: 0,
+                size: 0, oid,
+                flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                flags_extended: None,
+                path: adjusted.into_bytes(),
+            };
+            index.add_or_replace(entry);
             continue;
         }
 

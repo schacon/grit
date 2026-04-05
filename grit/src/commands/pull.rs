@@ -53,6 +53,15 @@ pub struct Args {
     /// Allow fast-forward (default).
     #[arg(long = "ff")]
     pub ff: bool,
+
+    /// Include one-line descriptions from commit messages in the merge commit.
+    /// Optionally limit the number of entries.
+    #[arg(long = "log", num_args = 0..=1, default_missing_value = "0", require_equals = true)]
+    pub log: Option<String>,
+
+    /// Do not include one-line descriptions.
+    #[arg(long = "no-log")]
+    pub no_log: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -94,12 +103,46 @@ pub fn run(args: Args) -> Result<()> {
     // Check if remote is local (path-based: "." or contains "/")
     let is_local = remote_name == "." || remote_name.contains('/');
 
-    if is_local {
-        // For local remotes, resolve the ref directly in the repo
+    if is_local && remote_name != "." {
+        // For local path remotes, open the remote repo, copy objects, and resolve the branch there.
+        let remote_path = if let Some(stripped) = remote_name.strip_prefix("file://") {
+            std::path::PathBuf::from(stripped)
+        } else {
+            std::path::PathBuf::from(remote_name)
+        };
+
+        // Open remote repo (bare or non-bare)
+        let remote_repo = if let Ok(r) = Repository::open(&remote_path, None) {
+            r
+        } else {
+            let git_dir = remote_path.join(".git");
+            Repository::open(&git_dir, Some(&remote_path))
+                .with_context(|| format!("could not open remote repository at '{}'", remote_path.display()))?
+        };
+
+        // Copy objects from remote to local
+        super::fetch::copy_objects_for_pull(&remote_repo.git_dir, &repo.git_dir)?;
+
+        // Determine which branch to merge: try the specified merge_branch on the remote,
+        // falling back to the remote's HEAD
+        let remote_oid = if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, &format!("refs/heads/{merge_branch}")) {
+            oid
+        } else if let Ok(oid) = refs::resolve_ref(&remote_repo.git_dir, "HEAD") {
+            oid
+        } else {
+            bail!("bad revision '{merge_branch}': could not resolve in remote");
+        };
+
+        // Write FETCH_HEAD for compatibility
+        let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
+        std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
+
+        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+    } else if is_local {
+        // "." remote — resolve locally
         let remote_oid = grit_lib::rev_parse::resolve_revision(&repo, &merge_branch)
             .with_context(|| format!("bad revision '{merge_branch}'"))?;
 
-        // Write FETCH_HEAD for compatibility
         let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
@@ -189,8 +232,11 @@ fn do_merge_or_rebase(args: &Args, config: &ConfigSet, oid_hex: String, ref_name
             no_signoff: false,
             stat: false,
             no_stat: false,
-            log: None,
-            no_log: false,
+            log: args.log.as_ref().map(|v| {
+                let n = v.parse::<usize>().unwrap_or(0);
+                if n == 0 { 20 } else { n }
+            }),
+            no_log: args.no_log,
             compact_summary: false,
             summary: false,
             ff,

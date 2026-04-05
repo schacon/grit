@@ -209,16 +209,36 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
         }
     } else if !args.all {
         // Read bare object IDs from stdin.
+        // Lines may have the form:
+        //   <oid>          — include this object
+        //   <oid> <name>   — include this object (name hint for delta selection)
+        //   -<oid>         — exclude this object (negation)
         let stdin = io::stdin();
+        let mut exclude = BTreeSet::new();
         for line in stdin.lock().lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let oid = ObjectId::from_hex(trimmed)
-                .map_err(|e| anyhow::anyhow!("invalid object id '{trimmed}': {e}"))?;
+            // Check for negation prefix
+            if let Some(rest) = trimmed.strip_prefix('-') {
+                // Negated object: take just the hex part (may have trailing name)
+                let hex_part = rest.split_whitespace().next().unwrap_or(rest);
+                let oid = ObjectId::from_hex(hex_part)
+                    .map_err(|e| anyhow::anyhow!("invalid object id '{hex_part}': {e}"))?;
+                exclude.insert(oid);
+                continue;
+            }
+            // Positive object: may have "<oid> <name>" format
+            let hex_part = trimmed.split_whitespace().next().unwrap_or(trimmed);
+            let oid = ObjectId::from_hex(hex_part)
+                .map_err(|e| anyhow::anyhow!("invalid object id '{hex_part}': {e}"))?;
             oids.insert(oid);
+        }
+        // Remove excluded objects.
+        for oid in &exclude {
+            oids.remove(oid);
         }
     }
 

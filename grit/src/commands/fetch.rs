@@ -445,8 +445,22 @@ fn fetch_remote(
         }
     }
 
-    // Fetch tags if requested (or by default unless --no-tags)
-    if args.tags || !args.no_tags {
+    // Determine whether to fetch tags:
+    // CLI --tags/--no-tags override, then remote.<name>.tagopt, then default (fetch tags)
+    let should_fetch_tags = if args.tags {
+        true
+    } else if args.no_tags {
+        false
+    } else {
+        // Check remote.<name>.tagopt config
+        let tagopt_key = format!("remote.{remote_name}.tagopt");
+        match config.get(&tagopt_key).as_deref() {
+            Some("--no-tags") => false,
+            Some("--tags") => true,
+            _ => true, // default: fetch tags
+        }
+    };
+    if should_fetch_tags {
         for (refname, remote_oid) in &remote_tags {
             let old_oid = read_ref_oid(git_dir, refname);
             if old_oid.as_ref() == Some(remote_oid) {
@@ -586,6 +600,11 @@ fn read_ref_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
 
 /// Copy all objects (loose + packs) from remote to local.
 /// If `refetch` is true, re-copy objects even if they already exist locally.
+/// Copy objects from a remote git dir to local git dir (public for pull).
+pub fn copy_objects_for_pull(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
+    copy_objects(src_git_dir, dst_git_dir, false)
+}
+
 fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");

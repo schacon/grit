@@ -19,7 +19,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -715,25 +715,44 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
         Err(e) => return Err(e.into()),
     };
 
+    // Resolve pathspecs relative to the current directory
+    let cwd = std::env::current_dir().unwrap_or_else(|_| work_tree.to_path_buf());
+    // Canonicalize work_tree to resolve symlinks for proper prefix stripping
+    let canon_work_tree = work_tree.canonicalize().unwrap_or_else(|_| work_tree.to_path_buf());
+
     for spec in pathspecs {
-        let abs_path = work_tree.join(spec);
-        if abs_path.exists() {
+        // Resolve the pathspec relative to cwd
+        let abs_path = if std::path::Path::new(spec).is_absolute() {
+            PathBuf::from(spec)
+        } else {
+            cwd.join(spec)
+        };
+        // Canonicalize to resolve symlinks, then compute relative path to work_tree
+        let canon_path = abs_path.canonicalize().unwrap_or(abs_path.clone());
+        let rel_path = canon_path
+            .strip_prefix(&canon_work_tree)
+            .unwrap_or_else(|_| {
+                // Fallback: try stripping non-canonical work_tree
+                abs_path.strip_prefix(work_tree).unwrap_or(std::path::Path::new(spec))
+            });
+        let rel_str = rel_path.to_string_lossy().to_string();
+        if canon_path.exists() {
             use std::os::unix::fs::MetadataExt;
-            let meta = fs::symlink_metadata(&abs_path)?;
+            let meta = fs::symlink_metadata(&canon_path)?;
             let data = if meta.file_type().is_symlink() {
-                let target = fs::read_link(&abs_path)?;
+                let target = fs::read_link(&canon_path)?;
                 target.to_string_lossy().into_owned().into_bytes()
             } else {
-                fs::read(&abs_path)?
+                fs::read(&canon_path)?
             };
             let oid = repo.odb.write(ObjectKind::Blob, &data)?;
             let mode = grit_lib::index::normalize_mode(meta.mode());
-            let raw_path = spec.as_bytes().to_vec();
-            let entry = grit_lib::index::entry_from_stat(&abs_path, &raw_path, oid, mode)?;
+            let raw_path = rel_str.as_bytes().to_vec();
+            let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
             index.add_or_replace(entry);
         } else {
             // File deleted — remove from index
-            index.remove(spec.as_bytes());
+            index.remove(rel_str.as_bytes());
         }
     }
 

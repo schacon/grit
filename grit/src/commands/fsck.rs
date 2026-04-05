@@ -306,13 +306,12 @@ fn walk_reachable(
                     continue;
                 }
                 // Object is missing.
-                if let Some(ref_oid) = referrer {
-                    issues.push(Issue::Missing {
-                        oid,
-                        kind: "object",
-                        referenced_by: ref_oid,
-                    });
-                }
+                let ref_oid = referrer.unwrap_or(oid);
+                issues.push(Issue::Missing {
+                    oid,
+                    kind: "object",
+                    referenced_by: ref_oid,
+                });
                 continue;
             }
         };

@@ -143,7 +143,7 @@ pub fn run(args: Args) -> Result<()> {
     let _is_path_remote: bool;
 
     if let Some(ref r) = args.remote {
-        if r.contains('/') || r.starts_with('.') {
+        if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
             // Path-based remote: use directly as URL
             _is_path_remote = true;
             remote_name_owned = r.clone();
@@ -673,6 +673,10 @@ fn push_to_url(
 
     // Run pre-receive hook on the remote
     if !args.dry_run {
+        // Snapshot remote refs before hook (hook might create/modify refs)
+        let pre_hook_refs: Vec<(String, ObjectId)> =
+            refs::list_refs(&remote_repo.git_dir, "refs/").unwrap_or_default();
+
         let (hook_result, hook_output) = grit_lib::hooks::run_hook_in_git_dir(
             &remote_repo,
             "pre-receive",
@@ -686,9 +690,19 @@ fn push_to_url(
             colorize_remote_output(&output_str, color_remote);
         }
         if let HookResult::Failed(_code) = hook_result {
-            // Remove objects we copied (quarantine rollback)
+            // Quarantine rollback: remove copied objects
             for path in &copied_objects {
                 let _ = fs::remove_file(path);
+            }
+            // Rollback any ref changes the hook made
+            let post_hook_refs: Vec<(String, ObjectId)> =
+                refs::list_refs(&remote_repo.git_dir, "refs/").unwrap_or_default();
+            let pre_set: std::collections::HashSet<&str> =
+                pre_hook_refs.iter().map(|(r, _)| r.as_str()).collect();
+            for (refname, _) in &post_hook_refs {
+                if !pre_set.contains(refname.as_str()) {
+                    let _ = refs::delete_ref(&remote_repo.git_dir, refname);
+                }
             }
             bail!("pre-receive hook declined the push");
         }
