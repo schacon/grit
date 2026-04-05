@@ -184,8 +184,7 @@ fn collect_from_stdin(stdin: &io::Stdin, args: &Args) -> Result<Vec<(String, Str
                     _ => &current_author,
                 };
                 let key = format_key(ident, args.email);
-                let desc =
-                    format_description(current_message.trim(), args.format.as_deref());
+                let desc = format_description(current_message.trim(), args.format.as_deref());
                 result.push((key, desc));
             }
             has_commit = true;

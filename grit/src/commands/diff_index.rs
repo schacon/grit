@@ -58,10 +58,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Convert to DiffEntry for rename detection and output.
-    let diff_entries: Vec<DiffEntry> = changes
-        .iter()
-        .map(raw_change_to_diff_entry)
-        .collect();
+    let diff_entries: Vec<DiffEntry> = changes.iter().map(raw_change_to_diff_entry).collect();
 
     let diff_entries = if options.find_copies {
         let threshold = options.find_renames.unwrap_or(50);

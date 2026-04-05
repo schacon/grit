@@ -60,7 +60,7 @@ commit → check it off → move on.
 
 ## 2. Plumbing (94 files)
 
-- [ ] `t1505-rev-parse-last` █████████████████░░░ 6/7 (1 left) — test @{-N} syntax
+- [x] `t1505-rev-parse-last` ████████████████████ 7/7 (0 left) — test @{-N} syntax
 - [ ] `t1418-reflog-exists` ████████████████░░░░ 5/6 (1 left) — Test reflog display routines
 - [ ] `t0213-trace2-ancestry` ████████████████░░░░ 4/5 (1 left) — test trace2 cmd_ancestry event
 - [ ] `t1100-commit-tree-options` ████████████████░░░░ 4/5 (1 left) — git commit-tree options test

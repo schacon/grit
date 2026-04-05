@@ -652,9 +652,10 @@ fn run_filter(cmd: &str, data: &[u8], _rel_path: &str) -> Result<Vec<u8>, std::i
 
     let output = child.wait_with_output()?;
     if !output.status.success() {
-        return Err(std::io::Error::other(
-            format!("filter command exited with status {}", output.status),
-        ));
+        return Err(std::io::Error::other(format!(
+            "filter command exited with status {}",
+            output.status
+        )));
     }
 
     Ok(output.stdout)

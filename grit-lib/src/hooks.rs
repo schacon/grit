@@ -88,8 +88,13 @@ pub fn run_hook(
             .map(|v| !matches!(v.to_lowercase().as_str(), "false" | "no" | "off" | "0"))
             .unwrap_or(true);
         if show_warning {
-            eprintln!("hint: The '{}' hook was ignored because it's not set as executable.", hook_name);
-            eprintln!("hint: You can disable this warning with `git config advice.ignoredHook false`.");
+            eprintln!(
+                "hint: The '{}' hook was ignored because it's not set as executable.",
+                hook_name
+            );
+            eprintln!(
+                "hint: You can disable this warning with `git config advice.ignoredHook false`."
+            );
         }
         return HookResult::NotFound;
     }

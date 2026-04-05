@@ -1203,14 +1203,13 @@ fn resolve_color_remote(repo: &Repository, _args: &Args) -> bool {
     // Check -c color.remote=always from environment
     // GIT_CONFIG_COUNT / GIT_CONFIG_KEY / GIT_CONFIG_VALUE override
     for (key, val) in std::env::vars() {
-        if key.starts_with("GIT_CONFIG_KEY_")
-            && val == "color.remote" {
-                let idx = key.strip_prefix("GIT_CONFIG_KEY_").unwrap_or("");
-                let val_key = format!("GIT_CONFIG_VALUE_{idx}");
-                if let Ok(v) = std::env::var(&val_key) {
-                    return v == "always" || v == "true";
-                }
+        if key.starts_with("GIT_CONFIG_KEY_") && val == "color.remote" {
+            let idx = key.strip_prefix("GIT_CONFIG_KEY_").unwrap_or("");
+            let val_key = format!("GIT_CONFIG_VALUE_{idx}");
+            if let Ok(v) = std::env::var(&val_key) {
+                return v == "always" || v == "true";
             }
+        }
     }
     // Check repo config
     if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {

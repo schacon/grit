@@ -351,9 +351,8 @@ fn fetch_remote(
                 // Check fast-forward: reject non-ff updates unless forced
                 if let Some(ref old) = old_oid {
                     if old != &remote_oid && !force {
-                        let is_ff =
-                            merge_base::is_ancestor(&remote_repo, *old, remote_oid)
-                                .unwrap_or(false);
+                        let is_ff = merge_base::is_ancestor(&remote_repo, *old, remote_oid)
+                            .unwrap_or(false);
                         if !is_ff {
                             eprintln!(" ! [rejected]        {src} -> {dst} (non-fast-forward)");
                             bail!("cannot fast-forward ref '{local_ref}'");

@@ -116,10 +116,12 @@ impl Repository {
                     fs::read_to_string(&config_path)
                         .ok()
                         .and_then(|c| {
-                            c.lines().find(|l| {
-                                let trimmed = l.trim();
-                                trimmed.starts_with("bare") && trimmed.contains("true")
-                            }).map(|_| true)
+                            c.lines()
+                                .find(|l| {
+                                    let trimmed = l.trim();
+                                    trimmed.starts_with("bare") && trimmed.contains("true")
+                                })
+                                .map(|_| true)
                         })
                         .unwrap_or(false)
                 } else {
@@ -162,10 +164,7 @@ impl Repository {
             if let Some(mut repo) = try_open_at(current)? {
                 // Override work_tree with GIT_WORK_TREE env if set
                 if let Some(ref wt) = env_work_tree {
-                    repo.work_tree = Some(
-                        wt.canonicalize()
-                            .unwrap_or_else(|_| wt.clone()),
-                    );
+                    repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
                 }
                 return Ok(repo);
             }

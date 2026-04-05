@@ -78,13 +78,12 @@ pub fn run(args: Args) -> Result<()> {
     // Validate fast-forward unless --force
     for update in &updates {
         if let Some(old) = &update.old_oid {
-            if *old != update.new_oid && !args.force
-                && !is_ancestor(&repo, *old, update.new_oid)? {
-                    bail!(
-                        "non-fast-forward update to '{}' rejected (use --force to override)",
-                        update.remote_ref
-                    );
-                }
+            if *old != update.new_oid && !args.force && !is_ancestor(&repo, *old, update.new_oid)? {
+                bail!(
+                    "non-fast-forward update to '{}' rejected (use --force to override)",
+                    update.remote_ref
+                );
+            }
         }
     }
 
@@ -183,10 +182,9 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let dst_file = dst_pack.join(entry.file_name());
-                if !dst_file.exists()
-                    && fs::hard_link(entry.path(), &dst_file).is_err() {
-                        fs::copy(entry.path(), &dst_file)?;
-                    }
+                if !dst_file.exists() && fs::hard_link(entry.path(), &dst_file).is_err() {
+                    fs::copy(entry.path(), &dst_file)?;
+                }
             }
         }
     }

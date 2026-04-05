@@ -792,7 +792,8 @@ fn create_branch(
             // Try to parse as remote tracking branch: origin/branch or refs/remotes/origin/branch
             let remote_ref = if sp.starts_with("refs/remotes/") {
                 Some(sp.to_string())
-            } else if grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}")).is_ok()
+            } else if grit_lib::refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{sp}"))
+                .is_ok()
             {
                 Some(format!("refs/remotes/{sp}"))
             } else {
@@ -922,10 +923,9 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
 
     // Check if new name already exists (unless force; -M or -m -f)
     let force = args.force_rename || args.force;
-    if !force
-        && grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
-            bail!("A branch named '{new_name}' already exists.");
-        }
+    if !force && grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
+        bail!("A branch named '{new_name}' already exists.");
+    }
 
     // Delete the old ref FIRST to avoid d/f conflicts
     // (e.g., renaming m to m/m needs to remove refs/heads/m file before
@@ -1090,10 +1090,9 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("branch '{src_name}' not found."))?;
 
     // Check if dst already exists (unless force copy)
-    if !args.force_copy
-        && grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
-            bail!("A branch named '{dst_name}' already exists.");
-        }
+    if !args.force_copy && grit_lib::refs::resolve_ref(&repo.git_dir, &dst_ref).is_ok() {
+        bail!("A branch named '{dst_name}' already exists.");
+    }
 
     // Cannot copy onto itself if the result would be a d/f conflict
     if src_name == dst_name {

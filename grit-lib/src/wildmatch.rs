@@ -87,10 +87,12 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
                             || (pi + 1 < p.len() && p[pi] == b'\\' && p[pi + 1] == b'/');
 
                         if prev_ok && next_ok {
-                            if pi < p.len() && p[pi] == b'/'
-                                && dowild(&p[pi + 1..], &text[ti..], flags) == WM_MATCH {
-                                    return WM_MATCH;
-                                }
+                            if pi < p.len()
+                                && p[pi] == b'/'
+                                && dowild(&p[pi + 1..], &text[ti..], flags) == WM_MATCH
+                            {
+                                return WM_MATCH;
+                            }
                             match_slash = true;
                         } else {
                             match_slash = false;
@@ -102,10 +104,9 @@ fn dowild(p: &[u8], text: &[u8], flags: u32) -> i32 {
 
                 // Trailing star(s)?
                 if pi >= p.len() {
-                    if !match_slash
-                        && text[ti..].contains(&b'/') {
-                            return WM_ABORT_TO_STARSTAR;
-                        }
+                    if !match_slash && text[ti..].contains(&b'/') {
+                        return WM_ABORT_TO_STARSTAR;
+                    }
                     return WM_MATCH;
                 }
 
@@ -303,10 +304,8 @@ fn do_bracket(pattern: &[u8], pi: &mut usize, t_ch: u8, t_ch_raw: u8, flags: u32
             }
             p_ch = 0; // makes prev_ch = 0
             idx = end; // points at ']'
-        } else {
-            if t_ch == p_ch {
-                matched = true;
-            }
+        } else if t_ch == p_ch {
+            matched = true;
         }
 
         prev_ch = p_ch;

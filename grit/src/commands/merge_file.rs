@@ -8,8 +8,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::merge_file::{is_binary, merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::index::Index;
+use grit_lib::merge_file::{is_binary, merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use std::fs;
@@ -108,8 +108,7 @@ pub fn run_inner(args: Args) -> Result<i32> {
     let (current_bytes, base_bytes, other_bytes) = if args.object_id {
         let repo = Repository::discover(None).context("not a git repository")?;
         let index_path = repo.git_dir.join("index");
-        let index = Index::load(&index_path)
-            .context("reading index")?;
+        let index = Index::load(&index_path).context("reading index")?;
         let cb = resolve_object_id_content(&repo, &index, &current_str)?;
         let bb = resolve_object_id_content(&repo, &index, &base_str)?;
         let ob = resolve_object_id_content(&repo, &index, &other_str)?;
@@ -126,7 +125,10 @@ pub fn run_inner(args: Args) -> Result<i32> {
 
     // Binary detection.
     let names = [&current_str, &base_str, &other_str];
-    for (data, name) in [&current_bytes, &base_bytes, &other_bytes].iter().zip(names.iter()) {
+    for (data, name) in [&current_bytes, &base_bytes, &other_bytes]
+        .iter()
+        .zip(names.iter())
+    {
         if is_binary(data) {
             bail!("Cannot merge binary files: {}", name);
         }
@@ -138,16 +140,8 @@ pub fn run_inner(args: Args) -> Result<i32> {
         .first()
         .map(|s| s.as_str())
         .unwrap_or(&current_str);
-    let label_base = args
-        .label
-        .get(1)
-        .map(|s| s.as_str())
-        .unwrap_or(&base_str);
-    let label_theirs = args
-        .label
-        .get(2)
-        .map(|s| s.as_str())
-        .unwrap_or(&other_str);
+    let label_base = args.label.get(1).map(|s| s.as_str()).unwrap_or(&base_str);
+    let label_theirs = args.label.get(2).map(|s| s.as_str()).unwrap_or(&other_str);
 
     let favor = if args.ours {
         MergeFavor::Ours
@@ -196,7 +190,9 @@ pub fn run_inner(args: Args) -> Result<i32> {
     } else if args.object_id {
         // Write result as a blob object and print the OID.
         let repo = Repository::discover(None).context("not a git repository")?;
-        let oid = repo.odb.write(ObjectKind::Blob, &result.content)
+        let oid = repo
+            .odb
+            .write(ObjectKind::Blob, &result.content)
             .context("writing blob object")?;
         println!("{}", oid.to_hex());
     } else {
@@ -221,19 +217,20 @@ fn resolve_object_id_content(repo: &Repository, index: &Index, spec: &str) -> Re
         // Index entry lookup.
         for entry in &index.entries {
             let entry_path = String::from_utf8_lossy(&entry.path);
-            if entry_path == path {
-                if entry.stage() == 0 {
-                    let obj = repo.odb.read(&entry.oid)
+            if entry_path == path
+                && entry.stage() == 0 {
+                    let obj = repo
+                        .odb
+                        .read(&entry.oid)
                         .with_context(|| format!("cannot read blob for index entry '{}'", path))?;
                     return Ok(obj.data);
                 }
-            }
         }
         bail!("path '{}' is not in the index", path);
     } else {
         // Try as hex OID.
-        let oid = ObjectId::from_hex(spec)
-            .with_context(|| format!("invalid object ID '{}'", spec))?;
+        let oid =
+            ObjectId::from_hex(spec).with_context(|| format!("invalid object ID '{}'", spec))?;
         match repo.odb.read(&oid) {
             Ok(obj) => Ok(obj.data),
             Err(_) => {

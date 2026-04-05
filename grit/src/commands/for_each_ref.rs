@@ -854,7 +854,9 @@ fn atom_value(
                 Some(committish) => {
                     // Resolve the base committish
                     let base_oid = grit_lib::rev_parse::resolve_revision(repo, committish)
-                        .map_err(|_| FormatError::Fatal(format!("failed to find '{}'", committish)))?;
+                        .map_err(|_| {
+                            FormatError::Fatal(format!("failed to find '{}'", committish))
+                        })?;
                     // Peel the ref's target to a commit
                     let ref_oid = match peel_to_commit(repo, entry.oid) {
                         Ok(oid) => oid,
@@ -1412,11 +1414,9 @@ fn sanitize_subject(subject: &str) -> String {
         if ch.is_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
             result.push(ch);
             prev_hyphen = false;
-        } else {
-            if !prev_hyphen && !result.is_empty() {
-                result.push('-');
-                prev_hyphen = true;
-            }
+        } else if !prev_hyphen && !result.is_empty() {
+            result.push('-');
+            prev_hyphen = true;
         }
     }
     // Trim trailing hyphens

@@ -180,14 +180,15 @@ fn check_ref_df_conflict(repo: &Repository, name: &str) -> Result<()> {
     let components: Vec<&str> = name.split('/').collect();
     for i in 1..components.len() {
         let prefix = components[..i].join("/");
-        if prefix.starts_with("refs/") && grit_lib::refs::resolve_ref(&repo.git_dir, &prefix).is_ok() {
+        if prefix.starts_with("refs/")
+            && grit_lib::refs::resolve_ref(&repo.git_dir, &prefix).is_ok()
+        {
             bail!("'{prefix}' exists; cannot create '{name}'");
         }
     }
     // Check if any existing ref has `name` as a prefix
     let prefix_with_slash = format!("{name}/");
-    let all_refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/")
-        .unwrap_or_default();
+    let all_refs = grit_lib::refs::list_refs(&repo.git_dir, "refs/").unwrap_or_default();
     for (refname, _) in &all_refs {
         if refname.starts_with(&prefix_with_slash) {
             bail!("'{name}' exists as a directory; cannot create it");
