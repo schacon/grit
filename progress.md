@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    61 |
-| In progress |     1 |
-| Remaining   |   705 |
+| Completed   |    62 |
+| In progress |     0 |
+| Remaining   |   704 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -52,7 +52,8 @@
 - `t4016-diff-quote` — 5/5 tests pass (stale plan entry corrected)
 - `t4073-diff-stat-name-width` — 6/6 tests pass (fixed trailing `--stat-*` option parsing after revisions in `grit diff`)
 - `t4006-diff-mode` — 7/7 tests pass (binary stat row now renders as `Bin`; update-index `--chmod` now syncs worktree mode to match test helper expectations)
+- `t4007-rename-3` — 13/13 tests pass (`diff-files` now honors `-C/--find-copies-harder/-R` and emits copy-raw records for reverse index/worktree diffs)
 
 ## What Remains
 
-1 test file currently in progress (`t4007-rename-3`) and 705 still pending. See `plan.md` for the full prioritized list.
+No test file is currently marked in progress and 704 remain pending. See `plan.md` for the full prioritized list.

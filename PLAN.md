@@ -391,7 +391,7 @@ commit → check it off → move on.
 - [x] `t4029-diff-trailing-space` ████████████████████ 1/1 (0 left) — diff honors config option, diff.suppressBlankEmpty
 - [x] `t4110-apply-scan` ████████████████████ 1/1 (0 left) — git apply test for patches which require scanning forwards and backwards.
 
-- [~] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
+- [x] `t4007-rename-3` ████████████████████ 13/13 (0 left) — Rename interaction with pathspec.
 
 - [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
 - [x] `t4006-diff-mode` ████████████████████ 7/7 (0 left) — Test mode change diffs.

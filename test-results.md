@@ -15,3 +15,6 @@
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303`: 11/11 passing after rebuilding `target/release/grit`.
 - `bash scripts/run-upstream-tests.sh t4006-diff-mode`: 7/7 passing (verified after mode/stat fixes).
 - `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `cargo build --release`: passes (rebuild after `diff-files` copy-detection/reverse wiring changes).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4007-rename-3.sh`: 13/13 passing.
+- `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
