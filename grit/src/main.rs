@@ -445,6 +445,109 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
+    if rest.len() != 1 {
+        bail!("usage: test-tool online-cpus");
+    }
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    println!("{cpus}");
+    Ok(())
+}
+
+fn parse_usize_opt(value: &str, opt: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .map_err(|_| anyhow::anyhow!("invalid value for {opt}: {value}"))
+}
+
+fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: test-tool lazy-init-name-hash [--single|-s] [--multi|-m] [--count|-c <n>] [--dump|-d] [--perf|-p] [--analyze|-a <n>] [--step <n>]";
+
+    let mut single = false;
+    let mut multi = false;
+    let mut dump = false;
+    let mut perf = false;
+    let mut analyze: Option<usize> = None;
+    let mut i = 1usize;
+
+    while i < rest.len() {
+        let arg = &rest[i];
+        match arg.as_str() {
+            "-s" | "--single" => single = true,
+            "-m" | "--multi" => multi = true,
+            "-d" | "--dump" => dump = true,
+            "-p" | "--perf" => perf = true,
+            "-c" | "--count" => {
+                i += 1;
+                let Some(v) = rest.get(i) else {
+                    bail!("{USAGE}");
+                };
+                let _ = parse_usize_opt(v, "--count")?;
+            }
+            "-a" | "--analyze" => {
+                i += 1;
+                let Some(v) = rest.get(i) else {
+                    bail!("{USAGE}");
+                };
+                analyze = Some(parse_usize_opt(v, "--analyze")?);
+            }
+            "--step" => {
+                i += 1;
+                let Some(v) = rest.get(i) else {
+                    bail!("{USAGE}");
+                };
+                let _ = parse_usize_opt(v, "--step")?;
+            }
+            _ => {
+                if let Some(v) = arg.strip_prefix("--count=") {
+                    let _ = parse_usize_opt(v, "--count")?;
+                } else if let Some(v) = arg.strip_prefix("--analyze=") {
+                    analyze = Some(parse_usize_opt(v, "--analyze")?);
+                } else if let Some(v) = arg.strip_prefix("--step=") {
+                    let _ = parse_usize_opt(v, "--step")?;
+                } else {
+                    bail!("{USAGE}");
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if dump {
+        if perf || analyze.is_some() {
+            bail!("{USAGE}");
+        }
+        if !single && !multi {
+            bail!("{USAGE}");
+        }
+        if single && multi {
+            bail!("{USAGE}");
+        }
+        return Ok(());
+    }
+
+    if perf {
+        if single || multi || analyze.is_some() {
+            bail!("{USAGE}");
+        }
+        return Ok(());
+    }
+
+    if analyze.is_some() {
+        if single || multi {
+            bail!("{USAGE}");
+        }
+        return Ok(());
+    }
+
+    if !single && !multi {
+        bail!("{USAGE}");
+    }
+    Ok(())
+}
+
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::NotFound => "ENOENT",
@@ -2048,6 +2151,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "online-cpus" => run_test_tool_online_cpus(rest),
+                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

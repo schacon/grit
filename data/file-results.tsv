@@ -245,7 +245,7 @@ t3004-ls-files-basic	yes	6	6	0	ok	6	6	0
 t3005-ls-files-relative	yes	4	1	3	ok	1	4	0
 t3006-ls-files-long	yes	3	3	0	ok	3	3	0
 t3007-ls-files-recurse-submodules	yes	24	1	23	ok	1	24	0
-t3008-ls-files-lazy-init-name-hash	yes	1	0	1	ok	0	1	0
+t3008-ls-files-lazy-init-name-hash	yes	1	1	0	ok	1	1	0
 t3009-ls-files-others-nonsubmodule	yes	2	2	0	ok	2	2	0
 t3010-ls-files-killed-modified	yes	6	1	5	ok	1	6	0
 t3011-common-prefixes-and-directory-traversal	yes	21	7	14	ok	6	20	1

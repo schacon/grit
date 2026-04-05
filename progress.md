@@ -6,13 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    45 |
+| Completed   |    47 |
 | In progress |     0 |
-| Remaining   |   722 |
+| Remaining   |   720 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3205-branch-color` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
+- `t3008-ls-files-lazy-init-name-hash` — 1/1 tests pass (implemented missing `test-tool online-cpus` and `test-tool lazy-init-name-hash` subcommands in grit)
 - `t3908-stash-in-worktree` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3500-cherry` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
@@ -39,4 +41,4 @@
 
 ## What Remains
 
-722 test files still pending. See `plan.md` for the full prioritized list.
+720 test files still pending. See `plan.md` for the full prioritized list.
