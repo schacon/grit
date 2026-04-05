@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |     4 |
+| Completed   |     5 |
 | In progress |     0 |
-| Remaining   |   761 |
+| Remaining   |   760 |
 | **Total**   |   765 |
 
 ## Recently completed
 
+- `t1303-wacky-config` — 11/11 tests pass (stale plan entry corrected after upstream verification)
 - `t1402-check-ref-format` — 99/99 tests passing (was 97/99)
 - `t1505-rev-parse-last` — 7/7 tests pass (@{-N} syntax fully working)
 - `t1100-commit-tree-options` — 5/5 tests pass
@@ -20,4 +21,4 @@
 
 ## What Remains
 
-761 test files still pending. See `plan.md` for the full prioritized list.
+760 test files still pending. See `plan.md` for the full prioritized list.
