@@ -22,8 +22,12 @@ pub fn version_string() -> String {
 fn main() {
     let start = std::time::Instant::now();
     let trace2_path = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty());
-    let trace2_perf_path = std::env::var("GIT_TRACE2_PERF").ok().filter(|s| !s.is_empty());
-    let trace2_event_path = std::env::var("GIT_TRACE2_EVENT").ok().filter(|s| !s.is_empty());
+    let trace2_perf_path = std::env::var("GIT_TRACE2_PERF")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let trace2_event_path = std::env::var("GIT_TRACE2_EVENT")
+        .ok()
+        .filter(|s| !s.is_empty());
     let exit_code;
 
     // Write trace2 version event at startup
@@ -32,7 +36,11 @@ fn main() {
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
         let ancestry = get_process_ancestry();
-        let _ = trace2_write_event(path, "cmd_ancestry", &format!("ancestry:[{}]", ancestry.join(" ")));
+        let _ = trace2_write_event(
+            path,
+            "cmd_ancestry",
+            &format!("ancestry:[{}]", ancestry.join(" ")),
+        );
     }
     if let Some(ref path) = trace2_perf_path {
         let cmd_line: Vec<String> = std::env::args().collect();
@@ -93,18 +101,22 @@ fn get_process_ancestry() -> Vec<String> {
         // Walk up to 10 ancestors
         for _ in 0..10 {
             if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-                let name = status.lines()
+                let name = status
+                    .lines()
                     .find(|l| l.starts_with("Name:"))
                     .and_then(|l| l.split_whitespace().nth(1))
                     .unwrap_or("unknown")
                     .to_string();
-                let ppid = status.lines()
+                let ppid = status
+                    .lines()
                     .find(|l| l.starts_with("PPid:"))
                     .and_then(|l| l.split_whitespace().nth(1))
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(0);
                 result.push(name);
-                if ppid <= 1 { break; }
+                if ppid <= 1 {
+                    break;
+                }
                 pid = ppid;
             } else {
                 break;
@@ -122,7 +134,11 @@ fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()
         .create(true)
         .append(true)
         .open(path)?;
-    writeln!(file, "{} grit:0                         {} {}", now, event, data)?;
+    writeln!(
+        file,
+        "{} grit:0                         {} {}",
+        now, event, data
+    )?;
     Ok(())
 }
 
@@ -292,7 +308,7 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
 /// Apply global options (env vars, chdir).
 fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if let Some(dir) = &opts.change_dir {
-        if dir.as_os_str().len() > 0 {
+        if !dir.as_os_str().is_empty() {
             std::env::set_current_dir(dir)?;
         }
     }
@@ -326,11 +342,24 @@ struct ArgsWrapper<T: Args> {
 }
 
 /// Parse a command's clap Args from the remaining arguments.
+///
+/// When `-h` is passed, clap prints usage and the process exits with code 129
+/// (Git convention for usage errors) instead of clap's default exit code 0.
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     let mut argv = vec![format!("grit {subcmd}")];
     argv.extend(rest.iter().cloned());
-    let wrapper = ArgsWrapper::<T>::parse_from(argv);
-    wrapper.inner
+    match ArgsWrapper::<T>::try_parse_from(&argv) {
+        Ok(wrapper) => wrapper.inner,
+        Err(e) => {
+            let _ = e.print();
+            match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    std::process::exit(129)
+                }
+                _ => std::process::exit(129),
+            }
+        }
+    }
 }
 
 fn run() -> Result<()> {
@@ -354,10 +383,14 @@ fn run() -> Result<()> {
     apply_globals(&opts)?;
 
     // Handle --git-completion-helper / --git-completion-helper-all
-    if rest.iter().any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all") {
+    if rest
+        .iter()
+        .any(|a| a == "--git-completion-helper" || a == "--git-completion-helper-all")
+    {
         let show_all = rest.iter().any(|a| a == "--git-completion-helper-all");
         // Check if there's a sub-subcommand (e.g., 'config get --git-completion-helper')
-        let sub_subcmd: Option<&str> = rest.iter()
+        let sub_subcmd: Option<&str> = rest
+            .iter()
             .find(|a| !a.starts_with('-'))
             .map(|s| s.as_str());
         let key = if let Some(sub) = sub_subcmd {
@@ -377,8 +410,7 @@ fn run() -> Result<()> {
 /// (and their `--no-` negations) for the given subcommand.
 fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
     fn extract_options<T: Args>(show_all: bool) -> Vec<String> {
-        let cmd = Command::new("grit")
-            .flatten_help(false);
+        let cmd = Command::new("grit").flatten_help(false);
         let cmd = T::augment_args(cmd);
         let mut positive = Vec::new();
         let mut negative = Vec::new();
@@ -395,7 +427,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
                 // Check if this option takes a value
                 let takes_value = match arg.get_action() {
                     clap::ArgAction::Set | clap::ArgAction::Append => true,
-                    _ => arg.get_num_args().map_or(false, |r| r.min_values() > 0),
+                    _ => arg.get_num_args().is_some_and(|r| r.min_values() > 0),
                 };
                 let suffix = if takes_value { "=" } else { "" };
                 if hidden {
@@ -539,28 +571,101 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
 fn print_list_cmds(categories: &str) {
     let mut parseopt_mode = false;
     let mainporcelain = [
-        "add", "am", "archive", "bisect", "branch", "bundle", "checkout",
-        "cherry-pick", "clean", "clone", "commit", "describe", "diff",
-        "fetch", "format-patch", "gc", "grep", "init", "log", "merge",
-        "mv", "notes", "pull", "push", "range-diff", "rebase", "reset",
-        "restore", "revert", "rm", "shortlog", "show", "sparse-checkout",
-        "stash", "status", "submodule", "switch", "tag", "worktree",
+        "add",
+        "am",
+        "archive",
+        "bisect",
+        "branch",
+        "bundle",
+        "checkout",
+        "cherry-pick",
+        "clean",
+        "clone",
+        "commit",
+        "describe",
+        "diff",
+        "fetch",
+        "format-patch",
+        "gc",
+        "grep",
+        "init",
+        "log",
+        "merge",
+        "mv",
+        "notes",
+        "pull",
+        "push",
+        "range-diff",
+        "rebase",
+        "reset",
+        "restore",
+        "revert",
+        "rm",
+        "shortlog",
+        "show",
+        "sparse-checkout",
+        "stash",
+        "status",
+        "submodule",
+        "switch",
+        "tag",
+        "worktree",
     ];
     let complete = [
-        "apply", "blame", "cherry", "config", "difftool", "fsck", "help",
-        "mergetool", "prune", "reflog", "remote", "repack", "replace",
-        "send-email", "show-branch", "whatchanged",
+        "apply",
+        "blame",
+        "cherry",
+        "config",
+        "difftool",
+        "fsck",
+        "help",
+        "mergetool",
+        "prune",
+        "reflog",
+        "remote",
+        "repack",
+        "replace",
+        "send-email",
+        "show-branch",
+        "whatchanged",
     ];
     let plumbing = [
-        "cat-file", "check-attr", "check-ignore", "check-ref-format",
-        "checkout-index", "commit-graph", "commit-tree", "count-objects",
-        "diff-files", "diff-index", "diff-tree", "for-each-ref",
-        "get-tar-commit-id", "hash-object", "index-pack",
-        "ls-files", "ls-remote", "ls-tree",
-        "merge-base", "merge-file", "mktag", "mktree", "multi-pack-index",
-        "name-rev", "pack-objects", "pack-refs", "read-tree", "rev-list",
-        "rev-parse", "show-ref", "symbolic-ref", "update-index",
-        "update-ref", "verify-commit", "verify-pack", "verify-tag",
+        "cat-file",
+        "check-attr",
+        "check-ignore",
+        "check-ref-format",
+        "checkout-index",
+        "commit-graph",
+        "commit-tree",
+        "count-objects",
+        "diff-files",
+        "diff-index",
+        "diff-tree",
+        "for-each-ref",
+        "get-tar-commit-id",
+        "hash-object",
+        "index-pack",
+        "ls-files",
+        "ls-remote",
+        "ls-tree",
+        "merge-base",
+        "merge-file",
+        "mktag",
+        "mktree",
+        "multi-pack-index",
+        "name-rev",
+        "pack-objects",
+        "pack-refs",
+        "read-tree",
+        "rev-list",
+        "rev-parse",
+        "show-ref",
+        "symbolic-ref",
+        "update-index",
+        "update-ref",
+        "verify-commit",
+        "verify-pack",
+        "verify-tag",
         "write-tree",
     ];
 
@@ -586,34 +691,88 @@ fn print_list_cmds(categories: &str) {
                 parseopt_mode = true;
                 // Commands that support --git-completion-helper
                 let parseopt_cmds = [
-                    "add", "am", "apply", "bisect", "blame", "branch",
-                    "cat-file", "check-ignore", "checkout", "cherry-pick",
-                    "clean", "clone", "commit", "config", "describe",
-                    "diff", "fetch", "for-each-ref", "format-patch",
-                    "fsck", "gc", "grep", "init", "log", "ls-files",
-                    "ls-remote", "ls-tree", "merge", "merge-base", "mv",
-                    "notes", "pull", "push", "rebase", "reflog", "remote",
-                    "reset", "restore", "rev-list", "rev-parse", "revert",
-                    "rm", "send-email", "show", "show-ref",
-                    "sparse-checkout", "stash", "status", "submodule",
-                    "switch", "symbolic-ref", "tag", "update-index",
-                    "update-ref", "version", "worktree",
+                    "add",
+                    "am",
+                    "apply",
+                    "bisect",
+                    "blame",
+                    "branch",
+                    "cat-file",
+                    "check-ignore",
+                    "checkout",
+                    "cherry-pick",
+                    "clean",
+                    "clone",
+                    "commit",
+                    "config",
+                    "describe",
+                    "diff",
+                    "fetch",
+                    "for-each-ref",
+                    "format-patch",
+                    "fsck",
+                    "gc",
+                    "grep",
+                    "init",
+                    "log",
+                    "ls-files",
+                    "ls-remote",
+                    "ls-tree",
+                    "merge",
+                    "merge-base",
+                    "mv",
+                    "notes",
+                    "pull",
+                    "push",
+                    "rebase",
+                    "reflog",
+                    "remote",
+                    "reset",
+                    "restore",
+                    "rev-list",
+                    "rev-parse",
+                    "revert",
+                    "rm",
+                    "send-email",
+                    "show",
+                    "show-ref",
+                    "sparse-checkout",
+                    "stash",
+                    "status",
+                    "submodule",
+                    "switch",
+                    "symbolic-ref",
+                    "tag",
+                    "update-index",
+                    "update-ref",
+                    "version",
+                    "worktree",
                 ];
                 result.extend_from_slice(&parseopt_cmds);
             }
             "list-guide" => {
                 let guides = [
-                    "core-tutorial", "credentials", "cvs-migration",
-                    "diffcore", "everyday", "faq", "glossary",
-                    "namespaces", "remote-helpers", "submodules",
-                    "tutorial", "tutorial-2", "workflows",
+                    "core-tutorial",
+                    "credentials",
+                    "cvs-migration",
+                    "diffcore",
+                    "everyday",
+                    "faq",
+                    "glossary",
+                    "namespaces",
+                    "remote-helpers",
+                    "submodules",
+                    "tutorial",
+                    "tutorial-2",
+                    "workflows",
                 ];
                 result.extend_from_slice(&guides);
             }
             "config" => {
                 // Check completion.commands config for additions/removals
                 if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
-                    if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+                    if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                    {
                         if let Some(val) = config.get("completion.commands") {
                             for token in val.split_whitespace() {
                                 if let Some(cmd) = token.strip_prefix('-') {
@@ -633,7 +792,14 @@ fn print_list_cmds(categories: &str) {
 
     if parseopt_mode {
         // parseopt outputs all commands on a single space-separated line
-        println!("{}", result.iter().map(|s| s.as_ref()).collect::<Vec<&str>>().join(" "));
+        println!(
+            "{}",
+            result
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<&str>>()
+                .join(" ")
+        );
     } else {
         for cmd in &result {
             println!("{cmd}");
@@ -726,29 +892,151 @@ fn strsim_distance(a: &str, b: &str) -> usize {
 }
 
 const KNOWN_COMMANDS: &[&str] = &[
-    "add", "am", "annotate", "apply", "archive", "backfill", "bisect", "blame",
-    "branch", "bugreport", "bundle", "cat-file", "check-attr", "check-ignore",
-    "check-mailmap", "check-ref-format", "checkout", "checkout-index", "cherry",
-    "cherry-pick", "clean", "clone", "column", "commit", "commit-graph", "commit-tree",
-    "config", "count-objects", "credential", "credential-cache", "credential-store",
-    "daemon", "describe", "diagnose", "diff", "diff-files", "diff-index", "diff-pairs",
-    "diff-tree", "difftool", "fast-export", "fast-import", "fetch", "fetch-pack",
-    "filter-branch", "fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch",
-    "fsck", "gc", "get-tar-commit-id", "grep", "hash-object", "help", "history", "hook",
-    "http-backend", "http-fetch", "http-push", "index-pack", "init", "interpret-trailers",
-    "last-modified", "log", "ls-files", "ls-remote", "ls-tree", "mailinfo", "mailsplit",
-    "maintenance", "merge", "merge-base", "merge-file", "merge-index", "merge-one-file",
-    "merge-tree", "mergetool", "mktag", "mktree", "multi-pack-index", "mv", "name-rev",
-    "notes", "pack-objects", "pack-redundant", "pack-refs", "patch-id", "prune",
-    "prune-packed", "pull", "push", "range-diff", "read-tree", "rebase", "receive-pack",
-    "reflog", "refs", "remote", "repack", "replace", "replay", "repo", "rerere", "reset",
-    "restore", "rev-list", "rev-parse", "revert", "rm", "scalar", "send-email",
-    "send-pack", "sh-i18n", "sh-setup",
-    "shell", "shortlog", "show", "show-branch", "show-index", "show-ref", "sparse-checkout",
-    "stage", "stash", "status", "stripspace", "submodule", "switch", "symbolic-ref", "tag",
-    "unpack-file", "unpack-objects", "update-index", "update-ref", "update-server-info",
-    "upload-archive", "upload-pack", "var", "verify-commit", "verify-pack", "verify-tag",
-    "version", "whatchanged", "worktree", "write-tree",
+    "add",
+    "am",
+    "annotate",
+    "apply",
+    "archive",
+    "backfill",
+    "bisect",
+    "blame",
+    "branch",
+    "bugreport",
+    "bundle",
+    "cat-file",
+    "check-attr",
+    "check-ignore",
+    "check-mailmap",
+    "check-ref-format",
+    "checkout",
+    "checkout-index",
+    "cherry",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "column",
+    "commit",
+    "commit-graph",
+    "commit-tree",
+    "config",
+    "count-objects",
+    "credential",
+    "credential-cache",
+    "credential-store",
+    "daemon",
+    "describe",
+    "diagnose",
+    "diff",
+    "diff-files",
+    "diff-index",
+    "diff-pairs",
+    "diff-tree",
+    "difftool",
+    "fast-export",
+    "fast-import",
+    "fetch",
+    "fetch-pack",
+    "filter-branch",
+    "fmt-merge-msg",
+    "for-each-ref",
+    "for-each-repo",
+    "format-patch",
+    "fsck",
+    "gc",
+    "get-tar-commit-id",
+    "grep",
+    "hash-object",
+    "help",
+    "history",
+    "hook",
+    "http-backend",
+    "http-fetch",
+    "http-push",
+    "index-pack",
+    "init",
+    "interpret-trailers",
+    "last-modified",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "ls-tree",
+    "mailinfo",
+    "mailsplit",
+    "maintenance",
+    "merge",
+    "merge-base",
+    "merge-file",
+    "merge-index",
+    "merge-one-file",
+    "merge-tree",
+    "mergetool",
+    "mktag",
+    "mktree",
+    "multi-pack-index",
+    "mv",
+    "name-rev",
+    "notes",
+    "pack-objects",
+    "pack-redundant",
+    "pack-refs",
+    "patch-id",
+    "prune",
+    "prune-packed",
+    "pull",
+    "push",
+    "range-diff",
+    "read-tree",
+    "rebase",
+    "receive-pack",
+    "reflog",
+    "refs",
+    "remote",
+    "repack",
+    "replace",
+    "replay",
+    "repo",
+    "rerere",
+    "reset",
+    "restore",
+    "rev-list",
+    "rev-parse",
+    "revert",
+    "rm",
+    "scalar",
+    "send-email",
+    "send-pack",
+    "sh-i18n",
+    "sh-setup",
+    "shell",
+    "shortlog",
+    "show",
+    "show-branch",
+    "show-index",
+    "show-ref",
+    "sparse-checkout",
+    "stage",
+    "stash",
+    "status",
+    "stripspace",
+    "submodule",
+    "switch",
+    "symbolic-ref",
+    "tag",
+    "unpack-file",
+    "unpack-objects",
+    "update-index",
+    "update-ref",
+    "update-server-info",
+    "upload-archive",
+    "upload-pack",
+    "var",
+    "verify-commit",
+    "verify-pack",
+    "verify-tag",
+    "version",
+    "whatchanged",
+    "worktree",
+    "write-tree",
 ];
 
 /// Dispatch to the appropriate command handler.
@@ -817,10 +1105,15 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             for a in rest.iter() {
                 if a == "-h" {
                     new_rest.push("--no-filename".to_string());
-                } else if a.starts_with('-') && !a.starts_with("--") && a.contains('h') && a.len() > 2 {
+                } else if a.starts_with('-')
+                    && !a.starts_with("--")
+                    && a.contains('h')
+                    && a.len() > 2
+                {
                     // Combined short flags containing 'h'
                     let without_h: String = a.chars().filter(|&c| c != 'h').collect();
-                    if without_h.len() > 1 { // still has flags besides '-'
+                    if without_h.len() > 1 {
+                        // still has flags besides '-'
                         new_rest.push(without_h);
                     }
                     new_rest.push("--no-filename".to_string());
@@ -830,8 +1123,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             }
             let mut rest = new_rest;
             // Last-flag-wins: find the last pattern-type flag and remove earlier ones
-            let pattern_flags = ["-G", "-E", "-F", "-P",
-                "--basic-regexp", "--extended-regexp", "--fixed-strings", "--perl-regexp"];
+            let pattern_flags = [
+                "-G",
+                "-E",
+                "-F",
+                "-P",
+                "--basic-regexp",
+                "--extended-regexp",
+                "--fixed-strings",
+                "--perl-regexp",
+            ];
             let mut last_idx = None;
             for (i, a) in rest.iter().enumerate() {
                 if pattern_flags.contains(&a.as_str()) {
@@ -984,7 +1285,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 
                     let flags = match mode.as_str() {
                         "wildmatch" => grit_lib::wildmatch::WM_PATHNAME,
-                        "iwildmatch" => grit_lib::wildmatch::WM_PATHNAME | grit_lib::wildmatch::WM_CASEFOLD,
+                        "iwildmatch" => {
+                            grit_lib::wildmatch::WM_PATHNAME | grit_lib::wildmatch::WM_CASEFOLD
+                        }
                         "pathmatch" => 0,
                         "ipathmatch" => grit_lib::wildmatch::WM_CASEFOLD,
                         _ => bail!("unknown wildmatch mode: {mode}"),
@@ -1030,7 +1333,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         "WARNING: You called a grit command named '{subcmd}', which does not exist."
                     );
                     eprintln!("Auto-correcting to 'grit {corrected}'");
-                    return dispatch(&corrected, rest, opts);
+                    dispatch(&corrected, rest, opts)
                 }
                 _ => {
                     // Default: show suggestions

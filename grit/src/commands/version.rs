@@ -14,9 +14,15 @@ pub struct Args {
 }
 
 /// Run the `version` command.
-pub fn run(_args: Args) -> Result<()> {
+pub fn run(args: Args) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     writeln!(out, "git version 2.47.0.grit")?;
+    if args.build_options {
+        writeln!(out, "sizeof-long: {}", std::mem::size_of::<i64>())?;
+        writeln!(out, "sizeof-size_t: {}", std::mem::size_of::<usize>())?;
+        writeln!(out, "shell-path: /bin/sh")?;
+        writeln!(out, "default-hash: sha1")?;
+    }
     Ok(())
 }

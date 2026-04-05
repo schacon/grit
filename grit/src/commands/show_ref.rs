@@ -32,6 +32,11 @@ pub struct Args {
     #[arg(long = "exists")]
     pub exists: bool,
 
+    /// Filter refs read from stdin (or one per line, stripping trailing
+    /// whitespace) against existing refs.
+    #[arg(long = "exclude-existing", num_args = 0..=1, require_equals = true, value_name = "PATTERN", default_missing_value = "")]
+    pub exclude_existing: Option<Option<String>>,
+
     /// Show peeled tags.
     #[arg(short = 'd', long = "dereference")]
     pub dereference: bool,
@@ -63,8 +68,19 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    let has_exclude_existing = args.exclude_existing.is_some();
+
     if args.verify && args.exists {
-        bail!("options '--verify' and '--exists' cannot be used together");
+        eprintln!("fatal: options '--verify' and '--exists' cannot be used together");
+        std::process::exit(1);
+    }
+    if args.verify && has_exclude_existing {
+        eprintln!("fatal: options '--verify' and '--exclude-existing' cannot be used together");
+        std::process::exit(1);
+    }
+    if has_exclude_existing && args.exists {
+        eprintln!("fatal: options '--exclude-existing' and '--exists' cannot be used together");
+        std::process::exit(1);
     }
 
     let abbrev_len = resolve_abbrev_len(&args);
@@ -155,27 +171,42 @@ fn run_pattern_mode(
     hash_only: bool,
     abbrev_len: usize,
 ) -> Result<()> {
-    let mut refs = collect_all_refs(&repo.git_dir)?;
+    let refs = collect_all_refs(&repo.git_dir)?;
 
+    let mut found = 0usize;
+
+    // When --head is given, always show HEAD first (before other refs).
     if args.head {
         if let Ok(head_oid) = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD") {
-            refs.insert("HEAD".to_owned(), head_oid);
+            found += 1;
+            if !args.quiet {
+                print_one("HEAD", &head_oid, hash_only, abbrev_len);
+                if args.dereference {
+                    print_peeled_tag(repo, "HEAD", &head_oid, hash_only, abbrev_len)?;
+                }
+            }
         }
     }
 
-    let mut found = 0usize;
-    for (name, oid) in refs {
-        if args.branches && !name.starts_with("refs/heads/") {
+    for (name, oid) in &refs {
+        if args.branches && !args.tags && !name.starts_with("refs/heads/") {
             continue;
         }
-        if args.tags && !name.starts_with("refs/tags/") {
+        if args.tags && !args.branches && !name.starts_with("refs/tags/") {
+            continue;
+        }
+        if args.branches
+            && args.tags
+            && !name.starts_with("refs/heads/")
+            && !name.starts_with("refs/tags/")
+        {
             continue;
         }
         if !args.refs_or_patterns.is_empty()
             && !args
                 .refs_or_patterns
                 .iter()
-                .any(|pattern| ref_matches_pattern(&name, pattern))
+                .any(|pattern| ref_matches_pattern(name, pattern))
         {
             continue;
         }
@@ -184,9 +215,9 @@ fn run_pattern_mode(
         if args.quiet {
             continue;
         }
-        print_one(&name, &oid, hash_only, abbrev_len);
+        print_one(name, oid, hash_only, abbrev_len);
         if args.dereference {
-            print_peeled_tag(repo, &name, &oid, hash_only, abbrev_len)?;
+            print_peeled_tag(repo, name, oid, hash_only, abbrev_len)?;
         }
     }
 

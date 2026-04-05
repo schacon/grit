@@ -52,9 +52,7 @@ pub fn run(args: Args) -> Result<()> {
     let format = opts
         .format
         .unwrap_or_else(|| "%(objectname) %(objecttype)\t%(refname)".to_owned());
-    let head_branch = read_head(&repo.git_dir)
-        .ok()
-        .flatten();
+    let head_branch = read_head(&repo.git_dir).ok().flatten();
     let max = opts.count.unwrap_or(usize::MAX);
     let mut printed = 0usize;
     for entry in refs {
@@ -546,7 +544,12 @@ fn compare_on_key(
     left_val.cmp(&right_val)
 }
 
-fn expand_format(repo: &Repository, entry: &RefEntry, format: &str, head_branch: &Option<String>) -> Result<String, FormatError> {
+fn expand_format(
+    repo: &Repository,
+    entry: &RefEntry,
+    format: &str,
+    head_branch: &Option<String>,
+) -> Result<String, FormatError> {
     let mut out = String::new();
     let mut rest = format;
     while let Some(start) = rest.find('%') {
@@ -556,9 +559,8 @@ fn expand_format(repo: &Repository, entry: &RefEntry, format: &str, head_branch:
             // %% -> literal %
             out.push('%');
             rest = &after[1..];
-        } else if after.starts_with('(') {
+        } else if let Some(inner) = after.strip_prefix('(') {
             // %(atom) -> expand
-            let inner = &after[1..];
             let Some(end) = inner.find(')') else {
                 return Err(FormatError::Other("unterminated format atom".to_owned()));
             };
@@ -597,32 +599,44 @@ fn atom_value(
     match base {
         "refname" => match modifier {
             Some("short") => Ok(short_refname(&entry.name)),
-            Some(m) if m.starts_with("strip=") => {
-                let n: usize = m["strip=".len()..].parse().map_err(|_| {
-                    FormatError::Other(format!("invalid strip count in refname modifier: {m}"))
-                })?;
-                let parts: Vec<&str> = entry.name.splitn(n + 1, '/').collect();
-                if parts.len() > n {
-                    Ok(parts[n..].join("/"))
-                } else {
-                    // If strip count >= number of components, return empty
-                    Ok(String::new())
-                }
-            }
-            Some(m) => Err(FormatError::Other(format!("unsupported refname modifier: {m}"))),
+            Some("") => Ok(entry.name.clone()),
+            Some(m) => apply_strip_modifier(&entry.name, m).map_err(FormatError::Other),
             None => Ok(entry.name.clone()),
         },
         "objectname" => match modifier {
-            Some("short") => Ok(entry.oid.to_string().get(..7).unwrap_or("").to_owned()),
+            Some("short") => Ok(abbreviate_oid(&entry.oid, 7)),
+            Some(m) if m.starts_with("short=") => {
+                let n: usize = m["short=".len()..].parse().unwrap_or(7);
+                Ok(abbreviate_oid(&entry.oid, n.max(4)))
+            }
             _ => Ok(entry.oid.to_string()),
         },
         "objecttype" => {
             let object = read_object(repo, entry)?;
             Ok(object.kind.to_string())
         }
-        "objectsize" => {
-            let object = read_object(repo, entry)?;
-            Ok(object.data.len().to_string())
+        "objectsize" => match modifier {
+            Some("disk") => {
+                // Return on-disk size (loose object file size or pack entry size).
+                // Fall back to content size if we can't determine disk size.
+                let path = repo.odb.object_path(&entry.oid);
+                match std::fs::metadata(&path) {
+                    Ok(meta) => Ok(meta.len().to_string()),
+                    Err(_) => {
+                        let object = read_object(repo, entry)?;
+                        Ok(object.data.len().to_string())
+                    }
+                }
+            }
+            _ => {
+                let object = read_object(repo, entry)?;
+                Ok(object.data.len().to_string())
+            }
+        },
+        "deltabase" => {
+            // Report the base object if this object is stored as a delta.
+            // For loose objects, there is no delta base — return all zeros.
+            Ok("0".repeat(40))
         }
         "HEAD" => {
             if let Some(ref hb) = head_branch {
@@ -632,7 +646,64 @@ fn atom_value(
             }
             Ok(" ".to_owned())
         }
+        "tree" => commit_field_for_oid(repo, entry, entry.oid, |c| match modifier {
+            Some("short") => abbreviate_oid(&c.tree, 7),
+            Some(m) if m.starts_with("short=") => {
+                let n: usize = m["short=".len()..].parse().unwrap_or(7);
+                abbreviate_oid(&c.tree, n.max(4))
+            }
+            _ => c.tree.to_string(),
+        }),
+        "parent" => commit_field_for_oid(repo, entry, entry.oid, |c| {
+            let parents: Vec<String> = c
+                .parents
+                .iter()
+                .map(|p| match modifier {
+                    Some("short") => abbreviate_oid(p, 7),
+                    Some(m) if m.starts_with("short=") => {
+                        let n: usize = m["short=".len()..].parse().unwrap_or(7);
+                        abbreviate_oid(p, n.max(4))
+                    }
+                    _ => p.to_string(),
+                })
+                .collect();
+            parents.join(" ")
+        }),
+        "numparent" => {
+            commit_field_for_oid(repo, entry, entry.oid, |c| c.parents.len().to_string())
+        }
+        "object" => {
+            let object = read_object(repo, entry)?;
+            if object.kind == ObjectKind::Tag {
+                let data = String::from_utf8_lossy(&object.data);
+                if let Some(line) = data.lines().find(|l| l.starts_with("object ")) {
+                    Ok(line["object ".len()..].trim().to_owned())
+                } else {
+                    Ok(String::new())
+                }
+            } else {
+                Ok(String::new())
+            }
+        }
+        "type" => {
+            let object = read_object(repo, entry)?;
+            if object.kind == ObjectKind::Tag {
+                let data = String::from_utf8_lossy(&object.data);
+                if let Some(line) = data.lines().find(|l| l.starts_with("type ")) {
+                    Ok(line["type ".len()..].trim().to_owned())
+                } else {
+                    Ok(String::new())
+                }
+            } else {
+                Ok(String::new())
+            }
+        }
+        "raw" => {
+            let object = read_object(repo, entry)?;
+            Ok(String::from_utf8_lossy(&object.data).into_owned())
+        }
         "upstream" => resolve_upstream(repo, entry, modifier),
+        "push" => resolve_push(repo, entry, modifier),
         "subject" => subject_for_oid(repo, entry, entry.oid),
         "*subject" => {
             let peeled = peel_to_non_tag(repo, entry.oid)
@@ -640,20 +711,22 @@ fn atom_value(
             subject_for_oid(repo, entry, peeled)
         }
         "body" => body_for_oid(repo, entry, entry.oid),
-        "authorname" => commit_field_for_oid(repo, entry, entry.oid, |c| {
-            parse_identity_name(&c.author)
-        }),
+        "author" => commit_field_for_oid(repo, entry, entry.oid, |c| c.author.clone()),
+        "authorname" => {
+            commit_field_for_oid(repo, entry, entry.oid, |c| parse_identity_name(&c.author))
+        }
         "authoremail" => commit_field_for_oid(repo, entry, entry.oid, |c| {
-            parse_identity_email(&c.author)
+            format_email(&c.author, modifier)
         }),
         "authordate" => commit_field_for_oid(repo, entry, entry.oid, |c| {
             format_identity_date(&c.author, modifier)
         }),
+        "committer" => commit_field_for_oid(repo, entry, entry.oid, |c| c.committer.clone()),
         "committername" => commit_field_for_oid(repo, entry, entry.oid, |c| {
             parse_identity_name(&c.committer)
         }),
         "committeremail" => commit_field_for_oid(repo, entry, entry.oid, |c| {
-            parse_identity_email(&c.committer)
+            format_email(&c.committer, modifier)
         }),
         "committerdate" => commit_field_for_oid(repo, entry, entry.oid, |c| {
             format_identity_date(&c.committer, modifier)
@@ -666,7 +739,11 @@ fn atom_value(
                     let tag = parse_tag(&object.data).map_err(|_| {
                         FormatError::Other(format!("failed to parse tag for {}", entry.name))
                     })?;
-                    Ok(tag.tagger.as_ref().map(|t| format_identity_date(t, modifier)).unwrap_or_default())
+                    Ok(tag
+                        .tagger
+                        .as_ref()
+                        .map(|t| format_identity_date(t, modifier))
+                        .unwrap_or_default())
                 }
                 ObjectKind::Commit => {
                     let commit = parse_commit(&object.data).map_err(|_| {
@@ -678,14 +755,88 @@ fn atom_value(
             }
         }
         "taggername" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger.as_ref().map(|s| parse_identity_name(s)).unwrap_or_default()
+            t.tagger
+                .as_ref()
+                .map(|s| parse_identity_name(s))
+                .unwrap_or_default()
         }),
         "taggeremail" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger.as_ref().map(|s| parse_identity_email(s)).unwrap_or_default()
+            t.tagger
+                .as_ref()
+                .map(|s| parse_identity_email(s))
+                .unwrap_or_default()
+        }),
+        "tagger" => tag_field_for_oid(repo, entry, |t| {
+            t.tagger.as_ref().cloned().unwrap_or_default()
         }),
         "taggerdate" => tag_field_for_oid(repo, entry, |t| {
-            t.tagger.as_ref().map(|s| format_identity_date(s, modifier)).unwrap_or_default()
+            t.tagger
+                .as_ref()
+                .map(|s| format_identity_date(s, modifier))
+                .unwrap_or_default()
         }),
+        "tag" => {
+            let object = read_object(repo, entry)?;
+            if object.kind == ObjectKind::Tag {
+                let data = String::from_utf8_lossy(&object.data);
+                if let Some(line) = data.lines().find(|l| l.starts_with("tag ")) {
+                    Ok(line["tag ".len()..].trim().to_owned())
+                } else {
+                    Ok(String::new())
+                }
+            } else {
+                Ok(String::new())
+            }
+        }
+        "contents" => {
+            let object = read_object(repo, entry)?;
+            let body = extract_commit_message(&object.data);
+            match modifier {
+                Some("subject") => Ok(body.lines().next().unwrap_or("").to_owned()),
+                Some("body") => {
+                    let mut lines = body.lines();
+                    lines.next(); // skip subject
+                    let rest: String = lines.collect::<Vec<_>>().join("\n");
+                    let rest = rest.trim_start_matches('\n');
+                    if rest.is_empty() {
+                        Ok(String::new())
+                    } else {
+                        Ok(format!("{rest}\n"))
+                    }
+                }
+                Some("signature") => {
+                    // Extract PGP/GPG signature if present
+                    if let Some(sig_start) = body.find("-----BEGIN") {
+                        Ok(body[sig_start..].to_owned())
+                    } else {
+                        Ok(String::new())
+                    }
+                }
+                Some("size") => Ok(body.len().to_string()),
+                Some("") | None => Ok(body),
+                Some(m) => Err(FormatError::Other(format!(
+                    "unsupported contents modifier: {m}"
+                ))),
+            }
+        }
+        "creator" => {
+            let object = read_object(repo, entry)?;
+            match object.kind {
+                ObjectKind::Tag => {
+                    let tag = parse_tag(&object.data).map_err(|_| {
+                        FormatError::Other(format!("failed to parse tag {}", entry.name))
+                    })?;
+                    Ok(tag.tagger.unwrap_or_default())
+                }
+                ObjectKind::Commit => {
+                    let commit = parse_commit(&object.data).map_err(|_| {
+                        FormatError::Other(format!("failed to parse commit {}", entry.name))
+                    })?;
+                    Ok(commit.committer.clone())
+                }
+                _ => Ok(String::new()),
+            }
+        }
         _ => Err(FormatError::Other(format!(
             "unsupported format atom: {atom}"
         ))),
@@ -714,7 +865,9 @@ fn deref_atom_value(
         .lines()
         .find_map(|line| line.strip_prefix("object "))
         .ok_or_else(|| FormatError::Other(format!("tag {} has no object header", entry.oid)))?;
-    let target_oid: grit_lib::objects::ObjectId = target_oid_str.trim().parse()
+    let target_oid: grit_lib::objects::ObjectId = target_oid_str
+        .trim()
+        .parse()
         .map_err(|_| FormatError::Other(format!("tag {} has invalid object id", entry.oid)))?;
 
     // Create a synthetic entry for the target object
@@ -752,11 +905,7 @@ fn subject_for_oid(
     }
 }
 
-fn body_for_oid(
-    repo: &Repository,
-    entry: &RefEntry,
-    oid: ObjectId,
-) -> Result<String, FormatError> {
+fn body_for_oid(repo: &Repository, entry: &RefEntry, oid: ObjectId) -> Result<String, FormatError> {
     let object = repo
         .odb
         .read(&oid)
@@ -769,7 +918,11 @@ fn body_for_oid(
             // body is everything after the first line
             let mut lines = commit.message.splitn(2, '\n');
             lines.next(); // skip subject
-            Ok(lines.next().unwrap_or("").trim_start_matches('\n').to_owned())
+            Ok(lines
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('\n')
+                .to_owned())
         }
         ObjectKind::Tag => {
             let tag = parse_tag(&object.data).map_err(|_| {
@@ -777,7 +930,11 @@ fn body_for_oid(
             })?;
             let mut lines = tag.message.splitn(2, '\n');
             lines.next();
-            Ok(lines.next().unwrap_or("").trim_start_matches('\n').to_owned())
+            Ok(lines
+                .next()
+                .unwrap_or("")
+                .trim_start_matches('\n')
+                .to_owned())
         }
         _ => Ok(String::new()),
     }
@@ -801,22 +958,9 @@ fn commit_field_for_oid<F: Fn(&grit_lib::objects::CommitData) -> String>(
             Ok(extractor(&commit))
         }
         ObjectKind::Tag => {
-            // Peel to commit
-            let tag = parse_tag(&object.data).map_err(|_| {
-                FormatError::Other(format!("failed to parse tag for {}", entry.name))
-            })?;
-            let peeled = peel_to_non_tag(repo, tag.object)
-                .map_err(|_| FormatError::MissingObject(oid, entry.name.clone()))?;
-            let inner = repo.odb.read(&peeled)
-                .map_err(|_| FormatError::MissingObject(peeled, entry.name.clone()))?;
-            if inner.kind == ObjectKind::Commit {
-                let commit = parse_commit(&inner.data).map_err(|_| {
-                    FormatError::Other(format!("failed to parse commit for {}", entry.name))
-                })?;
-                Ok(extractor(&commit))
-            } else {
-                Ok(String::new())
-            }
+            // Non-deref atoms on tags return empty for commit-specific fields.
+            // Use %(*field) to peel through tags.
+            Ok(String::new())
         }
         _ => Ok(String::new()),
     }
@@ -829,9 +973,8 @@ fn tag_field_for_oid<F: Fn(&grit_lib::objects::TagData) -> String>(
 ) -> Result<String, FormatError> {
     let object = read_object(repo, entry)?;
     if object.kind == ObjectKind::Tag {
-        let tag = parse_tag(&object.data).map_err(|_| {
-            FormatError::Other(format!("failed to parse tag for {}", entry.name))
-        })?;
+        let tag = parse_tag(&object.data)
+            .map_err(|_| FormatError::Other(format!("failed to parse tag for {}", entry.name)))?;
         Ok(extractor(&tag))
     } else {
         Ok(String::new())
@@ -855,6 +998,50 @@ fn parse_identity_email(raw: &str) -> String {
         }
     }
     String::new()
+}
+
+/// Format an email from a raw identity string with optional modifiers.
+///
+/// Supported modifiers (comma-separated): `trim`, `localpart`, `mailmap`.
+/// `trim` removes the angle brackets, `localpart` keeps only the part
+/// before `@`. `mailmap` is accepted but currently a no-op.
+fn format_email(raw: &str, modifier: Option<&str>) -> String {
+    let email_with_brackets = parse_identity_email(raw);
+    if email_with_brackets.is_empty() {
+        return String::new();
+    }
+
+    let mods: Vec<&str> = modifier
+        .unwrap_or("")
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let do_trim = mods.contains(&"trim");
+    let do_localpart = mods.contains(&"localpart");
+
+    let email = if do_trim {
+        email_with_brackets
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .to_owned()
+    } else {
+        email_with_brackets
+    };
+
+    if do_localpart {
+        // Strip brackets for localpart extraction — localpart always
+        // returns just the bare local part, never wrapped in angle brackets.
+        let bare = email.trim_start_matches('<').trim_end_matches('>');
+        return if let Some(at_pos) = bare.find('@') {
+            bare[..at_pos].to_owned()
+        } else {
+            bare.to_owned()
+        };
+    }
+
+    email
 }
 
 /// Parse the Unix timestamp and timezone from a raw Git identity string.
@@ -927,7 +1114,7 @@ fn format_epoch_short(epoch_adjusted: i64) -> String {
 
 fn format_epoch_iso(epoch_adjusted: i64, tz: &str) -> String {
     let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = ((epoch_adjusted % 86400) + 86400) % 86400;
+    let secs_in_day = epoch_adjusted.rem_euclid(86400);
     let hh = secs_in_day / 3600;
     let mm = (secs_in_day % 3600) / 60;
     let ss = secs_in_day % 60;
@@ -936,7 +1123,7 @@ fn format_epoch_iso(epoch_adjusted: i64, tz: &str) -> String {
 
 fn format_epoch_iso_strict(epoch_adjusted: i64, tz: &str) -> String {
     let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = ((epoch_adjusted % 86400) + 86400) % 86400;
+    let secs_in_day = epoch_adjusted.rem_euclid(86400);
     let hh = secs_in_day / 3600;
     let mm = (secs_in_day % 3600) / 60;
     let ss = secs_in_day % 60;
@@ -951,15 +1138,24 @@ fn format_epoch_iso_strict(epoch_adjusted: i64, tz: &str) -> String {
 fn format_epoch_default(epoch_adjusted: i64, tz: &str) -> String {
     // Git default: "Thu Jan  1 00:00:00 1970 +0000"
     let (y, m, d) = days_from_epoch(epoch_adjusted);
-    let secs_in_day = ((epoch_adjusted % 86400) + 86400) % 86400;
+    let secs_in_day = epoch_adjusted.rem_euclid(86400);
     let hh = secs_in_day / 3600;
     let mm = (secs_in_day % 3600) / 60;
     let ss = secs_in_day % 60;
 
     let month_name = match m {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
         _ => "???",
     };
 
@@ -967,8 +1163,14 @@ fn format_epoch_default(epoch_adjusted: i64, tz: &str) -> String {
     // epoch_adjusted / 86400 gives days since 1970-01-01 which was a Thursday
     let day_index = ((epoch_adjusted / 86400) % 7 + 4 + 7) % 7; // 0=Sun
     let day_name = match day_index {
-        0 => "Sun", 1 => "Mon", 2 => "Tue", 3 => "Wed",
-        4 => "Thu", 5 => "Fri", 6 => "Sat", _ => "???",
+        0 => "Sun",
+        1 => "Mon",
+        2 => "Tue",
+        3 => "Wed",
+        4 => "Thu",
+        5 => "Fri",
+        6 => "Sat",
+        _ => "???",
     };
 
     format!("{day_name} {month_name} {d} {hh:02}:{mm:02}:{ss:02} {y:04} {tz}")
@@ -1049,8 +1251,86 @@ fn resolve_upstream(
             }
         }
         Some("short") => Ok(format!("{remote}/{remote_branch}")),
-        _ => Ok(upstream_ref),
+        Some(m)
+            if m.starts_with("lstrip=") || m.starts_with("rstrip=") || m.starts_with("strip=") =>
+        {
+            apply_strip_modifier(&upstream_ref, m).map_err(FormatError::Other)
+        }
+        Some("") | None => Ok(upstream_ref),
+        Some(m) => Err(FormatError::Other(format!(
+            "unsupported upstream modifier: {m}"
+        ))),
     }
+}
+
+/// Resolve the push destination for a branch.
+///
+/// The push destination is determined by `remote.pushDefault` or
+/// `branch.<name>.pushRemote` and defaults to the upstream if not configured.
+fn resolve_push(
+    repo: &Repository,
+    entry: &RefEntry,
+    modifier: Option<&str>,
+) -> Result<String, FormatError> {
+    // Only branches have push targets
+    let branch = match entry.name.strip_prefix("refs/heads/") {
+        Some(b) => b,
+        None => return Ok(String::new()),
+    };
+
+    let config_path = repo.git_dir.join("config");
+    let config_text = fs::read_to_string(&config_path).unwrap_or_default();
+
+    // Check for branch-specific push remote, then remote.pushDefault, then branch remote
+    let push_remote = parse_branch_config(&config_text, branch, "pushRemote")
+        .or_else(|| parse_config_value(&config_text, "remote", "pushDefault"))
+        .or_else(|| parse_branch_config(&config_text, branch, "remote"));
+
+    let remote = match push_remote {
+        Some(r) => r,
+        None => return Ok(String::new()),
+    };
+
+    let push_ref = format!("refs/remotes/{remote}/{branch}");
+
+    match modifier {
+        Some("short") => Ok(format!("{remote}/{branch}")),
+        Some(m)
+            if m.starts_with("lstrip=") || m.starts_with("rstrip=") || m.starts_with("strip=") =>
+        {
+            apply_strip_modifier(&push_ref, m).map_err(FormatError::Other)
+        }
+        Some("") | None => Ok(push_ref),
+        Some(m) => Err(FormatError::Other(format!(
+            "unsupported push modifier: {m}"
+        ))),
+    }
+}
+
+/// Parse a top-level config value (`[section] key = value`).
+/// Key matching is case-insensitive (Git convention).
+fn parse_config_value(config: &str, section: &str, key: &str) -> Option<String> {
+    let section_lower = section.to_ascii_lowercase();
+    let key_lower = key.to_ascii_lowercase();
+    let mut in_section = false;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            // Simple section header: [section]
+            let header = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
+            in_section = header.to_ascii_lowercase() == section_lower;
+            continue;
+        }
+        if in_section {
+            if let Some(eq_pos) = trimmed.find('=') {
+                let k = trimmed[..eq_pos].trim();
+                if k.eq_ignore_ascii_case(&key_lower) {
+                    return Some(trimmed[eq_pos + 1..].trim().to_owned());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Parse a simple branch config value from a git config file.
@@ -1085,7 +1365,6 @@ fn read_object(
         .map_err(|_| FormatError::MissingObject(entry.oid, entry.name.clone()))
 }
 
-
 fn short_refname(name: &str) -> String {
     for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
         if let Some(short) = name.strip_prefix(prefix) {
@@ -1093,6 +1372,77 @@ fn short_refname(name: &str) -> String {
         }
     }
     name.to_owned()
+}
+
+/// Extract the message portion of a commit or tag object (everything after
+/// the first blank line).
+fn extract_commit_message(data: &[u8]) -> String {
+    let text = String::from_utf8_lossy(data);
+    if let Some(pos) = text.find("\n\n") {
+        text[pos + 2..].to_owned()
+    } else {
+        String::new()
+    }
+}
+
+/// Abbreviate an OID to at most `n` hex characters.
+fn abbreviate_oid(oid: &ObjectId, n: usize) -> String {
+    let hex = oid.to_string();
+    let n = n.clamp(4, hex.len());
+    hex[..n].to_owned()
+}
+
+/// Apply `lstrip=N`, `rstrip=N`, or `strip=N` modifier to a refname.
+///
+/// Positive N strips from the specified side; negative N strips from
+/// the opposite side (keeping that many components from the specified side).
+fn apply_strip_modifier(name: &str, modifier: &str) -> std::result::Result<String, String> {
+    let (kind, value_str) = if let Some(v) = modifier.strip_prefix("lstrip=") {
+        ("lstrip", v)
+    } else if let Some(v) = modifier.strip_prefix("rstrip=") {
+        ("rstrip", v)
+    } else if let Some(v) = modifier.strip_prefix("strip=") {
+        // strip is an alias for lstrip
+        ("lstrip", v)
+    } else {
+        return Err(format!("unsupported refname modifier: {modifier}"));
+    };
+
+    let n: isize = value_str
+        .parse()
+        .map_err(|_| format!("invalid strip count in refname modifier: {modifier}"))?;
+    let parts: Vec<&str> = name.split('/').collect();
+    let total = parts.len();
+
+    match kind {
+        "lstrip" => {
+            let strip_count = if n >= 0 {
+                n as usize
+            } else {
+                // Negative lstrip: keep abs(n) components from the right
+                total.saturating_sub((-n) as usize)
+            };
+            if strip_count >= total {
+                Ok(String::new())
+            } else {
+                Ok(parts[strip_count..].join("/"))
+            }
+        }
+        "rstrip" => {
+            let strip_count = if n >= 0 {
+                n as usize
+            } else {
+                // Negative rstrip: keep abs(n) components from the left
+                total.saturating_sub((-n) as usize)
+            };
+            if strip_count >= total {
+                Ok(String::new())
+            } else {
+                Ok(parts[..total - strip_count].join("/"))
+            }
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn peel_to_non_tag(

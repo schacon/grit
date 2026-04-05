@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read as _, Write};
 
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -189,7 +189,8 @@ pub fn run(args: Args) -> Result<()> {
                     let tag_data = String::from_utf8_lossy(&current_obj.data);
                     if let Some(target_line) = tag_data.lines().find(|l| l.starts_with("object ")) {
                         let target_hex = &target_line["object ".len()..];
-                        _current_oid = target_hex.parse::<ObjectId>()
+                        _current_oid = target_hex
+                            .parse::<ObjectId>()
                             .map_err(|_| anyhow::anyhow!("bad tag target"))?;
                         current_obj = repo.read_replaced(&_current_oid)?;
                     } else {
@@ -203,7 +204,12 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 _ => {
                     if !args.allow_unknown_type {
-                        bail!("object {} is of type {}, not {}", oid, current_obj.kind, kind);
+                        bail!(
+                            "object {} is of type {}, not {}",
+                            oid,
+                            current_obj.kind,
+                            kind
+                        );
                     }
                     break;
                 }
@@ -241,17 +247,32 @@ fn validate_args(args: &Args) -> Result<()> {
     // Collect the "command mode" flags that were set.
     // These are mutually exclusive with each other.
     let mut cmdmodes: Vec<&str> = Vec::new();
-    if args.exists { cmdmodes.push("-e"); }
-    if args.pretty { cmdmodes.push("-p"); }
-    if args.show_type { cmdmodes.push("-t"); }
-    if args.size { cmdmodes.push("-s"); }
-    if args.textconv { cmdmodes.push("--textconv"); }
-    if args.filters { cmdmodes.push("--filters"); }
+    if args.exists {
+        cmdmodes.push("-e");
+    }
+    if args.pretty {
+        cmdmodes.push("-p");
+    }
+    if args.show_type {
+        cmdmodes.push("-t");
+    }
+    if args.size {
+        cmdmodes.push("-s");
+    }
+    if args.textconv {
+        cmdmodes.push("--textconv");
+    }
+    if args.filters {
+        cmdmodes.push("--filters");
+    }
 
     // --batch-all-objects conflicts with mode flags as a cmdmode
     if args.batch_all_objects && !cmdmodes.is_empty() {
         let mode = cmdmodes[0];
-        usage_error(&format!("error: {} cannot be used together with --batch-all-objects", mode));
+        usage_error(&format!(
+            "error: {} cannot be used together with --batch-all-objects",
+            mode
+        ));
     }
 
     // Check mutual exclusivity of cmdmode flags
@@ -262,7 +283,8 @@ fn validate_args(args: &Args) -> Result<()> {
         ));
     }
 
-    let is_batch = args.batch.is_some() || args.batch_check.is_some() || args.batch_command.is_some();
+    let is_batch =
+        args.batch.is_some() || args.batch_check.is_some() || args.batch_command.is_some();
     let has_mode = !cmdmodes.is_empty();
     let mode_name = cmdmodes.first().copied().unwrap_or("");
 
@@ -294,19 +316,25 @@ fn validate_args(args: &Args) -> Result<()> {
 
     // Mode flags are incompatible with batch mode
     if has_mode && is_batch {
-        usage_error(&format!("fatal: '{}' is incompatible with batch mode", mode_name));
+        usage_error(&format!(
+            "fatal: '{}' is incompatible with batch mode",
+            mode_name
+        ));
     }
 
     // Mode flags are incompatible with --follow-symlinks (a batch-only option)
     // (already handled above since --follow-symlinks requires batch mode)
 
     // --textconv/--filters require an object argument (unless in batch mode)
-    if (args.textconv || args.filters) && !is_batch {
-        if args.type_or_object.is_none() {
-            let opt = if args.textconv { "--textconv" } else { "--filters" };
+    if (args.textconv || args.filters) && !is_batch
+        && args.type_or_object.is_none() {
+            let opt = if args.textconv {
+                "--textconv"
+            } else {
+                "--filters"
+            };
             usage_error(&format!("fatal: <rev> required with '{}'", opt));
         }
-    }
 
     // -e, -p, -t, -s require an object argument
     if (args.exists || args.pretty || args.show_type || args.size) && !is_batch {
@@ -335,11 +363,10 @@ fn validate_args(args: &Args) -> Result<()> {
     }
 
     // Batch modes reject positional arguments
-    if is_batch {
-        if args.type_or_object.is_some() {
+    if is_batch
+        && args.type_or_object.is_some() {
             usage_error("fatal: batch modes take no arguments");
         }
-    }
 
     Ok(())
 }
@@ -347,14 +374,23 @@ fn validate_args(args: &Args) -> Result<()> {
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    let mut out = stdout.lock();
+    let mut stdout_lock = stdout.lock();
     let format = args.batch_format().unwrap_or("");
+
+    let nul_input = args.nul_input || args.nul_both;
+    let nul_output = args.nul_both;
+    let use_app_buffer = args.buffer && args.batch_command.is_some();
 
     // Check if we should suppress the final flush (for testing --buffer behavior)
     let no_flush_on_exit = std::env::var("GIT_TEST_CAT_FILE_NO_FLUSH_ON_EXIT").is_ok();
 
-    for line in stdin.lock().lines() {
-        let line = line?;
+    // In --buffer mode for --batch-command, accumulate output in an
+    // application-level buffer and only write to stdout on `flush` commands.
+    let mut app_buf: Vec<u8> = Vec::new();
+
+    let records = read_input_records(&stdin, nul_input)?;
+
+    for line in &records {
         let trimmed = line.trim();
 
         if args.batch_command.is_some() {
@@ -377,7 +413,18 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         eprintln!("fatal: contents requires arguments");
                         std::process::exit(128);
                     }
-                    print_batch_entry(repo, obj_str, true, format, &mut out)?;
+                    if use_app_buffer {
+                        print_batch_entry(repo, obj_str, true, format, nul_output, &mut app_buf)?;
+                    } else {
+                        print_batch_entry(
+                            repo,
+                            obj_str,
+                            true,
+                            format,
+                            nul_output,
+                            &mut stdout_lock,
+                        )?;
+                    }
                 }
                 Some("info") => {
                     let obj_str = parts.next().unwrap_or("").trim();
@@ -385,7 +432,18 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         eprintln!("fatal: info requires arguments");
                         std::process::exit(128);
                     }
-                    print_batch_entry(repo, obj_str, false, format, &mut out)?;
+                    if use_app_buffer {
+                        print_batch_entry(repo, obj_str, false, format, nul_output, &mut app_buf)?;
+                    } else {
+                        print_batch_entry(
+                            repo,
+                            obj_str,
+                            false,
+                            format,
+                            nul_output,
+                            &mut stdout_lock,
+                        )?;
+                    }
                 }
                 Some("flush") => {
                     let rest = parts.next().unwrap_or("").trim();
@@ -397,7 +455,9 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         eprintln!("fatal: flush is only for --buffer mode");
                         std::process::exit(128);
                     }
-                    out.flush()?;
+                    stdout_lock.write_all(&app_buf)?;
+                    stdout_lock.flush()?;
+                    app_buf.clear();
                 }
                 Some(other) => {
                     eprintln!("fatal: unknown command: '{}'", other);
@@ -407,40 +467,83 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
             }
         } else {
             let include_content = args.batch_includes_content();
-            print_batch_entry(repo, trimmed, include_content, format, &mut out)?;
+            print_batch_entry(
+                repo,
+                trimmed,
+                include_content,
+                format,
+                nul_output,
+                &mut stdout_lock,
+            )?;
         }
     }
 
-    if !no_flush_on_exit || !args.buffer {
-        out.flush()?;
+    if no_flush_on_exit && use_app_buffer {
+        // Discard the application buffer — the test verifies that --buffer
+        // mode holds output until an explicit flush command.
+        return Ok(());
     }
+    // Flush any remaining buffered data.
+    if use_app_buffer {
+        stdout_lock.write_all(&app_buf)?;
+    }
+    stdout_lock.flush()?;
     Ok(())
 }
 
-
+/// Read all input records, splitting on NUL when `nul_input` is true,
+/// otherwise splitting on newlines. A trailing delimiter does not create
+/// an extra empty record (same semantics as [`BufRead::lines`]).
+fn read_input_records(stdin: &io::Stdin, nul_input: bool) -> Result<Vec<String>> {
+    if nul_input {
+        let mut buf = Vec::new();
+        stdin.lock().read_to_end(&mut buf)?;
+        let mut records: Vec<String> = buf
+            .split(|&b| b == 0)
+            .map(|s| String::from_utf8_lossy(s).into_owned())
+            .collect();
+        // Strip a single trailing empty record (from a trailing NUL),
+        // matching the behaviour of BufRead::lines() with trailing LF.
+        if records.last().is_some_and(|s| s.is_empty()) {
+            records.pop();
+        }
+        Ok(records)
+    } else {
+        let mut records = Vec::new();
+        for line in stdin.lock().lines() {
+            records.push(line?);
+        }
+        Ok(records)
+    }
+}
 
 fn print_batch_entry(
     repo: &Repository,
     input: &str,
     include_content: bool,
     format: &str,
+    nul_output: bool,
     out: &mut impl Write,
 ) -> Result<()> {
     let (obj_str, rest) = parse_batch_input(input, format);
+    let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
 
     if obj_str.is_empty() {
         // Empty line: print " missing"
-        writeln!(out, " missing")?;
+        out.write_all(b" missing")?;
+        out.write_all(eol)?;
         return Ok(());
     }
 
     match resolve_object_with_mode(repo, obj_str) {
         Err(_) => {
-            writeln!(out, "{obj_str} missing")?;
+            write!(out, "{obj_str} missing")?;
+            out.write_all(eol)?;
         }
         Ok((oid, mode)) => match repo.read_replaced(&oid) {
             Err(_) => {
-                writeln!(out, "{obj_str} missing")?;
+                write!(out, "{obj_str} missing")?;
+                out.write_all(eol)?;
             }
             Ok(obj) => {
                 let oid_str = oid.to_string();
@@ -451,17 +554,18 @@ fn print_batch_entry(
                     None => String::new(),
                 };
                 if format.is_empty() {
-                    writeln!(out, "{} {} {}", oid_str, kind_str, size)?;
+                    write!(out, "{} {} {}", oid_str, kind_str, size)?;
                 } else {
-                    writeln!(
+                    write!(
                         out,
                         "{}",
                         apply_format(format, &oid_str, &kind_str, size, rest, &mode_str)
                     )?;
                 }
+                out.write_all(eol)?;
                 if include_content {
                     out.write_all(&obj.data)?;
-                    writeln!(out)?;
+                    out.write_all(eol)?;
                 }
             }
         },
@@ -533,8 +637,7 @@ fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {
 ///
 /// Uses the full rev-parse machinery for resolution.
 fn resolve_object(repo: &Repository, obj_str: &str) -> Result<ObjectId> {
-    rev_parse::resolve_revision(repo, obj_str)
-        .map_err(|e| anyhow::anyhow!("{}", e))
+    rev_parse::resolve_revision(repo, obj_str).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Resolve an object reference and also return the file mode if the reference

@@ -86,7 +86,8 @@ pub fn show_prefix(repo: &Repository, cwd: &Path) -> String {
 #[must_use]
 pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     // Handle @{upstream} and @{push} suffixes
-    if let Some(base) = spec.strip_suffix("@{upstream}")
+    if let Some(base) = spec
+        .strip_suffix("@{upstream}")
         .or_else(|| spec.strip_suffix("@{u}"))
         .or_else(|| spec.strip_suffix("@{UPSTREAM}"))
         .or_else(|| spec.strip_suffix("@{U}"))
@@ -107,10 +108,9 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
                 let mut count = 0usize;
                 for entry in entries.iter().rev() {
                     let msg = &entry.message;
-                    if msg.starts_with("checkout: moving from ") {
+                    if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
                         count += 1;
                         if count == n {
-                            let rest = &msg["checkout: moving from ".len()..];
                             if let Some(to_pos) = rest.find(" to ") {
                                 let from_branch = &rest[..to_pos];
                                 let ref_name = format!("refs/heads/{from_branch}");
@@ -177,12 +177,12 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
         // Handle @ prefix (e.g., @funny) and branch names with @
         branch.to_owned()
     };
-    
+
     // Read branch.<name>.remote and branch.<name>.merge from config
     let config_path = repo.git_dir.join("config");
     let config_content = fs::read_to_string(&config_path).ok()?;
     let (remote, merge) = parse_branch_tracking(&config_content, &branch_name)?;
-    
+
     // For local tracking (remote = "."), use the merge ref directly.
     // For remote tracking, convert to refs/remotes/<remote>/<branch>.
     if remote == "." {
@@ -206,7 +206,7 @@ fn parse_branch_tracking(config: &str, branch: &str) -> Option<(String, String)>
     let mut merge = None;
     let mut in_section = false;
     let target_section = format!("[branch \"{}\"]", branch);
-    
+
     for line in config.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
@@ -229,7 +229,7 @@ fn parse_branch_tracking(config: &str, branch: &str) -> Option<(String, String)>
             merge = Some(value.trim().to_owned());
         }
     }
-    
+
     match (remote, merge) {
         (Some(r), Some(m)) => Some((r, m)),
         _ => None,
@@ -270,12 +270,11 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
             } else {
                 resolve_revision(repo, right_raw)?
             };
-            let bases = crate::merge_base::merge_bases_first_vs_rest(
-                repo, left_oid, &[right_oid],
-            )?;
-            return bases.into_iter().next().ok_or_else(|| {
-                Error::ObjectNotFound(format!("no merge base for '{spec}'"))
-            });
+            let bases = crate::merge_base::merge_bases_first_vs_rest(repo, left_oid, &[right_oid])?;
+            return bases
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::ObjectNotFound(format!("no merge base for '{spec}'")));
         }
     }
 
@@ -321,7 +320,10 @@ fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
             let tag = crate::objects::parse_tag(&obj.data)?;
             peel_to_tree(repo, tag.object)
         }
-        _ => Err(Error::ObjectNotFound(format!("cannot peel {} to tree", oid))),
+        _ => Err(Error::ObjectNotFound(format!(
+            "cannot peel {} to tree",
+            oid
+        ))),
     }
 }
 
@@ -345,7 +347,10 @@ fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Resu
             }
         }
     }
-    Err(Error::ObjectNotFound(format!("path '{}' not found in tree {}", path, tree_oid)))
+    Err(Error::ObjectNotFound(format!(
+        "path '{}' not found in tree {}",
+        path, tree_oid
+    )))
 }
 
 /// A single parent/ancestor navigation step.
@@ -582,11 +587,10 @@ fn try_resolve_at_minus(repo: &Repository, spec: &str) -> Result<Option<ObjectId
     // Iterate newest-first
     for entry in entries.iter().rev() {
         let msg = &entry.message;
-        if msg.starts_with("checkout: moving from ") {
+        if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
             count += 1;
             if count == n {
                 // Extract the "from" branch name
-                let rest = &msg["checkout: moving from ".len()..];
                 if let Some(to_pos) = rest.find(" to ") {
                     let from_branch = &rest[..to_pos];
                     // Try to resolve the branch name
@@ -600,12 +604,17 @@ fn try_resolve_at_minus(repo: &Repository, spec: &str) -> Result<Option<ObjectId
                             return Ok(Some(oid));
                         }
                     }
-                    return Err(Error::InvalidRef(format!("cannot resolve @{{-{n}}}: branch '{}' not found", from_branch)));
+                    return Err(Error::InvalidRef(format!(
+                        "cannot resolve @{{-{n}}}: branch '{}' not found",
+                        from_branch
+                    )));
                 }
             }
         }
     }
-    Err(Error::InvalidRef(format!("@{{-{n}}}: only {count} checkout(s) in reflog")))
+    Err(Error::InvalidRef(format!(
+        "@{{-{n}}}: only {count} checkout(s) in reflog"
+    )))
 }
 
 /// Try to resolve `ref@{N}` reflog index syntax.
@@ -646,11 +655,19 @@ fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<Obje
     };
     let entries = read_reflog(&repo.git_dir, &refname)?;
     if entries.is_empty() {
-        return Err(Error::InvalidRef(format!("log for '{}' is empty", refname_raw)));
+        return Err(Error::InvalidRef(format!(
+            "log for '{}' is empty",
+            refname_raw
+        )));
     }
     // Reflog entries are oldest-first in file; @{0} is the newest (last)
-    let reversed_idx = entries.len().checked_sub(1 + index)
-        .ok_or_else(|| Error::InvalidRef(format!("log for '{}' only has {} entries", refname_raw, entries.len())))?;
+    let reversed_idx = entries.len().checked_sub(1 + index).ok_or_else(|| {
+        Error::InvalidRef(format!(
+            "log for '{}' only has {} entries",
+            refname_raw,
+            entries.len()
+        ))
+    })?;
     Ok(Some(entries[reversed_idx].new_oid))
 }
 
@@ -660,7 +677,11 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
     // Check for @{upstream}, @{u}, @{UPSTREAM}, @{U}, @{push} (case-insensitive for upstream)
     let lower = spec.to_lowercase();
     if lower.ends_with("@{upstream}") || lower.ends_with("@{u}") {
-        let suffix_len = if lower.ends_with("@{upstream}") { 11 } else { 4 };
+        let suffix_len = if lower.ends_with("@{upstream}") {
+            11
+        } else {
+            4
+        };
         let base = &spec[..spec.len() - suffix_len];
         return resolve_upstream_ref(repo, base);
     }
@@ -676,8 +697,7 @@ fn try_resolve_at_suffix(repo: &Repository, spec: &str) -> Option<String> {
 fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
     use crate::index::Index;
     let index_path = repo.index_path();
-    let index = Index::load(&index_path)
-        .map_err(|_| Error::ObjectNotFound(format!(":{path}")))?;
+    let index = Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{path}")))?;
     match index.get(path.as_bytes(), 0) {
         Some(entry) => Ok(entry.oid),
         None => Err(Error::ObjectNotFound(format!(":{path}"))),
@@ -776,6 +796,14 @@ fn parse_peel_suffix(spec: &str) -> (&str, Option<&str>) {
             return (base, Some(op));
         }
     }
+    // `^0` is shorthand for `^{commit}` — peel tags and verify commit.
+    if let Some(base) = spec.strip_suffix("^0") {
+        // Only match if the character before `^0` is not also a `^` (avoid
+        // matching `^^0` as a peel instead of nav+nav).
+        if !base.ends_with('^') {
+            return (base, Some("commit"));
+        }
+    }
     (spec, None)
 }
 
@@ -806,7 +834,7 @@ fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>>
 fn collect_loose_object_ids(repo: &Repository) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     let objects_dir = repo.odb.objects_dir();
-    let read = match fs::read_dir(&objects_dir) {
+    let read = match fs::read_dir(objects_dir) {
         Ok(read) => read,
         Err(err) => return Err(Error::Io(err)),
     };
@@ -886,7 +914,8 @@ fn resolve_commit_message_search(
     pattern: &str,
 ) -> Result<ObjectId> {
     use crate::state::resolve_head;
-    let head = resolve_head(&repo.git_dir).map_err(|_| Error::ObjectNotFound(format!(":/{pattern}")))?;
+    let head =
+        resolve_head(&repo.git_dir).map_err(|_| Error::ObjectNotFound(format!(":/{pattern}")))?;
     let start_oid = match head.oid() {
         Some(oid) => *oid,
         None => return Err(Error::ObjectNotFound(format!(":/{pattern}"))),
