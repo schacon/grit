@@ -1070,6 +1070,36 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
         bail!("Merge conflict in stash apply");
     }
 
+    // Show status after applying, like git does.
+    if !quiet {
+        let status_args = super::status::Args {
+            short: false,
+            no_short: false,
+            porcelain: None,
+            branch: false,
+            no_branch: false,
+            untracked: "normal".to_string(),
+            ignored: false,
+            null_terminated: false,
+            ahead_behind: false,
+            no_ahead_behind: false,
+            column: None,
+            no_column: false,
+            _porcelain_v2_hidden: false,
+            find_renames: None,
+            no_find_renames: false,
+            no_optional_locks: false,
+            verbose: 0,
+            show_stash: false,
+            no_show_stash: false,
+            ignore_submodules: None,
+            no_renames: false,
+            pathspec: vec![],
+        };
+        // Best-effort: don't fail the stash apply if status display fails.
+        let _ = super::status::run(status_args);
+    }
+
     Ok(())
 }
 

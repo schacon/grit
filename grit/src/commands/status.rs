@@ -15,7 +15,7 @@ use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit status`.
 #[derive(Debug, ClapArgs)]
@@ -209,6 +209,40 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         (Vec::new(), Vec::new())
     };
+
+    // Compute the cwd prefix relative to work_tree so paths are displayed
+    // relative to the user's current directory (matching git behavior).
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
+    let wt_canon = work_tree.canonicalize().unwrap_or_else(|_| work_tree.to_path_buf());
+    let prefix = cwd_canon.strip_prefix(&wt_canon).ok().and_then(|p| {
+        if p.as_os_str().is_empty() {
+            None
+        } else {
+            Some(p.to_path_buf())
+        }
+    });
+
+    // Re-map paths from worktree-relative to cwd-relative when prefix is set.
+    let relativize = |wt_rel: &str| -> String {
+        if let Some(ref pfx) = prefix {
+            let target = Path::new(wt_rel);
+            // Compute ".." components to go up from prefix, then append target
+            let mut result = PathBuf::new();
+            for _ in pfx.components() {
+                result.push("..");
+            }
+            result.push(target);
+            result.to_string_lossy().to_string()
+        } else {
+            wt_rel.to_string()
+        }
+    };
+
+    let staged = remap_diff_paths(&staged, &relativize);
+    let unstaged = remap_diff_paths(&unstaged, &relativize);
+    let untracked: Vec<String> = untracked.into_iter().map(|p| relativize(&p)).collect();
+    let ignored_files: Vec<String> = ignored_files.into_iter().map(|p| relativize(&p)).collect();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -892,4 +926,24 @@ fn collect_ancestors_set(
         }
     }
     Ok(visited)
+}
+
+/// Remap worktree-relative paths in diff entries using the given function.
+fn remap_diff_paths(
+    entries: &[grit_lib::diff::DiffEntry],
+    f: &dyn Fn(&str) -> String,
+) -> Vec<grit_lib::diff::DiffEntry> {
+    entries
+        .iter()
+        .map(|e| {
+            let mut new_entry = e.clone();
+            if let Some(ref p) = e.old_path {
+                new_entry.old_path = Some(f(p));
+            }
+            if let Some(ref p) = e.new_path {
+                new_entry.new_path = Some(f(p));
+            }
+            new_entry
+        })
+        .collect()
 }

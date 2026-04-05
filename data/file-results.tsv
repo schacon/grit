@@ -33,7 +33,7 @@ t0034-root-safe-directory	yes	0	0	0	ok	0	0	0
 t0035-safe-bare-repository	yes	12	1	11	ok	1	12	0
 t0040-parse-options	yes	94	0	94	ok	0	94	0
 t0041-usage	yes	16	12	4	ok	12	16	0
-t0050-filesystem	yes	13	12	1	ok	11	12	1
+t0050-filesystem	yes	13	12	1	ok	10	11	2
 t0051-windows-named-pipe	yes	0	0	0	ok	0	0	0
 t0052-simple-ipc	yes	0	0	0	ok	0	0	0
 t0055-beyond-symlinks	yes	3	3	0	ok	3	3	0
@@ -344,7 +344,7 @@ t3904-stash-patch	yes	10	4	6	ok	4	10	0
 t3905-stash-include-untracked	yes	34	12	22	ok	12	34	0
 t3906-stash-submodule	yes	16	10	6	ok	10	16	0
 t3907-stash-show-config	yes	10	1	9	ok	1	10	0
-t3908-stash-in-worktree	yes	2	1	1	ok	1	2	0
+t3908-stash-in-worktree	yes	2	2	0	ok	2	2	0
 t3909-stash-pathspec-file	yes	5	1	4	ok	1	5	0
 t3910-mac-os-precompose	yes	0	0	0	ok	0	0	1
 t3920-crlf-messages	yes	18	3	15	ok	3	18	0

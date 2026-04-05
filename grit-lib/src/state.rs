@@ -13,7 +13,7 @@
 //! `commit`, and other porcelain commands.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
@@ -219,11 +219,51 @@ fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // Try packed-refs
-            resolve_packed_ref(git_dir, refname)
+            // Try packed-refs in git_dir
+            if let Some(oid) = resolve_packed_ref(git_dir, refname)? {
+                return Ok(Some(oid));
+            }
+
+            // For worktrees, fall back to the common git directory for
+            // shared refs (branches, tags, etc.).
+            if let Some(common) = common_dir_for(git_dir) {
+                if common != git_dir {
+                    // Try loose ref in common dir
+                    let common_ref = common.join(refname);
+                    match fs::read_to_string(&common_ref) {
+                        Ok(content) => {
+                            let trimmed = content.trim();
+                            if let Some(target) = trimmed.strip_prefix("ref: ") {
+                                return resolve_ref(git_dir, target);
+                            }
+                            match ObjectId::from_hex(trimmed) {
+                                Ok(oid) => return Ok(Some(oid)),
+                                Err(_) => {}
+                            }
+                        }
+                        Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e2) => return Err(Error::Io(e2)),
+                    }
+                    // Try packed-refs in common dir
+                    return resolve_packed_ref(&common, refname);
+                }
+            }
+            Ok(None)
         }
         Err(e) => Err(Error::Io(e)),
     }
+}
+
+/// Determine the common git directory for worktree-aware ref resolution.
+fn common_dir_for(git_dir: &Path) -> Option<PathBuf> {
+    let raw = fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let rel = raw.trim();
+    let path = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().ok()
 }
 
 /// Look up a ref in `packed-refs`.
