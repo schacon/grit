@@ -26,3 +26,4 @@
 - `./scripts/run-tests.sh t0070-fundamental.sh`: 4/11 passing (improved from 1/11 after implementing missing `test-tool` subcommands in grit).
 - `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 4/11 passing, with remaining failures in `send-split-sideband`/`receive-sideband`/`unpack-sideband` execution via the local `tests/test-tool` wrapper.
 - Direct validation using `/workspace/tests/grit test-tool pkt-line ...`: sideband helper flows match expected output (`receive-sideband`, EOF/missing-sideband diagnostics, and both `unpack-sideband` modes with/without `--reader-use-sideband` and chomp toggles).
+- `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.

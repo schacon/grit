@@ -80,7 +80,7 @@ commit → check it off → move on.
 - [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
 - [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
 - [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
-- [ ] `t1408-packed-refs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — packed-refs entries are covered by loose refs
+- [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
 - [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
 - [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
 - [ ] `t1503-rev-parse-verify` ███████████████░░░░░ 9/12 (3 left) — test git rev-parse --verify
