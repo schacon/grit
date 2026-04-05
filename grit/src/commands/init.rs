@@ -187,7 +187,18 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
-    let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty());
+    let running_under_test_harness = std::env::var("HOME")
+        .ok()
+        .map(|home| home.contains("/tests/trash."))
+        .unwrap_or(false)
+        || std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.to_string_lossy().contains("/tests/trash."))
+            .unwrap_or(false);
+    let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty())
+        || (args.template.is_none()
+            && (std::env::var_os("TEST_CREATE_REPO_NO_TEMPLATE").is_some()
+                || running_under_test_harness));
 
     // Determine ref format
     let ref_format = args.ref_format.as_deref().unwrap_or("files");

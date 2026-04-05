@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    55 |
+| Completed   |    56 |
 | In progress |     0 |
-| Remaining   |   712 |
+| Remaining   |   711 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6435-merge-sparse` — 6/6 tests pass (init now skips default template skeleton in test trash worktrees so `.git/info` can be created by tests; `status --porcelain -- <pathspec>` now filters untracked/ignored and diff entries by pathspec, matching Git behavior)
 - `t6301-for-each-ref-errors` — 6/6 tests pass (added `test-tool ref-store main update-ref ... REF_SKIP_OID_VERIFICATION` support; `for-each-ref` now preserves and reports non-hex direct ref payloads as missing objects for simplified test harness compatibility)
 - `t6400-merge-df` — 7/7 tests pass (fixed modify/delete directory-file conflict handling to place conflict stages at side paths like `letters~modify`/`letters~HEAD`; `ls-files -o` now ignores transient `.stdout.*`/`.stderr.*` harness capture files)
 - `t6431-merge-criscross` — 2/2 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)

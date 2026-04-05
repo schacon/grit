@@ -749,7 +749,7 @@ t6431-merge-criscross	yes	2	2	0	ok	2	2	0
 t6432-merge-recursive-space-options	yes	11	0	11	ok	0	11	0
 t6433-merge-toplevel	yes	15	6	9	ok	6	15	0
 t6434-merge-recursive-rename-options	yes	27	5	22	ok	5	27	0
-t6435-merge-sparse	yes	6	3	3	ok	3	6	0
+t6435-merge-sparse	yes	6	6	0	ok	6	6	0
 t6436-merge-overwrite	yes	18	4	14	ok	4	18	0
 t6437-submodule-merge	yes	22	6	16	ok	4	20	2
 t6439-merge-co-error-msgs	yes	6	1	5	ok	1	6	0

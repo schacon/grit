@@ -241,10 +241,30 @@ pub fn run(mut args: Args) -> Result<()> {
         }
     };
 
-    let staged = remap_diff_paths(&staged, &relativize);
-    let unstaged = remap_diff_paths(&unstaged, &relativize);
-    let untracked: Vec<String> = untracked.into_iter().map(|p| relativize(&p)).collect();
-    let ignored_files: Vec<String> = ignored_files.into_iter().map(|p| relativize(&p)).collect();
+    let pathspecs: Vec<String> = args
+        .pathspec
+        .iter()
+        .filter(|spec| spec.as_str() != "--")
+        .cloned()
+        .collect();
+    let staged: Vec<grit_lib::diff::DiffEntry> = remap_diff_paths(&staged, &relativize)
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
+        .collect();
+    let unstaged: Vec<grit_lib::diff::DiffEntry> = remap_diff_paths(&unstaged, &relativize)
+        .into_iter()
+        .filter(|entry| status_path_matches(entry.path(), &pathspecs))
+        .collect();
+    let untracked: Vec<String> = untracked
+        .into_iter()
+        .map(|p| relativize(&p))
+        .filter(|p| status_path_matches(p, &pathspecs))
+        .collect();
+    let ignored_files: Vec<String> = ignored_files
+        .into_iter()
+        .map(|p| relativize(&p))
+        .filter(|p| status_path_matches(p, &pathspecs))
+        .collect();
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -969,4 +989,15 @@ fn remap_diff_paths(
             new_entry
         })
         .collect()
+}
+
+fn status_path_matches(path: &str, pathspecs: &[String]) -> bool {
+    if pathspecs.is_empty() {
+        return true;
+    }
+    let normalized = path.trim_end_matches('/');
+    pathspecs.iter().any(|spec| {
+        crate::pathspec::pathspec_matches(spec, path)
+            || crate::pathspec::pathspec_matches(spec, normalized)
+    })
 }
