@@ -6,4 +6,4 @@
 - `./tests/harness/run.sh`: not run for this task.
 - `./scripts/run-tests.sh t6414-merge-rename-nocruft.sh`: 3/3 passing (now fully passing).
 - `./scripts/run-tests.sh t6408-merge-up-to-date.sh`: 7/7 passing (fully passing).
-- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 6/7 passing (still partial; no regression from this change).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (now fully passing).

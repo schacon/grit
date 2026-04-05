@@ -697,7 +697,7 @@ commit → check it off → move on.
 - [ ] `t6110-rev-list-sparse` ██████████░░░░░░░░░░ 1/2 (1 left) — operations that cull histories in unusual ways
 - [ ] `t6425-merge-rename-delete` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Merge-recursive rename/delete conflict message
 - [x] `t6408-merge-up-to-date` ████████████████████ 7/7 (0 left) — merge fast-forward and up to date
-- [ ] `t6417-merge-ours-theirs` █████████████████░░░ 6/7 (1 left) — Merge-recursive ours and theirs variants
+- [x] `t6417-merge-ours-theirs` ████████████████████ 7/7 (0 left) — Merge-recursive ours and theirs variants
 - [ ] `t6114-keep-packs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — rev-list with .keep packs
 - [ ] `t6134-pathspec-in-submodule` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — test case exclude pathspec
 - [ ] `t6136-pathspec-in-bare` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — diagnosing out-of-scope pathspec

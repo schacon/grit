@@ -732,7 +732,7 @@ t6413-merge-crlf	yes	3	3	0	ok	3	3	0
 t6414-merge-rename-nocruft	yes	3	3	0	ok	3	3	0
 t6415-merge-dir-to-symlink	yes	24	19	5	ok	18	23	1
 t6416-recursive-corner-cases	yes	40	12	28	ok	9	37	3
-t6417-merge-ours-theirs	yes	7	6	1	ok	6	7	0
+t6417-merge-ours-theirs	yes	7	7	0	ok	7	7	0
 t6418-merge-text-auto	yes	11	2	9	ok	2	11	0
 t6419-merge-ignorecase	yes	0	0	0	ok	0	0	0
 t6421-merge-partial-clone	yes	3	0	3	ok	0	3	0

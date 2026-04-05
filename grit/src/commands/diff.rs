@@ -1360,7 +1360,7 @@ fn parse_rev_and_paths(args: &[String], has_separator: bool) -> (Vec<String>, Ve
         for arg in args {
             if in_paths {
                 paths.push(arg.clone());
-            } else if std::path::Path::new(arg).exists() {
+            } else if std::fs::symlink_metadata(std::path::Path::new(arg)).is_ok() {
                 in_paths = true;
                 paths.push(arg.clone());
             } else {

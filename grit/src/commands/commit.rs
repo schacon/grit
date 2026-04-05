@@ -752,9 +752,8 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
                     .unwrap_or(std::path::Path::new(spec))
             });
         let rel_str = rel_path.to_string_lossy().to_string();
-        if canon_path.exists() {
+        if let Ok(meta) = fs::symlink_metadata(&canon_path) {
             use std::os::unix::fs::MetadataExt;
-            let meta = fs::symlink_metadata(&canon_path)?;
             let data = if meta.file_type().is_symlink() {
                 let target = fs::read_link(&canon_path)?;
                 target.to_string_lossy().into_owned().into_bytes()
