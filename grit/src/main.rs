@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::io::Read;
 use std::path::PathBuf;
 
 mod commands;
@@ -751,6 +752,377 @@ fn run_test_tool_advise(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+enum JsonWriterValue {
+    Object(Vec<(String, JsonWriterValue)>),
+    Array(Vec<JsonWriterValue>),
+    String(String),
+    Integer(i64),
+    Double(String),
+    Boolean(bool),
+    Null,
+}
+
+#[derive(Debug)]
+enum JsonWriterContainer {
+    Object {
+        key_in_parent: Option<String>,
+        entries: Vec<(String, JsonWriterValue)>,
+    },
+    Array {
+        key_in_parent: Option<String>,
+        entries: Vec<JsonWriterValue>,
+    },
+}
+
+fn json_escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn render_json_value(v: &JsonWriterValue, pretty: bool, indent: usize) -> String {
+    match v {
+        JsonWriterValue::Object(entries) => {
+            if entries.is_empty() {
+                return "{}".to_string();
+            }
+            if !pretty {
+                let inner = entries
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "\"{}\":{}",
+                            json_escape_string(k),
+                            render_json_value(v, false, indent)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{{{inner}}}")
+            } else {
+                let indent_str = "  ".repeat(indent);
+                let child_indent_str = "  ".repeat(indent + 1);
+                let mut out = String::from("{\n");
+                for (idx, (k, v)) in entries.iter().enumerate() {
+                    out.push_str(&child_indent_str);
+                    out.push('"');
+                    out.push_str(&json_escape_string(k));
+                    out.push_str("\": ");
+                    out.push_str(&render_json_value(v, true, indent + 1));
+                    if idx + 1 != entries.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&indent_str);
+                out.push('}');
+                out
+            }
+        }
+        JsonWriterValue::Array(entries) => {
+            if entries.is_empty() {
+                return "[]".to_string();
+            }
+            if !pretty {
+                let inner = entries
+                    .iter()
+                    .map(|v| render_json_value(v, false, indent))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("[{inner}]")
+            } else {
+                let indent_str = "  ".repeat(indent);
+                let child_indent_str = "  ".repeat(indent + 1);
+                let mut out = String::from("[\n");
+                for (idx, v) in entries.iter().enumerate() {
+                    out.push_str(&child_indent_str);
+                    out.push_str(&render_json_value(v, true, indent + 1));
+                    if idx + 1 != entries.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&indent_str);
+                out.push(']');
+                out
+            }
+        }
+        JsonWriterValue::String(s) => format!("\"{}\"", json_escape_string(s)),
+        JsonWriterValue::Integer(i) => i.to_string(),
+        JsonWriterValue::Double(d) => d.clone(),
+        JsonWriterValue::Boolean(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        JsonWriterValue::Null => "null".to_string(),
+    }
+}
+
+fn attach_json_value(
+    stack: &mut [JsonWriterContainer],
+    root: &mut Option<JsonWriterValue>,
+    key_in_parent: Option<String>,
+    value: JsonWriterValue,
+) -> Result<()> {
+    if let Some(parent) = stack.last_mut() {
+        match parent {
+            JsonWriterContainer::Object { entries, .. } => {
+                let Some(key) = key_in_parent else {
+                    bail!("json-writer: missing object key while attaching value");
+                };
+                entries.push((key, value));
+            }
+            JsonWriterContainer::Array { entries, .. } => {
+                entries.push(value);
+            }
+        }
+    } else {
+        *root = Some(value);
+    }
+    Ok(())
+}
+
+fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
+    let mut pretty = false;
+    if let Some(flag) = rest.get(1) {
+        match flag.as_str() {
+            "-u" | "--unit" => return Ok(()),
+            "-p" | "--pretty" => pretty = true,
+            _ => {}
+        }
+    }
+
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let mut stack: Vec<JsonWriterContainer> = Vec::new();
+    let mut root: Option<JsonWriterValue> = None;
+    let mut saw_root = false;
+
+    for raw_line in input.lines() {
+        let line = raw_line.trim().trim_end_matches(|c| c == ' ' || c == '\t');
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let verb = parts[0];
+
+        if !saw_root {
+            match verb {
+                "object" => {
+                    stack.push(JsonWriterContainer::Object {
+                        key_in_parent: None,
+                        entries: Vec::new(),
+                    });
+                    saw_root = true;
+                    continue;
+                }
+                "array" => {
+                    stack.push(JsonWriterContainer::Array {
+                        key_in_parent: None,
+                        entries: Vec::new(),
+                    });
+                    saw_root = true;
+                    continue;
+                }
+                _ => bail!("json-writer: first line must be 'object' or 'array'"),
+            }
+        }
+
+        match verb {
+            "end" => {
+                let container = stack
+                    .pop()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: unexpected 'end'"))?;
+                match container {
+                    JsonWriterContainer::Object {
+                        key_in_parent,
+                        entries,
+                    } => {
+                        let value = JsonWriterValue::Object(entries);
+                        attach_json_value(&mut stack, &mut root, key_in_parent, value)?;
+                    }
+                    JsonWriterContainer::Array {
+                        key_in_parent,
+                        entries,
+                    } => {
+                        let value = JsonWriterValue::Array(entries);
+                        attach_json_value(&mut stack, &mut root, key_in_parent, value)?;
+                    }
+                }
+            }
+
+            "object-string" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires key"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires value"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::String((*value).to_string())));
+                    }
+                    _ => bail!("json-writer: object-string used outside object"),
+                }
+            }
+            "object-int" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires key"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires value"))?;
+                let parsed = value
+                    .parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::Integer(parsed)));
+                    }
+                    _ => bail!("json-writer: object-int used outside object"),
+                }
+            }
+            "object-double" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires key"))?;
+                let precision = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires precision"))?;
+                let value = parts.get(3).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires value"))?;
+                let p = precision
+                    .parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
+                let v = value
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
+                let rendered = format!("{v:.p$}");
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::Double(rendered)));
+                    }
+                    _ => bail!("json-writer: object-double used outside object"),
+                }
+            }
+            "object-true" | "object-false" | "object-null" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object literal requires key"))?;
+                let val = match verb {
+                    "object-true" => JsonWriterValue::Boolean(true),
+                    "object-false" => JsonWriterValue::Boolean(false),
+                    _ => JsonWriterValue::Null,
+                };
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), val));
+                    }
+                    _ => bail!("json-writer: object literal used outside object"),
+                }
+            }
+            "object-object" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-object requires key"))?;
+                stack.push(JsonWriterContainer::Object {
+                    key_in_parent: Some((*key).to_string()),
+                    entries: Vec::new(),
+                });
+            }
+            "object-array" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-array requires key"))?;
+                stack.push(JsonWriterContainer::Array {
+                    key_in_parent: Some((*key).to_string()),
+                    entries: Vec::new(),
+                });
+            }
+
+            "array-string" => {
+                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-string requires value"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::String((*value).to_string()));
+                    }
+                    _ => bail!("json-writer: array-string used outside array"),
+                }
+            }
+            "array-int" => {
+                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-int requires value"))?;
+                let parsed = value
+                    .parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::Integer(parsed));
+                    }
+                    _ => bail!("json-writer: array-int used outside array"),
+                }
+            }
+            "array-double" => {
+                let precision = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires precision"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires value"))?;
+                let p = precision
+                    .parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
+                let v = value
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
+                let rendered = format!("{v:.p$}");
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::Double(rendered));
+                    }
+                    _ => bail!("json-writer: array-double used outside array"),
+                }
+            }
+            "array-true" | "array-false" | "array-null" => {
+                let val = match verb {
+                    "array-true" => JsonWriterValue::Boolean(true),
+                    "array-false" => JsonWriterValue::Boolean(false),
+                    _ => JsonWriterValue::Null,
+                };
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(val);
+                    }
+                    _ => bail!("json-writer: array literal used outside array"),
+                }
+            }
+            "array-object" => {
+                stack.push(JsonWriterContainer::Object {
+                    key_in_parent: None,
+                    entries: Vec::new(),
+                });
+            }
+            "array-array" => {
+                stack.push(JsonWriterContainer::Array {
+                    key_in_parent: None,
+                    entries: Vec::new(),
+                });
+            }
+            _ => bail!("json-writer: unrecognized token '{verb}'"),
+        }
+    }
+
+    if !stack.is_empty() {
+        bail!("json-writer: json not terminated");
+    }
+    let root = root.ok_or_else(|| anyhow::anyhow!("json-writer: empty input"))?;
+    let rendered = render_json_value(&root, pretty, 0);
+    println!("{rendered}");
+    Ok(())
+}
+
 fn run_test_tool(rest: &[String]) -> Result<()> {
     match rest.first().map(String::as_str).unwrap_or("") {
         "wildmatch" => {
@@ -798,6 +1170,7 @@ fn run_test_tool(rest: &[String]) -> Result<()> {
         "sigchain" => run_test_tool_sigchain(rest),
         "example-tap" => run_test_tool_example_tap(),
         "advise" => run_test_tool_advise(rest),
+        "json-writer" => run_test_tool_json_writer(rest),
         _ => test_tool_usage(),
     }
 }
