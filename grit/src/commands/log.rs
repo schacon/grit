@@ -1417,15 +1417,68 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
         Err(_) => return map,
     };
 
-    for entry in entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        if let Ok(commit_oid) = name.parse::<ObjectId>() {
-            // Read the blob to get note content
+    // Notes trees may use fanout (e.g. "ab/cdef..."), and imported notes can
+    // even have deeper split paths. Traverse recursively and interpret any blob
+    // whose slash-stripped path is a full 40-hex object id as a note entry.
+    fn walk_notes_tree(
+        repo: &Repository,
+        entries: &[grit_lib::objects::TreeEntry],
+        prefix: &str,
+        map: &mut std::collections::HashMap<ObjectId, Vec<u8>>,
+    ) {
+        for entry in entries {
+            let name = String::from_utf8_lossy(&entry.name);
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+
+            if entry.mode == 0o040000 {
+                let Ok(sub_obj) = repo.odb.read(&entry.oid) else {
+                    continue;
+                };
+                if sub_obj.kind != grit_lib::objects::ObjectKind::Tree {
+                    continue;
+                }
+                let Ok(sub_entries) = parse_tree(&sub_obj.data) else {
+                    continue;
+                };
+                walk_notes_tree(repo, &sub_entries, &path, map);
+                continue;
+            }
+
+            // Flatten fanout path segments, then try parsing as commit OID.
+            let oid_hex: String = path.chars().filter(|&c| c != '/').collect();
+            if oid_hex.len() != 40 || !oid_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let Ok(commit_oid) = oid_hex.parse::<ObjectId>() else {
+                continue;
+            };
+
+            // Read the blob to get note content.
             if let Ok(blob) = repo.odb.read(&entry.oid) {
-                map.insert(commit_oid, blob.data);
+                if blob.kind == grit_lib::objects::ObjectKind::Blob {
+                    if let Some(existing) = map.get_mut(&commit_oid) {
+                        // Multiple note blobs can refer to the same commit
+                        // (e.g. mixed fanout/non-fanout paths). Git displays
+                        // them concatenated with a blank line separator in
+                        // tree traversal order.
+                        if existing.ends_with(b"\n") {
+                            existing.extend_from_slice(b"\n");
+                        } else {
+                            existing.extend_from_slice(b"\n\n");
+                        }
+                        existing.extend_from_slice(&blob.data);
+                    } else {
+                        map.insert(commit_oid, blob.data);
+                    }
+                }
             }
         }
     }
+    walk_notes_tree(repo, &entries, "", &mut map);
 
     map
 }

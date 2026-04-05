@@ -932,7 +932,7 @@ commit → check it off → move on.
 - [ ] `t9306-fast-import-signed-tags` ████████████░░░░░░░░ 6/10 (4 left) — git fast-import --signed-tags=<mode>
 - [ ] `t9351-fast-export-anonymize` ██████████████░░░░░░ 12/17 (5 left) — basic tests for fast-export --anonymize
 - [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
-- [ ] `t9301-fast-import-notes` █████████░░░░░░░░░░░ 8/17 (9 left) — test git fast-import of notes objects
+- [x] `t9301-fast-import-notes` ████████████████████ 17/17 (0 left) — test git fast-import of notes objects
 - [x] `t9003-help-autocorrect` ████████████████████ 10/10 (0 left) — help.autocorrect finding a match
 - [x] `t9002-column` ████████████████████ 16/16 (0 left) — git column
 - [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
