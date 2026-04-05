@@ -35,6 +35,10 @@ pub struct Args {
     #[arg(short = 'A', long = "all", alias = "no-ignore-removal")]
     pub all: bool,
 
+    /// Legacy compatibility flag (accepted, equivalent to default behavior).
+    #[arg(long = "no-all", hide = true)]
+    pub no_all: bool,
+
     /// Record only the intent to add a path (placeholder entry).
     #[arg(short = 'N', long = "intent-to-add")]
     pub intent_to_add: bool,
@@ -599,33 +603,74 @@ fn update_tracked(
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
-    let tracked: Vec<(Vec<u8>, String, u32)> = index
-        .entries
+    let requested_pathspecs: Vec<String> = args
+        .pathspec
         .iter()
-        .filter(|ie| ie.stage() == 0)
-        .filter(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path);
-            prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
-        })
-        .map(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path).to_string();
-            (ie.path.clone(), path_str, ie.mode)
-        })
+        .map(|p| resolve_pathspec(p, work_tree, prefix))
         .collect();
 
-    for (raw_path, path_str, mode) in &tracked {
+    // Build unique candidate paths from all stages so `add -u` can resolve
+    // unmerged entries (stage 1/2/3) into stage-0 entries.
+    let mut all_candidates: Vec<String> = index
+        .entries
+        .iter()
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
+    all_candidates.sort();
+    all_candidates.dedup();
+
+    let mut matched_specs = vec![false; requested_pathspecs.len()];
+    let filtered_candidates: Vec<String> = if requested_pathspecs.is_empty() {
+        // `git add -u` with no pathspec updates from repository root, even
+        // when invoked from a subdirectory.
+        all_candidates
+    } else {
+        all_candidates
+            .into_iter()
+            .filter(|path| {
+                let mut matched_any = false;
+                for (i, spec) in requested_pathspecs.iter().enumerate() {
+                    if path_matches_update_pathspec(path, spec) {
+                        matched_specs[i] = true;
+                        matched_any = true;
+                    }
+                }
+                matched_any
+            })
+            .collect()
+    };
+
+    if !requested_pathspecs.is_empty() {
+        for (i, matched) in matched_specs.iter().enumerate() {
+            if !matched {
+                bail!(
+                    "error: pathspec '{}' did not match any file(s) known to git",
+                    args.pathspec
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| requested_pathspecs[i].clone())
+                );
+            }
+        }
+    }
+
+    for path_str in &filtered_candidates {
+        let raw_path = path_str.as_bytes().to_vec();
+        let mode = index.get(&raw_path, 0).map(|e| e.mode);
+
         if check_symlink_in_path(work_tree, Path::new(path_str)).is_some() {
-            if args.verbose {
-                eprintln!("remove '{path_str}'");
+            if args.verbose || args.dry_run {
+                println!("remove '{path_str}'");
             }
             if !args.dry_run {
-                index.remove(raw_path);
+                index.remove(&raw_path);
             }
             continue;
         }
 
         let abs_path = work_tree.join(path_str);
-        if *mode == 0o160000 {
+        let abs_meta = fs::symlink_metadata(&abs_path).ok();
+        if mode == Some(0o160000) {
             if add_cfg
                 .submodule_ignores
                 .get(path_str)
@@ -637,15 +682,15 @@ fn update_tracked(
             if dot_git.exists() {
                 stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
             } else {
-                if args.verbose {
-                    eprintln!("remove '{path_str}'");
+                if args.verbose || args.dry_run {
+                    println!("remove '{path_str}'");
                 }
                 if !args.dry_run {
-                    index.remove(raw_path);
+                    index.remove(&raw_path);
                 }
             }
-        } else if abs_path.exists() {
-            if abs_path.is_dir() {
+        } else if let Some(meta) = abs_meta {
+            if meta.file_type().is_dir() {
                 let dot_git = abs_path.join(".git");
                 if dot_git.exists() {
                     if add_cfg
@@ -657,22 +702,22 @@ fn update_tracked(
                     }
                     stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
                 } else {
-                    if args.verbose {
-                        eprintln!("remove '{path_str}'");
+                    if args.verbose || args.dry_run {
+                        println!("remove '{path_str}'");
                     }
                     if !args.dry_run {
-                        index.remove(raw_path);
+                        index.remove(&raw_path);
                     }
                 }
             } else {
                 stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
             }
         } else {
-            if args.verbose {
-                eprintln!("remove '{path_str}'");
+            if args.verbose || args.dry_run {
+                println!("remove '{path_str}'");
             }
             if !args.dry_run {
-                index.remove(raw_path);
+                index.remove(&raw_path);
             }
         }
     }
@@ -948,11 +993,60 @@ fn stage_file(
     add_cfg: &AddConfig,
 ) -> Result<()> {
     if args.dry_run {
-        if args.chmod.is_some() {
-            // Don't actually stage, just check if the file exists
-            return Ok(());
+        let meta = fs::symlink_metadata(abs_path)?;
+        let is_symlink = meta.file_type().is_symlink();
+
+        let mode = if is_symlink {
+            0o120000
+        } else if add_cfg.core_filemode {
+            normalize_mode(meta.mode())
+        } else {
+            index
+                .get(rel_path.as_bytes(), 0)
+                .or_else(|| index.get(rel_path.as_bytes(), 2))
+                .or_else(|| index.get(rel_path.as_bytes(), 1))
+                .map(|e| e.mode)
+                .unwrap_or(0o100644)
+        };
+
+        let final_mode = if let Some(ref chmod_val) = args.chmod {
+            match chmod_val.as_str() {
+                "+x" => 0o100755,
+                "-x" => 0o100644,
+                other => bail!("unrecognized --chmod value: {}", other),
+            }
+        } else {
+            mode
+        };
+
+        let data = if is_symlink {
+            let target = fs::read_link(abs_path)?;
+            target.to_string_lossy().into_owned().into_bytes()
+        } else {
+            let raw = fs::read(abs_path)?;
+            let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+            let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
+                convert_from_working_tree_encoding(&raw, encoding).with_context(|| {
+                    format!(
+                        "failed to convert '{}' from encoding '{}'",
+                        rel_path, encoding
+                    )
+                })?
+            } else {
+                raw
+            };
+            match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
+                Ok(converted) => converted,
+                Err(msg) => bail!("{msg}"),
+            }
+        };
+        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        let unchanged = index
+            .get(rel_path.as_bytes(), 0)
+            .is_some_and(|e| e.oid == oid && e.mode == final_mode);
+        if !unchanged {
+            println!("add '{rel_path}'");
         }
-        println!("add '{rel_path}'");
         return Ok(());
     }
 
@@ -1224,6 +1318,17 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
 /// Check whether a string contains glob metacharacters.
 fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn path_matches_update_pathspec(path: &str, spec: &str) -> bool {
+    if has_glob_chars(spec) {
+        return glob_matches(spec, path);
+    }
+    let norm = spec.trim_end_matches('/');
+    if norm.is_empty() || norm == "." {
+        return true;
+    }
+    path == norm || path.starts_with(&format!("{norm}/"))
 }
 
 /// Simple glob pattern matching against a single path component name.

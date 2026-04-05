@@ -160,6 +160,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         // Collect matching index entries (by prefix for directories).
+        let is_glob = has_glob_chars(&rel);
         let matches: Vec<String> = index
             .entries
             .iter()
@@ -168,6 +169,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 if rel.is_empty() {
                     // Empty rel means match everything (pathspec ".")
                     true
+                } else if is_glob {
+                    glob_pathspec_matches(&rel, &p)
                 } else {
                     p == rel || p.starts_with(&format!("{rel}/"))
                 }
@@ -510,4 +513,106 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<std::path:
         }
     }
     None
+}
+
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    glob_matches_inner(pattern.as_bytes(), path.as_bytes())
+}
+
+fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut si = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_si = 0;
+
+    while si < path.len() {
+        if pi < pattern.len() && pattern[pi] == b'?' && path[si] != b'/' {
+            pi += 1;
+            si += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            if pi + 1 < pattern.len() && pattern[pi + 1] == b'*' {
+                let rest = &pattern[pi + 2..];
+                let rest = if !rest.is_empty() && rest[0] == b'/' {
+                    &rest[1..]
+                } else {
+                    rest
+                };
+                for i in si..=path.len() {
+                    if glob_matches_inner(rest, &path[i..]) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            star_pi = pi;
+            star_si = si;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'[' {
+            pi += 1;
+            let negate = pi < pattern.len() && (pattern[pi] == b'!' || pattern[pi] == b'^');
+            if negate {
+                pi += 1;
+            }
+            let mut found = false;
+            let ch = path[si];
+            while pi < pattern.len() && pattern[pi] != b']' {
+                if pi + 2 < pattern.len() && pattern[pi + 1] == b'-' {
+                    if ch >= pattern[pi] && ch <= pattern[pi + 2] {
+                        found = true;
+                    }
+                    pi += 3;
+                } else {
+                    if ch == pattern[pi] {
+                        found = true;
+                    }
+                    pi += 1;
+                }
+            }
+            if pi < pattern.len() {
+                pi += 1;
+            }
+            if found == negate {
+                if star_pi != usize::MAX && path[si] != b'/' {
+                    pi = star_pi + 1;
+                    star_si += 1;
+                    si = star_si;
+                } else {
+                    return false;
+                }
+            } else {
+                si += 1;
+            }
+        } else if pi < pattern.len() && pattern[pi] == path[si] {
+            pi += 1;
+            si += 1;
+        } else if star_pi != usize::MAX && path[si] != b'/' {
+            pi = star_pi + 1;
+            star_si += 1;
+            si = star_si;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+fn glob_pathspec_matches(pattern: &str, path: &str) -> bool {
+    if glob_matches(pattern, path) {
+        return true;
+    }
+    // For directory-like pathspecs (e.g. "*" or "dir*"), Git also matches
+    // top-level path components and then applies recursion with -r.
+    if let Some((first, _)) = path.split_once('/') {
+        glob_matches(pattern, first)
+    } else {
+        false
+    }
 }
