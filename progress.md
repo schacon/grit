@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    54 |
+| Completed   |    55 |
 | In progress |     0 |
-| Remaining   |   713 |
-| **Total**   |   767 |
+| Remaining   |   711 |
+| **Total**   |   766 |
 
 ## Recently completed
 
+- `t2012-checkout-last` — 22/22 tests pass (upstream re-verification on `main`; the `plan.md` entry was stale and no Rust code changes were required)
 - `t2050-git-dir-relative` — 4/4 tests pass (upstream re-verification on `main`; the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t1015-read-index-unmerged` — 6/6 tests pass (`merge --abort` and `am --skip` now survive directory/file conflicts, and `format-patch -1 <rev>` now formats the requested single commit)
 - `t2105-update-index-gitfile` — 4/4 tests pass (upstream re-verification on `main`; `update-index` already resolves `.git` directories and gitfiles to stage a `160000` gitlink, so the stale `PLAN.md` entry was corrected)
@@ -38,7 +39,7 @@
 - `t0213-trace2-ancestry` — 5/5 tests pass (`cmd_ancestry` trace2 coverage complete)
 - `t1310-config-default` — 5/5 tests pass (`git config --default` validation and typed fallback handling)
 - `t2060-switch` — 16/16 tests pass
-- `t1303-wacky-config` — 11/11 tests pass (stale plan entry corrected after upstream verification)
+- `t1303-wacky-config` — 11/11 tests pass (requested upstream rerun confirmed the file is already green; the stale duplicate `plan.md` entry was removed)
 - `t1402-check-ref-format` — 99/99 tests passing (was 97/99)
 - `t1505-rev-parse-last` — 7/7 tests pass (@{-N} syntax fully working)
 - `t1100-commit-tree-options` — 5/5 tests pass
@@ -47,4 +48,4 @@
 
 ## What Remains
 
-713 test files still pending. See `PLAN.md` for the full prioritized list.
+711 test files still pending. See `PLAN.md` for the full prioritized list.

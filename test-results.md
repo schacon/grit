@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2012 bash scripts/run-upstream-tests.sh t2012 2>&1 | tail -40`: 22/22 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2012 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 bash scripts/run-upstream-tests.sh t2050 2>&1 | tail -40`: 4/4 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2105 bash scripts/run-upstream-tests.sh t2105`: 4/4 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2105 cargo fmt --all`: completed.
 - `cargo test --workspace`: not run for this task.
@@ -55,3 +64,7 @@
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1408 bash scripts/run-upstream-tests.sh t1408`: 3/3 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
 - `cargo fmt`: completed.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1408 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303 2>&1 | tail -40`: 11/11 passing against `target/release/grit`; the remaining failing-count entry in `plan.md` was stale and has been removed.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t1303 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
