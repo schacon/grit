@@ -795,6 +795,12 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
 
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
+        if has_symlink_ancestor(work_tree, Path::new(path_str)) {
+            index.remove(raw_path);
+            changed = true;
+            continue;
+        }
+
         let abs_path = work_tree.join(path_str);
         if abs_path.exists() {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
@@ -838,6 +844,55 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 }
                 continue;
             }
+
+            if abs_path.is_dir() {
+                let head_path = abs_path.join(".git/HEAD");
+                if let Ok(head_content) = fs::read_to_string(&head_path) {
+                    let head_trimmed = head_content.trim();
+                    let oid_hex = if let Some(r) = head_trimmed.strip_prefix("ref: ") {
+                        let ref_path = abs_path.join(".git").join(r);
+                        match fs::read_to_string(&ref_path) {
+                            Ok(s) => s.trim().to_string(),
+                            Err(_) => {
+                                index.remove(raw_path);
+                                changed = true;
+                                continue;
+                            }
+                        }
+                    } else {
+                        head_trimmed.to_string()
+                    };
+                    if let Ok(oid) = oid_hex.parse::<ObjectId>() {
+                        use std::os::unix::fs::MetadataExt;
+                        let meta = fs::symlink_metadata(&abs_path)?;
+                        let entry = grit_lib::index::IndexEntry {
+                            ctime_sec: meta.ctime() as u32,
+                            ctime_nsec: meta.ctime_nsec() as u32,
+                            mtime_sec: meta.mtime() as u32,
+                            mtime_nsec: meta.mtime_nsec() as u32,
+                            dev: meta.dev() as u32,
+                            ino: meta.ino() as u32,
+                            mode: 0o160000,
+                            uid: meta.uid(),
+                            gid: meta.gid(),
+                            size: 0,
+                            oid,
+                            flags: path_str.len().min(0xFFF) as u16,
+                            flags_extended: None,
+                            path: raw_path.clone(),
+                        };
+                        index.add_or_replace(entry);
+                        changed = true;
+                        continue;
+                    }
+                }
+                // Plain directory replacing a tracked file/symlink:
+                // stage removal, matching `git add -u` behavior used by commit -a.
+                index.remove(raw_path);
+                changed = true;
+                continue;
+            }
+
             use std::os::unix::fs::MetadataExt;
             let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {
@@ -862,6 +917,24 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn has_symlink_ancestor(work_tree: &Path, rel_path: &Path) -> bool {
+    let mut current = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    if components.len() <= 1 {
+        return false;
+    }
+    for component in components.iter().take(components.len() - 1) {
+        current.push(component);
+        let abs = work_tree.join(&current);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Result of building a commit message — may be UTF-8 or raw bytes.

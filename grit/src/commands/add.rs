@@ -575,23 +575,60 @@ fn update_tracked(
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
-    let tracked: Vec<(Vec<u8>, String)> = index
+    let tracked: Vec<(Vec<u8>, String, u32)> = index
         .entries
         .iter()
+        .filter(|ie| ie.stage() == 0)
         .filter(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path);
             prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
         })
         .map(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path).to_string();
-            (ie.path.clone(), path_str)
+            (ie.path.clone(), path_str, ie.mode)
         })
         .collect();
 
-    for (raw_path, path_str) in &tracked {
+    for (raw_path, path_str, mode) in &tracked {
+        if check_symlink_in_path(work_tree, Path::new(path_str)).is_some() {
+            if args.verbose {
+                eprintln!("remove '{path_str}'");
+            }
+            if !args.dry_run {
+                index.remove(raw_path);
+            }
+            continue;
+        }
+
         let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
-            stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+        if *mode == 0o160000 {
+            let dot_git = abs_path.join(".git");
+            if dot_git.exists() {
+                stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
+            } else {
+                if args.verbose {
+                    eprintln!("remove '{path_str}'");
+                }
+                if !args.dry_run {
+                    index.remove(raw_path);
+                }
+            }
+        } else if abs_path.exists() {
+            if abs_path.is_dir() {
+                let dot_git = abs_path.join(".git");
+                if dot_git.exists() {
+                    stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
+                } else {
+                    if args.verbose {
+                        eprintln!("remove '{path_str}'");
+                    }
+                    if !args.dry_run {
+                        index.remove(raw_path);
+                    }
+                }
+            } else {
+                stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+            }
         } else {
             if args.verbose {
                 eprintln!("remove '{path_str}'");
