@@ -311,7 +311,7 @@ test_expect_success 'patch-id handles diffs with one line of before/after' '
 	calc_patch_id diffu1stable <diffu1
 '
 
-test_expect_failure 'patch-id computes same ID with different object hashes' '
+test_expect_success 'patch-id computes same ID with different object hashes' '
 	test_when_finished "rm -rf repo-sha1 repo-sha256" &&
 
 	cat >diff <<-\EOF &&
