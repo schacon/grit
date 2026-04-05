@@ -617,10 +617,41 @@ fn do_octopus_merge(
     args: &Args,
     favor: MergeFavor,
 ) -> Result<()> {
-    // Resolve all merge targets
+    // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
+    let mut merge_names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for name in &args.commits {
-        merge_oids.push(resolve_merge_target(repo, name)?);
+        let oid = resolve_merge_target(repo, name)?;
+        // Skip duplicates
+        if !seen.insert(oid) {
+            continue;
+        }
+        // Skip if this is HEAD itself or an ancestor of HEAD
+        if oid == head_oid || is_ancestor(repo, oid, head_oid)? {
+            continue;
+        }
+        merge_oids.push(oid);
+        merge_names.push(name.clone());
+    }
+
+    if merge_oids.is_empty() {
+        if !args.quiet {
+            eprintln!("Already up to date.");
+        }
+        return Ok(());
+    }
+
+    // If only one merge target remains after filtering, delegate to single merge
+    if merge_oids.len() == 1 {
+        let merge_oid = merge_oids[0];
+        if args.no_ff && !args.ff_only {
+            return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
+        }
+        if is_ancestor(repo, head_oid, merge_oid)? {
+            return do_fast_forward(repo, head, head_oid, merge_oid, args);
+        }
+        return do_real_merge(repo, head, head_oid, merge_oid, args, favor);
     }
 
     // Save ORIG_HEAD
@@ -677,7 +708,7 @@ fn do_octopus_merge(
                 .map(|oid| format!("{}\n", oid.to_hex()))
                 .collect();
             fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
-            let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+            let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
             fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
             fs::write(repo.git_dir.join("MERGE_MODE"), "")?;
             for (ctype, cpath) in &merge_result.conflict_descriptions {
@@ -716,7 +747,7 @@ fn do_octopus_merge(
             .map(|oid| format!("{}\n", oid.to_hex()))
             .collect();
         fs::write(repo.git_dir.join("MERGE_HEAD"), &merge_head_content)?;
-        let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+        let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
         fs::write(repo.git_dir.join("MERGE_MSG"), &msg)?;
         fs::write(repo.git_dir.join("MERGE_MODE"), "no-ff\n")?;
         if !args.quiet {
@@ -726,7 +757,7 @@ fn do_octopus_merge(
     }
 
     let tree_oid = write_tree_from_index(&repo.odb, &final_index, "")?;
-    let msg = build_octopus_merge_message(head, &args.commits, args.message.as_deref());
+    let msg = build_octopus_merge_message(head, &merge_names, args.message.as_deref(), repo);
 
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let now = OffsetDateTime::now_utc();
@@ -820,21 +851,58 @@ fn build_merge_log(
 }
 
 /// Build merge message for octopus merges.
-fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom: Option<&str>) -> String {
+fn build_octopus_merge_message(head: &HeadState, branch_names: &[String], custom: Option<&str>, repo: &Repository) -> String {
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
-    // Git uses "Merge branches 'a', 'b' and 'c'" for octopus
-    let formatted = if branch_names.len() == 2 {
-        format!("Merge branches '{}' and '{}'", branch_names[0], branch_names[1])
-    } else {
-        let last = branch_names.last().unwrap();
-        let rest: Vec<String> = branch_names[..branch_names.len() - 1]
-            .iter()
-            .map(|n| format!("'{}'", n))
-            .collect();
-        format!("Merge branches {} and '{}'", rest.join(", "), last)
+
+    // Determine the kind for each branch name
+    let classify = |name: &str| -> &str {
+        if resolve_ref(&repo.git_dir, &format!("refs/tags/{name}")).is_ok() {
+            "tag"
+        } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{name}")).is_ok() {
+            "remote-tracking branch"
+        } else {
+            "branch"
+        }
     };
+
+    // Git groups by kind: "Merge tags 'a' and 'b'" or "Merge branches 'a', tag 'b' and branch 'c'"
+    // If all are the same kind, use plural: "Merge tags 'a' and 'b'"
+    // Otherwise, prefix each with its kind
+    let kinds: Vec<&str> = branch_names.iter().map(|n| classify(n)).collect();
+    let all_same = kinds.windows(2).all(|w| w[0] == w[1]);
+
+    let formatted = if all_same {
+        let kind_plural = match kinds[0] {
+            "tag" => "tags",
+            "remote-tracking branch" => "remote-tracking branches",
+            _ => "branches",
+        };
+        if branch_names.len() == 2 {
+            format!("Merge {kind_plural} '{}' and '{}'", branch_names[0], branch_names[1])
+        } else {
+            let last = branch_names.last().unwrap();
+            let rest: Vec<String> = branch_names[..branch_names.len() - 1]
+                .iter()
+                .map(|n| format!("'{n}'"))
+                .collect();
+            format!("Merge {kind_plural} {} and '{last}'", rest.join(", "))
+        }
+    } else {
+        // Mixed kinds
+        let parts: Vec<String> = branch_names.iter().zip(kinds.iter())
+            .map(|(n, k)| format!("{k} '{n}'"))
+            .collect();
+        if parts.len() == 2 {
+            format!("Merge {} and {}", parts[0], parts[1])
+        } else {
+            let last = parts.last().unwrap().clone();
+            let rest = parts[..parts.len() - 1].join(", ");
+            format!("Merge {rest} and {last}")
+        }
+    };
+
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {
             format!("{formatted} into {name}")
@@ -955,7 +1023,7 @@ fn build_squash_msg(repo: &Repository, head_oid: ObjectId, merge_oids: &[ObjectI
         ts_b.cmp(&ts_a)
     });
 
-    for (oid, commit) in &commits_to_show {
+    for (i, (oid, commit)) in commits_to_show.iter().enumerate() {
         msg.push('\n');
         msg.push_str(&format!("commit {}\n", oid.to_hex()));
         msg.push_str(&format!("Author: {}\n", format_author_for_log(&commit.author)));
@@ -964,7 +1032,10 @@ fn build_squash_msg(repo: &Repository, head_oid: ObjectId, merge_oids: &[ObjectI
         for line in commit.message.trim_end().lines() {
             msg.push_str(&format!("    {}\n", line));
         }
-        msg.push('\n');
+        // Add trailing blank line only after the last commit
+        if i == commits_to_show.len() - 1 {
+            msg.push('\n');
+        }
     }
 
     Ok(msg)
