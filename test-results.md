@@ -19,6 +19,24 @@
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4007-rename-3.sh`: 13/13 passing.
 - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing; `data/file-results.tsv` refreshed.
 - `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 2/4 passing (baseline for next in-progress Diff target).
+- `cargo build --release`: passes (rebuild after `apply --whitespace=fix` context/remove matching updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4125-apply-ws-fuzz.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- `cargo test -p grit-lib --lib`: passes (96/96).
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 1/3 passing (baseline for next in-progress Diff target).
+- `cargo build --release`: passes (rebuild after `apply --build-fake-ancestor=<file>` implementation).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4131-apply-fake-ancestor.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 3/3 passing; `data/file-results.tsv` refreshed.
+- `cargo test -p grit-lib --lib`: passes (96/96).
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `./scripts/run-tests.sh t4217-log-limit.sh`: 1/3 passing (baseline for next in-progress Diff target).
+- `cargo build --release`: passes (rebuild after `log --since-as-filter` date-threshold and ident-date parsing fixes).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4217-log-limit.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t4217-log-limit.sh`: 3/3 passing; `data/file-results.tsv` refreshed.
+- `cargo test -p grit-lib --lib`: passes (96/96).
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `./scripts/run-tests.sh t4044-diff-index-unique-abbrev.sh`: 0/2 passing (baseline for next in-progress Diff target).
 - `cargo build --release`: passes (rebuild after `git apply` whitespace-fuzz matching fixes).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4125-apply-ws-fuzz.sh`: 4/4 passing.
 - `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing; `data/file-results.tsv` refreshed.

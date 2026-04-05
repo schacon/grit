@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    65 |
-| In progress |     0 |
-| Remaining   |   699 |
+| In progress |     1 |
+| Remaining   |   698 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -59,4 +59,4 @@
 
 ## What Remains
 
-No test files are currently marked in progress; 699 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4044-diff-index-unique-abbrev`) and 698 remain pending. See `plan.md` for the full prioritized list.

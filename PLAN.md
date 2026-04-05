@@ -402,7 +402,7 @@ commit → check it off → move on.
 - [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (0 left) — Pickaxe options
 - [x] `t4131-apply-fake-ancestor` ████████████████████ 3/3 (0 left) — git apply --build-fake-ancestor handling.
 - [x] `t4217-log-limit` ████████████████████ 3/3 (0 left) — git log with filter options limiting the output
-- [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
+- [~] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
 - [ ] `t4112-apply-renames` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git apply should not get confused with rename/copy.
 
 - [ ] `t4152-am-subjects` ███████████████░░░░░ 10/13 (3 left) — test subject preservation with format-patch | am
