@@ -333,40 +333,47 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Determine branch name and commit
+    // Determine branch target and commit.
     let head_state = resolve_head(&common)?;
     let head_oid = head_state.oid().copied();
 
-    // Determine branch name and starting commit.
+    // Determine branch mode and starting commit.
     // `worktree add <path> <branch>` — if <branch> exists as a ref, check it out;
     //   otherwise create a new branch from HEAD.
+    // `worktree add <path> <commit-ish>` — check out detached HEAD at that commit.
     // `worktree add -b <new> <path>` — always create a new branch from HEAD.
-    let (branch_name, commit_oid) = if let Some(ref new_b) = args.force_new_branch {
+    let (branch_name, commit_oid, implicit_detach) = if let Some(ref new_b) = args.force_new_branch
+    {
         // -B: create or reset branch
         let oid =
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
-        (new_b.clone(), oid)
+        (Some(new_b.clone()), oid, false)
     } else if let Some(ref new_b) = args.new_branch {
         let oid =
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
-        (new_b.clone(), oid)
+        (Some(new_b.clone()), oid, false)
     } else if let Some(ref spec) = args.branch {
-        // Try to resolve the branch/commit-ish
-        match resolve_commitish(&repo, spec) {
-            Ok(oid) => (spec.clone(), oid),
-            Err(_) => {
-                // Branch doesn't exist yet — create from HEAD
-                let oid = head_oid.ok_or_else(|| {
-                    anyhow::anyhow!("'{}' is not a commit and HEAD is invalid", spec)
-                })?;
-                (spec.clone(), oid)
+        // Existing local branch: check out attached.
+        if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{spec}")) {
+            (Some(spec.clone()), oid, false)
+        } else {
+            // Existing non-branch commit-ish (e.g. tag): check out detached.
+            match resolve_commitish(&repo, spec) {
+                Ok(oid) => (None, oid, true),
+                Err(_) => {
+                    // Unknown name: create a new branch from HEAD.
+                    let oid = head_oid.ok_or_else(|| {
+                        anyhow::anyhow!("'{}' is not a commit and HEAD is invalid", spec)
+                    })?;
+                    (Some(spec.clone()), oid, false)
+                }
             }
         }
     } else {
         let oid = head_oid.ok_or_else(|| {
             anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
         })?;
-        (wt_name.clone(), oid)
+        (Some(wt_name.clone()), oid, false)
     };
 
     // Create the working tree directory
@@ -389,9 +396,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     )?;
 
     // Write HEAD — either branch or detached
-    if args.detach {
+    let detach_head = args.detach || implicit_detach;
+    if detach_head {
         fs::write(wt_admin.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
     } else {
+        let branch_name = branch_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal error: missing branch name"))?;
         // Create the branch ref if it doesn't exist yet
         let branch_ref = format!("refs/heads/{}", branch_name);
         let ref_path = common.join(&branch_ref);
@@ -421,11 +432,22 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         fs::write(wt_admin.join("locked"), format!("{reason}\n"))?;
     }
 
-    println!(
-        "Preparing worktree (new branch '{}') at '{}'",
-        branch_name,
-        wt_path.display()
-    );
+    if detach_head {
+        println!(
+            "Preparing worktree (detached HEAD {}) at '{}'",
+            &commit_oid.to_hex()[..7],
+            wt_path.display()
+        );
+    } else {
+        let branch_name = branch_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal error: missing branch name"))?;
+        println!(
+            "Preparing worktree (new branch '{}') at '{}'",
+            branch_name,
+            wt_path.display()
+        );
+    }
 
     // Populate the working tree by checking out the commit
     if !args.no_checkout {

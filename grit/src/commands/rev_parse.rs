@@ -274,9 +274,13 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Check if we have any actions at all
+    // Check if we have any actions at all.
+    // `git rev-parse` without output actions still validates repository setup
+    // and errors out for invalid or missing repositories.
     let has_output_actions = actions.iter().any(|a| !matches!(a, Action::PathSeparator));
     if !has_output_actions {
+        let _ = discover_optional(None)?
+            .ok_or_else(|| anyhow::anyhow!("not a git repository (or any of the parent directories)"))?;
         return Ok(());
     }
 
