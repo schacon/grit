@@ -228,12 +228,14 @@ pub fn run(mut args: Args) -> Result<()> {
         );
     }
 
-    if args.all || args.pathspec.iter().any(|p| p == ".") {
+    let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
+    if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
+        let effective_prefix = if is_root_pathspec { None } else { prefix.as_deref() };
         add_all(
             odb,
             &mut index,
             work_tree,
-            prefix.as_deref(),
+            effective_prefix,
             &args,
             &repo,
             &mut ignore_matcher,
@@ -782,7 +784,7 @@ fn stage_gitlink(
     }
 
     if args.dry_run {
-        eprintln!("add '{}'", rel_path);
+        println!("add '{}'", rel_path);
         return Ok(());
     }
 
@@ -806,7 +808,7 @@ fn stage_gitlink(
     index.add_or_replace(entry);
 
     if args.verbose {
-        eprintln!("add '{}'", rel_path);
+        println!("add '{}'", rel_path);
     }
 
     Ok(())
@@ -827,7 +829,7 @@ fn stage_file(
             // Don't actually stage, just check if the file exists
             return Ok(());
         }
-        eprintln!("add '{rel_path}'");
+        println!("add '{rel_path}'");
         return Ok(());
     }
 
@@ -859,7 +861,7 @@ fn stage_file(
         };
         index.add_or_replace(entry);
         if args.verbose {
-            eprintln!("add '{rel_path}'");
+            println!("add '{rel_path}'");
         }
         return Ok(());
     }
@@ -944,7 +946,7 @@ fn stage_file(
     index.stage_file(entry);
 
     if args.verbose {
-        eprintln!("add '{rel_path}'");
+        println!("add '{rel_path}'");
     }
 
     Ok(())
@@ -1057,7 +1059,14 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
             // Treat the pattern as a path from the repo root
             return rest.to_owned();
         }
-        // ":(icase)" or other magic signatures — return as-is, don't prefix
+        // ":(magic)pattern" — long-form magic, extract the pattern part
+        if pathspec.len() > 1 && pathspec.as_bytes()[1] == b'(' {
+            if let Some(close) = pathspec[2..].find(')') {
+                let pattern = &pathspec[close + 3..];
+                return pattern.to_owned();
+            }
+        }
+        // Other colon-prefixed — return as-is
         return pathspec.to_owned();
     }
 

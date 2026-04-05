@@ -2087,6 +2087,16 @@ fn write_blob_to_worktree(
         obj.data
     };
 
+    // Skip writing if the file already has the same content (preserves mtime)
+    if mode != MODE_SYMLINK {
+        let abs_path = work_tree.join(rel_path);
+        if let Ok(existing) = std::fs::read(&abs_path) {
+            if existing == *data {
+                return Ok(());
+            }
+        }
+    }
+
     write_to_worktree(work_tree, rel_path, &data, mode)
 }
 

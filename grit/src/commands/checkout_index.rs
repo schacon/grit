@@ -107,7 +107,7 @@ pub fn run(args: Args) -> Result<()> {
                 if args.quiet {
                     continue;
                 }
-                bail!("'{}' not in index", input_path.display());
+                bail!("'{}' is not in the cache", input_path.display());
             }
             selected_paths.push(path_bytes);
         }
@@ -119,29 +119,40 @@ pub fn run(args: Args) -> Result<()> {
                 if args.quiet {
                     continue;
                 }
-                bail!("'{}' not in index", input_path.display());
+                bail!("'{}' is not in the cache", input_path.display());
             }
             selected_paths.push(path_bytes);
         }
     }
 
+    let mut has_errors = false;
     for path in selected_paths {
         let entry = index
             .get(&path, target_stage)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("'{}' not in index", String::from_utf8_lossy(&path)))?;
-        let outcome = checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args)?;
-        if let Some(updated) = outcome.updated_entry {
-            index.add_or_replace(updated);
-            index_needs_write = true;
-        }
-        if let Some(line) = outcome.temp_output {
-            println!("{line}");
+            .ok_or_else(|| anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path)))?;
+        match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
+            Ok(outcome) => {
+                if let Some(updated) = outcome.updated_entry {
+                    index.add_or_replace(updated);
+                    index_needs_write = true;
+                }
+                if let Some(line) = outcome.temp_output {
+                    println!("{line}");
+                }
+            }
+            Err(_) => {
+                has_errors = true;
+            }
         }
     }
 
     if args.update_stat && index_needs_write {
         index.write(&index_path).context("writing index")?;
+    }
+
+    if has_errors {
+        std::process::exit(1);
     }
 
     Ok(())
@@ -170,10 +181,22 @@ fn checkout_entry(
         return Ok(outcome);
     }
 
-    let obj = repo
-        .odb
-        .read(&entry.oid)
-        .context("reading object for checkout")?;
+    // Submodule entries cannot be checked out
+    if entry.mode == 0o160000 {
+        if args.temp {
+            eprintln!("cannot create temporary submodule {path_str}");
+            return Err(anyhow::anyhow!("cannot create temporary submodule {path_str}"));
+        }
+        return Ok(outcome);
+    }
+
+    let obj = match repo.odb.read(&entry.oid) {
+        Ok(obj) => obj,
+        Err(_) => {
+            eprintln!("unable to read sha1 file of {path_str} ({})", entry.oid);
+            return Err(anyhow::anyhow!("unable to read sha1 file of {path_str} ({})", entry.oid));
+        }
+    };
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{path_str}'");
     }
