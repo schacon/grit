@@ -72,7 +72,10 @@ case "$1" in
     exec "$GRIT_BIN" test-tool "$@"
     ;;
   chmtime) shift; touch "$@" 2>/dev/null ;;
-  *) exit 0 ;;
+  *)
+    GRIT_BIN=${GRIT_BIN:?}
+    exec "$GRIT_BIN" test-tool "$@"
+    ;;
 esac
 TOOL
 chmod +x "$WORKDIR/t/helper/test-tool"
