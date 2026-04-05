@@ -7,14 +7,17 @@ test_description='reftable HTTPD tests'
 
 start_httpd
 
-REPO="$HTTPD_DOCUMENT_ROOT_PATH/repo"
+REPO="$HTTPD_DOCUMENT_ROOT_PATH/repo.git"
+SRC_REPO="$TRASH_DIRECTORY/src-repo"
 
 test_expect_success 'serving ls-remote' '
-	git init --ref-format=reftable -b main "$REPO" &&
-	cd "$REPO" &&
+	mkdir -p "$SRC_REPO" &&
+	git init --ref-format=reftable -b main "$SRC_REPO" &&
+	cd "$SRC_REPO" &&
 	test_commit m1 &&
-	>.git/git-daemon-export-ok &&
-	git ls-remote "http://127.0.0.1:$LIB_HTTPD_PORT/smart/repo" | cut -f 2-2 -d "	" >actual &&
+	cd "$TRASH_DIRECTORY" &&
+	git clone --bare "$SRC_REPO" "$REPO" &&
+	git ls-remote "http://127.0.0.1:$LIB_HTTPD_PORT/smart/repo.git" | cut -f 2-2 -d "$(printf "\t")" >actual &&
 	cat >expect <<-EOF &&
 	HEAD
 	refs/heads/main

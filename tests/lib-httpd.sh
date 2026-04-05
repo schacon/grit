@@ -23,15 +23,27 @@
 # HTTP transport tests need real git for client operations since grit
 # doesn't support HTTP transport yet. Override the wrapper to use real git.
 REAL_GIT="$(command -v git 2>/dev/null || echo /usr/bin/git)"
-# Strip our .bin wrapper from PATH to find the real git
-for _p in $(echo "$PATH" | tr ':' ' '); do
-	if test -x "$_p/git" && ! grep -q 'GUST_BIN\|grit' "$_p/git" 2>/dev/null; then
-		REAL_GIT="$_p/git"
-		break
+# If command -v returns a grit wrapper/binary, prefer a non-grit git on PATH.
+if printf "%s" "$REAL_GIT" | grep -q "grit"; then
+	for _p in $(echo "$PATH" | tr ':' ' '); do
+		if test -x "$_p/git" && ! grep -q 'GUST_BIN\|grit' "$_p/git" 2>/dev/null; then
+			REAL_GIT="$_p/git"
+			break
+		fi
+	done
+	if test -z "$REAL_GIT" || printf "%s" "$REAL_GIT" | grep -q "grit"; then
+		REAL_GIT="$(command -v git 2>/dev/null | head -n 1)"
 	fi
-done
+fi
 
 # Replace the git wrapper with real git for HTTP transport
+if test -n "$BIN_DIRECTORY" && test -d "$BIN_DIRECTORY"; then
+	cat >"$BIN_DIRECTORY/git" <<EOFWRAP
+#!/bin/sh
+exec "$REAL_GIT" "\$@"
+EOFWRAP
+	chmod +x "$BIN_DIRECTORY/git"
+fi
 if test -n "$TRASH_DIRECTORY" && test -d "$TRASH_DIRECTORY/.bin"; then
 	cat >"$TRASH_DIRECTORY/.bin/git" <<EOFWRAP
 #!/bin/sh
@@ -42,17 +54,25 @@ fi
 
 # Find the test-httpd binary
 REPO_ROOT="$(cd "$TEST_DIRECTORY/.." && pwd)"
+# Binaries built by Cargo use underscores, not hyphens (test_httpd),
+# so check both naming conventions.
 TEST_HTTPD_BIN="$REPO_ROOT/target/debug/test-httpd"
-
 if ! test -x "$TEST_HTTPD_BIN"
 then
-	# Try release build
 	TEST_HTTPD_BIN="$REPO_ROOT/target/release/test-httpd"
+fi
+if ! test -x "$TEST_HTTPD_BIN"
+then
+	TEST_HTTPD_BIN="$REPO_ROOT/target/debug/test_httpd"
+fi
+if ! test -x "$TEST_HTTPD_BIN"
+then
+	TEST_HTTPD_BIN="$REPO_ROOT/target/release/test_httpd"
 fi
 
 if ! test -x "$TEST_HTTPD_BIN"
 then
-	skip_all='test-httpd binary not found; build with: cargo build -p grit-rs'
+	skip_all='test-httpd binary not found; build with: cargo build --release --package grit-rs --bin test-httpd'
 	test_done
 fi
 

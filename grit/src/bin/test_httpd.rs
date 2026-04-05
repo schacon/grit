@@ -96,6 +96,18 @@ fn find_git_http_backend() -> PathBuf {
             return PathBuf::from(c);
         }
     }
+
+    // Try git's exec path, which is the canonical location for git-http-backend
+    if let Ok(output) = std::process::Command::new("git").arg("--exec-path").output() {
+        if output.status.success() {
+            let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let candidate = Path::new(&exec_path).join("git-http-backend");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
     // Fallback: try PATH
     PathBuf::from("git-http-backend")
 }
