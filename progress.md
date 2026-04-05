@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    40 |
+| Completed   |    41 |
 | In progress |     0 |
-| Remaining   |   727 |
+| Remaining   |   726 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0050-filesystem` — 13/13 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3004-ls-files-basic` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3304-notes-mixed` — 6/6 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected)
 - `t3211-peel-ref` — 8/8 tests pass (upstream re-verification on `main`; stale `plan.md` entry corrected)
@@ -34,4 +35,4 @@
 
 ## What Remains
 
-727 test files still pending. See `plan.md` for the full prioritized list.
+726 test files still pending. See `plan.md` for the full prioritized list.
