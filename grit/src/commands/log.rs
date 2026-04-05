@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
@@ -14,9 +15,10 @@ use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -160,6 +162,10 @@ pub struct Args {
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
+
+    /// Control whether to ignore submodule changes in displayed commit diffs.
+    #[arg(long = "ignore-submodules", value_name = "WHEN", num_args = 0..=1, default_missing_value = "all")]
+    pub ignore_submodules: Option<String>,
 
     /// Show stat with patch.
     #[arg(long = "patch-with-stat")]
@@ -363,6 +369,7 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -372,23 +379,25 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         // Check config for color.diff / color.ui
         let mut c = false;
-        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-            if let Some(val) = config.get("color.diff") {
+        if let Some(val) = config.get("color.diff") {
+            match val.as_str() {
+                "always" | "true" => c = true,
+                "auto" => {
+                    c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                }
+                _ => {}
+            }
+        }
+        if !c {
+            if let Some(val) = config.get("color.ui") {
                 match val.as_str() {
                     "always" | "true" => c = true,
-                    "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                        || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
-                    _ => {}
-                }
-            }
-            if !c {
-                if let Some(val) = config.get("color.ui") {
-                    match val.as_str() {
-                        "always" | "true" => c = true,
-                        "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                            || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
-                        _ => {}
+                    "auto" => {
+                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
                     }
+                    _ => {}
                 }
             }
         }
@@ -399,6 +408,13 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.no_graph {
         args.graph = false;
     }
+
+    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
+    let gitmodules_ignores = repo
+        .work_tree
+        .as_deref()
+        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
+        .unwrap_or_default();
 
     // Detect conflicting flag combinations
     if args.graph {
@@ -695,7 +711,14 @@ pub fn run(mut args: Args) -> Result<()> {
         )?;
 
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+            write_commit_diff(
+                &mut out,
+                &repo.odb,
+                commit_data,
+                &args,
+                ignore_submodules_mode,
+                &gitmodules_ignores,
+            )?;
         }
     }
 
@@ -704,6 +727,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
 pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let gitmodules_ignores = repo
+        .work_tree
+        .as_deref()
+        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
+        .unwrap_or_default();
+
     let mut oids = Vec::new();
     if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
@@ -770,6 +800,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc;
+    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -787,7 +818,14 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
+            write_commit_diff(
+                &mut out,
+                &repo.odb,
+                commit_data,
+                args,
+                ignore_submodules_mode,
+                &gitmodules_ignores,
+            )?;
         }
     }
 
@@ -2737,16 +2775,25 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
+    ignore_submodules_mode: &'static str,
+    gitmodules_ignores: &HashMap<String, String>,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
-    let mut entries = compute_commit_diff(odb, info)?;
+    let entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
     }
 
     // Apply orderfile sorting if specified
-    if let Some(ref order_path) = args.order_file {
-        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
+    let mut entries = if let Some(ref order_path) = args.order_file {
+        crate::commands::diff::apply_orderfile_entries(entries, order_path)
+    } else {
+        entries
+    };
+
+    entries.retain(|e| !should_hide_submodule_log_entry(e, ignore_submodules_mode, gitmodules_ignores));
+    if entries.is_empty() {
+        return Ok(());
     }
 
     // For --cc mode on merge commits, compute combined diff entries
@@ -3366,5 +3413,100 @@ fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
         } else {
             return current;
         }
+    }
+}
+
+fn should_hide_submodule_log_entry(
+    entry: &DiffEntry,
+    ignore_submodules_mode: &str,
+    gitmodules_ignores: &HashMap<String, String>,
+) -> bool {
+    let is_submodule = entry.old_mode == "160000" || entry.new_mode == "160000";
+    if !is_submodule {
+        return false;
+    }
+
+    match ignore_submodules_mode {
+        "none" => false,
+        "default" => {
+            let key = normalize_repo_relpath(entry.path());
+            gitmodules_ignores
+                .get(&key)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+        }
+        _ => true,
+    }
+}
+
+fn load_submodule_ignore_settings(
+    work_tree: &Path,
+    config: &ConfigSet,
+) -> Result<HashMap<String, String>> {
+    let mut map = HashMap::new();
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = match fs::read_to_string(&gitmodules_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(e.into()),
+    };
+
+    let parsed = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)
+        .with_context(|| format!("failed to parse {}", gitmodules_path.display()))?;
+
+    let mut name_to_path: HashMap<String, String> = HashMap::new();
+    let mut name_to_ignore: HashMap<String, String> = HashMap::new();
+    for entry in parsed.entries {
+        if !entry.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &entry.key["submodule.".len()..];
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(path) = entry.value {
+                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if let Some(ignore) = entry.value {
+                name_to_ignore.insert(name.to_string(), ignore);
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        let key = format!("submodule.{name}.ignore");
+        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
+            map.insert(path, value);
+        }
+    }
+
+    Ok(map)
+}
+
+fn normalize_repo_relpath(path: &str) -> String {
+    let mut out = PathBuf::new();
+    for comp in Path::new(path).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => out.push(seg),
+            std::path::Component::ParentDir => out.push(".."),
+            _ => {}
+        }
+    }
+    let s = out.to_string_lossy().to_string();
+    if s.is_empty() {
+        path.trim_end_matches('/').to_string()
+    } else {
+        s
+    }
+}
+
+fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some(v) if v.eq_ignore_ascii_case("all") => "all",
+        Some(v) if v.eq_ignore_ascii_case("none") => "none",
+        Some(v) if v.eq_ignore_ascii_case("dirty") => "dirty",
+        Some(v) if v.eq_ignore_ascii_case("untracked") => "untracked",
+        Some(v) if v.eq_ignore_ascii_case("default") => "default",
+        Some(_) => "default",
+        None => "default",
     }
 }

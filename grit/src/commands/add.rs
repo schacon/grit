@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::stat_matches;
+use grit_lib::error::Error as GritError;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -228,6 +229,7 @@ pub fn run(mut args: Args) -> Result<()> {
         conv,
         attrs,
         config: config.clone(),
+        submodule_ignores: load_submodule_ignore_settings(work_tree, &config)?,
     };
 
     // --renormalize: re-apply clean conversion to tracked files
@@ -336,6 +338,7 @@ struct AddConfig {
     conv: ConversionConfig,
     attrs: GitAttributes,
     config: ConfigSet,
+    submodule_ignores: std::collections::HashMap<String, String>,
 }
 
 #[allow(dead_code)]
@@ -527,6 +530,27 @@ fn add_all(
 
     for rel_path in &paths {
         let abs_path = work_tree.join(rel_path);
+        let is_submodule_dir = fs::symlink_metadata(&abs_path)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false)
+            && abs_path.join(".git").exists();
+        if is_submodule_dir {
+            if add_cfg
+                .submodule_ignores
+                .get(rel_path)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+            {
+                continue;
+            }
+            if let Err(e) = stage_gitlink(odb, index, work_tree, rel_path, &abs_path, args) {
+                if add_cfg.ignore_errors {
+                    eprintln!("warning: {e}");
+                } else {
+                    return Err(e);
+                }
+            }
+            continue;
+        }
         if let Err(e) = stage_file(odb, index, work_tree, rel_path, &abs_path, args, add_cfg) {
             if add_cfg.ignore_errors {
                 eprintln!("warning: {e}");
@@ -602,6 +626,13 @@ fn update_tracked(
 
         let abs_path = work_tree.join(path_str);
         if *mode == 0o160000 {
+            if add_cfg
+                .submodule_ignores
+                .get(path_str)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+            {
+                continue;
+            }
             let dot_git = abs_path.join(".git");
             if dot_git.exists() {
                 stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
@@ -617,6 +648,13 @@ fn update_tracked(
             if abs_path.is_dir() {
                 let dot_git = abs_path.join(".git");
                 if dot_git.exists() {
+                    if add_cfg
+                        .submodule_ignores
+                        .get(path_str)
+                        .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+                    {
+                        continue;
+                    }
                     stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
                 } else {
                     if args.verbose {
@@ -720,6 +758,15 @@ fn add_path(
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
         if embedded_git.exists() {
+            if add_cfg
+                .submodule_ignores
+                .get(path)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+                && !args.force
+            {
+                println!("Skipping submodule due to ignore=all: {}", path);
+                return Ok(());
+            }
             // This is an embedded repository — stage as a gitlink (160000)
             return stage_gitlink(odb, index, work_tree, path, &abs_path, args)
                 .map_err(AddPathError::IoError);
@@ -785,15 +832,19 @@ fn stage_gitlink(
     abs_path: &Path,
     args: &Args,
 ) -> Result<()> {
-    // Read the embedded repo's HEAD to get the commit OID
-    let embedded_head_path = abs_path.join(".git/HEAD");
+    // Read the embedded repo's HEAD to get the commit OID.
+    // Support both:
+    //   - <submodule>/.git/HEAD (embedded git dir)
+    //   - <submodule>/.git (gitfile with "gitdir: ...")
+    let git_dir = resolve_submodule_git_dir(abs_path)?;
+    let embedded_head_path = git_dir.join("HEAD");
     let head_content = fs::read_to_string(&embedded_head_path)
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
 
     // Resolve the HEAD
     let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
-        let ref_path = abs_path.join(".git").join(refname);
+        let ref_path = git_dir.join(refname);
         fs::read_to_string(&ref_path)
             .with_context(|| {
                 format!(
@@ -863,6 +914,27 @@ fn stage_gitlink(
     }
 
     Ok(())
+}
+
+fn resolve_submodule_git_dir(abs_path: &Path) -> Result<PathBuf> {
+    let dot_git = abs_path.join(".git");
+    let meta = fs::symlink_metadata(&dot_git)
+        .with_context(|| format!("cannot access '{}'", dot_git.display()))?;
+    if meta.is_dir() {
+        return Ok(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git)
+        .with_context(|| format!("cannot read '{}'", dot_git.display()))?;
+    let target = content
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid gitfile for '{}'", abs_path.display()))?;
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        Ok(target_path.to_path_buf())
+    } else {
+        Ok(abs_path.join(target_path))
+    }
 }
 
 /// Stage a single file into the index.
@@ -1066,6 +1138,10 @@ fn walk_directory(
         }
 
         if is_dir {
+            if path.join(".git").exists() {
+                out.push(rel);
+                continue;
+            }
             walk_directory(&path, work_tree, out, repo, ignore_matcher, force)?;
         } else {
             out.push(rel);
@@ -1135,13 +1211,14 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
         return pathspec.to_owned();
     }
 
-    match prefix {
+    let combined = match prefix {
         Some(p) if !p.is_empty() => {
             let combined = PathBuf::from(p).join(pathspec);
             combined.to_string_lossy().to_string()
         }
         _ => pathspec.to_owned(),
-    }
+    };
+    normalize_repo_relpath(&combined)
 }
 
 /// Check whether a string contains glob metacharacters.
@@ -1390,3 +1467,71 @@ fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
     err.to_string().contains("Permission denied")
         || err.to_string().contains("permission denied")
 }
+
+fn normalize_repo_relpath(path: &str) -> String {
+    let mut out = PathBuf::new();
+    for comp in Path::new(path).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => out.push(seg),
+            std::path::Component::ParentDir => out.push(".."),
+            _ => {}
+        }
+    }
+    let s = out.to_string_lossy().to_string();
+    if s.is_empty() { path.trim_end_matches('/').to_string() } else { s }
+}
+
+fn load_submodule_ignore_settings(
+    work_tree: &Path,
+    config: &ConfigSet,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+
+    // Parse [submodule "<name>"] path = <path> from .gitmodules.
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = match fs::read_to_string(&gitmodules_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(e.into()),
+    };
+    let parsed = grit_lib::config::ConfigFile::parse(
+        &gitmodules_path,
+        &content,
+        grit_lib::config::ConfigScope::Local,
+    )
+    .map_err(|e| match e {
+        GritError::ConfigError(msg) => anyhow::anyhow!("failed to parse .gitmodules: {msg}"),
+        other => anyhow::anyhow!("failed to parse .gitmodules: {other}"),
+    })?;
+
+    let mut name_to_path: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut name_to_ignore: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for entry in parsed.entries {
+        if !entry.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &entry.key["submodule.".len()..];
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(path) = entry.value.clone() {
+                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if let Some(ignore) = entry.value {
+                name_to_ignore.insert(name.to_string(), ignore);
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        let key = format!("submodule.{name}.ignore");
+        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
+            map.insert(path, value);
+        }
+    }
+
+    Ok(map)
+}
+
