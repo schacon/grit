@@ -4,7 +4,7 @@ am	Main Porcelain	yes	160	43	8	26.9
 archive	Main Porcelain	yes	114	66	0	57.8
 bisect	Main Porcelain	yes	96	18	0	18.8
 branch	Main Porcelain	yes	351	138	0	39.2
-checkout	Main Porcelain	yes	436	206	5	47.2
+checkout	Main Porcelain	yes	436	207	5	47.4
 cherry-pick	Main Porcelain	yes	189	67	6	35.5
 clean	Main Porcelain	yes	87	28	0	32.4
 clone	Main Porcelain	yes	425	118	42	27.7
