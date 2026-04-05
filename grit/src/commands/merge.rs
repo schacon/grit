@@ -130,6 +130,14 @@ pub struct Args {
     /// Automatically stash/unstash before/after merge.
     #[arg(long = "autostash")]
     pub autostash: bool,
+
+    /// How to clean up the merge message.
+    #[arg(long = "cleanup", value_name = "MODE")]
+    pub cleanup: Option<String>,
+
+    /// Read the commit message from the given file.
+    #[arg(short = 'F', long = "file", value_name = "FILE")]
+    pub file: Option<String>,
 }
 
 /// Apply branch.<name>.mergeoptions to the args.
