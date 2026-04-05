@@ -1,7 +1,7 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
 add	Main Porcelain	yes	541	171	21	31.6
 am	Main Porcelain	yes	160	42	8	26.2
-archive	Main Porcelain	yes	114	63	0	55.6
+archive	Main Porcelain	yes	114	66	0	57.8
 bisect	Main Porcelain	yes	96	18	0	18.8
 branch	Main Porcelain	yes	351	135	0	38.6
 checkout	Main Porcelain	yes	436	175	5	40.2

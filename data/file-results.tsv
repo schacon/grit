@@ -492,7 +492,7 @@ t4257-am-interactive	yes	4	1	3	ok	1	4	0
 t4258-am-quoted-cr	yes	4	1	3	ok	1	4	0
 t4300-merge-tree	yes	22	5	17	ok	5	22	0
 t4301-merge-tree-write-tree	yes	33	1	32	ok	1	33	0
-t5000-tar-tree	yes	90	32	58	ok	32	90	0
+t5000-tar-tree	yes	90	36	54	ok	36	90	0
 t5001-archive-attr	yes	44	24	20	ok	24	44	0
 t5002-archive-attr-pattern	yes	19	15	4	ok	15	19	0
 t5003-archive-zip	yes	82	71	11	ok	71	82	0
@@ -662,7 +662,7 @@ t5900-repo-selection	yes	8	0	8	ok	0	8	0
 t6000-rev-list-misc	yes	23	6	17	ok	6	23	0
 t6001-rev-list-graft	yes	14	3	11	ok	3	14	0
 t6002-rev-list-bisect	yes	53	4	49	ok	4	53	0
-t6003-rev-list-topo-order	yes	36	21	15	ok	21	36	0
+t6003-rev-list-topo-order	yes	36	22	14	ok	22	36	0
 t6004-rev-list-path-optim	yes	7	2	5	ok	2	7	0
 t6005-rev-list-count	yes	6	1	5	ok	1	6	0
 t6006-rev-list-format	yes	80	28	52	ok	28	80	0
