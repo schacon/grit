@@ -210,6 +210,7 @@ fn do_merge_or_rebase(
             keep_base: false,
             fork_point: false,
             no_fork_point: false,
+            verbose: false,
         };
         super::rebase::run(rebase_args)
     } else {
