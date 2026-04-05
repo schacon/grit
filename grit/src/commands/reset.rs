@@ -727,6 +727,11 @@ fn checkout_index_to_worktree(
         None => return Ok(()),
     };
 
+    // Load gitattributes and config for CRLF conversion
+    let attr_rules = grit_lib::crlf::load_gitattributes(&work_tree);
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let conv = config.as_ref().map(grit_lib::crlf::ConversionConfig::from_config);
+
     let old_stage0: HashSet<Vec<u8>> = old_index
         .entries
         .iter()
@@ -784,7 +789,14 @@ fn checkout_index_to_worktree(
             }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
-            std::fs::write(&abs_path, &obj.data)?;
+            // Apply CRLF conversion if configured
+            let data = if let (Some(ref cfg), Some(ref cv)) = (&config, &conv) {
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, cfg);
+                grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, cv, &file_attrs, None)
+            } else {
+                obj.data.clone()
+            };
+            std::fs::write(&abs_path, &data)?;
             if entry.mode == MODE_EXECUTABLE {
                 use std::os::unix::fs::PermissionsExt;
                 let mut perms = std::fs::metadata(&abs_path)?.permissions();

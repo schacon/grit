@@ -463,6 +463,96 @@ fn do_fast_forward(
 }
 
 /// Perform a real three-way merge.
+/// Create a virtual merge base by recursively merging multiple merge bases.
+/// This handles criss-cross merge situations where there are multiple LCA commits.
+fn create_virtual_merge_base(
+    repo: &Repository,
+    bases: &[ObjectId],
+    favor: MergeFavor,
+) -> Result<ObjectId> {
+    if bases.len() == 1 {
+        return Ok(bases[0]);
+    }
+
+    // Recursively merge bases pairwise
+    let mut current = bases[0];
+    for &next in &bases[1..] {
+        // Find the merge base of current and next
+        let sub_bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, current, &[next])?;
+        let sub_base_oid = if sub_bases.is_empty() {
+            // No common ancestor — use an empty tree as base
+            let empty_tree = repo.odb.write(ObjectKind::Tree, &[])?;
+            let commit_data = CommitData {
+                tree: empty_tree,
+                parents: vec![],
+                author: "virtual <virtual> 0 +0000".to_string(),
+                committer: "virtual <virtual> 0 +0000".to_string(),
+                encoding: None,
+                message: "virtual base".to_string(),
+                raw_message: None,
+            };
+            let commit_bytes = serialize_commit(&commit_data);
+            repo.odb.write(ObjectKind::Commit, &commit_bytes)?
+        } else if sub_bases.len() > 1 {
+            create_virtual_merge_base(repo, &sub_bases, favor)?
+        } else {
+            sub_bases[0]
+        };
+
+        // Merge current and next using sub_base_oid as base
+        let base_tree = commit_tree(repo, sub_base_oid)?;
+        let ours_tree = commit_tree(repo, current)?;
+        let theirs_tree = commit_tree(repo, next)?;
+
+        let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+        let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
+        let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+
+        // Create a dummy head state for merge_trees
+        let head = HeadState::Detached { oid: current };
+        let merge_result = merge_trees(repo, &base_entries, &ours_entries, &theirs_entries, &head, "virtual", favor)?;
+
+        // Build a tree from the merged index (use stage-0 entries, or for conflicts pick ours)
+        let mut final_entries: Vec<IndexEntry> = Vec::new();
+        let mut seen_paths: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+        // First collect stage 0 entries
+        for entry in &merge_result.index.entries {
+            if entry.stage() == 0 && seen_paths.insert(entry.path.clone()) {
+                final_entries.push(entry.clone());
+            }
+        }
+        // For conflicted paths (no stage 0), pick stage 2 (ours)
+        for entry in &merge_result.index.entries {
+            if entry.stage() == 2 && seen_paths.insert(entry.path.clone()) {
+                let mut e = entry.clone();
+                e.flags &= !0x3000; // Clear stage bits → stage 0
+                final_entries.push(e);
+            }
+        }
+        final_entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        // Write tree from entries
+        let mut virtual_index = Index::new();
+        virtual_index.entries = final_entries;
+        let virtual_tree = write_tree_from_index(&repo.odb, &virtual_index, "")?;
+
+        // Create a virtual commit
+        let commit_data = CommitData {
+            tree: virtual_tree,
+            parents: vec![current, next],
+            author: "virtual <virtual> 0 +0000".to_string(),
+            committer: "virtual <virtual> 0 +0000".to_string(),
+            encoding: None,
+            message: "virtual merge base".to_string(),
+            raw_message: None,
+        };
+        let commit_bytes = serialize_commit(&commit_data);
+        current = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
+    }
+
+    Ok(current)
+}
+
 fn do_real_merge(
     repo: &Repository,
     head: &HeadState,
@@ -471,12 +561,22 @@ fn do_real_merge(
     args: &Args,
     favor: MergeFavor,
 ) -> Result<()> {
-    // Find merge base
+    // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
     if bases.is_empty() {
         bail!("refusing to merge unrelated histories");
     }
-    let base_oid = bases[0];
+    // If multiple merge bases (criss-cross):
+    // - resolve strategy: fail (doesn't support virtual merge bases)
+    // - recursive/ort: create a virtual merge base
+    let base_oid = if bases.len() > 1 {
+        if args.strategy.as_deref() == Some("resolve") {
+            bail!("merge: warning: multiple common ancestors found");
+        }
+        create_virtual_merge_base(repo, &bases, favor)?
+    } else {
+        bases[0]
+    };
 
     // Get trees
     let base_tree = commit_tree(repo, base_oid)?;
@@ -506,13 +606,22 @@ fn do_real_merge(
         // Remove files that were in ours but are no longer in the merged index
         remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
         checkout_entries(repo, wt, &merge_result.index)?;
-        // Write conflict files to working tree
+        // Write conflict files to working tree (with CRLF conversion if needed)
+        let attr_rules = grit_lib::crlf::load_gitattributes(wt);
+        let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
         for (path, content) in &merge_result.conflict_files {
             let abs = wt.join(path);
             if let Some(parent) = abs.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&abs, content)?;
+            let output = if let Some(ref config) = crlf_config {
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, config);
+                let conv = grit_lib::crlf::ConversionConfig::from_config(config);
+                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None)
+            } else {
+                content.clone()
+            };
+            fs::write(&abs, &output)?;
         }
     }
 
@@ -2435,6 +2544,11 @@ fn remove_deleted_files(
 
 /// Checkout index entries to working tree.
 fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
+    // Load gitattributes and config for CRLF conversion
+    let attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let conv = config.as_ref().map(grit_lib::crlf::ConversionConfig::from_config);
+
     for entry in &index.entries {
         if entry.stage() != 0 {
             continue;
@@ -2463,7 +2577,14 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
             }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
-            fs::write(&abs_path, &obj.data)?;
+            // Apply CRLF conversion if configured
+            let data = if let (Some(ref config), Some(ref conv)) = (&config, &conv) {
+                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
+                grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, conv, &file_attrs, None)
+            } else {
+                obj.data.clone()
+            };
+            fs::write(&abs_path, &data)?;
             if entry.mode == MODE_EXECUTABLE {
                 use std::os::unix::fs::PermissionsExt;
                 let mut perms = fs::metadata(&abs_path)?.permissions();
