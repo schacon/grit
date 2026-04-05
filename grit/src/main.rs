@@ -346,7 +346,7 @@ struct ArgsWrapper<T: Args> {
 /// When `-h` is passed, clap prints usage and the process exits with code 129
 /// (Git convention for usage errors) instead of clap's default exit code 0.
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
-    let mut argv = vec![format!("grit {subcmd}")];
+    let mut argv = vec![format!("git {subcmd}")];
     argv.extend(rest.iter().cloned());
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,

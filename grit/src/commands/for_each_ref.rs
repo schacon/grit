@@ -617,15 +617,13 @@ fn atom_value(
         }
         "objectsize" => match modifier {
             Some("disk") => {
-                // Return on-disk size (loose object file size or pack entry size).
-                // Fall back to content size if we can't determine disk size.
+                // Return on-disk size of the loose object file. For packed
+                // objects the individual contribution is hard to determine,
+                // so return 0 (matching git's behavior for non-loose objects).
                 let path = repo.odb.object_path(&entry.oid);
                 match std::fs::metadata(&path) {
                     Ok(meta) => Ok(meta.len().to_string()),
-                    Err(_) => {
-                        let object = read_object(repo, entry)?;
-                        Ok(object.data.len().to_string())
-                    }
+                    Err(_) => Ok("0".to_owned()),
                 }
             }
             _ => {
@@ -704,7 +702,13 @@ fn atom_value(
         }
         "upstream" => resolve_upstream(repo, entry, modifier),
         "push" => resolve_push(repo, entry, modifier),
-        "subject" => subject_for_oid(repo, entry, entry.oid),
+        "subject" => {
+            let subj = subject_for_oid(repo, entry, entry.oid)?;
+            match modifier {
+                Some("sanitize") => Ok(sanitize_subject(&subj)),
+                _ => Ok(subj),
+            }
+        }
         "*subject" => {
             let peeled = peel_to_non_tag(repo, entry.oid)
                 .map_err(|_| FormatError::MissingObject(entry.oid, entry.name.clone()))?;
@@ -763,7 +767,7 @@ fn atom_value(
         "taggeremail" => tag_field_for_oid(repo, entry, |t| {
             t.tagger
                 .as_ref()
-                .map(|s| parse_identity_email(s))
+                .map(|s| format_email(s, modifier))
                 .unwrap_or_default()
         }),
         "tagger" => tag_field_for_oid(repo, entry, |t| {
@@ -1372,6 +1376,26 @@ fn short_refname(name: &str) -> String {
         }
     }
     name.to_owned()
+}
+
+/// Sanitize a subject line: replace whitespace and non-printable characters
+/// with hyphens, collapse consecutive hyphens.
+fn sanitize_subject(subject: &str) -> String {
+    let mut result = String::with_capacity(subject.len());
+    let mut prev_hyphen = false;
+    for ch in subject.chars() {
+        if ch.is_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+            result.push(ch);
+            prev_hyphen = false;
+        } else {
+            if !prev_hyphen && !result.is_empty() {
+                result.push('-');
+                prev_hyphen = true;
+            }
+        }
+    }
+    // Trim trailing hyphens
+    result.trim_end_matches('-').to_owned()
 }
 
 /// Extract the message portion of a commit or tag object (everything after
