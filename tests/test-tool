@@ -2,6 +2,8 @@
 # Minimal test-tool stub for grit tests
 # Implements the most-used subcommands from git's test-tool
 case "$1" in
+  "")
+    sha1sum | cut -d' ' -f1 ;;
   chmtime)
     shift
     # Parse optional --get flag
@@ -41,6 +43,17 @@ case "$1" in
     sha1sum | cut -d' ' -f1 ;;
   sha256)
     sha256sum | cut -d' ' -f1 ;;
+  zlib)
+    shift
+    case "$1" in
+      deflate)
+        python3 -c 'import sys, zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))'
+        ;;
+      *)
+        echo "test-tool zlib: unknown function: $1" >&2
+        exit 1
+        ;;
+    esac ;;
   genrandom)
     seed="$2"; count="${3:-0}"
     dd if=/dev/urandom bs=1 count="$count" 2>/dev/null ;;

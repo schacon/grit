@@ -6,13 +6,18 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    55 |
+| Completed   |    60 |
 | In progress |     0 |
-| Remaining   |   711 |
+| Remaining   |   706 |
 | **Total**   |   766 |
 
 ## Recently completed
 
+- `t3009-ls-files-others-nonsubmodule` — 2/2 tests pass (re-ran the requested upstream verification on `main`; `target/release/grit` already handled nested non-submodule repositories correctly, so the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t3502-cherry-pick-merge` — 12/12 tests pass (the requested upstream verification passed after clearing a stale `/tmp/grit-upstream-workdir`; the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t3302-notes-index-expensive` — 12/12 tests pass (re-ran the requested upstream verification on `main`; this checkout already had the fix, so the stale `PLAN.md` entry was corrected and no Rust code changes were required)
+- `t2104-update-index-skip-worktree` — 7/7 tests pass (re-ran the requested upstream verification on `main`; the `PLAN.md` entry was stale and no Rust code changes were required)
+- `t2010-checkout-ambiguous` — 10/10 tests pass (re-ran the requested upstream verification on `main`; `plan.md` was already marked complete and no Rust code changes were required)
 - `t2012-checkout-last` — 22/22 tests pass (upstream re-verification on `main`; the `plan.md` entry was stale and no Rust code changes were required)
 - `t2050-git-dir-relative` — 4/4 tests pass (upstream re-verification on `main`; the `PLAN.md` entry was stale and no Rust code changes were required)
 - `t1015-read-index-unmerged` — 6/6 tests pass (`merge --abort` and `am --skip` now survive directory/file conflicts, and `format-patch -1 <rev>` now formats the requested single commit)
@@ -48,4 +53,4 @@
 
 ## What Remains
 
-711 test files still pending. See `PLAN.md` for the full prioritized list.
+706 test files still pending. See `PLAN.md` for the full prioritized list.

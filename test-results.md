@@ -2,7 +2,16 @@
 
 **Updated:** 2026-04-05
 
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3009 bash scripts/run-upstream-tests.sh t3009 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3009 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2012 bash scripts/run-upstream-tests.sh t2012 2>&1 | tail -40`: 22/22 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3302 bash scripts/run-upstream-tests.sh t3302 2>&1 | tail -40`: the requested tail-only run did not include TAP output, but the full rerun of `CARGO_TARGET_DIR=/tmp/grit-build-t3302 bash scripts/run-upstream-tests.sh t3302` completed with 12/12 passing against `target/release/grit`; this checkout already had the fix, so the `PLAN.md` entry was stale.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3302 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `cargo clippy --fix --allow-dirty`: not run for this task.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t2012 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
@@ -66,5 +75,17 @@
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1408 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303 2>&1 | tail -40`: 11/11 passing against `target/release/grit`; the remaining failing-count entry in `plan.md` was stale and has been removed.
 - `CARGO_TARGET_DIR=/tmp/grit-build-t1303 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2010 bash scripts/run-upstream-tests.sh t2010 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 10/10 passing against `target/release/grit`; `plan.md` was already marked complete and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2010 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2104 bash scripts/run-upstream-tests.sh t2104 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 7/7 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t2104 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo test --workspace`: not run for this task.
+- `./tests/harness/run.sh`: not run for this task.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3502 bash scripts/run-upstream-tests.sh t3502 2>&1 | tail -40`: the requested run only surfaced stale `/tmp/grit-upstream-workdir` cleanup noise; after clearing that scratch directory and re-running `bash scripts/run-upstream-tests.sh t3502`, upstream verification confirmed 12/12 passing against `target/release/grit`, so the `PLAN.md` entry was stale.
+- `CARGO_TARGET_DIR=/tmp/grit-build-t3502 cargo fmt --all 2>/dev/null; true`: completed.
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.

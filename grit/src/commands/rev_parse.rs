@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
-    abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
-    is_inside_work_tree, resolve_revision, show_prefix, symbolic_full_name,
+    abbreviate_object_id, abbreviate_ref_name, discover_optional, inspect_ambiguous_abbrev,
+    is_inside_git_dir, is_inside_work_tree, resolve_revision, show_prefix, symbolic_full_name,
+    AmbiguousAbbrevFatal,
 };
 use std::env;
 
@@ -576,6 +577,12 @@ pub fn run(args: Args) -> Result<()> {
                     }
                 }
 
+                if is_plain_hex_abbrev(rev) {
+                    if let Some(report) = inspect_ambiguous_abbrev(current, rev)? {
+                        render_ambiguous_abbrev_and_exit(rev, &report);
+                    }
+                }
+
                 let rewritten = rewrite_tree_path_spec(rev, prefix.as_deref());
                 match resolve_revision(current, &rewritten) {
                     Ok(oid) => {
@@ -698,6 +705,37 @@ fn normalize_slash_path(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+fn is_plain_hex_abbrev(spec: &str) -> bool {
+    (4..=40).contains(&spec.len()) && spec.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn render_ambiguous_abbrev_and_exit(
+    rev: &str,
+    report: &grit_lib::rev_parse::AmbiguousAbbrevReport,
+) -> ! {
+    eprintln!("error: short object ID {rev} is ambiguous");
+    for diagnostic in &report.diagnostics {
+        eprintln!("{diagnostic}");
+    }
+    if let Some(fatal) = report.fatal {
+        match fatal {
+            AmbiguousAbbrevFatal::InvalidObjectType => eprintln!("fatal: invalid object type"),
+        }
+        std::process::exit(128);
+    }
+
+    eprintln!("hint: The candidates are:");
+    for candidate in &report.candidates {
+        eprintln!("hint:   {} {}", candidate.oid, candidate.kind);
+    }
+    eprintln!(
+        "fatal: ambiguous argument '{rev}': unknown revision or path not in the working tree."
+    );
+    eprintln!("Use '--' to separate paths from revisions, like this:");
+    eprintln!("'git <command> [<revision>...] -- [<file>...]'");
+    std::process::exit(128);
 }
 
 /// Run `rev-parse --parseopt` mode.

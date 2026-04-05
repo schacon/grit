@@ -15,6 +15,129 @@ use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
 
+/// Detailed information for an ambiguous abbreviated object name.
+#[derive(Debug, Clone)]
+pub struct AmbiguousAbbrevReport {
+    /// Candidate objects matching the abbreviated prefix.
+    pub candidates: Vec<AmbiguousAbbrevCandidate>,
+    /// Extra diagnostics that Git prints while probing candidate objects.
+    pub diagnostics: Vec<String>,
+    /// Fatal condition that stops candidate rendering.
+    pub fatal: Option<AmbiguousAbbrevFatal>,
+}
+
+/// A single ambiguous abbreviated-object candidate.
+#[derive(Debug, Clone)]
+pub struct AmbiguousAbbrevCandidate {
+    /// Full object ID of the candidate.
+    pub oid: ObjectId,
+    /// Candidate type as presented to the user.
+    pub kind: AmbiguousAbbrevKind,
+}
+
+/// The rendered kind for an ambiguous abbreviated-object candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmbiguousAbbrevKind {
+    /// A blob object.
+    Blob,
+    /// A tree object.
+    Tree,
+    /// A commit object.
+    Commit,
+    /// A tag object.
+    Tag,
+    /// A corrupt or unreadable object.
+    BadObject,
+}
+
+impl std::fmt::Display for AmbiguousAbbrevKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Blob => f.write_str("blob"),
+            Self::Tree => f.write_str("tree"),
+            Self::Commit => f.write_str("commit"),
+            Self::Tag => f.write_str("tag"),
+            Self::BadObject => f.write_str("[bad object]"),
+        }
+    }
+}
+
+/// A fatal abbreviated-object ambiguity condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AmbiguousAbbrevFatal {
+    /// One or more candidates had an invalid object type header.
+    InvalidObjectType,
+}
+
+/// Inspect an abbreviated object prefix for Git-style ambiguity reporting.
+///
+/// Returns `Ok(None)` when the prefix is not ambiguous. When ambiguous, the
+/// report includes candidate kinds and any diagnostics observed while reading
+/// candidate objects.
+///
+/// # Errors
+///
+/// Returns I/O or object database errors unrelated to candidate probing.
+pub fn inspect_ambiguous_abbrev(
+    repo: &Repository,
+    prefix: &str,
+) -> Result<Option<AmbiguousAbbrevReport>> {
+    let matches = find_abbrev_matches(repo, prefix)?;
+    if matches.len() <= 1 {
+        return Ok(None);
+    }
+
+    let mut report = AmbiguousAbbrevReport {
+        candidates: Vec::with_capacity(matches.len()),
+        diagnostics: Vec::new(),
+        fatal: None,
+    };
+
+    for oid in matches {
+        match repo.odb.read(&oid) {
+            Ok(object) => {
+                let kind = match object.kind {
+                    ObjectKind::Blob => AmbiguousAbbrevKind::Blob,
+                    ObjectKind::Tree => AmbiguousAbbrevKind::Tree,
+                    ObjectKind::Commit => AmbiguousAbbrevKind::Commit,
+                    ObjectKind::Tag => AmbiguousAbbrevKind::Tag,
+                };
+                report
+                    .candidates
+                    .push(AmbiguousAbbrevCandidate { oid, kind });
+            }
+            Err(Error::UnknownObjectType(_)) => {
+                report.fatal = Some(AmbiguousAbbrevFatal::InvalidObjectType);
+                return Ok(Some(report));
+            }
+            Err(Error::Zlib(message)) => {
+                let rendered = render_inflate_error(&message);
+                for _ in 0..2 {
+                    report
+                        .diagnostics
+                        .push(format!("error: inflate: data stream error ({rendered})"));
+                    report
+                        .diagnostics
+                        .push(format!("error: unable to unpack {oid} header"));
+                }
+                report.candidates.push(AmbiguousAbbrevCandidate {
+                    oid,
+                    kind: AmbiguousAbbrevKind::BadObject,
+                });
+            }
+            Err(Error::CorruptObject(_)) => {
+                report.candidates.push(AmbiguousAbbrevCandidate {
+                    oid,
+                    kind: AmbiguousAbbrevKind::BadObject,
+                });
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(Some(report))
+}
+
 /// Return `Some(repo)` when a repository can be discovered at `start`.
 ///
 /// # Parameters
@@ -1072,6 +1195,14 @@ fn is_two_hex(text: &str) -> bool {
 
 fn is_hex_prefix(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn render_inflate_error(message: &str) -> &str {
+    if message.contains("corrupt deflate stream") {
+        "incorrect header check"
+    } else {
+        message
+    }
 }
 
 fn path_is_within(path: &Path, container: &Path) -> bool {

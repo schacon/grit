@@ -462,6 +462,39 @@ fn run_test_tool_hexdump() -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_sha1() -> Result<()> {
+    use sha1::{Digest, Sha1};
+    use std::io::Read;
+
+    let mut input = Vec::new();
+    std::io::stdin().read_to_end(&mut input)?;
+    println!("{}", hex::encode(Sha1::digest(&input)));
+    Ok(())
+}
+
+fn run_test_tool_zlib(rest: &[String]) -> Result<()> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::{Read, Write};
+
+    if rest.len() < 2 {
+        bail!("usage: test-tool zlib <deflate>");
+    }
+
+    match rest[1].as_str() {
+        "deflate" => {
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input)?;
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(&input)?;
+            let output = encoder.finish()?;
+            std::io::stdout().write_all(&output)?;
+            Ok(())
+        }
+        other => bail!("test-tool zlib: unknown function '{other}'"),
+    }
+}
+
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::NotFound => "ENOENT",
@@ -2066,6 +2099,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "hexdump" => run_test_tool_hexdump(),
+                "sha1" => run_test_tool_sha1(),
+                "zlib" => run_test_tool_zlib(rest),
                 "ref-store" => commands::test_tool_ref_store::run(&rest[1..]),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
