@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |     8 |
+| Completed   |     9 |
 | In progress |     0 |
-| Remaining   |   757 |
+| Remaining   |   756 |
 | **Total**   |   765 |
 
 ## Recently completed
 
+- `t0213-trace2-ancestry` — 5/5 tests pass (`cmd_ancestry` trace2 coverage complete)
 - `t1310-config-default` — 5/5 tests pass (`git config --default` validation and typed fallback handling)
 - `t2060-switch` — 16/16 tests pass
 - `t1303-wacky-config` — 11/11 tests pass (stale plan entry corrected after upstream verification)
@@ -24,4 +25,4 @@
 
 ## What Remains
 
-757 test files still pending. See `plan.md` for the full prioritized list.
+756 test files still pending. See `plan.md` for the full prioritized list.

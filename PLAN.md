@@ -62,7 +62,7 @@ commit → check it off → move on.
 
 - [x] `t1505-rev-parse-last` ████████████████████ 7/7 (0 left) — test @{-N} syntax
 - [x] `t1418-reflog-exists` ████████████████████ 6/6 (0 left) — Test reflog display routines
-- [ ] `t0213-trace2-ancestry` ████████████████░░░░ 4/5 (1 left) — test trace2 cmd_ancestry event
+- [x] `t0213-trace2-ancestry` ████████████████████ 5/5 (0 left) — test trace2 cmd_ancestry event
 - [x] `t1100-commit-tree-options` ████████████████████ 5/5 (0 left) — git commit-tree options test
 
 - [ ] `t1003-read-tree-prefix` █████████████░░░░░░░ 2/3 (1 left) — git read-tree --prefix test.
