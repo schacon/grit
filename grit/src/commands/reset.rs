@@ -521,6 +521,20 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
         // Hard/Keep: also update working tree.
         if repo.work_tree.is_some() {
+            if mode == ResetMode::Merge || mode == ResetMode::Keep {
+                let obstruction = find_untracked_obstruction(
+                    repo.work_tree.as_deref().expect("worktree checked above"),
+                    &old_index,
+                    &new_index,
+                );
+                if let Some((path, is_dir)) = obstruction {
+                    if is_dir {
+                        bail!("Updating '{}' would lose untracked files in it", path);
+                    } else {
+                        bail!("Updating '{}' would lose untracked files.", path);
+                    }
+                }
+            }
             checkout_index_to_worktree(repo, &old_index, &mut new_index)?;
         }
         if !quiet {
@@ -657,6 +671,65 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
 /// Compute the git blob OID for raw content (without writing to ODB).
 fn hash_blob_content(data: &[u8]) -> ObjectId {
     Odb::hash_object_data(ObjectKind::Blob, data)
+}
+
+fn find_untracked_obstruction(
+    work_tree: &Path,
+    old_index: &Index,
+    new_index: &Index,
+) -> Option<(String, bool)> {
+    let old_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if old_paths.contains(&entry.path) {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs = work_tree.join(&rel);
+        if !abs.exists() && !abs.is_symlink() {
+            continue;
+        }
+
+        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
+            let mut prefix = String::new();
+            for component in rel.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                if prefix.len() < rel.len() && old_paths.contains(prefix.as_bytes()) {
+                    return true;
+                }
+            }
+            false
+        });
+        if has_tracked_prefix {
+            continue;
+        }
+
+        let replaces_tracked_dir = old_paths.iter().any(|op| {
+            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
+        });
+        if replaces_tracked_dir {
+            continue;
+        }
+
+        let is_dir = std::fs::symlink_metadata(&abs)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false);
+        return Some((rel, is_dir));
+    }
+
+    None
 }
 
 /// Print "Unstaged changes after reset:" with modified files (mixed mode).

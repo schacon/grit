@@ -213,12 +213,28 @@ pub fn run(args: Args) -> Result<()> {
     // Load git configuration for format.* keys
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
-    // Determine the list of commits to format
-    let revision = args.revision.as_deref().unwrap_or("-1");
-    let commits = if args.root {
-        collect_root_commits(&repo, revision)?
+    // Determine the list of commits to format.
+    //
+    // `-1` is special in Git: with an explicit revision argument it means
+    // "format exactly that commit", not "commits since that revision".
+    let commits = if args.last_one {
+        match args.revision.as_deref() {
+            Some(revision) => {
+                let oid = resolve_revision(&repo, revision)
+                    .with_context(|| format!("unknown revision '{revision}'"))?;
+                let obj = repo.odb.read(&oid).context("reading commit")?;
+                let commit = parse_commit(&obj.data).context("parsing commit")?;
+                vec![(oid, commit)]
+            }
+            None => collect_last_n_commits(&repo, 1)?,
+        }
     } else {
-        collect_commits(&repo, revision)?
+        let revision = args.revision.as_deref().unwrap_or("-1");
+        if args.root {
+            collect_root_commits(&repo, revision)?
+        } else {
+            collect_commits(&repo, revision)?
+        }
     };
 
     if commits.is_empty() {

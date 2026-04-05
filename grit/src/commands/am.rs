@@ -18,8 +18,10 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
+use grit_lib::odb::Odb;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
@@ -553,22 +555,32 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         }
     }
 
-    // Try to apply the diff to the working tree
-    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff);
-
-    match apply_result {
-        Ok(affected_paths) => {
-            // Stage only the files that the patch touched
-            stage_affected_files(repo, &affected_paths)?;
+    let preimage_matches = patch_preimage_matches(repo, work_tree, &patch.diff)?;
+    if !preimage_matches {
+        if opts.three_way {
+            apply_three_way(repo, patch)?;
+        } else {
+            fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+            bail!("patch does not apply");
         }
-        Err(e) => {
-            if opts.three_way {
-                // Attempt 3-way merge
-                apply_three_way(repo, patch)?;
-            } else {
-                // Save message for --continue
-                fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
-                return Err(e);
+    } else {
+        // Try to apply the diff to the working tree
+        let apply_result = apply_patch_to_worktree(work_tree, &patch.diff);
+
+        match apply_result {
+            Ok(affected_paths) => {
+                // Stage only the files that the patch touched
+                stage_affected_files(repo, &affected_paths)?;
+            }
+            Err(e) => {
+                if opts.three_way {
+                    // Attempt 3-way merge
+                    apply_three_way(repo, patch)?;
+                } else {
+                    // Save message for --continue
+                    fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                    return Err(e);
+                }
             }
         }
     }
@@ -675,10 +687,22 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             get_blob_from_tree(repo, &head_commit.tree, &rel_path).unwrap_or_default()
         };
 
-        // Try to find the base blob from the index line in the diff
-        // The patch's context lines tell us what the pre-image looks like
-        // Build the pre-image from hunks
-        let base = build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone());
+        // Try to find the base blob from index preimage hash in the patch.
+        // Fall back to reconstructing from hunks when the hash cannot be read.
+        let base = if let Some(base_oid) = fp
+            .old_oid_hint
+            .as_deref()
+            .and_then(|hint| resolve_oid_hint(repo, hint).ok())
+        {
+            match repo.odb.read(&base_oid) {
+                Ok(obj) if obj.kind == ObjectKind::Blob => {
+                    String::from_utf8_lossy(&obj.data).into_owned()
+                }
+                _ => build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone()),
+            }
+        } else {
+            build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
+        };
 
         // Apply the patch to the base to get "theirs"
         let theirs = match apply_hunks(&base, &fp.hunks) {
@@ -1197,10 +1221,20 @@ fn do_skip() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
+        let old_index = load_index(&repo)?;
+        if let Some(wt) = &repo.work_tree {
+            if let Some((path, is_dir)) = find_untracked_obstruction(wt, &old_index, &index) {
+                if is_dir {
+                    bail!("Updating '{}' would lose untracked files in it", path);
+                } else {
+                    bail!("Updating '{}' would lose untracked files.", path);
+                }
+            }
+        }
         index.write(&repo.index_path())?;
 
         if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &index)?;
+            checkout_index_to_worktree(&repo, wt, &old_index, &index)?;
         }
     }
 
@@ -1318,10 +1352,20 @@ fn do_abort() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
+        let old_index = load_index(&repo)?;
+        if let Some(wt) = &repo.work_tree {
+            if let Some((path, is_dir)) = find_untracked_obstruction(wt, &old_index, &index) {
+                if is_dir {
+                    bail!("Updating '{}' would lose untracked files in it", path);
+                } else {
+                    bail!("Updating '{}' would lose untracked files.", path);
+                }
+            }
+        }
         index.write(&repo.index_path())?;
 
         if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &index)?;
+            checkout_index_to_worktree(&repo, wt, &old_index, &index)?;
         }
 
         // Restore HEAD — use saved head-name to restore branch state
@@ -2354,6 +2398,8 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
 struct FilePatch {
     old_path: Option<String>,
     new_path: Option<String>,
+    old_oid_hint: Option<String>,
+    new_oid_hint: Option<String>,
     old_mode: Option<String>,
     new_mode: Option<String>,
     is_new: bool,
@@ -2412,6 +2458,8 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             let mut fp = FilePatch {
                 old_path: None,
                 new_path: None,
+                old_oid_hint: None,
+                new_oid_hint: None,
                 old_mode: None,
                 new_mode: None,
                 is_new: false,
@@ -2437,6 +2485,14 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                     fp.old_mode = Some(val.to_string());
                 } else if let Some(val) = line.strip_prefix("new mode ") {
                     fp.new_mode = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("index ") {
+                    let mut parts = val.split_whitespace();
+                    if let Some(pair) = parts.next() {
+                        if let Some((old_oid, new_oid)) = pair.split_once("..") {
+                            fp.old_oid_hint = Some(old_oid.to_string());
+                            fp.new_oid_hint = Some(new_oid.to_string());
+                        }
+                    }
                 } else if let Some(val) = line.strip_prefix("new file mode ") {
                     fp.is_new = true;
                     fp.new_mode = Some(val.to_string());
@@ -2513,6 +2569,20 @@ fn strip_components(path: &str, n: usize) -> String {
     remaining.to_string()
 }
 
+fn resolve_oid_hint(repo: &Repository, hint: &str) -> Result<ObjectId> {
+    let h = hint.trim();
+    if h.is_empty() || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid object-id hint");
+    }
+    if h.chars().all(|c| c == '0') {
+        bail!("null object-id hint");
+    }
+    if h.len() == 40 {
+        return Ok(h.parse::<ObjectId>()?);
+    }
+    resolve_revision(repo, h).map_err(Into::into)
+}
+
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
     let header = lines[start];
     let (old_start, old_count, new_start, new_count) =
@@ -2574,6 +2644,50 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
         let n: usize = s.parse()?;
         Ok((n, 1))
     }
+}
+
+fn patch_preimage_matches(_repo: &Repository, work_tree: &Path, diff: &str) -> Result<bool> {
+    let file_patches = parse_patch(diff)?;
+    for fp in &file_patches {
+        let Some(hint_raw) = fp.old_oid_hint.as_deref() else {
+            continue;
+        };
+        let hint = hint_raw.trim().to_ascii_lowercase();
+        if hint.is_empty() || hint.chars().all(|c| c == '0') {
+            // New-file patches often use all-zero preimage.
+            continue;
+        }
+
+        let old_path = fp
+            .old_path
+            .as_deref()
+            .or_else(|| fp.effective_path())
+            .unwrap_or("");
+        if old_path == "/dev/null" {
+            continue;
+        }
+
+        let rel_path = strip_components(old_path, 1);
+        let abs_path = work_tree.join(&rel_path);
+        if !abs_path.exists() && !abs_path.is_symlink() {
+            return Ok(false);
+        }
+
+        let blob_bytes = if abs_path.is_symlink() {
+            let target = std::fs::read_link(&abs_path)?;
+            target.to_string_lossy().as_bytes().to_vec()
+        } else if abs_path.is_file() {
+            std::fs::read(&abs_path)?
+        } else {
+            return Ok(false);
+        };
+
+        let oid_hex = Odb::hash_object_data(ObjectKind::Blob, &blob_bytes).to_hex();
+        if !oid_hex.starts_with(&hint) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
@@ -2783,8 +2897,21 @@ fn tree_to_index_entries(
     Ok(result)
 }
 
-fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
+fn checkout_index_to_worktree(
+    repo: &Repository,
+    work_tree: &Path,
+    old_index: &Index,
+    index: &Index,
+) -> Result<()> {
     use grit_lib::index::{MODE_EXECUTABLE, MODE_SYMLINK};
+
+    if let Some((path, is_dir)) = find_untracked_obstruction(work_tree, old_index, index) {
+        if is_dir {
+            bail!("Updating '{}' would lose untracked files in it", path);
+        } else {
+            bail!("Updating '{}' would lose untracked files.", path);
+        }
+    }
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -2815,4 +2942,94 @@ fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index
     }
 
     Ok(())
+}
+
+fn find_untracked_obstruction(
+    work_tree: &Path,
+    old_index: &Index,
+    new_index: &Index,
+) -> Option<(String, bool)> {
+    let old_paths: std::collections::HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    let new_paths: std::collections::HashSet<Vec<u8>> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    let dir_has_entries = |abs: &Path| -> bool {
+        fs::read_dir(abs)
+            .ok()
+            .and_then(|mut rd| rd.next())
+            .is_some()
+    };
+
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs = work_tree.join(&rel);
+        if !abs.exists() && !abs.is_symlink() {
+            continue;
+        }
+
+        let is_dir = fs::symlink_metadata(&abs)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false);
+        // If the target wants a file/symlink but a directory exists there,
+        // replacing it would drop untracked contents.
+        if is_dir && entry.mode != 0o160000 && dir_has_entries(&abs) {
+            return Some((rel, true));
+        }
+
+        if old_paths.contains(&entry.path) {
+            continue;
+        }
+
+        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
+            let mut prefix = String::new();
+            for component in rel.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                if prefix.len() < rel.len() && old_paths.contains(prefix.as_bytes()) {
+                    return true;
+                }
+            }
+            false
+        });
+        if has_tracked_prefix {
+            continue;
+        }
+
+        let replaces_tracked_dir = old_paths.iter().any(|op| {
+            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
+        });
+        if replaces_tracked_dir {
+            continue;
+        }
+        return Some((rel, is_dir));
+    }
+
+    // Also protect deletions where a formerly tracked file path is now a
+    // directory containing untracked files (e.g. file -> dir replacement).
+    for old_path in old_paths.difference(&new_paths) {
+        let rel = String::from_utf8_lossy(old_path).into_owned();
+        let abs = work_tree.join(&rel);
+        let is_dir = fs::symlink_metadata(&abs)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false);
+        if is_dir && dir_has_entries(&abs) {
+            return Some((rel, true));
+        }
+    }
+
+    None
 }

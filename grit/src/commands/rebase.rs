@@ -1056,6 +1056,14 @@ fn checkout_merged_index(
     old_index: &Index,
     index: &Index,
 ) -> Result<()> {
+    if let Some((path, is_dir)) = find_untracked_obstruction(work_tree, old_index, index) {
+        if is_dir {
+            bail!("Updating '{}' would lose untracked files in it", path);
+        } else {
+            bail!("Updating '{}' would lose untracked files.", path);
+        }
+    }
+
     let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
 
     for entry in &old_index.entries {
@@ -1089,6 +1097,65 @@ fn checkout_merged_index(
     }
 
     Ok(())
+}
+
+fn find_untracked_obstruction(
+    work_tree: &Path,
+    old_index: &Index,
+    new_index: &Index,
+) -> Option<(String, bool)> {
+    let old_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if old_paths.contains(&entry.path) {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs = work_tree.join(&rel);
+        if !abs.exists() && !abs.is_symlink() {
+            continue;
+        }
+
+        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
+            let mut prefix = String::new();
+            for component in rel.split('/') {
+                if !prefix.is_empty() {
+                    prefix.push('/');
+                }
+                prefix.push_str(component);
+                if prefix.len() < rel.len() && old_paths.contains(prefix.as_bytes()) {
+                    return true;
+                }
+            }
+            false
+        });
+        if has_tracked_prefix {
+            continue;
+        }
+
+        let replaces_tracked_dir = old_paths.iter().any(|op| {
+            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
+        });
+        if replaces_tracked_dir {
+            continue;
+        }
+
+        let is_dir = fs::symlink_metadata(&abs)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false);
+        return Some((rel, is_dir));
+    }
+
+    None
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
