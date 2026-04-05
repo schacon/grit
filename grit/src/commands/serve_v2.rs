@@ -38,17 +38,7 @@ struct ServerCaps {
 impl ServerCaps {
     fn load(git_dir: &Path) -> Self {
         let version = crate::version_string();
-        let os_name = std::env::consts::OS;
-        let os_suffix = match os_name {
-            "linux" => "Linux",
-            "macos" => "Darwin",
-            "windows" => "Windows",
-            "freebsd" => "FreeBSD",
-            "openbsd" => "OpenBSD",
-            "netbsd" => "NetBSD",
-            other => other,
-        };
-        let agent = format!("agent=git/{version}-{os_suffix}");
+        let agent = format!("agent=git/{version}-");
 
         let advertise_object_info = read_config_bool(git_dir, "transfer.advertiseObjectInfo");
         let advertise_bundle_uri = read_config_bool(git_dir, "uploadpack.advertiseBundleURIs");

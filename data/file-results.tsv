@@ -363,7 +363,7 @@ t4012-diff-binary	yes	13	2	11	ok	2	13	0
 t4013-diff-various	yes	230	78	152	ok	78	230	0
 t4014-format-patch	yes	215	47	168	ok	47	215	0
 t4015-diff-whitespace	yes	136	74	62	ok	74	136	0
-t4016-diff-quote	yes	5	2	3	ok	2	5	0
+t4016-diff-quote	yes	5	5	0	ok	5	5	0
 t4017-diff-retval	yes	38	30	8	ok	30	38	0
 t4018-diff-funcname	yes	4	1	3	ok	1	4	0
 t4019-diff-wserror	yes	21	5	16	ok	5	21	0
@@ -431,7 +431,7 @@ t4107-apply-ignore-whitespace	yes	11	7	4	ok	7	11	0
 t4108-apply-threeway	yes	18	4	14	ok	4	18	0
 t4109-apply-multifrag	yes	3	3	0	ok	3	3	0
 t4110-apply-scan	yes	1	1	0	ok	1	1	0
-t4111-apply-subdir	yes	10	8	2	ok	8	10	0
+t4111-apply-subdir	yes	10	10	0	ok	10	10	0
 t4112-apply-renames	yes	2	0	2	ok	0	2	0
 t4113-apply-ending	yes	3	3	0	ok	3	3	0
 t4114-apply-typechange	yes	12	5	7	ok	5	12	0
