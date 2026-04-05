@@ -14,9 +14,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -60,6 +61,10 @@ pub struct Args {
     /// Prepend directory to all file paths in the patch.
     #[arg(long = "directory", value_name = "DIR")]
     pub directory: Option<String>,
+
+    /// Build a temporary index with preimage blobs from patch index lines.
+    #[arg(long = "build-fake-ancestor", value_name = "FILE")]
+    pub build_fake_ancestor: Option<PathBuf>,
 
     /// Recount hunk line counts (for corrupted patches).
     #[arg(long = "recount")]
@@ -952,6 +957,11 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    if let Some(path) = &args.build_fake_ancestor {
+        build_fake_ancestor_file(&patches, &args, path)?;
+        return Ok(());
+    }
+
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
@@ -966,6 +976,67 @@ pub fn run(args: Args) -> Result<()> {
         apply_to_worktree(&patches, &args)?;
     }
 
+    Ok(())
+}
+
+/// Build a temporary index file containing original blob versions referenced by the patch.
+///
+/// This implements `git apply --build-fake-ancestor=<file>` behavior.
+fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let current_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let mut fake = Index::new();
+
+    for fp in patches {
+        let Some(raw_old_path) = fp.old_path.as_deref() else {
+            continue;
+        };
+        if raw_old_path == "/dev/null" {
+            continue;
+        }
+        let adjusted = adjust_path(raw_old_path, args.strip, args.directory.as_deref());
+        if adjusted.is_empty() {
+            continue;
+        }
+
+        let resolved = if let Some(old_oid) = fp.old_oid.as_deref() {
+            let oid = resolve_revision(&repo, old_oid)
+                .with_context(|| format!("resolving old blob id `{old_oid}` for `{adjusted}`"))?;
+            let mode = fp.old_mode.as_deref().map(parse_mode).unwrap_or(0o100644);
+            Some((mode, oid))
+        } else { current_index.get(adjusted.as_bytes(), 0).map(|entry| (entry.mode, entry.oid)) };
+
+        let Some((mode, oid)) = resolved else {
+            continue;
+        };
+
+        let entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags_extended: None,
+            path: adjusted.into_bytes(),
+        };
+        fake.add_or_replace(entry);
+    }
+
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+    }
+    fake.write(out_path)
+        .with_context(|| format!("writing {}", out_path.display()))?;
     Ok(())
 }
 
