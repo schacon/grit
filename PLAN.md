@@ -412,10 +412,10 @@ commit → check it off → move on.
 
 - [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 
-- [~] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
+- [ ] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
 - [ ] `t4039-diff-assume-unchanged` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff with assume-unchanged entries
-- [ ] `t4049-diff-stat-count` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff --stat-count
-- [ ] `t4133-apply-filenames` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — git apply filename consistency check
+- [~] `t4049-diff-stat-count` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff --stat-count
+- [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check
 - [ ] `t4257-am-interactive` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — am --interactive tests
 - [ ] `t4258-am-quoted-cr` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test am --quoted-cr=<action>
 - [ ] `t4072-diff-max-depth` ██████████████████░░ 72/76 (4 left) — check that diff --max-depth will limit recursion

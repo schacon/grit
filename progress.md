@@ -6,9 +6,9 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    69 |
+| Completed   |    70 |
 | In progress |     1 |
-| Remaining   |   697 |
+| Remaining   |   696 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -60,7 +60,8 @@
 - `t4117-apply-reject` — 8/8 tests pass (`git apply --reject` now applies matching hunks, writes `<path>.rej` for rejected hunks, and exits non-zero on partial apply)
 - `t4152-am-subjects` — 13/13 tests pass (`git am` now folds wrapped Subject continuations into subject text without injecting blank separator lines; `-k` preserves multiline subject breaks)
 - `t4003-diff-rename-1` — 7/7 tests pass (`diff-index -p` now honors `GIT_DIFF_OPTS` context settings such as `--unified=0`, including rename/copy patch output)
+- `t4133-apply-filenames` — 4/4 tests pass (`git apply` now validates diff header filename consistency and missing filename metadata before applying hunks)
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4018-diff-funcname`) and 697 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4018-diff-funcname`) and 696 remain pending. See `plan.md` for the full prioritized list.

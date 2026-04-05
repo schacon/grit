@@ -464,7 +464,7 @@ t4129-apply-samemode	yes	23	12	11	ok	12	23	0
 t4130-apply-criss-cross-rename	yes	7	7	0	ok	7	7	0
 t4131-apply-fake-ancestor	yes	3	3	0	ok	3	3	0
 t4132-apply-removal	yes	14	1	13	ok	1	14	0
-t4133-apply-filenames	yes	4	1	3	ok	1	4	0
+t4133-apply-filenames	yes	4	4	0	ok	4	4	0
 t4134-apply-submodule	yes	2	2	0	ok	2	2	0
 t4135-apply-weird-filenames	yes	20	3	17	ok	3	20	0
 t4136-apply-check	yes	6	2	4	ok	2	6	0

@@ -5,6 +5,19 @@
 - `cargo build --release`: passes (rebuild after `diff-index` `GIT_DIFF_OPTS` context parsing support).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4003-diff-rename-1.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t4003-diff-rename-1.sh`: 7/7 passing; `data/file-results.tsv` refreshed.
+- `cargo build --release`: passes (rebuild after `git apply` filename consistency validation checks).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4133-apply-filenames.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t4133-apply-filenames.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- Regression checks:
+  - `./scripts/run-tests.sh t4117-apply-reject.sh`: 8/8 passing.
+  - `./scripts/run-tests.sh t4112-apply-renames.sh`: 2/2 passing.
+  - `./scripts/run-tests.sh t4131-apply-fake-ancestor.sh`: 3/3 passing.
+  - `./scripts/run-tests.sh t4125-apply-ws-fuzz.sh`: 4/4 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+- `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 1/4 passing (investigative baseline while triaging next target selection).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash tests/t4049-diff-stat-count.sh`: fails with expected fixture mismatch due missing test binary fixture and stat count behavior gaps.
 - Regression checks:
   - `./scripts/run-tests.sh t4007-rename-3.sh`: 13/13 passing.
   - `./scripts/run-tests.sh t4006-diff-mode.sh`: 7/7 passing.

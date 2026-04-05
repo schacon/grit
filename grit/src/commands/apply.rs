@@ -139,10 +139,18 @@ enum HunkLine {
 /// Represents one file in a unified diff.
 #[derive(Debug, Clone)]
 struct FilePatch {
+    /// Path from `diff --git` old side (`a/...`) when present.
+    diff_old_path: Option<String>,
+    /// Path from `diff --git` new side (`b/...`) when present.
+    diff_new_path: Option<String>,
     /// Path on the old side (None for new files).
     old_path: Option<String>,
     /// Path on the new side (None for deleted files).
     new_path: Option<String>,
+    /// Whether an explicit `---` header line was present.
+    saw_old_header: bool,
+    /// Whether an explicit `+++` header line was present.
+    saw_new_header: bool,
     /// Old mode from extended header.
     old_mode: Option<String>,
     /// New mode from extended header.
@@ -238,8 +246,12 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
         // Look for "diff --git" header or a bare ---/+++ pair.
         if lines[i].starts_with("diff --git ") {
             let mut fp = FilePatch {
+                diff_old_path: None,
+                diff_new_path: None,
                 old_path: None,
                 new_path: None,
+                saw_old_header: false,
+                saw_new_header: false,
                 old_mode: None,
                 new_mode: None,
                 is_new: false,
@@ -256,6 +268,8 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             // Parse "diff --git a/foo b/foo"
             let rest = &lines[i]["diff --git ".len()..];
             if let Some((a, b)) = split_diff_git_paths(rest) {
+                fp.diff_old_path = Some(a.clone());
+                fp.diff_new_path = Some(b.clone());
                 fp.old_path = Some(a);
                 fp.new_path = Some(b);
             }
@@ -310,10 +324,12 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             if i < lines.len() && lines[i].starts_with("--- ") {
                 let old_p = &lines[i]["--- ".len()..];
                 fp.old_path = Some(old_p.to_string());
+                fp.saw_old_header = true;
                 i += 1;
                 if i < lines.len() && lines[i].starts_with("+++ ") {
                     let new_p = &lines[i]["+++ ".len()..];
                     fp.new_path = Some(new_p.to_string());
+                    fp.saw_new_header = true;
                     i += 1;
                 }
             }
@@ -332,8 +348,12 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
         {
             // Bare unified diff without "diff --git" header
             let mut fp = FilePatch {
+                diff_old_path: None,
+                diff_new_path: None,
                 old_path: None,
                 new_path: None,
+                saw_old_header: false,
+                saw_new_header: false,
                 old_mode: None,
                 new_mode: None,
                 is_new: false,
@@ -349,9 +369,11 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
 
             let old_p = &lines[i]["--- ".len()..];
             fp.old_path = Some(old_p.to_string());
+            fp.saw_old_header = true;
             i += 1;
             let new_p = &lines[i]["+++ ".len()..];
             fp.new_path = Some(new_p.to_string());
+            fp.saw_new_header = true;
             i += 1;
 
             // Check for /dev/null
@@ -580,6 +602,39 @@ fn reverse_patches(patches: &mut [FilePatch]) {
             hunk.lines = new_lines;
         }
     }
+}
+
+fn validate_patch_headers(patches: &[FilePatch]) -> Result<()> {
+    for fp in patches {
+        if (fp.diff_old_path.is_some() || fp.diff_new_path.is_some())
+            && !fp.hunks.is_empty()
+            && (!fp.saw_old_header || !fp.saw_new_header)
+        {
+            bail!("patch lacks filename information");
+        }
+
+        if fp.saw_old_header {
+            if let (Some(diff_old), Some(old)) =
+                (fp.diff_old_path.as_deref(), fp.old_path.as_deref())
+            {
+                if old != "/dev/null" && diff_old != old {
+                    bail!("inconsistent old filename");
+                }
+            }
+        }
+
+        if fp.saw_new_header {
+            if let (Some(diff_new), Some(new)) =
+                (fp.diff_new_path.as_deref(), fp.new_path.as_deref())
+            {
+                if new != "/dev/null" && diff_new != new {
+                    bail!("inconsistent new filename");
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,6 +1157,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let mut patches = parse_patch(&input)?;
+    validate_patch_headers(&patches)?;
 
     if args.reverse {
         reverse_patches(&mut patches);
