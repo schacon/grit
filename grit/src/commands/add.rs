@@ -140,15 +140,14 @@ pub fn run(mut args: Args) -> Result<()> {
         .and_then(|r| r.ok())
         .unwrap_or(true);
 
-    let mut index = match Index::load(&repo.index_path()) {
-        Ok(idx) => idx,
-        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            Index::new_with_config(
-                config.get("index.version").as_deref(),
-                config.get("feature.manyFiles").as_deref(),
-            )
-        }
-        Err(e) => return Err(e.into()),
+    let index_path = repo.index_path();
+    let mut index = if index_path.exists() {
+        Index::load(&index_path)?
+    } else {
+        Index::new_with_config(
+            config.get("index.version").as_deref(),
+            config.get("feature.manyFiles").as_deref(),
+        )
     };
 
     let odb = &repo.odb;
@@ -613,11 +612,8 @@ fn add_path(
             prefix.push_str(component);
             if let Some(ie) = index.get(prefix.as_bytes(), 0) {
                 if ie.mode == 0o160000 {
-                    return Err(AddPathError::Other(anyhow::anyhow!(
-                        "'{}' in submodule '{}'",
-                        path,
-                        prefix
-                    )));
+                    eprintln!("fatal: Pathspec '{}' is in submodule '{}'", path, prefix);
+                    std::process::exit(128);
                 }
             }
         }
