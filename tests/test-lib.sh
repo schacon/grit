@@ -668,6 +668,12 @@ test_hook () {
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
 test_cmp_config () {
 	local default=""
+	local config_cwd=""
+	if test "$1" = "-C"
+	then
+		config_cwd="$2"
+		shift 2
+	fi
 	if test "$1" = "--default"
 	then
 		default="$2"
@@ -676,7 +682,12 @@ test_cmp_config () {
 	local expect="$1"
 	shift
 	local actual
-	actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	if test -n "$config_cwd"
+	then
+		actual=$(git -C "$config_cwd" config "$@" 2>/dev/null) || actual="$default"
+	else
+		actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	fi
 	if test "$expect" = "$actual"
 	then
 		return 0
