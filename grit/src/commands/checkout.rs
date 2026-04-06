@@ -225,13 +225,26 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Case 1: checkout -b <new_branch> [<start_point>]
-    if let Some(ref new_branch_name) = args.new_branch {
+    if let Some(ref raw_new_branch) = args.new_branch {
+        // Resolve @{-N} syntax in branch name (e.g. `git checkout -b @{-1}`)
+        let resolved_new_branch: String;
+        let new_branch_name: &str = if raw_new_branch.starts_with("@{") {
+            match refs::resolve_at_n_branch(&repo.git_dir, raw_new_branch) {
+                Ok(name) => {
+                    resolved_new_branch = name;
+                    &resolved_new_branch
+                }
+                Err(_) => raw_new_branch.as_str(),
+            }
+        } else {
+            raw_new_branch.as_str()
+        };
         // -b takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
             if args.track.is_some() {
                 bail!("'--track' cannot be used with updating paths");
             }
-            bail!("too many arguments for -b");
+            bail!("Cannot update paths and switch to branch at the same time.");
         }
         // Capture the current HEAD branch before checkout (for tracking setup)
         let pre_head_branch = if target.is_none() && args.track.is_some() {
@@ -360,6 +373,11 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
+        // Warn if a tag with the same name also exists (ambiguous ref)
+        let tag_ref = format!("refs/tags/{target}");
+        if refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok() {
+            eprintln!("warning: refname '{}' is ambiguous.", target);
+        }
         return switch_branch(&repo, &target, &branch_ref, switch_force);
     }
 
@@ -508,7 +526,8 @@ fn create_and_switch_branch(
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        bail!("a branch named '{}' already exists", name);
+        eprintln!("fatal: a branch named '{name}' already exists");
+        std::process::exit(128);
     }
 
     // Resolve start point (default: HEAD)
@@ -627,7 +646,8 @@ fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
 
     // Check the branch doesn't already exist
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        bail!("a branch named '{}' already exists", name);
+        eprintln!("fatal: a branch named '{name}' already exists");
+        std::process::exit(128);
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)

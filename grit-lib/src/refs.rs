@@ -567,6 +567,38 @@ fn collect_refs(
     Ok(())
 }
 
+/// Resolve `@{-N}` syntax to the branch name (not an OID).
+/// Returns the branch name of the Nth previously checked out branch.
+pub fn resolve_at_n_branch(git_dir: &Path, spec: &str) -> Result<String> {
+    // Parse the N from @{-N}
+    let inner = spec
+        .strip_prefix("@{-")
+        .and_then(|s| s.strip_suffix('}'))
+        .ok_or_else(|| Error::InvalidRef(format!("not an @{{-N}} ref: {spec}")))?;
+    let n: usize = inner
+        .parse()
+        .map_err(|_| Error::InvalidRef(format!("invalid N in {spec}")))?;
+    if n == 0 {
+        return Err(Error::InvalidRef("@{-0} is not valid".to_string()));
+    }
+    let entries = crate::reflog::read_reflog(git_dir, "HEAD")?;
+    let mut count = 0usize;
+    for entry in entries.iter().rev() {
+        let msg = &entry.message;
+        if let Some(rest) = msg.strip_prefix("checkout: moving from ") {
+            count += 1;
+            if count == n {
+                if let Some(to_pos) = rest.find(" to ") {
+                    return Ok(rest[..to_pos].to_string());
+                }
+            }
+        }
+    }
+    Err(Error::InvalidRef(format!(
+        "{spec}: only {count} checkout(s) in reflog"
+    )))
+}
+
 fn collect_packed_refs(
     git_dir: &Path,
     prefix: &str,
