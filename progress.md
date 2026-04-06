@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    91 |
+| Completed   |    92 |
 | In progress |     0 |
-| Remaining   |   676 |
+| Remaining   |   675 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1416-ref-transaction-hooks` — 10/10 tests pass (fixed test-hook lifecycle semantics in the local harness so hooks created without `--setup` are cleaned up after each test via `test_when_finished`, preventing stale `reference-transaction` hooks from leaking into later tests and polluting hook output in queued `update-ref --stdin` symref transactions)
 - `t1403-show-ref` — 12/12 tests pass (extended the `test_commit` test helper to accept `--annotate` so setup creates annotated tags expected by upstream scripts; and fixed `show-ref -d` peeling to emit `^{} ` entries only for annotated tag refs by requiring `refs/tags/*` and peeling tag objects through nested tags while avoiding pseudo/branch refs)
 - `t1421-reflog-write` — 10/10 tests pass (implemented strict `reflog write` argument/validation compatibility: fully-qualified refname checks with root-ref allowance, full-length object-ID enforcement with Git-style error messages for abbreviated vs nonexistent OIDs, reflog message normalization to single-line whitespace, and `%gs` formatting for `reflog show`; fixed `test-tool` global `-C` handling so helper invocations like `test-tool -C <repo> ref-store ...` dispatch correctly; and aligned reflog-write identity resolution with upstream tests by honoring committer env for name/email while preserving test-harness date semantics and config fallback behavior)
 - `t1414-reflog-walk` — 12/12 tests pass (implemented merge-aware reflog commit messages so reflog subjects distinguish merge commits; taught checkout/update-ref reflog writers to respect test-controlled committer dates so reflog chronology is correct; enhanced `log -g` reflog walk with multi-ref interleaving by reflog entry timestamp, support for `--no-merges`/`--merges`/pathspec/date filters in reflog mode, and merge path filtering against the intersection of changed paths across all parents; and fixed `rev-list -g` compatibility for `--parents` output and empty-argument failure behavior)

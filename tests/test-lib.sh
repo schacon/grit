@@ -671,7 +671,12 @@ test_hook () {
 		hook_dir=".git/hooks"
 	fi
 	mkdir -p "$hook_dir" &&
-	write_script "$hook_dir/$1"
+	hook_file="$hook_dir/$1" &&
+	if test -z "$setup"
+	then
+		test_when_finished "rm -f \"$hook_file\""
+	fi &&
+	write_script "$hook_file"
 }
 
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
