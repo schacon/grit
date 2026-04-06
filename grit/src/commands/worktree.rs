@@ -684,6 +684,7 @@ struct WorktreeInfo {
     head: HeadState,
     is_bare: bool,
     is_locked: bool,
+    lock_reason: Option<String>,
 }
 
 /// Resolve HEAD for a linked worktree admin dir.
@@ -734,6 +735,7 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
         head: main_head,
         is_bare: repo.is_bare(),
         is_locked: false,
+        lock_reason: None,
     });
 
     // Linked worktrees
@@ -761,13 +763,26 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
                 admin.clone()
             };
 
-            let is_locked = admin.join("locked").exists();
+            let locked_file = admin.join("locked");
+            let is_locked = locked_file.exists();
+            let lock_reason = if is_locked {
+                let content = fs::read_to_string(&locked_file).unwrap_or_default();
+                let reason = content.trim().to_string();
+                if reason.is_empty() {
+                    None
+                } else {
+                    Some(reason)
+                }
+            } else {
+                None
+            };
 
             entries.push(WorktreeInfo {
                 path: wt_path,
                 head: wt_head,
                 is_bare: false,
                 is_locked,
+                lock_reason,
             });
         }
     }
@@ -815,7 +830,17 @@ fn cmd_list(args: ListArgs) -> Result<()> {
                 out.write_all(&[sep])?;
             }
             if entry.is_locked {
-                out.write_all(b"locked")?;
+                if let Some(ref reason) = entry.lock_reason {
+                    // Quote and escape the reason if it contains newlines
+                    if reason.contains('\n') || reason.contains('\r') {
+                        let escaped = reason.replace('\r', "\\r").replace('\n', "\\n");
+                        out.write_all(format!("locked \"{escaped}\"").as_bytes())?;
+                    } else {
+                        out.write_all(format!("locked {reason}").as_bytes())?;
+                    }
+                } else {
+                    out.write_all(b"locked")?;
+                }
                 out.write_all(&[sep])?;
             }
             out.write_all(entry_sep)?;
