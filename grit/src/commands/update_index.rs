@@ -349,7 +349,7 @@ pub fn run(args: Args) -> Result<()> {
         };
 
         // Check for D/F conflicts in the index before adding.
-        // Skip for gitlinks (submodule directories) which can replace directory entries.
+        // Skip for gitlinks (submodule directories).
         let is_gitlink = meta.file_type().is_dir() && abs_path.join(".git").exists();
         if args.add && !is_gitlink {
             let rel_str = String::from_utf8_lossy(&rel_bytes);
@@ -361,12 +361,13 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("error: invalid path '{}'", rel_str);
                 }
             }
-            // Check if any existing index entry has this path as a prefix (we're adding a dir-level path)
+            // Check if any existing index entry has this path as a prefix
             let dir_prefix = format!("{rel_str}/");
-            if index.entries.iter().any(|e| {
+            let has_dir_entries = index.entries.iter().any(|e| {
                 let p = String::from_utf8_lossy(&e.path);
                 p.starts_with(dir_prefix.as_str())
-            }) {
+            });
+            if has_dir_entries {
                 bail!("error: invalid path '{}'", rel_str);
             }
         }

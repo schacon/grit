@@ -266,8 +266,16 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         match tree_oids.len() {
             1 => {
-                // `-m` with one tree acts like a carry-forward overlay.
-                for e in tree_to_index_entries(&repo, &tree_oids[0], "", prot)? {
+                // `-m` with one tree: replace index with new tree, but carry forward
+                // unmerged entries. All stage-0 entries not in the new tree are removed.
+                let new_tree_entries = tree_to_index_entries(&repo, &tree_oids[0], "", prot)?;
+                let new_tree_paths: std::collections::HashSet<Vec<u8>> =
+                    new_tree_entries.iter().map(|e| e.path.clone()).collect();
+                // Keep only stage != 0 (unmerged) entries from old index that aren't in new tree
+                new_index
+                    .entries
+                    .retain(|e| e.stage() != 0 || new_tree_paths.contains(&e.path));
+                for e in new_tree_entries {
                     add_or_replace_with_df_cleanup(&mut new_index, e);
                 }
             }
