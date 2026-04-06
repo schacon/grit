@@ -6,9 +6,10 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::{init_repository, Repository};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -255,6 +256,11 @@ pub fn run(args: Args) -> Result<()> {
                 dest.git_dir.join("HEAD"),
                 format!("ref: refs/heads/{branch}\n"),
             )?;
+        }
+
+        if args.no_local {
+            let tips = collect_repo_tips(&dest.git_dir)?;
+            verify_reachable_objects(&dest, &tips)?;
         }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
@@ -781,6 +787,62 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
         fs::write(&shallow_path, content.join("\n") + "\n")?;
     }
 
+    Ok(())
+}
+
+/// Collect all commit/tag tips for repository connectivity verification.
+fn collect_repo_tips(git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let mut tips = Vec::new();
+    if let Ok(head) = refs::resolve_ref(git_dir, "HEAD") {
+        tips.push(head);
+    }
+    tips.extend(
+        refs::list_refs(git_dir, "refs/")?
+            .into_iter()
+            .map(|(_, oid)| oid),
+    );
+    tips.sort();
+    tips.dedup();
+    Ok(tips)
+}
+
+/// Verify that all objects reachable from `tips` are present and well-formed.
+///
+/// This is used for transport-style local clone (`--no-local`) to catch
+/// missing, corrupt, and misnamed objects early, including in bare clones.
+fn verify_reachable_objects(repo: &Repository, tips: &[ObjectId]) -> Result<()> {
+    let mut seen = HashSet::new();
+    let mut stack: Vec<ObjectId> = tips.to_vec();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let object = repo.odb.read(&oid)?;
+        let computed = grit_lib::odb::Odb::hash_object_data(object.kind, &object.data);
+        if computed != oid {
+            bail!("object {} is corrupted or has the wrong name", oid.to_hex());
+        }
+        match object.kind {
+            ObjectKind::Commit => {
+                let commit = parse_commit(&object.data)?;
+                stack.push(commit.tree);
+                stack.extend(commit.parents);
+            }
+            ObjectKind::Tree => {
+                let entries = parse_tree(&object.data)?;
+                for entry in entries {
+                    if entry.mode != 0o160000 {
+                        stack.push(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                let tag = parse_tag(&object.data)?;
+                stack.push(tag.object);
+            }
+            ObjectKind::Blob => {}
+        }
+    }
     Ok(())
 }
 

@@ -2016,6 +2016,7 @@ fn collect_tree_objects_filtered(
     missing: &mut Vec<ObjectId>,
     missing_print: bool,
 ) -> Result<()> {
+    let empty_tree_oid = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").ok();
     if !seen.insert(tree_oid) {
         return Ok(());
     }
@@ -2029,6 +2030,9 @@ fn collect_tree_objects_filtered(
     let object = match repo.odb.read(&tree_oid) {
         Ok(obj) => obj,
         Err(err) => {
+            if empty_tree_oid.is_some_and(|oid| oid == tree_oid) {
+                return Ok(());
+            }
             if missing_print {
                 missing.push(tree_oid);
                 return Ok(());

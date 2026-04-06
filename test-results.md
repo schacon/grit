@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after clone transport and rev-list missing-object compatibility updates for corruption handling).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1060-object-corruption && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1060-object-corruption.sh`: 17/17 passing (1 expected-failure test remains marked TODO in upstream script).
+- `rm -rf /workspace/tests/trash.t1060-object-corruption && ./scripts/run-tests.sh t1060-object-corruption.sh`: 17/17 passing.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing (regression check).
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing (regression check).
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
 - `cargo fmt`: success (after repository-format/repo-version compatibility changes).
 - `cargo build --release -p grit-rs`: success.
 - `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing.

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    76 |
+| Completed   |    77 |
 | In progress |     0 |
-| Remaining   |   691 |
+| Remaining   |   690 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1060-object-corruption` — 17/17 tests pass (hardened local clone object-copy validation to fail on corrupt/missing/misnamed objects before bare clone completion, and taught `rev-list --objects` to tolerate the canonical empty tree object as implicitly present when missing from loose storage)
 - `t1302-repo-version` — 18/18 tests pass (added repository format/extension validation for supported v0/v1 repos and expected extension semantics, enforced local config operations against unsupported repos, blocked `apply --check --index` on invalid repositories, and made `prune` refuse precious-objects repositories while preserving existing `repack -ad` protections)
 - `t1090-sparse-checkout-scope` — 7/7 tests pass (implemented sparse-checkout scope compatibility across checkout/merge/fetch paths: added `checkout-index --ignore-skip-worktree-bits`, `clone --template` acceptance for sparse fixture setup, `config -C <path>` compatibility/no-op behavior, `fetch --filter=blob:none` sparse-aware blob retention, and `rev-list --missing=print` support used by partial sparse validation)
 - `t0411-clone-from-partial` — 7/7 tests pass (implemented blob:none partial-clone shaping for local clone fixtures, disabled clone-time lazy fetch by default with `lazy fetching disabled` diagnostics, and added promisor lazy-fetch attempt for `pack-objects --revs` via configured `remote.origin.uploadpack`)
@@ -69,4 +70,4 @@
 
 ## What Remains
 
-691 test files still pending. See `plan.md` for the full prioritized list.
+690 test files still pending. See `plan.md` for the full prioritized list.

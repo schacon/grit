@@ -94,7 +94,7 @@ commit → check it off → move on.
 - [x] `t0411-clone-from-partial` ████████████████████ 7/7 (0 left) — check that local clone does not fetch from promisor remotes
 - [x] `t1090-sparse-checkout-scope` ████████████████████ 7/7 (0 left) — sparse checkout scope tests
 - [x] `t1302-repo-version` ████████████████████ 18/18 (0 left) — Test repository version check
-- [ ] `t1060-object-corruption` ████████████░░░░░░░░ 11/17 (6 left) — see how we handle various forms of corruption
+- [x] `t1060-object-corruption` ████████████████████ 17/17 (0 left) — see how we handle various forms of corruption
 - [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.
 
 - [ ] `t1415-worktree-refs` ████████░░░░░░░░░░░░ 4/10 (6 left) — per-worktree refs
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,707/24,806 tests passing, 16,099 failures remaining**
+**8,713/24,806 tests passing, 16,093 failures remaining**
