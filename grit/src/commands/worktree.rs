@@ -1434,6 +1434,42 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
         }
     }
 
+    // Check for duplicate entries (multiple admins pointing to same gitdir)
+    if worktrees_dir.is_dir() {
+        let mut gitdir_targets: std::collections::HashMap<PathBuf, String> =
+            std::collections::HashMap::new();
+        let mut all_entries: Vec<String> = fs::read_dir(&worktrees_dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        all_entries.sort();
+        for name in &all_entries {
+            let admin = worktrees_dir.join(name);
+            let gitdir_file = admin.join("gitdir");
+            if let Ok(raw) = fs::read_to_string(&gitdir_file) {
+                let target = PathBuf::from(raw.trim());
+                let target_canonical = target.canonicalize().unwrap_or(target);
+                if let Some(first_name) = gitdir_targets.get(&target_canonical) {
+                    if first_name != name {
+                        // Duplicate! Remove this one.
+                        if args.verbose || args.dry_run {
+                            eprintln!("Removing worktrees/{name}: duplicate entry");
+                        }
+                        if !args.dry_run {
+                            let _ = fs::remove_dir_all(&admin);
+                        }
+                    }
+                } else {
+                    gitdir_targets.insert(target_canonical, name.clone());
+                }
+            }
+        }
+    }
+
     // If .git/worktrees is now empty, remove it too
     if !args.dry_run && worktrees_dir.exists() {
         if let Ok(mut entries) = fs::read_dir(&worktrees_dir) {
