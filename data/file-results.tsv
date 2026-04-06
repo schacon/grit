@@ -438,7 +438,7 @@ t4103-apply-binary	yes	24	7	17	ok	7	24	0
 t4104-apply-boundary	yes	24	18	6	ok	18	24	0
 t4105-apply-fuzz	yes	9	2	7	ok	2	9	0
 t4106-apply-stdin	yes	3	3	0	ok	3	3	0
-t4107-apply-ignore-whitespace	yes	11	7	4	ok	7	11	0
+t4107-apply-ignore-whitespace	yes	11	11	0	ok	11	11	0
 t4108-apply-threeway	yes	18	4	14	ok	4	18	0
 t4109-apply-multifrag	yes	3	3	0	ok	3	3	0
 t4110-apply-scan	yes	1	1	0	ok	1	1	0

@@ -420,7 +420,7 @@ commit → check it off → move on.
 - [x] `t4258-am-quoted-cr` ████████████████████ 4/4 (0 left) — test am --quoted-cr=<action>
 - [x] `t4072-diff-max-depth` ████████████████████ 76/76 (0 left) — check that diff --max-depth will limit recursion
 - [x] `t4040-whitespace-status` ████████████████████ 11/11 (0 left) — diff --exit-code with whitespace
-- [~] `t4107-apply-ignore-whitespace` ████████████░░░░░░░░ 7/11 (4 left) — git-apply --ignore-whitespace.
+- [x] `t4107-apply-ignore-whitespace` ████████████████████ 11/11 (0 left) — git-apply --ignore-whitespace (`--ignore-whitespace`, `--ignore-space-change`, `--no-ignore-whitespace`, and `--inaccurate-eof` behavior now matches this test)
 - [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
 

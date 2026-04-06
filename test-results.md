@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `git apply` whitespace-ignore/inaccurate-eof option support and hunk application mode propagation updates).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4107-apply-ignore-whitespace.sh` (from `tests/`): 11/11 passing.
+- `./scripts/run-tests.sh t4107-apply-ignore-whitespace.sh`: 11/11 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4107-apply-ignore-whitespace`: 11/11 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `diff_index_to_worktree` conflict-path handling update for `t4049`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4049-diff-stat-count.sh` (from `tests/`): 3/4 passing; remaining local mismatch is test 2 where this mirror's `test_chmod` helper only applies `--chmod` to one path.
 - `./scripts/run-tests.sh t4049-diff-stat-count.sh`: 3/4 passing; `data/file-results.tsv` refreshed.
