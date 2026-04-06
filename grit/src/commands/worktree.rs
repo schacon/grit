@@ -805,6 +805,13 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             writeln!(out)?;
         }
     } else {
+        // Compute max path display width for column alignment (min 40, use char count not bytes)
+        let max_path_len = entries
+            .iter()
+            .map(|e| e.path.display().to_string().chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(40);
         for entry in &entries {
             let sha = match &entry.head {
                 HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
@@ -825,13 +832,15 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             };
 
             let lock_marker = if entry.is_locked { " locked" } else { "" };
+            let path_str = entry.path.display().to_string();
             writeln!(
                 out,
-                "{:<40} {} {}{}",
-                entry.path.display(),
+                "{:<width$} {} {}{}",
+                path_str,
                 sha,
                 branch_info,
                 lock_marker,
+                width = max_path_len,
             )?;
         }
     }
