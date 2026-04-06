@@ -4,6 +4,11 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6433-merge-toplevel.sh`: 15/15 passing (direct validation after merge fixes for unborn octopus refusal, `FETCH_HEAD` multi-tip expansion, octopus fast-forward parent handling, and `--autostash` apply message/restore behavior).
+- `./scripts/run-tests.sh t6433-merge-toplevel.sh`: 15/15 passing (now fully passing).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge frontend updates for `t6433`).
+- `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (regression check after merge frontend updates for `t6433`).
+- `./scripts/run-tests.sh t6409-merge-subtree.sh`: 7/12 passing (snapshot check; remains partial in current harness).
 - `PATH="/tmp:$PATH" GUST_BIN=/workspace/target/release/grit bash tests/t6102-rev-list-unexpected-objects.sh`: 22/22 passing (direct validation with temporary `hex2oct` helper available in `PATH`; confirms `rev-list --objects` now handles unexpected object types and tag type-mismatch diagnostics as expected).
 - `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (now fully passing in harness when helper is available).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after object-root handling changes).

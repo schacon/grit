@@ -748,7 +748,7 @@ t6429-merge-sequence-rename-caching	yes	11	1	10	ok	1	11	0
 t6430-merge-recursive	yes	36	10	26	ok	10	36	0
 t6431-merge-criscross	yes	2	2	0	ok	2	2	0
 t6432-merge-recursive-space-options	yes	11	0	11	ok	0	11	0
-t6433-merge-toplevel	yes	15	6	9	ok	6	15	0
+t6433-merge-toplevel	yes	15	15	0	ok	15	15	0
 t6434-merge-recursive-rename-options	yes	27	5	22	ok	5	27	0
 t6435-merge-sparse	yes	6	6	0	ok	6	6	0
 t6436-merge-overwrite	yes	18	4	14	ok	4	18	0

@@ -229,6 +229,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // Read merge.ff config and apply unless overridden by CLI flags.
     // CLI flags (--ff, --no-ff, --ff-only) take precedence over config.
     let repo = Repository::discover(None).context("not a git repository")?;
+    if args.commits.len() == 1 && args.commits[0] == "FETCH_HEAD" {
+        args.commits = read_fetch_head_merge_oids(&repo)?;
+    }
     {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
@@ -466,6 +469,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
 fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
+    if args.commits.len() != 1 {
+        bail!("Can merge only exactly one commit into empty head");
+    }
     let merge_oid = resolve_merge_target(repo, &args.commits[0])?;
     update_head(&repo.git_dir, head, &merge_oid)?;
     // Update index and working tree
@@ -875,6 +881,12 @@ fn do_real_merge(
         &mut theirs_entries,
     );
 
+    let autostash_entries = if args.autostash {
+        capture_dirty_tracked_entries(repo)?
+    } else {
+        Vec::new()
+    };
+
     // Sparse checkout safety: if a SKIP_WORKTREE path is currently present in
     // the working tree and this merge would update that path, abort before
     // touching the index/worktree so user data is preserved.
@@ -906,12 +918,14 @@ fn do_real_merge(
         .ok()
         .as_deref()
         .is_some_and(|v| v.trim() == "0");
-    bail_if_merge_would_overwrite_local_changes(
-        repo,
-        &ours_entries,
-        &merge_result.index,
-        append_strategy_failed,
-    )?;
+    if !args.autostash {
+        bail_if_merge_would_overwrite_local_changes(
+            repo,
+            &ours_entries,
+            &merge_result.index,
+            append_strategy_failed,
+        )?;
+    }
 
     // Write index
     merge_result.index.write(&repo.index_path())?;
@@ -1063,6 +1077,11 @@ fn do_real_merge(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
     update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if args.autostash && !autostash_entries.is_empty() {
+        apply_autostash_entries(repo, &autostash_entries)?;
+        eprintln!("Applied autostash.");
+    }
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -1484,6 +1503,10 @@ fn do_octopus_merge(
         return Ok(());
     }
 
+    let head_is_ancestor_of_all = merge_oids
+        .iter()
+        .all(|oid| is_ancestor(repo, head_oid, *oid).unwrap_or(false));
+
     // If only one merge target remains after filtering, delegate to single merge
     if merge_oids.len() == 1 {
         let merge_oid = merge_oids[0];
@@ -1644,7 +1667,11 @@ fn do_octopus_merge(
     let author = resolve_ident(&config, "author", now)?;
     let committer = resolve_ident(&config, "committer", now)?;
 
-    let mut parents = vec![head_oid];
+    let mut parents = if !args.no_ff && head_is_ancestor_of_all {
+        Vec::new()
+    } else {
+        vec![head_oid]
+    };
     parents.extend(merge_oids);
 
     let commit_data = CommitData {
@@ -3545,6 +3572,79 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
 fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     use grit_lib::rev_parse::resolve_revision;
     resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{}: {}", spec, e))
+}
+
+fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {
+    let fetch_head_path = repo.git_dir.join("FETCH_HEAD");
+    let content = fs::read_to_string(&fetch_head_path)
+        .with_context(|| "FETCH_HEAD: object not found: FETCH_HEAD".to_string())?;
+
+    let mut oids = Vec::new();
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut parts = line.split('\t');
+        let Some(oid) = parts.next() else {
+            continue;
+        };
+        let not_for_merge = parts.next().is_some_and(|value| value == "not-for-merge");
+        if not_for_merge {
+            continue;
+        }
+        if oid.len() == 40 && oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            oids.push(oid.to_owned());
+        }
+    }
+
+    if oids.is_empty() {
+        bail!("FETCH_HEAD: object not found: FETCH_HEAD");
+    }
+    Ok(oids)
+}
+
+#[derive(Clone)]
+struct AutoStashEntry {
+    path: String,
+    content: Vec<u8>,
+}
+
+fn capture_dirty_tracked_entries(repo: &Repository) -> Result<Vec<AutoStashEntry>> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let index = Index::load(&repo.index_path())?;
+    let mut entries = Vec::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path).to_string();
+        let abs = work_tree.join(&path);
+        if fs::symlink_metadata(&abs).is_err() {
+            continue;
+        }
+        if is_worktree_entry_dirty(repo, entry, &abs)? {
+            if let Ok(content) = fs::read(&abs) {
+                entries.push(AutoStashEntry { path, content });
+            }
+        }
+    }
+    Ok(entries)
+}
+
+fn apply_autostash_entries(repo: &Repository, entries: &[AutoStashEntry]) -> Result<()> {
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(());
+    };
+    for entry in entries {
+        let abs = work_tree.join(&entry.path);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&abs, &entry.content)?;
+    }
+    Ok(())
 }
 
 /// Build the default merge commit message.

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    70 |
-| In progress |     1 |
+| Completed   |    71 |
+| In progress |     0 |
 | Remaining   |   696 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6433-merge-toplevel` — 15/15 tests pass (`merge` now expands `FETCH_HEAD` into mergeable tips for octopus merges, rejects merging multiple heads into an unborn branch, omits redundant HEAD parent in octopus fast-forward ancestry cases, and restores tracked dirty worktree files for successful `--autostash` merges with `Applied autostash.` output)
 - `t6102-rev-list-unexpected-objects` — 22/22 tests pass (`rev-list --objects` now accepts non-commit positive tips as object roots while preserving commit walk semantics for standard tips; tree-walk validation now reports expected corruption diagnostics for wrong entry kinds and for tag-root type mismatches (e.g. `not a blob` / `not a tree` / `not a commit`), matching upstream object-type expectations in lone and seen-object traversal cases)
 - `t6131-pathspec-icase` — 9/9 tests pass (implemented robust `:(icase)` pathspec resolution from subdirectories by preserving a case-sensitive cwd prefix via internal `prefix:` magic; updated shared pathspec matcher plus `ls-files`/`log` pathspec normalization so magic pathspecs no longer over-match sibling directories when invoked from `-C`/subdir contexts)
 - `t6060-merge-index` — 7/7 tests pass (`merge-index` now supports Git-compatible `-o`/`-q`, argument ordering, and built-in dispatch for `git-merge-one-file`; helper now updates stage-0 index entries via effective `GIT_INDEX_FILE`, requires a work tree for working-tree writes, and writes merged content to index+worktree; `diff-files` now honors `--diff-filter` and `rev-parse` now resolves `:path`/`:N:path` against effective `GIT_INDEX_FILE`)
