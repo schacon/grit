@@ -221,6 +221,10 @@ fn run_expire(args: ExpireArgs) -> Result<()> {
         grit_lib::reflog::list_reflog_refs(&repo.git_dir).map_err(|e| anyhow::anyhow!("{e}"))?
     } else {
         let refname = args.refname.as_deref().unwrap_or("HEAD");
+        // Reject ref@{N} syntax — expire takes a refname, not a specific entry.
+        if refname.contains("@{") {
+            bail!("error: reflog expire does not accept specific entries like '{refname}'");
+        }
         let resolved = resolve_refname(&repo, refname)?;
         vec![resolved]
     };
@@ -280,27 +284,35 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
             if args.updateref {
                 let entries =
                     read_reflog(&repo.git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
-                // Entries are oldest-first; indices are newest-first
+                // Entries newest-first (index 0 = most recent)
                 let mut reversed = entries.clone();
                 reversed.reverse();
-                // Figure out which entries will remain after deletion
+
+                // Determine which OID to update the ref to.
+                // - If index 0 is being deleted: use new_oid of new index 0 (next surviving entry)
+                // - Otherwise: use old_oid of the current index 0 (= new_oid of the deleted entry,
+                //   since deleting a middle entry effectively rewinds to that state)
                 let indices_set: std::collections::HashSet<usize> =
                     indices.iter().copied().collect();
-                let remaining: Vec<&grit_lib::reflog::ReflogEntry> = reversed
+
+                // Determine the OID to update the ref to:
+                // Use the new_oid of whatever becomes the new HEAD@{0} after deletion.
+                // When deleting a non-top entry, the new top's new_oid is used.
+                // This matches git's behavior for --updateref.
+                let update_oid = reversed
                     .iter()
                     .enumerate()
-                    .filter(|(i, _)| !indices_set.contains(i))
-                    .map(|(_, e)| e)
-                    .collect();
-                if let Some(new_top) = remaining.first() {
-                    let update_oid = &new_top.new_oid;
+                    .find(|(i, _)| !indices_set.contains(i))
+                    .map(|(_, e)| e.new_oid.clone());
+
+                if let Some(oid) = update_oid {
                     if refname == "HEAD" {
                         if let Ok(Some(target)) = grit_lib::refs::read_head(&repo.git_dir) {
-                            grit_lib::refs::write_ref(&repo.git_dir, &target, update_oid)
+                            grit_lib::refs::write_ref(&repo.git_dir, &target, &oid)
                                 .map_err(|e| anyhow::anyhow!("{e}"))?;
                         }
                     } else {
-                        grit_lib::refs::write_ref(&repo.git_dir, refname, update_oid)
+                        grit_lib::refs::write_ref(&repo.git_dir, refname, &oid)
                             .map_err(|e| anyhow::anyhow!("{e}"))?;
                     }
                 }
