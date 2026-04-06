@@ -25,6 +25,7 @@ use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use std::collections::BTreeSet;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
@@ -112,6 +113,14 @@ impl WhitespaceMode {
 #[derive(Debug, ClapArgs)]
 #[command(about = "Show changes between commits, commit and working tree, etc.")]
 pub struct Args {
+    /// Produce combined diff format from merge commits.
+    #[arg(short = 'c')]
+    pub combined: bool,
+
+    /// Produce dense combined diff format from merge commits.
+    #[arg(long = "cc")]
+    pub dense_combined: bool,
+
     /// Show staged changes (index vs HEAD). Alias: --staged.
     #[arg(long = "cached", alias = "staged")]
     pub cached: bool,
@@ -425,6 +434,8 @@ pub fn run(mut args: Args) -> Result<()> {
             match r.as_str() {
                 "--name-only" => args.name_only = true,
                 "--name-status" => args.name_status = true,
+                "-c" => args.combined = true,
+                "--cc" => args.dense_combined = true,
                 "--numstat" => args.numstat = true,
                 "--shortstat" => args.shortstat = true,
                 "--summary" => args.summary = true,
@@ -627,6 +638,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let entries: Vec<DiffEntry> = match (args.cached, revs.len()) {
+        (_, _) if args.combined || args.dense_combined => combined_diff_entries(&repo, &revs)?,
         (true, 0) => {
             // --cached with no revision: index vs HEAD
             diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
@@ -1022,6 +1034,87 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Build synthetic entries for combined-diff path listing (`-c`/`--cc`).
+///
+/// For a merge result tree and its parent trees, Git combined path listing
+/// keeps only paths that differ from *all* parents. This helper computes that
+/// intersection and returns deterministic, sorted synthetic entries.
+fn combined_diff_entries(repo: &Repository, revs: &[String]) -> Result<Vec<DiffEntry>> {
+    let (base_tree, parent_trees) = resolve_combined_tree_set(repo, revs)?;
+    if parent_trees.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut common_paths: Option<BTreeSet<String>> = None;
+    for parent_tree in parent_trees {
+        let entries = diff_trees(&repo.odb, Some(&parent_tree), Some(&base_tree), "")?;
+        let paths: BTreeSet<String> = entries
+            .into_iter()
+            .map(|entry| entry.path().to_owned())
+            .collect();
+        common_paths = Some(match common_paths {
+            None => paths,
+            Some(prev) => prev.intersection(&paths).cloned().collect(),
+        });
+    }
+
+    let mut result = Vec::new();
+    for path in common_paths.unwrap_or_default() {
+        result.push(DiffEntry {
+            status: DiffStatus::Modified,
+            old_path: Some(path.clone()),
+            new_path: Some(path),
+            old_mode: "000000".to_owned(),
+            new_mode: "000000".to_owned(),
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
+    }
+    Ok(result)
+}
+
+/// Resolve the base tree and parent trees for combined-diff calculations.
+fn resolve_combined_tree_set(
+    repo: &Repository,
+    revs: &[String],
+) -> Result<(ObjectId, Vec<ObjectId>)> {
+    if revs.is_empty() {
+        bail!("combined diff requires at least one revision");
+    }
+
+    if revs.len() == 1 {
+        let commit_oid = resolve_revision(repo, &revs[0])
+            .with_context(|| format!("unknown revision: '{}'", revs[0]))?;
+        let commit_obj = repo
+            .odb
+            .read(&commit_oid)
+            .with_context(|| format!("reading commit {}", revs[0]))?;
+        if commit_obj.kind != ObjectKind::Commit {
+            bail!("'{}' does not name a commit", revs[0]);
+        }
+        let commit = parse_commit(&commit_obj.data).context("parsing commit for combined diff")?;
+        let parent_trees = commit
+            .parents
+            .iter()
+            .map(|parent| {
+                let parent_obj = repo.odb.read(parent).context("reading parent commit")?;
+                let parent_commit =
+                    parse_commit(&parent_obj.data).context("parsing parent commit")?;
+                Ok(parent_commit.tree)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        return Ok((commit.tree, parent_trees));
+    }
+
+    let base_tree = commit_or_tree_oid(repo, &revs[0])?;
+    let parent_trees = revs[1..]
+        .iter()
+        .map(|rev| commit_or_tree_oid(repo, rev))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((base_tree, parent_trees))
 }
 
 /// Split args on `--` to separate revisions from paths.

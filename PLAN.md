@@ -428,9 +428,9 @@ commit → check it off → move on.
 - [x] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch (`--apply` compatibility flag added; worktree apply now preserves existing executable bit when patch mode is unspecified for rename/copy hunks)
 
 - [x] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion (`core.whitespace tabwidth=<n>` expansion now normalizes leading indent for context matching and whitespace-fix output)
-- [~] `t4023-diff-rename-typechange` ██████████░░░░░░░░░░ 2/4 (2 left) — typechange rename detection (`-B`/`--break-rewrites` + `-M` wiring and `T100` output now match; remaining local/upstream harness mismatch is missing `../Makefile` fixture in this environment)
-- [~] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
-- [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
+- [x] `t4023-diff-rename-typechange` ████████████████████ 4/4 (0 left) — typechange rename detection (`commit -a` now stages symlink paths via `symlink_metadata`; `diff-tree -B/-M` wiring now emits expected cross-rename/copy pairs and `T100`; this environment still needs the top-level `Makefile` fixture mirrored for harness setup parity)
+- [x] `t4057-diff-combined-paths` ████████████████████ 4/4 (0 left) — combined diff show only paths that are different to all parents (`git diff -c/--cc --name-only` now computes intersection of paths changed versus every parent)
+- [~] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
 - [ ] `t4207-log-decoration-colors` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — test 
 - [ ] `t4055-diff-context` ██████████░░░░░░░░░░ 5/10 (5 left) — diff.context configuration
 - [ ] `t4064-diff-oidfind` ██████████░░░░░░░░░░ 5/10 (5 left) — test finding specific blobs in the revision walking

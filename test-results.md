@@ -2,6 +2,17 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `git diff -c/--cc` combined path-list support for merge parents and parser handling of `-c`/`--cc`).
+- `./scripts/run-tests.sh t4057-diff-combined-paths.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4057-diff-combined-paths`: 4/4 passing in isolated upstream harness.
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4057-diff-combined-paths.sh` (from `tests/`): 0/4 in this local shell run due `test-lib.sh` cleanup/cwd race after first assertion; tracked harness confirms full pass.
+- Regression checks:
+  - `./scripts/run-tests.sh t4023-diff-rename-typechange.sh`: 2/4 (known fixture mismatch in this environment; unchanged behavior).
+  - `./scripts/run-tests.sh t4038-diff-combined.sh`: 6/26 (existing baseline; no regression observed from this focused parser/path-list update).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `commit -a` symlink staging fix and `diff-tree -B/-M` typechange/copy name-status updates for `t4023`).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4023-diff-rename-typechange.sh` (from `tests/`): 2/4 passing; remaining local failures are setup fixture mismatch (`tests/../Makefile` missing in this repo mirror) and dependent `five..six` assertion.
 - `./scripts/run-tests.sh t4023-diff-rename-typechange.sh`: 2/4 passing; `data/file-results.tsv` refreshed.

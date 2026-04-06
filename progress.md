@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    82 |
+| Completed   |    83 |
 | In progress |     1 |
-| Remaining   |   684 |
+| Remaining   |   683 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4057-diff-combined-paths` — 4/4 tests pass (`git diff -c/--cc --name-only` now uses merge-combined path filtering and supports explicit merge-parent revision sets)
 - `t4049-diff-stat-count` — 4/4 tests pass in upstream harness (`diff --stat` file-count and summary accounting is complete; this mirror still reports 3/4 due simplified `test_chmod` helper behavior)
 - `t4138-apply-ws-expansion` — 5/5 tests pass (`git apply --whitespace=fix` now honors `core.whitespace=tab-in-indent,tabwidth=<n>` expansion semantics when matching tab-indented context/removal lines against space-expanded preimages)
 - `t4102-apply-rename` — 5/5 tests pass (`git apply` now accepts compatibility `--apply` and preserves executable mode for rename/copy patch targets by inheriting source file metadata when patch mode headers are omitted)
@@ -76,4 +77,4 @@
 
 ## What Remains
 
-1 test file is currently marked in progress (`t4023-diff-rename-typechange`) and 684 remain pending. See `plan.md` for the full prioritized list.
+1 test file is currently marked in progress (`t4023-diff-rename-typechange`) and 683 remain pending. See `plan.md` for the full prioritized list.
