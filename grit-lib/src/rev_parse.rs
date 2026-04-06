@@ -202,9 +202,81 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 /// Resolve `@{push}` for a given branch.
 fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
-    // @{push} is typically the same as @{upstream} unless push remote differs
-    // For simplicity, treat it the same way
+    // Check push.default configuration
+    let config_path = crate::refs::common_dir(&repo.git_dir)
+        .unwrap_or_else(|| repo.git_dir.clone())
+        .join("config");
+    let config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+    // Parse push.default
+    let push_default = parse_config_value(&config_content, "push", "default");
+    match push_default.as_deref().unwrap_or("simple") {
+        "nothing" => return None, // no push destination
+        _ => {}
+    }
+
+    // Check for explicit push remote (remote.pushRemote or branch.<name>.pushRemote)
+    let push_remote = parse_config_value(&config_content, "remote", "pushRemote").or_else(|| {
+        let section = format!("[branch \"{}\"]", branch);
+        let mut in_section = false;
+        for line in config_content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                in_section = trimmed == section;
+                continue;
+            }
+            if in_section {
+                if let Some(v) = trimmed
+                    .strip_prefix("pushremote = ")
+                    .or_else(|| trimmed.strip_prefix("pushRemote = "))
+                {
+                    return Some(v.trim().to_owned());
+                }
+            }
+        }
+        None
+    });
+
+    if let Some(remote) = push_remote {
+        // Find the push refspec for this remote
+        let tracking_ref = format!("refs/remotes/{remote}/{branch}");
+        if crate::refs::resolve_ref(&repo.git_dir, &tracking_ref).is_ok() {
+            return Some(tracking_ref);
+        }
+    }
+
+    // Fall back to upstream tracking
     resolve_upstream_ref(repo, branch)
+}
+
+fn parse_config_value(config: &str, section: &str, key: &str) -> Option<String> {
+    let section_header = format!("[{}]", section);
+    let mut in_section = false;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed.eq_ignore_ascii_case(&section_header);
+            continue;
+        }
+        if in_section {
+            if let Some(rest) = trimmed
+                .to_ascii_lowercase()
+                .strip_prefix(&format!("{}.", key))
+                .or_else(|| {
+                    trimmed
+                        .to_ascii_lowercase()
+                        .strip_prefix(&format!("{} = ", key))
+                        .map(|_| &trimmed[key.len() + 3..])
+                })
+            {
+                let _ = rest;
+                // Parse the value after '='
+                if let Some(eq_pos) = trimmed.find('=') {
+                    return Some(trimmed[eq_pos + 1..].trim().to_owned());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Parse branch tracking configuration from git config content.
