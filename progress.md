@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    93 |
+| Completed   |    94 |
 | In progress |     0 |
-| Remaining   |   674 |
+| Remaining   |   673 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1004-read-tree-m-u-wf` — 17/17 tests pass (implemented `read-tree -m -u` worktree safety checks to detect untracked and locally modified overwrite hazards before update, added support for `--exclude-per-directory=.gitignore` to allow ignored-file clobbering in compatibility scenarios while validating unsupported forms, skipped no-op blob rewrites during checkout updates to preserve local edits not touched by the merge, and wired legacy `merge-resolve` / `merge-recursive` command aliases to the existing 3-way read-tree merge path used by upstream D/F resolve coverage)
 - `t1014-read-tree-confusing` — 28/28 tests pass (normalized zero-width space test variable setup in the test harness to be locale-independent under `LC_ALL=C`, and hardened `read-tree` HFS-protection checks by normalizing path components with U+200C removed before case-insensitive `.git` equivalence checks so confusing Unicode dotgit variants are rejected while legitimate UTF-8 paths still pass when protection is disabled)
 - `t1416-ref-transaction-hooks` — 10/10 tests pass (fixed test-hook lifecycle semantics in the local harness so hooks created without `--setup` are cleaned up after each test via `test_when_finished`, preventing stale `reference-transaction` hooks from leaking into later tests and polluting hook output in queued `update-ref --stdin` symref transactions)
 - `t1403-show-ref` — 12/12 tests pass (extended the `test_commit` test helper to accept `--annotate` so setup creates annotated tags expected by upstream scripts; and fixed `show-ref -d` peeling to emit `^{} ` entries only for annotated tag refs by requiring `refs/tags/*` and peeling tag objects through nested tags while avoiding pseudo/branch refs)
@@ -86,4 +87,4 @@
 
 ## What Remains
 
-677 test files still pending. See `plan.md` for the full prioritized list.
+673 test files still pending. See `plan.md` for the full prioritized list.

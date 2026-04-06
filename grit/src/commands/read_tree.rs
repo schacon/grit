@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::error::Error as GustError;
+use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
@@ -45,6 +46,10 @@ pub struct Args {
     /// Dry-run: perform checks but do not actually update the index.
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
+
+    /// Per-directory ignore file name used to allow clobbering ignored files.
+    #[arg(long = "exclude-per-directory")]
+    pub exclude_per_directory: Option<String>,
 
     /// Empty the index.
     #[arg(long = "empty")]
@@ -204,6 +209,19 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    let allow_ignored_overwrite = match args.exclude_per_directory.as_deref() {
+        None => false,
+        Some(".gitignore") => {
+            if !args.update {
+                bail!("--exclude-per-directory requires -u");
+            }
+            true
+        }
+        Some(other) => {
+            bail!("unsupported --exclude-per-directory value '{other}'");
+        }
+    };
+
     if args.reset {
         // Reset mode is a hard replacement by the final tree argument.
         let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
@@ -266,6 +284,9 @@ pub fn run(args: Args) -> Result<()> {
     // Apply sparse checkout: set skip-worktree on entries not matching patterns
     apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
 
+    if args.update {
+        validate_worktree_updates(&repo, &old_index, &new_index, allow_ignored_overwrite)?;
+    }
     if !dry_run && args.update {
         checkout_index_entries(&repo, &old_index, &new_index)?;
     }
@@ -719,8 +740,19 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         None => return Ok(()),
     };
 
-    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
-    let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
+    let old_paths: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    let new_paths: HashSet<Vec<u8>> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    let old_stage0 = stage0_index_map(old_index);
 
     // Collect paths that have skip-worktree in the new index
     let new_skip_worktree: HashSet<Vec<u8>> = new_index
@@ -757,6 +789,12 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         }
         // Skip entries with skip-worktree bit set
         if entry.skip_worktree() {
+            continue;
+        }
+        if old_stage0
+            .get(&entry.path)
+            .is_some_and(|old_entry| same_blob(old_entry, entry))
+        {
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -808,6 +846,110 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         }
     }
     Ok(())
+}
+
+fn validate_worktree_updates(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+    allow_ignored_overwrite: bool,
+) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let old_stage0 = stage0_index_map(old_index);
+    let new_stage0 = stage0_index_map(new_index);
+
+    let mut all_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+    all_paths.extend(old_stage0.keys().cloned());
+    all_paths.extend(new_stage0.keys().cloned());
+
+    let mut ignore_matcher = if allow_ignored_overwrite {
+        Some(IgnoreMatcher::from_repository(repo)?)
+    } else {
+        None
+    };
+
+    for path in all_paths {
+        let old = old_stage0.get(&path);
+        let new = new_stage0.get(&path);
+
+        if let (Some(old_entry), Some(new_entry)) = (old, new) {
+            if same_blob(old_entry, new_entry) {
+                continue;
+            }
+        }
+
+        let rel_path = String::from_utf8_lossy(&path).into_owned();
+        let abs_path = work_tree.join(&rel_path);
+        let exists = std::fs::symlink_metadata(&abs_path)
+            .map(|_| true)
+            .unwrap_or(false);
+
+        if !exists {
+            continue;
+        }
+
+        match (old, new) {
+            (None, Some(_)) => {
+                if allow_ignored_overwrite {
+                    if let Some(ref mut matcher) = ignore_matcher {
+                        let (ignored, _) = matcher
+                            .check_path(repo, Some(old_index), &rel_path, false)
+                            .map_err(anyhow::Error::from)?;
+                        if ignored {
+                            continue;
+                        }
+                    }
+                }
+                bail!(
+                    "untracked working tree file '{}' would be overwritten by merge",
+                    rel_path
+                );
+            }
+            (Some(old_entry), Some(_)) | (Some(old_entry), None) => {
+                if !worktree_matches_entry(repo, old_entry, &abs_path)? {
+                    bail!(
+                        "local changes to '{}' would be overwritten by merge",
+                        rel_path
+                    );
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn worktree_matches_entry(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {
+    let obj = repo.odb.read(&entry.oid)?;
+    if obj.kind != ObjectKind::Blob {
+        return Ok(false);
+    }
+
+    let metadata = match std::fs::symlink_metadata(abs_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+
+    if entry.mode == MODE_SYMLINK {
+        if !metadata.file_type().is_symlink() {
+            return Ok(false);
+        }
+        let target = std::fs::read_link(abs_path)?;
+        return Ok(target.to_string_lossy().as_bytes() == obj.data.as_slice());
+    }
+
+    if !metadata.is_file() {
+        return Ok(false);
+    }
+
+    let data = std::fs::read(abs_path)?;
+    Ok(data == obj.data)
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {

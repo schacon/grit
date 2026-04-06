@@ -82,7 +82,7 @@ t1000-read-tree-m-3way	yes	83	47	36	ok	47	83	0
 t1001-read-tree-m-2way	yes	29	16	13	ok	16	29	0
 t1002-read-tree-m-u-2way	yes	22	6	16	ok	6	22	0
 t1003-read-tree-prefix	yes	3	3	0	ok	3	3	0
-t1004-read-tree-m-u-wf	yes	17	9	8	ok	9	17	0
+t1004-read-tree-m-u-wf	yes	17	17	0	ok	17	17	0
 t1005-read-tree-reset	yes	7	7	0	ok	7	7	0
 t1006-cat-file	yes	0	0	0	timeout	0	0	0
 t1007-hash-object	yes	40	15	25	ok	15	40	0

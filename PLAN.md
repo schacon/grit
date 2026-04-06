@@ -112,7 +112,7 @@ commit → check it off → move on.
 - [x] `t1421-reflog-write` ████████████████████ 10/10 (0 left) — Manually write reflog entries
 - [x] `t1403-show-ref` ████████████████████ 12/12 (0 left) — show-ref
 - [ ] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
-- [ ] `t1004-read-tree-m-u-wf` ███████░░░░░░░░░░░░░ 6/17 (11 left) — read-tree -m -u checks working tree files
+- [x] `t1004-read-tree-m-u-wf` ████████████████████ 17/17 (0 left) — read-tree -m -u checks working tree files
 - [ ] `t1411-reflog-show` ███████░░░░░░░░░░░░░ 6/17 (11 left) — Test reflog display routines
 - [ ] `t0212-trace2-event` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — test trace2 facility
 - [ ] `t0613-reftable-write-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — reftable write options
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,802/24,806 tests passing, 16,004 failures remaining**
+**8,813/24,806 tests passing, 15,993 failures remaining**

@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after `read-tree -m -u` worktree-overwrite safety checks, `--exclude-per-directory=.gitignore` compatibility support, and legacy `merge-resolve` / `merge-recursive` command aliases).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1004-read-tree-m-u-wf.sh` (run from `/workspace/tests`): 17/17 passing (improved from 6/17).
+- `./scripts/run-tests.sh t1004-read-tree-m-u-wf.sh`: 17/17 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1306-xdg-files.sh`: 12/21 passing (unchanged known pending file).
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo build --release -p grit-rs`: success (after Unicode confusing-path normalization fixes in `read-tree` and locale-independent test harness `u200c` setup).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 28/28 passing (improved from 27/28).
 - `u200c=$'\u200c' GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 28/28 passing (explicit Unicode-variable regression check).

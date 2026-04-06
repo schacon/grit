@@ -2818,6 +2818,29 @@ const KNOWN_COMMANDS: &[&str] = &[
     "write-tree",
 ];
 
+fn run_legacy_merge_strategy(rest: &[String]) -> Result<()> {
+    // Legacy strategy helpers are invoked as:
+    //   git merge-resolve <base> -- <ours> <theirs>
+    //   git merge-recursive <base> -- <ours> <theirs>
+    if rest.len() != 4 || rest[1] != "--" {
+        bail!("usage: <merge-strategy> <base> -- <ours> <theirs>");
+    }
+
+    let read_tree_args = commands::read_tree::Args {
+        merge: true,
+        index_only: false,
+        update: true,
+        reset: false,
+        prefix: None,
+        aggressive: false,
+        dry_run: false,
+        exclude_per_directory: None,
+        empty: false,
+        trees: vec![rest[0].clone(), rest[2].clone(), rest[3].clone()],
+    };
+    commands::read_tree::run(read_tree_args)
+}
+
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -2948,6 +2971,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
         "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
         "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
+        "merge-resolve" => run_legacy_merge_strategy(rest),
+        "merge-recursive" => run_legacy_merge_strategy(rest),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
