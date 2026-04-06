@@ -4,6 +4,12 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6016-rev-list-graph-simplify-history.sh`: 2/12 passing (direct baseline reproduction for active `t6016` work; failures are concentrated in `--graph` rendering and unsupported/partial history-simplification options in `log`).
+- `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh`: 2/12 passing (harness baseline refreshed; source-of-truth TSV updated).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check during `t6016` investigation).
+- `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (rev-list/path-limiter regression check during `t6016` investigation).
+- `./scripts/run-tests.sh t4201-log-graph.sh`: 1/23 passing (snapshot run against broader graph suite while assessing `--graph` implementation scope; no pass claim, used to gauge current graph coverage).
+- `cargo check -p grit-rs`: passing (sanity compile after reverting an unsuccessful experimental `log --graph` implementation attempt during `t6016` debugging).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6001-rev-list-graft.sh`: 14/14 passing (direct validation after wiring `.git/info/grafts` parent rewrites into rev-list commit graph traversal, fixing mixed rev/path token parsing to treat non-revision args as pathspecs after the first path token, and emitting graft deprecation advice from `show` when grafts are present unless `advice.graftFileDeprecated=false`).
 - `./scripts/run-tests.sh t6001-rev-list-graft.sh`: 14/14 passing (now fully passing).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after parser/graph updates).

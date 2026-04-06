@@ -478,6 +478,7 @@ t4151-am-abort	yes	20	2	18	ok	2	20	0
 t4152-am-subjects	yes	13	10	3	ok	10	13	0
 t4153-am-resume-override-opts	yes	6	1	5	ok	1	6	0
 t4200-rerere	yes	36	6	30	ok	6	36	0
+t4201-log-graph	yes	23	1	22	ok	1	23	0
 t4201-shortlog	yes	32	7	25	ok	7	32	0
 t4202-log	yes	149	69	80	ok	69	149	0
 t4203-mailmap	yes	74	14	60	ok	14	74	0
