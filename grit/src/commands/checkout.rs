@@ -356,9 +356,9 @@ pub fn run(args: Args) -> Result<()> {
         bail!("error: previous branch '{}' not found", prev);
     }
 
-    // Handle "checkout HEAD" — no-op when on a branch (don't detach)
+    // Handle "checkout HEAD" (and "@") — no-op when on a branch (don't detach)
     // But with -f, force-reset the working tree
-    if target == "HEAD" && !args.detach {
+    if (target == "HEAD" || target == "@") && !args.detach {
         if args.force {
             return force_reset_to_head(&repo);
         }
