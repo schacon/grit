@@ -452,7 +452,7 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.refresh || args.really_refresh || args.again {
         // Re-stat all entries; exit 1 if any files need updating.
-        let uptodate = refresh_index(
+        let (uptodate, _) = refresh_index(
             &mut index,
             work_tree,
             &repo.odb,
@@ -559,8 +559,10 @@ fn refresh_index(
     odb: &Odb,
     allow_unmerged: bool,
     ignore_missing: bool,
-) -> Result<bool> {
-    // Returns true if all files are up-to-date, false if any are modified.
+) -> Result<(bool, bool)> {
+    // Returns (all_uptodate, index_modified)
+    // all_uptodate: true if no files need updating
+    // index_modified: true if index stat data was changed
     if !allow_unmerged {
         if let Some(entry) = index.entries.iter().find(|entry| entry.stage() != 0) {
             let rel = std::str::from_utf8(&entry.path)
@@ -570,6 +572,7 @@ fn refresh_index(
     }
 
     let mut all_uptodate = true;
+    let mut index_modified = false;
     for entry in &mut index.entries {
         if entry.stage() != 0 {
             continue;
@@ -606,11 +609,16 @@ fn refresh_index(
                         entry.mtime_sec = meta.mtime() as u32;
                         entry.mtime_nsec = meta.mtime_nsec() as u32;
                         entry.size = meta.size() as u32;
+                        index_modified = true;
                     }
                 } else {
-                    // Stat matches, update ctime
-                    entry.ctime_sec = meta.ctime() as u32;
-                    entry.ctime_nsec = meta.ctime_nsec() as u32;
+                    // Stat matches, update ctime if it changed
+                    let new_ctime = meta.ctime() as u32;
+                    if entry.ctime_sec != new_ctime {
+                        entry.ctime_sec = new_ctime;
+                        entry.ctime_nsec = meta.ctime_nsec() as u32;
+                        index_modified = true;
+                    }
                 }
             }
             Err(_) => {
@@ -622,7 +630,7 @@ fn refresh_index(
             }
         }
     }
-    Ok(all_uptodate)
+    Ok((all_uptodate, index_modified))
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {
