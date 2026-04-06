@@ -698,34 +698,51 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= signoff= indir= tag=light message= file= contents= author=
+	local echo=echo append=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
-		--no-tag) tag=; shift ;;
+		--no-tag) tag=none; shift ;;
+		--annotate) tag=annotate; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
-		--printf) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
+		--printf) echo=printf; shift ;;
 		*) break ;;
 		esac
 	done
 	message="${1:?test_commit}" && shift
 	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
+	local tag_name="${1:-$message}"
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
+		if test -n "$append"
+		then
+			$echo "$contents" >>"$file"
+		else
+			$echo "$contents" >"$file"
+		fi &&
 		git add "$file" &&
 		if test -z "$notick"; then
 			test_tick
 		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
-		if test -n "$tag"; then
-			git tag "$message"
-		fi
+		case "$tag" in
+		none) ;;
+		annotate)
+			if test -z "$notick"; then
+				test_tick
+			fi &&
+			git tag -a -m "$message" "$tag_name"
+			;;
+		light)
+			git tag "$tag_name"
+			;;
+		esac
 	)
 }
 

@@ -106,6 +106,9 @@ pub fn run(args: Args) -> Result<()> {
     if args.revision.is_some() && args.mirror {
         bail!("--revision and --mirror are mutually exclusive");
     }
+    if args.recurse_submodules {
+        return passthrough_current_clone_invocation();
+    }
 
     // Detect ext:: transport
     if args.repository.starts_with("ext::") {
@@ -407,6 +410,18 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn passthrough_current_clone_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "clone") else {
+        bail!("failed to determine clone arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    crate::commands::git_passthrough::run("clone", &passthrough_args)
 }
 
 /// Check whether a URL looks like an SSH-style `host:/path` address.

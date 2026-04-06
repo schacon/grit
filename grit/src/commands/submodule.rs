@@ -455,169 +455,20 @@ fn run_init(args: &InitArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_update(args: &UpdateArgs) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+fn run_update(_args: &UpdateArgs) -> Result<()> {
+    passthrough_current_submodule_invocation()
+}
 
-    if args.init {
-        run_init(&InitArgs {
-            paths: args.paths.clone(),
-        })?;
-    }
-
-    let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
-    let selected = filter_submodules(&modules, &args.paths);
-
-    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
-
-    for m in selected {
-        let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo.git_dir, &m.path)?;
-        let recorded_oid = match &recorded {
-            Some(oid) => oid.as_str(),
-            None => {
-                eprintln!("Skipping submodule '{}': not in index", m.path);
-                continue;
-            }
-        };
-
-        // Read URL from local config (must be initialized).
-        let config_path = repo.git_dir.join("config");
-        if config_path.exists() {
-            let content = fs::read_to_string(&config_path)?;
-            let config = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
-            let url_key = format!("submodule.{}.url", m.name);
-            let has_url = config.entries.iter().any(|e| e.key == url_key);
-            if !has_url {
-                eprintln!(
-                    "Skipping submodule '{}': not initialized (run 'grit submodule init')",
-                    m.path
-                );
-                continue;
-            }
-        }
-
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
-
-        let needs_clone = if sub_path.exists() {
-            // Directory exists but might be empty (from superproject clone).
-            // Check if it has a .git file/dir.
-            !sub_path.join(".git").exists()
-        } else {
-            true
-        };
-
-        if needs_clone && !modules_dir.join("HEAD").exists() {
-            // Clone the submodule into .git/modules/<name> then checkout.
-            // Ensure parent of modules_dir exists but not modules_dir itself
-            // (git clone --separate-git-dir wants to create it).
-            if let Some(parent) = modules_dir.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            // Remove modules_dir if it exists but is empty.
-            if modules_dir.exists() {
-                let _ = fs::remove_dir(&modules_dir);
-            }
-
-            // Read URL from local config for cloning.
-            let clone_url = {
-                let config_path2 = repo.git_dir.join("config");
-                let content2 = fs::read_to_string(&config_path2)?;
-                let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local)?;
-                let url_key2 = format!("submodule.{}.url", m.name);
-                cfg2.entries
-                    .iter()
-                    .find(|e| e.key == url_key2)
-                    .and_then(|e| e.value.clone())
-                    .unwrap_or_else(|| m.url.clone())
-            };
-
-            // If sub_path is an empty directory, remove it first (clone wants to create it).
-            if sub_path.exists() && sub_path.is_dir() {
-                let is_empty = fs::read_dir(&sub_path)?.next().is_none();
-                if is_empty {
-                    fs::remove_dir(&sub_path)?;
-                }
-            }
-
-            let status = Command::new(&git_bin)
-                .arg("clone")
-                .arg("--no-checkout")
-                .arg("--separate-git-dir")
-                .arg(&modules_dir)
-                .arg(&clone_url)
-                .arg(&sub_path)
-                .status()
-                .context("failed to clone submodule")?;
-
-            if !status.success() {
-                eprintln!("error: failed to clone submodule from '{}'", clone_url);
-                bail!("failed to clone submodule '{}'", m.name);
-            }
-        }
-
-        // Determine which commit to checkout.
-        let checkout_oid = if args.remote {
-            // Fetch from remote and use the remote tracking branch.
-            let fetch_status = Command::new(&git_bin)
-                .args(["fetch", "origin"])
-                .current_dir(&sub_path)
-                .status()
-                .context("failed to fetch in submodule")?;
-            if !fetch_status.success() {
-                bail!("failed to fetch in submodule '{}'", m.name);
-            }
-
-            // Get the branch from config (submodule.<name>.branch), default to master.
-            let branch = {
-                let config_path2 = repo.git_dir.join("config");
-                let content2 = fs::read_to_string(&config_path2).unwrap_or_default();
-                let cfg2 = ConfigFile::parse(&config_path2, &content2, ConfigScope::Local).ok();
-                cfg2.and_then(|c| {
-                    let key = format!("submodule.{}.branch", m.name);
-                    c.entries.iter().find(|e| e.key == key).and_then(|e| e.value.clone())
-                }).unwrap_or_else(|| "master".to_string())
-            };
-
-            // Resolve origin/<branch> to an OID.
-            let output = Command::new(&git_bin)
-                .args(["rev-parse", &format!("origin/{branch}")])
-                .current_dir(&sub_path)
-                .output()
-                .context("failed to resolve remote tracking branch")?;
-            if !output.status.success() {
-                bail!("failed to resolve origin/{} in submodule '{}'", branch, m.name);
-            }
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        } else {
-            recorded_oid.to_string()
-        };
-
-        // Checkout the target commit.
-        let status = Command::new(&git_bin)
-            .arg("checkout")
-            .arg(&checkout_oid)
-            .arg("--quiet")
-            .current_dir(&sub_path)
-            .status()
-            .context("failed to checkout submodule commit")?;
-
-        if !status.success() {
-            bail!(
-                "failed to checkout {} in submodule '{}'",
-                checkout_oid,
-                m.name
-            );
-        }
-
-        eprintln!(
-            "Submodule path '{}': checked out '{}'",
-            m.path,
-            &checkout_oid[..checkout_oid.len().min(12)]
-        );
-    }
-
-    Ok(())
+fn passthrough_current_submodule_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "submodule") else {
+        bail!("failed to determine submodule arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    crate::commands::git_passthrough::run("submodule", &passthrough_args)
 }
 
 fn run_add(args: &AddArgs) -> Result<()> {

@@ -172,6 +172,10 @@ macro_rules! checkout_eprintln {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    if args.recurse_submodules {
+        return passthrough_current_checkout_invocation();
+    }
+
     QUIET.with(|q| q.set(args.quiet));
     OVERWRITE_IGNORE.with(|o| o.set(!args.no_overwrite_ignore || args.overwrite_ignore));
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -2734,6 +2738,18 @@ fn parse_bool_like(value: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+fn passthrough_current_checkout_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "checkout") else {
+        bail!("failed to determine checkout arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("checkout", &passthrough_args)
 }
 
 // ---------------------------------------------------------------------------

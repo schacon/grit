@@ -263,6 +263,14 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
         }
     }
 
+    // Handle A^! (meaning "A, excluding parents" in revision ranges).
+    // For single-object resolution, this should resolve like plain `A`.
+    if let Some(base) = spec.strip_suffix("^!") {
+        if !base.is_empty() {
+            return resolve_revision(repo, base);
+        }
+    }
+
     // Handle A...B (symmetric difference / merge-base)
     // Also handles A... (implies A...HEAD)
     if let Some(idx) = spec.find("...") {

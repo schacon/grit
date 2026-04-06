@@ -27,6 +27,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use std::process::Command;
 use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
@@ -559,7 +560,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let mut _symmetric = false;
     if revs.len() == 1 {
-        if let Some((left, right)) = revs[0].split_once("...") {
+        if let Some(base) = revs[0].strip_suffix("^!") {
+            if !base.is_empty() {
+                revs = vec![format!("{base}^"), base.to_owned()];
+            }
+        } else if let Some((left, right)) = revs[0].split_once("...") {
             let left = if left.is_empty() { "HEAD" } else { left };
             let right = if right.is_empty() { "HEAD" } else { right };
             let left_oid = resolve_revision(&repo, left)
@@ -980,6 +985,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 use_color,
                 word_diff,
                 wt_for_content,
+                repo.work_tree.as_deref(),
+                args.submodule.is_some(),
                 suppress_blank_empty,
                 patch_abbrev,
                 args.inter_hunk_context,
@@ -1759,6 +1766,8 @@ fn write_patch_with_prefix(
     use_color: bool,
     word_diff: bool,
     work_tree: Option<&Path>,
+    repo_work_tree: Option<&Path>,
+    show_submodule: bool,
     suppress_blank_empty: bool,
     abbrev_len: usize,
     _inter_hunk_context: Option<usize>,
@@ -1767,6 +1776,13 @@ fn write_patch_with_prefix(
     dst_prefix: &str,
 ) -> Result<()> {
     for entry in entries {
+        if show_submodule
+            && (entry.old_mode == "160000" || entry.new_mode == "160000")
+            && write_submodule_short(out, entry, repo_work_tree)?
+        {
+            continue;
+        }
+
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
@@ -1854,6 +1870,61 @@ fn write_patch_with_prefix(
         }
     }
     Ok(())
+}
+
+fn write_submodule_short(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    repo_work_tree: Option<&Path>,
+) -> Result<bool> {
+    // We only print short submodule summaries for gitlink updates where both
+    // sides exist as real commit OIDs.
+    if entry.old_oid == zero_oid() || entry.new_oid == zero_oid() {
+        return Ok(false);
+    }
+    let Some(wt) = repo_work_tree else {
+        return Ok(false);
+    };
+    let path = entry.path();
+    let sub_path = wt.join(path);
+    if !sub_path.exists() {
+        return Ok(false);
+    }
+
+    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+    let range = format!("{}..{}", entry.old_oid.to_hex(), entry.new_oid.to_hex());
+    let output = Command::new(&git_bin)
+        .arg("-C")
+        .arg(&sub_path)
+        .arg("log")
+        .arg("--format=%s")
+        .arg(&range)
+        .output();
+
+    let Ok(output) = output else {
+        return Ok(false);
+    };
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let subjects: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if subjects.is_empty() {
+        return Ok(false);
+    }
+
+    let old_abbrev = &entry.old_oid.to_hex()[..7];
+    let new_abbrev = &entry.new_oid.to_hex()[..7];
+    writeln!(out, "Submodule {path} {old_abbrev}..{new_abbrev}:")?;
+    for subject in subjects {
+        writeln!(out, "  > {subject}")?;
+    }
+    Ok(true)
 }
 
 /// Strip trailing space from blank context lines in unified diff output.
