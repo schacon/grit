@@ -670,18 +670,8 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         None => return Ok(()),
     };
 
-    let old_stage0: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-    let new_stage0: HashSet<Vec<u8>> = new_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
+    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
+    let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
 
     // Collect paths that have skip-worktree in the new index
     let new_skip_worktree: HashSet<Vec<u8>> = new_index
@@ -691,7 +681,7 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         .map(|e| e.path.clone())
         .collect();
 
-    for old_path in old_stage0.difference(&new_stage0) {
+    for old_path in old_paths.difference(&new_paths) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {

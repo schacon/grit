@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    80 |
+| Completed   |    81 |
 | In progress |     0 |
-| Remaining   |   687 |
+| Remaining   |   686 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1005-read-tree-reset` — 7/7 tests pass (fixed reset/checkout/read-tree cleanup for unmerged D/F remnants by removing non-stage0 entries during worktree updates; made index staging replace D/F-conflicting paths so file-vs-directory transitions don’t leave invalid index state; and unified `checkout -f` hard-reset path through tree-based cleanup logic)
 - `t1514-rev-parse-push` — 9/9 tests pass (implemented push-target resolution for `@{push}` honoring `push.default`, `branch.*.pushRemote`, and `remote.pushDefault`; added per-worktree ref namespace support (`main-worktree/*`, `worktrees/<id>/*`) plus ambiguity warnings in revision parsing; wired reflog lookup for cross-worktree refs; and ensured `git push` updates local remote-tracking refs so upstream setup and push-resolution semantics match native Git)
 - `t1415-worktree-refs` — 10/10 tests pass (implemented per-worktree ref resolution for `worktree/*`, `main-worktree/*`, and `worktrees/<id>/*` in `rev-parse`; added cross-worktree reflog lookup support; and fixed `for-each-ref` to include shared refs from the common dir while keeping per-worktree namespaces local)
 - `t1020-subdirectory` — 15/15 tests pass (fixed subdirectory pathspec handling in `diff-files`, propagated `GIT_PREFIX` for built-ins and shell aliases, and enabled external diff execution so `GIT_EXTERNAL_DIFF` receives correct subdirectory context)
@@ -73,4 +74,4 @@
 
 ## What Remains
 
-687 test files still pending. See `plan.md` for the full prioritized list.
+686 test files still pending. See `plan.md` for the full prioritized list.

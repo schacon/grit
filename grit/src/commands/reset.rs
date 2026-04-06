@@ -299,11 +299,9 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
-        {
-            if !staged_paths.contains(path) {
+            && !staged_paths.contains(path) {
                 staged_paths.push(path.clone());
             }
-        }
     }
 
     if staged_paths.is_empty() {
@@ -864,21 +862,11 @@ fn checkout_index_to_worktree(
         .as_ref()
         .map(grit_lib::crlf::ConversionConfig::from_config);
 
-    let old_stage0: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-    let new_stage0: HashSet<Vec<u8>> = new_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
+    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
+    let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
 
     // Remove paths that are no longer present in the new index.
-    for old_path in old_stage0.difference(&new_stage0) {
+    for old_path in old_paths.difference(&new_paths) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {

@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after `t1005-read-tree-reset` fixes in `index`, `read-tree`, `reset`, and `checkout` worktree-update paths).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1005-read-tree-reset && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1005-read-tree-reset.sh` (run from `/workspace/tests`): 7/7 passing.
+- `./scripts/run-tests.sh t1005-read-tree-reset.sh`: 7/7 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo fmt`: success (after `t1514-rev-parse-push` updates).
 - `cargo build --release -p grit-rs`: success.
 - `rm -rf /workspace/tests/trash.t1514-rev-parse-push && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1514-rev-parse-push.sh`: 9/9 passing.

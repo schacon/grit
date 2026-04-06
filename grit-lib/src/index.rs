@@ -435,8 +435,11 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
-        // Remove conflict stages first
-        self.entries.retain(|e| e.path != path || e.stage() == 0);
+        // Remove all entries that conflict by path:
+        // - exact path (all stages),
+        // - parent/child D/F conflicts (e.g. "a" vs "a/b").
+        self.entries
+            .retain(|e| !paths_conflict_for_df(&e.path, &path));
         // Then add/replace stage-0 entry
         self.add_or_replace(entry);
     }
@@ -470,6 +473,17 @@ impl Index {
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
     }
+}
+
+fn paths_conflict_for_df(a: &[u8], b: &[u8]) -> bool {
+    a == b || path_is_parent_of(a, b) || path_is_parent_of(b, a)
+}
+
+fn path_is_parent_of(parent: &[u8], child: &[u8]) -> bool {
+    if parent.len() >= child.len() {
+        return false;
+    }
+    child.starts_with(parent) && child[parent.len()] == b'/'
 }
 
 fn lockfile_pid_enabled(index_path: &Path) -> bool {
@@ -919,6 +933,34 @@ mod tests {
         assert_eq!(loaded.entries.len(), 2);
         assert_eq!(loaded.entries[0].path, b"bar/baz.txt");
         assert_eq!(loaded.entries[1].path, b"foo.txt");
+    }
+
+    #[test]
+    fn stage_file_removes_same_path_conflict_stages() {
+        let mut idx = Index::new();
+        let mut stage1 = make_entry("foo");
+        stage1.flags = (stage1.flags & 0x0FFF) | (1 << 12);
+        let mut stage3 = make_entry("foo");
+        stage3.flags = (stage3.flags & 0x0FFF) | (3 << 12);
+        idx.entries.push(stage1);
+        idx.entries.push(stage3);
+
+        idx.stage_file(make_entry("foo"));
+
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].path, b"foo");
+        assert_eq!(idx.entries[0].stage(), 0);
+    }
+
+    #[test]
+    fn stage_file_removes_df_conflicting_entries() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("df/file"));
+        idx.stage_file(make_entry("df"));
+
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].path, b"df");
+        assert_eq!(idx.entries[0].stage(), 0);
     }
 
     #[test]
