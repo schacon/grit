@@ -15,6 +15,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const ZERO_OID_HEX: &str = "0000000000000000000000000000000000000000";
+
 /// Arguments for `grit submodule`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Initialize, update, or inspect submodules")]
@@ -323,11 +325,15 @@ fn run_status(args: &StatusArgs) -> Result<()> {
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
     let selected = filter_submodules(&modules, &args.paths);
-
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
     for m in selected {
+        if is_submodule_unmerged(&repo, &m.path)? {
+            writeln!(out, "U{ZERO_OID_HEX} {}", m.path)?;
+            continue;
+        }
+
         let sub_path = work_tree.join(&m.path);
         let recorded = read_submodule_commit(&repo.git_dir, &m.path)?;
 
@@ -375,6 +381,15 @@ fn run_status(args: &StatusArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_submodule_unmerged(repo: &Repository, submodule_path: &str) -> Result<bool> {
+    let index = Index::load(&repo.index_path()).context("failed to load index")?;
+    let path_bytes = submodule_path.as_bytes();
+    Ok(index
+        .entries
+        .iter()
+        .any(|entry| entry.path == path_bytes && entry.stage() != 0))
 }
 
 /// Read HEAD of a submodule working directory.

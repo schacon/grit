@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{append_reflog, write_ref};
@@ -299,10 +299,9 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
+            && !staged_paths.contains(path)
         {
-            if !staged_paths.contains(path) {
-                staged_paths.push(path.clone());
-            }
+            staged_paths.push(path.clone());
         }
     }
 
@@ -884,7 +883,7 @@ fn checkout_index_to_worktree(
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         } else if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
+            let _ = std::fs::remove_dir(&abs);
         }
         remove_empty_parent_dirs(&work_tree, &abs);
     }
@@ -892,6 +891,11 @@ fn checkout_index_to_worktree(
     // Write all stage-0 entries from the new index.
     for entry in &mut new_index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();

@@ -14,13 +14,13 @@ use tempfile::NamedTempFile;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
-use grit_lib::refs::resolve_ref;
+use grit_lib::refs::{list_refs, resolve_ref};
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -821,6 +821,38 @@ fn short_oid(oid: ObjectId) -> String {
     hex[..7.min(hex.len())].to_string()
 }
 
+fn build_submodule_branch_map(repo: &Repository) -> HashMap<ObjectId, String> {
+    let mut branches = HashMap::new();
+    let Ok(refs) = list_refs(&repo.git_dir, "refs/heads/") else {
+        return branches;
+    };
+    for (refname, oid) in refs {
+        let name = refname
+            .strip_prefix("refs/heads/")
+            .unwrap_or(refname.as_str())
+            .to_string();
+        branches.insert(oid, name);
+    }
+    branches
+}
+
+fn format_submodule_conflict_advice(
+    conflict: &SubmoduleConflict,
+    branches: &HashMap<ObjectId, String>,
+) -> String {
+    let mut candidates = BTreeSet::new();
+    candidates.insert(short_oid(conflict.theirs));
+    if let Some(name) = branches.get(&conflict.theirs) {
+        candidates.insert(name.clone());
+    }
+
+    let either = candidates.into_iter().collect::<Vec<_>>().join(" or ");
+    format!(
+        "Failed to merge submodule {} (commits don't follow merge-base)\nCONFLICT (submodule): Merge conflict in {}\nRecursive merging with submodules currently only supports trivial cases.\nPlease manually handle the merging of each conflicted submodule.\nThis can be accomplished with the following steps:\n - go to submodule ({}), and either merge commit {}",
+        conflict.path, conflict.path, conflict.path, either
+    )
+}
+
 fn apply_subtree_shift(
     subtree_shift: &SubtreeShift,
     ours: &HashMap<Vec<u8>, IndexEntry>,
@@ -1117,6 +1149,15 @@ fn do_real_merge(
                 println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
             }
         }
+        if !merge_result.submodule_conflicts.is_empty() {
+            let submodule_branches = build_submodule_branch_map(repo);
+            for conflict in &merge_result.submodule_conflicts {
+                eprintln!(
+                    "{}",
+                    format_submodule_conflict_advice(conflict, &submodule_branches)
+                );
+            }
+        }
         println!("Automatic merge failed; fix conflicts and then commit the result.");
         std::process::exit(1);
     }
@@ -1271,6 +1312,9 @@ fn bail_if_merge_would_overwrite_local_changes(
 
     // Dirty tracked paths from HEAD that would change in the target.
     for (path, old_entry) in old_entries {
+        if old_entry.mode == MODE_GITLINK {
+            continue;
+        }
         let changed = match new_map.get(path.as_slice()) {
             Some(new_entry) => new_entry.oid != old_entry.oid || new_entry.mode != old_entry.mode,
             None => true,
@@ -1292,6 +1336,9 @@ fn bail_if_merge_would_overwrite_local_changes(
     // Staged changes (including staged additions) that would be overwritten.
     for idx_entry in &current_index.entries {
         if idx_entry.stage() != 0 {
+            continue;
+        }
+        if idx_entry.mode == MODE_GITLINK {
             continue;
         }
         let head_entry = old_entries.get(&idx_entry.path);
@@ -2477,6 +2524,8 @@ struct MergeResult {
     /// Conflict descriptions for output: (conflict_type, path).
     /// e.g. ("content", "file.txt") or ("modify/delete", "file.txt")
     conflict_descriptions: Vec<(String, String)>,
+    /// Submodule conflicts with ours/theirs commit ids.
+    submodule_conflicts: Vec<SubmoduleConflict>,
 }
 
 /// Tree-merge result exported for replay-style callers.
@@ -2489,6 +2538,18 @@ pub(crate) struct ReplayTreeMergeResult {
     pub conflict_files: Vec<(String, Vec<u8>)>,
     /// Human-readable conflict summaries.
     pub conflict_descriptions: Vec<(String, String)>,
+    /// Submodule conflicts with ours/theirs commit ids.
+    pub submodule_conflicts: Vec<SubmoduleConflict>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SubmoduleConflict {
+    /// Superproject path to the conflicting submodule.
+    pub path: String,
+    /// Ours side submodule commit.
+    pub ours: ObjectId,
+    /// Theirs side submodule commit.
+    pub theirs: ObjectId,
 }
 
 #[derive(Debug)]
@@ -2748,6 +2809,9 @@ fn detect_merge_renames(
         // First, build an OID → paths map for the side to detect where base blobs moved
         let mut side_oid_to_paths: HashMap<ObjectId, Vec<Vec<u8>>> = HashMap::new();
         for (path, entry) in side {
+            if entry.mode == MODE_GITLINK {
+                continue;
+            }
             side_oid_to_paths
                 .entry(entry.oid)
                 .or_default()
@@ -2757,6 +2821,9 @@ fn detect_merge_renames(
         // Find base entries whose OID appears at a different path in the side
         let mut exact_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for (base_path, base_entry) in base {
+            if base_entry.mode == MODE_GITLINK {
+                continue;
+            }
             if let Some(side_entry) = side.get(base_path) {
                 // If the same blob is still present at the original path, this
                 // source was not renamed away; don't treat additional copies as
@@ -2850,6 +2917,9 @@ fn detect_merge_renames(
         // First, exact OID-based renames
         let mut side_oid_to_paths: HashMap<ObjectId, Vec<Vec<u8>>> = HashMap::new();
         for (path, entry) in side {
+            if entry.mode == MODE_GITLINK {
+                continue;
+            }
             side_oid_to_paths
                 .entry(entry.oid)
                 .or_default()
@@ -2860,6 +2930,9 @@ fn detect_merge_renames(
         let mut matched_targets: BTreeSet<Vec<u8>> = BTreeSet::new();
 
         for (base_path, base_entry) in base {
+            if base_entry.mode == MODE_GITLINK {
+                continue;
+            }
             if side.contains_key(base_path) {
                 // Path still exists in side — check if it's an add-source pattern
                 let side_entry = &side[base_path];
@@ -3136,6 +3209,7 @@ fn merge_trees(
     let mut has_conflicts = false;
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
+    let mut submodule_conflicts: Vec<SubmoduleConflict> = Vec::new();
 
     let labels = resolve_conflict_labels(repo, their_name, base_label_prefix);
     let ours_label = labels.ours;
@@ -3606,6 +3680,33 @@ fn merge_trees(
             (Some(be), Some(oe), Some(te)) if be.oid == te.oid && be.mode == te.mode => {
                 index.entries.push(oe.clone());
             }
+            // Submodule pointer updates are not content-merged. If both sides
+            // changed the gitlink to different commits, report an unresolved
+            // submodule conflict and leave stage 2/3 entries.
+            (Some(be), Some(oe), Some(te))
+                if be.mode == MODE_GITLINK
+                    || oe.mode == MODE_GITLINK
+                    || te.mode == MODE_GITLINK =>
+            {
+                if oe.oid == te.oid {
+                    index.entries.push(oe.clone());
+                } else if be.oid == oe.oid {
+                    index.entries.push(te.clone());
+                } else if be.oid == te.oid {
+                    index.entries.push(oe.clone());
+                } else {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, oe, 2);
+                    stage_entry(&mut index, te, 3);
+                    conflict_descriptions.push(("submodule".to_string(), path_str.clone()));
+                    submodule_conflicts.push(SubmoduleConflict {
+                        path: path_str,
+                        ours: oe.oid,
+                        theirs: te.oid,
+                    });
+                }
+            }
             // Added only by ours
             (None, Some(oe), None) => {
                 index.entries.push(oe.clone());
@@ -3617,6 +3718,19 @@ fn merge_trees(
             // Both added same thing
             (None, Some(oe), Some(te)) if oe.oid == te.oid && oe.mode == te.mode => {
                 index.entries.push(oe.clone());
+            }
+            // Submodule added differently on both sides.
+            (None, Some(oe), Some(te)) if oe.mode == MODE_GITLINK || te.mode == MODE_GITLINK => {
+                let path_str = String::from_utf8_lossy(path).to_string();
+                has_conflicts = true;
+                stage_entry(&mut index, oe, 2);
+                stage_entry(&mut index, te, 3);
+                conflict_descriptions.push(("submodule".to_string(), path_str.clone()));
+                submodule_conflicts.push(SubmoduleConflict {
+                    path: path_str,
+                    ours: oe.oid,
+                    theirs: te.oid,
+                });
             }
             // Deleted by both
             (Some(_), None, None) => {
@@ -3826,6 +3940,7 @@ fn merge_trees(
         has_conflicts,
         conflict_files,
         conflict_descriptions,
+        submodule_conflicts,
     })
 }
 
@@ -3873,6 +3988,7 @@ pub(crate) fn merge_trees_for_replay(
         has_conflicts: result.has_conflicts,
         conflict_files: result.conflict_files,
         conflict_descriptions: result.conflict_descriptions,
+        submodule_conflicts: result.submodule_conflicts,
     })
 }
 
@@ -4661,6 +4777,11 @@ fn checkout_entries(
 
     for entry in &index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = fs::create_dir_all(&sm_dir);
             continue;
         }
         if old_entries.is_some_and(|old| {

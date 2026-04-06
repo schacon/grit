@@ -14,7 +14,7 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -646,6 +646,11 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         if entry.stage() != 0 {
             continue;
         }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
     }
@@ -678,6 +683,11 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
     // Write every entry to the worktree (force overwrite)
     for entry in &new_index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.mode == MODE_GITLINK {
+            let sm_dir = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            let _ = std::fs::create_dir_all(&sm_dir);
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
@@ -854,6 +864,12 @@ fn check_dirty_worktree(
         if old_entry.stage() != 0 {
             continue;
         }
+        if old_entry.mode == MODE_GITLINK {
+            // Gitlinks point to submodule commits in a different object store.
+            // Do not treat submodule directories as regular tracked files when
+            // deciding if branch checkout would overwrite local edits.
+            continue;
+        }
 
         let path_bytes = &old_entry.path;
         let rel_path = String::from_utf8_lossy(path_bytes);
@@ -917,6 +933,11 @@ fn check_dirty_worktree(
             let mut staged_conflicts = Vec::new();
             for old_entry in &old_index.entries {
                 if old_entry.stage() != 0 {
+                    continue;
+                }
+                if old_entry.mode == MODE_GITLINK {
+                    // Treat gitlinks as submodule pointers rather than staged
+                    // regular-file content in overwrite checks.
                     continue;
                 }
                 let path_bytes = &old_entry.path;
@@ -2101,7 +2122,10 @@ fn checkout_index_to_worktree(
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         } else if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
+            // Git only attempts to remove now-empty directories here; it does
+            // not recursively delete non-empty directories (notably submodule
+            // worktrees). Keep non-empty directories in place.
+            let _ = std::fs::remove_dir(&abs);
         }
         remove_empty_parent_dirs(work_tree, &abs);
     }
