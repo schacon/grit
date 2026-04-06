@@ -915,6 +915,24 @@ fn push_to_url(
         }
     }
 
+    // Update local remote-tracking refs for successfully pushed branches.
+    // e.g. after pushing refs/heads/main to origin, update refs/remotes/origin/main.
+    if !args.dry_run {
+        for (update, _) in &applied_updates {
+            let remote_branch = update
+                .remote_ref
+                .strip_prefix("refs/heads/")
+                .or_else(|| update.remote_ref.strip_prefix("refs/tags/"));
+            if let Some(branch) = remote_branch {
+                let tracking = format!("refs/remotes/{remote_name}/{branch}");
+                // Get the OID we pushed to the remote.
+                if let Ok(new_oid) = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref) {
+                    let _ = refs::write_ref(&repo.git_dir, &tracking, &new_oid);
+                }
+            }
+        }
+    }
+
     // Set upstream tracking if requested
     if args.set_upstream {
         if let Some(branch) = current_branch {

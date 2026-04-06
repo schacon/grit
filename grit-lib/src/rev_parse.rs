@@ -223,8 +223,12 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     {
         return resolve_upstream_ref(repo, base);
     }
-    if let Some(base) = spec.strip_suffix("@{push}") {
-        return resolve_push_ref(repo, base);
+    {
+        let lower = spec.to_lowercase();
+        if let Some(base_lower) = lower.strip_suffix("@{push}") {
+            let base = &spec[..base_lower.len()];
+            return resolve_push_ref(repo, base);
+        }
     }
 
     // Handle @{-N} syntax: return symbolic ref of Nth previously checked out branch
@@ -323,9 +327,122 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 /// Resolve `@{push}` for a given branch.
 fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
-    // @{push} is typically the same as @{upstream} unless push remote differs
-    // For simplicity, treat it the same way
-    resolve_upstream_ref(repo, branch)
+    let branch_name = if branch.is_empty() {
+        match refs::read_head(&repo.git_dir) {
+            Ok(Some(target)) => target.strip_prefix("refs/heads/")?.to_owned(),
+            _ => return None,
+        }
+    } else {
+        branch.to_owned()
+    };
+
+    let config = crate::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+
+    // push.default setting
+    let push_default = config
+        .get("push.default")
+        .unwrap_or_else(|| "simple".to_owned());
+
+    // With push.default=nothing, @{push} fails UNLESS push refspecs are configured.
+    // We check refspecs below; only return None if no refspecs match.
+    let nothing_mode = push_default == "nothing";
+
+    // Determine push remote: branch.<name>.pushRemote > remote.pushDefault > branch.<name>.remote
+    let push_remote = config
+        .get(&format!("branch.{branch_name}.pushRemote"))
+        .or_else(|| config.get("remote.pushDefault"))
+        .or_else(|| config.get(&format!("branch.{branch_name}.remote")));
+
+    let upstream_remote = config.get(&format!("branch.{branch_name}.remote"));
+    let upstream_merge = config.get(&format!("branch.{branch_name}.merge"));
+
+    let push_remote_name = push_remote.as_deref()?.to_owned();
+
+    // With push.default=simple: push remote must match upstream remote,
+    // AND the branch name must match the upstream merge branch name.
+    if push_default == "simple" {
+        // Triangular: push remote differs from upstream remote → fail
+        if let Some(ref upstream) = upstream_remote {
+            if *upstream != push_remote_name {
+                return None; // triangular, fails with simple
+            }
+        }
+        // Also fail if branch name doesn't match the merge branch (non-simple tracking)
+        if let Some(ref merge) = upstream_merge {
+            let merge_branch = merge.strip_prefix("refs/heads/").unwrap_or(merge);
+            if merge_branch != branch_name {
+                return None; // branch name != merge branch, fails with simple
+            }
+            return Some(format!("refs/remotes/{push_remote_name}/{merge_branch}"));
+        }
+        return None;
+    }
+
+    // push.default=current or matching: push branch_name to push_remote/branch_name
+    if push_default == "current" || push_default == "matching" {
+        // Check if branch exists on the remote's refspec mapping
+        // For simplicity: refs/remotes/<push_remote>/<branch_name>
+        let tracking = format!("refs/remotes/{push_remote_name}/{branch_name}");
+        if refs::resolve_ref(&repo.git_dir, &tracking).is_ok() {
+            return Some(tracking);
+        }
+        // Even if not yet tracked, current/matching pushes to same-named branch
+        return Some(tracking);
+    }
+
+    // push.default=upstream/tracking: same as @{upstream}
+    if push_default == "upstream" || push_default == "tracking" {
+        return resolve_upstream_ref(repo, branch);
+    }
+
+    // Check configured push refspecs for the remote.
+    // Look for explicit refspecs that map this branch.
+    if let Some(refspecs_str) = config.get(&format!("remote.{push_remote_name}.push")) {
+        for spec in refspecs_str.split_whitespace() {
+            let spec_noforce = spec.trim_start_matches('+');
+            if let Some((src, dst)) = spec_noforce.split_once(':') {
+                // Handle glob refspecs: refs/heads/*:refs/heads/magic/*
+                if src.ends_with('*') && dst.ends_with('*') {
+                    let src_prefix = src.trim_end_matches('*');
+                    let dst_prefix = dst.trim_end_matches('*');
+                    let full_src = format!("refs/heads/{branch_name}");
+                    if full_src.starts_with(src_prefix) {
+                        let rest = &full_src[src_prefix.len()..];
+                        let dst_ref = format!("{dst_prefix}{rest}");
+                        let dst_branch = dst_ref.strip_prefix("refs/heads/").unwrap_or(&dst_ref);
+                        return Some(format!("refs/remotes/{push_remote_name}/{dst_branch}"));
+                    }
+                } else {
+                    let src_branch = src.strip_prefix("refs/heads/").unwrap_or(src);
+                    if src_branch == branch_name || src == branch_name {
+                        let dst_branch = dst.strip_prefix("refs/heads/").unwrap_or(dst);
+                        return Some(format!("refs/remotes/{push_remote_name}/{dst_branch}"));
+                    }
+                }
+            } else {
+                // Symmetric refspec
+                let b = spec_noforce
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(spec_noforce);
+                if b == branch_name {
+                    return Some(format!("refs/remotes/{push_remote_name}/{branch_name}"));
+                }
+            }
+        }
+    }
+
+    // In nothing mode with no matching refspecs, fail.
+    if nothing_mode {
+        return None;
+    }
+
+    // Default: use upstream tracking ref
+    if let Some(ref merge) = upstream_merge {
+        let branch_part = merge.strip_prefix("refs/heads/")?;
+        return Some(format!("refs/remotes/{push_remote_name}/{branch_part}"));
+    }
+
+    None
 }
 
 /// Parse branch tracking configuration from git config content.
