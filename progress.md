@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    67 |
+| Completed   |    68 |
 | In progress |     0 |
-| Remaining   |   700 |
+| Remaining   |   699 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6060-merge-index` — 7/7 tests pass (`merge-index` now supports Git-compatible `-o`/`-q`, argument ordering, and built-in dispatch for `git-merge-one-file`; helper now updates stage-0 index entries via effective `GIT_INDEX_FILE`, requires a work tree for working-tree writes, and writes merged content to index+worktree; `diff-files` now honors `--diff-filter` and `rev-parse` now resolves `:path`/`:N:path` against effective `GIT_INDEX_FILE`)
 - `t6427-diff3-conflict-markers` — 9/9 tests pass (merge conflict markers now use correct base/theirs labels and conflict styles across `diff3`/`zdiff3`; rebase now preserves diff3/zdiff3 conflict-marker files with backend-specific base labels; merge-file zealous diff3 handling now matches expected compact conflict shapes for shared prefix/suffix insertions)
 - `t6401-merge-criss-cross` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected after confirmed clean harness run)
 - `t6435-merge-sparse` — 6/6 tests pass (init now skips default template skeleton in test trash worktrees so `.git/info` can be created by tests; `status --porcelain -- <pathspec>` now filters untracked/ignored and diff entries by pathspec, matching Git behavior)
@@ -57,4 +58,4 @@
 
 ## What Remains
 
-700 test files still pending. See `plan.md` for the full prioritized list.
+699 test files still pending. See `plan.md` for the full prioritized list.

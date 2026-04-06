@@ -116,6 +116,8 @@ struct Options {
     format: OutputFormat,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
+    /// Optional diff-filter specification.
+    diff_filter: Option<String>,
 }
 
 /// A single changed file: index side vs working tree.
@@ -143,6 +145,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
+    let mut diff_filter: Option<String> = None;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -209,14 +212,21 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--ignore-space-change"
                 | "--ignore-space-at-eol"
                 | "--ignore-blank-lines"
-                | "--diff-filter"
                 | "--full-index"
                 | "--no-ext-diff"
                 | "--no-prefix"
                 | "--no-renames"
                 | "--no-abbrev" => {}
-                _ if arg.starts_with("--diff-filter=")
-                    || arg.starts_with("-G")
+                "--diff-filter" => {
+                    if idx + 1 < argv.len() {
+                        diff_filter = Some(argv[idx + 1].clone());
+                        idx += 1;
+                    }
+                }
+                _ if arg.starts_with("--diff-filter=") => {
+                    diff_filter = Some(arg.trim_start_matches("--diff-filter=").to_string());
+                }
+                _ if arg.starts_with("-G")
                     || arg.starts_with("-S")
                     || arg.starts_with("-O")
                     || arg.starts_with("--src-prefix=")
@@ -238,6 +248,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         abbrev,
         format,
         suppress_diff,
+        diff_filter,
     })
 }
 
@@ -369,7 +380,37 @@ fn collect_changes(
         }
     }
 
-    Ok(changes.into_values().collect())
+    let mut out: Vec<Change> = changes.into_values().collect();
+    if let Some(spec) = options.diff_filter.as_deref() {
+        out.retain(|change| matches_diff_filter(change.status, spec));
+    }
+    Ok(out)
+}
+
+fn matches_diff_filter(status: char, spec: &str) -> bool {
+    if spec.is_empty() {
+        return true;
+    }
+    let status = status.to_ascii_uppercase();
+    let mut includes: Vec<char> = Vec::new();
+    let mut excludes: Vec<char> = Vec::new();
+    for c in spec.chars() {
+        if c == '*' {
+            continue;
+        }
+        if c.is_ascii_uppercase() {
+            includes.push(c);
+        } else if c.is_ascii_lowercase() {
+            excludes.push(c.to_ascii_uppercase());
+        }
+    }
+    if !includes.is_empty() && !includes.contains(&status) {
+        return false;
+    }
+    if excludes.contains(&status) {
+        return false;
+    }
+    true
 }
 
 /// `read-tree`-style entries carry zeroed stat data and are considered dirty

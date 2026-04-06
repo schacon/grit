@@ -722,7 +722,7 @@ commit → check it off → move on.
 
 - [x] `t6700-tree-depth` ████████████████████ 10/10 (0 left) — handling of deep trees in various commands
 - [x] `t6427-diff3-conflict-markers` ████████████████████ 9/9 (0 left) — recursive merge diff3 style conflict markers
-- [ ] `t6060-merge-index` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic git merge-index / git-merge-one-file tests
+- [x] `t6060-merge-index` ████████████████████ 7/7 (0 left) — basic git merge-index / git-merge-one-file tests
 - [ ] `t6131-pathspec-icase` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — test case insensitive pathspec limiting
 - [ ] `t6102-rev-list-unexpected-objects` ████████████░░░░░░░░ 14/22 (8 left) — git rev-list should handle unexpected object types
 - [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects

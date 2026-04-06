@@ -851,7 +851,18 @@ fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
 /// Look up a path in the index at a given stage and return its OID.
 fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Result<ObjectId> {
     use crate::index::Index;
-    let index_path = repo.index_path();
+    let index_path = if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = std::path::PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    };
     let index =
         Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
     match index.get(path.as_bytes(), stage) {
