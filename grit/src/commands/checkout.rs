@@ -270,7 +270,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
-    if !paths.is_empty() {
+    // Not applicable when --detach is set (paths incompatible with --detach)
+    if !paths.is_empty() && !args.detach {
         if !has_separator {
             if let Some(ref t) = target {
                 let is_rev = resolve_revision(&repo, t).is_ok()
@@ -360,8 +361,8 @@ pub fn run(args: Args) -> Result<()> {
 
     // If --detach, force detached HEAD even for branch names
     if args.detach {
-        // --detach takes at most one argument
-        if args.rest.len() > 1 {
+        // --detach takes at most one argument (no extra paths)
+        if !paths.is_empty() || args.rest.len() > 1 {
             bail!("--detach does not take a path argument");
         }
         match resolve_to_commit(&repo, &target) {
