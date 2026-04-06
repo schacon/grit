@@ -717,13 +717,13 @@ test_commit () {
 	message="${1:?test_commit}" && shift
 	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
+	if test -z "$notick"; then
+		test_tick
+	fi
 	(
 		test -n "$indir" && cd "$indir"
 		printf '%s\n' "$contents" >"$file" &&
 		git add "$file" &&
-		if test -z "$notick"; then
-			test_tick
-		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
 			git tag "$message"

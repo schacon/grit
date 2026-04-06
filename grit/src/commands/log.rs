@@ -12,6 +12,9 @@ use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{
+    collect_revision_specs_with_stdin, rev_list, OrderingMode, RevListOptions,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
@@ -76,6 +79,22 @@ pub struct Args {
     /// Only show commits that are decorated (have refs).
     #[arg(long = "simplify-by-decoration")]
     pub simplify_by_decoration: bool,
+
+    /// Show full history (do not prune TREESAME merges).
+    #[arg(long = "full-history")]
+    pub full_history: bool,
+
+    /// Further simplify full history by pruning redundant merges.
+    #[arg(long = "simplify-merges")]
+    pub simplify_merges: bool,
+
+    /// Show all commits in simplified history mode.
+    #[arg(long = "sparse")]
+    pub sparse: bool,
+
+    /// Show boundary commits.
+    #[arg(long = "boundary")]
+    pub boundary: bool,
 
     /// Skip this many commits.
     #[arg(long = "skip")]
@@ -360,6 +379,940 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
+fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
+    let mut implied_pathspecs: Vec<String> = Vec::new();
+    let mut revision_specs = Vec::new();
+    for rev in &args.revisions {
+        if rev == "--" {
+            break;
+        }
+        if rev.starts_with('-') && !rev.starts_with('^') {
+            continue;
+        }
+        if let Some(stripped) = rev.strip_prefix('^') {
+            match resolve_revision(repo, stripped) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(stripped) => {
+                    implied_pathspecs.push(stripped.to_owned())
+                }
+                Err(err) => return Err(err),
+            }
+        } else {
+            match resolve_revision(repo, rev) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
+                    implied_pathspecs.push(rev.clone())
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    if !implied_pathspecs.is_empty() {
+        validate_pathspec_scope(repo, &implied_pathspecs)?;
+    }
+
+    let mut combined_pathspecs = args.pathspecs.clone();
+    combined_pathspecs.extend(implied_pathspecs);
+    combined_pathspecs = resolve_effective_pathspecs(repo, &combined_pathspecs)?;
+
+    let mut options = RevListOptions {
+        all_refs: args.all,
+        first_parent: args.first_parent,
+        simplify_by_decoration: false,
+        skip: args.skip.unwrap_or(0),
+        max_count: args.max_count,
+        ordering: if args.date_order {
+            OrderingMode::Date
+        } else {
+            OrderingMode::Topo
+        },
+        reverse: false,
+        boundary: args.boundary,
+        full_history: args.full_history,
+        sparse: args.sparse,
+        paths: if args.follow {
+            Vec::new()
+        } else {
+            combined_pathspecs.clone()
+        },
+        ..RevListOptions::default()
+    };
+    if args.no_merges {
+        options.max_parents = Some(1);
+    }
+    if args.merges {
+        options.min_parents = Some(2);
+    }
+
+    let (mut positive_specs, negative_specs, stdin_all_refs) =
+        collect_revision_specs_with_stdin(&revision_specs, false)
+            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+    if stdin_all_refs {
+        options.all_refs = true;
+    }
+
+    if positive_specs.is_empty() && !options.all_refs {
+        positive_specs.push("HEAD".to_owned());
+    }
+
+    let mut result = rev_list(repo, &positive_specs, &negative_specs, &options)
+        .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+
+    if args.simplify_by_decoration {
+        result.commits = simplify_by_decoration_for_graph(repo, &result.commits)?;
+    }
+
+    if args.simplify_merges && args.full_history {
+        let simplified = simplify_merges_for_graph(repo, &result.commits)?;
+        result.commits = simplified;
+    }
+
+    let included: HashSet<ObjectId> = result.commits.iter().copied().collect();
+    let mut nodes = Vec::new();
+    let mut seen = HashSet::new();
+
+    for oid in &result.commits {
+        if !seen.insert(*oid) {
+            continue;
+        }
+        let parents = visible_parents_for_graph(repo, *oid, &included, args.first_parent)?;
+        nodes.push(GraphCommitNode {
+            oid: *oid,
+            parents,
+            is_boundary: false,
+        });
+    }
+
+    if args.boundary {
+        for oid in &result.boundary_commits {
+            if !seen.insert(*oid) {
+                continue;
+            }
+            let mut parents = load_raw_parents(repo, *oid)?;
+            if args.first_parent && parents.len() > 1 {
+                parents.truncate(1);
+            }
+            nodes.push(GraphCommitNode {
+                oid: *oid,
+                parents,
+                is_boundary: true,
+            });
+        }
+    }
+
+    let interesting: HashSet<ObjectId> = nodes.iter().map(|n| n.oid).collect();
+    for node in &mut nodes {
+        node.parents.retain(|p| interesting.contains(p));
+    }
+
+    let decorations = if args.simplify_by_decoration {
+        Some(collect_decorations(repo, false)?)
+    } else {
+        None
+    };
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut graph = AsciiGraph::new();
+    let line_prefix = args.line_prefix.as_deref().unwrap_or("");
+    let abbrev_len = parse_abbrev(&args.abbrev);
+
+    for node in nodes {
+        let info = load_commit_info(repo, node.oid)?;
+        graph.update(node.clone());
+
+        loop {
+            let (line, shown_commit_line) = graph.next_line();
+            if shown_commit_line {
+                let rendered =
+                    render_graph_commit_text(&node, &info, args, decorations.as_ref(), abbrev_len);
+                writeln!(out, "{line_prefix}{line}{rendered}")?;
+                break;
+            }
+            writeln!(out, "{line_prefix}{line}")?;
+        }
+
+        while !graph.is_commit_finished() {
+            let (line, _) = graph.next_line();
+            writeln!(out, "{line_prefix}{line}")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn simplify_merges_for_graph(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<ObjectId>> {
+    let selected: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut out = Vec::new();
+    for oid in commits {
+        let raw_parents = load_raw_parents(repo, *oid)?;
+        let mut direct = load_raw_parents(repo, *oid)?;
+        direct.retain(|p| selected.contains(p));
+        if raw_parents.len() > 1 && direct.len() <= 1 {
+            continue;
+        }
+        if direct.len() <= 1 {
+            out.push(*oid);
+            continue;
+        }
+
+        let mut simplified = graph_simplify_parent_list(repo, &selected, &direct)?;
+        simplified.sort_unstable();
+        simplified.dedup();
+        if simplified.len() > 1 {
+            out.push(*oid);
+        }
+    }
+    Ok(out)
+}
+
+fn simplify_by_decoration_for_graph(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let decorations = collect_decorations(repo, false)?;
+    let decorated: HashSet<ObjectId> = decorations
+        .keys()
+        .filter_map(|hex| hex.parse::<ObjectId>().ok())
+        .collect();
+
+    let mut out = Vec::new();
+    for oid in commits {
+        if decorated.contains(oid) {
+            out.push(*oid);
+            continue;
+        }
+        let parents = load_raw_parents(repo, *oid)?;
+        if parents.len() > 1 {
+            out.push(*oid);
+        }
+    }
+    Ok(out)
+}
+
+fn graph_simplify_parent_list(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    parents: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for parent in parents {
+        if parent_reachable_via_others(repo, selected, *parent, parents)? {
+            continue;
+        }
+        out.push(*parent);
+    }
+    Ok(out)
+}
+
+fn parent_reachable_via_others(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    target: ObjectId,
+    parents: &[ObjectId],
+) -> Result<bool> {
+    for parent in parents {
+        if *parent == target {
+            continue;
+        }
+        if graph_reaches(repo, selected, *parent, target)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn graph_reaches(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    start: ObjectId,
+    target: ObjectId,
+) -> Result<bool> {
+    let mut stack = vec![start];
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if oid == target {
+            return Ok(true);
+        }
+        let mut parents = load_raw_parents(repo, oid)?;
+        parents.retain(|p| selected.contains(p));
+        stack.extend(parents);
+    }
+    Ok(false)
+}
+
+fn load_raw_parents(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>> {
+    let object = repo.odb.read(&oid)?;
+    let commit = parse_commit(&object.data)?;
+    Ok(commit.parents)
+}
+
+fn visible_parents_for_graph(
+    repo: &Repository,
+    oid: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut direct = load_raw_parents(repo, oid)?;
+    if first_parent_only && direct.len() > 1 {
+        direct.truncate(1);
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for parent in direct {
+        collect_visible_parent_for_graph(
+            repo,
+            parent,
+            included,
+            first_parent_only,
+            &mut seen,
+            &mut out,
+        )?;
+    }
+    Ok(out)
+}
+
+fn collect_visible_parent_for_graph(
+    repo: &Repository,
+    candidate: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+    seen: &mut HashSet<ObjectId>,
+    out: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if !seen.insert(candidate) {
+        return Ok(());
+    }
+    if included.contains(&candidate) {
+        out.push(candidate);
+        return Ok(());
+    }
+    let mut parents = load_raw_parents(repo, candidate)?;
+    if parents.is_empty() {
+        return Ok(());
+    }
+    if first_parent_only && parents.len() > 1 {
+        parents.truncate(1);
+    } else if !first_parent_only {
+        parents.truncate(1);
+    }
+    for parent in parents {
+        collect_visible_parent_for_graph(repo, parent, included, first_parent_only, seen, out)?;
+    }
+    Ok(())
+}
+
+fn load_commit_info(repo: &Repository, oid: ObjectId) -> Result<CommitInfo> {
+    let obj = repo.odb.read(&oid)?;
+    let commit = parse_commit(&obj.data)?;
+    Ok(CommitInfo {
+        tree: commit.tree,
+        parents: commit.parents,
+        author: commit.author,
+        committer: commit.committer,
+        message: commit.message,
+    })
+}
+
+fn render_graph_commit_text(
+    node: &GraphCommitNode,
+    info: &CommitInfo,
+    args: &Args,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    abbrev_len: usize,
+) -> String {
+    let hex = node.oid.to_hex();
+    if args.oneline || args.format.as_deref() == Some("oneline") {
+        let first_line = info.message.lines().next().unwrap_or("");
+        return format!("{} {}", &hex[..abbrev_len.min(hex.len())], first_line);
+    }
+
+    if let Some(fmt) = args.format.as_deref() {
+        if fmt.starts_with("format:") || fmt.starts_with("tformat:") {
+            let template = if let Some(t) = fmt.strip_prefix("format:") {
+                t
+            } else if let Some(t) = fmt.strip_prefix("tformat:") {
+                t
+            } else {
+                fmt
+            };
+            return apply_format_string(
+                template,
+                &node.oid,
+                info,
+                decorations,
+                args.date.as_deref(),
+                abbrev_len,
+                false,
+            );
+        }
+        if fmt.contains('%') {
+            return apply_format_string(
+                fmt,
+                &node.oid,
+                info,
+                decorations,
+                args.date.as_deref(),
+                abbrev_len,
+                false,
+            );
+        }
+    }
+
+    info.message.lines().next().unwrap_or("").to_owned()
+}
+
+#[derive(Clone, Debug)]
+struct GraphCommitNode {
+    oid: ObjectId,
+    parents: Vec<ObjectId>,
+    is_boundary: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphState {
+    Padding,
+    Skip,
+    PreCommit,
+    Commit,
+    PostMerge,
+    Collapsing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GraphColumn {
+    oid: ObjectId,
+}
+
+#[derive(Debug)]
+struct AsciiGraph {
+    current: Option<GraphCommitNode>,
+    num_parents: usize,
+    width: usize,
+    expansion_row: usize,
+    state: GraphState,
+    prev_state: GraphState,
+    commit_index: usize,
+    prev_commit_index: usize,
+    merge_layout: isize,
+    edges_added: isize,
+    prev_edges_added: isize,
+    num_columns: usize,
+    num_new_columns: usize,
+    mapping_size: usize,
+    columns: Vec<GraphColumn>,
+    new_columns: Vec<GraphColumn>,
+    mapping: Vec<isize>,
+    old_mapping: Vec<isize>,
+}
+
+impl AsciiGraph {
+    fn new() -> Self {
+        Self {
+            current: None,
+            num_parents: 0,
+            width: 0,
+            expansion_row: 0,
+            state: GraphState::Padding,
+            prev_state: GraphState::Padding,
+            commit_index: 0,
+            prev_commit_index: 0,
+            merge_layout: 0,
+            edges_added: 0,
+            prev_edges_added: 0,
+            num_columns: 0,
+            num_new_columns: 0,
+            mapping_size: 0,
+            columns: Vec::new(),
+            new_columns: Vec::new(),
+            mapping: Vec::new(),
+            old_mapping: Vec::new(),
+        }
+    }
+
+    fn update(&mut self, commit: GraphCommitNode) {
+        self.current = Some(commit);
+        self.num_parents = self.current.as_ref().map_or(0, |c| c.parents.len());
+        self.prev_commit_index = self.commit_index;
+        self.update_columns();
+        self.expansion_row = 0;
+        if self.state != GraphState::Padding {
+            self.state = GraphState::Skip;
+        } else if self.needs_pre_commit_line() {
+            self.state = GraphState::PreCommit;
+        } else {
+            self.state = GraphState::Commit;
+        }
+    }
+
+    fn is_commit_finished(&self) -> bool {
+        self.state == GraphState::Padding
+    }
+
+    fn next_line(&mut self) -> (String, bool) {
+        if self.current.is_none() {
+            return (String::new(), false);
+        }
+        let mut line = String::new();
+        let shown_commit_line = match self.state {
+            GraphState::Padding => {
+                self.output_padding_line(&mut line);
+                false
+            }
+            GraphState::Skip => {
+                line.push_str("...");
+                if self.needs_pre_commit_line() {
+                    self.update_state(GraphState::PreCommit);
+                } else {
+                    self.update_state(GraphState::Commit);
+                }
+                false
+            }
+            GraphState::PreCommit => {
+                self.output_pre_commit_line(&mut line);
+                false
+            }
+            GraphState::Commit => {
+                self.output_commit_line(&mut line);
+                true
+            }
+            GraphState::PostMerge => {
+                self.output_post_merge_line(&mut line);
+                false
+            }
+            GraphState::Collapsing => {
+                self.output_collapsing_line(&mut line);
+                false
+            }
+        };
+
+        if line.len() < self.width {
+            line.push_str(&" ".repeat(self.width - line.len()));
+        }
+        (line, shown_commit_line)
+    }
+
+    fn update_state(&mut self, next: GraphState) {
+        self.prev_state = self.state;
+        self.state = next;
+    }
+
+    fn ensure_vec_sizes(&mut self, needed_columns: usize) {
+        let placeholder = match self.current.as_ref() {
+            Some(current) => current.oid,
+            None => return,
+        };
+        if self.columns.len() < needed_columns {
+            self.columns
+                .resize(needed_columns, GraphColumn { oid: placeholder });
+        }
+        if self.new_columns.len() < needed_columns {
+            self.new_columns
+                .resize(needed_columns, GraphColumn { oid: placeholder });
+        }
+        let map_len = needed_columns.saturating_mul(2);
+        if self.mapping.len() < map_len {
+            self.mapping.resize(map_len, -1);
+        }
+        if self.old_mapping.len() < map_len {
+            self.old_mapping.resize(map_len, -1);
+        }
+    }
+
+    fn find_new_column_by_commit(&self, oid: ObjectId) -> Option<usize> {
+        (0..self.num_new_columns).find(|&i| self.new_columns[i].oid == oid)
+    }
+
+    fn insert_into_new_columns(&mut self, oid: ObjectId, idx: isize) {
+        let mut i = self.find_new_column_by_commit(oid).unwrap_or_else(|| {
+            let pos = self.num_new_columns;
+            self.new_columns[pos] = GraphColumn { oid };
+            self.num_new_columns += 1;
+            pos
+        });
+
+        let mapping_idx: usize;
+        if self.num_parents > 1 && idx > -1 && self.merge_layout == -1 {
+            let dist = idx - i as isize;
+            let shift = if dist > 1 { (2 * dist) - 3 } else { 1 };
+            self.merge_layout = if dist > 0 { 0 } else { 1 };
+            self.edges_added = self.num_parents as isize + self.merge_layout - 2;
+            mapping_idx = (self.width as isize + (self.merge_layout - 1) * shift).max(0) as usize;
+            self.width = self
+                .width
+                .saturating_add((2 * self.merge_layout.max(0)) as usize);
+        } else if self.edges_added > 0
+            && self.width >= 2
+            && self.mapping.get(self.width - 2).copied() == Some(i as isize)
+        {
+            mapping_idx = self.width - 2;
+            self.edges_added = -1;
+        } else {
+            mapping_idx = self.width;
+            self.width = self.width.saturating_add(2);
+        }
+
+        if mapping_idx >= self.mapping.len() {
+            self.mapping.resize(mapping_idx + 1, -1);
+        }
+        self.mapping[mapping_idx] = i as isize;
+        // Keep i mutable use explicit to satisfy clippy about needless mut in closure capture.
+        i = i.saturating_add(0);
+        let _ = i;
+    }
+
+    fn update_columns(&mut self) {
+        std::mem::swap(&mut self.columns, &mut self.new_columns);
+        self.num_columns = self.num_new_columns;
+        self.num_new_columns = 0;
+
+        let max_new_columns = self.num_columns.saturating_add(self.num_parents.max(1));
+        self.ensure_vec_sizes(max_new_columns);
+        self.mapping_size = max_new_columns.saturating_mul(2);
+        for i in 0..self.mapping_size {
+            self.mapping[i] = -1;
+        }
+
+        self.width = 0;
+        self.prev_edges_added = self.edges_added;
+        self.edges_added = 0;
+
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        let mut seen_this = false;
+        let mut is_commit_in_columns = true;
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                is_commit_in_columns = false;
+                current_oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current_oid {
+                seen_this = true;
+                self.commit_index = i;
+                self.merge_layout = -1;
+                let parents = self
+                    .current
+                    .as_ref()
+                    .map(|c| c.parents.clone())
+                    .unwrap_or_default();
+                for parent in parents {
+                    let idx = i as isize;
+                    self.insert_into_new_columns(parent, idx);
+                }
+                if self.num_parents == 0 {
+                    self.width = self.width.saturating_add(2);
+                } else if !is_commit_in_columns && self.num_parents > 1 {
+                    // Keep width progression stable for detached columns.
+                    self.width = self.width.max((self.num_new_columns + 1) * 2);
+                }
+            } else {
+                self.insert_into_new_columns(col_oid, -1);
+            }
+        }
+
+        while self.mapping_size > 1 && self.mapping[self.mapping_size - 1] < 0 {
+            self.mapping_size -= 1;
+        }
+    }
+
+    fn num_dashed_parents(&self) -> isize {
+        self.num_parents as isize + self.merge_layout - 3
+    }
+
+    fn num_expansion_rows(&self) -> usize {
+        self.num_dashed_parents().max(0) as usize * 2
+    }
+
+    fn needs_pre_commit_line(&self) -> bool {
+        self.num_parents >= 3
+            && self.commit_index < self.num_columns.saturating_sub(1)
+            && self.expansion_row < self.num_expansion_rows()
+    }
+
+    fn is_mapping_correct(&self) -> bool {
+        for i in 0..self.mapping_size {
+            let target = self.mapping[i];
+            if target < 0 {
+                continue;
+            }
+            if target as usize == i / 2 {
+                continue;
+            }
+            return false;
+        }
+        true
+    }
+
+    fn output_padding_line(&self, line: &mut String) {
+        for i in 0..self.num_new_columns {
+            let _ = i;
+            line.push('|');
+            line.push(' ');
+        }
+    }
+
+    fn output_pre_commit_line(&mut self, line: &mut String) {
+        let mut seen_this = false;
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        for i in 0..self.num_columns {
+            let col_oid = self.columns[i].oid;
+            if col_oid == current_oid {
+                seen_this = true;
+                line.push('|');
+                line.push_str(&" ".repeat(self.expansion_row));
+            } else if seen_this && self.expansion_row == 0 {
+                if self.prev_state == GraphState::PostMerge && self.prev_commit_index < i {
+                    line.push('\\');
+                } else {
+                    line.push('|');
+                }
+            } else if seen_this && self.expansion_row > 0 {
+                line.push('\\');
+            } else {
+                line.push('|');
+            }
+            line.push(' ');
+        }
+
+        self.expansion_row += 1;
+        if !self.needs_pre_commit_line() {
+            self.update_state(GraphState::Commit);
+        }
+    }
+
+    fn output_commit_char(&self) -> char {
+        if self.current.as_ref().is_some_and(|c| c.is_boundary) {
+            'o'
+        } else {
+            '*'
+        }
+    }
+
+    fn draw_octopus_merge(&self, line: &mut String) {
+        let dashed = self.num_dashed_parents().max(0) as usize;
+        for i in 0..dashed {
+            let map_idx = (self.commit_index + i + 2) * 2;
+            let j = self.mapping.get(map_idx).copied().unwrap_or(-1);
+            if j < 0 || j as usize >= self.num_new_columns {
+                continue;
+            }
+            line.push('-');
+            line.push(if i == dashed - 1 { '.' } else { '-' });
+        }
+    }
+
+    fn output_commit_line(&mut self, line: &mut String) {
+        let mut seen_this = false;
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                current_oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current_oid {
+                seen_this = true;
+                line.push(self.output_commit_char());
+                if self.num_parents > 2 {
+                    self.draw_octopus_merge(line);
+                }
+            } else if seen_this && self.edges_added > 1 {
+                line.push('\\');
+            } else if seen_this && self.edges_added == 1 {
+                if self.prev_state == GraphState::PostMerge
+                    && self.prev_edges_added > 0
+                    && self.prev_commit_index < i
+                {
+                    line.push('\\');
+                } else {
+                    line.push('|');
+                }
+            } else if self.prev_state == GraphState::Collapsing
+                && (2 * i + 1) < self.old_mapping.len()
+                && self.old_mapping[2 * i + 1] == i as isize
+                && (2 * i) < self.mapping.len()
+                && self.mapping[2 * i] < i as isize
+            {
+                line.push('/');
+            } else {
+                line.push('|');
+            }
+            line.push(' ');
+        }
+
+        if self.num_parents > 1 {
+            self.update_state(GraphState::PostMerge);
+        } else if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        } else {
+            self.update_state(GraphState::Collapsing);
+        }
+    }
+
+    fn output_post_merge_line(&mut self, line: &mut String) {
+        let merge_chars = ['/', '|', '\\'];
+        let current = match self.current.as_ref() {
+            Some(c) => c,
+            None => return,
+        };
+        let first_parent = current.parents.first().copied();
+        let mut parent_col_seen = false;
+        let mut seen_this = false;
+
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                current.oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current.oid {
+                seen_this = true;
+                let mut idx = self.merge_layout.clamp(0, 2) as usize;
+                for (j, parent) in current.parents.iter().enumerate() {
+                    if self.find_new_column_by_commit(*parent).is_none() {
+                        continue;
+                    }
+                    let c = merge_chars[idx.min(2)];
+                    line.push(c);
+                    if idx == 2 {
+                        if self.edges_added > 0 || j < current.parents.len().saturating_sub(1) {
+                            line.push(' ');
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+                if self.edges_added == 0 {
+                    line.push(' ');
+                }
+            } else if seen_this {
+                line.push(if self.edges_added > 0 { '\\' } else { '|' });
+                line.push(' ');
+            } else {
+                line.push('|');
+                if self.merge_layout != 0 || i != self.commit_index.saturating_sub(1) {
+                    line.push(if parent_col_seen { '_' } else { ' ' });
+                }
+            }
+
+            if first_parent.is_some_and(|p| p == col_oid) {
+                parent_col_seen = true;
+            }
+        }
+
+        if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        } else {
+            self.update_state(GraphState::Collapsing);
+        }
+    }
+
+    fn output_collapsing_line(&mut self, line: &mut String) {
+        std::mem::swap(&mut self.mapping, &mut self.old_mapping);
+        for i in 0..self.mapping_size {
+            self.mapping[i] = -1;
+        }
+
+        let mut used_horizontal = false;
+        let mut horizontal_edge: isize = -1;
+        let mut horizontal_target: isize = -1;
+
+        for i in 0..self.mapping_size {
+            let target = self.old_mapping[i];
+            if target < 0 {
+                continue;
+            }
+            if (target as usize) * 2 == i {
+                self.mapping[i] = target;
+            } else if i > 0 && self.mapping[i - 1] < 0 {
+                self.mapping[i - 1] = target;
+                if horizontal_edge == -1 {
+                    horizontal_edge = i as isize;
+                    horizontal_target = target;
+                    let mut j = (target as usize).saturating_mul(2).saturating_add(3);
+                    while j < i.saturating_sub(2) {
+                        self.mapping[j] = target;
+                        j += 2;
+                    }
+                }
+            } else if i > 0 && self.mapping[i - 1] == target {
+                continue;
+            } else if i > 1 && self.mapping[i - 2] < 0 {
+                self.mapping[i - 2] = target;
+                if horizontal_edge == -1 {
+                    horizontal_target = target;
+                    horizontal_edge = i as isize - 1;
+                    let mut j = (target as usize).saturating_mul(2).saturating_add(3);
+                    while j < i.saturating_sub(2) {
+                        self.mapping[j] = target;
+                        j += 2;
+                    }
+                }
+            }
+        }
+
+        for i in 0..self.mapping_size {
+            self.old_mapping[i] = self.mapping[i];
+        }
+        if self.mapping_size > 0 && self.mapping[self.mapping_size - 1] < 0 {
+            self.mapping_size -= 1;
+        }
+
+        for i in 0..self.mapping_size {
+            let target = self.mapping[i];
+            if target < 0 {
+                line.push(' ');
+            } else if (target as usize) * 2 == i {
+                line.push('|');
+            } else if target == horizontal_target && i as isize != horizontal_edge - 1 {
+                if i != (target as usize).saturating_mul(2).saturating_add(3) {
+                    self.mapping[i] = -1;
+                }
+                used_horizontal = true;
+                line.push('_');
+            } else {
+                if used_horizontal && (i as isize) < horizontal_edge {
+                    self.mapping[i] = -1;
+                }
+                line.push('/');
+            }
+        }
+
+        if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        }
+    }
+}
+
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -438,6 +1391,10 @@ pub fn run(mut args: Args) -> Result<()> {
     // Handle --no-walk: show given commits without walking parents
     if args.no_walk.is_some() {
         return run_no_walk(&repo, &args);
+    }
+
+    if args.graph {
+        return run_graph_log(&repo, &args);
     }
 
     // Determine starting points and excluded commits.

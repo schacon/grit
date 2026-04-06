@@ -380,9 +380,19 @@ pub fn rev_list(
     };
 
     // Path filtering: keep only commits that modify given paths
-    if !options.paths.is_empty() && !options.sparse {
+    if !options.paths.is_empty() {
         let paths = &options.paths;
-        ordered.retain(|oid| commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false));
+        ordered.retain(|oid| {
+            commit_touches_paths(
+                repo,
+                &mut graph,
+                *oid,
+                paths,
+                options.full_history,
+                options.sparse,
+            )
+            .unwrap_or(false)
+        });
     }
 
     // Left-right classification for symmetric diffs
@@ -1695,14 +1705,15 @@ fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
     );
     // Peel tags to commits; skip non-commit objects (e.g. tags of blobs/trees)
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for oid in raw {
         match peel_to_commit(repo, oid) {
-            Ok(commit_oid) => out.push(commit_oid),
+            Ok(commit_oid) if seen.insert(commit_oid) => out.push(commit_oid),
             Err(_) => {} // skip non-commit refs
+            _ => {}
         }
     }
     out.sort();
-    out.dedup();
     Ok(out)
 }
 
@@ -1843,6 +1854,8 @@ fn commit_touches_paths(
     graph: &mut CommitGraph<'_>,
     oid: ObjectId,
     paths: &[String],
+    full_history: bool,
+    sparse: bool,
 ) -> Result<bool> {
     let commit = load_commit(repo, oid)?;
     let parents = graph.parents_of(oid)?;
@@ -1851,6 +1864,9 @@ fn commit_touches_paths(
 
     // Root commit: include only when any requested pathspec exists.
     if parents.is_empty() {
+        if sparse {
+            return Ok(true);
+        }
         return Ok(commit_map
             .keys()
             .any(|path| paths.iter().any(|spec| pathspec_matches(spec, path))));
@@ -1861,7 +1877,14 @@ fn commit_touches_paths(
         let parent = load_commit(repo, parents[0])?;
         let parent_map: HashMap<String, ObjectId> =
             flatten_tree(repo, parent.tree, "")?.into_iter().collect();
-        return Ok(path_differs_for_specs(&commit_map, &parent_map, paths));
+        let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if differs {
+            return Ok(true);
+        }
+        if sparse {
+            return Ok(true);
+        }
+        return Ok(false);
     }
 
     // Merge commit simplification for default dense history:
@@ -1881,11 +1904,15 @@ fn commit_touches_paths(
         }
     }
 
-    if treesame_parents == 1 {
+    if !full_history && treesame_parents == 1 {
         return Ok(false);
     }
 
-    Ok(differs_any)
+    if differs_any {
+        return Ok(true);
+    }
+
+    Ok(sparse)
 }
 
 fn path_differs_for_specs(
