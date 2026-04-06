@@ -1215,7 +1215,7 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         return Ok((ConfigScope::System, path));
     }
     if args.global {
-        let path = global_config_path()
+        let path = global_config_path_for_write()
             .ok_or_else(|| anyhow::anyhow!("cannot determine global config path"))?;
         return Ok((ConfigScope::Global, path));
     }
@@ -1228,7 +1228,7 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         Ok((ConfigScope::Local, gd.join("config")))
     } else {
         // Outside repo, default to global for read operations
-        let path = global_config_path().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
+        let path = global_config_path_for_read().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
         Ok((ConfigScope::Global, path))
     }
 }
@@ -1257,7 +1257,7 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 
     if args.global {
         let mut set = ConfigSet::new();
-        if let Some(path) = global_config_path() {
+        if let Some(path) = global_config_path_for_read() {
             if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
                 set.merge(&f);
             }
@@ -1280,13 +1280,57 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 }
 
 /// Get the path for the global config file.
-fn global_config_path() -> Option<PathBuf> {
+fn global_config_path_for_read() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
         return Some(PathBuf::from(p));
     }
+
+    let gitconfig = global_gitconfig_path();
+    let xdg = global_xdg_config_path();
+
+    if gitconfig.as_ref().is_some_and(|p| p.exists()) {
+        return gitconfig;
+    }
+    if xdg.as_ref().is_some_and(|p| p.exists()) {
+        return xdg;
+    }
+
+    gitconfig.or(xdg)
+}
+
+/// Get the path to write for `--global` config operations.
+fn global_config_path_for_write() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
+        return Some(PathBuf::from(p));
+    }
+
+    let gitconfig = global_gitconfig_path();
+    let xdg = global_xdg_config_path();
+    let gitconfig_exists = gitconfig.as_ref().is_some_and(|p| p.exists());
+    let xdg_exists = xdg.as_ref().is_some_and(|p| p.exists());
+
+    if !gitconfig_exists && xdg_exists {
+        return xdg;
+    }
+
+    gitconfig.or(xdg)
+}
+
+fn global_gitconfig_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".gitconfig"))
+}
+
+fn global_xdg_config_path() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("git/config"));
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".config/git/config"))
 }
 
 /// Returns whether `--default` is valid for the selected operation.

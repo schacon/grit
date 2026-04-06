@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::config::{parse_path, ConfigSet};
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::repo::Repository;
@@ -153,15 +154,15 @@ impl IgnoreMatcher {
 }
 
 fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
-    let config_path = repo.git_dir.join("config");
-    let Some(config_text) = read_optional_text(&config_path)? else {
-        return Ok(Vec::new());
-    };
-    let Some(raw_path) = parse_core_excludesfile(&config_text) else {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let Some(raw_path) = config
+        .get("core.excludesfile")
+        .or_else(default_global_ignore_path)
+    else {
         return Ok(Vec::new());
     };
 
-    let expanded = expand_home(&raw_path);
+    let expanded = parse_path(&raw_path);
     let resolved = if Path::new(&expanded).is_absolute() {
         PathBuf::from(&expanded)
     } else if let Some(work_tree) = &repo.work_tree {
@@ -171,6 +172,18 @@ fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
     };
 
     load_rules_from_file(&resolved, raw_path, String::new())
+}
+
+fn default_global_ignore_path() -> Option<String> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(format!("{xdg}/git/ignore"));
+        }
+    }
+
+    std::env::var("HOME")
+        .ok()
+        .map(|home| format!("{home}/.config/git/ignore"))
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
@@ -311,53 +324,12 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
     })
 }
 
-fn parse_core_excludesfile(config_text: &str) -> Option<String> {
-    let mut in_core = false;
-    for line in config_text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            continue;
-        }
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            let section = trimmed
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim()
-                .to_ascii_lowercase();
-            in_core = section == "core";
-            continue;
-        }
-        if !in_core {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim().eq_ignore_ascii_case("excludesfile") {
-            return Some(value.trim().to_owned());
-        }
-    }
-    None
-}
-
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(Error::Io(err)),
     }
-}
-
-fn expand_home(path: &str) -> String {
-    if path == "~" {
-        return std::env::var("HOME").unwrap_or_else(|_| "~".to_owned());
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
-    }
-    path.to_owned()
 }
 
 fn strip_base<'a>(base: &str, path: &'a str) -> Option<&'a str> {

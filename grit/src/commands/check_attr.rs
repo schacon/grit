@@ -7,10 +7,11 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{parse_path, ConfigSet};
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit check-attr`.
 #[derive(Debug, ClapArgs)]
@@ -104,7 +105,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Load gitattributes
-    let rules = load_gitattributes(work_tree)?;
+    let rules = load_gitattributes(&repo, work_tree)?;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -136,8 +137,16 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 /// Load `.gitattributes` from the work tree root and any nested directories.
-fn load_gitattributes(work_tree: &Path) -> Result<Vec<AttrRule>> {
+fn load_gitattributes(repo: &Repository, work_tree: &Path) -> Result<Vec<AttrRule>> {
     let mut rules = Vec::new();
+
+    // Load global attributes first (lowest precedence), so local files can
+    // override them.
+    if let Some(path) = global_attributes_path(repo)? {
+        if path.exists() {
+            parse_gitattributes_file(&path, "", &mut rules)?;
+        }
+    }
 
     // Load root .gitattributes
     let root_attrs = work_tree.join(".gitattributes");
@@ -152,6 +161,24 @@ fn load_gitattributes(work_tree: &Path) -> Result<Vec<AttrRule>> {
     }
 
     Ok(rules)
+}
+
+fn global_attributes_path(repo: &Repository) -> Result<Option<PathBuf>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    if let Some(path) = config.get("core.attributesfile") {
+        return Ok(Some(PathBuf::from(parse_path(&path))));
+    }
+    Ok(default_global_attributes_path())
+}
+
+fn default_global_attributes_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("git/attributes"));
+        }
+    }
+    Some(PathBuf::from(home).join(".config/git/attributes"))
 }
 
 /// Parse a single .gitattributes file.

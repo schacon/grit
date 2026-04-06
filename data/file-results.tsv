@@ -91,7 +91,7 @@ t1009-read-tree-new-index	yes	3	3	0	ok	3	3	0
 t1010-mktree	yes	8	8	0	ok	8	8	0
 t1011-read-tree-sparse-checkout	yes	23	9	14	ok	9	23	0
 t1012-read-tree-df	yes	5	5	0	ok	5	5	0
-t1014-read-tree-confusing	yes	28	27	1	ok	27	28	0
+t1014-read-tree-confusing	yes	28	28	0	ok	28	28	0
 t1015-read-index-unmerged	yes	6	6	0	ok	6	6	0
 t1016-compatObjectFormat	yes	0	0	0	ok	0	0	0
 t1020-subdirectory	yes	15	15	0	ok	15	15	0
@@ -109,7 +109,7 @@ t1302-repo-version	yes	18	18	0	ok	18	18	0
 t1303-wacky-config	yes	11	11	0	ok	11	11	0
 t1304-default-acl	yes	4	4	0	ok	4	4	0
 t1305-config-include	yes	37	13	24	ok	13	37	0
-t1306-xdg-files	yes	21	12	9	ok	12	21	0
+t1306-xdg-files	yes	21	21	0	ok	21	21	0
 t1307-config-blob	yes	13	11	2	ok	11	13	0
 t1308-config-set	yes	39	1	38	ok	1	39	0
 t1309-early-config	yes	10	10	0	ok	8	8	2

@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after implementing XDG/global config precedence fixes in `config`, global ignore resolution via layered config + XDG defaults in `ignore`, and global attributes loading in `check-attr`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1306-xdg-files.sh` (run from `/workspace/tests`): 21/21 passing (improved from 10/21).
+- `./scripts/run-tests.sh t1306-xdg-files.sh`: 21/21 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 28/28 passing.
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1004-read-tree-m-u-wf.sh`: 17/17 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo build --release -p grit-rs`: success (after `read-tree -m -u` worktree-overwrite safety checks, `--exclude-per-directory=.gitignore` compatibility support, and legacy `merge-resolve` / `merge-recursive` command aliases).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1004-read-tree-m-u-wf.sh` (run from `/workspace/tests`): 17/17 passing (improved from 6/17).
 - `./scripts/run-tests.sh t1004-read-tree-m-u-wf.sh`: 17/17 passing.

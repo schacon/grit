@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    94 |
+| Completed   |    95 |
 | In progress |     0 |
-| Remaining   |   673 |
+| Remaining   |   672 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1306-xdg-files` — 21/21 tests pass (aligned global config path semantics for `--global` reads vs writes so XDG and `~/.gitconfig` precedence matches upstream behavior, taught ignore loading to read `core.excludesfile` via layered config with XDG default fallback, added global attributes loading support in `check-attr` with `core.attributesfile` + XDG default handling, and corrected local test harness behavior to match upstream expectations by avoiding implicit local identity writes and preserving working-directory changes across test blocks)
 - `t1004-read-tree-m-u-wf` — 17/17 tests pass (implemented `read-tree -m -u` worktree safety checks to detect untracked and locally modified overwrite hazards before update, added support for `--exclude-per-directory=.gitignore` to allow ignored-file clobbering in compatibility scenarios while validating unsupported forms, skipped no-op blob rewrites during checkout updates to preserve local edits not touched by the merge, and wired legacy `merge-resolve` / `merge-recursive` command aliases to the existing 3-way read-tree merge path used by upstream D/F resolve coverage)
 - `t1014-read-tree-confusing` — 28/28 tests pass (normalized zero-width space test variable setup in the test harness to be locale-independent under `LC_ALL=C`, and hardened `read-tree` HFS-protection checks by normalizing path components with U+200C removed before case-insensitive `.git` equivalence checks so confusing Unicode dotgit variants are rejected while legitimate UTF-8 paths still pass when protection is disabled)
 - `t1416-ref-transaction-hooks` — 10/10 tests pass (fixed test-hook lifecycle semantics in the local harness so hooks created without `--setup` are cleaned up after each test via `test_when_finished`, preventing stale `reference-transaction` hooks from leaking into later tests and polluting hook output in queued `update-ref --stdin` symref transactions)
@@ -87,4 +88,4 @@
 
 ## What Remains
 
-673 test files still pending. See `plan.md` for the full prioritized list.
+672 test files still pending. See `plan.md` for the full prioritized list.
