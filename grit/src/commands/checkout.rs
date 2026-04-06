@@ -700,16 +700,26 @@ fn force_create_and_switch_branch(
     {
         let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
         let worktrees_dir = common.join("worktrees");
-        // Check main worktree HEAD
-        if let Ok(main_head) = grit_lib::state::resolve_head(&common) {
-            if let grit_lib::state::HeadState::Branch { ref refname, .. } = main_head {
-                if *refname == branch_ref {
-                    let main_path = common.parent().unwrap_or(&common).to_path_buf();
-                    bail!(
-                        "fatal: '{}' is already used by worktree at '{}'",
-                        name,
-                        main_path.display()
-                    );
+        // Check main worktree HEAD (skip if we ARE the main worktree)
+        let main_path = common.parent().unwrap_or(&common).to_path_buf();
+        let we_are_main = repo
+            .work_tree
+            .as_ref()
+            .map(|wt| {
+                wt.canonicalize().unwrap_or(wt.clone())
+                    == main_path.canonicalize().unwrap_or(main_path.clone())
+            })
+            .unwrap_or(false);
+        if !we_are_main {
+            if let Ok(main_head) = grit_lib::state::resolve_head(&common) {
+                if let grit_lib::state::HeadState::Branch { ref refname, .. } = main_head {
+                    if *refname == branch_ref {
+                        bail!(
+                            "fatal: '{}' is already used by worktree at '{}'",
+                            name,
+                            main_path.display()
+                        );
+                    }
                 }
             }
         }
