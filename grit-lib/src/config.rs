@@ -1727,6 +1727,11 @@ fn parse_config_parameters(raw: &str) -> Vec<String> {
 }
 
 /// Return candidate paths for the global config file, in priority order.
+/// Public accessor for the ordered list of global config file paths.
+pub fn global_config_paths_pub() -> Vec<PathBuf> {
+    global_config_paths()
+}
+
 fn global_config_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
 

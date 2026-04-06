@@ -139,19 +139,91 @@ pub fn run(args: Args) -> Result<()> {
 fn load_gitattributes(work_tree: &Path) -> Result<Vec<AttrRule>> {
     let mut rules = Vec::new();
 
-    // Load root .gitattributes
-    let root_attrs = work_tree.join(".gitattributes");
-    if root_attrs.exists() {
-        parse_gitattributes_file(&root_attrs, "", &mut rules)?;
+    // Attributes are processed from most general to most specific;
+    // last matching rule wins within all files combined.
+    // Order: global → .git/info/attributes → .gitattributes (local wins)
+
+    // 1. Global attributes: core.attributesFile config or XDG default.
+    let global_attr = find_global_attributes_file(work_tree);
+    if let Some(path) = global_attr {
+        if path.exists() {
+            parse_gitattributes_file(&path, "", &mut rules)?;
+        }
     }
 
-    // Load info/attributes from .git
+    // 2. .git/info/attributes
     let info_attrs = work_tree.join(".git/info/attributes");
     if info_attrs.exists() {
         parse_gitattributes_file(&info_attrs, "", &mut rules)?;
     }
 
+    // 3. Root .gitattributes (most specific, wins over global)
+    let root_attrs = work_tree.join(".gitattributes");
+    if root_attrs.exists() {
+        parse_gitattributes_file(&root_attrs, "", &mut rules)?;
+    }
+
     Ok(rules)
+}
+
+/// Find the global gitattributes file: core.attributesFile or XDG default.
+fn find_global_attributes_file(work_tree: &Path) -> Option<std::path::PathBuf> {
+    // Check local repo config for core.attributesFile
+    let config_path = work_tree.join(".git/config");
+    if let Ok(text) = fs::read_to_string(&config_path) {
+        if let Some(p) = parse_attr_file_from_config(&text) {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    // Check global config
+    for global in grit_lib::config::global_config_paths_pub() {
+        if let Ok(text) = fs::read_to_string(&global) {
+            if let Some(p) = parse_attr_file_from_config(&text) {
+                return Some(std::path::PathBuf::from(p));
+            }
+        }
+    }
+    // XDG default
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(std::path::PathBuf::from(xdg).join("git/attributes"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(std::path::PathBuf::from(home).join(".config/git/attributes"));
+    }
+    None
+}
+
+/// Parse core.attributesFile from a config file's text.
+fn parse_attr_file_from_config(text: &str) -> Option<String> {
+    let mut in_core = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_core = trimmed.to_lowercase().starts_with("[core");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("attributesFile")
+            .or_else(|| trimmed.strip_prefix("attributesfile"))
+        {
+            let val = rest
+                .trim_start_matches(|c: char| c == ' ' || c == '=')
+                .trim();
+            if !val.is_empty() {
+                // Expand ~ in path
+                if val.starts_with('~') {
+                    if let Ok(home) = std::env::var("HOME") {
+                        return Some(format!("{home}{}", &val[1..]));
+                    }
+                }
+                return Some(val.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Parse a single .gitattributes file.

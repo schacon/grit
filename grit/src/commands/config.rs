@@ -1245,9 +1245,11 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 
     if args.global {
         let mut set = ConfigSet::new();
-        if let Some(path) = global_config_path() {
+        // Try all global config paths in order (first found wins).
+        for path in grit_lib::config::global_config_paths_pub() {
             if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
                 set.merge(&f);
+                break; // first found wins
             }
         }
         return Ok(set);
@@ -1272,9 +1274,23 @@ fn global_config_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
         return Some(PathBuf::from(p));
     }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".gitconfig"))
+    // If ~/.gitconfig exists, use it; otherwise use XDG path.
+    let home = std::env::var("HOME").ok()?;
+    let home_path = PathBuf::from(&home);
+    let gitconfig = home_path.join(".gitconfig");
+    if gitconfig.exists() {
+        return Some(gitconfig);
+    }
+    // XDG path
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("git/config"));
+    }
+    let xdg_default = home_path.join(".config/git/config");
+    if xdg_default.exists() {
+        return Some(xdg_default);
+    }
+    // Fall back to creating ~/.gitconfig
+    Some(gitconfig)
 }
 
 /// Returns whether `--default` is valid for the selected operation.

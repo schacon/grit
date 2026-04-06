@@ -153,24 +153,54 @@ impl IgnoreMatcher {
 }
 
 fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
-    let config_path = repo.git_dir.join("config");
-    let Some(config_text) = read_optional_text(&config_path)? else {
-        return Ok(Vec::new());
-    };
-    let Some(raw_path) = parse_core_excludesfile(&config_text) else {
-        return Ok(Vec::new());
-    };
+    // Check local repo config, then global config, for core.excludesFile.
+    // Also fall back to XDG default: $HOME/.config/git/ignore
+    let local_config = repo.git_dir.join("config");
+    let local_text = read_optional_text(&local_config)?.unwrap_or_default();
 
-    let expanded = expand_home(&raw_path);
-    let resolved = if Path::new(&expanded).is_absolute() {
-        PathBuf::from(&expanded)
-    } else if let Some(work_tree) = &repo.work_tree {
-        work_tree.join(&expanded)
+    // Try global config files for core.excludesFile
+    let mut raw_path: Option<String> = parse_core_excludesfile(&local_text);
+    if raw_path.is_none() {
+        for global_path in crate::config::global_config_paths_pub() {
+            if let Ok(Some(text)) = std::fs::read_to_string(&global_path)
+                .map(Some)
+                .or_else(|e| {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        Ok(None)
+                    } else {
+                        Err(e)
+                    }
+                })
+            {
+                raw_path = parse_core_excludesfile(&text);
+                if raw_path.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Some(ref rp) = raw_path {
+        let expanded = expand_home(rp);
+        let resolved = if Path::new(&expanded).is_absolute() {
+            PathBuf::from(&expanded)
+        } else if let Some(work_tree) = &repo.work_tree {
+            work_tree.join(&expanded)
+        } else {
+            repo.git_dir.join(&expanded)
+        };
+        return load_rules_from_file(&resolved, rp.clone(), String::new());
+    }
+
+    // XDG default: $XDG_CONFIG_HOME/git/ignore or $HOME/.config/git/ignore
+    let xdg_ignore = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        PathBuf::from(xdg).join("git/ignore")
+    } else if let Ok(home) = std::env::var("HOME") {
+        PathBuf::from(home).join(".config/git/ignore")
     } else {
-        repo.git_dir.join(&expanded)
+        return Ok(Vec::new());
     };
-
-    load_rules_from_file(&resolved, raw_path, String::new())
+    load_rules_from_file(&xdg_ignore, ".config/git/ignore".to_owned(), String::new())
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
