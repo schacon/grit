@@ -2719,7 +2719,6 @@ fn should_passthrough_branch_checkout(args: &Args, target: Option<&str>, paths: 
 
     target.is_some()
         || args.new_branch.is_some()
-        || args.force_branch.is_some()
         || args.orphan.is_some()
         || args.detach
         || args.force

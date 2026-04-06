@@ -250,6 +250,43 @@ fn common_dir(git_dir: &Path) -> Result<PathBuf> {
     }
 }
 
+fn has_any_local_branch_refs(common_git_dir: &Path) -> bool {
+    let heads_dir = common_git_dir.join("refs/heads");
+    if heads_dir.is_dir() {
+        let mut stack = vec![heads_dir];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match entry.file_type() {
+                    Ok(ft) if ft.is_file() => return true,
+                    Ok(ft) if ft.is_dir() => stack.push(path),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let packed_refs = common_git_dir.join("packed-refs");
+    if let Ok(content) = fs::read_to_string(packed_refs) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('^') {
+                continue;
+            }
+            if let Some((_oid, name)) = trimmed.split_once(' ') {
+                if name.starts_with("refs/heads/") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// Resolve a commit-ish string to an ObjectId within the given repo.
 fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     // Try as a branch ref first
@@ -284,6 +321,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
+    let head_state_for_mode = resolve_head(&repo.git_dir).unwrap_or(HeadState::Invalid);
+    let head_oid_for_mode = head_state_for_mode.oid().copied();
+    let has_local_branches = has_any_local_branch_refs(&common);
+    let needs_local_bad_head_flow = head_oid_for_mode.is_none() && has_local_branches;
+    let needs_local_inferred_orphan_combo =
+        head_oid_for_mode.is_none() && !has_local_branches && (args.no_checkout || args.track);
     // Use native Git for regular worktree-add behavior. Keep local implementation
     // for relative-path worktree modes because the host Git in this environment
     // does not support --relative-paths/--no-relative-paths.
@@ -291,6 +334,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         && !args.no_relative_paths
         && !config_use_relative_paths(&common)
         && !config_relative_worktrees_enabled(&common)
+        && !needs_local_bad_head_flow
+        && !needs_local_inferred_orphan_combo
     {
         return passthrough_current_worktree_invocation();
     }
@@ -356,11 +401,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         }
     }
 
-    let wt_path = wt_path.canonicalize().unwrap_or_else(|_| {
-        // Path may not exist yet; create it then canonicalize
-        let _ = fs::create_dir_all(&wt_path);
-        wt_path.canonicalize().unwrap_or(wt_path.clone())
-    });
+    let wt_path = wt_path
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path_for_compare(&wt_path));
 
     // Worktree name is derived from the basename of the path
     let wt_name = wt_path
@@ -432,12 +475,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     // Determine branch target and commit.
-    let head_state = resolve_head(&common)?;
+    let head_state = resolve_head(&repo.git_dir)?;
     let head_oid = head_state.oid().copied();
 
     // Infer --orphan when there is no usable source branch.
-    let inferred_orphan =
-        !args.detach && !args.orphan && args.branch.is_none() && head_oid.is_none();
+    let inferred_orphan = !args.detach
+        && !args.orphan
+        && args.branch.is_none()
+        && head_oid.is_none()
+        && !has_local_branches;
     if inferred_orphan {
         if !args.quiet {
             eprintln!("No possible source branch, inferring '--orphan'");
@@ -448,6 +494,16 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         if args.track {
             fatal_usage("options '--orphan' and '--track' cannot be used together");
         }
+    }
+    if !inferred_orphan && head_oid.is_none() && !args.orphan {
+        if !args.quiet {
+            let branch_hint = args
+                .new_branch
+                .as_deref()
+                .or(args.force_new_branch.as_deref());
+            warn_bad_head_and_orphan_hint(&repo.git_dir, &wt_path, branch_hint);
+        }
+        fatal_invalid_reference("HEAD");
     }
 
     // Determine branch mode and starting commit.
@@ -1303,6 +1359,34 @@ fn parse_gitdir_target(admin: &Path, text: &str) -> Option<PathBuf> {
 fn fatal_usage(message: &str) -> ! {
     eprintln!("fatal: {message}");
     std::process::exit(128);
+}
+
+fn fatal_invalid_reference(reference: &str) -> ! {
+    eprintln!("fatal: invalid reference: {reference}");
+    std::process::exit(128);
+}
+
+fn warn_bad_head_and_orphan_hint(git_dir: &Path, wt_path: &Path, branch_hint: Option<&str>) {
+    eprintln!("warning: HEAD points to an invalid (or orphaned) reference.");
+    eprintln!("HEAD path: '{}'", git_dir.join("HEAD").display());
+    if let Ok(contents) = fs::read_to_string(git_dir.join("HEAD")) {
+        eprintln!("HEAD contents: '{}'", contents.trim_end_matches('\n'));
+    }
+    eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
+    eprintln!("hint: (branch with no commits), you can do so");
+    eprintln!("hint: using the --orphan flag:");
+    eprintln!("hint:");
+    if let Some(branch_name) = branch_hint {
+        eprintln!(
+            "hint:     git worktree add --orphan -b {} {}",
+            branch_name,
+            wt_path.display()
+        );
+    } else {
+        eprintln!("hint:     git worktree add --orphan {}", wt_path.display());
+    }
+    eprintln!("hint:");
+    eprintln!("hint: Disable this message with \"git config advice.worktreeAddOrphan false\"");
 }
 
 fn resolve_previous_branch_name(common_git_dir: &Path) -> Result<String> {
