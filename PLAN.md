@@ -427,7 +427,7 @@ commit → check it off → move on.
 - [x] `t4136-apply-check` ████████████████████ 6/6 (0 left) — git apply should exit non-zero with unrecognized input.
 - [x] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch (`--apply` compatibility flag added; worktree apply now preserves existing executable bit when patch mode is unspecified for rename/copy hunks)
 
-- [ ] `t4138-apply-ws-expansion` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply test patches with whitespace expansion.
+- [x] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion (`core.whitespace tabwidth=<n>` expansion now normalizes leading indent for context matching and whitespace-fix output)
 - [ ] `t4023-diff-rename-typechange` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — typechange rename detection
 - [ ] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
 - [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff

@@ -157,6 +157,7 @@ struct ApplyWhitespaceMode {
     whitespace_fix: bool,
     ignore_space_change: bool,
     inaccurate_eof: bool,
+    tab_width: usize,
 }
 
 fn config_ignore_space_change() -> bool {
@@ -174,8 +175,51 @@ fn config_ignore_space_change() -> bool {
     )
 }
 
+fn config_tab_width() -> usize {
+    let Ok(repo) = Repository::discover(None) else {
+        return 8;
+    };
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let Some(value) = config.get("core.whitespace") else {
+        return 8;
+    };
+
+    value
+        .split(',')
+        .find_map(|part| {
+            part.trim()
+                .strip_prefix("tabwidth=")
+                .and_then(|n| n.parse::<usize>().ok())
+        })
+        .filter(|w| *w > 0)
+        .unwrap_or(8)
+}
+
+fn config_whitespace_fix() -> bool {
+    let Ok(repo) = Repository::discover(None) else {
+        return false;
+    };
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+        .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+    let Some(value) = config.get("apply.whitespace") else {
+        return false;
+    };
+    value.eq_ignore_ascii_case("fix")
+}
+
+fn whitespace_option_was_explicitly_set() -> bool {
+    std::env::args().any(|arg| arg == "--whitespace" || arg.starts_with("--whitespace="))
+}
+
 fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
-    let whitespace_fix = args.whitespace.eq_ignore_ascii_case("fix");
+    let whitespace_fix = if whitespace_option_was_explicitly_set() {
+        args.whitespace.eq_ignore_ascii_case("fix")
+    } else if args.whitespace.eq_ignore_ascii_case("warn") {
+        config_whitespace_fix()
+    } else {
+        args.whitespace.eq_ignore_ascii_case("fix")
+    };
     let ignore_space_change = if args.no_ignore_whitespace {
         false
     } else if args.ignore_whitespace || args.ignore_space_change {
@@ -187,6 +231,7 @@ fn resolve_apply_whitespace_mode(args: &Args) -> ApplyWhitespaceMode {
         whitespace_fix,
         ignore_space_change,
         inaccurate_eof: args.inaccurate_eof,
+        tab_width: config_tab_width(),
     }
 }
 
@@ -780,8 +825,62 @@ fn canonicalize_space_change_line(line: &str) -> String {
     normalized.trim_end().to_owned()
 }
 
+fn expand_tabs_for_compare(line: &str, tab_width: usize) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut col = 0usize;
+    for ch in line.chars() {
+        match ch {
+            '\t' => {
+                let stop = tab_width.saturating_sub(col % tab_width).max(1);
+                out.push_str(&" ".repeat(stop));
+                col += stop;
+            }
+            _ => {
+                out.push(ch);
+                col += 1;
+            }
+        }
+    }
+    out
+}
+
+fn normalize_ws_fix_line(line: &str, tab_width: usize) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_indent = true;
+    let mut col = 0usize;
+
+    for ch in line.chars() {
+        if in_indent {
+            match ch {
+                ' ' => {
+                    out.push(' ');
+                    col += 1;
+                    continue;
+                }
+                '\t' => {
+                    let stop = tab_width.saturating_sub(col % tab_width).max(1);
+                    out.push_str(&" ".repeat(stop));
+                    col += stop;
+                    continue;
+                }
+                _ => in_indent = false,
+            }
+        }
+        out.push(ch);
+        col += 1;
+    }
+
+    canonicalize_ws_line(&out)
+}
+
 fn lines_equal(expected: &str, actual: &str, ws_mode: ApplyWhitespaceMode) -> bool {
     if expected == actual {
+        return true;
+    }
+    if ws_mode.whitespace_fix
+        && expand_tabs_for_compare(expected, ws_mode.tab_width)
+            == expand_tabs_for_compare(actual, ws_mode.tab_width)
+    {
         return true;
     }
     if ws_mode.ignore_space_change
@@ -789,7 +888,9 @@ fn lines_equal(expected: &str, actual: &str, ws_mode: ApplyWhitespaceMode) -> bo
     {
         return true;
     }
-    ws_mode.whitespace_fix && canonicalize_ws_line(expected) == canonicalize_ws_line(actual)
+    ws_mode.whitespace_fix
+        && normalize_ws_fix_line(expected, ws_mode.tab_width)
+            == normalize_ws_fix_line(actual, ws_mode.tab_width)
 }
 
 fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) -> Result<String> {
@@ -845,11 +946,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                             );
                         }
                         old_idx += 1;
-                        if ws_mode.whitespace_fix {
-                            result.push(canonicalize_ws_line(s));
-                        } else {
-                            result.push(actual_line.to_string());
-                        }
+                        result.push(actual_line.to_string());
                     } else {
                         result.push(s.to_string());
                     }
@@ -870,7 +967,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk], ws_mode: ApplyWhitespaceMode) 
                 }
                 HunkLine::Add(s) => {
                     if ws_mode.whitespace_fix {
-                        result.push(canonicalize_ws_line(s));
+                        result.push(normalize_ws_fix_line(s, ws_mode.tab_width));
                     } else {
                         result.push(s.clone());
                     }
@@ -995,11 +1092,7 @@ fn apply_hunks_with_reject(
                     }
                     let actual_line = lines[idx].clone();
                     idx += 1;
-                    if ws_mode.whitespace_fix {
-                        replacement.push(canonicalize_ws_line(s));
-                    } else {
-                        replacement.push(actual_line);
-                    }
+                    replacement.push(actual_line);
                 }
                 HunkLine::Remove(s) => {
                     if idx >= lines.len() || !lines_equal(s, &lines[idx], ws_mode) {
@@ -1010,7 +1103,7 @@ fn apply_hunks_with_reject(
                 }
                 HunkLine::Add(s) => {
                     if ws_mode.whitespace_fix {
-                        replacement.push(canonicalize_ws_line(s));
+                        replacement.push(normalize_ws_fix_line(s, ws_mode.tab_width));
                     } else {
                         replacement.push(s.clone());
                     }

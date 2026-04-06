@@ -468,7 +468,7 @@ t4133-apply-filenames	yes	4	4	0	ok	4	4	0
 t4134-apply-submodule	yes	2	2	0	ok	2	2	0
 t4135-apply-weird-filenames	yes	20	3	17	ok	3	20	0
 t4136-apply-check	yes	6	6	0	ok	6	6	0
-t4138-apply-ws-expansion	yes	5	1	4	ok	1	5	0
+t4138-apply-ws-expansion	yes	5	5	0	ok	5	5	0
 t4139-apply-escape	yes	12	2	10	ok	2	12	0
 t4140-apply-ita	yes	7	2	5	ok	2	7	0
 t4141-apply-too-large	yes	1	1	0	ok	1	1	0
