@@ -610,6 +610,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     for candidate in &[
+        format!("refs/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),

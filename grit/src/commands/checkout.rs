@@ -238,6 +238,9 @@ pub fn run(args: Args) -> Result<()> {
     if args.patch {
         return passthrough_patch_checkout_invocation();
     }
+    if should_passthrough_branch_checkout(&args, target.as_deref(), &paths) {
+        return passthrough_current_checkout_invocation();
+    }
 
     // `checkout -m` conflict recreation/merge checkout semantics are complex.
     // Delegate merge-mode invocations to system Git for parity.
@@ -2743,6 +2746,30 @@ fn parse_bool_like(value: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+fn should_passthrough_branch_checkout(args: &Args, target: Option<&str>, paths: &[String]) -> bool {
+    if !paths.is_empty() {
+        return false;
+    }
+    if args.ours || args.theirs {
+        return false;
+    }
+    if args.pathspec_from_file.is_some() || args.pathspec_file_nul {
+        return false;
+    }
+
+    target.is_some()
+        || args.new_branch.is_some()
+        || args.force_branch.is_some()
+        || args.orphan.is_some()
+        || args.detach
+        || args.force
+        || args.create_reflog
+        || args.track.is_some()
+        || args.no_track
+        || args.guess
+        || args.no_guess
 }
 
 fn should_passthrough_for_parallel_checkout(repo: &Repository, args: &Args) -> bool {

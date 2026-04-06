@@ -482,7 +482,7 @@ t2020-checkout-detach	yes	26	26	0	ok	26	26	0
 t2021-checkout-overwrite	yes	9	9	0	ok	9	9	0
 t2022-checkout-paths	yes	5	5	0	ok	5	5	0
 t2023-checkout-m	yes	5	5	0	ok	5	5	0
-t2024-checkout-dwim	yes	23	11	12	ok	11	23	0
+t2024-checkout-dwim	yes	23	23	0	ok	23	23	0
 t2025-checkout-no-overlay	yes	6	6	0	ok	6	6	0
 t2026-checkout-pathspec-file	yes	11	11	0	ok	11	11	0
 t2027-checkout-track	yes	5	5	0	ok	5	5	0
