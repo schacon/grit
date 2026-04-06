@@ -334,13 +334,22 @@ sane_unset () {
 }
 
 test_seq () {
-	local i="$1" end="${2:-}"
-	if test -z "$end"; then
-		end=$i
-		i=1
-	fi
+	local fmt="%d"
+	case "$1" in
+	-f)
+		fmt="$2"
+		shift 2
+		;;
+	esac
+	case $# in
+	1)	set 1 "$1" ;;
+	2)	;;
+	*)	echo "BUG: not 1 or 2 parameters to test_seq" >&2; return 1 ;;
+	esac
+	local i="$1"
+	local end="$2"
 	while test "$i" -le "$end"; do
-		echo "$i"
+		printf "$fmt\n" "$i"
 		i=$(($i + 1))
 	done
 }

@@ -329,12 +329,12 @@ pub fn run(args: Args) -> Result<()> {
                 let sub_git_dir = resolve_gitdir(&dot_git)?;
                 let head_path = sub_git_dir.join("HEAD");
                 let head_content = std::fs::read_to_string(&head_path)
-                    .with_context(|| format!("reading HEAD of submodule"))?;
+                    .with_context(|| "reading HEAD of submodule".to_string())?;
                 let head_content = head_content.trim();
                 let oid: ObjectId = if let Some(refname) = head_content.strip_prefix("ref: ") {
                     let ref_path = sub_git_dir.join(refname);
                     let ref_content = std::fs::read_to_string(&ref_path)
-                        .with_context(|| format!("reading ref in submodule"))?;
+                        .with_context(|| "reading ref in submodule".to_string())?;
                     ref_content.trim().parse().with_context(|| "invalid oid")?
                 } else {
                     head_content.parse().with_context(|| "invalid HEAD oid")?
@@ -368,10 +368,11 @@ pub fn run(args: Args) -> Result<()> {
         // On filesystems without symlink support (core.symlinks=false), keep
         // an existing symlink entry's mode even if the worktree stores it
         // as a plain file containing the link target.
-        if !symlinks_enabled && !meta.file_type().is_symlink() {
-            if existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
-                mode = grit_lib::index::MODE_SYMLINK;
-            }
+        if !symlinks_enabled
+            && !meta.file_type().is_symlink()
+            && existing_mode == Some(grit_lib::index::MODE_SYMLINK)
+        {
+            mode = grit_lib::index::MODE_SYMLINK;
         }
 
         let data = if meta.file_type().is_symlink() {

@@ -1156,8 +1156,10 @@ fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Resul
         HeadState::Branch { refname, .. } => {
             // Update the ref that HEAD points to
             if grit_lib::reftable::is_reftable_repo(git_dir) {
-                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                grit_lib::reftable::reftable_write_ref(
+                    git_dir, refname, commit_oid, None, None, None,
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             } else {
                 let ref_path = git_dir.join(refname);
                 if let Some(parent) = ref_path.parent() {

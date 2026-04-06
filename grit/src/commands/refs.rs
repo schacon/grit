@@ -519,7 +519,7 @@ fn migrate_files_to_reftable(repo: &Repository) -> Result<()> {
             let oid: grit_lib::objects::ObjectId = value
                 .parse()
                 .with_context(|| format!("parsing oid for {refname}"))?;
-            grit_lib::reftable::reftable_write_ref(git_dir, refname, &oid, None, None)
+            grit_lib::reftable::reftable_write_ref(git_dir, refname, &oid, None, None, None)
                 .with_context(|| format!("writing ref {refname}"))?;
         }
     }

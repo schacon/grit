@@ -1096,6 +1096,162 @@ fn run_test_tool_zlib(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn read_be_u24(buf: &[u8], pos: usize) -> Result<usize> {
+    if pos + 3 > buf.len() {
+        bail!("reftable: truncated u24 at offset {pos}");
+    }
+    Ok(((buf[pos] as usize) << 16) | ((buf[pos + 1] as usize) << 8) | (buf[pos + 2] as usize))
+}
+
+fn read_be_u16(buf: &[u8], pos: usize) -> Result<usize> {
+    if pos + 2 > buf.len() {
+        bail!("reftable: truncated u16 at offset {pos}");
+    }
+    Ok(((buf[pos] as usize) << 8) | (buf[pos + 1] as usize))
+}
+
+fn decode_reftable_header_block_size(data: &[u8]) -> Result<u32> {
+    if data.len() < 8 {
+        bail!("reftable: file too small");
+    }
+    if &data[0..4] != b"REFT" {
+        bail!("reftable: bad magic");
+    }
+    Ok(((data[5] as u32) << 16) | ((data[6] as u32) << 8) | (data[7] as u32))
+}
+
+fn decode_reftable_footer_size(data: &[u8]) -> Result<usize> {
+    if data.len() < 5 {
+        bail!("reftable: file too small");
+    }
+    let version = data[4];
+    let footer_size = if version == 2 { 72 } else { 68 };
+    if data.len() < footer_size {
+        bail!("reftable: file too small for footer");
+    }
+    Ok(footer_size)
+}
+
+fn dump_reftable_blocks(path: &Path) -> Result<()> {
+    let data = std::fs::read(path)?;
+    let block_size = decode_reftable_header_block_size(&data)?;
+    let footer_size = decode_reftable_footer_size(&data)?;
+    let footer_start = data.len() - footer_size;
+
+    println!("header:");
+    println!("  block_size: {block_size}");
+
+    let mut pos = 24usize;
+    let mut current_section: Option<u8> = None;
+    while pos < footer_start {
+        let block_type = data[pos];
+        if block_type == 0 {
+            if block_size == 0 {
+                break;
+            }
+            let bs = block_size as usize;
+            pos = ((pos / bs) + 1) * bs;
+            continue;
+        }
+
+        let block_len = read_be_u24(&data, pos + 1)?;
+        let restart_count;
+        let restart_off = block_len;
+        let next_pos;
+        if block_type == b'g' {
+            let inflated_size = block_len
+                .checked_sub(4)
+                .ok_or_else(|| anyhow::anyhow!("reftable: invalid log block length"))?;
+            let compressed_start = pos + 4;
+            if compressed_start > footer_start {
+                bail!("reftable: invalid log block offset");
+            }
+            let remaining = &data[compressed_start..footer_start];
+            let mut decoder = flate2::read::DeflateDecoder::new(remaining);
+            let mut inflated = vec![0u8; inflated_size];
+            decoder.read_exact(&mut inflated)?;
+            restart_count = read_be_u16(&inflated, inflated.len().saturating_sub(2))?;
+            next_pos = compressed_start
+                .checked_add(decoder.total_in() as usize)
+                .ok_or_else(|| anyhow::anyhow!("reftable: invalid log block length"))?;
+        } else {
+            let block_end = if pos == 24 {
+                block_len
+            } else {
+                pos + block_len
+            };
+            if block_end > footer_start {
+                break;
+            }
+            restart_count = read_be_u16(&data, block_end - 2)?;
+            next_pos = if block_size > 0 {
+                let bs = block_size as usize;
+                if pos == 24 {
+                    bs
+                } else {
+                    pos + bs
+                }
+            } else if pos == 24 {
+                block_len
+            } else {
+                pos + block_len
+            };
+        }
+
+        let section = match block_type {
+            b'r' => "ref",
+            b'g' => "log",
+            b'i' => "idx",
+            b'o' => "obj",
+            _ => break,
+        };
+        if current_section != Some(block_type) {
+            current_section = Some(block_type);
+            println!("{section}:");
+        }
+
+        let restart_off = restart_off
+            .checked_sub(2 + 3 * restart_count)
+            .ok_or_else(|| anyhow::anyhow!("reftable: invalid restart table"))?;
+        println!("  - length: {restart_off}");
+        println!("    restarts: {restart_count}");
+
+        pos = next_pos;
+    }
+
+    Ok(())
+}
+
+fn run_test_tool_dump_reftable(rest: &[String]) -> Result<()> {
+    let mut dump_blocks = false;
+    let mut path: Option<&str> = None;
+
+    let mut i = 1usize;
+    while i < rest.len() {
+        let arg = &rest[i];
+        if !arg.starts_with('-') {
+            path = Some(arg);
+            break;
+        }
+        match arg.as_str() {
+            "-b" => dump_blocks = true,
+            "-h" | "-?" => {
+                println!("usage: test-tool dump-reftable -b <table>");
+                return Ok(());
+            }
+            "-t" | "-s" | "-6" => bail!("test-tool dump-reftable: unsupported option '{arg}'"),
+            _ => bail!("test-tool dump-reftable: unknown option '{arg}'"),
+        }
+        i += 1;
+    }
+
+    if !dump_blocks {
+        bail!("test-tool dump-reftable: only '-b' is supported");
+    }
+    let path = path.ok_or_else(|| anyhow::anyhow!("need argument"))?;
+    dump_reftable_blocks(Path::new(path))
+}
+
 fn test_tool_ref_store_usage() -> &'static str {
     "usage: test-tool ref-store <main|submodule:<path>|worktree:<id>> <function> [args]"
 }
@@ -3603,6 +3759,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "config" => run_test_tool_config(tool_args),
                 "hexdump" => run_test_tool_hexdump(tool_args),
                 "zlib" => run_test_tool_zlib(tool_args),
+                "dump-reftable" => run_test_tool_dump_reftable(tool_args),
                 "ref-store" => run_test_tool_ref_store(tool_args),
                 "pkt-line" => run_test_tool_pkt_line(tool_args),
                 other => bail!("test-tool: unknown subcommand '{other}'"),

@@ -8,6 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::refs::{list_refs, read_ref_file, Ref};
+use grit_lib::reftable::{is_reftable_repo, read_write_options, ReftableStack};
 use grit_lib::repo::Repository;
 use std::collections::BTreeMap;
 use std::fs;
@@ -33,6 +34,9 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
     let git_dir = &repo.git_dir;
+    if is_reftable_repo(git_dir) {
+        return run_reftable_pack_refs(git_dir);
+    }
 
     // Collect all loose refs under refs/
     let refs = list_refs(git_dir, "refs/").context("failed to list refs")?;
@@ -64,6 +68,35 @@ pub fn run(args: Args) -> Result<()> {
         for (refname, _) in &refs {
             prune_loose_ref(git_dir, refname);
         }
+    }
+
+    Ok(())
+}
+
+fn run_reftable_pack_refs(git_dir: &Path) -> Result<()> {
+    let opts = match read_write_options(git_dir) {
+        Ok(opts) => opts,
+        Err(grit_lib::error::Error::ConfigError(msg))
+            if msg == "reftable block size cannot exceed 16MB"
+                || msg == "reftable block size cannot exceed 65535" =>
+        {
+            eprintln!("fatal: {msg}");
+            std::process::exit(1);
+        }
+        Err(err) => return Err(err.into()),
+    };
+
+    let mut stack = ReftableStack::open(git_dir).context("unable to open reftable stack")?;
+    if stack.table_names().len() <= 1 {
+        return Ok(());
+    }
+
+    if let Err(err) = stack.compact_with_options(&opts) {
+        let rendered = err.to_string();
+        if rendered.contains("too large") {
+            return Err(anyhow::anyhow!("unable to compact stack: entry too large"));
+        }
+        return Err(anyhow::anyhow!("unable to compact stack: {rendered}"));
     }
 
     Ok(())

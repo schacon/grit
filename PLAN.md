@@ -115,7 +115,7 @@ commit → check it off → move on.
 - [x] `t1004-read-tree-m-u-wf` ████████████████████ 17/17 (0 left) — read-tree -m -u checks working tree files
 - [x] `t1411-reflog-show` ████████████████████ 17/17 (0 left) — Test reflog display routines
 - [x] `t0212-trace2-event` ████████████████████ 11/11 (0 left) — test trace2 facility
-- [ ] `t0613-reftable-write-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — reftable write options
+- [x] `t0613-reftable-write-options` ████████████████████ 11/11 (0 left) — reftable write options
 - [ ] `t1419-exclude-refs` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test exclude_patterns functionality in main ref store
 - [ ] `t0211-trace2-perf` ████░░░░░░░░░░░░░░░░ 4/17 (13 left) — test trace2 facility (perf target)
 - [ ] `t1508-at-combinations` ████████████░░░░░░░░ 21/35 (14 left) — test various @{X} syntax combinations together

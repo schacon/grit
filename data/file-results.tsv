@@ -76,7 +76,7 @@ t0602-reffiles-fsck	yes	23	3	20	ok	3	23	0
 t0610-reftable-basics	yes	91	23	68	ok	23	91	0
 t0611-reftable-httpd	yes	0	0	0	timeout	0	0	0
 t0612-reftable-jgit-compatibility	yes	0	0	0	ok	0	0	0
-t0613-reftable-write-options	yes	11	0	11	ok	0	11	0
+t0613-reftable-write-options	yes	11	11	0	ok	11	11	0
 t0614-reftable-fsck	yes	7	7	0	ok	7	7	0
 t1000-read-tree-m-3way	yes	83	47	36	ok	47	83	0
 t1001-read-tree-m-2way	yes	29	16	13	ok	16	29	0

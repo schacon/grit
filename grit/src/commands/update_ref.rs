@@ -9,6 +9,7 @@ use time::OffsetDateTime;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::{append_reflog, delete_ref, read_symbolic_ref, resolve_ref, write_ref};
+use grit_lib::reftable::is_reftable_repo;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit update-ref`.
@@ -99,41 +100,70 @@ pub fn run(args: Args) -> Result<()> {
         refname: target_refname.clone(),
     };
 
+    let log_message = args.log_message.as_deref().unwrap_or("");
+    let should_write_reflog =
+        !log_message.is_empty() || args.create_reflog || should_log_ref_updates(&repo);
+
     // Zero OID means delete
     if new_oid == zero_oid() {
         run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
         run_ref_transaction_committed(&repo, &[hook_update]);
-        if let Some(msg) = &args.log_message {
-            let _ = append_reflog(
-                &repo.git_dir,
+        if should_write_reflog {
+            append_reflog_or_fail(
+                &repo,
                 &target_refname,
                 &old_oid_for_reflog,
                 &new_oid,
-                "grit <grit> 0 +0000",
-                msg,
-            );
+                &resolve_reflog_identity(&repo),
+                log_message,
+            )?;
         }
         return Ok(());
     }
 
     run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
 
-    write_ref(&repo.git_dir, &target_refname, &new_oid).context("writing ref")?;
+    if is_reftable_repo(&repo.git_dir) && should_write_reflog {
+        let identity = resolve_reflog_identity(&repo);
+        if let Err(err) = grit_lib::reftable::reftable_write_ref(
+            &repo.git_dir,
+            &target_refname,
+            &new_oid,
+            Some(&identity),
+            Some(log_message),
+            None,
+        ) {
+            if err.to_string().contains("too large") {
+                eprintln!(
+                    "fatal: update_ref failed for ref '{}': reftable: transaction failure: entry too large",
+                    target_refname
+                );
+                std::process::exit(1);
+            }
+            return Err(anyhow::Error::new(err)).context("writing ref");
+        }
+    } else if let Err(err) = write_ref(&repo.git_dir, &target_refname, &new_oid) {
+        if is_reftable_repo(&repo.git_dir) && err.to_string().contains("too large") {
+            eprintln!(
+                "fatal: update_ref failed for ref '{}': reftable: transaction failure: entry too large",
+                target_refname
+            );
+            std::process::exit(1);
+        }
+        return Err(err).context("writing ref");
+    }
     run_ref_transaction_committed(&repo, &[hook_update]);
 
-    // Reflog — write when -m is given or when --create-reflog is set
-    let msg = args.log_message.as_deref().unwrap_or("");
-    if !msg.is_empty() || args.create_reflog {
-        let identity = resolve_reflog_identity(&repo);
-        let _ = append_reflog(
-            &repo.git_dir,
+    if should_write_reflog && !is_reftable_repo(&repo.git_dir) {
+        append_reflog_or_fail(
+            &repo,
             &target_refname,
             &old_oid_for_reflog,
             &new_oid,
-            &identity,
-            msg,
-        );
+            &resolve_reflog_identity(&repo),
+            log_message,
+        )?;
     }
 
     Ok(())
@@ -150,7 +180,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         input.lines().collect()
     };
 
-    let mut transaction_active = false;
+    let mut state = BatchState::Open;
     let mut transaction_prepared = false;
     let mut staged: Vec<BatchOp> = Vec::new();
 
@@ -170,7 +200,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     new_oid: resolve_oid_or_ref(repo, parts[2])?,
                     expected_old: parse_old_expectation(parts.get(3).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "create" => {
                 if parts.len() < 3 {
@@ -180,7 +211,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     new_oid: resolve_oid_or_ref(repo, parts[2])?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "delete" => {
                 if parts.len() < 2 {
@@ -190,7 +222,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old: parse_old_expectation(parts.get(2).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "verify" => {
                 if parts.len() < 2 {
@@ -200,7 +233,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old: parse_old_expectation(parts.get(2).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "symref-update" => {
                 if parts.len() < 3 {
@@ -228,7 +262,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     new_target: parts[2].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "symref-create" => {
                 if parts.len() < 3 {
@@ -238,7 +273,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     new_target: parts[2].to_owned(),
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "symref-delete" => {
                 if parts.len() < 2 {
@@ -251,7 +287,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "symref-verify" => {
                 if !args.no_deref {
@@ -268,55 +305,89 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                ensure_can_enqueue_in_state(state)?;
+                staged.push(op);
             }
             "start" => {
-                if transaction_active {
-                    bail!("transaction already started");
+                match state {
+                    BatchState::Started => bail!("cannot restart ongoing transaction"),
+                    BatchState::Prepared => bail!("prepared transactions can only be closed"),
+                    BatchState::Open | BatchState::Closed => {
+                        transaction_prepared = false;
+                        state = BatchState::Started;
+                    }
                 }
-                transaction_active = true;
-                transaction_prepared = false;
-                staged.clear();
                 println!("start: ok");
             }
             "prepare" => {
-                if !transaction_active {
+                if matches!(state, BatchState::Closed) {
                     bail!("no transaction started");
+                }
+                if matches!(state, BatchState::Prepared) {
+                    bail!("prepared transactions can only be closed");
                 }
                 let hook_updates = hook_updates_for_ops(&staged)?;
                 run_ref_transaction_prepare(repo, &hook_updates)?;
                 transaction_prepared = true;
+                state = BatchState::Prepared;
             }
             "commit" => {
-                if !transaction_active {
+                if matches!(state, BatchState::Closed) {
                     bail!("no transaction started");
                 }
-
-                let hook_updates = hook_updates_for_ops(&staged)?;
-                if !transaction_prepared {
-                    run_ref_transaction_prepare(repo, &hook_updates)?;
-                }
-                for op in staged.drain(..) {
-                    apply_batch_op(repo, args, op)?;
-                }
-                run_ref_transaction_committed(repo, &hook_updates);
-                transaction_active = false;
-                transaction_prepared = false;
-                println!("commit: ok");
+                let transaction_base_index = if matches!(state, BatchState::Started) {
+                    Some(reftable_transaction_base_index(repo)?)
+                } else {
+                    None
+                };
+                commit_staged_batch(
+                    repo,
+                    args,
+                    &mut staged,
+                    &mut transaction_prepared,
+                    transaction_base_index,
+                    true,
+                )?;
+                state = BatchState::Closed;
             }
             "abort" => {
-                if transaction_active {
+                if !matches!(state, BatchState::Closed) {
                     let hook_updates = hook_updates_for_ops(&staged)?;
                     if !hook_updates.is_empty() {
                         run_ref_transaction_aborted(repo, &hook_updates);
                     }
                 }
                 staged.clear();
-                transaction_active = false;
                 transaction_prepared = false;
+                state = BatchState::Closed;
             }
             other => bail!("unknown batch command: {other}"),
         }
+    }
+
+    match state {
+        BatchState::Open => {
+            let transaction_base_index = if !staged.is_empty() {
+                Some(reftable_transaction_base_index(repo)?)
+            } else {
+                None
+            };
+            commit_staged_batch(
+                repo,
+                args,
+                &mut staged,
+                &mut transaction_prepared,
+                transaction_base_index,
+                false,
+            )?;
+        }
+        BatchState::Started | BatchState::Prepared => {
+            let hook_updates = hook_updates_for_ops(&staged)?;
+            if !hook_updates.is_empty() {
+                run_ref_transaction_aborted(repo, &hook_updates);
+            }
+        }
+        BatchState::Closed => {}
     }
 
     Ok(())
@@ -340,6 +411,42 @@ fn resolve_oid_or_ref(repo: &Repository, s: &str) -> Result<ObjectId> {
         }
     }
     bail!("not a valid object name: '{s}'")
+}
+
+fn append_reflog_or_fail(
+    repo: &Repository,
+    refname: &str,
+    old_oid: &ObjectId,
+    new_oid: &ObjectId,
+    identity: &str,
+    message: &str,
+) -> Result<()> {
+    if let Err(err) = append_reflog(&repo.git_dir, refname, old_oid, new_oid, identity, message) {
+        if is_reftable_repo(&repo.git_dir) && err.to_string().contains("too large") {
+            eprintln!(
+                "fatal: update_ref failed for ref '{}': reftable: transaction failure: entry too large",
+                refname
+            );
+            std::process::exit(1);
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+fn should_log_ref_updates(repo: &Repository) -> bool {
+    let Ok(cfg) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) else {
+        return !repo.is_bare();
+    };
+    let Some(value) = cfg.get("core.logAllRefUpdates") else {
+        return !repo.is_bare();
+    };
+    let lowered = value.trim().to_ascii_lowercase();
+    match lowered.as_str() {
+        "always" | "true" | "yes" | "on" | "1" => true,
+        "false" | "no" | "off" | "0" => false,
+        _ => !repo.is_bare(),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -392,26 +499,67 @@ enum BatchOp {
     },
 }
 
-fn queue_or_apply(
-    repo: &Repository,
-    args: &Args,
-    transaction_active: bool,
-    staged: &mut Vec<BatchOp>,
-    op: BatchOp,
-) -> Result<()> {
-    if transaction_active {
-        staged.push(op);
-        Ok(())
-    } else {
-        let hook_update = hook_update_for_op(&op)?;
-        run_ref_transaction_prepare(repo, std::slice::from_ref(&hook_update))?;
-        apply_batch_op(repo, args, op)?;
-        run_ref_transaction_committed(repo, &[hook_update]);
-        Ok(())
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BatchState {
+    Open,
+    Started,
+    Prepared,
+    Closed,
+}
+
+fn ensure_can_enqueue_in_state(state: BatchState) -> Result<()> {
+    match state {
+        BatchState::Open | BatchState::Started => Ok(()),
+        BatchState::Prepared => bail!("prepared transactions can only be closed"),
+        BatchState::Closed => bail!("transaction is closed"),
     }
 }
 
-fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
+fn commit_staged_batch(
+    repo: &Repository,
+    args: &Args,
+    staged: &mut Vec<BatchOp>,
+    transaction_prepared: &mut bool,
+    transaction_base_index: Option<u64>,
+    report_ok: bool,
+) -> Result<()> {
+    let hook_updates = hook_updates_for_ops(staged)?;
+    if !*transaction_prepared {
+        run_ref_transaction_prepare(repo, &hook_updates)?;
+    }
+    for op in staged.drain(..) {
+        apply_batch_op(repo, args, op, transaction_base_index)?;
+    }
+    run_ref_transaction_committed(repo, &hook_updates);
+    *transaction_prepared = false;
+    if report_ok {
+        println!("commit: ok");
+    }
+    Ok(())
+}
+
+fn reftable_transaction_base_index(repo: &Repository) -> Result<u64> {
+    if !is_reftable_repo(&repo.git_dir) {
+        return Ok(0);
+    }
+    let stack = grit_lib::reftable::ReftableStack::open(&repo.git_dir)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(stack
+        .max_update_index()
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        + 1)
+}
+
+fn apply_batch_op(
+    repo: &Repository,
+    args: &Args,
+    op: BatchOp,
+    forced_update_index: Option<u64>,
+) -> Result<()> {
+    let log_message = args.log_message.as_deref().unwrap_or("");
+    let should_write_reflog =
+        !log_message.is_empty() || args.create_reflog || should_log_ref_updates(repo);
+
     match op {
         BatchOp::UpdateOid {
             refname,
@@ -424,16 +572,37 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
             }
             let old_oid =
                 resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
-            write_ref(&repo.git_dir, &target_refname, &new_oid)?;
-            if let Some(msg) = &args.log_message {
-                let _ = append_reflog(
+            if is_reftable_repo(&repo.git_dir) && should_write_reflog {
+                let identity = resolve_reflog_identity(repo);
+                if let Err(err) = grit_lib::reftable::reftable_write_ref(
                     &repo.git_dir,
                     &target_refname,
-                    &old_oid,
                     &new_oid,
-                    &resolve_reflog_identity(repo),
-                    msg,
-                );
+                    Some(&identity),
+                    Some(log_message),
+                    forced_update_index,
+                ) {
+                    if err.to_string().contains("too large") {
+                        eprintln!(
+                            "fatal: update_ref failed for ref '{}': reftable: transaction failure: entry too large",
+                            target_refname
+                        );
+                        std::process::exit(1);
+                    }
+                    return Err(err.into());
+                }
+            } else {
+                write_ref(&repo.git_dir, &target_refname, &new_oid)?;
+                if should_write_reflog {
+                    append_reflog_or_fail(
+                        repo,
+                        &target_refname,
+                        &old_oid,
+                        &new_oid,
+                        &resolve_reflog_identity(repo),
+                        log_message,
+                    )?;
+                }
             }
         }
         BatchOp::CreateOid { refname, new_oid } => {
@@ -441,17 +610,61 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
             if resolve_ref(&repo.git_dir, &target_refname).is_ok() {
                 bail!("ref '{target_refname}' already exists");
             }
-            write_ref(&repo.git_dir, &target_refname, &new_oid)?;
+            let old_oid = zero_oid();
+            if is_reftable_repo(&repo.git_dir) && should_write_reflog {
+                let identity = resolve_reflog_identity(repo);
+                if let Err(err) = grit_lib::reftable::reftable_write_ref(
+                    &repo.git_dir,
+                    &target_refname,
+                    &new_oid,
+                    Some(&identity),
+                    Some(log_message),
+                    forced_update_index,
+                ) {
+                    if err.to_string().contains("too large") {
+                        eprintln!(
+                            "fatal: update_ref failed for ref '{}': reftable: transaction failure: entry too large",
+                            target_refname
+                        );
+                        std::process::exit(1);
+                    }
+                    return Err(err.into());
+                }
+            } else {
+                write_ref(&repo.git_dir, &target_refname, &new_oid)?;
+                if should_write_reflog {
+                    append_reflog_or_fail(
+                        repo,
+                        &target_refname,
+                        &old_oid,
+                        &new_oid,
+                        &resolve_reflog_identity(repo),
+                        log_message,
+                    )?;
+                }
+            }
         }
         BatchOp::DeleteOid {
             refname,
             expected_old,
         } => {
             let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            let old_oid =
+                resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
             if let Some(expected) = expected_old {
                 verify_expected_old(repo, &target_refname, expected)?;
             }
             delete_ref(&repo.git_dir, &target_refname)?;
+            if should_write_reflog {
+                append_reflog_or_fail(
+                    repo,
+                    &target_refname,
+                    &old_oid,
+                    &zero_oid(),
+                    &resolve_reflog_identity(repo),
+                    log_message,
+                )?;
+            }
         }
         BatchOp::VerifyOid {
             refname,

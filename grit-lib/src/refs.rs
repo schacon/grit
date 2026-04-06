@@ -187,7 +187,7 @@ fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> 
 /// Returns [`Error::Io`] on filesystem errors.
 pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
-        return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
+        return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None, None);
     }
     let path = git_dir.join(refname);
     if let Some(parent) = path.parent() {
@@ -312,6 +312,14 @@ pub fn read_head(git_dir: &Path) -> Result<Option<String>> {
 /// `Ok(None)` when it is direct or missing.
 pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>> {
     if crate::reftable::is_reftable_repo(git_dir) {
+        if refname == "HEAD" {
+            return match read_ref_file(&git_dir.join("HEAD")) {
+                Ok(Ref::Symbolic(target)) => Ok(Some(target)),
+                Ok(Ref::Direct(_)) => Ok(None),
+                Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            };
+        }
         return crate::reftable::reftable_read_symbolic_ref(git_dir, refname);
     }
     let path = git_dir.join(refname);

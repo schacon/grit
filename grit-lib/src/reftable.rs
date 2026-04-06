@@ -30,6 +30,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use crate::config::{parse_bool, ConfigSet};
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 
@@ -51,6 +52,8 @@ const FOOTER_V1_SIZE: usize = 68;
 const BLOCK_TYPE_REF: u8 = b'r';
 /// Block type: index block.
 const BLOCK_TYPE_INDEX: u8 = b'i';
+/// Block type: object-index block.
+const BLOCK_TYPE_OBJ: u8 = b'o';
 /// Block type: log block (zlib-compressed).
 const BLOCK_TYPE_LOG: u8 = b'g';
 
@@ -68,6 +71,12 @@ const DEFAULT_BLOCK_SIZE: u32 = 4096;
 
 /// How many records between restart points.
 const RESTART_INTERVAL: usize = 16;
+
+/// Maximum supported reftable block size (16 MiB - 1 byte).
+const MAX_BLOCK_SIZE: u32 = (1 << 24) - 1;
+
+/// Maximum supported restart interval.
+const MAX_RESTART_INTERVAL: usize = u16::MAX as usize;
 
 // ---------------------------------------------------------------------------
 // Varint encoding (Git pack-style)
@@ -172,6 +181,8 @@ pub struct WriteOptions {
     pub restart_interval: usize,
     /// Whether to write log blocks.
     pub write_log: bool,
+    /// Whether to write object index blocks.
+    pub index_objects: bool,
 }
 
 impl Default for WriteOptions {
@@ -180,6 +191,7 @@ impl Default for WriteOptions {
             block_size: DEFAULT_BLOCK_SIZE,
             restart_interval: RESTART_INTERVAL,
             write_log: true,
+            index_objects: true,
         }
     }
 }
@@ -206,6 +218,15 @@ pub struct ReftableWriter {
     refs: Vec<RefRecord>,
     // Accumulated log records.
     logs: Vec<LogRecord>,
+}
+
+#[derive(Debug, Clone)]
+struct RefBlockSummary {
+    start: u64,
+    rel_start: u64,
+    first_name: String,
+    last_name: String,
+    object_ids: Vec<ObjectId>,
 }
 
 impl ReftableWriter {
@@ -257,7 +278,11 @@ impl ReftableWriter {
         assert_eq!(out.len(), HEADER_SIZE);
 
         // --- Ref blocks ---
-        let ref_block_positions = self.write_ref_blocks(&mut out)?;
+        let ref_block_summaries = self.write_ref_blocks(&mut out)?;
+        let ref_block_positions: Vec<(u64, String)> = ref_block_summaries
+            .iter()
+            .map(|summary| (summary.rel_start, summary.last_name.clone()))
+            .collect();
 
         // --- Ref index (if ≥ 4 ref blocks) ---
         let ref_index_position = if ref_block_positions.len() >= 4 {
@@ -268,13 +293,21 @@ impl ReftableWriter {
             0
         };
 
+        // --- Object index blocks ---
+        let (obj_position, obj_id_len, obj_index_position) =
+            if self.opts.index_objects && ref_index_position > 0 {
+                self.write_obj_blocks(&mut out, &ref_block_summaries)?
+            } else {
+                (0, 0, 0)
+            };
+
         // --- Log blocks ---
-        let log_position = if self.opts.write_log && !self.logs.is_empty() {
+        let (log_position, log_index_position) = if self.opts.write_log && !self.logs.is_empty() {
             let pos = out.len() as u64;
-            self.write_log_blocks(&mut out)?;
-            pos
+            let index_pos = self.write_log_blocks(&mut out)?;
+            (pos, index_pos)
         } else {
-            0
+            (0, 0)
         };
 
         // --- Footer ---
@@ -290,14 +323,14 @@ impl ReftableWriter {
 
         // ref_index_position
         out.extend_from_slice(&ref_index_position.to_be_bytes());
-        // (obj_position << 5) | obj_id_len — no obj blocks yet
-        out.extend_from_slice(&0u64.to_be_bytes());
+        // (obj_position << 5) | obj_id_len
+        out.extend_from_slice(&((obj_position << 5) | u64::from(obj_id_len)).to_be_bytes());
         // obj_index_position
-        out.extend_from_slice(&0u64.to_be_bytes());
+        out.extend_from_slice(&obj_index_position.to_be_bytes());
         // log_position
         out.extend_from_slice(&log_position.to_be_bytes());
-        // log_index_position (we skip log index for simplicity)
-        out.extend_from_slice(&0u64.to_be_bytes());
+        // log_index_position
+        out.extend_from_slice(&log_index_position.to_be_bytes());
 
         // CRC-32 of footer (everything from footer_start to here)
         let crc = crc32(&out[footer_start..]);
@@ -306,15 +339,15 @@ impl ReftableWriter {
         Ok(out)
     }
 
-    /// Write ref blocks, returning (block_start_position, last_refname) per block.
-    fn write_ref_blocks(&self, out: &mut Vec<u8>) -> Result<Vec<(u64, String)>> {
+    /// Write ref blocks, returning per-block metadata.
+    fn write_ref_blocks(&self, out: &mut Vec<u8>) -> Result<Vec<RefBlockSummary>> {
         if self.refs.is_empty() {
             return Ok(Vec::new());
         }
 
         let block_size = self.opts.block_size as usize;
         let restart_interval = self.opts.restart_interval;
-        let mut block_positions: Vec<(u64, String)> = Vec::new();
+        let mut block_summaries: Vec<RefBlockSummary> = Vec::new();
         let mut i = 0;
 
         while i < self.refs.len() {
@@ -326,18 +359,19 @@ impl ReftableWriter {
             let mut restart_offsets: Vec<u32> = Vec::new();
             let mut prev_name = String::new();
             let mut count = 0;
-            let mut last_name = String::new();
+            let mut first_name = String::new();
+            let mut object_ids = Vec::new();
 
             while i < self.refs.len() {
                 let rec = &self.refs[i];
-                let is_restart = count % restart_interval == 0;
-
                 let mut rec_buf = Vec::new();
-                let prefix_len = if is_restart {
-                    0
+                let base_name: &[u8] = if count % restart_interval == 0 {
+                    &[]
                 } else {
-                    common_prefix_len(prev_name.as_bytes(), rec.name.as_bytes())
+                    prev_name.as_bytes()
                 };
+                let prefix_len = common_prefix_len(base_name, rec.name.as_bytes());
+                let is_restart = prefix_len == 0;
                 let suffix = &rec.name.as_bytes()[prefix_len..];
                 let suffix_len = suffix.len();
 
@@ -347,22 +381,26 @@ impl ReftableWriter {
                     RefValue::Val2(_, _) => VALUE_TWO_OID,
                     RefValue::Symref(_) => VALUE_SYMREF,
                 };
+                let mut record_object_ids: Vec<ObjectId> = Vec::new();
 
                 put_varint(prefix_len as u64, &mut rec_buf);
                 put_varint(((suffix_len as u64) << 3) | value_type as u64, &mut rec_buf);
                 rec_buf.extend_from_slice(suffix);
 
-                let update_index_delta = rec.update_index.saturating_sub(self.min_update_index);
-                put_varint(update_index_delta, &mut rec_buf);
+                let rel_update_index = rec.update_index.saturating_sub(self.min_update_index);
+                put_varint(rel_update_index, &mut rec_buf);
 
                 match &rec.value {
                     RefValue::Deletion => {}
                     RefValue::Val1(oid) => {
                         rec_buf.extend_from_slice(oid.as_bytes());
+                        record_object_ids.push(*oid);
                     }
                     RefValue::Val2(oid, peeled) => {
                         rec_buf.extend_from_slice(oid.as_bytes());
                         rec_buf.extend_from_slice(peeled.as_bytes());
+                        record_object_ids.push(*oid);
+                        record_object_ids.push(*peeled);
                     }
                     RefValue::Symref(target) => {
                         put_varint(target.len() as u64, &mut rec_buf);
@@ -403,7 +441,14 @@ impl ReftableWriter {
                 }
 
                 records_buf.extend_from_slice(&rec_buf);
-                last_name = rec.name.clone();
+                for oid in record_object_ids {
+                    if !object_ids.contains(&oid) {
+                        object_ids.push(oid);
+                    }
+                }
+                if count == 0 {
+                    first_name = rec.name.clone();
+                }
                 prev_name = rec.name.clone();
                 count += 1;
                 i += 1;
@@ -455,36 +500,60 @@ impl ReftableWriter {
 
             // Pad to block alignment if needed
             if block_size > 0 {
-                let written = out.len() - block_start;
-                let target = if is_first_block {
+                let target_end = if is_first_block {
+                    // The first block starts after the table header but still
+                    // occupies only one full table block.
                     block_size
                 } else {
-                    block_size
+                    block_start + block_size
                 };
-                if written < target {
-                    out.resize(block_start + target, 0);
+                if out.len() < target_end {
+                    out.resize(target_end, 0);
                 }
             }
 
-            block_positions.push((block_start as u64, last_name.clone()));
+            let rel_start = if is_first_block {
+                0
+            } else {
+                block_start as u64
+            };
+            block_summaries.push(RefBlockSummary {
+                start: block_start as u64,
+                rel_start,
+                first_name,
+                last_name: prev_name,
+                object_ids,
+            });
+            if std::env::var("REFTABLE_DEBUG_BLOCKS").ok().as_deref() == Some("1") {
+                let summary = block_summaries.last().expect("just pushed summary");
+                eprintln!(
+                    "DEBUG reftable ref-block start={} first={} obj_count={}",
+                    summary.start,
+                    summary.first_name,
+                    summary.object_ids.len()
+                );
+            }
         }
 
-        Ok(block_positions)
+        Ok(block_summaries)
     }
 
     /// Write a single-level ref index block.
     fn write_ref_index(&self, out: &mut Vec<u8>, block_positions: &[(u64, String)]) -> Result<()> {
+        let block_start = out.len();
+        let is_first_block = block_start == HEADER_SIZE;
         let mut records_buf = Vec::new();
         let mut restart_offsets: Vec<u32> = Vec::new();
         let mut prev_name = String::new();
 
         for (idx, (block_pos, last_ref)) in block_positions.iter().enumerate() {
-            let is_restart = idx % self.opts.restart_interval == 0;
-            let prefix_len = if is_restart {
-                0
+            let base_name: &[u8] = if idx % self.opts.restart_interval == 0 {
+                &[]
             } else {
-                common_prefix_len(prev_name.as_bytes(), last_ref.as_bytes())
+                prev_name.as_bytes()
             };
+            let prefix_len = common_prefix_len(base_name, last_ref.as_bytes());
+            let is_restart = prefix_len == 0;
             let suffix = &last_ref.as_bytes()[prefix_len..];
 
             if is_restart {
@@ -522,11 +591,276 @@ impl ReftableWriter {
         out.push((rc >> 8) as u8);
         out.push((rc & 0xff) as u8);
 
+        if self.opts.block_size > 0 {
+            let target_end = if is_first_block {
+                self.opts.block_size as usize
+            } else {
+                block_start + self.opts.block_size as usize
+            };
+            if out.len() < target_end {
+                out.resize(target_end, 0);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_obj_blocks(
+        &self,
+        out: &mut Vec<u8>,
+        ref_block_summaries: &[RefBlockSummary],
+    ) -> Result<(u64, u8, u64)> {
+        let mut obj_to_offsets: BTreeMap<ObjectId, Vec<u64>> = BTreeMap::new();
+        for summary in ref_block_summaries {
+            for oid in &summary.object_ids {
+                obj_to_offsets.entry(*oid).or_default().push(summary.start);
+            }
+        }
+        if obj_to_offsets.is_empty() {
+            return Ok((0, 0, 0));
+        }
+
+        let mut object_keys: Vec<[u8; HASH_SIZE]> =
+            obj_to_offsets.keys().map(|oid| *oid.as_bytes()).collect();
+        object_keys.sort();
+
+        let mut max_common = 1usize;
+        for pair in object_keys.windows(2) {
+            let common = common_prefix_len(&pair[0], &pair[1]);
+            if common > max_common {
+                max_common = common;
+            }
+        }
+        let object_id_len = (max_common + 1).min(HASH_SIZE) as u8;
+
+        let obj_position = out.len() as u64;
+        let block_size = self.opts.block_size as usize;
+        let restart_interval = self.opts.restart_interval;
+        let mut obj_block_positions: Vec<(u64, Vec<u8>)> = Vec::new();
+        let mut i = 0usize;
+
+        while i < object_keys.len() {
+            let block_start = out.len();
+            let is_first_block = block_start == HEADER_SIZE;
+            let mut records_buf = Vec::new();
+            let mut restart_offsets: Vec<u32> = Vec::new();
+            let mut prev_key = Vec::<u8>::new();
+            let mut count = 0usize;
+            let mut last_key = Vec::<u8>::new();
+
+            while i < object_keys.len() {
+                let full_key = object_keys[i];
+                let key = &full_key[..object_id_len as usize];
+                let offsets = obj_to_offsets
+                    .get(
+                        &ObjectId::from_bytes(&full_key)
+                            .map_err(|e| Error::InvalidRef(e.to_string()))?,
+                    )
+                    .ok_or_else(|| Error::InvalidRef("missing object index entry".to_owned()))?;
+                let base_key: &[u8] = if count.is_multiple_of(restart_interval) {
+                    &[]
+                } else {
+                    &prev_key
+                };
+                let prefix_len = common_prefix_len(base_key, key);
+                let is_restart = prefix_len == 0;
+                let suffix = &key[prefix_len..];
+                let value_type = if (1..=8).contains(&offsets.len()) {
+                    offsets.len() as u8
+                } else {
+                    0
+                };
+
+                let mut rec_buf = Vec::new();
+                put_varint(prefix_len as u64, &mut rec_buf);
+                put_varint(
+                    ((suffix.len() as u64) << 3) | value_type as u64,
+                    &mut rec_buf,
+                );
+                rec_buf.extend_from_slice(suffix);
+                if value_type == 0 {
+                    put_varint(offsets.len() as u64, &mut rec_buf);
+                }
+                if let Some(first) = offsets.first() {
+                    put_varint(*first, &mut rec_buf);
+                    let mut last = *first;
+                    for off in offsets.iter().skip(1) {
+                        put_varint(off.saturating_sub(last), &mut rec_buf);
+                        last = *off;
+                    }
+                }
+
+                let restart_count = restart_offsets.len() + if is_restart { 1 } else { 0 };
+                let trailer_size = restart_count * 3 + 2;
+                let total = 4 + records_buf.len() + rec_buf.len() + trailer_size;
+                let block_len = if is_first_block {
+                    HEADER_SIZE + total
+                } else {
+                    total
+                };
+                let effective_block_size = if block_size > 0 {
+                    block_size
+                } else {
+                    usize::MAX
+                };
+                if block_size > 0 && block_len > effective_block_size {
+                    if count == 0 {
+                        return Err(Error::InvalidRef(
+                            "reftable: object index entry too large for block size".to_owned(),
+                        ));
+                    }
+                    break;
+                }
+
+                if is_restart {
+                    let offset = if is_first_block {
+                        HEADER_SIZE + 4 + records_buf.len()
+                    } else {
+                        4 + records_buf.len()
+                    };
+                    restart_offsets.push(offset as u32);
+                }
+
+                records_buf.extend_from_slice(&rec_buf);
+                last_key = key.to_vec();
+                prev_key = key.to_vec();
+                count += 1;
+                i += 1;
+            }
+
+            if count == 0 {
+                return Err(Error::InvalidRef(
+                    "reftable: object index entry too large for block size".to_owned(),
+                ));
+            }
+
+            if restart_offsets.is_empty() {
+                restart_offsets.push(if is_first_block {
+                    HEADER_SIZE as u32 + 4
+                } else {
+                    4
+                });
+            }
+
+            let trailer_size = restart_offsets.len() * 3 + 2;
+            let block_len = if is_first_block {
+                HEADER_SIZE + 4 + records_buf.len() + trailer_size
+            } else {
+                4 + records_buf.len() + trailer_size
+            };
+
+            out.push(BLOCK_TYPE_OBJ);
+            out.push(((block_len >> 16) & 0xff) as u8);
+            out.push(((block_len >> 8) & 0xff) as u8);
+            out.push((block_len & 0xff) as u8);
+            out.extend_from_slice(&records_buf);
+
+            for &off in &restart_offsets {
+                out.push(((off >> 16) & 0xff) as u8);
+                out.push(((off >> 8) & 0xff) as u8);
+                out.push((off & 0xff) as u8);
+            }
+            let rc = restart_offsets.len() as u16;
+            out.push((rc >> 8) as u8);
+            out.push((rc & 0xff) as u8);
+
+            if block_size > 0 {
+                let target_end = if is_first_block {
+                    block_size
+                } else {
+                    block_start + block_size
+                };
+                if out.len() < target_end {
+                    out.resize(target_end, 0);
+                }
+            }
+
+            obj_block_positions.push((block_start as u64, last_key));
+        }
+
+        let obj_index_position = if obj_block_positions.len() >= 4 {
+            let pos = out.len() as u64;
+            self.write_obj_index(out, &obj_block_positions, object_id_len)?;
+            pos
+        } else {
+            0
+        };
+
+        Ok((obj_position, object_id_len, obj_index_position))
+    }
+
+    fn write_obj_index(
+        &self,
+        out: &mut Vec<u8>,
+        block_positions: &[(u64, Vec<u8>)],
+        object_id_len: u8,
+    ) -> Result<()> {
+        let block_start = out.len();
+        let is_first_block = block_start == HEADER_SIZE;
+        let mut records_buf = Vec::new();
+        let mut restart_offsets: Vec<u32> = Vec::new();
+        let mut prev_key = Vec::<u8>::new();
+
+        for (idx, (block_pos, key)) in block_positions.iter().enumerate() {
+            let base_key: &[u8] = if idx % self.opts.restart_interval == 0 {
+                &[]
+            } else {
+                &prev_key
+            };
+            let prefix_len = common_prefix_len(base_key, key);
+            let is_restart = prefix_len == 0;
+            let suffix = &key[prefix_len..];
+            if is_restart {
+                restart_offsets.push(4 + records_buf.len() as u32);
+            }
+            put_varint(prefix_len as u64, &mut records_buf);
+            put_varint((suffix.len() as u64) << 3, &mut records_buf);
+            records_buf.extend_from_slice(suffix);
+            put_varint(*block_pos, &mut records_buf);
+            prev_key = key.clone();
+        }
+
+        if restart_offsets.is_empty() {
+            restart_offsets.push(4);
+        }
+        let trailer_size = restart_offsets.len() * 3 + 2;
+        let block_len = 4 + records_buf.len() + trailer_size;
+        if object_id_len == 0 {
+            return Err(Error::InvalidRef(
+                "reftable: invalid object id length".to_owned(),
+            ));
+        }
+
+        out.push(BLOCK_TYPE_INDEX);
+        out.push(((block_len >> 16) & 0xff) as u8);
+        out.push(((block_len >> 8) & 0xff) as u8);
+        out.push((block_len & 0xff) as u8);
+        out.extend_from_slice(&records_buf);
+        for &off in &restart_offsets {
+            out.push(((off >> 16) & 0xff) as u8);
+            out.push(((off >> 8) & 0xff) as u8);
+            out.push((off & 0xff) as u8);
+        }
+        let rc = restart_offsets.len() as u16;
+        out.push((rc >> 8) as u8);
+        out.push((rc & 0xff) as u8);
+
+        if self.opts.block_size > 0 {
+            let target_end = if is_first_block {
+                self.opts.block_size as usize
+            } else {
+                block_start + self.opts.block_size as usize
+            };
+            if out.len() < target_end {
+                out.resize(target_end, 0);
+            }
+        }
+
         Ok(())
     }
 
     /// Write log blocks (zlib-compressed).
-    fn write_log_blocks(&mut self, out: &mut Vec<u8>) -> Result<()> {
+    fn write_log_blocks(&mut self, out: &mut Vec<u8>) -> Result<u64> {
         use flate2::write::DeflateEncoder;
         use flate2::Compression;
 
@@ -537,83 +871,197 @@ impl ReftableWriter {
                 .then_with(|| b.update_index.cmp(&a.update_index))
         });
 
-        // Build the uncompressed log block content
-        let mut inner = Vec::new();
+        let block_size = self.opts.block_size as usize;
+        let restart_interval = self.opts.restart_interval;
+        let mut i = 0usize;
+        let mut log_block_positions: Vec<(u64, Vec<u8>)> = Vec::new();
+
+        while i < self.logs.len() {
+            let block_start = out.len();
+            let is_first_block = block_start == HEADER_SIZE;
+            let mut records_buf = Vec::new();
+            let mut restart_offsets: Vec<u32> = Vec::new();
+            let mut prev_key = Vec::<u8>::new();
+            let mut last_key = Vec::<u8>::new();
+            let mut count = 0usize;
+
+            while i < self.logs.len() {
+                let log = &self.logs[i];
+
+                let mut key = Vec::new();
+                key.extend_from_slice(log.refname.as_bytes());
+                key.push(0);
+                key.extend_from_slice(&(0xffffffffffffffffu64 - log.update_index).to_be_bytes());
+
+                let base_key: &[u8] = if count.is_multiple_of(restart_interval) {
+                    &[]
+                } else {
+                    &prev_key
+                };
+                let prefix_len = common_prefix_len(base_key, &key);
+                let is_restart = prefix_len == 0;
+                let suffix = &key[prefix_len..];
+
+                let mut rec_buf = Vec::new();
+                let log_type: u8 = 1;
+                put_varint(prefix_len as u64, &mut rec_buf);
+                put_varint(((suffix.len() as u64) << 3) | log_type as u64, &mut rec_buf);
+                rec_buf.extend_from_slice(suffix);
+                rec_buf.extend_from_slice(log.old_id.as_bytes());
+                rec_buf.extend_from_slice(log.new_id.as_bytes());
+                put_varint(log.name.len() as u64, &mut rec_buf);
+                rec_buf.extend_from_slice(log.name.as_bytes());
+                put_varint(log.email.len() as u64, &mut rec_buf);
+                rec_buf.extend_from_slice(log.email.as_bytes());
+                put_varint(log.time_seconds, &mut rec_buf);
+                rec_buf.extend_from_slice(&log.tz_offset.to_be_bytes());
+                put_varint(log.message.len() as u64, &mut rec_buf);
+                rec_buf.extend_from_slice(log.message.as_bytes());
+
+                let restart_count = restart_offsets.len() + if is_restart { 1 } else { 0 };
+                let trailer_size = restart_count * 3 + 2;
+                let mut block_len = 4 + records_buf.len() + rec_buf.len() + trailer_size;
+                if is_first_block {
+                    block_len += HEADER_SIZE;
+                }
+                let effective_block_size = if block_size > 0 {
+                    block_size
+                } else {
+                    usize::MAX
+                };
+                if block_size > 0 && block_len > effective_block_size {
+                    if count == 0 {
+                        return Err(Error::InvalidRef(
+                            "reftable: log entry too large for block size".to_owned(),
+                        ));
+                    }
+                    break;
+                }
+
+                if is_restart {
+                    let offset = if is_first_block {
+                        HEADER_SIZE + 4 + records_buf.len()
+                    } else {
+                        4 + records_buf.len()
+                    };
+                    restart_offsets.push(offset as u32);
+                }
+                records_buf.extend_from_slice(&rec_buf);
+                last_key = key.clone();
+                prev_key = key;
+                count += 1;
+                i += 1;
+            }
+
+            if count == 0 {
+                return Err(Error::InvalidRef(
+                    "reftable: log entry too large for block size".to_owned(),
+                ));
+            }
+
+            if restart_offsets.is_empty() {
+                restart_offsets.push(4);
+            }
+
+            let mut inner = records_buf;
+            for &off in &restart_offsets {
+                inner.push(((off >> 16) & 0xff) as u8);
+                inner.push(((off >> 8) & 0xff) as u8);
+                inner.push((off & 0xff) as u8);
+            }
+            let rc = restart_offsets.len() as u16;
+            inner.push((rc >> 8) as u8);
+            inner.push((rc & 0xff) as u8);
+
+            let block_len = 4 + inner.len();
+            let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+            encoder
+                .write_all(&inner)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            let compressed = encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
+
+            out.push(BLOCK_TYPE_LOG);
+            out.push(((block_len >> 16) & 0xff) as u8);
+            out.push(((block_len >> 8) & 0xff) as u8);
+            out.push((block_len & 0xff) as u8);
+            out.extend_from_slice(&compressed);
+
+            log_block_positions.push((
+                if is_first_block {
+                    0
+                } else {
+                    block_start as u64
+                },
+                last_key,
+            ));
+        }
+
+        if log_block_positions.len() >= 4 {
+            let pos = out.len() as u64;
+            self.write_log_index(out, &log_block_positions)?;
+            Ok(pos)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn write_log_index(&self, out: &mut Vec<u8>, block_positions: &[(u64, Vec<u8>)]) -> Result<()> {
+        let block_start = out.len();
+        let is_first_block = block_start == HEADER_SIZE;
+        let mut records_buf = Vec::new();
         let mut restart_offsets: Vec<u32> = Vec::new();
         let mut prev_key = Vec::<u8>::new();
 
-        for (idx, log) in self.logs.iter().enumerate() {
-            let is_restart = idx % self.opts.restart_interval == 0;
-
-            // Log key: refname \0 reverse_int64(update_index)
-            let mut key = Vec::new();
-            key.extend_from_slice(log.refname.as_bytes());
-            key.push(0);
-            key.extend_from_slice(&(0xffffffffffffffffu64 - log.update_index).to_be_bytes());
-
-            let prefix_len = if is_restart {
-                0
+        for (idx, (block_pos, key)) in block_positions.iter().enumerate() {
+            let base_key: &[u8] = if idx % self.opts.restart_interval == 0 {
+                &[]
             } else {
-                common_prefix_len(&prev_key, &key)
+                &prev_key
             };
+            let prefix_len = common_prefix_len(base_key, key);
+            let is_restart = prefix_len == 0;
             let suffix = &key[prefix_len..];
-
             if is_restart {
-                // Offset within the decompressed block (4 byte header + inner.len())
-                restart_offsets.push(4 + inner.len() as u32);
+                restart_offsets.push(4 + records_buf.len() as u32);
             }
-
-            // log_type = 1 (standard reflog data)
-            let log_type: u8 = 1;
-            put_varint(prefix_len as u64, &mut inner);
-            put_varint(((suffix.len() as u64) << 3) | log_type as u64, &mut inner);
-            inner.extend_from_slice(suffix);
-
-            // log_data
-            inner.extend_from_slice(log.old_id.as_bytes());
-            inner.extend_from_slice(log.new_id.as_bytes());
-            put_varint(log.name.len() as u64, &mut inner);
-            inner.extend_from_slice(log.name.as_bytes());
-            put_varint(log.email.len() as u64, &mut inner);
-            inner.extend_from_slice(log.email.as_bytes());
-            put_varint(log.time_seconds, &mut inner);
-            inner.extend_from_slice(&log.tz_offset.to_be_bytes());
-            put_varint(log.message.len() as u64, &mut inner);
-            inner.extend_from_slice(log.message.as_bytes());
-
-            prev_key = key;
+            put_varint(prefix_len as u64, &mut records_buf);
+            put_varint((suffix.len() as u64) << 3, &mut records_buf);
+            records_buf.extend_from_slice(suffix);
+            put_varint(*block_pos, &mut records_buf);
+            prev_key = key.clone();
         }
 
         if restart_offsets.is_empty() {
             restart_offsets.push(4);
         }
 
-        // Append restart table
-        for &off in &restart_offsets {
-            inner.push(((off >> 16) & 0xff) as u8);
-            inner.push(((off >> 8) & 0xff) as u8);
-            inner.push((off & 0xff) as u8);
-        }
-        let rc = restart_offsets.len() as u16;
-        inner.push((rc >> 8) as u8);
-        inner.push((rc & 0xff) as u8);
+        let trailer_size = restart_offsets.len() * 3 + 2;
+        let block_len = 4 + records_buf.len() + trailer_size;
 
-        // block_len is the *inflated* size including the 4-byte block header
-        let block_len = 4 + inner.len();
-
-        // Deflate the inner content
-        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(&inner)
-            .map_err(|e| Error::Zlib(e.to_string()))?;
-        let compressed = encoder.finish().map_err(|e| Error::Zlib(e.to_string()))?;
-
-        // Write block header + compressed data
-        out.push(BLOCK_TYPE_LOG);
+        out.push(BLOCK_TYPE_INDEX);
         out.push(((block_len >> 16) & 0xff) as u8);
         out.push(((block_len >> 8) & 0xff) as u8);
         out.push((block_len & 0xff) as u8);
-        out.extend_from_slice(&compressed);
+        out.extend_from_slice(&records_buf);
+        for &off in &restart_offsets {
+            out.push(((off >> 16) & 0xff) as u8);
+            out.push(((off >> 8) & 0xff) as u8);
+            out.push((off & 0xff) as u8);
+        }
+        let rc = restart_offsets.len() as u16;
+        out.push((rc >> 8) as u8);
+        out.push((rc & 0xff) as u8);
+
+        if self.opts.block_size > 0 {
+            let target_end = if is_first_block {
+                self.opts.block_size as usize
+            } else {
+                block_start + self.opts.block_size as usize
+            };
+            if out.len() < target_end {
+                out.resize(target_end, 0);
+            }
+        }
 
         Ok(())
     }
@@ -1233,8 +1681,12 @@ impl ReftableStack {
         self.table_names.push(filename.clone());
         self.write_tables_list()?;
 
-        // Auto-compact if we have too many tables
-        if self.table_names.len() > 5 {
+        // Auto-compact if we have too many tables.
+        //
+        // The upstream test suite disables this with
+        // GIT_TEST_REFTABLE_AUTOCOMPACTION=false and expects compaction to
+        // happen only when explicitly requested (e.g. via `pack-refs`).
+        if self.table_names.len() > 5 && auto_compaction_enabled() {
             self.compact()?;
         }
 
@@ -1250,8 +1702,9 @@ impl ReftableStack {
         value: RefValue,
         log: Option<LogRecord>,
         opts: &WriteOptions,
+        forced_update_index: Option<u64>,
     ) -> Result<()> {
-        let update_index = self.max_update_index()? + 1;
+        let update_index = forced_update_index.unwrap_or(self.max_update_index()? + 1);
         let mut writer = ReftableWriter::new(opts.clone(), update_index, update_index);
 
         // For a single-ref update we need to write all existing refs + the update
@@ -1276,12 +1729,17 @@ impl ReftableStack {
 
     /// Compact all tables into a single table.
     pub fn compact(&mut self) -> Result<()> {
+        self.compact_with_options(&WriteOptions::default())
+    }
+
+    /// Compact all tables into a single table using caller-provided options.
+    pub fn compact_with_options(&mut self, opts: &WriteOptions) -> Result<()> {
         if self.table_names.len() <= 1 {
             return Ok(());
         }
 
         // Read all refs and logs
-        let refs = self.read_refs()?;
+        let mut refs = self.read_refs()?;
         let logs = self.read_all_logs()?;
 
         // Determine update index range
@@ -1298,12 +1756,43 @@ impl ReftableStack {
             min_idx = 0;
         }
 
-        let mut writer = ReftableWriter::new(WriteOptions::default(), min_idx, max_idx);
+        if !refs.iter().any(|rec| rec.name == "HEAD") {
+            if let Some(git_dir) = self.reftable_dir.parent() {
+                if let Ok(content) = fs::read_to_string(git_dir.join("HEAD")) {
+                    let trimmed = content.trim();
+                    let head_value = if let Some(target) = trimmed.strip_prefix("ref: ") {
+                        Some(RefValue::Symref(target.trim().to_owned()))
+                    } else if trimmed.len() == HASH_SIZE * 2
+                        && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+                    {
+                        match trimmed.parse::<ObjectId>() {
+                            Ok(oid) => Some(RefValue::Val1(oid)),
+                            Err(_) => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(value) = head_value {
+                        refs.push(RefRecord {
+                            name: "HEAD".to_owned(),
+                            update_index: max_idx.max(min_idx),
+                            value,
+                        });
+                    }
+                }
+            }
+        }
+
+        refs.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let mut writer = ReftableWriter::new(opts.clone(), min_idx, max_idx);
         for rec in refs {
             writer.add_ref(rec)?;
         }
-        for log in logs {
-            writer.add_log(log)?;
+        if opts.write_log {
+            for log in logs {
+                writer.add_log(log)?;
+            }
         }
 
         let data = writer.finish()?;
@@ -1446,8 +1935,10 @@ pub fn reftable_write_ref(
     oid: &ObjectId,
     log_identity: Option<&str>,
     log_message: Option<&str>,
+    forced_update_index: Option<u64>,
 ) -> Result<()> {
     let mut stack = ReftableStack::open(git_dir)?;
+    let opts = read_write_options(git_dir)?;
     let old_oid = stack
         .lookup_ref(refname)?
         .and_then(|r| match r.value {
@@ -1468,18 +1959,23 @@ pub fn reftable_write_ref(
             email,
             time_seconds: time_secs,
             tz_offset: tz,
-            message: log_message.unwrap_or("").to_owned(),
+            message: normalize_log_message(log_message.unwrap_or("")),
         })
     } else {
         None
     };
 
     // Check config for logAllRefUpdates
-    let write_log = log.is_some() || should_log_ref_updates(git_dir);
+    let write_log = log.is_some() || opts.write_log;
     let log = if write_log { log } else { None };
 
-    let opts = read_write_options(git_dir);
-    stack.write_ref(refname, RefValue::Val1(*oid), log, &opts)
+    stack.write_ref(
+        refname,
+        RefValue::Val1(*oid),
+        log,
+        &opts,
+        forced_update_index,
+    )
 }
 
 /// Write a symbolic ref to a reftable repo.
@@ -1491,7 +1987,7 @@ pub fn reftable_write_symref(
     log_message: Option<&str>,
 ) -> Result<()> {
     let mut stack = ReftableStack::open(git_dir)?;
-    let opts = read_write_options(git_dir);
+    let opts = read_write_options(git_dir)?;
 
     let log = if let Some(identity) = log_identity {
         let (name, email, time_secs, tz) = parse_identity_string(identity);
@@ -1505,20 +2001,26 @@ pub fn reftable_write_symref(
             email,
             time_seconds: time_secs,
             tz_offset: tz,
-            message: log_message.unwrap_or("").to_owned(),
+            message: normalize_log_message(log_message.unwrap_or("")),
         })
     } else {
         None
     };
 
-    stack.write_ref(refname, RefValue::Symref(target.to_owned()), log, &opts)
+    stack.write_ref(
+        refname,
+        RefValue::Symref(target.to_owned()),
+        log,
+        &opts,
+        None,
+    )
 }
 
 /// Delete a ref from a reftable repo.
 pub fn reftable_delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     let mut stack = ReftableStack::open(git_dir)?;
-    let opts = read_write_options(git_dir);
-    stack.write_ref(refname, RefValue::Deletion, None, &opts)
+    let opts = read_write_options(git_dir)?;
+    stack.write_ref(refname, RefValue::Deletion, None, &opts, None)
 }
 
 /// Read the symbolic target of a ref in a reftable repo.
@@ -1597,7 +2099,7 @@ pub fn reftable_append_reflog(
     let (name, email, time_secs, tz) = parse_identity_string(identity);
     let mut stack = ReftableStack::open(git_dir)?;
     let update_index = stack.max_update_index()? + 1;
-    let opts = read_write_options(git_dir);
+    let opts = read_write_options(git_dir)?;
 
     let mut writer = ReftableWriter::new(opts, update_index, update_index);
     writer.add_log(LogRecord {
@@ -1609,7 +2111,7 @@ pub fn reftable_append_reflog(
         email,
         time_seconds: time_secs,
         tz_offset: tz,
-        message: message.to_owned(),
+        message: normalize_log_message(message),
     })?;
 
     let data = writer.finish()?;
@@ -1632,83 +2134,80 @@ pub fn reftable_reflog_exists(git_dir: &Path, refname: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Read reftable write options from the repository config.
-pub fn read_write_options(git_dir: &Path) -> WriteOptions {
-    let config_path = git_dir.join("config");
+pub fn read_write_options(git_dir: &Path) -> Result<WriteOptions> {
     let mut opts = WriteOptions::default();
+    let config = ConfigSet::load(Some(git_dir), true)?;
 
-    if let Ok(content) = fs::read_to_string(&config_path) {
-        let mut in_reftable = false;
-        let mut in_core = false;
-        let mut log_all_ref_updates: Option<bool> = None;
-
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                let section_lower = trimmed.to_lowercase();
-                in_reftable = section_lower.starts_with("[reftable]");
-                in_core = section_lower.starts_with("[core]");
-                continue;
-            }
-            if in_reftable {
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    let key = key.trim().to_lowercase();
-                    let value = value.trim();
-                    match key.as_str() {
-                        "blocksize" => {
-                            if let Ok(v) = value.parse::<u32>() {
-                                opts.block_size = v;
-                            }
-                        }
-                        "restartinterval" => {
-                            if let Ok(v) = value.parse::<usize>() {
-                                opts.restart_interval = v;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            if in_core {
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    let key = key.trim().to_lowercase();
-                    let value = value.trim().to_lowercase();
-                    if key == "logallrefupdates" {
-                        log_all_ref_updates = Some(value == "true" || value == "always");
-                    }
-                }
-            }
+    if let Some(parsed) = config.get_i64("reftable.blockSize") {
+        let mut value = parsed.map_err(Error::ConfigError)?;
+        if value < 0 {
+            return Err(Error::ConfigError(
+                "reftable block size must be non-negative".to_owned(),
+            ));
         }
+        if value == 0 {
+            value = i64::from(DEFAULT_BLOCK_SIZE);
+        }
+        if value > i64::from(MAX_BLOCK_SIZE) {
+            return Err(Error::ConfigError(
+                "reftable block size cannot exceed 16MB".to_owned(),
+            ));
+        }
+        opts.block_size = value as u32;
+    }
 
-        if let Some(false) = log_all_ref_updates {
-            opts.write_log = false;
+    if let Some(parsed) = config.get_i64("reftable.restartInterval") {
+        let mut value = parsed.map_err(Error::ConfigError)?;
+        if value < 0 {
+            return Err(Error::ConfigError(
+                "reftable restart interval must be non-negative".to_owned(),
+            ));
+        }
+        if value == 0 {
+            value = RESTART_INTERVAL as i64;
+        }
+        if value as usize > MAX_RESTART_INTERVAL {
+            // Match upstream wording expected by tests.
+            return Err(Error::ConfigError(
+                "reftable block size cannot exceed 65535".to_owned(),
+            ));
+        }
+        opts.restart_interval = value as usize;
+    }
+
+    if let Some(parsed) = config.get_bool("reftable.indexObjects") {
+        opts.index_objects = parsed.map_err(Error::ConfigError)?;
+    }
+
+    if let Some(raw) = config.get("core.logAllRefUpdates") {
+        if raw.eq_ignore_ascii_case("always") {
+            opts.write_log = true;
+        } else {
+            opts.write_log = parse_bool(&raw).map_err(Error::ConfigError)?;
         }
     }
 
-    opts
+    Ok(opts)
 }
 
-/// Check if logAllRefUpdates is enabled.
-fn should_log_ref_updates(git_dir: &Path) -> bool {
-    let config_path = git_dir.join("config");
-    if let Ok(content) = fs::read_to_string(&config_path) {
-        let mut in_core = false;
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_core = trimmed.to_lowercase().starts_with("[core]");
-                continue;
-            }
-            if in_core {
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    if key.trim().eq_ignore_ascii_case("logallrefupdates") {
-                        let v = value.trim().to_lowercase();
-                        return v == "true" || v == "always";
-                    }
-                }
-            }
-        }
+fn auto_compaction_enabled() -> bool {
+    let Ok(raw) = std::env::var("GIT_TEST_REFTABLE_AUTOCOMPACTION") else {
+        return true;
+    };
+    let normalized = raw.trim().to_ascii_lowercase();
+    !matches!(normalized.as_str(), "false" | "no" | "off" | "0")
+}
+
+fn normalize_log_message(message: &str) -> String {
+    if message.is_empty() {
+        return "\n".to_owned();
     }
-    false
+    let mut cleaned = message.trim_end_matches('\n').to_owned();
+    if cleaned.contains('\n') {
+        cleaned = cleaned.replace('\n', " ");
+    }
+    cleaned.push('\n');
+    cleaned
 }
 
 // ---------------------------------------------------------------------------
@@ -1994,6 +2493,7 @@ mod tests {
             block_size: 0, // unaligned
             restart_interval: 16,
             write_log: false,
+            index_objects: true,
         };
         let mut writer = ReftableWriter::new(opts, 1, 1);
         writer

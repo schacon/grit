@@ -2,6 +2,12 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after completing reftable write-option compatibility work and fixing reftable `HEAD` symbolic resolution for transaction-hook payloads).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1416-ref-transaction-hooks.sh` (run from `/workspace/tests`): 10/10 passing (regression fixed; tests 5 and 6 now emit `refs/heads/main` in hook payloads as expected).
+- `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+- `./scripts/run-tests.sh t0613-reftable-write-options.sh`: 11/11 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after implementing trace2 event-target compatibility for `test-tool trace2` verbs, including event JSON emission, child-process hierarchy/SID propagation, parameter/data events, credential redaction, and event-target file/discard handling).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0212-trace2-event.sh` (run from `/workspace/tests`): 11/11 passing (improved from 0/11).
 - `./scripts/run-tests.sh t0212-trace2-event.sh`: 11/11 passing.

@@ -394,7 +394,6 @@ fn create_git_dir(
             config_content.push_str("\tbare = true\n");
         } else {
             config_content.push_str("\tbare = false\n");
-            config_content.push_str("\tlogallrefupdates = true\n");
         }
 
         // Write extensions if needed

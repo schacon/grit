@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    97 |
+| Completed   |    98 |
 | In progress |     0 |
-| Remaining   |   670 |
+| Remaining   |   669 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0613-reftable-write-options` — 11/11 tests pass (implemented reftable write-option compatibility across config/env and table emission paths: robust write option parsing/validation from config, object index block generation and footer metadata, ref/log block restart and size accounting fixes, normalized reflog message formatting for reftable writes, transaction-safe `update_index` handling for `update-ref --stdin` batches via explicit base index wiring, and `test-tool dump-reftable` block decoding output parity used by upstream assertions; plus fixed reftable `HEAD` symbolic resolution for hook payload normalization so `t1416-ref-transaction-hooks` remains 10/10)
 - `t0212-trace2-event` — 11/11 tests pass (implemented trace2 event-target JSON writer with per-process SID/hierarchy tracking, `start`/`cmd_name`/`exit`/`error`/`data`/`def_param`/`child_start`/`child_exit`/`exec` event emission for `test-tool trace2` verbs, config/env parameter emission for `GIT_TRACE2_CONFIG_PARAMS` and `GIT_TRACE2_ENV_VARS`, global `trace2.eventTarget` config fallback, credential redaction for URL-like values, and trace-directory discard behavior for `GIT_TRACE2_MAX_FILES`)
 - `t1411-reflog-show` — 17/17 tests pass (implemented `reflog` default/show argument preprocessing so `git reflog --format=short` maps to show mode, routed `reflog show` through `log -g` for full parity, taught reflog selectors to preserve index syntax for `@{N}` while rendering date selectors for `@{now}`/date queries and `--date=` output, normalized reflog identity header formatting in `Reflog:` lines, added reflog patch output in `log -g -p` against commit parents, and extended revision resolution to accept parent suffixes like `HEAD^` in update-ref flows used by reflog tests)
 - `t1306-xdg-files` — 21/21 tests pass (aligned global config path semantics for `--global` reads vs writes so XDG and `~/.gitconfig` precedence matches upstream behavior, taught ignore loading to read `core.excludesfile` via layered config with XDG default fallback, added global attributes loading support in `check-attr` with `core.attributesfile` + XDG default handling, and corrected local test harness behavior to match upstream expectations by avoiding implicit local identity writes and preserving working-directory changes across test blocks)
