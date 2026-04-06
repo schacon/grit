@@ -358,6 +358,16 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
         (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref spec) = args.branch {
+        // Handle "-" shorthand (previous branch)
+        let spec = if spec == "-" {
+            // Resolve @{-1} to get the previous branch
+            refs::resolve_at_n_branch(&common, "@{-1}")
+                .ok()
+                .ok_or_else(|| anyhow::anyhow!("-: no previous branch"))?
+        } else {
+            spec.clone()
+        };
+        let spec = &spec;
         // Existing local branch: check out attached.
         if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{spec}")) {
             (Some(spec.clone()), Some(oid), false)
