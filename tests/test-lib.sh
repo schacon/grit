@@ -122,8 +122,14 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
-		"$GUST_BIN" init >/dev/null 2>&1 ||
-			echo "warning: could not git init trash directory" >&2
+		if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+		then
+			"$GUST_BIN" init --template=/dev/null >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		else
+			"$GUST_BIN" init >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		fi
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
 		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
@@ -282,7 +288,12 @@ test_create_repo () {
 	mkdir -p "$repo" &&
 	(
 		cd "$repo" &&
-		git init &&
+		if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+		then
+			git init --template=/dev/null
+		else
+			git init
+		fi &&
 		git config user.name "Test User" &&
 		git config user.email "test@example.com"
 	)
