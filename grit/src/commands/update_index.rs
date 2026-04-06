@@ -83,6 +83,10 @@ pub struct Args {
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
 
+    /// Set the index file version.
+    #[arg(long = "index-version", value_name = "N")]
+    pub index_version: Option<u32>,
+
     /// Add `<mode>,<object>,<path>` entry directly.
     /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
@@ -127,6 +131,16 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.show_index_version {
         println!("{}", index.version);
+        return Ok(());
+    }
+
+    if let Some(ver) = args.index_version {
+        let old_ver = index.version;
+        if args.verbose {
+            println!("index-version: was {old_ver}, set to {ver}");
+        }
+        index.version = ver;
+        index.write(&index_path).context("writing index")?;
         return Ok(());
     }
 
@@ -184,6 +198,15 @@ pub fn run(args: Args) -> Result<()> {
             let oid: ObjectId = oid_str
                 .parse()
                 .with_context(|| format!("invalid object id '{oid_str}'"))?;
+            // Reject null (all-zero) SHA1 — print verbose but skip
+            if oid.is_zero() {
+                let path_str = String::from_utf8_lossy(&path_bytes);
+                if args.verbose {
+                    println!("add '{path_str}'");
+                }
+                eprintln!("error: git update-index: --cacheinfo cannot add a null sha1");
+                std::process::exit(1);
+            }
             let entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -200,7 +223,13 @@ pub fn run(args: Args) -> Result<()> {
                 flags_extended: None,
                 path: path_bytes,
             };
-            index.add_or_replace(entry);
+            if args.verbose {
+                let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+                index.add_or_replace(entry);
+                println!("add '{path_str}'");
+            } else {
+                index.add_or_replace(entry);
+            }
         }
     }
 
