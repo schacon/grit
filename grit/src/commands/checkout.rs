@@ -35,7 +35,7 @@ pub struct Args {
     pub force_branch: Option<String>,
 
     /// Create a new orphan branch (no parent commit).
-    #[arg(long = "orphan")]
+    #[arg(long = "orphan", conflicts_with_all = ["new_branch", "force_branch", "track"])]
     pub orphan: Option<String>,
 
     /// Force: discard local changes.
@@ -200,9 +200,15 @@ pub fn run(args: Args) -> Result<()> {
         return checkout_patch(&repo, target.as_deref(), &paths);
     }
 
-    // Case: checkout --orphan <name>
+    // Case: checkout --orphan <name> [<start_point>]
     if let Some(ref orphan_name) = args.orphan {
-        return create_orphan_branch(&repo, orphan_name);
+        // Extract start point from positional args
+        let start_point = if !args.rest.is_empty() {
+            Some(args.rest[0].as_str())
+        } else {
+            None
+        };
+        return create_orphan_branch(&repo, orphan_name, start_point);
     }
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
@@ -701,17 +707,37 @@ fn force_create_and_switch_branch(
     Ok(())
 }
 
-/// Create an orphan branch (`checkout --orphan <name>`).
+/// Create an orphan branch (`checkout --orphan <name> [<start_point>]`).
 ///
 /// Sets HEAD to the new branch but does NOT create the ref (no commit yet).
-/// The index is preserved so the next commit will have the current content.
-fn create_orphan_branch(repo: &Repository, name: &str) -> Result<()> {
+/// If a start_point is given, populates the index/worktree from that commit.
+fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
 
     // Check the branch doesn't already exist
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
         eprintln!("fatal: a branch named '{name}' already exists");
         std::process::exit(128);
+    }
+
+    // If a start point is given, populate the index/worktree from it
+    if let Some(start) = start_point {
+        let start_oid = resolve_to_commit(repo, start)
+            .with_context(|| format!("invalid start point '{start}'"))?;
+        let tree_oid = commit_to_tree(repo, &start_oid)?;
+        let work_tree = repo
+            .work_tree
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("not a work tree"))?;
+        let old_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let new_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
+        let mut new_index = Index::new();
+        new_index.entries = new_entries;
+        new_index.sort();
+        checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
+        new_index
+            .write(&repo.index_path())
+            .context("writing index")?;
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)
