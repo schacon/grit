@@ -99,6 +99,10 @@ pub struct AddArgs {
     #[arg(long)]
     pub no_guess_remote: bool,
 
+    /// Do not set up tracking.
+    #[arg(long)]
+    pub no_track: bool,
+
     /// Create a new branch with -B (reset if exists).
     #[arg(short = 'B')]
     pub force_new_branch: Option<String>,
