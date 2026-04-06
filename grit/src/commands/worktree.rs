@@ -116,9 +116,9 @@ pub struct RemoveArgs {
     /// Path of the worktree to remove.
     pub path: PathBuf,
 
-    /// Force removal even if worktree has modifications.
-    #[arg(short, long)]
-    pub force: bool,
+    /// Force removal. Once: allow removing with dirty files. Twice: also allow removing locked worktrees.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub force: u8,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -869,15 +869,22 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
     let admin = worktrees_dir.join(&wt_name);
 
     // Check for lock
-    if admin.join("locked").exists() && !args.force {
+    // Locked: needs --force --force (force >= 2) to remove
+    if admin.join("locked").exists() && args.force < 2 {
+        if args.force >= 1 {
+            bail!(
+                "worktree '{}' is locked; use 'git worktree remove --force --force'",
+                wt_path.display()
+            );
+        }
         bail!(
             "worktree '{}' is locked; use --force or unlock it first",
             wt_path.display()
         );
     }
 
-    // Check for dirty/untracked files unless --force
-    if !args.force && wt_path.exists() {
+    // Check for dirty/untracked files unless --force >= 1
+    if args.force < 1 && wt_path.exists() {
         // Load the linked worktree's index (stored in the admin directory)
         let index_path = admin.join("index");
         if index_path.exists() {
@@ -1132,6 +1139,16 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
         args.destination.clone()
     } else {
         std::env::current_dir()?.join(&args.destination)
+    };
+
+    // If destination is an existing directory, append the source basename
+    let dst_path = if dst_path.exists() && dst_path.is_dir() {
+        let src_name = src_path
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("cannot determine source name"))?;
+        dst_path.join(src_name)
+    } else {
+        dst_path
     };
 
     if dst_path.exists() {
