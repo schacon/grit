@@ -1405,6 +1405,14 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
 
+    // If specific paths were given, validate them even if worktrees_dir doesn't exist
+    if !args.paths.is_empty() && !worktrees_dir.is_dir() {
+        for p in &args.paths {
+            eprintln!("error: '{}': not a valid path", p.display());
+        }
+        std::process::exit(1);
+    }
+
     if !worktrees_dir.is_dir() {
         return Ok(());
     }
@@ -1429,7 +1437,10 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
             let abs = abs.canonicalize().unwrap_or(abs);
             match find_worktree_name(&worktrees_dir, &abs) {
                 Ok(name) => names.push(name),
-                Err(e) => eprintln!("warning: {}", e),
+                Err(_) => {
+                    eprintln!("error: '{}': not a valid path", p.display());
+                    std::process::exit(1);
+                }
             }
         }
         names
