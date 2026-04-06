@@ -811,23 +811,25 @@ fn cmd_list(args: ListArgs) -> Result<()> {
         for entry in &entries {
             out.write_all(format!("worktree {}", entry.path.display()).as_bytes())?;
             out.write_all(&[sep])?;
-            let head_oid = match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => oid.to_hex(),
-                HeadState::Detached { oid } => oid.to_hex(),
-                _ => "0".repeat(40),
-            };
-            out.write_all(format!("HEAD {head_oid}").as_bytes())?;
-            out.write_all(&[sep])?;
-            match &entry.head {
-                HeadState::Branch { refname, .. } => {
-                    out.write_all(format!("branch {refname}").as_bytes())?;
-                    out.write_all(&[sep])?;
+            if !entry.is_bare {
+                let head_oid = match &entry.head {
+                    HeadState::Branch { oid: Some(oid), .. } => oid.to_hex(),
+                    HeadState::Detached { oid } => oid.to_hex(),
+                    _ => "0".repeat(40),
+                };
+                out.write_all(format!("HEAD {head_oid}").as_bytes())?;
+                out.write_all(&[sep])?;
+                match &entry.head {
+                    HeadState::Branch { refname, .. } => {
+                        out.write_all(format!("branch {refname}").as_bytes())?;
+                        out.write_all(&[sep])?;
+                    }
+                    HeadState::Detached { .. } => {
+                        out.write_all(b"detached")?;
+                        out.write_all(&[sep])?;
+                    }
+                    _ => {}
                 }
-                HeadState::Detached { .. } => {
-                    out.write_all(b"detached")?;
-                    out.write_all(&[sep])?;
-                }
-                _ => {}
             }
             if entry.is_bare {
                 out.write_all(b"bare")?;
