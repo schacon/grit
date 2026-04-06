@@ -755,6 +755,25 @@ fn add_path(
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
     if is_real_dir {
+        // Check if the directory itself is ignored (reject unless -f)
+        if !args.force {
+            if let Some(ref mut matcher) = ignore_matcher {
+                // Check the directory path (with trailing slash for dir matching)
+                let dir_path_slash = format!("{path}/");
+                let (is_ignored, _) = matcher
+                    .check_path(repo, Some(&*index), path, true)
+                    .or_else(|_| matcher.check_path(repo, Some(&*index), &dir_path_slash, true))
+                    .unwrap_or((false, None));
+                if is_ignored {
+                    return Err(AddPathError::Ignored(format!(
+                        "The following paths are ignored by one of your .gitignore files:\n\
+                         {path}\n\
+                         Use -f if you really want to add them."
+                    )));
+                }
+            }
+        }
+
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
         if embedded_git.exists() {
@@ -925,6 +944,10 @@ fn stage_file(
     let meta = fs::symlink_metadata(abs_path)?;
 
     if args.intent_to_add {
+        // Don't clobber existing entries — only add the intent marker if not already staged
+        if index.get(rel_path.as_bytes(), 0).is_some() {
+            return Ok(());
+        }
         let mode = if meta.file_type().is_symlink() {
             0o120000
         } else if add_cfg.core_filemode {
@@ -943,7 +966,7 @@ fn stage_file(
             uid: meta.uid(),
             gid: meta.gid(),
             size: 0,
-            oid: grit_lib::diff::zero_oid(),
+            oid: grit_lib::diff::empty_blob_oid(),
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
