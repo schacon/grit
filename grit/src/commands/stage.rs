@@ -46,6 +46,7 @@ pub fn run(args: Args) -> Result<()> {
         pathspec: args.pathspec,
         update: args.update,
         all: args.all,
+        no_all: false,
         intent_to_add: args.intent_to_add,
         dry_run: args.dry_run,
         verbose: args.verbose,

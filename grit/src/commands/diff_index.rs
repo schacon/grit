@@ -315,6 +315,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-r" => {
                     // recursive - default behavior for diff-index
                 }
+                "--ignore-submodules" => {
+                    // accepted for compatibility
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    // accepted for compatibility
+                }
                 _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
                     context_lines = arg[2..].parse::<usize>().unwrap();
                 }
@@ -458,12 +464,15 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
-            (Some(old), Some(new)) => changes.push(RawChange {
-                path,
-                status: 'M',
-                old: Some(old),
-                new: Some(new),
-            }),
+            (Some(old), Some(new)) => {
+                let status = if old.mode != new.mode { 'T' } else { 'M' };
+                changes.push(RawChange {
+                    path,
+                    status,
+                    old: Some(old),
+                    new: Some(new),
+                })
+            }
             (Some(old), None) => changes.push(RawChange {
                 path,
                 status: 'D',
@@ -502,12 +511,29 @@ fn diff_tree_vs_worktree(
         .collect();
 
     let mut merged = BTreeMap::new();
-    for change in diff_tree_vs_index(tree_map, index_map) {
-        merged.insert(change.path.clone(), change);
-    }
+    let mut all_paths = BTreeSet::new();
+    all_paths.extend(tree_map.keys().cloned());
+    all_paths.extend(index_map.keys().cloned());
 
-    for (path, index_snapshot) in index_map {
-        let abs = work_tree.join(path);
+    for path in all_paths {
+        let old = tree_map.get(&path).copied();
+        let index_snapshot = index_map.get(&path).copied();
+        let abs = work_tree.join(&path);
+
+        if has_symlink_ancestor(work_tree, &path) {
+            if let Some(old_snap) = old {
+                merged.insert(
+                    path.clone(),
+                    RawChange {
+                        path: path.clone(),
+                        status: 'D',
+                        old: Some(old_snap),
+                        new: None,
+                    },
+                );
+            }
+            continue;
+        }
 
         // Fast path: use stat cache to skip unchanged files
         let meta = match fs::symlink_metadata(&abs) {
@@ -516,16 +542,17 @@ fn diff_tree_vs_worktree(
                 if match_missing {
                     continue;
                 }
-                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                merged.insert(
-                    path.clone(),
-                    RawChange {
-                        path: path.clone(),
-                        status: 'D',
-                        old,
-                        new: None,
-                    },
-                );
+                if let Some(old_snap) = old {
+                    merged.insert(
+                        path.clone(),
+                        RawChange {
+                            path: path.clone(),
+                            status: 'D',
+                            old: Some(old_snap),
+                            new: None,
+                        },
+                    );
+                }
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -539,21 +566,32 @@ fn diff_tree_vs_worktree(
         }
 
         // Stat differs — must read and hash the file
-        match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
+        match read_worktree_snapshot_from_meta(repo, &abs, &path, &meta)? {
             Some(worktree_snapshot) => {
-                if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                let should_report = old
+                    .map(|old_snap| old_snap != worktree_snapshot)
+                    .unwrap_or_else(|| index_snapshot.is_some());
+                if should_report {
                     // Use zero OID for worktree side — the blob is not
                     // in the object database, matching git's behaviour.
                     let wt_placeholder = Snapshot {
                         mode: worktree_snapshot.mode,
                         oid: zero_oid(),
                     };
+                    let status = if let Some(old_snap) = old {
+                        if old_snap.mode != wt_placeholder.mode {
+                            'T'
+                        } else {
+                            'M'
+                        }
+                    } else {
+                        'A'
+                    };
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
-                            status: 'M',
+                            status,
                             old,
                             new: Some(wt_placeholder),
                         },
@@ -561,7 +599,17 @@ fn diff_tree_vs_worktree(
                 }
             }
             None => {
-                // Not a regular file or symlink — treat as missing
+                if let Some(old_snap) = old {
+                    merged.insert(
+                        path.clone(),
+                        RawChange {
+                            path: path.clone(),
+                            status: 'D',
+                            old: Some(old_snap),
+                            new: None,
+                        },
+                    );
+                }
             }
         }
     }
@@ -572,6 +620,7 @@ fn diff_tree_vs_worktree(
 fn read_worktree_snapshot_from_meta(
     _repo: &Repository,
     abs_path: &Path,
+    rel_path: &str,
     metadata: &fs::Metadata,
 ) -> Result<Option<Snapshot>> {
     if metadata.file_type().is_symlink() {
@@ -590,7 +639,67 @@ fn read_worktree_snapshot_from_meta(
         return Ok(Some(Snapshot { mode, oid }));
     }
 
+    if metadata.file_type().is_dir() {
+        let dot_git = abs_path.join(".git");
+        if dot_git.exists() {
+            let oid = read_submodule_head_oid(abs_path)
+                .with_context(|| format!("reading submodule HEAD for '{}'", rel_path))?;
+            return Ok(Some(Snapshot {
+                mode: MODE_GITLINK,
+                oid,
+            }));
+        }
+    }
+
     Ok(None)
+}
+
+fn read_submodule_head_oid(submodule_dir: &Path) -> Result<ObjectId> {
+    let dot_git = submodule_dir.join(".git");
+    let git_dir = resolve_gitdir(&dot_git)?;
+    let head = fs::read_to_string(git_dir.join("HEAD"))?;
+    let head = head.trim();
+    if let Some(refname) = head.strip_prefix("ref: ") {
+        let resolved = fs::read_to_string(git_dir.join(refname))?;
+        return resolved.trim().parse().context("invalid submodule ref oid");
+    }
+    head.parse().context("invalid submodule HEAD oid")
+}
+
+fn resolve_gitdir(dot_git: &Path) -> Result<PathBuf> {
+    let meta = fs::symlink_metadata(dot_git)?;
+    if meta.is_dir() {
+        return Ok(dot_git.to_path_buf());
+    }
+    let content = fs::read_to_string(dot_git)?;
+    let content = content.trim();
+    let target = content
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        Ok(target_path.to_path_buf())
+    } else {
+        Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
+    }
+}
+
+fn has_symlink_ancestor(work_tree: &Path, rel_path: &str) -> bool {
+    let rel = Path::new(rel_path);
+    let mut current = work_tree.to_path_buf();
+    let components: Vec<_> = rel.components().collect();
+    if components.len() <= 1 {
+        return false;
+    }
+    for comp in components.iter().take(components.len() - 1) {
+        current.push(comp.as_os_str());
+        if let Ok(meta) = fs::symlink_metadata(&current) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn canonicalize_mode(raw_mode: u32) -> u32 {

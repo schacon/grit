@@ -12,6 +12,7 @@
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
@@ -27,6 +28,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use std::process::Command;
 use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
@@ -586,7 +588,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let mut _symmetric = false;
     if revs.len() == 1 {
-        if let Some((left, right)) = revs[0].split_once("...") {
+        if let Some(base) = revs[0].strip_suffix("^!") {
+            if !base.is_empty() {
+                revs = vec![format!("{base}^"), base.to_owned()];
+            }
+        } else if let Some((left, right)) = revs[0].split_once("...") {
             let left = if left.is_empty() { "HEAD" } else { left };
             let right = if right.is_empty() { "HEAD" } else { right };
             let left_oid = resolve_revision(&repo, left)
@@ -613,6 +619,15 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+
+    // Native Git emits combined diff (`diff --cc`) when the index contains
+    // unmerged entries. Our local diff machinery currently only compares stage
+    // 0 entries and can incorrectly print no output in this state.
+    // Delegate these invocations for Git-compatible conflict presentation.
+    let has_unmerged_entries = index.entries.iter().any(|entry| entry.stage() != 0);
+    if has_unmerged_entries && !args.cached && revs.is_empty() {
+        return passthrough_current_diff_invocation();
+    }
 
     // Get HEAD tree OID (None if unborn)
     let head_tree = get_head_tree(&repo)?;
@@ -1076,6 +1091,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 use_color,
                 word_diff,
                 wt_for_content,
+                repo.work_tree.as_deref(),
+                args.submodule.is_some(),
                 suppress_blank_empty,
                 patch_abbrev,
                 args.inter_hunk_context,
@@ -1251,6 +1268,8 @@ fn run_no_index(args: &Args) -> Result<()> {
 /// Diff two directories recursively with --no-index.
 fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     use std::collections::BTreeSet;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
 
     fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -1281,22 +1300,39 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     let mut out = stdout.lock();
     let context_lines = args.unified.unwrap_or(3);
 
+    fn read_no_index_entry(path: &Path) -> Option<(Vec<u8>, &'static str)> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            let target = std::fs::read_link(path).ok()?;
+            #[cfg(unix)]
+            {
+                return Some((target.as_os_str().as_bytes().to_vec(), "120000"));
+            }
+            #[cfg(not(unix))]
+            {
+                return Some((target.to_string_lossy().as_bytes().to_vec(), "120000"));
+            }
+        }
+        if ft.is_file() {
+            return std::fs::read(path).ok().map(|d| (d, "100644"));
+        }
+        None
+    }
+
     for rel in &all_files {
         let fa = dir_a.join(rel);
         let fb = dir_b.join(rel);
-        let data_a = if fa.is_file() {
-            std::fs::read(&fa).ok()
-        } else {
-            None
-        };
-        let data_b = if fb.is_file() {
-            std::fs::read(&fb).ok()
-        } else {
-            None
-        };
+        let entry_a = read_no_index_entry(&fa);
+        let entry_b = read_no_index_entry(&fb);
 
-        match (&data_a, &data_b) {
-            (Some(a), Some(b)) if a == b => continue,
+        match (&entry_a, &entry_b) {
+            (Some((data_a, mode_a)), Some((data_b, mode_b)))
+                if mode_a == mode_b && data_a == data_b =>
+            {
+                continue;
+            }
+            (None, None) => continue,
             _ => {}
         }
 
@@ -1309,7 +1345,7 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
         if args.name_status {
-            let status = match (&data_a, &data_b) {
+            let status = match (&entry_a, &entry_b) {
                 (None, Some(_)) => "A",
                 (Some(_), None) => "D",
                 _ => "M",
@@ -1318,30 +1354,32 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
 
-        let text_a = data_a
+        let text_a = entry_a
             .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
+            .map(|(d, _)| String::from_utf8_lossy(d).to_string())
             .unwrap_or_default();
-        let text_b = data_b
+        let text_b = entry_b
             .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
+            .map(|(d, _)| String::from_utf8_lossy(d).to_string())
             .unwrap_or_default();
 
-        let old_label = if data_a.is_some() {
+        let old_label = if entry_a.is_some() {
             format!("a/{}", rel)
         } else {
             "/dev/null".to_string()
         };
-        let new_label = if data_b.is_some() {
+        let new_label = if entry_b.is_some() {
             format!("b/{}", rel)
         } else {
             "/dev/null".to_string()
         };
         writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
-        if data_a.is_none() {
-            writeln!(out, "new file mode 100644")?;
-        } else if data_b.is_none() {
-            writeln!(out, "deleted file mode 100644")?;
+        if entry_a.is_none() {
+            let new_mode = entry_b.as_ref().map(|(_, mode)| *mode).unwrap_or("100644");
+            writeln!(out, "new file mode {}", new_mode)?;
+        } else if entry_b.is_none() {
+            let old_mode = entry_a.as_ref().map(|(_, mode)| *mode).unwrap_or("100644");
+            writeln!(out, "deleted file mode {}", old_mode)?;
         }
         let patch =
             grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);
@@ -1861,6 +1899,8 @@ fn write_patch_with_prefix(
     use_color: bool,
     word_diff: bool,
     work_tree: Option<&Path>,
+    repo_work_tree: Option<&Path>,
+    show_submodule: bool,
     suppress_blank_empty: bool,
     abbrev_len: usize,
     _inter_hunk_context: Option<usize>,
@@ -1869,6 +1909,13 @@ fn write_patch_with_prefix(
     dst_prefix: &str,
 ) -> Result<()> {
     for entry in entries {
+        if show_submodule
+            && (entry.old_mode == "160000" || entry.new_mode == "160000")
+            && write_submodule_short(out, entry, repo_work_tree)?
+        {
+            continue;
+        }
+
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
@@ -1904,7 +1951,6 @@ fn write_patch_with_prefix(
         let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
         let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
 
-        // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
         let display_old = if entry.status == DiffStatus::Added {
             "/dev/null"
         } else {
@@ -1915,6 +1961,15 @@ fn write_patch_with_prefix(
         } else {
             new_path
         };
+
+        // For empty additions/deletions (intent-to-add placeholders), Git
+        // prints only the header (new/deleted file mode + index) without a
+        // unified patch body.
+        if old_content == new_content
+            && matches!(entry.status, DiffStatus::Added | DiffStatus::Deleted)
+        {
+            continue;
+        }
 
         if word_diff {
             let patch = word_diff_output(
@@ -1958,6 +2013,61 @@ fn write_patch_with_prefix(
         }
     }
     Ok(())
+}
+
+fn write_submodule_short(
+    out: &mut impl Write,
+    entry: &DiffEntry,
+    repo_work_tree: Option<&Path>,
+) -> Result<bool> {
+    // We only print short submodule summaries for gitlink updates where both
+    // sides exist as real commit OIDs.
+    if entry.old_oid == zero_oid() || entry.new_oid == zero_oid() {
+        return Ok(false);
+    }
+    let Some(wt) = repo_work_tree else {
+        return Ok(false);
+    };
+    let path = entry.path();
+    let sub_path = wt.join(path);
+    if !sub_path.exists() {
+        return Ok(false);
+    }
+
+    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+    let range = format!("{}..{}", entry.old_oid.to_hex(), entry.new_oid.to_hex());
+    let output = Command::new(&git_bin)
+        .arg("-C")
+        .arg(&sub_path)
+        .arg("log")
+        .arg("--format=%s")
+        .arg(&range)
+        .output();
+
+    let Ok(output) = output else {
+        return Ok(false);
+    };
+    if !output.status.success() {
+        return Ok(false);
+    }
+
+    let subjects: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if subjects.is_empty() {
+        return Ok(false);
+    }
+
+    let old_abbrev = &entry.old_oid.to_hex()[..7];
+    let new_abbrev = &entry.new_oid.to_hex()[..7];
+    writeln!(out, "Submodule {path} {old_abbrev}..{new_abbrev}:")?;
+    for subject in subjects {
+        writeln!(out, "  > {subject}")?;
+    }
+    Ok(true)
 }
 
 /// Strip trailing space from blank context lines in unified diff output.
@@ -2150,6 +2260,18 @@ fn word_diff_output(
     }
 
     output
+}
+
+fn passthrough_current_diff_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "diff") else {
+        bail!("failed to determine diff arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("diff", &passthrough_args)
 }
 
 /// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.

@@ -99,6 +99,22 @@ pub struct ConfigSet {
     entries: Vec<ConfigEntry>,
 }
 
+fn common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(raw) = fs::read_to_string(&commondir_file) {
+        let rel = raw.trim();
+        if !rel.is_empty() {
+            let candidate = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                git_dir.join(rel)
+            };
+            return candidate.canonicalize().unwrap_or(candidate);
+        }
+    }
+    git_dir.to_path_buf()
+}
+
 // ── Canonical key helpers ────────────────────────────────────────────
 
 /// Normalise a config key to canonical form.
@@ -1329,15 +1345,23 @@ impl ConfigSet {
 
         // Local config
         if let Some(gd) = git_dir {
-            let local_path = gd.join("config");
+            let common = common_git_dir(gd);
+
+            let local_path = common.join("config");
             if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
                 Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
 
-            // Worktree config
-            let wt_path = gd.join("config.worktree");
-            if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+            // Worktree config is only active when the extension is enabled.
+            let worktree_enabled = set
+                .get_bool("extensions.worktreeConfig")
+                .and_then(|r| r.ok())
+                .unwrap_or(false);
+            if worktree_enabled {
+                let wt_path = gd.join("config.worktree");
+                if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
+                    Self::merge_with_includes(&mut set, &f, true, 0)?;
+                }
             }
         }
 

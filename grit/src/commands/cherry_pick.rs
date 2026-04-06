@@ -6,6 +6,7 @@
 //!   - ours   = HEAD_tree    (current state)
 //!   - theirs = commit_tree  (the commit being picked)
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -127,6 +128,9 @@ pub fn run(args: Args) -> Result<()> {
 
 fn do_cherry_pick(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if git_passthrough::should_passthrough_from_subdir(&repo) {
+        return passthrough_current_cherry_pick_invocation();
+    }
     let git_dir = &repo.git_dir;
 
     // Don't start a new cherry-pick sequence if one is already in progress.
@@ -1200,9 +1204,18 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
     }
 }
 
+fn passthrough_current_cherry_pick_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("cherry-pick")
+}
+
 fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {
     if let Some(parent) = abs_path.parent() {
         fs::create_dir_all(parent)?;
+    }
+
+    if entry.mode == 0o160000 {
+        let _ = fs::create_dir_all(abs_path);
+        return Ok(());
     }
 
     let obj = repo

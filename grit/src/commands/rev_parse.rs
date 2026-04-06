@@ -8,6 +8,7 @@ use grit_lib::rev_parse::{
     AmbiguousAbbrevFatal,
 };
 use std::env;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit rev-parse`.
 #[derive(Debug, ClapArgs)]
@@ -39,6 +40,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut no_revs = false;
     let mut no_flags = false;
     let mut sq_output = false;
+    let mut path_format: Option<String> = None;
 
     // Collect ordered actions for sequential output
     #[derive(Debug)]
@@ -50,6 +52,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowPrefix,
         ShowCdup,
         ShowGitDir,
+        ShowGitCommonDir,
         ShowAbsoluteGitDir,
         ShowRefFormat,
         GitPath(String),
@@ -104,6 +107,8 @@ pub fn run(args: Args) -> Result<()> {
                 abbrev_ref = true;
             } else if arg == "--git-dir" {
                 actions.push(Action::ShowGitDir);
+            } else if arg == "--git-common-dir" {
+                actions.push(Action::ShowGitCommonDir);
             } else if arg == "--absolute-git-dir" {
                 actions.push(Action::ShowAbsoluteGitDir);
             } else if arg == "--git-path" {
@@ -122,6 +127,21 @@ pub fn run(args: Args) -> Result<()> {
                 prefix = Some(value.clone());
             } else if let Some(value) = arg.strip_prefix("--prefix=") {
                 prefix = Some(value.to_owned());
+            } else if let Some(value) = arg.strip_prefix("--path-format=") {
+                match value {
+                    "absolute" | "relative" => path_format = Some(value.to_owned()),
+                    _ => bail!("unknown argument to --path-format: {value}"),
+                }
+            } else if arg == "--path-format" {
+                i += 1;
+                let value = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--path-format requires an argument"))?;
+                match value.as_str() {
+                    "absolute" | "relative" => path_format = Some(value.clone()),
+                    _ => bail!("unknown argument to --path-format: {value}"),
+                }
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
@@ -363,15 +383,30 @@ pub fn run(args: Args) -> Result<()> {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                if cwd == current.git_dir.as_path() {
-                    println!(".");
-                } else if current.git_dir == cwd.join(".git") {
-                    // At worktree root: git prints ".git"
-                    println!(".git");
-                } else {
-                    // From subdirectories or non-standard layouts,
-                    // git prints the absolute path
+                if path_format.as_deref() == Some("absolute") {
                     println!("{}", current.git_dir.display());
+                } else {
+                    if cwd == current.git_dir.as_path() {
+                        println!(".");
+                    } else if current.git_dir == cwd.join(".git") {
+                        // At worktree root: git prints ".git"
+                        println!(".git");
+                    } else {
+                        // From subdirectories or non-standard layouts,
+                        // git prints the absolute path
+                        println!("{}", current.git_dir.display());
+                    }
+                }
+            }
+            Action::ShowGitCommonDir => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let common = resolve_common_git_dir(&current.git_dir);
+                if path_format.as_deref() == Some("absolute") {
+                    println!("{}", common.display());
+                } else {
+                    println!("{}", relative_path_from(&cwd, &common));
                 }
             }
             Action::ShowAbsoluteGitDir => {
@@ -410,6 +445,12 @@ pub fn run(args: Args) -> Result<()> {
             }
             Action::GitPath(path_arg) => {
                 if let Some(current) = repo.as_ref() {
+                    let common = resolve_common_git_dir(&current.git_dir);
+                    let git_path_base = if git_path_is_worktree_private(path_arg) {
+                        current.git_dir.clone()
+                    } else {
+                        common.clone()
+                    };
                     let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
                         let config =
                             grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
@@ -422,12 +463,18 @@ pub fn run(args: Args) -> Result<()> {
                                 hooks_dir.join(remainder)
                             }
                         } else {
-                            current.git_dir.join(path_arg)
+                            common.join(path_arg)
                         }
                     } else {
-                        current.git_dir.join(path_arg)
+                        git_path_base.join(path_arg)
                     };
-                    println!("{}", resolved.display());
+                    if path_format.as_deref() == Some("absolute") {
+                        println!("{}", resolved.display());
+                    } else if path_format.as_deref() == Some("relative") {
+                        println!("{}", relative_path_from(&cwd, &resolved));
+                    } else {
+                        println!("{}", resolved.display());
+                    }
                 } else {
                     bail!("not a git repository");
                 }
@@ -926,5 +973,68 @@ fn ensure_glob_suffix(pattern: &str) -> String {
         format!("{pattern}*")
     } else {
         format!("{pattern}/*")
+    }
+}
+
+fn resolve_common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(raw) = std::fs::read_to_string(&commondir_file) {
+        let rel = raw.trim();
+        if !rel.is_empty() {
+            let path = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                git_dir.join(rel)
+            };
+            return path.canonicalize().unwrap_or(path);
+        }
+    }
+    git_dir.to_path_buf()
+}
+
+fn git_path_is_worktree_private(path_arg: &str) -> bool {
+    matches!(
+        path_arg,
+        "HEAD"
+            | "index"
+            | "ORIG_HEAD"
+            | "MERGE_HEAD"
+            | "CHERRY_PICK_HEAD"
+            | "REVERT_HEAD"
+            | "BISECT_LOG"
+            | "BISECT_NAMES"
+            | "BISECT_TERMS"
+            | "logs/HEAD"
+    ) || path_arg == "rebase-apply"
+        || path_arg.starts_with("rebase-apply/")
+        || path_arg == "rebase-merge"
+        || path_arg.starts_with("rebase-merge/")
+        || path_arg.starts_with("refs/bisect/")
+        || path_arg.starts_with("logs/refs/bisect/")
+}
+
+fn relative_path_from(from: &Path, to: &Path) -> String {
+    let from = from.canonicalize().unwrap_or_else(|_| from.to_path_buf());
+    let to = to.canonicalize().unwrap_or_else(|_| to.to_path_buf());
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let mut common_len = 0usize;
+    while common_len < from_components.len()
+        && common_len < to_components.len()
+        && from_components[common_len] == to_components[common_len]
+    {
+        common_len += 1;
+    }
+    let mut rel = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        rel.push("..");
+    }
+    for c in &to_components[common_len..] {
+        rel.push(c.as_os_str());
+    }
+    if rel.as_os_str().is_empty() {
+        ".".to_owned()
+    } else {
+        rel.display().to_string()
     }
 }

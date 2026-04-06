@@ -189,7 +189,8 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
     }
-    let path = git_dir.join(refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let path = storage_dir.join(refname);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -212,8 +213,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_delete_ref(git_dir, refname);
     }
+    let storage_dir = ref_storage_dir(git_dir, refname);
     // Remove the loose ref file
-    let path = git_dir.join(refname);
+    let path = storage_dir.join(refname);
     match fs::remove_file(&path) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -221,7 +223,7 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     }
 
     // Also remove the entry from packed-refs if present
-    remove_packed_ref(git_dir, refname)?;
+    remove_packed_ref(&storage_dir, refname)?;
 
     Ok(())
 }
@@ -318,7 +320,20 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     match read_ref_file(&path) {
         Ok(Ref::Symbolic(target)) => Ok(Some(target)),
         Ok(Ref::Direct(_)) => Ok(None),
-        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+            if let Some(common) = common_dir(git_dir) {
+                if common != git_dir {
+                    let cpath = common.join(refname);
+                    match read_ref_file(&cpath) {
+                        Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
+                        Ok(Ref::Direct(_)) => return Ok(None),
+                        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Ok(None)
+        }
         Err(e) => Err(e),
     }
 }
@@ -352,7 +367,12 @@ pub fn append_reflog(
             git_dir, refname, old_oid, new_oid, identity, message,
         );
     }
-    let log_path = git_dir.join("logs").join(refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let log_path = storage_dir.join("logs").join(refname);
+    let auto_create = refname == "HEAD" || reflog_auto_create_enabled(git_dir);
+    if !auto_create && !log_path.exists() {
+        return Ok(());
+    }
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -364,6 +384,63 @@ pub fn append_reflog(
     use io::Write;
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
+    if refname == "HEAD" || refname.starts_with("refs/bisect/") {
+        return git_dir.to_path_buf();
+    }
+    common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
+}
+
+/// Determine whether missing reflog files should be auto-created.
+///
+/// This follows Git's core.logAllRefUpdates behavior:
+/// - explicit true/always/on/1 => create logs
+/// - explicit false/never/off/0 => do not auto-create
+/// - unset => true for non-bare repos, false for bare repos
+fn reflog_auto_create_enabled(git_dir: &Path) -> bool {
+    let config_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let config_path = config_dir.join("config");
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return true,
+    };
+
+    let mut in_core = false;
+    let mut log_all_ref_updates: Option<bool> = None;
+    let mut bare = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_core = trimmed.to_ascii_lowercase().starts_with("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_ascii_lowercase();
+        let value = value.trim().to_ascii_lowercase();
+        match key.as_str() {
+            "logallrefupdates" => {
+                log_all_ref_updates = match value.as_str() {
+                    "1" | "true" | "yes" | "on" | "always" => Some(true),
+                    "0" | "false" | "no" | "off" | "never" => Some(false),
+                    _ => None,
+                };
+            }
+            "bare" => {
+                bare = matches!(value.as_str(), "1" | "true" | "yes" | "on");
+            }
+            _ => {}
+        }
+    }
+
+    log_all_ref_updates.unwrap_or(!bare)
 }
 
 /// List all refs under a given prefix (e.g. `"refs/heads/"`).
@@ -382,12 +459,14 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     let mut results = Vec::new();
     let base = git_dir.join(prefix);
     collect_refs(&base, prefix, git_dir, &mut results)?;
+    collect_packed_refs(git_dir, prefix, &mut results)?;
 
     // For worktrees, also collect refs from the common dir
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
             let cbase = cdir.join(prefix);
             collect_refs(&cbase, prefix, &cdir, &mut results)?;
+            collect_packed_refs(&cdir, prefix, &mut results)?;
             // Deduplicate: worktree-local refs take priority
             results.sort_by(|a, b| a.0.cmp(&b.0));
             results.dedup_by(|b, a| a.0 == b.0);
@@ -484,6 +563,30 @@ fn collect_refs(
                 out.push((refname, oid))
             }
         }
+    }
+    Ok(())
+}
+
+fn collect_packed_refs(git_dir: &Path, prefix: &str, out: &mut Vec<(String, ObjectId)>) -> Result<()> {
+    let packed_path = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    for line in content.lines() {
+        if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let hash = parts.next().unwrap_or("");
+        let refname = parts.next().unwrap_or("").trim();
+        if !refname.starts_with(prefix) || hash.len() != 40 {
+            continue;
+        }
+        let oid: ObjectId = hash.parse()?;
+        out.push((refname.to_string(), oid));
     }
     Ok(())
 }

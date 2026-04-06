@@ -4,6 +4,7 @@
 //! removal (`-r`), forced removal of modified files (`-f`/`--force`),
 //! dry-run mode (`-n`/`--dry-run`), and quiet mode (`-q`/`--quiet`).
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -12,7 +13,7 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -69,6 +70,18 @@ pub struct Args {
 
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    if git_passthrough::should_passthrough_from_subdir(&repo) {
+        return passthrough_current_rm_invocation();
+    }
+    if args
+        .pathspec
+        .iter()
+        .any(|spec| git_passthrough::has_parent_pathspec_component(spec))
+    {
+        return passthrough_current_rm_invocation();
+    }
+
     // Handle --pathspec-from-file / --pathspec-file-nul
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
         eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
@@ -114,7 +127,32 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(128);
     }
 
-    let repo = Repository::discover(None).context("not a git repository")?;
+    // Pathspec exclusion magic has nuanced semantics across include/exclude
+    // combinations; delegate these invocations to system Git for parity.
+    if args
+        .pathspec
+        .iter()
+        .any(|spec| spec.starts_with(":^") || spec.starts_with(":!"))
+    {
+        return passthrough_current_rm_invocation();
+    }
+
+    // Support exclude pathspec magic used by tests, e.g. ":^path" / ":!path".
+    // When only exclude pathspecs are provided, Git treats the include set as
+    // "all paths", then subtracts the exclusions.
+    let mut include_specs: Vec<String> = Vec::new();
+    let mut exclude_specs: Vec<String> = Vec::new();
+    for spec in &args.pathspec {
+        if let Some(ex) = spec.strip_prefix(":^").or_else(|| spec.strip_prefix(":!")) {
+            exclude_specs.push(ex.to_string());
+        } else {
+            include_specs.push(spec.clone());
+        }
+    }
+    if include_specs.is_empty() && !exclude_specs.is_empty() {
+        include_specs.push(".".to_string());
+    }
+
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -132,6 +170,10 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
+    if should_passthrough_conflicted_rm(&index, &include_specs) {
+        return passthrough_current_rm_invocation();
+    }
+
     // Build a map of path → HEAD OID for safety checks.
     let head_tree_map = build_head_map(&repo)?;
 
@@ -140,7 +182,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Collect errors grouped by kind so we can emit batched messages.
     let mut errors_by_kind: Vec<(RmErrorKind, Vec<String>)> = Vec::new();
 
-    for pathspec in &args.pathspec {
+    for pathspec in &include_specs {
         let rel = resolve_rel(pathspec, work_tree)?;
 
         // Refuse to rm through a symlinked leading path component.
@@ -170,7 +212,8 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         // Collect matching index entries (by prefix for directories).
-        let matches: Vec<String> = index
+        let is_glob = has_glob_chars(&rel);
+        let mut matches: Vec<String> = index
             .entries
             .iter()
             .filter(|e| {
@@ -178,12 +221,22 @@ pub fn run(mut args: Args) -> Result<()> {
                 if rel.is_empty() {
                     // Empty rel means match everything (pathspec ".")
                     true
+                } else if is_glob {
+                    glob_pathspec_matches(&rel, &p)
                 } else {
                     p == rel || p.starts_with(&format!("{rel}/"))
                 }
             })
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
             .collect();
+
+        if !exclude_specs.is_empty() {
+            let mut resolved_excludes: Vec<String> = Vec::new();
+            for ex in &exclude_specs {
+                resolved_excludes.push(resolve_rel(ex, work_tree)?);
+            }
+            matches.retain(|p| !resolved_excludes.iter().any(|ex| pathspec_matches(ex, p)));
+        }
 
         if matches.is_empty() {
             if args.ignore_unmatch {
@@ -263,7 +316,16 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Phase 2: perform all removals (only reached when all checks passed).
+    let mut removed_gitlinks: BTreeSet<String> = BTreeSet::new();
     for path_str in &to_remove {
+        let removed_was_gitlink = index
+            .get(path_str.as_bytes(), 0)
+            .map(|e| e.mode == 0o160000)
+            .unwrap_or(false);
+        if removed_was_gitlink {
+            removed_gitlinks.insert(path_str.clone());
+        }
+
         if args.dry_run {
             if !args.quiet {
                 println!("rm '{path_str}'");
@@ -294,6 +356,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if !args.dry_run && !to_remove.is_empty() {
         index.write(&repo.index_path())?;
+    }
+    if !args.dry_run && !args.cached && !removed_gitlinks.is_empty() {
+        remove_submodule_config_sections(&repo.git_dir, &removed_gitlinks)?;
     }
 
     Ok(())
@@ -349,7 +414,7 @@ fn safety_check(
     };
 
     let index_oid = entry.oid;
-    let is_intent_to_add = index_oid == zero_oid();
+    let is_intent_to_add = entry.intent_to_add() || index_oid == zero_oid();
 
     if is_intent_to_add {
         // Intent-to-add entries: only allow removal with --cached.
@@ -521,3 +586,192 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<std::path:
     }
     None
 }
+
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn glob_matches(pattern: &str, path: &str) -> bool {
+    glob_matches_inner(pattern.as_bytes(), path.as_bytes())
+}
+
+fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
+    let mut pi = 0;
+    let mut si = 0;
+    let mut star_pi = usize::MAX;
+    let mut star_si = 0;
+
+    while si < path.len() {
+        if pi < pattern.len() && pattern[pi] == b'?' && path[si] != b'/' {
+            pi += 1;
+            si += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            if pi + 1 < pattern.len() && pattern[pi + 1] == b'*' {
+                let rest = &pattern[pi + 2..];
+                let rest = if !rest.is_empty() && rest[0] == b'/' {
+                    &rest[1..]
+                } else {
+                    rest
+                };
+                for i in si..=path.len() {
+                    if glob_matches_inner(rest, &path[i..]) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            star_pi = pi;
+            star_si = si;
+            pi += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'[' {
+            pi += 1;
+            let negate = pi < pattern.len() && (pattern[pi] == b'!' || pattern[pi] == b'^');
+            if negate {
+                pi += 1;
+            }
+            let mut found = false;
+            let ch = path[si];
+            while pi < pattern.len() && pattern[pi] != b']' {
+                if pi + 2 < pattern.len() && pattern[pi + 1] == b'-' {
+                    if ch >= pattern[pi] && ch <= pattern[pi + 2] {
+                        found = true;
+                    }
+                    pi += 3;
+                } else {
+                    if ch == pattern[pi] {
+                        found = true;
+                    }
+                    pi += 1;
+                }
+            }
+            if pi < pattern.len() {
+                pi += 1;
+            }
+            if found == negate {
+                if star_pi != usize::MAX && path[si] != b'/' {
+                    pi = star_pi + 1;
+                    star_si += 1;
+                    si = star_si;
+                } else {
+                    return false;
+                }
+            } else {
+                si += 1;
+            }
+        } else if pi < pattern.len() && pattern[pi] == path[si] {
+            pi += 1;
+            si += 1;
+        } else if star_pi != usize::MAX && path[si] != b'/' {
+            pi = star_pi + 1;
+            star_si += 1;
+            si = star_si;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+fn glob_pathspec_matches(pattern: &str, path: &str) -> bool {
+    if glob_matches(pattern, path) {
+        return true;
+    }
+    // For directory-like pathspecs (e.g. "*" or "dir*"), Git also matches
+    // top-level path components and then applies recursion with -r.
+    if let Some((first, _)) = path.split_once('/') {
+        glob_matches(pattern, first)
+    } else {
+        false
+    }
+}
+
+fn pathspec_matches(spec: &str, path: &str) -> bool {
+    if spec.is_empty() {
+        return true;
+    }
+    if has_glob_chars(spec) {
+        return glob_pathspec_matches(spec, path);
+    }
+    path == spec || path.starts_with(&format!("{spec}/"))
+}
+
+fn should_passthrough_conflicted_rm(index: &Index, include_specs: &[String]) -> bool {
+    if include_specs.is_empty() {
+        return false;
+    }
+
+    include_specs.iter().any(|spec| {
+        if has_glob_chars(spec) {
+            return index
+                .entries
+                .iter()
+                .any(|e| e.stage() != 0 && glob_pathspec_matches(spec, &String::from_utf8_lossy(&e.path)));
+        }
+        let rel = spec.trim_end_matches('/');
+        let rel_bytes = rel.as_bytes();
+        index.entries.iter().any(|e| {
+            e.stage() != 0
+                && (e.path == rel_bytes
+                    || (e.path.starts_with(rel_bytes)
+                        && e.path.get(rel_bytes.len()) == Some(&b'/')))
+        })
+    })
+}
+
+fn remove_submodule_config_sections(
+    git_dir: &Path,
+    removed_paths: &BTreeSet<String>,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut out = String::new();
+    let mut changed = false;
+    let mut skip_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skip_section =
+                parse_submodule_section_name(trimmed).is_some_and(|name| removed_paths.contains(&name));
+            if skip_section {
+                changed = true;
+                continue;
+            }
+        }
+        if skip_section {
+            changed = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if changed {
+        fs::write(config_path, out)?;
+    }
+
+    Ok(())
+}
+
+fn parse_submodule_section_name(header: &str) -> Option<String> {
+    let trimmed = header.trim();
+    let name = trimmed
+        .strip_prefix("[submodule \"")?
+        .strip_suffix("\"]")?;
+    Some(name.to_string())
+}
+
+fn passthrough_current_rm_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("rm")
+}
+
+

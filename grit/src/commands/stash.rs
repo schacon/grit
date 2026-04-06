@@ -10,6 +10,7 @@
 //!
 //! Subcommands: push, save, list, show, pop, apply, drop, clear, branch, create, store.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::BTreeSet;
@@ -218,6 +219,12 @@ pub enum StashCommand {
 
 /// Run `grit stash`.
 pub fn run(args: Args) -> Result<()> {
+    if let Ok(repo) = Repository::discover(None) {
+        if git_passthrough::should_passthrough_from_subdir(&repo) {
+            return passthrough_current_stash_invocation();
+        }
+    }
+
     match args.command {
         None => {
             // Bare `grit stash` == `grit stash push`
@@ -395,6 +402,10 @@ pub fn run(args: Args) -> Result<()> {
             do_store(commit, message, q)
         }
     }
+}
+
+fn passthrough_current_stash_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("stash")
 }
 
 // ---------------------------------------------------------------------------

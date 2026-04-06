@@ -15,7 +15,6 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -138,23 +137,14 @@ impl IndexEntry {
 /// The in-memory representation of the Git index file.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
-    /// Index format version (2, 3, or 4).
+    /// Index format version (2 or 3).
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
-    /// Saved higher-stage entries used to recreate conflicts.
-    pub resolve_undo: BTreeMap<Vec<u8>, ResolveUndoEntry>,
-}
-
-/// Saved stage 1/2/3 entries for a resolved path.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ResolveUndoEntry {
-    /// Mode and object ID for stages 1..=3. `None` means the stage was absent.
-    pub stages: [Option<(u32, ObjectId)>; 3],
 }
 
 /// Default index version when `GIT_INDEX_VERSION` is unset or invalid.
-const INDEX_FORMAT_DEFAULT: u32 = 2;
+const INDEX_FORMAT_DEFAULT: u32 = 3;
 /// Minimum supported index version.
 const INDEX_FORMAT_LB: u32 = 2;
 /// Maximum supported index version (version 4 requests are accepted and
@@ -193,7 +183,6 @@ impl Index {
         Self {
             version,
             entries: Vec::new(),
-            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -209,7 +198,6 @@ impl Index {
             return Self {
                 version: v,
                 entries: Vec::new(),
-                resolve_undo: BTreeMap::new(),
             };
         }
         // Config index.version
@@ -219,7 +207,6 @@ impl Index {
                     return Self {
                         version: v,
                         entries: Vec::new(),
-                        resolve_undo: BTreeMap::new(),
                     };
                 }
             }
@@ -231,7 +218,6 @@ impl Index {
             return Self {
                 version: INDEX_FORMAT_DEFAULT,
                 entries: Vec::new(),
-                resolve_undo: BTreeMap::new(),
             };
         }
         // feature.manyFiles implies version 4
@@ -242,14 +228,12 @@ impl Index {
                 return Self {
                     version: 4,
                     entries: Vec::new(),
-                    resolve_undo: BTreeMap::new(),
                 };
             }
         }
         Self {
             version: 2,
             entries: Vec::new(),
-            resolve_undo: BTreeMap::new(),
         }
     }
 
@@ -280,11 +264,10 @@ impl Index {
 
         // Verify trailing SHA-1 checksum
         let (body, checksum) = data.split_at(data.len() - 20);
-        let checksum_is_zero = checksum.iter().all(|byte| *byte == 0);
         let mut hasher = Sha1::new();
         hasher.update(body);
         let computed = hasher.finalize();
-        if !checksum_is_zero && computed.as_slice() != checksum {
+        if computed.as_slice() != checksum {
             return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
         }
 
@@ -320,33 +303,7 @@ impl Index {
             pos += consumed;
         }
 
-        let mut index = Self {
-            version,
-            entries,
-            resolve_undo: BTreeMap::new(),
-        };
-
-        while pos + 8 <= body.len() {
-            let signature = &body[pos..pos + 4];
-            pos += 4;
-            let size = u32::from_be_bytes(
-                body[pos..pos + 4]
-                    .try_into()
-                    .map_err(|_| Error::IndexError("cannot read extension size".to_owned()))?,
-            ) as usize;
-            pos += 4;
-            if pos + size > body.len() {
-                return Err(Error::IndexError("extension exceeds index size".to_owned()));
-            }
-            let extension = &body[pos..pos + size];
-            pos += size;
-
-            if signature == b"REUC" {
-                index.resolve_undo = parse_resolve_undo(extension)?;
-            }
-        }
-
-        Ok(index)
+        Ok(Self { version, entries })
     }
 
     /// Write the index to a file, computing and appending the trailing SHA-1.
@@ -358,13 +315,9 @@ impl Index {
         let mut body = Vec::new();
         self.serialize_into(&mut body)?;
 
-        let checksum = if index_skip_hash_enabled(path) {
-            [0u8; 20].to_vec()
-        } else {
-            let mut hasher = Sha1::new();
-            hasher.update(&body);
-            hasher.finalize().to_vec()
-        };
+        let mut hasher = Sha1::new();
+        hasher.update(&body);
+        let checksum = hasher.finalize();
 
         let tmp_path = path.with_extension("lock");
         let pid_path = pid_path_for_lock(&tmp_path);
@@ -378,10 +331,7 @@ impl Index {
             Ok(file) => file,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 let message = build_lock_exists_message(&tmp_path, &pid_path, &e);
-                return Err(Error::Io(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    message,
-                )));
+                return Err(Error::Io(io::Error::new(io::ErrorKind::AlreadyExists, message)));
             }
             Err(e) => return Err(Error::Io(e)),
         };
@@ -428,14 +378,12 @@ impl Index {
         // Determine which version to write.
         // Version 4 requires path compression, which we do not implement yet.
         // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version == 4 {
-            4
+        let write_version = if self.entries.iter().any(|e| e.flags_extended.is_some()) {
+            // Extended flags (e.g. intent-to-add / skip-worktree) require index v3+.
+            3
         } else if self.version >= 3 {
-            if self.entries.iter().any(|e| e.flags_extended.is_some()) {
-                3
-            } else {
-                2
-            }
+            // We don't implement v4 path compression on write yet.
+            2
         } else {
             self.version
         };
@@ -444,21 +392,8 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
-        let mut prev_path: &[u8] = &[];
         for entry in &self.entries {
-            if write_version == 4 {
-                serialize_entry_v4(entry, prev_path, out);
-                prev_path = &entry.path;
-            } else {
-                serialize_entry(entry, write_version, out);
-            }
-        }
-        if !self.resolve_undo.is_empty() {
-            let mut reuc = Vec::new();
-            serialize_resolve_undo(&self.resolve_undo, &mut reuc);
-            out.extend_from_slice(b"REUC");
-            out.extend_from_slice(&(reuc.len() as u32).to_be_bytes());
-            out.extend_from_slice(&reuc);
+            serialize_entry(entry, write_version, out);
         }
         Ok(())
     }
@@ -491,21 +426,6 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
-        let mut saved = ResolveUndoEntry::default();
-        let mut has_conflicts = false;
-        for existing in &self.entries {
-            if existing.path != path {
-                continue;
-            }
-            let stage = existing.stage();
-            if (1..=3).contains(&stage) {
-                saved.stages[(stage - 1) as usize] = Some((existing.mode, existing.oid));
-                has_conflicts = true;
-            }
-        }
-        if has_conflicts {
-            self.resolve_undo.insert(path.clone(), saved);
-        }
         // Remove conflict stages first
         self.entries.retain(|e| e.path != path || e.stage() == 0);
         // Then add/replace stage-0 entry
@@ -518,7 +438,6 @@ impl Index {
     pub fn remove(&mut self, path: &[u8]) -> bool {
         let before = self.entries.len();
         self.entries.retain(|e| e.path != path);
-        self.resolve_undo.remove(path);
         self.entries.len() < before
     }
 
@@ -542,103 +461,6 @@ impl Index {
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
     }
-
-    /// Restore higher-stage entries for a previously resolved path.
-    #[must_use]
-    pub fn unresolve(&mut self, path: &[u8]) -> bool {
-        let Some(saved) = self.resolve_undo.remove(path) else {
-            return false;
-        };
-
-        self.entries.retain(|e| e.path != path);
-        for (index, stage) in saved.stages.iter().enumerate() {
-            let Some((mode, oid)) = stage else {
-                continue;
-            };
-            let stage_num = (index + 1) as u8;
-            self.entries.push(IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode: *mode,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid: *oid,
-                flags: (path.len().min(0xFFF) as u16) | ((stage_num as u16) << 12),
-                flags_extended: None,
-                path: path.to_vec(),
-            });
-        }
-        self.sort();
-        true
-    }
-}
-
-fn parse_resolve_undo(data: &[u8]) -> Result<BTreeMap<Vec<u8>, ResolveUndoEntry>> {
-    let mut pos = 0usize;
-    let mut entries = BTreeMap::new();
-
-    while pos < data.len() {
-        let path_end = data[pos..]
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or_else(|| Error::IndexError("resolve-undo path missing NUL".to_owned()))?;
-        let path = data[pos..pos + path_end].to_vec();
-        pos += path_end + 1;
-
-        let mut modes = [0u32; 3];
-        for mode in &mut modes {
-            let mode_end = data[pos..]
-                .iter()
-                .position(|&b| b == 0)
-                .ok_or_else(|| Error::IndexError("resolve-undo mode missing NUL".to_owned()))?;
-            let raw = std::str::from_utf8(&data[pos..pos + mode_end])
-                .map_err(|_| Error::IndexError("resolve-undo mode is not UTF-8".to_owned()))?;
-            *mode = u32::from_str_radix(raw, 8)
-                .map_err(|_| Error::IndexError("invalid resolve-undo mode".to_owned()))?;
-            pos += mode_end + 1;
-        }
-
-        let mut entry = ResolveUndoEntry::default();
-        for (index, mode) in modes.into_iter().enumerate() {
-            if mode == 0 {
-                continue;
-            }
-            if pos + 20 > data.len() {
-                return Err(Error::IndexError(
-                    "resolve-undo object id exceeds extension size".to_owned(),
-                ));
-            }
-            let oid = ObjectId::from_bytes(&data[pos..pos + 20])?;
-            pos += 20;
-            entry.stages[index] = Some((mode, oid));
-        }
-
-        entries.insert(path, entry);
-    }
-
-    Ok(entries)
-}
-
-fn serialize_resolve_undo(entries: &BTreeMap<Vec<u8>, ResolveUndoEntry>, out: &mut Vec<u8>) {
-    for (path, entry) in entries {
-        out.extend_from_slice(path);
-        out.push(0);
-        for stage in &entry.stages {
-            let mode = stage.map(|(mode, _)| mode).unwrap_or(0);
-            out.extend_from_slice(format!("{mode:o}").as_bytes());
-            out.push(0);
-        }
-        for stage in &entry.stages {
-            if let Some((_, oid)) = stage {
-                out.extend_from_slice(oid.as_bytes());
-            }
-        }
-    }
 }
 
 fn lockfile_pid_enabled(index_path: &Path) -> bool {
@@ -650,27 +472,6 @@ fn lockfile_pid_enabled(index_path: &Path) -> bool {
     ConfigSet::load(Some(git_dir), true)
         .ok()
         .and_then(|cfg| cfg.get_bool("core.lockfilepid"))
-        .and_then(|res| res.ok())
-        .unwrap_or(false)
-}
-
-fn index_skip_hash_enabled(index_path: &Path) -> bool {
-    let git_dir = match index_path.parent() {
-        Some(dir) => dir,
-        None => return false,
-    };
-
-    let config = match ConfigSet::load(Some(git_dir), true) {
-        Ok(config) => config,
-        Err(_) => return false,
-    };
-
-    if let Some(value) = config.get_bool("index.skipHash").and_then(|res| res.ok()) {
-        return value;
-    }
-
-    config
-        .get_bool("feature.manyFiles")
         .and_then(|res| res.ok())
         .unwrap_or(false)
 }
@@ -924,60 +725,6 @@ fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
     }
 }
 
-fn serialize_entry_v4(entry: &IndexEntry, prev_path: &[u8], out: &mut Vec<u8>) {
-    let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
-
-    write_u32(out, entry.ctime_sec);
-    write_u32(out, entry.ctime_nsec);
-    write_u32(out, entry.mtime_sec);
-    write_u32(out, entry.mtime_nsec);
-    write_u32(out, entry.dev);
-    write_u32(out, entry.ino);
-    write_u32(out, entry.mode);
-    write_u32(out, entry.uid);
-    write_u32(out, entry.gid);
-    write_u32(out, entry.size);
-    out.extend_from_slice(entry.oid.as_bytes());
-
-    let mut flags = entry.flags;
-    if entry.flags_extended.is_some() {
-        flags |= 0x4000;
-    } else {
-        flags &= !0x4000;
-    }
-    let path_len = entry.path.len().min(0xFFF) as u16;
-    flags = (flags & 0xF000) | path_len;
-    out.extend_from_slice(&flags.to_be_bytes());
-
-    if let Some(fe) = entry.flags_extended {
-        out.extend_from_slice(&fe.to_be_bytes());
-    }
-
-    let shared_prefix_len = prev_path
-        .iter()
-        .zip(entry.path.iter())
-        .take_while(|(lhs, rhs)| lhs == rhs)
-        .count();
-    let strip_len = prev_path.len().saturating_sub(shared_prefix_len);
-    write_varint(strip_len, out);
-    out.extend_from_slice(&entry.path[shared_prefix_len..]);
-    out.push(0);
-}
-
-fn write_varint(mut value: usize, out: &mut Vec<u8>) {
-    loop {
-        let mut byte = (value & 0x7f) as u8;
-        value >>= 7;
-        if value != 0 {
-            byte |= 0x80;
-        }
-        out.push(byte);
-        if value == 0 {
-            break;
-        }
-    }
-}
-
 /// Build an [`IndexEntry`] by stat-ing a file on disk.
 ///
 /// # Parameters
@@ -1132,28 +879,10 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &4u32.to_be_bytes());
+        assert_eq!(&data[4..8], &2u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
         assert_eq!(loaded.entries[0].path, b"one");
         assert_eq!(loaded.entries[1].path, b"two/one");
-    }
-
-    #[test]
-    fn loads_index_with_zeroed_trailing_hash() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("index");
-
-        let mut idx = Index::new();
-        idx.add_or_replace(make_entry("foo"));
-        idx.write(&path).unwrap();
-
-        let mut data = fs::read(&path).unwrap();
-        let len = data.len();
-        data[len - 20..].fill(0);
-        fs::write(&path, data).unwrap();
-
-        let loaded = Index::load(&path).unwrap();
-        assert_eq!(loaded.entries[0].path, b"foo");
     }
 }

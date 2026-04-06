@@ -151,7 +151,7 @@ pub fn run(args: Args) -> Result<()> {
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
     let urls: Vec<String>;
-    let _is_path_remote: bool;
+    let is_path_remote: bool;
 
     if let Some(ref r) = args.remote {
         if r.is_empty() {
@@ -160,11 +160,11 @@ pub fn run(args: Args) -> Result<()> {
         }
         if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
             // Path-based remote: use directly as URL
-            _is_path_remote = true;
+            is_path_remote = true;
             remote_name_owned = r.clone();
             urls = vec![r.clone()];
         } else {
-            _is_path_remote = false;
+            is_path_remote = false;
             remote_name_owned = r.clone();
             // Check pushurl first (may be multi-valued), then url
             let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
@@ -179,7 +179,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     } else {
-        _is_path_remote = false;
+        is_path_remote = false;
         remote_name_owned = if let Some(ref branch) = current_branch {
             config
                 .get(&format!("branch.{branch}.remote"))
@@ -216,6 +216,7 @@ pub fn run(args: Args) -> Result<()> {
             &args,
             url,
             remote_name,
+            is_path_remote,
             current_branch.as_deref(),
             push_all,
             &push_refspecs_from_config,
@@ -231,6 +232,7 @@ fn push_to_url(
     args: &Args,
     url: &str,
     remote_name: &str,
+    is_path_remote: bool,
     current_branch: Option<&str>,
     push_all: bool,
     push_refspecs_from_config: &[String],
@@ -899,6 +901,12 @@ fn push_to_url(
         bail!("failed to push some refs to '{url}'");
     }
 
+    // Mirror native Git behavior: successful pushes through a named remote
+    // update the corresponding local remote-tracking refs.
+    if !args.dry_run && !is_path_remote {
+        update_local_remote_tracking_refs(repo, remote_name, &applied_updates)?;
+    }
+
     // Run post-receive hook on the remote (after successful ref updates)
     if !args.dry_run && !applied_updates.is_empty() {
         let (_, hook_output) = grit_lib::hooks::run_hook_in_git_dir(
@@ -949,6 +957,30 @@ fn push_to_url(
         }
     }
 
+    Ok(())
+}
+
+fn update_local_remote_tracking_refs(
+    repo: &Repository,
+    remote_name: &str,
+    applied_updates: &[(&RefUpdate, Option<ObjectId>)],
+) -> Result<()> {
+    for (update, _) in applied_updates {
+        let Some(branch_name) = update.remote_ref.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        let tracking_ref = format!("refs/remotes/{remote_name}/{branch_name}");
+        match update.new_oid {
+            Some(new_oid) => {
+                refs::write_ref(&repo.git_dir, &tracking_ref, &new_oid).with_context(|| {
+                    format!("updating local remote-tracking ref {tracking_ref}")
+                })?;
+            }
+            None => {
+                let _ = refs::delete_ref(&repo.git_dir, &tracking_ref);
+            }
+        }
+    }
     Ok(())
 }
 

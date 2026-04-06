@@ -12,13 +12,12 @@
 //! - `grit apply --directory=<dir>` — prepend directory to paths
 //! - Reads from stdin if no file argument given
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::index::{Index, IndexEntry};
+use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -75,13 +74,13 @@ pub struct Args {
     #[arg(long = "allow-binary-replacement")]
     pub allow_binary_replacement: bool,
 
-    /// Build a temporary index containing the pre-image blobs referenced by the patch.
-    #[arg(long = "build-fake-ancestor", value_name = "FILE")]
-    pub build_fake_ancestor: Option<PathBuf>,
-
     /// Verbose output.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
+
+    /// Add new files to the index as intent-to-add entries.
+    #[arg(long = "intent-to-add")]
+    pub intent_to_add: bool,
 
     /// How to handle whitespace errors.
     #[arg(long = "whitespace", value_name = "ACTION", default_value = "warn")]
@@ -130,31 +129,6 @@ enum HunkLine {
     Remove(String),
     /// "\ No newline at end of file"
     NoNewline,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WhitespaceMode {
-    Nowarn,
-    Warn,
-    Fix,
-    Error,
-    ErrorAll,
-}
-
-impl WhitespaceMode {
-    fn from_arg(value: &str) -> Self {
-        match value {
-            "nowarn" => Self::Nowarn,
-            "fix" | "strip" => Self::Fix,
-            "error" => Self::Error,
-            "error-all" => Self::ErrorAll,
-            _ => Self::Warn,
-        }
-    }
-
-    fn fixes_errors(self) -> bool {
-        matches!(self, Self::Fix)
-    }
 }
 
 /// Represents one file in a unified diff.
@@ -208,20 +182,6 @@ impl FilePatch {
                 .filter(|p| *p != "/dev/null")
                 .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"));
         }
-        self.new_path
-            .as_deref()
-            .filter(|p| *p != "/dev/null")
-            .or(self.old_path.as_deref().filter(|p| *p != "/dev/null"))
-    }
-
-    fn source_path(&self) -> Option<&str> {
-        self.old_path
-            .as_deref()
-            .filter(|p| *p != "/dev/null")
-            .or(self.new_path.as_deref().filter(|p| *p != "/dev/null"))
-    }
-
-    fn destination_path(&self) -> Option<&str> {
         self.new_path
             .as_deref()
             .filter(|p| *p != "/dev/null")
@@ -595,12 +555,7 @@ fn reverse_patches(patches: &mut [FilePatch]) {
 /// Find the best starting position for a hunk by scanning around the
 /// nominal position. Returns the 0-based line index where the hunk's
 /// leading context/remove lines match the old file.
-fn find_hunk_start(
-    old_lines: &[&str],
-    hunk: &Hunk,
-    nominal: usize,
-    whitespace_mode: WhitespaceMode,
-) -> usize {
+fn find_hunk_start(old_lines: &[&str], hunk: &Hunk, nominal: usize) -> usize {
     // Collect the leading context + remove lines (the old-side lines)
     let old_side: Vec<&str> = hunk
         .lines
@@ -616,19 +571,17 @@ fn find_hunk_start(
     }
 
     // Check if the nominal position matches
-    if matches_at(old_lines, &old_side, nominal, whitespace_mode) {
+    if matches_at(old_lines, &old_side, nominal) {
         return nominal;
     }
 
     // Scan outward from nominal
     let max_scan = old_lines.len();
     for delta in 1..=max_scan {
-        if nominal >= delta && matches_at(old_lines, &old_side, nominal - delta, whitespace_mode) {
+        if nominal >= delta && matches_at(old_lines, &old_side, nominal - delta) {
             return nominal - delta;
         }
-        if nominal + delta <= old_lines.len()
-            && matches_at(old_lines, &old_side, nominal + delta, whitespace_mode)
-        {
+        if nominal + delta <= old_lines.len() && matches_at(old_lines, &old_side, nominal + delta) {
             return nominal + delta;
         }
     }
@@ -638,58 +591,17 @@ fn find_hunk_start(
 }
 
 /// Check if old_side lines match old_lines starting at `start`.
-fn matches_at(
-    old_lines: &[&str],
-    old_side: &[&str],
-    start: usize,
-    whitespace_mode: WhitespaceMode,
-) -> bool {
+fn matches_at(old_lines: &[&str], old_side: &[&str], start: usize) -> bool {
     if start + old_side.len() > old_lines.len() {
         return false;
     }
     old_side
         .iter()
         .zip(&old_lines[start..start + old_side.len()])
-        .all(|(a, b)| lines_match(a, b, whitespace_mode))
+        .all(|(a, b)| *a == *b)
 }
 
-fn normalize_line_for_match<'a>(line: &'a str, whitespace_mode: WhitespaceMode) -> Cow<'a, str> {
-    if whitespace_mode.fixes_errors() {
-        Cow::Owned(fix_whitespace_errors(line))
-    } else {
-        Cow::Borrowed(line)
-    }
-}
-
-fn lines_match(expected: &str, actual: &str, whitespace_mode: WhitespaceMode) -> bool {
-    normalize_line_for_match(expected, whitespace_mode)
-        == normalize_line_for_match(actual, whitespace_mode)
-}
-
-fn fix_whitespace_errors(line: &str) -> String {
-    let bytes = line.as_bytes();
-    let indent_len = bytes
-        .iter()
-        .take_while(|byte| matches!(**byte, b' ' | b'\t'))
-        .count();
-    let mut fixed = String::with_capacity(line.len());
-    for byte in &bytes[..indent_len] {
-        if *byte == b'\t' {
-            while fixed.ends_with(' ') {
-                fixed.pop();
-            }
-        }
-        fixed.push(char::from(*byte));
-    }
-    fixed.push_str(&line[indent_len..]);
-    fixed.trim_end_matches([' ', '\t']).to_string()
-}
-
-fn apply_hunks(
-    old_content: &str,
-    hunks: &[Hunk],
-    whitespace_mode: WhitespaceMode,
-) -> Result<String> {
+fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     // Split into lines, keeping track of trailing newline
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
     let old_lines: Vec<&str> = if old_content.is_empty() {
@@ -711,21 +623,7 @@ fn apply_hunks(
         let hunk_start = (nominal_start + offset).max(0) as usize;
 
         // If context at hunk_start doesn't match, scan nearby to find it
-        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start, whitespace_mode);
-
-        // A hunk anchored at the start of the file cannot slide forward if it
-        // begins by inserting new content. Doing so would silently preserve the
-        // original first line and duplicate the inserted line.
-        if hunk_start == 0
-            && actual_start > 0
-            && hunk
-                .lines
-                .iter()
-                .find(|hl| !matches!(hl, HunkLine::NoNewline))
-                .is_some_and(|hl| matches!(hl, HunkLine::Add(_)))
-        {
-            bail!("patch does not apply");
-        }
+        let actual_start = find_hunk_start(&old_lines, hunk, hunk_start);
 
         // Copy lines before this hunk
         while old_idx < actual_start && old_idx < old_lines.len() {
@@ -746,28 +644,21 @@ fn apply_hunks(
                 HunkLine::Context(s) => {
                     if old_idx < old_lines.len() {
                         // Verify context matches
-                        let current_line = old_lines[old_idx];
-                        if !lines_match(s, current_line, whitespace_mode) {
+                        if old_lines[old_idx] != s.as_str() {
                             bail!(
                                 "context mismatch at line {}: expected {:?}, got {:?}",
                                 old_idx + 1,
                                 s,
-                                current_line
+                                old_lines[old_idx]
                             );
                         }
                         old_idx += 1;
-                        result.push(if whitespace_mode.fixes_errors() {
-                            fix_whitespace_errors(s)
-                        } else {
-                            s.clone()
-                        });
-                    } else {
-                        result.push(s.clone());
                     }
+                    result.push(s.clone());
                 }
                 HunkLine::Remove(s) => {
                     if old_idx < old_lines.len() {
-                        if !lines_match(s, old_lines[old_idx], whitespace_mode) {
+                        if old_lines[old_idx] != s.as_str() {
                             bail!(
                                 "remove mismatch at line {}: expected {:?}, got {:?}",
                                 old_idx + 1,
@@ -780,11 +671,7 @@ fn apply_hunks(
                     remove_no_newline = false;
                 }
                 HunkLine::Add(s) => {
-                    result.push(if whitespace_mode.fixes_errors() {
-                        fix_whitespace_errors(s)
-                    } else {
-                        s.clone()
-                    });
+                    result.push(s.clone());
                     add_no_newline = false;
                 }
                 HunkLine::NoNewline => {
@@ -993,6 +880,14 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn run(args: Args) -> Result<()> {
+    if args.directory.is_none() {
+        if let Ok(repo) = Repository::discover(None) {
+            if git_passthrough::should_passthrough_from_subdir(&repo) {
+                return passthrough_current_apply_invocation();
+            }
+        }
+    }
+
     // Read patch input
     let input = if args.patches.is_empty() {
         let mut buf = String::new();
@@ -1021,16 +916,10 @@ pub fn run(args: Args) -> Result<()> {
         buf
     };
 
-    let whitespace_mode = WhitespaceMode::from_arg(&args.whitespace);
     let mut patches = parse_patch(&input)?;
 
     if args.reverse {
         reverse_patches(&mut patches);
-    }
-
-    if let Some(path) = args.build_fake_ancestor.as_deref() {
-        build_fake_ancestor(&patches, &args, path)?;
-        return Ok(());
     }
 
     // Info-only modes
@@ -1051,145 +940,27 @@ pub fn run(args: Args) -> Result<()> {
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
-        apply_to_index(&patches, &args, whitespace_mode)?;
-    } else if args.check && args.index {
-        // --check --index requires a valid repository (to access the index)
-        let _repo = Repository::discover(None).context("not a git repository")?;
-        check_patches(&patches, &args, whitespace_mode)?;
+        apply_to_index(&patches, &args)?;
     } else if args.check {
-        check_patches(&patches, &args, whitespace_mode)?;
+        check_patches(&patches, &args)?;
+    } else if args.intent_to_add {
+        // Match Git: --intent-to-add applies the patch to the working tree and
+        // records index entries as intent-to-add (for new files).
+        apply_to_worktree(&patches, &args)?;
+        apply_to_index(&patches, &args)?;
     } else if args.index {
         verify_worktree_matches_index(&patches, &args)?;
-        apply_to_worktree(&patches, &args, whitespace_mode)?;
-        apply_to_index(&patches, &args, whitespace_mode)?;
+        apply_to_worktree(&patches, &args)?;
+        apply_to_index(&patches, &args)?;
     } else {
-        apply_to_worktree(&patches, &args, whitespace_mode)?;
+        apply_to_worktree(&patches, &args)?;
     }
 
     Ok(())
 }
 
-fn build_fake_ancestor(patches: &[FilePatch], args: &Args, output_path: &Path) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let current_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
-    let mut ancestor = Index::new();
-
-    for fp in patches {
-        let Some(path_str) = fp.effective_path() else {
-            continue;
-        };
-        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
-        let mode = match (fp.old_mode.as_deref(), fp.new_mode.as_deref()) {
-            (Some(mode), _) => parse_mode(mode),
-            (None, Some(mode)) if fp.hunks.is_empty() => parse_mode(mode),
-            _ => current_index
-                .get(adjusted.as_bytes(), 0)
-                .map(|entry| entry.mode)
-                .unwrap_or(0o100644),
-        };
-
-        let oid = if let Some(old_oid) = fp.old_oid.as_deref() {
-            resolve_patch_oid(&repo, old_oid)?
-        } else if fp.hunks.is_empty() {
-            current_index
-                .get(adjusted.as_bytes(), 0)
-                .map(|entry| entry.oid)
-                .ok_or_else(|| anyhow::anyhow!("{adjusted} not found in index"))?
-        } else {
-            continue;
-        };
-
-        let entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode,
-            uid: 0,
-            gid: 0,
-            size: 0,
-            oid,
-            flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
-            flags_extended: None,
-            path: adjusted.into_bytes(),
-        };
-        ancestor.add_or_replace(entry);
-    }
-
-    if let Some(parent) = output_path.parent() {
-        if parent.as_os_str().is_empty() {
-            ancestor.write(output_path)?;
-            return Ok(());
-        }
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    ancestor.write(output_path)?;
-    Ok(())
-}
-
-fn resolve_patch_oid(repo: &Repository, oid_text: &str) -> Result<grit_lib::objects::ObjectId> {
-    if oid_text.len() == 40 {
-        let oid = grit_lib::objects::ObjectId::from_hex(oid_text)?;
-        if repo.odb.exists(&oid) {
-            return Ok(oid);
-        }
-    }
-
-    let matches = collect_matching_object_ids(repo, oid_text)?;
-    match matches.as_slice() {
-        [oid] => Ok(*oid),
-        [] => bail!("object not found: {oid_text}"),
-        _ => bail!("ambiguous object name: {oid_text}"),
-    }
-}
-
-fn collect_matching_object_ids(
-    repo: &Repository,
-    prefix: &str,
-) -> Result<Vec<grit_lib::objects::ObjectId>> {
-    if !(4..=40).contains(&prefix.len()) || !prefix.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Ok(Vec::new());
-    }
-
-    let mut matches = Vec::new();
-    let read_dir = fs::read_dir(repo.odb.objects_dir())?;
-    for dir_entry in read_dir {
-        let dir_entry = dir_entry?;
-        if !dir_entry.file_type()?.is_dir() {
-            continue;
-        }
-        let prefix_name = dir_entry.file_name();
-        let Some(prefix_name) = prefix_name.to_str() else {
-            continue;
-        };
-        if prefix_name.len() != 2 || !prefix_name.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            continue;
-        }
-
-        for file_entry in fs::read_dir(dir_entry.path())? {
-            let file_entry = file_entry?;
-            if !file_entry.file_type()?.is_file() {
-                continue;
-            }
-            let suffix = file_entry.file_name();
-            let Some(suffix) = suffix.to_str() else {
-                continue;
-            };
-            if suffix.len() != 38 || !suffix.chars().all(|ch| ch.is_ascii_hexdigit()) {
-                continue;
-            }
-
-            let candidate = format!("{prefix_name}{suffix}");
-            if candidate.starts_with(prefix) {
-                matches.push(grit_lib::objects::ObjectId::from_hex(&candidate)?);
-            }
-        }
-    }
-
-    Ok(matches)
+fn passthrough_current_apply_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("apply")
 }
 
 /// Apply patches to the working tree.
@@ -1255,47 +1026,14 @@ fn remove_empty_dirs_up(dir: &Path) {
     }
 }
 
-fn adjusted_source_path(fp: &FilePatch, args: &Args) -> Result<PathBuf> {
-    let path = fp
-        .source_path()
-        .ok_or_else(|| anyhow::anyhow!("patch has no source path"))?;
-    Ok(PathBuf::from(adjust_path(
-        path,
-        args.strip,
-        args.directory.as_deref(),
-    )))
-}
-
-fn adjusted_destination_path(fp: &FilePatch, args: &Args) -> Result<PathBuf> {
-    let path = fp
-        .destination_path()
-        .ok_or_else(|| anyhow::anyhow!("patch has no destination path"))?;
-    Ok(PathBuf::from(adjust_path(
-        path,
-        args.strip,
-        args.directory.as_deref(),
-    )))
-}
-
-fn apply_to_worktree(
-    patches: &[FilePatch],
-    args: &Args,
-    whitespace_mode: WhitespaceMode,
-) -> Result<()> {
-    let mut original_sources: HashMap<PathBuf, String> = HashMap::new();
+fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
     for fp in patches {
-        let source_path = adjusted_source_path(fp, args)?;
-        let destination_path = adjusted_destination_path(fp, args)?;
-        if destination_path != source_path && (fp.is_copy || fp.is_rename) {
-            let content = fs::read_to_string(&source_path)
-                .with_context(|| format!("failed to read {}", source_path.display()))?;
-            original_sources.insert(source_path, content);
-        }
-    }
+        let path_str = fp
+            .effective_path()
+            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
 
-    for fp in patches {
         if fp.is_deleted {
-            let path = adjusted_source_path(fp, args)?;
             // Delete the file (or directory for submodules)
             if path.is_dir() {
                 fs::remove_dir_all(&path)
@@ -1312,7 +1050,6 @@ fn apply_to_worktree(
         }
 
         if fp.is_new {
-            let path = adjusted_destination_path(fp, args)?;
             // Submodule: create directory
             if fp.new_mode.as_deref() == Some("160000") {
                 fs::create_dir_all(&path)?;
@@ -1324,7 +1061,7 @@ fn apply_to_worktree(
                     fs::create_dir_all(parent)?;
                 }
             }
-            let content = apply_hunks("", &fp.hunks, whitespace_mode).with_context(|| {
+            let content = apply_hunks("", &fp.hunks).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
             fs::write(&path, content.as_bytes())
@@ -1340,94 +1077,66 @@ fn apply_to_worktree(
             continue;
         }
 
-        let source_path = adjusted_source_path(fp, args)?;
-        let destination_path = adjusted_destination_path(fp, args)?;
-        let old_content = if destination_path != source_path && (fp.is_copy || fp.is_rename) {
-            original_sources
-                .get(&source_path)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("{} not found", source_path.display()))?
-        } else {
-            fs::read_to_string(&source_path)
-                .with_context(|| format!("failed to read {}", source_path.display()))?
-        };
-        let new_content = if fp.hunks.is_empty() {
-            old_content.clone()
-        } else {
-            apply_hunks(&old_content, &fp.hunks, whitespace_mode).with_context(|| {
-                format!("failed to apply patch to {}", destination_path.display())
-            })?
-        };
-
-        if destination_path != source_path {
-            if let Some(parent) = destination_path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+        // Modify existing file — read from old_path if it differs from new_path
+        let read_path = if let Some(old_p) = fp.old_path.as_deref().filter(|p| *p != "/dev/null") {
+            let adj = PathBuf::from(adjust_path(old_p, args.strip, args.directory.as_deref()));
+            if adj != path && adj.exists() {
+                adj
+            } else {
+                path.clone()
             }
-        }
+        } else {
+            path.clone()
+        };
+        let old_content = fs::read_to_string(&read_path)
+            .with_context(|| format!("failed to read {}", read_path.display()))?;
 
-        if !fp.hunks.is_empty() || destination_path != source_path {
-            fs::write(&destination_path, new_content.as_bytes())
-                .with_context(|| format!("failed to write {}", destination_path.display()))?;
-        }
-
-        if fp.is_rename && destination_path != source_path && source_path.exists() {
-            fs::remove_file(&source_path)
-                .with_context(|| format!("failed to remove {}", source_path.display()))?;
-            if let Some(parent) = source_path.parent() {
-                remove_empty_dirs_up(parent);
+        if fp.hunks.is_empty() {
+            // Mode-only change
+            #[cfg(unix)]
+            if let Some(mode) = fp.new_mode.as_deref() {
+                use std::os::unix::fs::PermissionsExt;
+                let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
             }
+            continue;
         }
 
-        #[cfg(unix)]
-        if let Some(mode) = fp.new_mode.as_deref() {
-            use std::os::unix::fs::PermissionsExt;
-            let perm = if mode == "100755" { 0o755 } else { 0o644 };
-            fs::set_permissions(&destination_path, fs::Permissions::from_mode(perm))?;
-        }
+        let new_content = apply_hunks(&old_content, &fp.hunks)
+            .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+        fs::write(&path, new_content.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     }
 
     Ok(())
 }
 
 /// Apply patches to the index only (--cached).
-fn apply_to_index(
-    patches: &[FilePatch],
-    args: &Args,
-    whitespace_mode: WhitespaceMode,
-) -> Result<()> {
+fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let mut index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
-    let original_index = index.clone();
     // CWD prefix for subdir apply
     let cwd_prefix = if let Some(ref wt) = repo.work_tree {
         if let Ok(cwd) = std::env::current_dir() {
             if let Ok(rel) = cwd.strip_prefix(wt) {
                 let s = rel.to_string_lossy().to_string();
-                if s.is_empty() {
-                    String::new()
-                } else {
-                    format!("{s}/")
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        }
-    } else {
-        String::new()
-    };
+                if s.is_empty() { String::new() } else { format!("{s}/") }
+            } else { String::new() }
+        } else { String::new() }
+    } else { String::new() };
 
     for fp in patches {
+        let path_str = fp
+            .effective_path()
+            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+        let raw = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let adjusted = format!("{cwd_prefix}{raw}");
+
         if fp.is_deleted {
-            let source_raw = adjusted_source_path(fp, args)?;
-            let source = format!("{cwd_prefix}{}", source_raw.to_string_lossy());
-            index.remove(source.as_bytes());
+            index.remove(adjusted.as_bytes());
             continue;
         }
 
@@ -1435,8 +1144,6 @@ fn apply_to_index(
         if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
             && fp.is_new
         {
-            let destination_raw = adjusted_destination_path(fp, args)?;
-            let adjusted = format!("{cwd_prefix}{}", destination_raw.to_string_lossy());
             let commit_hash = fp
                 .hunks
                 .iter()
@@ -1472,35 +1179,53 @@ fn apply_to_index(
             continue;
         }
 
-        let destination_raw = adjusted_destination_path(fp, args)?;
-        let adjusted = format!("{cwd_prefix}{}", destination_raw.to_string_lossy());
-        let source_adjusted = if fp.is_new {
-            None
-        } else {
-            let source_raw = adjusted_source_path(fp, args)?;
-            Some(format!("{cwd_prefix}{}", source_raw.to_string_lossy()))
-        };
-
         // Get old content from index (or empty for new files)
-        let old_content = if let Some(source_adjusted) = source_adjusted.as_deref() {
-            let source_index = if adjusted != *source_adjusted && (fp.is_copy || fp.is_rename) {
-                &original_index
-            } else {
-                &index
-            };
-            let entry = source_index
-                .get(source_adjusted.as_bytes(), 0)
-                .ok_or_else(|| anyhow::anyhow!("{source_adjusted} not found in index"))?;
+        let old_content = if fp.is_new {
+            if args.intent_to_add {
+                let empty_oid = repo
+                    .odb
+                    .write(ObjectKind::Blob, b"")
+                    .context("writing empty blob for intent-to-add")?;
+                if index.version < 3 {
+                    index.version = 3;
+                }
+                let mut entry = grit_lib::index::IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: fp
+                        .new_mode
+                        .as_deref()
+                        .map(parse_mode)
+                        .unwrap_or(0o100644),
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid: empty_oid,
+                    flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                    flags_extended: None,
+                    path: adjusted.clone().into_bytes(),
+                };
+                entry.set_intent_to_add(true);
+                index.add_or_replace(entry);
+                continue;
+            }
+            String::new()
+        } else {
+            let entry = index
+                .get(adjusted.as_bytes(), 0)
+                .ok_or_else(|| anyhow::anyhow!("{adjusted} not found in index"))?;
             let obj = repo.odb.read(&entry.oid)?;
             String::from_utf8_lossy(&obj.data).into_owned()
-        } else {
-            String::new()
         };
 
         let new_content = if fp.hunks.is_empty() {
             old_content.clone()
         } else {
-            apply_hunks(&old_content, &fp.hunks, whitespace_mode)
+            apply_hunks(&old_content, &fp.hunks)
                 .with_context(|| format!("failed to apply patch to {adjusted}"))?
         };
 
@@ -1512,10 +1237,6 @@ fn apply_to_index(
             parse_mode(m)
         } else if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
             entry.mode
-        } else if let Some(source_adjusted) = source_adjusted.as_deref() {
-            index
-                .get(source_adjusted.as_bytes(), 0)
-                .map_or(0o100644, |entry| entry.mode)
         } else {
             0o100644
         };
@@ -1538,13 +1259,6 @@ fn apply_to_index(
             flags_extended: None,
             path: adjusted.into_bytes(),
         };
-        if fp.is_rename {
-            if let Some(source_adjusted) = source_adjusted.as_deref() {
-                if source_adjusted != String::from_utf8_lossy(&entry.path) {
-                    index.remove(source_adjusted.as_bytes());
-                }
-            }
-        }
         index.add_or_replace(entry);
     }
 
@@ -1553,14 +1267,14 @@ fn apply_to_index(
 }
 
 /// Check if patches apply cleanly without modifying anything.
-fn check_patches(
-    patches: &[FilePatch],
-    args: &Args,
-    whitespace_mode: WhitespaceMode,
-) -> Result<()> {
+fn check_patches(patches: &[FilePatch], args: &Args) -> Result<()> {
     for fp in patches {
+        let path_str = fp
+            .effective_path()
+            .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
+
         if fp.is_deleted {
-            let path = adjusted_source_path(fp, args)?;
             if !path.exists() {
                 bail!("{}: does not exist", path.display());
             }
@@ -1568,12 +1282,11 @@ fn check_patches(
         }
 
         if fp.is_new {
-            let path = adjusted_destination_path(fp, args)?;
             if path.exists() {
                 bail!("{}: already exists", path.display());
             }
             // Verify hunks apply to empty content
-            apply_hunks("", &fp.hunks, whitespace_mode).with_context(|| {
+            apply_hunks("", &fp.hunks).with_context(|| {
                 format!(
                     "patch does not apply cleanly to new file {}",
                     path.display()
@@ -1582,19 +1295,10 @@ fn check_patches(
             continue;
         }
 
-        let source_path = adjusted_source_path(fp, args)?;
-        let destination_path = adjusted_destination_path(fp, args)?;
-        if destination_path != source_path && destination_path.exists() {
-            bail!("{}: already exists", destination_path.display());
-        }
-        let old_content = fs::read_to_string(&source_path)
-            .with_context(|| format!("failed to read {}", source_path.display()))?;
-        apply_hunks(&old_content, &fp.hunks, whitespace_mode).with_context(|| {
-            format!(
-                "patch does not apply cleanly to {}",
-                destination_path.display()
-            )
-        })?;
+        let old_content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        apply_hunks(&old_content, &fp.hunks)
+            .with_context(|| format!("patch does not apply cleanly to {}", path.display()))?;
     }
 
     Ok(())
@@ -1603,57 +1307,4 @@ fn check_patches(
 /// Parse an octal mode string like "100644" to u32.
 fn parse_mode(s: &str) -> u32 {
     u32::from_str_radix(s, 8).unwrap_or(0o100644)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{apply_hunks, parse_patch, WhitespaceMode};
-
-    #[test]
-    fn whitespace_fix_matches_previously_fixed_context() {
-        let patch = "\
-diff --git a/file b/file
-index c9c3076..fee6fe1 100644
---- a/file
-+++ b/file
-@@ -1,7 +1,7 @@
- a 
- bb 
- c 
--d 
-+D 
- eeee 
- f 
- ggg 
-";
-        let patches = parse_patch(patch).unwrap();
-        let old = "a\nbb\nc\nd\neeee\nf\nggg\nh\n";
-        let new = apply_hunks(old, &patches[0].hunks, WhitespaceMode::Fix).unwrap();
-
-        assert_eq!(new, "a\nbb\nc\nD\neeee\nf\nggg\nh\n");
-    }
-
-    #[test]
-    fn whitespace_fix_preserves_existing_context_outside_changed_lines() {
-        let patch = "\
-diff --git a/file b/file
-index c9c3076..fee6fe1 100644
---- a/file
-+++ b/file
-@@ -1,7 +1,7 @@
- a
- bb
- c
--d
-+D
- eeee
- f
- ggg
-";
-        let patches = parse_patch(patch).unwrap();
-        let old = "a \nbb \nc \nd \neeee \nf \nggg \nh \n";
-        let new = apply_hunks(old, &patches[0].hunks, WhitespaceMode::Fix).unwrap();
-
-        assert_eq!(new, "a\nbb\nc\nD\neeee\nf\nggg\nh \n");
-    }
 }

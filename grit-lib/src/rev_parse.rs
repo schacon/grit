@@ -503,6 +503,14 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
         }
     }
 
+    // Handle A^! (meaning "A, excluding parents" in revision ranges).
+    // For single-object resolution, this should resolve like plain `A`.
+    if let Some(base) = spec.strip_suffix("^!") {
+        if !base.is_empty() {
+            return resolve_revision(repo, base);
+        }
+    }
+
     // Handle A...B (symmetric difference / merge-base)
     // Also handles A... (implies A...HEAD)
     if let Some(idx) = spec.find("...") {
@@ -580,7 +588,10 @@ fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
     let obj = repo.odb.read(tree_oid)?;
     let entries = crate::objects::parse_tree(&obj.data)?;
-    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
+    let components: Vec<&str> = path
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
     if components.is_empty() {
         return Ok(*tree_oid);
     }
@@ -839,6 +850,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     for candidate in &[
+        format!("refs/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),
@@ -1133,10 +1145,19 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
     let index_path = repo.index_path();
     let index =
         Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
-    match index.get(path.as_bytes(), stage) {
+    let normalized = normalize_index_lookup_path(path);
+    match index.get(normalized.as_bytes(), stage) {
         Some(entry) => Ok(entry.oid),
         None => Err(Error::ObjectNotFound(format!(":{stage}:{path}"))),
     }
+}
+
+fn normalize_index_lookup_path(path: &str) -> String {
+    let mut p = path;
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest;
+    }
+    p.trim_start_matches('/').to_string()
 }
 
 fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {

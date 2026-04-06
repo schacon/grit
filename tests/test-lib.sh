@@ -44,6 +44,7 @@ fi
 
 # Resolve GUST_BIN to an absolute path so wrapper scripts work regardless of cwd.
 GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
+export GUST_BIN
 
 # Test environment
 TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
@@ -99,6 +100,13 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
+	# Native git sometimes executes `git test-tool ...` (dashed helper lookup),
+	# so provide git-test-tool in PATH to route to our test helper script.
+	cat >"$BIN_DIRECTORY/git-test-tool" <<EOF
+#!/bin/sh
+exec "$TEST_DIRECTORY/test-tool" "\$@"
+EOF
+	chmod +x "$BIN_DIRECTORY/git-test-tool"
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
@@ -114,8 +122,14 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
-		"$GUST_BIN" init >/dev/null 2>&1 ||
-			echo "warning: could not git init trash directory" >&2
+		if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+		then
+			"$GUST_BIN" init --template=/dev/null >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		else
+			"$GUST_BIN" init >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		fi
 		"$GUST_BIN" config user.name "Test User" 2>/dev/null
 		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
@@ -125,8 +139,15 @@ PATH="$TEST_DIRECTORY:$PATH"
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store inside .git/ so the file is never tracked by git.
-_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+# Prefer storing inside .git/ so the file is never tracked by git; when the
+# harness is configured with TEST_NO_CREATE_REPO=1 there may be no top-level
+# .git directory, so fall back to the trash root.
+if test -d "$TRASH_DIRECTORY/.git"
+then
+	_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+else
+	_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
+fi
 
 test_tick () {
 	if test -z "${test_tick+set}"
@@ -156,9 +177,12 @@ test_debug () {
 # Default diff program
 DIFF="${DIFF:-diff}"
 
-# Allow tests to use $HOME — isolate from real user config
-HOME="$TRASH_DIRECTORY"
-XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
+# Allow tests to use $HOME — isolate from real user config.
+# Keep HOME outside the repo worktree root so `git add -A` doesn't stage
+# global config files (e.g. $HOME/.gitconfig) as test content.
+HOME="$BIN_DIRECTORY/home"
+XDG_CONFIG_HOME="$HOME/.config"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 export HOME XDG_CONFIG_HOME
 
 # Prevent tests from discovering enclosing repositories
@@ -178,6 +202,10 @@ TEST_COMMITTER_LOCALNAME=committer
 TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+
+# Match upstream test harness defaults for editor-related variables.
+: "${EDITOR:=:}"
+export EDITOR
 
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
@@ -204,7 +232,33 @@ fi
 
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
+test_path_exists () { test -e "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
+test_path_is_symlink () { test -h "$1"; }
+test_oid_to_path () { echo "$1" | sed 's#^\(..\)#\1/#'; }
+
+test_path_is_dir_not_symlink () {
+	test_path_is_dir "$1" &&
+	! test -h "$1"
+}
+
+# Set mtime to a fixed timestamp used by racy-index tests.
+# Optional second arg adds seconds to the base timestamp.
+test_set_magic_mtime () {
+	local inc="${2:-0}"
+	local mtime=$((1234567890 + inc))
+	touch -m -d "@$mtime" "$1" &&
+	test_is_magic_mtime "$1" "$inc"
+}
+
+# Check if file has the expected magic timestamp.
+test_is_magic_mtime () {
+	local inc="${2:-0}"
+	local mtime=$((1234567890 + inc))
+	local actual
+	actual=$(stat -c %Y "$1" 2>/dev/null) || return 1
+	test "$actual" = "$mtime"
+}
 
 test_grep () {
 	local negate=""
@@ -234,7 +288,12 @@ test_create_repo () {
 	mkdir -p "$repo" &&
 	(
 		cd "$repo" &&
-		git init &&
+		if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+		then
+			git init --template=/dev/null
+		else
+			git init
+		fi &&
 		git config user.name "Test User" &&
 		git config user.email "test@example.com"
 	)
@@ -338,7 +397,7 @@ _x05='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
 _x35="$_x05$_x05$_x05$_x05$_x05$_x05$_x05"
 _x40="$_x35$_x05"
 OID_REGEX="$_x40"
-EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
 EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
@@ -351,6 +410,8 @@ test_oid () {
 	hexsz) echo "40" ;;
 	algo) echo "sha1" ;;
 	zero) echo "$ZERO_OID" ;;
+	empty_tree) echo "$EMPTY_TREE" ;;
+	empty_blob) echo "$EMPTY_BLOB" ;;
 	*) echo "unknown-oid" ;;
 	esac
 }
@@ -644,6 +705,12 @@ test_hook () {
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
 test_cmp_config () {
 	local default=""
+	local config_cwd=""
+	if test "$1" = "-C"
+	then
+		config_cwd="$2"
+		shift 2
+	fi
 	if test "$1" = "--default"
 	then
 		default="$2"
@@ -652,7 +719,12 @@ test_cmp_config () {
 	local expect="$1"
 	shift
 	local actual
-	actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	if test -n "$config_cwd"
+	then
+		actual=$(git -C "$config_cwd" config "$@" 2>/dev/null) || actual="$default"
+	else
+		actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	fi
 	if test "$expect" = "$actual"
 	then
 		return 0
@@ -663,34 +735,51 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= signoff= indir= tag=light message= file= contents= author=
+	local echo=echo append=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
-		--no-tag) tag=; shift ;;
+		--no-tag) tag=none; shift ;;
+		--annotate) tag=annotate; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
-		--printf) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
+		--printf) echo=printf; shift ;;
 		*) break ;;
 		esac
 	done
 	message="${1:?test_commit}" && shift
 	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
+	local tag_name="${1:-$message}"
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
+		if test -n "$append"
+		then
+			$echo "$contents" >>"$file"
+		else
+			$echo "$contents" >"$file"
+		fi &&
 		git add "$file" &&
 		if test -z "$notick"; then
 			test_tick
 		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
-		if test -n "$tag"; then
-			git tag "$message"
-		fi
+		case "$tag" in
+		none) ;;
+		annotate)
+			if test -z "$notick"; then
+				test_tick
+			fi &&
+			git tag -a -m "$message" "$tag_name"
+			;;
+		light)
+			git tag "$tag_name"
+			;;
+		esac
 	)
 }
 
@@ -806,7 +895,12 @@ test_expect_success () {
 	# We save and restore 'set -e' state since eval doesn't
 	# propagate exit-on-error the way a subshell does.
 	local _old_cwd="$PWD"
-	cd "$TRASH_DIRECTORY" || return 1
+	local _run_cwd="$TRASH_DIRECTORY"
+	if test -n "$SUBDIRECTORY_OK"
+	then
+		_run_cwd="$_old_cwd"
+	fi
+	cd "$_run_cwd" || return 1
 	# Run with errexit but capture result.
 	# Wrap in a function to localize set -e.
 	_test_eval_result=0

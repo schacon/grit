@@ -1191,6 +1191,65 @@ fn resolve_git_dir() -> Option<PathBuf> {
     }
 }
 
+fn resolve_common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(raw) = std::fs::read_to_string(&commondir_file) {
+        let rel = raw.trim();
+        let candidate = if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            git_dir.join(rel)
+        };
+        return candidate.canonicalize().unwrap_or(candidate);
+    }
+    git_dir.to_path_buf()
+}
+
+fn has_linked_worktrees(common_git_dir: &Path) -> bool {
+    let worktrees = common_git_dir.join("worktrees");
+    if !worktrees.is_dir() {
+        return false;
+    }
+    std::fs::read_dir(worktrees)
+        .ok()
+        .map(|mut it| it.any(|e| e.is_ok()))
+        .unwrap_or(false)
+}
+
+fn worktree_config_extension_enabled(common_git_dir: &Path) -> bool {
+    let local_path = common_git_dir.join("config");
+    let Some(local_cfg) = ConfigFile::from_path(&local_path, ConfigScope::Local)
+        .ok()
+        .flatten()
+    else {
+        return false;
+    };
+    let set = {
+        let mut set = ConfigSet::new();
+        set.merge(&local_cfg);
+        set
+    };
+    set.get_bool("extensions.worktreeConfig")
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+}
+
+fn resolve_worktree_config_target(git_dir: &Path) -> Result<(ConfigScope, PathBuf)> {
+    let common = resolve_common_git_dir(git_dir);
+    let linked = has_linked_worktrees(&common);
+    let enabled = worktree_config_extension_enabled(&common);
+    if enabled {
+        return Ok((ConfigScope::Worktree, git_dir.join("config.worktree")));
+    }
+    if linked {
+        bail!(
+            "--worktree cannot be used with multiple working trees unless the config extension worktreeConfig is enabled"
+        );
+    }
+    // Single-worktree compatibility mode: behave like local config.
+    Ok((ConfigScope::Local, common.join("config")))
+}
+
 /// Determine which config file to write to based on flags.
 fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigScope, PathBuf)> {
     if let Some(ref path) = args.file {
@@ -1209,11 +1268,12 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
     }
     if args.worktree {
         let gd = git_dir.ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-        return Ok((ConfigScope::Worktree, gd.join("config.worktree")));
+        return resolve_worktree_config_target(gd);
     }
     // Default: local
     if let Some(gd) = git_dir {
-        Ok((ConfigScope::Local, gd.join("config")))
+        let common = resolve_common_git_dir(gd);
+        Ok((ConfigScope::Local, common.join("config")))
     } else {
         // Outside repo, default to global for read operations
         let path = global_config_path().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
@@ -1258,7 +1318,19 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
     if args.local {
         let mut set = ConfigSet::new();
         if let Some(gd) = git_dir {
-            if let Some(f) = ConfigFile::from_path(&gd.join("config"), ConfigScope::Local)? {
+            let common = resolve_common_git_dir(gd);
+            if let Some(f) = ConfigFile::from_path(&common.join("config"), ConfigScope::Local)? {
+                set.merge(&f);
+            }
+        }
+        return Ok(set);
+    }
+
+    if args.worktree {
+        let mut set = ConfigSet::new();
+        if let Some(gd) = git_dir {
+            let (scope, path) = resolve_worktree_config_target(gd)?;
+            if let Some(f) = ConfigFile::from_path(&path, scope)? {
                 set.merge(&f);
             }
         }

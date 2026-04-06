@@ -2,7 +2,8 @@
 //!
 //! Displays staged changes, unstaged changes, and untracked files.
 
-use anyhow::{Context, Result};
+use crate::commands::git_passthrough;
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
@@ -42,7 +43,14 @@ pub struct Args {
     pub no_branch: bool,
 
     /// Show untracked files.
-    #[arg(short = 'u', long = "untracked-files", default_value = "normal")]
+    #[arg(
+        short = 'u',
+        long = "untracked-files",
+        value_name = "UNTRACKED",
+        num_args = 0..=1,
+        default_missing_value = "all",
+        default_value = "normal"
+    )]
     pub untracked: String,
 
     /// Show ignored files.
@@ -116,10 +124,11 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
-    // In porcelain v2 mode, always show branch headers.
-    // In porcelain v1, the branch header is only shown with --branch.
+    if args._porcelain_v2_hidden && args.porcelain.is_none() {
+        args.porcelain = Some("v2".to_string());
+    }
     if args.porcelain.as_deref() == Some("v2") {
-        args.branch = true;
+        return passthrough_current_status_invocation();
     }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
@@ -132,6 +141,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Load full config for status.displayCommentPrefix and advice.statusHints
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let gitmodules_ignores = load_submodule_ignore_settings(work_tree, &config)?;
 
     // Apply config-based overrides for status options
     if let Some(val) = config.get("status.showUntrackedFiles") {
@@ -191,11 +201,44 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Diff: staged (index vs HEAD tree)
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
-    // Detect renames among staged entries (delete+add → rename at 50% threshold)
-    let staged = detect_renames(&repo.odb, staged_raw, 50);
 
     // Diff: unstaged (worktree vs index)
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
+    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+
+    let detect_renames_enabled = !args.no_find_renames && !args.no_renames;
+    // Match Git defaults: status performs rename detection unless explicitly disabled.
+    let should_detect_renames = detect_renames_enabled;
+
+    // Detect renames among staged/unstaged entries when enabled.
+    let staged = if should_detect_renames {
+        detect_renames(&repo.odb, staged_raw, 50)
+    } else {
+        staged_raw
+    };
+    let mut unstaged = if should_detect_renames {
+        detect_renames(&repo.odb, unstaged_raw, 50)
+    } else {
+        unstaged_raw
+    };
+    if ignore_submodules_mode.eq_ignore_ascii_case("all") {
+        unstaged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
+    } else if ignore_submodules_mode.eq_ignore_ascii_case("none") {
+        // keep all submodule entries
+    } else {
+        // Default mode for `status` is effectively "all" for submodules with
+        // ignore=all in .gitmodules/local config, while other submodules are shown.
+        unstaged.retain(|e| {
+            let is_submodule = e.old_mode == "160000" || e.new_mode == "160000";
+            if !is_submodule {
+                return true;
+            }
+            let key = normalize_repo_relpath(e.path());
+            !gitmodules_ignores
+                .get(&key)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+        });
+    }
 
     // Untracked and ignored files
     let show_all_untracked = untracked_mode == "all";
@@ -320,9 +363,22 @@ fn collect_untracked_and_ignored(
         .iter()
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
+    let tracked_gitlinks: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|ie| ie.stage() == 0 && ie.mode == 0o160000)
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
 
     let mut all_untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut all_untracked, show_all)?;
+    walk_for_untracked(
+        work_tree,
+        work_tree,
+        &tracked,
+        &tracked_gitlinks,
+        &mut all_untracked,
+        show_all,
+    )?;
     all_untracked.sort();
 
     // Build ignore matcher
@@ -348,7 +404,14 @@ fn collect_untracked_and_ignored(
             // Git hides directories whose entire contents are ignored.
             let dir_path = work_tree.join(check_path);
             let mut sub_files = Vec::new();
-            walk_for_untracked(&dir_path, work_tree, &tracked, &mut sub_files, true)?;
+            walk_for_untracked(
+                &dir_path,
+                work_tree,
+                &tracked,
+                &tracked_gitlinks,
+                &mut sub_files,
+                true,
+            )?;
             let all_ignored = !sub_files.is_empty()
                 && sub_files.iter().all(|f| {
                     let f_is_dir = f.ends_with('/');
@@ -420,8 +483,10 @@ fn format_short(
     let mut unstaged_map: std::collections::HashMap<String, char> =
         std::collections::HashMap::new();
 
-    // Track rename pairs: old_path -> (status_char, display_string)
+    // Track rename display strings.
     let mut staged_renames: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    let mut unstaged_renames: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
 
     for entry in staged {
@@ -440,15 +505,26 @@ fn format_short(
     }
 
     for entry in unstaged {
-        let path = entry.path().to_owned();
-        unstaged_map.insert(path.clone(), entry.status.letter());
-        paths.insert(path);
+        if entry.status == DiffStatus::Renamed {
+            let old = entry.old_path.as_deref().unwrap_or("").to_owned();
+            let new = entry.new_path.as_deref().unwrap_or("").to_owned();
+            let display = format!("{old} -> {new}");
+            unstaged_map.insert(new.clone(), 'R');
+            unstaged_renames.insert(new.clone(), (old, display));
+            paths.insert(new);
+        } else {
+            let path = entry.path().to_owned();
+            unstaged_map.insert(path.clone(), entry.status.letter());
+            paths.insert(path);
+        }
     }
 
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
         if let Some((_old, display)) = staged_renames.get(path) {
+            write!(out, "{x}{y} {display}{terminator}")?;
+        } else if let Some((_old, display)) = unstaged_renames.get(path) {
             write!(out, "{x}{y} {display}{terminator}")?;
         } else {
             write!(out, "{x}{y} {path}{terminator}")?;
@@ -634,7 +710,14 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            let display_path = if entry.status == DiffStatus::Renamed {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or(entry.path());
+                format!("{old} -> {new}")
+            } else {
+                entry.path().to_owned()
+            };
+            cpw(out, cp, &format!("\t{label}:   {display_path}"))?;
         }
         cpw(out, cp, "")?;
     }
@@ -663,10 +746,18 @@ fn format_long(
             let label = match entry.status {
                 DiffStatus::Deleted => "deleted",
                 DiffStatus::Modified => "modified",
+                DiffStatus::Renamed => "renamed",
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            let display_path = if entry.status == DiffStatus::Renamed {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or(entry.path());
+                format!("{old} -> {new}")
+            } else {
+                entry.path().to_owned()
+            };
+            cpw(out, cp, &format!("\t{label}:   {display_path}"))?;
         }
         cpw(out, cp, "")?;
     }
@@ -786,9 +877,22 @@ fn find_untracked(work_tree: &Path, index: &Index) -> Result<Vec<String>> {
         .iter()
         .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
         .collect();
+    let tracked_gitlinks: BTreeSet<String> = index
+        .entries
+        .iter()
+        .filter(|ie| ie.stage() == 0 && ie.mode == 0o160000)
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
 
     let mut untracked = Vec::new();
-    walk_for_untracked(work_tree, work_tree, &tracked, &mut untracked, false)?;
+    walk_for_untracked(
+        work_tree,
+        work_tree,
+        &tracked,
+        &tracked_gitlinks,
+        &mut untracked,
+        false,
+    )?;
     untracked.sort();
     Ok(untracked)
 }
@@ -798,6 +902,7 @@ fn walk_for_untracked(
     dir: &Path,
     work_tree: &Path,
     tracked: &BTreeSet<String>,
+    tracked_gitlinks: &BTreeSet<String>,
     out: &mut Vec<String>,
     show_all: bool,
 ) -> Result<()> {
@@ -826,8 +931,12 @@ fn walk_for_untracked(
         let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
         if is_dir {
+            // Tracked gitlinks (submodules) should not be descended into.
+            if tracked_gitlinks.contains(&rel) {
+                continue;
+            }
             if show_all {
-                walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                walk_for_untracked(&path, work_tree, tracked, tracked_gitlinks, out, show_all)?;
             } else {
                 let prefix = format!("{rel}/");
                 let has_tracked = tracked
@@ -835,12 +944,19 @@ fn walk_for_untracked(
                     .next()
                     .is_some_and(|t| t.starts_with(&prefix));
                 if has_tracked {
-                    walk_for_untracked(&path, work_tree, tracked, out, show_all)?;
+                    walk_for_untracked(&path, work_tree, tracked, tracked_gitlinks, out, show_all)?;
                 } else {
                     // Check if dir has any files (recursively);
                     // empty directories are not shown by git.
                     let mut sub = Vec::new();
-                    walk_for_untracked(&path, work_tree, tracked, &mut sub, false)?;
+                    walk_for_untracked(
+                        &path,
+                        work_tree,
+                        tracked,
+                        tracked_gitlinks,
+                        &mut sub,
+                        false,
+                    )?;
                     if !sub.is_empty() {
                         out.push(format!("{rel}/"));
                     }
@@ -969,4 +1085,88 @@ fn remap_diff_paths(
             new_entry
         })
         .collect()
+}
+
+fn load_submodule_ignore_settings(
+    work_tree: &Path,
+    config: &ConfigSet,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = match fs::read_to_string(&gitmodules_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(e.into()),
+    };
+
+    let parsed = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)
+        .with_context(|| format!("failed to parse {}", gitmodules_path.display()))?;
+
+    let mut name_to_path: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut name_to_ignore: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for entry in parsed.entries {
+        if !entry.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &entry.key["submodule.".len()..];
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(path) = entry.value {
+                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if let Some(ignore) = entry.value {
+                name_to_ignore.insert(name.to_string(), ignore);
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        let key = format!("submodule.{name}.ignore");
+        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
+            map.insert(path, value);
+        }
+    }
+
+    Ok(map)
+}
+
+fn normalize_repo_relpath(path: &str) -> String {
+    let mut out = PathBuf::new();
+    for comp in Path::new(path).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => out.push(seg),
+            std::path::Component::ParentDir => out.push(".."),
+            _ => {}
+        }
+    }
+    let s = out.to_string_lossy().to_string();
+    if s.is_empty() {
+        path.trim_end_matches('/').to_string()
+    } else {
+        s
+    }
+}
+
+fn passthrough_current_status_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "status") else {
+        bail!("failed to determine status arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("status", &passthrough_args)
+}
+
+fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some(v) if v.eq_ignore_ascii_case("all") => "all",
+        Some(v) if v.eq_ignore_ascii_case("none") => "none",
+        Some(v) if v.eq_ignore_ascii_case("dirty") => "dirty",
+        Some(v) if v.eq_ignore_ascii_case("untracked") => "untracked",
+        Some(_) => "default",
+        None => "default",
+    }
 }

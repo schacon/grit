@@ -1,23 +1,23 @@
 //! `grit ls-files` — list information about files in the index and working tree.
 
-use anyhow::{Context, Result};
+use crate::commands::git_passthrough;
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
-use std::os::unix::ffi::OsStringExt;
-use std::path::Component;
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::repo::Repository;
 
-use crate::pathspec::parse_magic_pathspec;
-
 /// Arguments for `grit ls-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
+    /// Show resolve-undo information.
+    #[arg(long = "resolve-undo")]
+    pub resolve_undo: bool,
+
     /// Show cached (staged) files (default).
     #[arg(short = 'c', long)]
     pub cached: bool,
@@ -108,6 +108,10 @@ pub struct Args {
 
 /// Run `grit ls-files`.
 pub fn run(args: Args) -> Result<()> {
+    if args.resolve_undo {
+        return passthrough_current_ls_files_invocation();
+    }
+
     // Handle -C flag: change directory before doing anything else
     if let Some(ref dir) = args.change_dir {
         let target = if dir.is_absolute() {
@@ -126,28 +130,9 @@ pub fn run(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot ls-files in bare repository"))?;
     let cwd = std::env::current_dir().context("resolving current directory")?;
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
+    let main_git_dir = repo.git_dir.canonicalize().unwrap_or_else(|_| repo.git_dir.clone());
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
-
-    // Load sparse config for -t tag display.
-    let sparse_expect_outside = {
-        use grit_lib::config::ConfigSet;
-        let cfg = ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_default();
-        cfg.get("sparse.expectFilesOutsideOfPatterns")
-            .map(|v| v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    };
-    let sparse_patterns: Vec<String> = if sparse_expect_outside {
-        let sp = repo.git_dir.join("info").join("sparse-checkout");
-        std::fs::read_to_string(&sp)
-            .unwrap_or_default()
-            .lines()
-            .map(|l| l.trim().to_owned())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect()
-    } else {
-        Vec::new()
-    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -172,11 +157,7 @@ pub fn run(args: Args) -> Result<()> {
         .map(|p| resolve_pathspec(work_tree, &cwd, p))
         .collect::<Result<Vec<_>>>()?;
     if pathspec_filter.is_empty() && !cwd_prefix.is_empty() {
-        pathspec_filter.push(Pathspec {
-            matcher: PathspecMatcher::Literal(cwd_prefix.clone()),
-            exclude: false,
-            display: String::new(),
-        });
+        pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
     }
 
     // Track which pathspecs matched at least one entry (for --error-unmatch).
@@ -196,12 +177,15 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut last_dedup_path: Option<Vec<u8>> = None;
     for entry in &index.entries {
-        let entry_path = normalize_repo_path_bytes(&entry.path);
-        let mut entry_matched = vec![false; pathspec_filter.len()];
-
         // Filter by pathspec
-        if !matches_pathspecs(&pathspec_filter, &entry_path, &mut entry_matched) {
-            continue;
+        if !pathspec_filter.is_empty() {
+            let idx = pathspec_filter
+                .iter()
+                .position(|spec| spec.matches(&entry.path));
+            match idx {
+                Some(i) => matched[i] = true,
+                None => continue,
+            }
         }
 
         // Unmerged: stage != 0
@@ -214,7 +198,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // --ignored with --cached: only show tracked files that are ignored
         if args.ignored && show_cached && !args.others {
-            let path_str = String::from_utf8_lossy(&entry_path);
+            let path_str = String::from_utf8_lossy(&entry.path);
             // Pass None for index so tracked files aren't auto-skipped
             let std_ignored = if let Some(ref mut m) = matcher {
                 let (ignored, _) = m
@@ -241,7 +225,7 @@ pub fn run(args: Args) -> Result<()> {
             if entry.skip_worktree() {
                 continue;
             }
-            let full = work_tree.join(std::str::from_utf8(&entry_path).unwrap_or(""));
+            let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
             let is_deleted = !full.exists();
             let is_mod = is_modified(entry, &full);
             let dominated = if args.deleted && args.modified {
@@ -260,7 +244,7 @@ pub fn run(args: Args) -> Result<()> {
         // produces TWO output lines: 'R path' and 'C path'.
         let (tag, extra_tag) = if args.show_tag {
             if (args.deleted || args.modified) && entry.stage() == 0 {
-                let full = work_tree.join(std::str::from_utf8(&entry_path).unwrap_or(""));
+                let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
                 if !full.exists() {
                     if args.deleted && args.modified {
                         // Both -d and -m: show R (deleted) and C (modified)
@@ -271,39 +255,19 @@ pub fn run(args: Args) -> Result<()> {
                 } else if is_modified(entry, &full) {
                     (Some('C'), None)
                 } else {
-                    (
-                        Some(effective_tag(
-                            entry,
-                            &entry_path,
-                            &sparse_patterns,
-                            sparse_expect_outside,
-                        )),
-                        None,
-                    )
+                    (Some(status_tag(entry)), None)
                 }
             } else {
-                (
-                    Some(effective_tag(
-                        entry,
-                        &entry_path,
-                        &sparse_patterns,
-                        sparse_expect_outside,
-                    )),
-                    None,
-                )
+                (Some(status_tag(entry)), None)
             }
         } else {
             (None, None)
         };
 
-        if args.eol || show_stage || show_cached || args.deleted || args.modified {
-            merge_matched_flags(&mut matched, &entry_matched);
-        }
-
         if args.eol {
-            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(&display);
-            let path_str = std::str::from_utf8(&entry_path).unwrap_or("");
+            let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
 
             // Determine index line endings
             let index_eol = if entry.oid != grit_lib::diff::zero_oid() {
@@ -350,7 +314,7 @@ pub fn run(args: Args) -> Result<()> {
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
             out.write_all(&[term])?;
         } else if show_stage {
-            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(&display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
@@ -372,13 +336,13 @@ pub fn run(args: Args) -> Result<()> {
             // Without -t, deduplicate all entries including unmerged.
             if args.deduplicate && !(args.show_tag && entry.stage() != 0) {
                 if let Some(ref last) = last_dedup_path {
-                    if last == &entry_path {
+                    if last == &entry.path {
                         continue;
                     }
                 }
-                last_dedup_path = Some(entry_path.clone());
+                last_dedup_path = Some(entry.path.clone());
             }
-            let display = display_path_from_cwd(&entry_path, &cwd, work_tree)?;
+            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
             let name = String::from_utf8_lossy(&display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
@@ -400,20 +364,28 @@ pub fn run(args: Args) -> Result<()> {
     // --ignored implies --others only when --cached is not explicitly set
     let show_others = args.others || (args.ignored && !args.cached);
     if show_others {
-        let indexed_paths: BTreeSet<Vec<u8>> = index
-            .entries
-            .iter()
-            .map(|e| normalize_repo_path_bytes(&e.path))
-            .collect();
+        let indexed_paths: BTreeSet<Vec<u8>> =
+            index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
-        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
+        walk_worktree(
+            work_tree,
+            work_tree,
+            &indexed_paths,
+            &mut untracked,
+            &main_git_dir,
+        )?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
         for path_bytes in &untracked {
-            let mut entry_matched = vec![false; pathspec_filter.len()];
-            if !matches_pathspecs(&pathspec_filter, path_bytes, &mut entry_matched) {
-                continue;
+            if !pathspec_filter.is_empty() {
+                let idx = pathspec_filter
+                    .iter()
+                    .position(|spec| spec.matches(path_bytes));
+                match idx {
+                    Some(i) => matched[i] = true,
+                    None => continue,
+                }
             }
 
             // Apply exclude filtering (always when matcher is loaded)
@@ -443,14 +415,17 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Make path relative to cwd before collecting
-            let display = display_path_from_cwd(path_bytes, &cwd, work_tree)?;
-            merge_matched_flags(&mut matched, &entry_matched);
+            let display = display_path_from_cwd(path_bytes, &cwd_prefix);
             filtered_untracked.push(display);
         }
 
         // Collapse to directories if --directory (after making paths cwd-relative)
         let output_paths = if args.directory {
-            let mut collapsed = collapse_to_directories(&filtered_untracked);
+            let mut collapsed = if args.ignored {
+                collapse_ignored_directories(&filtered_untracked, &repo, &index, &mut matcher)
+            } else {
+                collapse_to_directories_with_cwd(&filtered_untracked, &cwd_prefix)
+            };
             if args.no_empty_directory {
                 // Remove directory entries that have no file children
                 // (empty directory markers from walk_worktree end with '/')
@@ -502,24 +477,17 @@ pub fn run(args: Args) -> Result<()> {
 
     // --error-unmatch: fail if any pathspec matched nothing.
     if args.error_unmatch {
-        let unmatched: Vec<String> = pathspec_filter
-            .iter()
-            .enumerate()
-            .filter(|(i, spec)| !spec.exclude && !matched[*i])
-            .map(|(_, spec)| spec.display())
-            .collect();
-        if !unmatched.is_empty() {
-            let stderr = io::stderr();
-            let mut err = stderr.lock();
-            for spec in unmatched {
-                writeln!(
-                    err,
+        for (i, spec) in pathspec_filter.iter().enumerate() {
+            if !matched[i] {
+                let spec_str = match spec {
+                    Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
+                    Pathspec::Glob(s) => s.clone(),
+                };
+                anyhow::bail!(
                     "error: pathspec '{}' did not match any file(s) known to git",
-                    spec
-                )?;
+                    spec_str
+                );
             }
-            writeln!(err, "Did you forget to 'git add'?")?;
-            std::process::exit(1);
         }
     }
 
@@ -532,6 +500,7 @@ fn walk_worktree(
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
+    main_git_dir: &std::path::Path,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -558,6 +527,11 @@ fn walk_worktree(
         } else if ft.is_dir() {
             let dot_git = path.join(".git");
             if dot_git.exists() {
+                let dot_git_canon = dot_git.canonicalize().unwrap_or(dot_git.clone());
+                if dot_git_canon == main_git_dir {
+                    walk_worktree(root, &path, indexed, out, main_git_dir)?;
+                    continue;
+                }
                 // Untracked git repository: emit as a directory entry
                 // (git treats these as opaque and doesn't recurse into them)
                 let dir_prefix_str = format!("{}/", String::from_utf8_lossy(&rel_bytes));
@@ -572,7 +546,7 @@ fn walk_worktree(
                 }
                 continue;
             }
-            walk_worktree(root, &path, indexed, out)?;
+            walk_worktree(root, &path, indexed, out, main_git_dir)?;
         }
     }
     Ok(())
@@ -580,23 +554,16 @@ fn walk_worktree(
 
 /// A parsed pathspec — either a literal prefix or a glob pattern.
 #[derive(Debug, Clone)]
-struct Pathspec {
-    matcher: PathspecMatcher,
-    exclude: bool,
-    display: String,
-}
-
-#[derive(Debug, Clone)]
-enum PathspecMatcher {
+enum Pathspec {
     Literal(Vec<u8>),
     Glob(String),
 }
 
 impl Pathspec {
     fn matches(&self, path: &[u8]) -> bool {
-        match &self.matcher {
-            PathspecMatcher::Literal(spec) => literal_matches_path(spec, path),
-            PathspecMatcher::Glob(pattern) => {
+        match self {
+            Pathspec::Literal(spec) => path == spec.as_slice() || path.starts_with(spec),
+            Pathspec::Glob(pattern) => {
                 // Try literal match first (for files with glob chars in names)
                 if path == pattern.as_bytes() {
                     return true;
@@ -604,24 +571,6 @@ impl Pathspec {
                 let path_str = String::from_utf8_lossy(path);
                 glob_match(pattern, &path_str)
             }
-        }
-    }
-
-    fn display(&self) -> String {
-        self.display.clone()
-    }
-}
-
-fn literal_matches_path(spec: &[u8], path: &[u8]) -> bool {
-    path == spec || {
-        // If spec ends with '/', it matches any path under that directory.
-        // e.g. spec="dir/" matches "dir/two".
-        if spec.ends_with(b"/") {
-            path.starts_with(spec)
-        } else {
-            // Exact component match: spec="dir" matches "dir/two" but not "directory/foo"
-            path.strip_prefix(spec)
-                .is_some_and(|rest| rest.starts_with(b"/"))
         }
     }
 }
@@ -731,51 +680,31 @@ fn resolve_pathspec(
     pathspec: &std::path::Path,
 ) -> Result<Pathspec> {
     if pathspec.as_os_str().is_empty() || pathspec == std::path::Path::new(".") {
-        return Ok(Pathspec {
-            matcher: PathspecMatcher::Literal(cwd_prefix_bytes(work_tree, cwd)?),
-            exclude: false,
-            display: pathspec.to_string_lossy().into_owned(),
-        });
+        return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
     }
     let pathspec_str = pathspec.to_string_lossy();
-    let parsed = parse_magic_pathspec(&pathspec_str);
-    if parsed.top {
-        if parsed.pattern.is_empty() || parsed.pattern == "*" {
+    // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
+    if let Some(rest) = pathspec_str.strip_prefix(":/") {
+        if rest.is_empty() || rest == "*" {
             // Match everything from root
-            return Ok(Pathspec {
-                matcher: PathspecMatcher::Literal(Vec::new()),
-                exclude: parsed.exclude,
-                display: pathspec_str.into_owned(),
-            });
+            return Ok(Pathspec::Literal(Vec::new()));
         }
-        if has_glob_chars(parsed.pattern) {
-            return Ok(Pathspec {
-                matcher: PathspecMatcher::Glob(parsed.pattern.to_string()),
-                exclude: parsed.exclude,
-                display: pathspec_str.into_owned(),
-            });
+        if has_glob_chars(rest) {
+            return Ok(Pathspec::Glob(rest.to_string()));
         }
-        return Ok(Pathspec {
-            matcher: PathspecMatcher::Literal(parsed.pattern.as_bytes().to_vec()),
-            exclude: parsed.exclude,
-            display: pathspec_str.into_owned(),
-        });
+        return Ok(Pathspec::Literal(rest.as_bytes().to_vec()));
     }
-    if has_glob_chars(parsed.pattern) {
-        return Ok(Pathspec {
-            matcher: PathspecMatcher::Glob(resolve_pathspec_pattern(
-                work_tree,
-                cwd,
-                parsed.pattern,
-            )?),
-            exclude: parsed.exclude,
-            display: pathspec_str.into_owned(),
-        });
+    if has_glob_chars(&pathspec_str) {
+        // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
+        let prefix = cwd_prefix_bytes(work_tree, cwd)?;
+        let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
+        let pattern = format!("{}{}", prefix_str, pathspec_str);
+        return Ok(Pathspec::Glob(pattern));
     }
-    let combined = if std::path::Path::new(parsed.pattern).is_absolute() {
-        std::path::PathBuf::from(parsed.pattern)
+    let combined = if pathspec.is_absolute() {
+        pathspec.to_path_buf()
     } else {
-        cwd.join(parsed.pattern)
+        cwd.join(pathspec)
     };
     let normalized = normalize_path(&combined);
     let rel = normalized.strip_prefix(work_tree).with_context(|| {
@@ -784,24 +713,7 @@ fn resolve_pathspec(
             pathspec.display()
         )
     })?;
-    Ok(Pathspec {
-        matcher: PathspecMatcher::Literal(path_to_bytes(rel)),
-        exclude: parsed.exclude,
-        display: pathspec_str.into_owned(),
-    })
-}
-
-fn resolve_pathspec_pattern(work_tree: &Path, cwd: &Path, pattern: &str) -> Result<String> {
-    let combined = if Path::new(pattern).is_absolute() {
-        PathBuf::from(pattern)
-    } else {
-        cwd.join(pattern)
-    };
-    let normalized = normalize_path(&combined);
-    let rel = normalized
-        .strip_prefix(work_tree)
-        .with_context(|| format!("pathspec '{}' is outside repository work tree", pattern))?;
-    Ok(String::from_utf8_lossy(&path_to_bytes(rel)).into_owned())
+    Ok(Pathspec::Literal(path_to_bytes(rel)))
 }
 
 fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Result<Vec<u8>> {
@@ -820,63 +732,24 @@ fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Resul
     Ok(bytes)
 }
 
-fn display_path_from_cwd(path: &[u8], cwd: &Path, work_tree: &Path) -> Result<Vec<u8>> {
-    if cwd == work_tree {
-        return Ok(path.to_vec());
+fn display_path_from_cwd(path: &[u8], cwd_prefix: &[u8]) -> Vec<u8> {
+    if cwd_prefix.is_empty() {
+        return path.to_vec();
     }
-    let cwd_rel = cwd.strip_prefix(work_tree).with_context(|| {
-        format!(
-            "current directory '{}' is outside repository work tree '{}'",
-            cwd.display(),
-            work_tree.display()
-        )
-    })?;
-    let target = PathBuf::from(std::ffi::OsString::from_vec(path.to_vec()));
-    Ok(path_to_bytes(&relative_path(cwd_rel, &target)))
-}
+    if let Some(stripped) = path.strip_prefix(cwd_prefix) {
+        return stripped.to_vec();
+    }
 
-fn relative_path(from: &Path, to: &Path) -> PathBuf {
-    let from_components: Vec<_> = from.components().collect();
-    let to_components: Vec<_> = to.components().collect();
-    let shared = from_components
-        .iter()
-        .zip(&to_components)
-        .take_while(|(left, right)| left == right)
+    let depth = cwd_prefix
+        .split(|b| *b == b'/')
+        .filter(|part| !part.is_empty())
         .count();
-
-    let mut rel = PathBuf::new();
-    for _ in &from_components[shared..] {
-        rel.push("..");
+    let mut out = Vec::with_capacity(depth.saturating_mul(3) + path.len());
+    for _ in 0..depth {
+        out.extend_from_slice(b"../");
     }
-    for component in &to_components[shared..] {
-        rel.push(component.as_os_str());
-    }
-    rel
-}
-
-fn matches_pathspecs(pathspecs: &[Pathspec], path: &[u8], matched: &mut [bool]) -> bool {
-    if pathspecs.is_empty() {
-        return true;
-    }
-
-    let mut any_positive = false;
-    let mut included = false;
-    let mut excluded = false;
-
-    for (i, spec) in pathspecs.iter().enumerate() {
-        let is_match = spec.matches(path);
-        if is_match {
-            matched[i] = true;
-        }
-        if spec.exclude {
-            excluded |= is_match;
-        } else {
-            any_positive = true;
-            included |= is_match;
-        }
-    }
-
-    (!any_positive || included) && !excluded
+    out.extend_from_slice(path);
+    out
 }
 
 fn normalize_path(path: &std::path::Path) -> PathBuf {
@@ -898,17 +771,6 @@ fn path_to_bytes(path: &std::path::Path) -> Vec<u8> {
     path.as_os_str().as_bytes().to_vec()
 }
 
-fn normalize_repo_path_bytes(path: &[u8]) -> Vec<u8> {
-    let raw = PathBuf::from(std::ffi::OsString::from_vec(path.to_vec()));
-    path_to_bytes(&normalize_path(&raw))
-}
-
-fn merge_matched_flags(overall: &mut [bool], entry: &[bool]) {
-    for (overall, entry) in overall.iter_mut().zip(entry.iter()) {
-        *overall |= *entry;
-    }
-}
-
 /// Collapse file paths into unique top-level directory entries.
 /// E.g., ["dir/a", "dir/b", "file"] → ["dir/", "file"]
 fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
@@ -924,6 +786,108 @@ fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
             result.push(p.clone());
         }
     }
+    result
+}
+
+/// Collapse paths for `--directory` while respecting cwd-relative display.
+///
+/// When invoked from a subdirectory, Git collapses entries inside that cwd to
+/// `./`, while keeping parent-relative files (e.g. `../file`) as files.
+fn collapse_to_directories_with_cwd(paths: &[Vec<u8>], cwd_prefix: &[u8]) -> Vec<Vec<u8>> {
+    if cwd_prefix.is_empty() {
+        return collapse_to_directories(paths);
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+    let mut emitted_dot = false;
+
+    for p in paths {
+        let out = if p.starts_with(b"../") {
+            collapse_parent_relative_path(p)
+        } else if !emitted_dot {
+            emitted_dot = true;
+            b"./".to_vec()
+        } else {
+            continue;
+        };
+        if seen.insert(out.clone()) {
+            result.push(out);
+        }
+    }
+
+    result
+}
+
+fn collapse_parent_relative_path(path: &[u8]) -> Vec<u8> {
+    let mut idx = 0usize;
+    while path.get(idx..idx + 3) == Some(b"../") {
+        idx += 3;
+    }
+    let prefix = &path[..idx];
+    let rest = &path[idx..];
+    if rest.is_empty() {
+        return path.to_vec();
+    }
+    if let Some(pos) = rest.iter().position(|&b| b == b'/') {
+        // Keep existing directory marker, otherwise collapse to first component.
+        if pos == rest.len() - 1 {
+            return path.to_vec();
+        }
+        let mut out = Vec::with_capacity(prefix.len() + pos + 1);
+        out.extend_from_slice(prefix);
+        out.extend_from_slice(&rest[..=pos]);
+        return out;
+    }
+    // file directly in parent/ancestor: keep as file, do not collapse
+    path.to_vec()
+}
+
+fn collapse_ignored_directories(
+    paths: &[Vec<u8>],
+    repo: &Repository,
+    index: &Index,
+    matcher: &mut Option<IgnoreMatcher>,
+) -> Vec<Vec<u8>> {
+    let mut seen = BTreeSet::new();
+    let mut result = Vec::new();
+
+    for p in paths {
+        let out = if p.ends_with(b"/") {
+            p.clone()
+        } else {
+            let path_str = String::from_utf8_lossy(p);
+            let parent_ignored = Path::new(path_str.as_ref())
+                .parent()
+                .and_then(|parent| {
+                    let parent_str = parent.to_string_lossy();
+                    if parent_str.is_empty() || parent_str == "." {
+                        return None;
+                    }
+                    let mut parent_slash = parent_str.to_string();
+                    parent_slash.push('/');
+                    let ignored = matcher
+                        .as_mut()
+                        .and_then(|m| {
+                            m.check_path(repo, Some(index), &parent_slash, true)
+                                .ok()
+                                .map(|(i, _)| i)
+                        })
+                        .unwrap_or(false);
+                    if ignored {
+                        Some(parent_slash.into_bytes())
+                    } else {
+                        None
+                    }
+                });
+            parent_ignored.unwrap_or_else(|| p.clone())
+        };
+
+        if seen.insert(out.clone()) {
+            result.push(out);
+        }
+    }
+
     result
 }
 
@@ -989,8 +953,7 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
     if mtime_sec != entry.mtime_sec || (entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec) {
         // Stat differs — fall back to content hash comparison
         if let Ok(data) = std::fs::read(path) {
-            let hash =
-                grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            let hash = grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
             return hash != entry.oid;
         }
         return true;
@@ -1062,79 +1025,6 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     }
 }
 
-/// Determine the display tag for -t, considering sparse patterns.
-fn effective_tag(
-    entry: &IndexEntry,
-    path: &[u8],
-    sparse_patterns: &[String],
-    sparse_expect_outside: bool,
-) -> char {
-    // If skip-worktree is already set, always 'S'.
-    if entry.skip_worktree() {
-        return 'S';
-    }
-    // If sparse.expectFilesOutsideOfPatterns, check if file is outside patterns.
-    if sparse_expect_outside && !sparse_patterns.is_empty() {
-        let path_str = String::from_utf8_lossy(path);
-        let mut included = false;
-        for pat in sparse_patterns {
-            let p = pat.trim();
-            if p.is_empty() || p.starts_with('#') {
-                continue;
-            }
-            let (negated, effective) = if p.starts_with('!') {
-                (true, &p[1..])
-            } else {
-                (false, p)
-            };
-            let unanchored = effective.strip_prefix('/').unwrap_or(effective);
-            let matches = if unanchored == "*" || unanchored == "**" {
-                true
-            } else if unanchored.ends_with('/') {
-                let dir = unanchored.trim_end_matches('/');
-                path_str == dir || path_str.starts_with(&format!("{dir}/"))
-            } else {
-                // Use glob matching for the pattern
-                let glob_matches = |pat: &str, text: &str| -> bool {
-                    fn g(p: &[u8], t: &[u8]) -> bool {
-                        match (p.first(), t.first()) {
-                            (None, None) => true,
-                            (Some(b'*'), _) => {
-                                for i in 0..=t.len() {
-                                    if g(&p[1..], &t[i..]) {
-                                        return true;
-                                    }
-                                }
-                                false
-                            }
-                            (Some(b'?'), Some(_)) => g(&p[1..], &t[1..]),
-                            (Some(a), Some(b)) if a == b => g(&p[1..], &t[1..]),
-                            _ => false,
-                        }
-                    }
-                    g(pat.as_bytes(), text.as_bytes())
-                };
-                let path_str_ref: &str = &path_str;
-                glob_matches(unanchored, path_str_ref)
-                    || path_str.starts_with(&format!("{unanchored}/"))
-                    || (!unanchored.contains('/')
-                        && path_str
-                            .split('/')
-                            .last()
-                            .map(|b| glob_matches(unanchored, b))
-                            .unwrap_or(false))
-            };
-            if matches {
-                included = !negated;
-            }
-        }
-        if !included {
-            return 'S';
-        }
-    }
-    status_tag(entry)
-}
-
 fn status_tag(entry: &IndexEntry) -> char {
     if entry.stage() != 0 {
         'C' // unmerged (conflict)
@@ -1145,4 +1035,16 @@ fn status_tag(entry: &IndexEntry) -> char {
     } else {
         'H' // regular cached
     }
+}
+
+fn passthrough_current_ls_files_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "ls-files") else {
+        bail!("failed to determine ls-files arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("ls-files", &passthrough_args)
 }

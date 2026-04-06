@@ -410,8 +410,9 @@ pub fn diff_index_to_tree(
 
     // Check index entries against tree
     for ie in &index.entries {
-        // Only look at stage 0 (merged) entries
-        if ie.stage() != 0 {
+        // Only look at stage 0 (merged) entries.
+        // Intent-to-add entries behave as absent in staged comparisons.
+        if ie.stage() != 0 || ie.intent_to_add() {
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
@@ -499,14 +500,54 @@ pub fn diff_index_to_worktree(
         if ie.stage() != 0 {
             continue;
         }
+        // Sparse-checkout paths marked skip-worktree should not participate
+        // in regular worktree diffs.
+        if ie.skip_worktree() {
+            continue;
+        }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+
+        // Intent-to-add entries behave as "path absent from index" for
+        // worktree comparisons: show as Added only when the file currently
+        // exists in the working tree.
+        if ie.intent_to_add() {
+            let file_path = work_tree.join(path_str_ref);
+            match fs::symlink_metadata(&file_path) {
+                Ok(meta) if !meta.is_dir() => {
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let wt_oid =
+                        hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+                    let wt_mode = mode_from_metadata(&meta);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None,
+                        new_path: Some(path_str_ref.to_owned()),
+                        old_mode: "000000".to_owned(),
+                        new_mode: format_mode(wt_mode),
+                        old_oid: zero_oid(),
+                        new_oid: wt_oid,
+                        score: None,
+                    });
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if e.raw_os_error() == Some(20) /* ENOTDIR */ => {}
+                Err(e) => return Err(Error::Io(e)),
+            }
+            continue;
+        }
 
         // Gitlink entries (submodules) are directories — compare HEAD commit.
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head(&sub_dir);
+            // An existing directory without a nested `.git` is an
+            // uninitialized submodule checkout and is considered clean.
+            if sub_head_oid.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
+                continue;
+            }
             if sub_head_oid.as_ref() != Some(&ie.oid) {
                 let path_owned = path_str_ref.to_owned();
                 let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
@@ -560,13 +601,21 @@ pub fn diff_index_to_worktree(
             Ok(meta) => {
                 // Check if the file has changed using stat data first
                 if stat_matches(ie, &meta) {
-                    // Stat data matches content-wise, but also check mode.
-                    // The index mode might have been changed via --chmod=+x.
                     let worktree_mode = mode_from_metadata(&meta);
-                    if worktree_mode == ie.mode {
-                        continue; // Fast path: stat+mode match, assume unchanged
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let worktree_oid = hash_worktree_file(
+                        odb,
+                        &file_path,
+                        &meta,
+                        &conv,
+                        &file_attrs,
+                        path_str_ref,
+                    )?;
+
+                    if worktree_mode == ie.mode && worktree_oid == ie.oid {
+                        continue; // truly unchanged
                     }
-                    // Mode differs — emit a mode-only change entry.
+
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -575,7 +624,7 @@ pub fn diff_index_to_worktree(
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
-                        new_oid: ie.oid,
+                        new_oid: worktree_oid,
                         score: None,
                     });
                     continue;
@@ -746,6 +795,13 @@ pub fn diff_tree_to_worktree(
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
+        // Intent-to-add entries should participate in tree-vs-worktree path
+        // union (so `diff HEAD` can show them as added), but they should not be
+        // treated as normal index baselines for content/mode comparisons.
+        if ie.intent_to_add() {
+            index_paths.insert(path);
+            continue;
+        }
         index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
     }
@@ -769,6 +825,10 @@ pub fn diff_tree_to_worktree(
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
                 let sub_head = read_submodule_head(&sub_dir);
+                // Uninitialized submodule directories are considered clean.
+                if sub_head.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
+                    continue;
+                }
                 if sub_head.as_ref() != Some(&te.oid) {
                     let new_oid = sub_head.unwrap_or_else(zero_oid);
                     result.push(DiffEntry {
@@ -796,11 +856,15 @@ pub fn diff_tree_to_worktree(
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
-                // Fast path: if the index entry matches the tree entry AND
-                // stat cache matches, the file is unchanged — skip hashing.
                 if let Some(ie) = index_entries.get(path.as_bytes()) {
                     if ie.oid == te.oid && ie.mode == te.mode && stat_matches(ie, meta) {
-                        continue;
+                        let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
+                        let wt_oid =
+                            hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
+                        let wt_mode = mode_from_metadata(meta);
+                        if wt_oid == te.oid && wt_mode == te.mode {
+                            continue;
+                        }
                     }
                 }
 
@@ -1962,4 +2026,11 @@ fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
         // Detached HEAD — direct OID
         ObjectId::from_hex(head_content).ok()
     }
+}
+
+fn is_unpopulated_submodule_dir(sub_dir: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(sub_dir) else {
+        return false;
+    };
+    meta.is_dir() && !sub_dir.join(".git").exists()
 }

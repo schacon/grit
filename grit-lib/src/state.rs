@@ -149,10 +149,22 @@ pub struct RepoState {
 /// Returns [`Error::Io`] if files cannot be read.
 pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
     let head_path = git_dir.join("HEAD");
-    let content = match fs::read_to_string(&head_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HeadState::Invalid),
-        Err(e) => return Err(Error::Io(e)),
+    let content = match fs::read_link(&head_path) {
+        Ok(link_target) => {
+            let rendered = link_target.to_string_lossy();
+            if link_target.is_absolute() {
+                format!("ref: {rendered}")
+            } else if rendered.starts_with("refs/") {
+                format!("ref: {rendered}")
+            } else {
+                fs::read_to_string(&head_path).map_err(Error::Io)?
+            }
+        }
+        Err(_) => match fs::read_to_string(&head_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HeadState::Invalid),
+            Err(e) => return Err(Error::Io(e)),
+        },
     };
 
     let trimmed = content.trim();
@@ -242,12 +254,28 @@ fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
                             }
                         }
                         Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e2)
+                            if e2.kind() == std::io::ErrorKind::IsADirectory
+                                || e2.kind() == std::io::ErrorKind::NotADirectory
+                                || e2.raw_os_error() == Some(21)
+                                || e2.raw_os_error() == Some(20) => {}
                         Err(e2) => return Err(Error::Io(e2)),
                     }
                     // Try packed-refs in common dir
                     return resolve_packed_ref(&common, refname);
                 }
             }
+            Ok(None)
+        }
+        Err(e)
+            if e.kind() == std::io::ErrorKind::IsADirectory
+                || e.kind() == std::io::ErrorKind::NotADirectory
+                || e.raw_os_error() == Some(21)
+                || e.raw_os_error() == Some(20) =>
+        {
+            // Directory/file conflicts in refs (e.g. HEAD points at
+            // refs/heads/outer while refs/heads/outer/inner exists) should be
+            // treated like a missing ref, not a hard I/O failure.
             Ok(None)
         }
         Err(e) => Err(Error::Io(e)),

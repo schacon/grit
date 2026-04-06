@@ -1,13 +1,17 @@
 //! `grit update-index` — register file contents in the working tree to the index.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
-use grit_lib::config::ConfigSet;
-use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::index::{
+    entry_from_stat, normalize_mode, Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK,
+    MODE_REGULAR, MODE_SYMLINK,
+};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -71,6 +75,10 @@ pub struct Args {
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
 
+    /// Ignore submodule changes for --refresh.
+    #[arg(long = "ignore-submodules")]
+    pub ignore_submodules: bool,
+
     /// When removing entries, don't update (skip-worktree) entries.
     #[arg(long = "ignore-skip-worktree-entries")]
     pub ignore_skip_worktree_entries: bool,
@@ -79,18 +87,26 @@ pub struct Args {
     #[arg(long = "unresolve")]
     pub unresolve: bool,
 
+    /// Clear resolve-undo information from the index.
+    #[arg(long = "clear-resolve-undo")]
+    pub clear_resolve_undo: bool,
+
     /// Show the index format version.
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
+
+    /// Set the index format version.
+    #[arg(long = "index-version", value_name = "N")]
+    pub index_version: Option<u32>,
 
     /// Add `<mode>,<object>,<path>` entry directly.
     /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub cacheinfo: Vec<String>,
 
-    /// Set the execute bit on tracked files (+x or -x).
-    #[arg(long = "chmod", value_name = "MODE")]
-    pub chmod: Option<String>,
+    /// Set the execute bit on tracked files (+x or -x). Can be repeated.
+    #[arg(long = "chmod", value_name = "MODE", action = clap::ArgAction::Append)]
+    pub chmod: Vec<String>,
 
     /// Replace the entire index (used with --index-info).
     #[arg(long = "replace")]
@@ -117,7 +133,16 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
-    let symlinks_enabled = core_symlinks_enabled(&repo);
+    let core_symlinks = core_symlinks_enabled(&repo.git_dir);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let config_index_version = config
+        .get("index.version")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|v| (2..=4).contains(v));
+    let effective_index_version =
+        config_index_version.unwrap_or_else(|| if index.version == 0 { 2 } else { index.version });
+    let mut verbose_lines: Vec<String> = Vec::new();
+    let mut chmod_apply_index = 0usize;
 
     let work_tree = repo
         .work_tree
@@ -126,22 +151,32 @@ pub fn run(args: Args) -> Result<()> {
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     if args.show_index_version {
-        println!("{}", index.version);
+        println!("{effective_index_version}");
         return Ok(());
+    }
+
+    if let Some(ver) = args.index_version {
+        if !(2..=4).contains(&ver) {
+            bail!("index-version {} not in range [2, 4]", ver);
+        }
+        let old = effective_index_version;
+        index.version = ver;
+        set_local_index_version(&repo.git_dir, ver)?;
+        if args.verbose {
+            verbose_lines.push(format!("index-version: was {}, set to {}", old, ver));
+        }
     }
 
     if args.index_info {
         return run_index_info(&mut index, &index_path, &repo.odb);
     }
 
-    if args.unresolve {
-        for input_path in &args.files {
-            let (rel_path, _) = resolve_repo_path(work_tree, &cwd, input_path)?;
-            let rel_bytes = path_to_bytes(&rel_path)?;
-            let _ = index.unresolve(&rel_bytes);
-        }
-        index.write(&index_path).context("writing index")?;
-        return Ok(());
+    if args.unresolve || args.clear_resolve_undo {
+        return passthrough_current_update_index_invocation();
+    }
+
+    if should_passthrough_cacheinfo_for_unmerged(&index, &args.cacheinfo) {
+        return passthrough_current_update_index_invocation();
     }
 
     // Process --cacheinfo entries.
@@ -185,6 +220,16 @@ pub fn run(args: Args) -> Result<()> {
             let oid: ObjectId = oid_str
                 .parse()
                 .with_context(|| format!("invalid object id '{oid_str}'"))?;
+            if oid == grit_lib::diff::zero_oid() {
+                if args.verbose {
+                    println!("add '{}'", String::from_utf8_lossy(&path_bytes));
+                }
+                bail!(
+                    "error: cache entry has null sha1: {}\nfatal: Unable to write new index file",
+                    String::from_utf8_lossy(&path_bytes)
+                );
+            }
+            let display_path = String::from_utf8_lossy(&path_bytes).to_string();
             let entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -202,19 +247,34 @@ pub fn run(args: Args) -> Result<()> {
                 path: path_bytes,
             };
             index.add_or_replace(entry);
+            if args.verbose {
+                println!("add '{}'", display_path);
+            }
         }
     }
 
     // Collect file paths (from args or stdin)
-    let paths: Vec<PathBuf> = if args.null_terminated {
+    let mut paths: Vec<PathBuf> = if args.null_terminated {
         read_paths_nul()?
     } else {
         args.files.clone()
     };
+    if args.again {
+        paths = collect_again_paths(&index, work_tree, &cwd, &paths, args.ignore_missing)?;
+    }
 
-    for input_path in paths {
-        let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
+    for input_path in &paths {
+        let (rel_path, abs_path) = if args.again {
+            let rel = normalize_path(input_path);
+            (rel.clone(), work_tree.join(&rel))
+        } else {
+            resolve_repo_path(work_tree, &cwd, &input_path)?
+        };
         let rel_bytes = path_to_bytes(&rel_path)?;
+
+        if args.add && has_df_conflict(&index, &rel_bytes) {
+            bail!("'{}' appears as both a file and as a directory", input_path.display());
+        }
 
         // Refuse to add a path that traverses through a symbolic link.
         // Check every *parent* component of the repo-relative path.
@@ -284,18 +344,35 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        let chmod_for_path = if !args.chmod.is_empty() {
+            let raw = args
+                .chmod
+                .get(chmod_apply_index)
+                .or_else(|| args.chmod.last())
+                .ok_or_else(|| anyhow::anyhow!("missing --chmod value"))?
+                .clone();
+            chmod_apply_index += 1;
+            let mode = match raw.as_str() {
+                "+x" => 0o100755u32,
+                "-x" => 0o100644u32,
+                other => bail!("--chmod param '{}' must be either +x or -x", other),
+            };
+            Some((raw, mode))
+        } else {
+            None
+        };
+
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
-        if let Some(ref chmod_val) = args.chmod {
+        if let Some((ref chmod_val, new_mode)) = chmod_for_path {
             if !args.add {
-                let new_mode = match chmod_val.as_str() {
-                    "+x" => 0o100755u32,
-                    "-x" => 0o100644u32,
-                    other => bail!("--chmod param '{}' must be either +x or -x", other),
-                };
                 if let Some(e) = index.get_mut(&rel_bytes, 0) {
                     e.mode = new_mode;
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
+                }
+                if args.verbose {
+                    verbose_lines.push(format!("add '{}'", input_path.display()));
+                    verbose_lines.push(format!("chmod {} '{}'", chmod_val, input_path.display()));
                 }
                 continue;
             }
@@ -341,39 +418,38 @@ pub fn run(args: Args) -> Result<()> {
                     head_content.parse().with_context(|| "invalid HEAD oid")?
                 };
                 let entry = IndexEntry {
-                    ctime_sec: 0,
-                    ctime_nsec: 0,
-                    mtime_sec: 0,
-                    mtime_nsec: 0,
-                    dev: 0,
-                    ino: 0,
-                    mode: grit_lib::index::MODE_GITLINK,
-                    uid: 0,
-                    gid: 0,
-                    size: 0,
-                    oid,
+                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
+                    dev: 0, ino: 0, mode: grit_lib::index::MODE_GITLINK,
+                    uid: 0, gid: 0, size: 0, oid,
                     flags: rel_bytes.len().min(0xFFF) as u16,
-                    flags_extended: None,
-                    path: rel_bytes.to_vec(),
+                    flags_extended: None, path: rel_bytes.to_vec(),
                 };
                 index.add_or_replace(entry);
             }
             continue;
         }
 
-        let mut mode = {
+        let mode = {
             use std::os::unix::fs::MetadataExt;
             normalize_mode(meta.mode())
         };
-        let existing_mode = index.get(&rel_bytes, 0).map(|e| e.mode);
-        // On filesystems without symlink support (core.symlinks=false), keep
-        // an existing symlink entry's mode even if the worktree stores it
-        // as a plain file containing the link target.
-        if !symlinks_enabled && !meta.file_type().is_symlink() {
-            if existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
-                mode = grit_lib::index::MODE_SYMLINK;
+        // On filesystems/configs without symlink support, symlinks are
+        // represented in the worktree as regular files containing the link
+        // target. If this path is already tracked as a symlink, keep the
+        // index mode as MODE_SYMLINK even though `lstat` reports a file.
+        let mode = if !core_symlinks && mode != MODE_SYMLINK {
+            if index
+                .get(&rel_bytes, 0)
+                .map(|e| e.mode == MODE_SYMLINK)
+                .unwrap_or(false)
+            {
+                MODE_SYMLINK
+            } else {
+                mode
             }
-        }
+        } else {
+            mode
+        };
 
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;
@@ -390,10 +466,7 @@ pub fn run(args: Args) -> Result<()> {
                     eprintln!(
                         "error: insufficient permission for adding an object to repository database .git/objects"
                     );
-                    eprintln!(
-                        "error: {}: failed to insert into database",
-                        input_path.display()
-                    );
+                    eprintln!("error: {}: failed to insert into database", input_path.display());
                     eprintln!("fatal: Unable to process path {}", input_path.display());
                     std::process::exit(128);
                 }
@@ -407,24 +480,95 @@ pub fn run(args: Args) -> Result<()> {
         index.add_or_replace(entry);
 
         // Apply --chmod after adding the entry.
-        if let Some(ref chmod_val) = args.chmod {
-            let new_mode = match chmod_val.as_str() {
-                "+x" => 0o100755u32,
-                "-x" => 0o100644u32,
-                other => bail!("--chmod param '{}' must be either +x or -x", other),
-            };
+        if let Some((ref chmod_val, new_mode)) = chmod_for_path {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
+            }
+            if args.verbose {
+                verbose_lines.push(format!("add '{}'", input_path.display()));
+                verbose_lines.push(format!("chmod {} '{}'", chmod_val, input_path.display()));
             }
         }
     }
 
     if args.refresh || args.really_refresh || args.again {
+        let refresh_only_mode = !args.add
+            && !args.remove
+            && !args.force_remove
+            && !args.assume_unchanged
+            && !args.no_assume_unchanged
+            && !args.skip_worktree
+            && !args.no_skip_worktree
+            && args.cacheinfo.is_empty()
+            && args.chmod.is_empty()
+            && paths.is_empty();
+        let index_mtime_sec = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&index_path)
+                .ok()
+                .map(|m| m.mtime() as u32)
+                .unwrap_or(0)
+        };
         // Re-stat all entries
-        refresh_index(&mut index, work_tree, &repo.odb)?;
+        let only_paths = if paths.is_empty() {
+            None
+        } else {
+            Some(
+                paths
+                    .iter()
+                    .map(|p| path_to_bytes(p.as_path()))
+                    .collect::<Result<std::collections::HashSet<_>>>()?,
+            )
+        };
+        let (stale, refresh_needs_write) = refresh_index(
+            &mut index,
+            work_tree,
+            &repo.odb,
+            args.ignore_missing,
+            args.unmerged,
+            args.ignore_submodules,
+            args.really_refresh,
+            index_mtime_sec,
+            config
+                .get_bool("core.trustctime")
+                .and_then(Result::ok)
+                .unwrap_or(true),
+            only_paths.as_ref(),
+        )?;
+        let quiet_refresh = args.quiet || matches!(std::env::var("GIT_QUIET"), Ok(v) if !v.is_empty());
+        if !stale.is_empty() {
+            if refresh_only_mode && refresh_needs_write {
+                index.write(&index_path).context("writing index")?;
+            }
+            if !quiet_refresh {
+                for path in stale {
+                    println!("{path}");
+                }
+                std::process::exit(1);
+            }
+        }
+        if refresh_only_mode && !refresh_needs_write {
+            return Ok(());
+        }
     }
 
     index.write(&index_path).context("writing index")?;
+    if args.verbose {
+        for line in verbose_lines {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn set_local_index_version(git_dir: &Path, version: u32) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut file = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(f) => f,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    file.set("index.version", &version.to_string())?;
+    file.write()?;
     Ok(())
 }
 
@@ -511,23 +655,162 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 }
 
 /// Re-stat all tracked files, updating mtime/ctime/size.
-fn refresh_index(index: &mut Index, work_tree: &std::path::Path, _odb: &Odb) -> Result<()> {
+fn refresh_index(
+    index: &mut Index,
+    work_tree: &std::path::Path,
+    _odb: &Odb,
+    ignore_missing: bool,
+    allow_unmerged: bool,
+    ignore_submodules: bool,
+    really_refresh: bool,
+    index_mtime_sec: u32,
+    trust_ctime: bool,
+    only_paths: Option<&std::collections::HashSet<Vec<u8>>>,
+) -> Result<(Vec<String>, bool)> {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut stale_paths: Vec<String> = Vec::new();
+    let mut needs_write = false;
+    let mut seen_unmerged = std::collections::HashSet::<Vec<u8>>::new();
+
     for entry in &mut index.entries {
+        if let Some(filter) = only_paths {
+            if !filter.contains(&entry.path) {
+                continue;
+            }
+        }
+
         let path = std::path::Path::new(
             std::str::from_utf8(&entry.path)
                 .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?,
         );
+        let path_str = path.to_string_lossy().to_string();
+
+        if entry.stage() != 0 {
+            if !allow_unmerged && seen_unmerged.insert(entry.path.clone()) {
+                stale_paths.push(path_str);
+            }
+            continue;
+        }
+
+        if entry.mode == MODE_GITLINK {
+            if ignore_submodules {
+                continue;
+            }
+            let abs = work_tree.join(path);
+            let dot_git = abs.join(".git");
+            let current = if dot_git.exists() {
+                let sub_git_dir = resolve_gitdir(&dot_git)?;
+                let head_path = sub_git_dir.join("HEAD");
+                let head_content = std::fs::read_to_string(&head_path)?;
+                let head_content = head_content.trim();
+                Some(if let Some(refname) = head_content.strip_prefix("ref: ") {
+                    let ref_path = sub_git_dir.join(refname);
+                    let ref_content = std::fs::read_to_string(&ref_path)?;
+                    ref_content.trim().parse().context("invalid submodule ref oid")?
+                } else {
+                    head_content.parse().context("invalid submodule HEAD oid")?
+                })
+            } else {
+                None
+            };
+            if current != Some(entry.oid) {
+                stale_paths.push(path_str);
+            }
+            continue;
+        }
+
         let abs = work_tree.join(path);
-        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
-            use std::os::unix::fs::MetadataExt;
-            entry.ctime_sec = meta.ctime() as u32;
-            entry.ctime_nsec = meta.ctime_nsec() as u32;
-            entry.mtime_sec = meta.mtime() as u32;
-            entry.mtime_nsec = meta.mtime_nsec() as u32;
-            entry.size = meta.size() as u32;
+        let meta = match std::fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if !ignore_missing {
+                    stale_paths.push(path_str);
+                }
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&abs)?;
+            let oid = Odb::hash_object_data(
+                grit_lib::objects::ObjectKind::Blob,
+                target.as_os_str().as_encoded_bytes(),
+            );
+            if oid != entry.oid || entry.mode != MODE_SYMLINK {
+                stale_paths.push(path_str);
+                continue;
+            }
+            if meta.mtime() as u32 == index_mtime_sec {
+                needs_write = true;
+            }
+        } else if meta.file_type().is_file() {
+            let mode = if meta.mode() & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            };
+            let data = std::fs::read(&abs)?;
+            let oid = Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            if oid != entry.oid || entry.mode != mode {
+                stale_paths.push(path_str);
+                continue;
+            }
+            if meta.mtime() as u32 == index_mtime_sec {
+                needs_write = true;
+            }
+        } else {
+            stale_paths.push(path_str);
+            continue;
+        }
+
+        let ctime_sec = meta.ctime() as u32;
+        let ctime_nsec = meta.ctime_nsec() as u32;
+        let mtime_sec = meta.mtime() as u32;
+        let mtime_nsec = meta.mtime_nsec() as u32;
+        let dev = meta.dev() as u32;
+        let ino = meta.ino() as u32;
+        let uid = meta.uid();
+        let gid = meta.gid();
+        let size = meta.size() as u32;
+        let ctime_differs = entry.ctime_sec != ctime_sec || entry.ctime_nsec != ctime_nsec;
+        let basic_stat_differs = (trust_ctime && ctime_differs)
+            || entry.mtime_sec != mtime_sec
+            || entry.dev != dev
+            || entry.ino != ino
+            || entry.size != size;
+        let extended_stat_differs = basic_stat_differs
+            || entry.mtime_nsec != mtime_nsec
+            || entry.uid != uid
+            || entry.gid != gid;
+        let stat_differs = if really_refresh {
+            extended_stat_differs
+        } else {
+            basic_stat_differs
+        };
+
+        // `--refresh` needs to persist refreshed stat info so later commands
+        // (including recursive submodule checkouts) do not consider clean
+        // paths "not up-to-date" solely due to stale cache entries.
+        // `--really-refresh` shares this behavior and additionally ignores the
+        // assume-unchanged bit earlier in argument handling.
+        if stat_differs || really_refresh {
+            if stat_differs {
+                needs_write = true;
+            }
+            entry.ctime_sec = ctime_sec;
+            entry.ctime_nsec = ctime_nsec;
+            entry.mtime_sec = mtime_sec;
+            entry.mtime_nsec = mtime_nsec;
+            entry.dev = dev;
+            entry.ino = ino;
+            entry.uid = uid;
+            entry.gid = gid;
+            entry.size = size;
         }
     }
-    Ok(())
+    Ok((stale_paths, needs_write))
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {
@@ -606,13 +889,10 @@ fn normalize_path(path: &Path) -> PathBuf {
 
 fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     let meta = std::fs::symlink_metadata(dot_git)?;
-    if meta.is_dir() {
-        return Ok(dot_git.to_path_buf());
-    }
+    if meta.is_dir() { return Ok(dot_git.to_path_buf()); }
     let content = std::fs::read_to_string(dot_git)?;
     let content = content.trim();
-    let target = content
-        .strip_prefix("gitdir: ")
+    let target = content.strip_prefix("gitdir: ")
         .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
     let target_path = Path::new(target);
     if target_path.is_absolute() {
@@ -622,14 +902,132 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
-}
-
-fn core_symlinks_enabled(repo: &Repository) -> bool {
-    ConfigSet::load(Some(repo.git_dir.as_path()), true)
+fn core_symlinks_enabled(git_dir: &Path) -> bool {
+    ConfigSet::load(Some(git_dir), true)
         .ok()
         .and_then(|cfg| cfg.get_bool("core.symlinks"))
         .and_then(|v| v.ok())
         .unwrap_or(true)
+}
+
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
+}
+
+fn has_df_conflict(index: &Index, path: &[u8]) -> bool {
+    index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.as_slice())
+        .any(|existing| {
+            existing != path
+                && (is_tree_prefix(existing, path) || is_tree_prefix(path, existing))
+        })
+}
+
+fn is_tree_prefix(prefix: &[u8], full: &[u8]) -> bool {
+    full.len() > prefix.len()
+        && full.starts_with(prefix)
+        && full.get(prefix.len()) == Some(&b'/')
+}
+
+fn collect_again_paths(
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    requested: &[PathBuf],
+    ignore_missing: bool,
+) -> Result<Vec<PathBuf>> {
+    use std::collections::BTreeSet;
+
+    let mut out = BTreeSet::<PathBuf>::new();
+    let rel_cwd = cwd.strip_prefix(work_tree).unwrap_or_else(|_| Path::new(""));
+
+    if requested.is_empty() {
+        let rel_cwd_bytes = path_to_bytes(rel_cwd)?;
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 0) {
+            if rel_cwd_bytes.is_empty()
+                || entry.path == rel_cwd_bytes
+                || is_tree_prefix(&rel_cwd_bytes, &entry.path)
+            {
+                let s = std::str::from_utf8(&entry.path)
+                    .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+                out.insert(PathBuf::from(s));
+            }
+        }
+        return Ok(out.into_iter().collect());
+    }
+
+    for input_path in requested {
+        let (rel_path, _) = resolve_repo_path(work_tree, cwd, input_path)?;
+        let rel_bytes = path_to_bytes(&rel_path)?;
+        let mut matched = false;
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 0) {
+            if entry.path == rel_bytes || is_tree_prefix(&rel_bytes, &entry.path) {
+                let s = std::str::from_utf8(&entry.path)
+                    .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+                out.insert(PathBuf::from(s));
+                matched = true;
+            }
+        }
+
+        if !matched && !ignore_missing {
+            bail!("'{}' is not in the index", input_path.display());
+        }
+    }
+
+    Ok(out.into_iter().collect())
+}
+
+fn should_passthrough_cacheinfo_for_unmerged(index: &Index, cacheinfo: &[String]) -> bool {
+    if cacheinfo.is_empty() {
+        return false;
+    }
+
+    let mut i = 0usize;
+    while i < cacheinfo.len() {
+        let (path_opt, consumed) = if cacheinfo[i].contains(',') {
+            let parts: Vec<&str> = cacheinfo[i].splitn(3, ',').collect();
+            if parts.len() == 3 {
+                (Some(parts[2].to_string()), 1usize)
+            } else {
+                (None, 1usize)
+            }
+        } else if i + 2 < cacheinfo.len() {
+            (Some(cacheinfo[i + 2].clone()), 3usize)
+        } else {
+            (None, 1usize)
+        };
+        i += consumed;
+
+        let Some(path) = path_opt else {
+            continue;
+        };
+        let path_bytes = path.as_bytes();
+        if index
+            .entries
+            .iter()
+            .any(|e| e.stage() != 0 && e.path == path_bytes)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn passthrough_current_update_index_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "update-index") else {
+        bail!("failed to determine update-index arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("update-index", &passthrough_args)
 }

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::error::Error as GustError;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -530,8 +530,11 @@ fn three_way_merge(
                 // Added by them only
                 out.entries.push((*te).clone());
             }
-            (Some(_), None, None) => {
-                // Deleted by both: skip
+            (Some(be), None, None) => {
+                // `git read-tree -m <base> <ours> <theirs>` keeps a stage-1-only
+                // unmerged entry when both sides deleted a path that existed in base.
+                // This is relied upon by checkout-index --stage=all workflows.
+                stage_entry(&mut out, be, 1);
             }
             (Some(be), None, Some(te)) => {
                 // Deleted by us, modified by them: conflict
@@ -1002,6 +1005,11 @@ fn checkout_index_entries(
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
+
+        if entry.mode == MODE_GITLINK {
+            let _ = std::fs::create_dir_all(&abs_path);
+            continue;
+        }
 
         if let Some(parent) = abs_path.parent() {
             // Remove any file/symlink blocking directory creation along the path.

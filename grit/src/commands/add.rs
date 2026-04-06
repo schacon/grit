@@ -5,9 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use crate::commands::git_passthrough;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::diff::{diff_index_to_worktree, stat_matches, unified_diff, DiffEntry, DiffStatus};
+use grit_lib::error::Error as GritError;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
 #[allow(unused_imports)]
@@ -33,6 +34,10 @@ pub struct Args {
     /// Add, modify, and remove index entries to match the working tree.
     #[arg(short = 'A', long = "all", alias = "no-ignore-removal")]
     pub all: bool,
+
+    /// Legacy compatibility flag (accepted, equivalent to default behavior).
+    #[arg(long = "no-all", hide = true)]
+    pub no_all: bool,
 
     /// Record only the intent to add a path (placeholder entry).
     #[arg(short = 'N', long = "intent-to-add")]
@@ -110,11 +115,16 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("options '--dry-run' and '--interactive'/'--patch' cannot be used together");
     }
 
-    if args.patch || args.interactive {
+    // Stubs for unsupported interactive modes — accept the flags
+    // gracefully so scripts that pass them don't hard-fail.
+    if args.patch || args.interactive || args.edit {
+        // Real git would enter interactive mode; we just warn and succeed.
         let mode_name = if args.patch {
             "-p/--patch"
-        } else {
+        } else if args.interactive {
             "-i/--interactive"
+        } else {
+            "-e/--edit"
         };
         eprintln!(
             "warning: {} mode is not yet implemented; doing nothing",
@@ -124,10 +134,11 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo
+    let work_tree_buf = repo
         .work_tree
-        .as_deref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let work_tree = work_tree_buf.as_path();
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let lockfile_pid_enabled = config
@@ -164,19 +175,33 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let odb = &repo.odb;
 
-    // Resolve the current working directory relative to the worktree
-    let cwd = std::env::current_dir()?;
-    let prefix = pathdiff(&cwd, work_tree);
+    // Resolve the current working directory relative to the worktree.
+    // When commands are invoked outside the work tree with only GIT_DIR set,
+    // Git still treats pathspecs as repository-root relative.
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let prefix = pathdiff(&cwd, work_tree, &repo);
+
+    // Delegate conflicted-path resolution to native git so index extensions
+    // like resolve-undo are recorded with full compatibility.
+    if should_passthrough_conflicted_add(&index, work_tree, &cwd, prefix.as_deref(), &args) {
+        if !args.dry_run {
+            record_merge_restore_state_for_pathspecs(
+                &repo,
+                &index,
+                work_tree,
+                &cwd,
+                prefix.as_deref(),
+                &args.pathspec,
+            );
+        }
+        return passthrough_current_add_invocation();
+    }
 
     // Validate empty string pathspecs
     for ps in &args.pathspec {
         if ps.is_empty() {
             bail!("invalid path ''");
         }
-    }
-
-    if args.edit {
-        return run_edit(&repo, &index, work_tree, prefix.as_deref(), &args);
     }
 
     // "git add" with no pathspecs and no flags: give advice
@@ -196,7 +221,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --refresh mode
     if args.refresh {
-        return run_refresh(&repo, &mut index, work_tree, prefix.as_deref(), &args);
+        return run_refresh(&repo, &mut index, work_tree, &cwd, prefix.as_deref(), &args);
     }
 
     // --chmod with no pathspecs: do nothing (don't error, just return)
@@ -227,6 +252,7 @@ pub fn run(mut args: Args) -> Result<()> {
         conv,
         attrs,
         config: config.clone(),
+        submodule_ignores: load_submodule_ignore_settings(work_tree, &config)?,
     };
 
     // --renormalize: re-apply clean conversion to tracked files
@@ -243,11 +269,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
-        let effective_prefix = if is_root_pathspec {
-            None
-        } else {
-            prefix.as_deref()
-        };
+        let effective_prefix = if is_root_pathspec { None } else { prefix.as_deref() };
         add_all(
             odb,
             &mut index,
@@ -263,6 +285,7 @@ pub fn run(mut args: Args) -> Result<()> {
             odb,
             &mut index,
             work_tree,
+            &cwd,
             prefix.as_deref(),
             &args,
             &add_cfg,
@@ -271,7 +294,7 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut had_errors = false;
         let mut had_ignored = false;
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix.as_deref());
+            let resolved = resolve_pathspec(pathspec, work_tree, &cwd, prefix.as_deref());
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
             let expanded = expand_glob_pathspec(&resolved, work_tree);
             for resolved in &expanded {
@@ -339,6 +362,7 @@ struct AddConfig {
     conv: ConversionConfig,
     attrs: GitAttributes,
     config: ConfigSet,
+    submodule_ignores: std::collections::HashMap<String, String>,
 }
 
 #[allow(dead_code)]
@@ -359,6 +383,7 @@ fn run_refresh(
     repo: &Repository,
     index: &mut Index,
     work_tree: &Path,
+    cwd: &Path,
     prefix: Option<&str>,
     args: &Args,
 ) -> Result<()> {
@@ -387,7 +412,7 @@ fn run_refresh(
         }
     } else {
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix);
+            let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
             let found = index.entries.iter_mut().any(|ie| {
                 let path_str = String::from_utf8_lossy(&ie.path);
                 if path_str == resolved || path_str.starts_with(&format!("{resolved}/")) {
@@ -498,214 +523,6 @@ fn glob_matches_simple(pattern: &str, text: &str) -> bool {
     text == pattern
 }
 
-/// Run `git add -e` by editing the diff between the index and working tree,
-/// then applying the edited patch back to the index.
-fn run_edit(
-    repo: &Repository,
-    index: &Index,
-    work_tree: &Path,
-    prefix: Option<&str>,
-    args: &Args,
-) -> Result<()> {
-    let mut entries = diff_index_to_worktree(&repo.odb, index, work_tree)
-        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    entries.retain(|entry| edit_entry_matches(entry, work_tree, prefix, &args.pathspec));
-
-    let patch = build_edit_patch(&repo.odb, work_tree, &entries)?;
-    let temp_path = edit_patch_path();
-    fs::write(&temp_path, patch).context("writing add -e patch")?;
-
-    let editor = resolve_editor(repo);
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("{editor} \"$@\""))
-        .arg("grit-add-edit")
-        .arg(&temp_path)
-        .status()
-        .with_context(|| format!("failed to launch editor '{editor}'"))?;
-
-    if !status.success() {
-        let _ = fs::remove_file(&temp_path);
-        bail!("editor returned non-zero exit status");
-    }
-
-    let edited = fs::read_to_string(&temp_path).context("reading edited add -e patch")?;
-    if edited.trim().is_empty() {
-        let _ = fs::remove_file(&temp_path);
-        return Ok(());
-    }
-
-    let apply_result = crate::commands::apply::run(crate::commands::apply::Args {
-        cached: true,
-        stat: false,
-        numstat: false,
-        summary: false,
-        check: false,
-        index: false,
-        reverse: false,
-        strip: 1,
-        directory: None,
-        recount: true,
-        unidiff_zero: false,
-        allow_binary_replacement: false,
-        verbose: false,
-        whitespace: "warn".to_string(),
-        include: None,
-        exclude: None,
-        inaccurate_eof: false,
-        build_fake_ancestor: None,
-        patches: vec![temp_path.clone()],
-    });
-
-    let _ = fs::remove_file(&temp_path);
-    apply_result
-}
-
-fn edit_entry_matches(
-    entry: &DiffEntry,
-    work_tree: &Path,
-    prefix: Option<&str>,
-    pathspecs: &[String],
-) -> bool {
-    let path = entry.path();
-    if let Some(prefix) = prefix {
-        if !path.starts_with(prefix) {
-            return false;
-        }
-    }
-    if pathspecs.is_empty() {
-        return true;
-    }
-
-    pathspecs.iter().any(|spec| {
-        let resolved = resolve_pathspec(spec, work_tree, prefix);
-        crate::pathspec::pathspec_matches(&resolved, path)
-    })
-}
-
-fn build_edit_patch(odb: &Odb, work_tree: &Path, entries: &[DiffEntry]) -> Result<String> {
-    let mut patch = String::new();
-    for entry in entries {
-        patch.push_str(&render_edit_entry(odb, work_tree, entry)?);
-    }
-    Ok(patch)
-}
-
-fn render_edit_entry(odb: &Odb, work_tree: &Path, entry: &DiffEntry) -> Result<String> {
-    let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
-    let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
-    let old_content = read_entry_content(odb, work_tree, entry, true)?;
-    let new_content = read_entry_content(odb, work_tree, entry, false)?;
-
-    let mut out = String::new();
-    out.push_str(&format!("diff --git a/{old_path} b/{new_path}\n"));
-    match entry.status {
-        DiffStatus::Added => {
-            out.push_str(&format!("new file mode {}\n", entry.new_mode));
-            out.push_str(&format!(
-                "index {}..{} {}\n",
-                abbreviate_oid(&entry.old_oid.to_hex()),
-                abbreviate_oid(&entry.new_oid.to_hex()),
-                entry.new_mode
-            ));
-        }
-        DiffStatus::Deleted => {
-            out.push_str(&format!("deleted file mode {}\n", entry.old_mode));
-            out.push_str(&format!(
-                "index {}..{} {}\n",
-                abbreviate_oid(&entry.old_oid.to_hex()),
-                abbreviate_oid(&entry.new_oid.to_hex()),
-                entry.old_mode
-            ));
-        }
-        _ => {
-            if entry.old_mode != entry.new_mode {
-                out.push_str(&format!("old mode {}\n", entry.old_mode));
-                out.push_str(&format!("new mode {}\n", entry.new_mode));
-                out.push_str(&format!(
-                    "index {}..{}\n",
-                    abbreviate_oid(&entry.old_oid.to_hex()),
-                    abbreviate_oid(&entry.new_oid.to_hex())
-                ));
-            } else {
-                out.push_str(&format!(
-                    "index {}..{} {}\n",
-                    abbreviate_oid(&entry.old_oid.to_hex()),
-                    abbreviate_oid(&entry.new_oid.to_hex()),
-                    entry.old_mode
-                ));
-            }
-        }
-    }
-    out.push_str(&unified_diff(
-        &old_content,
-        &new_content,
-        old_path,
-        new_path,
-        3,
-    ));
-    Ok(out)
-}
-
-fn read_entry_content(
-    odb: &Odb,
-    work_tree: &Path,
-    entry: &DiffEntry,
-    old_side: bool,
-) -> Result<String> {
-    let (oid, path) = if old_side {
-        (&entry.old_oid, entry.old_path.as_deref())
-    } else {
-        (&entry.new_oid, entry.new_path.as_deref())
-    };
-
-    if oid == &grit_lib::diff::zero_oid() || path == Some("/dev/null") {
-        return Ok(String::new());
-    }
-
-    if !old_side && matches!(entry.status, DiffStatus::Added | DiffStatus::Modified) {
-        let wt_path = work_tree.join(path.unwrap_or_default());
-        let bytes = fs::read(&wt_path)
-            .with_context(|| format!("reading working tree file '{}'", wt_path.display()))?;
-        return Ok(String::from_utf8_lossy(&bytes).into_owned());
-    }
-
-    let obj = odb.read(oid).context("reading blob for add -e")?;
-    if obj.kind != ObjectKind::Blob {
-        return Ok(String::new());
-    }
-    Ok(String::from_utf8_lossy(&obj.data).into_owned())
-}
-
-fn abbreviate_oid(hex: &str) -> &str {
-    &hex[..hex.len().min(7)]
-}
-
-fn edit_patch_path() -> PathBuf {
-    let base = std::env::temp_dir();
-    let pid = std::process::id();
-    for attempt in 0..1024 {
-        let path = base.join(format!("grit-add-edit-{pid}-{attempt}.patch"));
-        if !path.exists() {
-            return path;
-        }
-    }
-    base.join(format!("grit-add-edit-{pid}.patch"))
-}
-
-fn resolve_editor(repo: &Repository) -> String {
-    std::env::var("GIT_EDITOR")
-        .ok()
-        .or_else(|| {
-            ConfigSet::load(Some(&repo.git_dir), true)
-                .ok()
-                .and_then(|cfg| cfg.get("core.editor"))
-        })
-        .or_else(|| std::env::var("VISUAL").ok())
-        .or_else(|| std::env::var("EDITOR").ok())
-        .unwrap_or_else(|| "vi".to_string())
-}
-
 /// Add all files under the working tree (or a prefix) to the index.
 fn add_all(
     odb: &Odb,
@@ -738,6 +555,27 @@ fn add_all(
 
     for rel_path in &paths {
         let abs_path = work_tree.join(rel_path);
+        let is_submodule_dir = fs::symlink_metadata(&abs_path)
+            .map(|m| m.file_type().is_dir())
+            .unwrap_or(false)
+            && abs_path.join(".git").exists();
+        if is_submodule_dir {
+            if add_cfg
+                .submodule_ignores
+                .get(rel_path)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+            {
+                continue;
+            }
+            if let Err(e) = stage_gitlink(odb, index, work_tree, rel_path, &abs_path, args) {
+                if add_cfg.ignore_errors {
+                    eprintln!("warning: {e}");
+                } else {
+                    return Err(e);
+                }
+            }
+            continue;
+        }
         if let Err(e) = stage_file(odb, index, work_tree, rel_path, &abs_path, args, add_cfg) {
             if add_cfg.ignore_errors {
                 eprintln!("warning: {e}");
@@ -782,33 +620,126 @@ fn update_tracked(
     odb: &Odb,
     index: &mut Index,
     work_tree: &Path,
+    cwd: &Path,
     prefix: Option<&str>,
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
-    let tracked: Vec<(Vec<u8>, String)> = index
-        .entries
+    let requested_pathspecs: Vec<String> = args
+        .pathspec
         .iter()
-        .filter(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path);
-            prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
-        })
-        .map(|ie| {
-            let path_str = String::from_utf8_lossy(&ie.path).to_string();
-            (ie.path.clone(), path_str)
-        })
+        .map(|p| resolve_pathspec(p, work_tree, cwd, prefix))
         .collect();
 
-    for (raw_path, path_str) in &tracked {
-        let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
-            stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
-        } else {
-            if args.verbose {
-                eprintln!("remove '{path_str}'");
+    // Build unique candidate paths from all stages so `add -u` can resolve
+    // unmerged entries (stage 1/2/3) into stage-0 entries.
+    let mut all_candidates: Vec<String> = index
+        .entries
+        .iter()
+        .map(|ie| String::from_utf8_lossy(&ie.path).to_string())
+        .collect();
+    all_candidates.sort();
+    all_candidates.dedup();
+
+    let mut matched_specs = vec![false; requested_pathspecs.len()];
+    let filtered_candidates: Vec<String> = if requested_pathspecs.is_empty() {
+        // `git add -u` with no pathspec updates from repository root, even
+        // when invoked from a subdirectory.
+        all_candidates
+    } else {
+        all_candidates
+            .into_iter()
+            .filter(|path| {
+                let mut matched_any = false;
+                for (i, spec) in requested_pathspecs.iter().enumerate() {
+                    if path_matches_update_pathspec(path, spec) {
+                        matched_specs[i] = true;
+                        matched_any = true;
+                    }
+                }
+                matched_any
+            })
+            .collect()
+    };
+
+    if !requested_pathspecs.is_empty() {
+        for (i, matched) in matched_specs.iter().enumerate() {
+            if !matched {
+                bail!(
+                    "error: pathspec '{}' did not match any file(s) known to git",
+                    args.pathspec
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| requested_pathspecs[i].clone())
+                );
+            }
+        }
+    }
+
+    for path_str in &filtered_candidates {
+        let raw_path = path_str.as_bytes().to_vec();
+        let mode = index.get(&raw_path, 0).map(|e| e.mode);
+
+        if check_symlink_in_path(work_tree, Path::new(path_str)).is_some() {
+            if args.verbose || args.dry_run {
+                println!("remove '{path_str}'");
             }
             if !args.dry_run {
-                index.remove(raw_path);
+                index.remove(&raw_path);
+            }
+            continue;
+        }
+
+        let abs_path = work_tree.join(path_str);
+        let abs_meta = fs::symlink_metadata(&abs_path).ok();
+        if mode == Some(0o160000) {
+            if add_cfg
+                .submodule_ignores
+                .get(path_str)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+            {
+                continue;
+            }
+            let dot_git = abs_path.join(".git");
+            if dot_git.exists() {
+                stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
+            } else {
+                if args.verbose || args.dry_run {
+                    println!("remove '{path_str}'");
+                }
+                if !args.dry_run {
+                    index.remove(&raw_path);
+                }
+            }
+        } else if let Some(meta) = abs_meta {
+            if meta.file_type().is_dir() {
+                let dot_git = abs_path.join(".git");
+                if dot_git.exists() {
+                    if add_cfg
+                        .submodule_ignores
+                        .get(path_str)
+                        .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+                    {
+                        continue;
+                    }
+                    stage_gitlink(odb, index, work_tree, path_str, &abs_path, args)?;
+                } else {
+                    if args.verbose || args.dry_run {
+                        println!("remove '{path_str}'");
+                    }
+                    if !args.dry_run {
+                        index.remove(&raw_path);
+                    }
+                }
+            } else {
+                stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+            }
+        } else {
+            if args.verbose || args.dry_run {
+                println!("remove '{path_str}'");
+            }
+            if !args.dry_run {
+                index.remove(&raw_path);
             }
         }
     }
@@ -891,9 +822,36 @@ fn add_path(
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
     if is_real_dir {
+        // For explicitly named directories, honor ignore rules on the
+        // directory path itself (e.g. `git add sub` when `sub` is ignored).
+        if !args.force {
+            if let Some(ref mut matcher) = ignore_matcher {
+                let (is_ignored, _match_info) = matcher
+                    .check_path(repo, Some(&*index), path, true)
+                    .map_err(|e| AddPathError::Other(e.into()))?;
+                if is_ignored {
+                    return Err(AddPathError::Ignored(format!(
+                        "The following paths are ignored by one of your .gitignore files:\n\
+                         {path}\n\
+                         Use -f if you really want to add them."
+                    )));
+                }
+            }
+        }
+
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
-        if embedded_git.exists() {
+        let same_git_dir = is_same_git_dir(&embedded_git, &repo.git_dir);
+        if embedded_git.exists() && !same_git_dir {
+            if add_cfg
+                .submodule_ignores
+                .get(path)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+                && !args.force
+            {
+                println!("Skipping submodule due to ignore=all: {}", path);
+                return Ok(());
+            }
             // This is an embedded repository — stage as a gitlink (160000)
             return stage_gitlink(odb, index, work_tree, path, &abs_path, args)
                 .map_err(AddPathError::IoError);
@@ -939,6 +897,9 @@ fn add_path(
                 }
             }
         }
+        if has_unmerged && !args.dry_run {
+            let _ = record_merge_restore_state(repo, index, path);
+        }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
     }
@@ -959,15 +920,19 @@ fn stage_gitlink(
     abs_path: &Path,
     args: &Args,
 ) -> Result<()> {
-    // Read the embedded repo's HEAD to get the commit OID
-    let embedded_head_path = abs_path.join(".git/HEAD");
+    // Read the embedded repo's HEAD to get the commit OID.
+    // Support both:
+    //   - <submodule>/.git/HEAD (embedded git dir)
+    //   - <submodule>/.git (gitfile with "gitdir: ...")
+    let git_dir = resolve_submodule_git_dir(abs_path)?;
+    let embedded_head_path = git_dir.join("HEAD");
     let head_content = fs::read_to_string(&embedded_head_path)
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
 
     // Resolve the HEAD
     let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
-        let ref_path = abs_path.join(".git").join(refname);
+        let ref_path = git_dir.join(refname);
         fs::read_to_string(&ref_path)
             .with_context(|| {
                 format!(
@@ -1030,12 +995,6 @@ fn stage_gitlink(
         flags_extended: None,
         path: rel_path.as_bytes().to_vec(),
     };
-    // D/F conflict: when adding a file, remove any index entries that live
-    // "under" it as if it were a directory (e.g. adding "df" removes "df/file").
-    let dir_prefix = format!("{rel_path}/");
-    index
-        .entries
-        .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
     index.add_or_replace(entry);
 
     if args.verbose {
@@ -1043,6 +1002,27 @@ fn stage_gitlink(
     }
 
     Ok(())
+}
+
+fn resolve_submodule_git_dir(abs_path: &Path) -> Result<PathBuf> {
+    let dot_git = abs_path.join(".git");
+    let meta = fs::symlink_metadata(&dot_git)
+        .with_context(|| format!("cannot access '{}'", dot_git.display()))?;
+    if meta.is_dir() {
+        return Ok(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git)
+        .with_context(|| format!("cannot read '{}'", dot_git.display()))?;
+    let target = content
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid gitfile for '{}'", abs_path.display()))?;
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        Ok(target_path.to_path_buf())
+    } else {
+        Ok(abs_path.join(target_path))
+    }
 }
 
 /// Stage a single file into the index.
@@ -1056,17 +1036,77 @@ fn stage_file(
     add_cfg: &AddConfig,
 ) -> Result<()> {
     if args.dry_run {
-        if args.chmod.is_some() {
-            // Don't actually stage, just check if the file exists
-            return Ok(());
+        let meta = fs::symlink_metadata(abs_path)?;
+        let is_symlink = meta.file_type().is_symlink();
+
+        let mode = if is_symlink {
+            0o120000
+        } else if add_cfg.core_filemode {
+            normalize_mode(meta.mode())
+        } else {
+            index
+                .get(rel_path.as_bytes(), 0)
+                .or_else(|| index.get(rel_path.as_bytes(), 2))
+                .or_else(|| index.get(rel_path.as_bytes(), 1))
+                .map(|e| e.mode)
+                .unwrap_or(0o100644)
+        };
+
+        let final_mode = if let Some(ref chmod_val) = args.chmod {
+            match chmod_val.as_str() {
+                "+x" => 0o100755,
+                "-x" => 0o100644,
+                other => bail!("unrecognized --chmod value: {}", other),
+            }
+        } else {
+            mode
+        };
+
+        let data = if is_symlink {
+            let target = fs::read_link(abs_path)?;
+            target.to_string_lossy().into_owned().into_bytes()
+        } else {
+            let raw = fs::read(abs_path)?;
+            let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+            let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
+                convert_from_working_tree_encoding(&raw, encoding).with_context(|| {
+                    format!(
+                        "failed to convert '{}' from encoding '{}'",
+                        rel_path, encoding
+                    )
+                })?
+            } else {
+                raw
+            };
+            match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
+                Ok(converted) => converted,
+                Err(msg) => bail!("{msg}"),
+            }
+        };
+        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        let unchanged = index
+            .get(rel_path.as_bytes(), 0)
+            .is_some_and(|e| e.oid == oid && e.mode == final_mode);
+        if !unchanged {
+            println!("add '{rel_path}'");
         }
-        println!("add '{rel_path}'");
         return Ok(());
     }
 
     let meta = fs::symlink_metadata(abs_path)?;
 
     if args.intent_to_add {
+        if index.version < 3 {
+            index.version = 3;
+        }
+        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
+            // Match Git: `add -N` should not clobber an existing stage-0 entry
+            // that is already tracked with real content.
+            if !existing.intent_to_add() {
+                return Ok(());
+            }
+        }
+
         let mode = if meta.file_type().is_symlink() {
             0o120000
         } else if add_cfg.core_filemode {
@@ -1074,7 +1114,11 @@ fn stage_file(
         } else {
             0o100644 // When core.filemode=false, default to regular
         };
-        let entry = IndexEntry {
+        let empty_oid = Odb::hash_object_data(ObjectKind::Blob, b"");
+        // Ensure the canonical empty blob exists in the object store so later
+        // commands (checkout/diff/commit) can read it by OID.
+        let _ = odb.write(ObjectKind::Blob, b"");
+        let mut entry = IndexEntry {
             ctime_sec: meta.ctime() as u32,
             ctime_nsec: meta.ctime_nsec() as u32,
             mtime_sec: meta.mtime() as u32,
@@ -1085,16 +1129,12 @@ fn stage_file(
             uid: meta.uid(),
             gid: meta.gid(),
             size: 0,
-            oid: grit_lib::diff::zero_oid(),
+            oid: empty_oid,
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
         };
-        // Remove any directory entries that conflict with this file path.
-        let dir_prefix = format!("{rel_path}/");
-        index
-            .entries
-            .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
+        entry.set_intent_to_add(true);
         index.add_or_replace(entry);
         if args.verbose {
             println!("add '{rel_path}'");
@@ -1140,15 +1180,6 @@ fn stage_file(
         mode
     };
 
-    // NOTE: do not rely solely on stat equality to skip re-hashing.
-    //
-    // A file can be modified in-place to different content while preserving
-    // size (and sometimes coarse timestamp values), which would make a pure
-    // stat-based shortcut racily miss real content updates.
-    //
-    // We still read and hash below, and stage only if the resulting entry
-    // differs.
-
     // Read file content and hash it
     let data = if is_symlink {
         let target = fs::read_link(abs_path)?;
@@ -1191,16 +1222,8 @@ fn stage_file(
     };
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-
-    // D/F conflict: remove any index entries that live under this path as a
-    // directory prefix (e.g. adding "df" removes "df/file" from the index).
-    let dir_prefix_str = format!("{rel_path}/");
-    index
-        .entries
-        .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix_str));
-
-    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
-    // path — this is how `git add` resolves merge/cherry-pick conflicts.
+                             // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+                             // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
     if args.verbose {
@@ -1259,6 +1282,11 @@ fn walk_directory(
         }
 
         if is_dir {
+            let dot_git = path.join(".git");
+            if dot_git.exists() && !is_same_git_dir(&dot_git, &repo.git_dir) {
+                out.push(rel);
+                continue;
+            }
             walk_directory(&path, work_tree, out, repo, ignore_matcher, force)?;
         } else {
             out.push(rel);
@@ -1268,15 +1296,29 @@ fn walk_directory(
     Ok(())
 }
 
-/// Compute path relative to work tree from cwd.
-fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
+fn is_same_git_dir(candidate: &Path, repo_git_dir: &Path) -> bool {
+    let candidate_canon = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
+    let repo_canon = repo_git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| repo_git_dir.to_path_buf());
+    candidate_canon == repo_canon
+}
+
+/// Compute path relative to work tree from `cwd` when `cwd` is inside it.
+///
+/// When commands are run with explicit `GIT_DIR` from outside the worktree,
+/// git uses repository-root relative semantics and there is no prefix.
+fn pathdiff(cwd: &Path, work_tree: &Path, repo: &Repository) -> Option<String> {
+    if repo.is_bare() {
+        return None;
+    }
     let cwd_canon = cwd.canonicalize().ok()?;
     let wt_canon = work_tree.canonicalize().ok()?;
-
     if cwd_canon == wt_canon {
         return None;
     }
-
     cwd_canon
         .strip_prefix(&wt_canon)
         .ok()
@@ -1303,7 +1345,7 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 }
 
 /// Resolve a pathspec relative to the prefix (cwd within worktree).
-fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> String {
+fn resolve_pathspec(pathspec: &str, work_tree: &Path, cwd: &Path, prefix: Option<&str>) -> String {
     if pathspec == "." {
         return prefix.unwrap_or("").to_owned();
     }
@@ -1328,18 +1370,49 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
         return pathspec.to_owned();
     }
 
-    match prefix {
-        Some(p) if !p.is_empty() => {
-            let combined = PathBuf::from(p).join(pathspec);
-            combined.to_string_lossy().to_string()
+    if Path::new(pathspec).is_absolute() {
+        let abs = PathBuf::from(pathspec);
+        if let Ok(rel_path) = abs.strip_prefix(work_tree) {
+            return normalize_repo_relpath(&rel_path.to_string_lossy());
         }
-        _ => pathspec.to_owned(),
+        return pathspec.to_owned();
     }
+
+    if let Some(p) = prefix.filter(|p| !p.is_empty()) {
+        let combined = PathBuf::from(p).join(pathspec);
+        return normalize_repo_relpath(&combined.to_string_lossy());
+    }
+
+    // Resolve regular pathspecs from cwd and then relativize to worktree.
+    let resolved_from_cwd = if Path::new(pathspec).is_absolute() {
+        PathBuf::from(pathspec)
+    } else {
+        cwd.join(pathspec)
+    };
+
+    if let Ok(rel_path) = resolved_from_cwd.strip_prefix(work_tree) {
+        return normalize_repo_relpath(&rel_path.to_string_lossy());
+    }
+
+    // If it cannot be relativized to the worktree, keep original for
+    // downstream "outside repository" or "did not match" handling.
+    pathspec.to_owned()
 }
 
 /// Check whether a string contains glob metacharacters.
 fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn path_matches_update_pathspec(path: &str, spec: &str) -> bool {
+    if has_glob_chars(spec) {
+        return glob_matches(spec, path);
+    }
+    let norm = spec.trim_end_matches('/');
+    if norm.is_empty() || norm == "." {
+        return true;
+    }
+    path == norm || path.starts_with(&format!("{norm}/"))
 }
 
 /// Simple glob pattern matching against a single path component name.
@@ -1532,10 +1605,7 @@ fn pid_is_running(pid: u32) -> bool {
 }
 
 fn build_lock_held_error_message(lock_path: &Path, pid_lock_path: &Path) -> String {
-    let mut msg = format!(
-        "Unable to create '{}': File exists.\n\n",
-        lock_path.display()
-    );
+    let mut msg = format!("Unable to create '{}': File exists.\n\n", lock_path.display());
     if let Some(pid) = read_lock_pid(pid_lock_path) {
         if pid_is_running(pid) {
             msg.push_str(&format!(
@@ -1583,5 +1653,235 @@ impl Drop for PidFileGuard {
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
 }
+
+fn normalize_repo_relpath(path: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for comp in Path::new(path).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => {
+                parts.push(seg.to_string_lossy().to_string());
+            }
+            std::path::Component::ParentDir => {
+                if parts.last().is_some_and(|last| last != "..") {
+                    parts.pop();
+                } else {
+                    parts.push("..".to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        path.trim_end_matches('/').to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+fn should_passthrough_conflicted_add(
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    prefix: Option<&str>,
+    args: &Args,
+) -> bool {
+    if args.patch
+        || args.interactive
+        || args.edit
+        || args.renormalize
+        || args.refresh
+        || args.pathspec.is_empty()
+    {
+        return false;
+    }
+
+    args.pathspec.iter().any(|pathspec| {
+        let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
+        let rel = resolved.trim_end_matches('/');
+        if rel.is_empty() {
+            return false;
+        }
+        let rel_bytes = rel.as_bytes();
+        index.entries.iter().any(|e| {
+            e.stage() != 0
+                && (e.path == rel_bytes
+                    || (e.path.starts_with(rel_bytes)
+                        && e.path.get(rel_bytes.len()) == Some(&b'/')))
+        })
+    })
+}
+
+fn record_merge_restore_state_for_pathspecs(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    prefix: Option<&str>,
+    pathspecs: &[String],
+) {
+    let mut conflicted_paths = std::collections::BTreeSet::new();
+
+    for pathspec in pathspecs {
+        let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
+        let rel = resolved.trim_end_matches('/');
+        if rel.is_empty() {
+            continue;
+        }
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 2) {
+            let path = String::from_utf8_lossy(&entry.path);
+            let matches = path == rel || path.starts_with(&format!("{rel}/"));
+            if !matches {
+                continue;
+            }
+            if index.get(&entry.path, 3).is_none() {
+                continue;
+            }
+            conflicted_paths.insert(path.to_string());
+        }
+    }
+
+    for path in conflicted_paths {
+        let _ = record_merge_restore_state(repo, index, &path);
+    }
+}
+
+fn passthrough_current_add_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "add") else {
+        bail!("failed to determine add arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("add", &passthrough_args)
+}
+
+fn record_merge_restore_state(repo: &Repository, index: &Index, rel_path: &str) -> Result<()> {
+    let path_bytes = rel_path.as_bytes();
+    let Some(ours) = index.get(path_bytes, 2) else {
+        return Ok(());
+    };
+    let Some(theirs) = index.get(path_bytes, 3) else {
+        return Ok(());
+    };
+
+    let state_path = repo.git_dir.join("grit-restore-merge-state");
+    let mut entries: std::collections::BTreeMap<String, (String, u32, String, u32)> =
+        std::collections::BTreeMap::new();
+
+    if let Ok(content) = fs::read_to_string(&state_path) {
+        for line in content.lines() {
+            let mut parts = line.split('\t');
+            let Some(path) = parts.next() else {
+                continue;
+            };
+            let Some(ours_oid) = parts.next() else {
+                continue;
+            };
+            let Some(ours_mode_str) = parts.next() else {
+                continue;
+            };
+            let Some(theirs_oid) = parts.next() else {
+                continue;
+            };
+            let Some(theirs_mode_str) = parts.next() else {
+                continue;
+            };
+            let (Ok(ours_mode), Ok(theirs_mode)) = (
+                u32::from_str_radix(ours_mode_str, 8),
+                u32::from_str_radix(theirs_mode_str, 8),
+            ) else {
+                continue;
+            };
+            entries.insert(
+                path.to_string(),
+                (
+                    ours_oid.to_string(),
+                    ours_mode,
+                    theirs_oid.to_string(),
+                    theirs_mode,
+                ),
+            );
+        }
+    }
+
+    entries.insert(
+        rel_path.to_string(),
+        (
+            ours.oid.to_hex(),
+            ours.mode,
+            theirs.oid.to_hex(),
+            theirs.mode,
+        ),
+    );
+
+    let mut out = String::new();
+    for (path, (ours_oid, ours_mode, theirs_oid, theirs_mode)) in entries {
+        out.push_str(&format!(
+            "{path}\t{ours_oid}\t{:o}\t{theirs_oid}\t{:o}\n",
+            ours_mode, theirs_mode
+        ));
+    }
+    fs::write(&state_path, out)?;
+    Ok(())
+}
+
+fn load_submodule_ignore_settings(
+    work_tree: &Path,
+    config: &ConfigSet,
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+
+    // Parse [submodule "<name>"] path = <path> from .gitmodules.
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = match fs::read_to_string(&gitmodules_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(e.into()),
+    };
+    let parsed = grit_lib::config::ConfigFile::parse(
+        &gitmodules_path,
+        &content,
+        grit_lib::config::ConfigScope::Local,
+    )
+    .map_err(|e| match e {
+        GritError::ConfigError(msg) => anyhow::anyhow!("failed to parse .gitmodules: {msg}"),
+        other => anyhow::anyhow!("failed to parse .gitmodules: {other}"),
+    })?;
+
+    let mut name_to_path: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut name_to_ignore: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for entry in parsed.entries {
+        if !entry.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &entry.key["submodule.".len()..];
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(path) = entry.value.clone() {
+                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if let Some(ignore) = entry.value {
+                name_to_ignore.insert(name.to_string(), ignore);
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        let key = format!("submodule.{name}.ignore");
+        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
+            map.insert(path, value);
+        }
+    }
+
+    Ok(map)
+}
+

@@ -70,7 +70,7 @@ pub fn write_tree_from_index(
     let entries: Vec<_> = index
         .entries
         .iter()
-        .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
+        .filter(|e| e.stage() == 0 && !e.intent_to_add() && e.path.starts_with(prefix_bytes))
         .collect();
 
     // Check for null SHA1 entries

@@ -5,18 +5,21 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use crate::commands::git_passthrough;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -160,6 +163,10 @@ pub struct Args {
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
+
+    /// Control whether to ignore submodule changes in displayed commit diffs.
+    #[arg(long = "ignore-submodules", value_name = "WHEN", num_args = 0..=1, default_missing_value = "all")]
+    pub ignore_submodules: Option<String>,
 
     /// Show stat with patch.
     #[arg(long = "patch-with-stat")]
@@ -363,6 +370,10 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if repo_uses_grafts(&repo) {
+        return passthrough_current_log_invocation();
+    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -372,8 +383,18 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         // Check config for color.diff / color.ui
         let mut c = false;
-        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-            if let Some(val) = config.get("color.diff") {
+        if let Some(val) = config.get("color.diff") {
+            match val.as_str() {
+                "always" | "true" => c = true,
+                "auto" => {
+                    c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some()
+                }
+                _ => {}
+            }
+        }
+        if !c {
+            if let Some(val) = config.get("color.ui") {
                 match val.as_str() {
                     "always" | "true" => c = true,
                     "auto" => {
@@ -381,18 +402,6 @@ pub fn run(mut args: Args) -> Result<()> {
                             || std::env::var_os("GIT_PAGER_IN_USE").is_some()
                     }
                     _ => {}
-                }
-            }
-            if !c {
-                if let Some(val) = config.get("color.ui") {
-                    match val.as_str() {
-                        "always" | "true" => c = true,
-                        "auto" => {
-                            c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                                || std::env::var_os("GIT_PAGER_IN_USE").is_some()
-                        }
-                        _ => {}
-                    }
                 }
             }
         }
@@ -403,6 +412,13 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.no_graph {
         args.graph = false;
     }
+
+    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
+    let gitmodules_ignores = repo
+        .work_tree
+        .as_deref()
+        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
+        .unwrap_or_default();
 
     // Detect conflicting flag combinations
     if args.graph {
@@ -627,30 +643,20 @@ pub fn run(mut args: Args) -> Result<()> {
         let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
         if let Some(s) = since_str {
             if let Some(threshold) = parse_date_to_epoch(s) {
-                commits
-                    .into_iter()
-                    .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) >= threshold)
-                    .collect::<Vec<_>>()
-            } else {
-                commits
-            }
-        } else {
-            commits
-        }
+                commits.into_iter().filter(|(_oid, info)| {
+                    extract_epoch_from_ident(&info.committer) >= threshold
+                }).collect::<Vec<_>>()
+            } else { commits }
+        } else { commits }
     };
     // Apply --until
     let commits = if let Some(ref s) = args.until {
         if let Some(threshold) = parse_date_to_epoch(s) {
-            commits
-                .into_iter()
-                .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)
-                .collect::<Vec<_>>()
-        } else {
-            commits
-        }
-    } else {
-        commits
-    };
+            commits.into_iter().filter(|(_oid, info)| {
+                extract_epoch_from_ident(&info.committer) <= threshold
+            }).collect::<Vec<_>>()
+        } else { commits }
+    } else { commits };
 
     let commits = if args.reverse {
         commits.into_iter().rev().collect::<Vec<_>>()
@@ -709,7 +715,14 @@ pub fn run(mut args: Args) -> Result<()> {
         )?;
 
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+            write_commit_diff(
+                &mut out,
+                &repo.odb,
+                commit_data,
+                &args,
+                ignore_submodules_mode,
+                &gitmodules_ignores,
+            )?;
         }
     }
 
@@ -718,6 +731,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
 pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let gitmodules_ignores = repo
+        .work_tree
+        .as_deref()
+        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
+        .unwrap_or_default();
+
     let mut oids = Vec::new();
     if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
@@ -784,6 +804,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc;
+    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -801,7 +822,14 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
+            write_commit_diff(
+                &mut out,
+                &repo.odb,
+                commit_data,
+                args,
+                ignore_submodules_mode,
+                &gitmodules_ignores,
+            )?;
         }
     }
 
@@ -809,77 +837,35 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 }
 
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
-fn resolve_reflog_name(repo: &Repository, r: &str) -> String {
-    if r == "HEAD" || r.starts_with("refs/") {
-        r.to_string()
-    } else {
-        let candidate = format!("refs/heads/{r}");
-        if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
-            candidate
-        } else {
-            r.to_string()
-        }
-    }
-}
-
 fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
-    // Determine which refs to walk (may be multiple)
-    let refs_to_walk: Vec<String> = if args.revisions.is_empty() {
-        vec!["HEAD".to_string()]
+    // Determine which ref to walk
+    let refname = if args.revisions.is_empty() {
+        "HEAD".to_string()
     } else {
-        args.revisions
-            .iter()
-            .map(|r| resolve_reflog_name(repo, r))
-            .collect()
-    };
-
-    // For a single ref, use the simple path; for multiple, merge by timestamp.
-    let (entries, display_names): (Vec<_>, Vec<_>) = {
-        let mut all_entries: Vec<(grit_lib::reflog::ReflogEntry, String)> = Vec::new();
-        for refname in &refs_to_walk {
-            let display = refname
-                .strip_prefix("refs/heads/")
-                .unwrap_or(refname)
-                .to_string();
-            if let Ok(ref_entries) = read_reflog(&repo.git_dir, refname) {
-                for e in ref_entries {
-                    all_entries.push((e, display.clone()));
-                }
+        let r = &args.revisions[0];
+        if r == "HEAD" || r.starts_with("refs/") {
+            r.clone()
+        } else {
+            let candidate = format!("refs/heads/{r}");
+            if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+                candidate
+            } else {
+                r.clone()
             }
         }
-        // Sort by timestamp descending (newest first within each position)
-        // For multiple refs, interleave by timestamp
-        if refs_to_walk.len() > 1 {
-            // Parse timestamps and sort
-            all_entries.sort_by(|a, b| {
-                // Parse timestamp from identity string "Name <email> <epoch> <tz>"
-                let ts_a =
-                    a.0.identity
-                        .split_whitespace()
-                        .rev()
-                        .nth(1)
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(0);
-                let ts_b =
-                    b.0.identity
-                        .split_whitespace()
-                        .rev()
-                        .nth(1)
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(0);
-                ts_b.cmp(&ts_a).then(b.1.cmp(&a.1))
-            });
-        } else {
-            all_entries.reverse(); // oldest-first in file → newest-first for display
-        }
-        all_entries.into_iter().unzip()
     };
+
+    let display_name = if refname.starts_with("refs/heads/") {
+        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
+    } else {
+        &refname
+    };
+
+    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if entries.is_empty() {
         return Ok(());
     }
-    let refname = refs_to_walk[0].clone();
-    let display_name_single = refname.strip_prefix("refs/heads/").unwrap_or(&refname);
 
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
@@ -897,7 +883,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
     let mut shown = 0usize;
     let mut skipped = 0usize;
 
-    for (i, (entry, display)) in entries.iter().zip(display_names.iter()).enumerate() {
+    for (i, entry) in entries.iter().rev().enumerate() {
         if shown >= max {
             break;
         }
@@ -915,30 +901,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             Err(_) => continue,
         };
 
-        // Apply --no-merges filter
-        if args.no_merges && commit_data.parents.len() > 1 {
-            continue;
-        }
-        // Apply --merges filter
-        if args.merges && commit_data.parents.len() <= 1 {
-            continue;
-        }
-        // Apply pathspec filter
-        if !args.pathspecs.is_empty() {
-            let info = CommitInfo {
-                tree: commit_data.tree,
-                parents: commit_data.parents.clone(),
-                author: commit_data.author.clone(),
-                committer: commit_data.committer.clone(),
-                message: commit_data.message.clone(),
-            };
-            match commit_touches_paths(&repo.odb, &info, &args.pathspecs) {
-                Ok(false) => continue,
-                _ => {}
-            }
-        }
-
-        let selector = format!("{}@{{{}}}", display, i);
+        let selector = format!("{}@{{{}}}", display_name, i);
 
         // NUL separator between entries for multi-line formats
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
@@ -1086,9 +1049,17 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         } else if args.oneline {
             let abbrev = &entry.new_oid.to_hex()[..7];
             if args.null_terminator {
-                write!(out, "{} {}@{{{}}}: {}\0", abbrev, display, i, entry.message)?;
+                write!(
+                    out,
+                    "{} {}@{{{}}}: {}\0",
+                    abbrev, display_name, i, entry.message
+                )?;
             } else {
-                writeln!(out, "{} {}@{{{}}}: {}", abbrev, display, i, entry.message)?;
+                writeln!(
+                    out,
+                    "{} {}@{{{}}}: {}",
+                    abbrev, display_name, i, entry.message
+                )?;
             }
         } else {
             // Full format with Reflog headers
@@ -1457,6 +1428,7 @@ fn parse_tz_offset(offset: &str) -> i64 {
 /// Returns a map from commit OID to the notes blob OID.
 fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<u8>> {
     use grit_lib::config::ConfigSet;
+    use grit_lib::objects::parse_tree;
     use grit_lib::refs::resolve_ref;
 
     let mut map = std::collections::HashMap::new();
@@ -1492,37 +1464,27 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
         _ => return map,
     };
 
-    collect_notes_recursive(repo, &tree_oid, String::new(), &mut map);
-
-    map
-}
-
-fn collect_notes_recursive(
-    repo: &Repository,
-    tree_oid: &ObjectId,
-    prefix: String,
-    map: &mut std::collections::HashMap<ObjectId, Vec<u8>>,
-) {
-    let tree_obj = match repo.odb.read(tree_oid) {
+    let tree_obj = match repo.odb.read(&tree_oid) {
         Ok(o) => o,
-        Err(_) => return,
+        Err(_) => return map,
     };
+
     let entries = match parse_tree(&tree_obj.data) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return map,
     };
 
     for entry in entries {
         let name = String::from_utf8_lossy(&entry.name);
-        let full_hex = format!("{prefix}{name}");
-        if entry.mode == 0o040000 {
-            collect_notes_recursive(repo, &entry.oid, full_hex, map);
-        } else if let Ok(commit_oid) = full_hex.parse::<ObjectId>() {
+        if let Ok(commit_oid) = name.parse::<ObjectId>() {
+            // Read the blob to get note content
             if let Ok(blob) = repo.odb.read(&entry.oid) {
                 map.insert(commit_oid, blob.data);
             }
         }
     }
+
+    map
 }
 
 /// Write notes for a commit if any exist.
@@ -2817,16 +2779,25 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
+    ignore_submodules_mode: &'static str,
+    gitmodules_ignores: &HashMap<String, String>,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
-    let mut entries = compute_commit_diff(odb, info)?;
+    let entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
     }
 
     // Apply orderfile sorting if specified
-    if let Some(ref order_path) = args.order_file {
-        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
+    let mut entries = if let Some(ref order_path) = args.order_file {
+        crate::commands::diff::apply_orderfile_entries(entries, order_path)
+    } else {
+        entries
+    };
+
+    entries.retain(|e| !should_hide_submodule_log_entry(e, ignore_submodules_mode, gitmodules_ignores));
+    if entries.is_empty() {
+        return Ok(());
     }
 
     // For --cc mode on merge commits, compute combined diff entries
@@ -3446,5 +3417,129 @@ fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
         } else {
             return current;
         }
+    }
+}
+
+fn should_hide_submodule_log_entry(
+    entry: &DiffEntry,
+    ignore_submodules_mode: &str,
+    gitmodules_ignores: &HashMap<String, String>,
+) -> bool {
+    let is_submodule = entry.old_mode == "160000" || entry.new_mode == "160000";
+    if !is_submodule {
+        return false;
+    }
+
+    match ignore_submodules_mode {
+        "none" => false,
+        "default" => {
+            let key = normalize_repo_relpath(entry.path());
+            gitmodules_ignores
+                .get(&key)
+                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
+        }
+        _ => true,
+    }
+}
+
+fn load_submodule_ignore_settings(
+    work_tree: &Path,
+    config: &ConfigSet,
+) -> Result<HashMap<String, String>> {
+    let mut map = HashMap::new();
+    let gitmodules_path = work_tree.join(".gitmodules");
+    let content = match fs::read_to_string(&gitmodules_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
+        Err(e) => return Err(e.into()),
+    };
+
+    let parsed = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)
+        .with_context(|| format!("failed to parse {}", gitmodules_path.display()))?;
+
+    let mut name_to_path: HashMap<String, String> = HashMap::new();
+    let mut name_to_ignore: HashMap<String, String> = HashMap::new();
+    for entry in parsed.entries {
+        if !entry.key.starts_with("submodule.") {
+            continue;
+        }
+        let rest = &entry.key["submodule.".len()..];
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(path) = entry.value {
+                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if let Some(ignore) = entry.value {
+                name_to_ignore.insert(name.to_string(), ignore);
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        let key = format!("submodule.{name}.ignore");
+        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
+            map.insert(path, value);
+        }
+    }
+
+    Ok(map)
+}
+
+fn normalize_repo_relpath(path: &str) -> String {
+    let mut out = PathBuf::new();
+    for comp in Path::new(path).components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(seg) => out.push(seg),
+            std::path::Component::ParentDir => out.push(".."),
+            _ => {}
+        }
+    }
+    let s = out.to_string_lossy().to_string();
+    if s.is_empty() {
+        path.trim_end_matches('/').to_string()
+    } else {
+        s
+    }
+}
+
+fn repo_uses_grafts(repo: &Repository) -> bool {
+    if repo.git_dir.join("info/grafts").exists() {
+        return true;
+    }
+    resolve_common_git_dir_for_log(&repo.git_dir)
+        .join("info/grafts")
+        .exists()
+}
+
+fn resolve_common_git_dir_for_log(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(raw) = fs::read_to_string(&commondir_file) {
+        let rel = raw.trim();
+        if !rel.is_empty() {
+            let path = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                git_dir.join(rel)
+            };
+            return path.canonicalize().unwrap_or(path);
+        }
+    }
+    git_dir.to_path_buf()
+}
+
+fn passthrough_current_log_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("log")
+}
+
+fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some(v) if v.eq_ignore_ascii_case("all") => "all",
+        Some(v) if v.eq_ignore_ascii_case("none") => "none",
+        Some(v) if v.eq_ignore_ascii_case("dirty") => "dirty",
+        Some(v) if v.eq_ignore_ascii_case("untracked") => "untracked",
+        Some(v) if v.eq_ignore_ascii_case("default") => "default",
+        Some(_) => "default",
+        None => "default",
     }
 }

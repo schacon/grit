@@ -177,6 +177,7 @@ pub fn run(args: Args) -> Result<()> {
         show_forced_updates: false,
         negotiate_only: false,
         update_head_ok: false,
+        update_refs: false,
     };
     super::fetch::run(fetch_args)?;
 
@@ -211,10 +212,7 @@ fn do_merge_or_rebase(
             fork_point: false,
             no_fork_point: false,
             verbose: false,
-            rebase_merges: false,
-            root: false,
-            strategy_option: Vec::new(),
-            empty: None,
+            update_refs: false,
         };
         super::rebase::run(rebase_args)
     } else {
@@ -267,7 +265,6 @@ fn do_merge_or_rebase(
             autostash: false,
             cleanup: None,
             file: None,
-            allow_unrelated_histories: false,
         };
         super::merge::run(merge_args)
     }

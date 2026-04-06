@@ -5,10 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::diff::{
-    count_changes, detect_copies, detect_renames, format_stat_line, stat_matches, unified_diff,
-    zero_oid, DiffEntry, DiffStatus,
-};
+use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
 };
@@ -22,6 +19,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+// ── Public clap interface ────────────────────────────────────────────
+
 /// Arguments for `grit diff-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -32,125 +31,56 @@ pub struct Args {
 
 /// Run `grit diff-files`.
 pub fn run(args: Args) -> Result<()> {
-    let mut options = parse_options(&args.args)?;
+    let options = parse_options(&args.args)?;
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
     };
 
-    // Resolve pathspecs relative to cwd → repo-root-relative paths.
-    // e.g. "." run from "dir/" becomes "dir", so it filters to that subtree.
-    if !options.pathspecs.is_empty() {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        options.pathspecs = options
-            .pathspecs
-            .iter()
-            .map(|spec| {
-                // Resolve spec relative to cwd, then make it relative to work_tree.
-                let abs = if std::path::Path::new(spec).is_absolute() {
-                    std::path::PathBuf::from(spec)
-                } else {
-                    cwd.join(spec)
-                };
-                // Canonicalize to resolve ".", ".." etc.
-                let abs = abs.canonicalize().unwrap_or_else(|_| cwd.join(spec));
-                abs.strip_prefix(&work_tree)
-                    .map(|rel| rel.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| spec.clone())
-            })
-            .collect();
-    }
-
     let index_path = effective_index_path(&repo)?;
     let index = Index::load(&index_path).context("loading index")?;
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
-    let special_diff_entries =
-        (options.reverse || options.find_copies || options.find_renames.is_some())
-            .then(|| build_diff_entries(&repo, &index, &work_tree, &changes, &options))
-            .transpose()?;
 
     if !options.quiet && !options.suppress_diff {
-        if let Some(diff_entries) = &special_diff_entries {
-            match options.format {
-                OutputFormat::Raw => {
-                    for entry in diff_entries {
-                        println!("{}", render_raw_diff_entry(entry, &repo, options.abbrev)?);
-                    }
-                }
-                OutputFormat::NameOnly => {
-                    for entry in diff_entries {
-                        println!("{}", entry.path());
-                    }
-                }
-                OutputFormat::NameStatus => {
-                    for entry in diff_entries {
-                        match (entry.status, entry.score) {
-                            (DiffStatus::Renamed, Some(score)) => {
-                                println!(
-                                    "R{score:03}\t{}\t{}",
-                                    entry.old_path.as_deref().unwrap_or(""),
-                                    entry.new_path.as_deref().unwrap_or("")
-                                );
-                            }
-                            (DiffStatus::Copied, Some(score)) => {
-                                println!(
-                                    "C{score:03}\t{}\t{}",
-                                    entry.old_path.as_deref().unwrap_or(""),
-                                    entry.new_path.as_deref().unwrap_or("")
-                                );
-                            }
-                            _ => {
-                                println!("{}\t{}", entry.status.letter(), entry.path());
-                            }
-                        }
-                    }
-                }
-                OutputFormat::Patch | OutputFormat::Stat | OutputFormat::NumStat => {
-                    bail!("unsupported output format with reverse/copy detection");
+        match options.format {
+            OutputFormat::Raw => {
+                for change in &changes {
+                    println!("{}", render_raw(change, &repo, options.abbrev)?);
                 }
             }
-        } else {
-            match options.format {
-                OutputFormat::Raw => {
-                    for change in &changes {
-                        println!("{}", render_raw(change, &repo, options.abbrev)?);
-                    }
+            OutputFormat::NameOnly => {
+                for change in &changes {
+                    println!("{}", change.path);
                 }
-                OutputFormat::NameOnly => {
-                    for change in &changes {
-                        println!("{}", change.path);
-                    }
+            }
+            OutputFormat::NameStatus => {
+                for change in &changes {
+                    println!("{}\t{}", change.status, change.path);
                 }
-                OutputFormat::NameStatus => {
-                    for change in &changes {
-                        println!("{}\t{}", change.status, change.path);
-                    }
+            }
+            OutputFormat::Patch => {
+                for change in &changes {
+                    print_patch(change, &repo, &work_tree)?;
                 }
-                OutputFormat::Patch => {
-                    for change in &changes {
-                        print_patch(change, &repo, &work_tree)?;
-                    }
-                }
-                OutputFormat::Stat => {
-                    print_stat(&changes, &repo, &work_tree)?;
-                }
-                OutputFormat::NumStat => {
-                    print_numstat(&changes, &repo, &work_tree)?;
-                }
+            }
+            OutputFormat::Stat => {
+                print_stat(&changes, &repo, &work_tree)?;
+            }
+            OutputFormat::NumStat => {
+                print_numstat(&changes, &repo, &work_tree)?;
             }
         }
     }
 
-    let has_changes = special_diff_entries
-        .as_ref()
-        .map_or(!changes.is_empty(), |entries| !entries.is_empty());
-    if (options.exit_code || options.quiet) && has_changes {
+    if (options.exit_code || options.quiet) && !changes.is_empty() {
         std::process::exit(1);
     }
     Ok(())
 }
+
+// ── Internal types ───────────────────────────────────────────────────
 
 /// Output format for `diff-files`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,14 +116,8 @@ struct Options {
     format: OutputFormat,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
-    /// Reverse the diff direction.
-    reverse: bool,
-    /// Rename similarity threshold used for copy/rename detection.
-    find_renames: Option<u32>,
-    /// Enable copy detection.
-    find_copies: bool,
-    /// Consider unmodified source files during copy detection.
-    find_copies_harder: bool,
+    /// Ignore submodule (gitlink) entries.
+    ignore_submodules: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -209,7 +133,11 @@ struct Change {
     new_mode: u32,
     /// Index-side OID.
     old_oid: ObjectId,
+    /// Working-tree-side OID (or zero for deleted/unknown).
+    new_oid: ObjectId,
 }
+
+// ── Option parsing ───────────────────────────────────────────────────
 
 fn parse_options(argv: &[String]) -> Result<Options> {
     let mut pathspecs = Vec::new();
@@ -219,10 +147,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
-    let mut reverse = false;
-    let mut find_renames: Option<u32> = None;
-    let mut find_copies = false;
-    let mut find_copies_harder = false;
+    let mut ignore_submodules = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -261,7 +186,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 }
                 "--exit-code" => exit_code = true,
                 "-q" | "--quiet" => quiet = true,
-                "-R" => reverse = true,
                 "-s" | "--no-patch" => suppress_diff = true,
                 "--patch-with-raw" => {
                     format = OutputFormat::Patch;
@@ -276,56 +200,12 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-2" => stage = 2,
                 "-3" => stage = 3,
                 "--abbrev" => abbrev = Some(7),
-                "-C" | "--find-copies" => {
-                    find_copies = true;
-                    if find_renames.is_none() {
-                        find_renames = Some(50);
-                    }
-                }
-                "--find-copies-harder" => {
-                    find_copies_harder = true;
-                }
-                "-M" | "--find-renames" => {
-                    if find_renames.is_none() {
-                        find_renames = Some(50);
-                    }
-                }
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
                     let parsed = value
                         .parse::<usize>()
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
-                }
-                _ if arg.starts_with("-C") && arg.len() > 2 => {
-                    let value = &arg[2..];
-                    let parsed = value
-                        .parse::<u32>()
-                        .with_context(|| format!("invalid -C value: `{value}`"))?;
-                    find_copies = true;
-                    find_renames = Some(parsed);
-                }
-                _ if arg.starts_with("-M") && arg.len() > 2 => {
-                    let value = &arg[2..];
-                    let parsed = value
-                        .parse::<u32>()
-                        .with_context(|| format!("invalid -M value: `{value}`"))?;
-                    find_renames = Some(parsed);
-                }
-                _ if arg.starts_with("--find-copies=") => {
-                    let value = arg.trim_start_matches("--find-copies=");
-                    let parsed = value
-                        .parse::<u32>()
-                        .with_context(|| format!("invalid --find-copies value: `{value}`"))?;
-                    find_copies = true;
-                    find_renames = Some(parsed);
-                }
-                _ if arg.starts_with("--find-renames=") => {
-                    let value = arg.trim_start_matches("--find-renames=");
-                    let parsed = value
-                        .parse::<u32>()
-                        .with_context(|| format!("invalid --find-renames value: `{value}`"))?;
-                    find_renames = Some(parsed);
                 }
                 // Silently accept diff options we don't fully implement yet
                 "-w"
@@ -339,7 +219,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--no-ext-diff"
                 | "--no-prefix"
                 | "--no-renames"
-                | "--no-abbrev" => {}
+                | "--no-abbrev"
+                | "--ignore-submodules" => {
+                    ignore_submodules = true;
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    ignore_submodules = true;
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("-G")
                     || arg.starts_with("-S")
@@ -363,12 +249,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         abbrev,
         format,
         suppress_diff,
-        reverse,
-        find_renames,
-        find_copies,
-        find_copies_harder,
+        ignore_submodules,
     })
 }
+
+// ── Core diff logic ──────────────────────────────────────────────────
 
 /// Build the list of changes between the index and the working tree.
 fn collect_changes(
@@ -409,21 +294,88 @@ fn collect_changes(
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
+            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                continue;
+            }
+            if idx_entry.intent_to_add() {
+                let abs = work_tree.join(path);
+                if let Some((wt_mode, _wt_oid)) = read_worktree_info(repo, &abs)? {
+                    changes.insert(
+                        path.clone(),
+                        Change {
+                            path: path.clone(),
+                            status: 'A',
+                            old_mode: 0,
+                            new_mode: wt_mode,
+                            old_oid: zero_oid(),
+                            new_oid: _wt_oid,
+                        },
+                    );
+                }
+                continue;
+            }
+
+            if has_symlink_ancestor(work_tree, Path::new(path)) {
+                changes.insert(
+                    path.clone(),
+                    Change {
+                        path: path.clone(),
+                        status: 'D',
+                        old_mode: canonicalize_mode(*idx_mode),
+                        new_mode: 0,
+                        old_oid: *idx_oid,
+                        new_oid: zero_oid(),
+                    },
+                );
+                continue;
+            }
+
             let abs = work_tree.join(path);
             match read_worktree_info_fast(repo, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
+                WorktreeStatus::Smudged(wt_mode) => {
+                    if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                        continue;
+                    }
+                    let idx_canonical = canonicalize_mode(*idx_mode);
+                    let status = if wt_mode == 0 {
+                        'D'
+                    } else if wt_mode != idx_canonical {
+                        'T'
+                    } else {
+                        'M'
+                    };
+                    changes.insert(
+                        path.clone(),
+                        Change {
+                            path: path.clone(),
+                            status,
+                            old_mode: idx_canonical,
+                            new_mode: wt_mode,
+                            old_oid: *idx_oid,
+                            new_oid: zero_oid(),
+                        },
+                    );
+                }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
-                    {
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
+                        let status = if wt_mode == 0 {
+                            'D'
+                        } else if wt_mode != idx_canonical {
+                            'T'
+                        } else {
+                            'M'
+                        };
                         changes.insert(
                             path.clone(),
                             Change {
                                 path: path.clone(),
-                                status: 'M',
+                                status,
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
+                                new_oid: wt_oid,
                             },
                         );
                     }
@@ -438,6 +390,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -460,12 +413,16 @@ fn collect_changes(
                     old_mode: 0,
                     new_mode: 0,
                     old_oid: zero_oid(),
+                    new_oid: zero_oid(),
                 },
             );
         }
     } else {
         // Stage-specific mode: compare requested stage entries against worktree.
         for (path, (idx_mode, idx_oid)) in &staged {
+            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                continue;
+            }
             let abs = work_tree.join(path);
             match read_worktree_info(repo, &abs)? {
                 Some((wt_mode, _wt_oid)) => {
@@ -477,6 +434,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: _wt_oid,
                         },
                     );
                 }
@@ -489,6 +447,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -499,21 +458,14 @@ fn collect_changes(
     Ok(changes.into_values().collect())
 }
 
-/// `read-tree`-style entries carry zeroed stat data and are considered dirty
-/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
-fn is_stat_smudged(entry: &IndexEntry) -> bool {
-    entry.ctime_sec == 0
-        && entry.ctime_nsec == 0
-        && entry.mtime_sec == 0
-        && entry.mtime_nsec == 0
-        && entry.dev == 0
-        && entry.ino == 0
-}
+// ── Worktree probing ─────────────────────────────────────────────────
 
 /// Result of probing a working-tree file against its index entry.
 enum WorktreeStatus {
     /// File is unchanged according to stat info — no need to hash.
     Unchanged,
+    /// Index entry has zeroed stat info and should appear modified.
+    Smudged(u32),
     /// File exists and may be modified (mode, oid from full hash).
     Modified(u32, ObjectId),
     /// File is missing from the working tree.
@@ -535,6 +487,45 @@ fn read_worktree_info_fast(
     };
 
     let _ = repo;
+    let idx_mode = canonicalize_mode(index_entry.mode);
+
+    // Gitlink entries need special handling:
+    // - An existing directory without a nested `.git` is an uninitialized
+    //   submodule and is considered clean.
+    // - A populated submodule compares by checked out commit.
+    if idx_mode == MODE_GITLINK && meta.file_type().is_dir() {
+        if !abs_path.join(".git").exists() {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        let oid = read_submodule_head_oid(abs_path)?;
+        if oid == index_entry.oid {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        return Ok(WorktreeStatus::Modified(MODE_GITLINK, oid));
+    }
+
+    // Entries created by read-tree start with zeroed stat information.
+    // Until an explicit refresh (e.g. checkout-index -u / update-index
+    // --refresh), Git reports them as modified in diff-files.
+    if has_uninitialized_stat(index_entry) {
+        if meta.file_type().is_symlink() {
+            return Ok(WorktreeStatus::Smudged(MODE_SYMLINK));
+        }
+        if meta.file_type().is_file() {
+            let wt_mode = if meta.permissions().mode() & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            };
+            return Ok(WorktreeStatus::Smudged(wt_mode));
+        }
+        if meta.file_type().is_dir() {
+            if abs_path.join(".git").exists() {
+                return Ok(WorktreeStatus::Smudged(MODE_GITLINK));
+            }
+            return Ok(WorktreeStatus::Smudged(0));
+        }
+    }
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
@@ -559,6 +550,14 @@ fn read_worktree_info_fast(
         return Ok(WorktreeStatus::Modified(MODE_SYMLINK, oid));
     }
 
+    if meta.file_type().is_dir() {
+        if abs_path.join(".git").exists() {
+            let oid = read_submodule_head_oid(abs_path)?;
+            return Ok(WorktreeStatus::Modified(MODE_GITLINK, oid));
+        }
+        return Ok(WorktreeStatus::Modified(0, zero_oid()));
+    }
+
     if meta.file_type().is_file() {
         let mode = if meta.permissions().mode() & 0o111 != 0 {
             MODE_EXECUTABLE
@@ -571,6 +570,68 @@ fn read_worktree_info_fast(
     }
 
     Ok(WorktreeStatus::Missing)
+}
+
+fn read_submodule_head_oid(submodule_dir: &Path) -> Result<ObjectId> {
+    let dot_git = submodule_dir.join(".git");
+    let git_dir = resolve_gitdir(&dot_git)?;
+    let head = fs::read_to_string(git_dir.join("HEAD"))
+        .with_context(|| format!("cannot read {}", git_dir.join("HEAD").display()))?;
+    let head = head.trim();
+    if let Some(refname) = head.strip_prefix("ref: ") {
+        let resolved = fs::read_to_string(git_dir.join(refname))
+            .with_context(|| format!("cannot read {}", git_dir.join(refname).display()))?;
+        return resolved.trim().parse().context("invalid submodule ref oid");
+    }
+    head.parse().context("invalid submodule HEAD oid")
+}
+
+fn resolve_gitdir(dot_git: &Path) -> Result<PathBuf> {
+    let meta = fs::symlink_metadata(dot_git)?;
+    if meta.is_dir() {
+        return Ok(dot_git.to_path_buf());
+    }
+    let content = fs::read_to_string(dot_git)?;
+    let content = content.trim();
+    let target = content
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        Ok(target_path.to_path_buf())
+    } else {
+        Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
+    }
+}
+
+fn has_symlink_ancestor(work_tree: &Path, rel_path: &Path) -> bool {
+    let mut current = PathBuf::new();
+    let components: Vec<_> = rel_path.components().collect();
+    if components.len() <= 1 {
+        return false;
+    }
+    for component in components.iter().take(components.len() - 1) {
+        current.push(component);
+        let abs = work_tree.join(&current);
+        if let Ok(meta) = fs::symlink_metadata(&abs) {
+            if meta.file_type().is_symlink() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn has_uninitialized_stat(entry: &IndexEntry) -> bool {
+    entry.ctime_sec == 0
+        && entry.ctime_nsec == 0
+        && entry.mtime_sec == 0
+        && entry.mtime_nsec == 0
+        && entry.dev == 0
+        && entry.ino == 0
+        && entry.uid == 0
+        && entry.gid == 0
+        && entry.size == 0
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.
@@ -606,6 +667,8 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
     Ok(None)
 }
 
+// ── Output renderers ─────────────────────────────────────────────────
+
 /// Format a change in Git's raw diff format.
 ///
 /// For `diff-files` the working-tree OID is always shown as zeros —
@@ -615,9 +678,14 @@ fn render_raw(change: &Change, repo: &Repository, abbrev: Option<usize>) -> Resu
     let old_oid = format_oid(change.old_oid, repo, abbrev, width)?;
     // Working-tree OID is always zeros in diff-files output.
     let new_oid = "0".repeat(width);
+    let status = if change.status == 'M' && change.old_mode != change.new_mode {
+        'T'
+    } else {
+        change.status
+    };
     Ok(format!(
         ":{:06o} {:06o} {} {} {}\t{}",
-        change.old_mode, change.new_mode, old_oid, new_oid, change.status, change.path
+        change.old_mode, change.new_mode, old_oid, new_oid, status, change.path
     ))
 }
 
@@ -638,6 +706,11 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
 
     // Build mode header lines
     let mut header = format!("diff --git a/{path} b/{path}");
+    let abbr = |oid: ObjectId| -> String {
+        let hex = oid.to_hex();
+        hex[..7.min(hex.len())].to_owned()
+    };
+
     if change.status == 'D' {
         header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
     } else if change.status == 'A' {
@@ -648,8 +721,28 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
             change.old_mode, change.new_mode
         ));
     }
+    if change.status == 'A' {
+        header.push_str(&format!("\nindex 0000000..{}", abbr(change.new_oid)));
+    } else if change.status == 'D' {
+        header.push_str(&format!("\nindex {}..0000000", abbr(change.old_oid)));
+    } else if change.old_mode == change.new_mode {
+        header.push_str(&format!(
+            "\nindex {}..{} {:06o}",
+            abbr(change.old_oid),
+            abbr(change.new_oid),
+            change.old_mode
+        ));
+    } else {
+        header.push_str(&format!(
+            "\nindex {}..{}",
+            abbr(change.old_oid),
+            abbr(change.new_oid)
+        ));
+    }
 
-    if old_content == new_content && change.old_mode != change.new_mode {
+    if old_content == new_content
+        && (change.status == 'A' || change.status == 'D' || change.old_mode != change.new_mode)
+    {
         // Mode-only change, no content diff needed
         println!("{header}");
     } else if old_content != new_content {
@@ -744,6 +837,8 @@ fn load_patch_contents(
     Ok((old_content, new_content))
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────
+
 /// Format an OID, optionally abbreviated.
 fn format_oid(
     oid: ObjectId,
@@ -803,204 +898,4 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
-}
-
-fn collect_stage0_entries(
-    index: &Index,
-    pathspecs: &[String],
-) -> BTreeMap<String, (u32, ObjectId)> {
-    let mut entries = BTreeMap::new();
-    for entry in &index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let Ok(path) = String::from_utf8(entry.path.clone()) else {
-            continue;
-        };
-        if matches_pathspec(&path, pathspecs) {
-            entries.insert(path, (canonicalize_mode(entry.mode), entry.oid));
-        }
-    }
-    entries
-}
-
-fn collect_worktree_snapshots(
-    repo: &Repository,
-    work_tree: &Path,
-    stage0_entries: &BTreeMap<String, (u32, ObjectId)>,
-) -> Result<BTreeMap<String, (u32, ObjectId)>> {
-    let mut snapshots = BTreeMap::new();
-    for path in stage0_entries.keys() {
-        let abs = work_tree.join(path);
-        if let Some((mode, oid)) = read_worktree_info(repo, &abs)? {
-            snapshots.insert(path.clone(), (mode, oid));
-        }
-    }
-    Ok(snapshots)
-}
-
-fn build_diff_entries(
-    repo: &Repository,
-    index: &Index,
-    work_tree: &Path,
-    changes: &[Change],
-    options: &Options,
-) -> Result<Vec<DiffEntry>> {
-    let stage0_entries = collect_stage0_entries(index, &options.pathspecs);
-    let worktree_snapshots = collect_worktree_snapshots(repo, work_tree, &stage0_entries)?;
-
-    let mut diff_entries = Vec::with_capacity(changes.len());
-    for change in changes {
-        let index_snapshot = stage0_entries
-            .get(&change.path)
-            .copied()
-            .unwrap_or((change.old_mode, change.old_oid));
-        let worktree_snapshot = worktree_snapshots.get(&change.path).copied();
-
-        let entry = if options.reverse {
-            reverse_change_to_diff_entry(change, worktree_snapshot, index_snapshot)
-        } else {
-            change_to_diff_entry(change, worktree_snapshot)
-        };
-        diff_entries.push(entry);
-    }
-
-    let diff_entries = if options.find_copies {
-        let threshold = options.find_renames.unwrap_or(50);
-        let source_entries: Vec<(String, String, ObjectId)> = if options.reverse {
-            worktree_snapshots
-                .iter()
-                .map(|(path, (mode, oid))| (path.clone(), format!("{mode:06o}"), *oid))
-                .collect()
-        } else {
-            stage0_entries
-                .iter()
-                .map(|(path, (mode, oid))| (path.clone(), format!("{mode:06o}"), *oid))
-                .collect()
-        };
-        detect_copies(
-            &repo.odb,
-            diff_entries,
-            threshold,
-            options.find_copies_harder,
-            &source_entries,
-        )
-    } else if let Some(threshold) = options.find_renames {
-        detect_renames(&repo.odb, diff_entries, threshold)
-    } else {
-        diff_entries
-    };
-
-    Ok(diff_entries)
-}
-
-fn change_to_diff_entry(change: &Change, worktree_snapshot: Option<(u32, ObjectId)>) -> DiffEntry {
-    match change.status {
-        'D' => DiffEntry {
-            status: DiffStatus::Deleted,
-            old_path: Some(change.path.clone()),
-            new_path: None,
-            old_mode: format!("{:06o}", change.old_mode),
-            new_mode: "000000".to_owned(),
-            old_oid: change.old_oid,
-            new_oid: zero_oid(),
-            score: None,
-        },
-        'U' => DiffEntry {
-            status: DiffStatus::Unmerged,
-            old_path: Some(change.path.clone()),
-            new_path: Some(change.path.clone()),
-            old_mode: format!("{:06o}", change.old_mode),
-            new_mode: format!("{:06o}", change.new_mode),
-            old_oid: change.old_oid,
-            new_oid: zero_oid(),
-            score: None,
-        },
-        _ => {
-            let (new_mode, new_oid) = worktree_snapshot.unwrap_or((change.new_mode, zero_oid()));
-            DiffEntry {
-                status: DiffStatus::Modified,
-                old_path: Some(change.path.clone()),
-                new_path: Some(change.path.clone()),
-                old_mode: format!("{:06o}", change.old_mode),
-                new_mode: format!("{new_mode:06o}"),
-                old_oid: change.old_oid,
-                new_oid,
-                score: None,
-            }
-        }
-    }
-}
-
-fn reverse_change_to_diff_entry(
-    change: &Change,
-    worktree_snapshot: Option<(u32, ObjectId)>,
-    index_snapshot: (u32, ObjectId),
-) -> DiffEntry {
-    match change.status {
-        'D' => DiffEntry {
-            status: DiffStatus::Added,
-            old_path: None,
-            new_path: Some(change.path.clone()),
-            old_mode: "000000".to_owned(),
-            new_mode: format!("{:06o}", index_snapshot.0),
-            old_oid: zero_oid(),
-            new_oid: index_snapshot.1,
-            score: None,
-        },
-        'U' => DiffEntry {
-            status: DiffStatus::Unmerged,
-            old_path: Some(change.path.clone()),
-            new_path: Some(change.path.clone()),
-            old_mode: "000000".to_owned(),
-            new_mode: format!("{:06o}", index_snapshot.0),
-            old_oid: zero_oid(),
-            new_oid: index_snapshot.1,
-            score: None,
-        },
-        _ => {
-            let (old_mode, old_oid) = worktree_snapshot.unwrap_or((0, zero_oid()));
-            DiffEntry {
-                status: DiffStatus::Modified,
-                old_path: Some(change.path.clone()),
-                new_path: Some(change.path.clone()),
-                old_mode: format!("{old_mode:06o}"),
-                new_mode: format!("{:06o}", index_snapshot.0),
-                old_oid,
-                new_oid: index_snapshot.1,
-                score: None,
-            }
-        }
-    }
-}
-
-fn render_raw_diff_entry(
-    entry: &DiffEntry,
-    repo: &Repository,
-    abbrev: Option<usize>,
-) -> Result<String> {
-    let width = abbrev.unwrap_or(40).clamp(4, 40);
-
-    let old_oid = format_oid(entry.old_oid, repo, abbrev, width)?;
-    let new_oid = format_oid(entry.new_oid, repo, abbrev, width)?;
-
-    let status = match (entry.status, entry.score) {
-        (DiffStatus::Renamed, Some(score)) => format!("R{score:03}"),
-        (DiffStatus::Copied, Some(score)) => format!("C{score:03}"),
-        _ => entry.status.letter().to_string(),
-    };
-
-    let path = match entry.status {
-        DiffStatus::Renamed | DiffStatus::Copied => format!(
-            "{}\t{}",
-            entry.old_path.as_deref().unwrap_or(""),
-            entry.new_path.as_deref().unwrap_or("")
-        ),
-        _ => entry.path().to_owned(),
-    };
-
-    Ok(format!(
-        ":{} {} {} {} {}\t{}",
-        entry.old_mode, entry.new_mode, old_oid, new_oid, status, path
-    ))
 }

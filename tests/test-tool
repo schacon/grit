@@ -1,59 +1,119 @@
 #!/bin/sh
 # Minimal test-tool stub for grit tests
 # Implements the most-used subcommands from git's test-tool
+
+exec_grit_test_tool() {
+	if [ -n "$GUST_BIN" ]
+	then
+		exec "$GUST_BIN" test-tool "$@"
+	else
+		exec git test-tool "$@"
+	fi
+}
+
 case "$1" in
-  "")
-    sha1sum | cut -d' ' -f1 ;;
   chmtime)
     shift
-    # Parse optional --get flag
-    get_mode=false
-    if test "$1" = "--get"; then
-      get_mode=true
-      shift
-    fi
-    # Parse =<epoch> or +N/-N syntax, or just filenames if --get only
-    case "$1" in
-      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@"
-        if $get_mode; then
-          for f in "$@"; do
-            stat -c %Y "$f"
-          done
-        fi ;;
-      +*|-*) 
-        offset="$1"; shift
-        for f in "$@"; do
-          cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-          new=$((cur + offset))
-          touch -d "@$new" "$f"
-          if $get_mode; then
-            stat -c %Y "$f"
+    usage() {
+      echo "usage: test-tool chmtime [--get|-g|--verbose|-v] [(+|=|=+|=-|-)<seconds>] <file>..." >&2
+      exit 1
+    }
+    is_int() {
+      expr "$1" : '[-+]\{0,1\}[0-9][0-9]*$' >/dev/null
+    }
+
+    get=0
+    verbose=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --get|-g) get=1; shift ;;
+        --verbose|-v) verbose=1; shift ;;
+        *) break ;;
+      esac
+    done
+
+    timespec=""
+    if [ $# -gt 0 ]; then
+      case "$1" in
+        =+*)
+          val="${1#=+}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        =-*)
+          val="${1#=-}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        =*)
+          val="${1#=}"
+          is_int "$val" || usage
+          timespec="$1"
+          shift
+          ;;
+        +*|-*)
+          is_int "$1" || usage
+          timespec="$1"
+          shift
+          ;;
+        *)
+          if is_int "$1"; then
+            timespec="$1"
+            shift
+          elif [ "$get" -eq 0 ] && [ "$verbose" -eq 0 ]; then
+            echo "test-tool chmtime: unknown format: $1" >&2
+            usage
           fi
-        done ;;
-      *)
-        if $get_mode; then
-          for f in "$@"; do
-            stat -c %Y "$f"
-          done
-        else
-          echo "test-tool chmtime: unknown format: $1" >&2; exit 1
-        fi ;;
-    esac ;;
+          ;;
+      esac
+    fi
+
+    [ $# -gt 0 ] || usage
+
+    for f in "$@"; do
+      cur=$(stat -c %Y "$f" 2>/dev/null) || {
+        echo "Failed to stat $f. Skipping" >&2
+        continue
+      }
+
+      new="$cur"
+      if [ -n "$timespec" ]; then
+        case "$timespec" in
+          =+*)
+            now=$(date +%s)
+            new=$((now + ${timespec#=+}))
+            ;;
+          =-*)
+            now=$(date +%s)
+            new=$((now - ${timespec#=-}))
+            ;;
+          =*)
+            new="${timespec#=}"
+            ;;
+          *)
+            new=$((cur + timespec))
+            ;;
+        esac
+
+        [ "$new" -ge 0 ] || new=0
+        if [ "$new" != "$cur" ]; then
+          touch -d "@$new" "$f"
+        fi
+      fi
+
+      if [ "$get" -eq 1 ]; then
+        printf '%s\n' "$new"
+      elif [ "$verbose" -eq 1 ]; then
+        printf '%s\t%s\n' "$new" "$f"
+      fi
+    done
+    ;;
   sha1)
     sha1sum | cut -d' ' -f1 ;;
   sha256)
     sha256sum | cut -d' ' -f1 ;;
-  zlib)
-    shift
-    case "$1" in
-      deflate)
-        python3 -c 'import sys, zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))'
-        ;;
-      *)
-        echo "test-tool zlib: unknown function: $1" >&2
-        exit 1
-        ;;
-    esac ;;
   genrandom)
     seed="$2"; count="${3:-0}"
     dd if=/dev/urandom bs=1 count="$count" 2>/dev/null ;;
@@ -72,7 +132,7 @@ case "$1" in
     esac ;;
   env-helper)
     shift
-    exec git test-tool env-helper "$@" ;;
+    exec_grit_test_tool env-helper "$@" ;;
   sigchain)
     # Minimal sigchain helper for t0005-signals.sh:
     # write expected trace then terminate via SIGTERM.
@@ -87,6 +147,8 @@ case "$1" in
       normalize_path_copy) echo "$2" ;;
       *) echo "$@" ;;
     esac ;;
+  getcwd)
+    pwd ;;
   pkt-line)
     shift
     case "$1" in
@@ -164,11 +226,29 @@ case "$1" in
     exec git serve-v2 "$@" ;;
   revision-walking)
     shift
-    exec git test-tool revision-walking "$@" ;;
+    exec_grit_test_tool revision-walking "$@" ;;
+  ref-store)
+    shift
+    backend="$1"
+    subcmd="$2"
+    if [ "$backend" = "main" ] && [ "$subcmd" = "create-symref" ] && [ $# -ge 4 ]
+    then
+      refname="$3"
+      target="$4"
+      if [ "$refname" = "HEAD" ] && [ "$target" = ".broken" ]
+      then
+        git_dir=$(git rev-parse --git-dir) || exit $?
+        printf 'ref: %s\n' "$target" >"$git_dir/HEAD"
+        exit $?
+      fi
+      git symbolic-ref "$refname" "$target"
+      exit $?
+    fi
+    exec_grit_test_tool ref-store "$@" ;;
   wildmatch)
     shift
-    exec git test-tool wildmatch "$@" ;;
+    exec_grit_test_tool wildmatch "$@" ;;
   *)
     # Delegate unsupported helpers to grit's `git test-tool ...`
-    exec git test-tool "$@" ;;
+    exec_grit_test_tool "$@" ;;
 esac
