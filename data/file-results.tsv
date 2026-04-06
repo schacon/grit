@@ -224,7 +224,7 @@ t2201-add-update-typechange	yes	6	6	0	ok	6	6	0
 t2202-add-addremove	yes	3	3	0	ok	3	3	0
 t2203-add-intent	yes	19	4	15	ok	4	19	0
 t2204-add-ignored	yes	47	47	0	ok	47	47	0
-t2205-add-worktree-config	yes	13	3	10	ok	3	13	0
+t2205-add-worktree-config	yes	13	13	0	ok	13	13	0
 t2206-add-submodule-ignored	yes	8	8	0	ok	8	8	0
 t2300-cd-to-toplevel	yes	5	5	0	ok	5	5	0
 t2400-worktree-add	yes	232	37	195	ok	37	232	0

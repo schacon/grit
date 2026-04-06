@@ -105,37 +105,30 @@ impl Repository {
         // GIT_DIR override
         if let Ok(dir) = env::var("GIT_DIR") {
             let git_dir = PathBuf::from(&dir);
-            let work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
-            if work_tree.is_some() {
-                return Self::open(&git_dir, work_tree.as_deref());
-            }
-            // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
-            // from the parent of the git directory (standard layout).
-            let mut repo = Self::open(&git_dir, None)?;
-            if repo.work_tree.is_none() {
-                let canonical = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
-                // Check core.bare config
-                let config_path = canonical.join("config");
-                let is_bare = if config_path.exists() {
-                    fs::read_to_string(&config_path)
-                        .ok()
-                        .and_then(|c| {
-                            c.lines()
-                                .find(|l| {
-                                    let trimmed = l.trim();
-                                    trimmed.starts_with("bare") && trimmed.contains("true")
-                                })
-                                .map(|_| true)
-                        })
-                        .unwrap_or(false)
+            let cwd = env::current_dir()?;
+            if let Ok(wt_raw) = env::var("GIT_WORK_TREE") {
+                let wt = if Path::new(&wt_raw).is_absolute() {
+                    PathBuf::from(wt_raw)
                 } else {
-                    false
+                    cwd.join(wt_raw)
                 };
-                if !is_bare {
-                    repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
-                }
+                return Self::open(&git_dir, Some(&wt));
             }
-            return Ok(repo);
+
+            // With GIT_DIR set and no explicit GIT_WORK_TREE:
+            // - if core.worktree is set, honor it
+            // - else if core.bare=true, treat as bare
+            // - else default worktree is the current working directory
+            //   (matches Git's --git-dir behavior).
+            let canonical_git = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
+            let (core_bare, core_worktree) = read_core_bare_and_worktree(&canonical_git);
+            if let Some(wt) = core_worktree {
+                return Self::open(&git_dir, Some(&wt));
+            }
+            if core_bare.unwrap_or(false) {
+                return Self::open(&git_dir, None);
+            }
+            return Self::open(&git_dir, Some(&cwd));
         }
 
         // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it
@@ -239,6 +232,54 @@ impl Repository {
     }
 }
 
+fn read_core_bare_and_worktree(git_dir: &Path) -> (Option<bool>, Option<PathBuf>) {
+    let config_path = git_dir.join("config");
+    let Ok(content) = fs::read_to_string(&config_path) else {
+        return (None, None);
+    };
+
+    let mut in_core = false;
+    let mut bare = None;
+    let mut worktree = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_core = trimmed.eq_ignore_ascii_case("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim().trim_matches('"');
+        if key.eq_ignore_ascii_case("bare") {
+            let v = value.to_ascii_lowercase();
+            bare = match v.as_str() {
+                "true" | "yes" | "on" | "1" => Some(true),
+                "false" | "no" | "off" | "0" => Some(false),
+                _ => bare,
+            };
+        } else if key.eq_ignore_ascii_case("worktree") && !value.is_empty() {
+            let path = PathBuf::from(value);
+            let abs = if path.is_absolute() {
+                path
+            } else {
+                git_dir.join(path)
+            };
+            worktree = Some(abs.canonicalize().unwrap_or(abs));
+        }
+    }
+
+    (bare, worktree)
+}
+
 /// Try to open a repository rooted exactly at `dir`.
 ///
 /// Returns `Ok(None)` when `dir` is not a repository root (the caller should
@@ -290,7 +331,8 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         let content =
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
-        let repo = Repository::open(&git_dir, Some(dir))?;
+        let mut repo = Repository::open(&git_dir, Some(dir))?;
+        apply_core_worktree_override(&mut repo);
         return Ok(Some(repo));
     }
 
@@ -318,6 +360,7 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                     };
                     repo.git_dir = abs_dot_git;
                 }
+                apply_core_worktree_override(&mut repo);
                 return Ok(Some(repo));
             }
             Err(Error::NotARepository(_)) => return Ok(None),
@@ -342,6 +385,15 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     }
 
     Ok(None)
+}
+
+fn apply_core_worktree_override(repo: &mut Repository) {
+    let (core_bare, core_worktree) = read_core_bare_and_worktree(&repo.git_dir);
+    if let Some(wt) = core_worktree {
+        repo.work_tree = Some(wt);
+    } else if core_bare == Some(true) {
+        repo.work_tree = None;
+    }
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

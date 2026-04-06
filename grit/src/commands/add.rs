@@ -134,10 +134,11 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo
+    let work_tree_buf = repo
         .work_tree
-        .as_deref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let work_tree = work_tree_buf.as_path();
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let lockfile_pid_enabled = config
@@ -174,9 +175,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let odb = &repo.odb;
 
-    // Resolve the current working directory relative to the worktree
-    let cwd = std::env::current_dir()?;
-    let prefix = pathdiff(&cwd, work_tree);
+    // Resolve the current working directory relative to the worktree.
+    // When commands are invoked outside the work tree with only GIT_DIR set,
+    // Git still treats pathspecs as repository-root relative.
+    let cwd = std::env::current_dir().context("resolving cwd")?;
+    let prefix = pathdiff(&cwd, work_tree, &repo);
 
     // Validate empty string pathspecs
     for ps in &args.pathspec {
@@ -202,7 +205,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // --refresh mode
     if args.refresh {
-        return run_refresh(&repo, &mut index, work_tree, prefix.as_deref(), &args);
+        return run_refresh(&repo, &mut index, work_tree, &cwd, prefix.as_deref(), &args);
     }
 
     // --chmod with no pathspecs: do nothing (don't error, just return)
@@ -266,6 +269,7 @@ pub fn run(mut args: Args) -> Result<()> {
             odb,
             &mut index,
             work_tree,
+            &cwd,
             prefix.as_deref(),
             &args,
             &add_cfg,
@@ -274,7 +278,7 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut had_errors = false;
         let mut had_ignored = false;
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix.as_deref());
+            let resolved = resolve_pathspec(pathspec, work_tree, &cwd, prefix.as_deref());
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
             let expanded = expand_glob_pathspec(&resolved, work_tree);
             for resolved in &expanded {
@@ -363,6 +367,7 @@ fn run_refresh(
     repo: &Repository,
     index: &mut Index,
     work_tree: &Path,
+    cwd: &Path,
     prefix: Option<&str>,
     args: &Args,
 ) -> Result<()> {
@@ -391,7 +396,7 @@ fn run_refresh(
         }
     } else {
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix);
+            let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
             let found = index.entries.iter_mut().any(|ie| {
                 let path_str = String::from_utf8_lossy(&ie.path);
                 if path_str == resolved || path_str.starts_with(&format!("{resolved}/")) {
@@ -599,6 +604,7 @@ fn update_tracked(
     odb: &Odb,
     index: &mut Index,
     work_tree: &Path,
+    cwd: &Path,
     prefix: Option<&str>,
     args: &Args,
     add_cfg: &AddConfig,
@@ -606,7 +612,7 @@ fn update_tracked(
     let requested_pathspecs: Vec<String> = args
         .pathspec
         .iter()
-        .map(|p| resolve_pathspec(p, work_tree, prefix))
+        .map(|p| resolve_pathspec(p, work_tree, cwd, prefix))
         .collect();
 
     // Build unique candidate paths from all stages so `add -u` can resolve
@@ -819,7 +825,8 @@ fn add_path(
 
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
-        if embedded_git.exists() {
+        let same_git_dir = is_same_git_dir(&embedded_git, &repo.git_dir);
+        if embedded_git.exists() && !same_git_dir {
             if add_cfg
                 .submodule_ignores
                 .get(path)
@@ -1252,7 +1259,8 @@ fn walk_directory(
         }
 
         if is_dir {
-            if path.join(".git").exists() {
+            let dot_git = path.join(".git");
+            if dot_git.exists() && !is_same_git_dir(&dot_git, &repo.git_dir) {
                 out.push(rel);
                 continue;
             }
@@ -1265,15 +1273,29 @@ fn walk_directory(
     Ok(())
 }
 
-/// Compute path relative to work tree from cwd.
-fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
+fn is_same_git_dir(candidate: &Path, repo_git_dir: &Path) -> bool {
+    let candidate_canon = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
+    let repo_canon = repo_git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| repo_git_dir.to_path_buf());
+    candidate_canon == repo_canon
+}
+
+/// Compute path relative to work tree from `cwd` when `cwd` is inside it.
+///
+/// When commands are run with explicit `GIT_DIR` from outside the worktree,
+/// git uses repository-root relative semantics and there is no prefix.
+fn pathdiff(cwd: &Path, work_tree: &Path, repo: &Repository) -> Option<String> {
+    if repo.is_bare() {
+        return None;
+    }
     let cwd_canon = cwd.canonicalize().ok()?;
     let wt_canon = work_tree.canonicalize().ok()?;
-
     if cwd_canon == wt_canon {
         return None;
     }
-
     cwd_canon
         .strip_prefix(&wt_canon)
         .ok()
@@ -1300,7 +1322,7 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 }
 
 /// Resolve a pathspec relative to the prefix (cwd within worktree).
-fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> String {
+fn resolve_pathspec(pathspec: &str, work_tree: &Path, cwd: &Path, prefix: Option<&str>) -> String {
     if pathspec == "." {
         return prefix.unwrap_or("").to_owned();
     }
@@ -1325,14 +1347,33 @@ fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> 
         return pathspec.to_owned();
     }
 
-    let combined = match prefix {
-        Some(p) if !p.is_empty() => {
-            let combined = PathBuf::from(p).join(pathspec);
-            combined.to_string_lossy().to_string()
+    if Path::new(pathspec).is_absolute() {
+        let abs = PathBuf::from(pathspec);
+        if let Ok(rel_path) = abs.strip_prefix(work_tree) {
+            return normalize_repo_relpath(&rel_path.to_string_lossy());
         }
-        _ => pathspec.to_owned(),
+        return pathspec.to_owned();
+    }
+
+    if let Some(p) = prefix.filter(|p| !p.is_empty()) {
+        let combined = PathBuf::from(p).join(pathspec);
+        return normalize_repo_relpath(&combined.to_string_lossy());
+    }
+
+    // Resolve regular pathspecs from cwd and then relativize to worktree.
+    let resolved_from_cwd = if Path::new(pathspec).is_absolute() {
+        PathBuf::from(pathspec)
+    } else {
+        cwd.join(pathspec)
     };
-    normalize_repo_relpath(&combined)
+
+    if let Ok(rel_path) = resolved_from_cwd.strip_prefix(work_tree) {
+        return normalize_repo_relpath(&rel_path.to_string_lossy());
+    }
+
+    // If it cannot be relativized to the worktree, keep original for
+    // downstream "outside repository" or "did not match" handling.
+    pathspec.to_owned()
 }
 
 /// Check whether a string contains glob metacharacters.
@@ -1594,17 +1635,28 @@ fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
 }
 
 fn normalize_repo_relpath(path: &str) -> String {
-    let mut out = PathBuf::new();
+    let mut parts: Vec<String> = Vec::new();
     for comp in Path::new(path).components() {
         match comp {
             std::path::Component::CurDir => {}
-            std::path::Component::Normal(seg) => out.push(seg),
-            std::path::Component::ParentDir => out.push(".."),
+            std::path::Component::Normal(seg) => {
+                parts.push(seg.to_string_lossy().to_string());
+            }
+            std::path::Component::ParentDir => {
+                if parts.last().is_some_and(|last| last != "..") {
+                    parts.pop();
+                } else {
+                    parts.push("..".to_string());
+                }
+            }
             _ => {}
         }
     }
-    let s = out.to_string_lossy().to_string();
-    if s.is_empty() { path.trim_end_matches('/').to_string() } else { s }
+    if parts.is_empty() {
+        path.trim_end_matches('/').to_string()
+    } else {
+        parts.join("/")
+    }
 }
 
 fn record_merge_restore_state(repo: &Repository, index: &Index, rel_path: &str) -> Result<()> {
