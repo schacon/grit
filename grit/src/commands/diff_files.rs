@@ -32,12 +32,35 @@ pub struct Args {
 
 /// Run `grit diff-files`.
 pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
+    let mut options = parse_options(&args.args)?;
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
     };
+
+    // Resolve pathspecs relative to cwd → repo-root-relative paths.
+    // e.g. "." run from "dir/" becomes "dir", so it filters to that subtree.
+    if !options.pathspecs.is_empty() {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        options.pathspecs = options
+            .pathspecs
+            .iter()
+            .map(|spec| {
+                // Resolve spec relative to cwd, then make it relative to work_tree.
+                let abs = if std::path::Path::new(spec).is_absolute() {
+                    std::path::PathBuf::from(spec)
+                } else {
+                    cwd.join(spec)
+                };
+                // Canonicalize to resolve ".", ".." etc.
+                let abs = abs.canonicalize().unwrap_or_else(|_| cwd.join(spec));
+                abs.strip_prefix(&work_tree)
+                    .map(|rel| rel.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| spec.clone())
+            })
+            .collect();
+    }
 
     let index_path = effective_index_path(&repo)?;
     let index = Index::load(&index_path).context("loading index")?;

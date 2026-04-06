@@ -577,10 +577,17 @@ impl Pathspec {
 }
 
 fn literal_matches_path(spec: &[u8], path: &[u8]) -> bool {
-    path == spec
-        || path
-            .strip_prefix(spec)
-            .is_some_and(|rest| rest.starts_with(b"/"))
+    path == spec || {
+        // If spec ends with '/', it matches any path under that directory.
+        // e.g. spec="dir/" matches "dir/two".
+        if spec.ends_with(b"/") {
+            path.starts_with(spec)
+        } else {
+            // Exact component match: spec="dir" matches "dir/two" but not "directory/foo"
+            path.strip_prefix(spec)
+                .is_some_and(|rest| rest.starts_with(b"/"))
+        }
+    }
 }
 
 /// Check if a string contains glob meta-characters.

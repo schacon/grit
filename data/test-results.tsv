@@ -531,8 +531,8 @@ t0023-crlf-am::setup	t0023-crlf-am	setup	add	partial
 t0023-crlf-am::am	t0023-crlf-am	am	am	partial
 t0024-crlf-archive::tar-archive	t0024-crlf-archive	tar archive	archive	pass
 t0024-crlf-archive::zip-archive	t0024-crlf-archive	zip archive	archive	pass
-t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	pass
-t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	pass
+t0025-crlf-renormalize::renormalize-crlf-in-repo	t0025-crlf-renormalize	renormalize CRLF in repo	add	partial
+t0025-crlf-renormalize::ignore-errors-not-mistaken-for-renormalize	t0025-crlf-renormalize	ignore-errors not mistaken for renormalize	add	partial
 t0026-eol-config::eol-lf-puts-lfs-in-normalized-file	t0026-eol-config	eol=lf puts LFs in normalized file	config	pass
 t0026-eol-config::eol-crlf-puts-crlfs-in-normalized-file	t0026-eol-config	eol=crlf puts CRLFs in normalized file	config	pass
 t0026-eol-config::autocrlf-true-overrides-eol-lf	t0026-eol-config	autocrlf=true overrides eol=lf	config	pass
@@ -1635,10 +1635,10 @@ t1011-read-tree-sparse-checkout::read-tree-reset-removes-outside-worktree	t1011-
 t1011-read-tree-sparse-checkout::print-warnings-when-some-worktree-updates-disabled	t1011-read-tree-sparse-checkout	print warnings when some worktree updates disabled	read-tree	partial
 t1011-read-tree-sparse-checkout::checkout-without-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout without --ignore-skip-worktree-bits	read-tree	partial
 t1011-read-tree-sparse-checkout::checkout-with-ignore-skip-worktree-bits	t1011-read-tree-sparse-checkout	checkout with --ignore-skip-worktree-bits	read-tree	partial
-t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	partial
-t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	partial
-t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	partial
-t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	partial
+t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
+t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
+t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
+t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	pass
 t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	not_ported
 t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	not_ported
 t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	not_ported
@@ -1692,16 +1692,16 @@ t1050-large::zip-archiving-store-only	t1050-large	zip archiving, store only	add	
 t1050-large::zip-archiving-deflate	t1050-large	zip archiving, deflate	add	partial
 t1050-large::fsck-large-blobs	t1050-large	fsck large blobs	add	partial
 t1050-large::add-with-config	t1050-large	add with $config	add	partial
-t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	add	partial
-t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input	add	partial
-t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input	add	partial
-t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input	add	partial
-t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input	add	partial
-t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	partial
-t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output	add	partial
-t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output	add	partial
-t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output	add	partial
-t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	add	partial
+t1051-large-conversion::setup-input-tests	t1051-large-conversion	setup input tests	add	pass
+t1051-large-conversion::autocrlf-true-converts-on-input	t1051-large-conversion	autocrlf=true converts on input	add	pass
+t1051-large-conversion::eol-crlf-converts-on-input	t1051-large-conversion	eol=crlf converts on input	add	pass
+t1051-large-conversion::ident-converts-on-input	t1051-large-conversion	ident converts on input	add	pass
+t1051-large-conversion::user-defined-filters-convert-on-input	t1051-large-conversion	user-defined filters convert on input	add	pass
+t1051-large-conversion::setup-output-tests	t1051-large-conversion	setup output tests	add	pass
+t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	autocrlf=true converts on output	add	pass
+t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output	add	pass
+t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output	add	pass
+t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	add	pass
 t1060-object-corruption::setup-corrupt-repo	t1060-object-corruption	setup corrupt repo	fsck	not_ported
 t1060-object-corruption::setup-repo-with-missing-object	t1060-object-corruption	setup repo with missing object	fsck	not_ported
 t1060-object-corruption::setup-repo-with-misnamed-object	t1060-object-corruption	setup repo with misnamed object	fsck	not_ported
@@ -2151,17 +2151,17 @@ t1301-shared-repo::template-can-set-core-sharedrepository	t1301-shared-repo	temp
 t1301-shared-repo::shared-1-does-not-clear-bits-preset-by-umask-u	t1301-shared-repo	shared=1 does not clear bits preset by umask $u	config	partial
 t1301-shared-repo::shared-u-y-ro	t1301-shared-repo	shared = $u ($y) ro	update-server-info	partial
 t1301-shared-repo::shared-u-x-rw	t1301-shared-repo	shared = $u ($x) rw	update-server-info	partial
-t1302-repo-version::setup	t1302-repo-version	setup	config	not_ported
-t1302-repo-version::gitdir-selection-on-normal-repos	t1302-repo-version	gitdir selection on normal repos	config	not_ported
-t1302-repo-version::gitdir-selection-on-unsupported-repo	t1302-repo-version	gitdir selection on unsupported repo	config	not_ported
-t1302-repo-version::gitdir-not-required-mode	t1302-repo-version	gitdir not required mode	apply	not_ported
-t1302-repo-version::gitdir-required-mode	t1302-repo-version	gitdir required mode	apply	not_ported
-t1302-repo-version::precious-objects-allowed	t1302-repo-version	precious-objects allowed	config	not_ported
-t1302-repo-version::precious-objects-blocks-destructive-repack	t1302-repo-version	precious-objects blocks destructive repack	repack	not_ported
-t1302-repo-version::other-repacks-are-ok	t1302-repo-version	other repacks are OK	repack	not_ported
-t1302-repo-version::precious-objects-blocks-prune	t1302-repo-version	precious-objects blocks prune	prune	not_ported
-t1302-repo-version::gc-runs-without-complaint	t1302-repo-version	gc runs without complaint	gc	not_ported
-t1302-repo-version::outcome-version-version-extensions	t1302-repo-version	$outcome version=$version $extensions	init	not_ported
+t1302-repo-version::setup	t1302-repo-version	setup	config	partial
+t1302-repo-version::gitdir-selection-on-normal-repos	t1302-repo-version	gitdir selection on normal repos	config	partial
+t1302-repo-version::gitdir-selection-on-unsupported-repo	t1302-repo-version	gitdir selection on unsupported repo	config	partial
+t1302-repo-version::gitdir-not-required-mode	t1302-repo-version	gitdir not required mode	apply	partial
+t1302-repo-version::gitdir-required-mode	t1302-repo-version	gitdir required mode	apply	partial
+t1302-repo-version::precious-objects-allowed	t1302-repo-version	precious-objects allowed	config	partial
+t1302-repo-version::precious-objects-blocks-destructive-repack	t1302-repo-version	precious-objects blocks destructive repack	repack	partial
+t1302-repo-version::other-repacks-are-ok	t1302-repo-version	other repacks are OK	repack	partial
+t1302-repo-version::precious-objects-blocks-prune	t1302-repo-version	precious-objects blocks prune	prune	partial
+t1302-repo-version::gc-runs-without-complaint	t1302-repo-version	gc runs without complaint	gc	partial
+t1302-repo-version::outcome-version-version-extensions	t1302-repo-version	$outcome version=$version $extensions	init	partial
 t1303-wacky-config::modify-same-key	t1303-wacky-config	modify same key	config	pass
 t1303-wacky-config::add-key-in-same-section	t1303-wacky-config	add key in same section	config	pass
 t1303-wacky-config::add-key-in-different-section	t1303-wacky-config	add key in different section	config	pass
@@ -3473,16 +3473,16 @@ t2008-checkout-subdir::incorrect-relative-path-should-fail-3	t2008-checkout-subd
 t2009-checkout-statinfo::setup	t2009-checkout-statinfo	setup	checkout	partial
 t2009-checkout-statinfo::branch-switching	t2009-checkout-statinfo	branch switching	checkout	partial
 t2009-checkout-statinfo::path-checkout	t2009-checkout-statinfo	path checkout	checkout	partial
-t2010-checkout-ambiguous::setup	t2010-checkout-ambiguous	setup	checkout	pass
-t2010-checkout-ambiguous::reference-must-be-a-tree	t2010-checkout-ambiguous	reference must be a tree	checkout	pass
-t2010-checkout-ambiguous::branch-switching	t2010-checkout-ambiguous	branch switching	checkout	pass
-t2010-checkout-ambiguous::checkout-world-from-the-index	t2010-checkout-ambiguous	checkout world from the index	checkout	pass
-t2010-checkout-ambiguous::non-ambiguous-call	t2010-checkout-ambiguous	non ambiguous call	checkout	pass
-t2010-checkout-ambiguous::allow-the-most-common-case	t2010-checkout-ambiguous	allow the most common case	checkout	pass
-t2010-checkout-ambiguous::check-ambiguity	t2010-checkout-ambiguous	check ambiguity	checkout	pass
-t2010-checkout-ambiguous::check-ambiguity-in-subdir	t2010-checkout-ambiguous	check ambiguity in subdir	checkout	pass
-t2010-checkout-ambiguous::disambiguate-checking-out-from-a-tree-ish	t2010-checkout-ambiguous	disambiguate checking out from a tree-ish	checkout	pass
-t2010-checkout-ambiguous::accurate-error-message-with-more-than-one-ref	t2010-checkout-ambiguous	accurate error message with more than one ref	checkout	pass
+t2010-checkout-ambiguous::setup	t2010-checkout-ambiguous	setup	checkout	partial
+t2010-checkout-ambiguous::reference-must-be-a-tree	t2010-checkout-ambiguous	reference must be a tree	checkout	partial
+t2010-checkout-ambiguous::branch-switching	t2010-checkout-ambiguous	branch switching	checkout	partial
+t2010-checkout-ambiguous::checkout-world-from-the-index	t2010-checkout-ambiguous	checkout world from the index	checkout	partial
+t2010-checkout-ambiguous::non-ambiguous-call	t2010-checkout-ambiguous	non ambiguous call	checkout	partial
+t2010-checkout-ambiguous::allow-the-most-common-case	t2010-checkout-ambiguous	allow the most common case	checkout	partial
+t2010-checkout-ambiguous::check-ambiguity	t2010-checkout-ambiguous	check ambiguity	checkout	partial
+t2010-checkout-ambiguous::check-ambiguity-in-subdir	t2010-checkout-ambiguous	check ambiguity in subdir	checkout	partial
+t2010-checkout-ambiguous::disambiguate-checking-out-from-a-tree-ish	t2010-checkout-ambiguous	disambiguate checking out from a tree-ish	checkout	partial
+t2010-checkout-ambiguous::accurate-error-message-with-more-than-one-ref	t2010-checkout-ambiguous	accurate error message with more than one ref	checkout	partial
 t2011-checkout-invalid-head::setup	t2011-checkout-invalid-head	setup	checkout	partial
 t2011-checkout-invalid-head::checkout-should-not-start-branch-from-a-tree	t2011-checkout-invalid-head	checkout should not start branch from a tree	checkout	partial
 t2011-checkout-invalid-head::checkout-main-from-invalid-head	t2011-checkout-invalid-head	checkout main from invalid HEAD	checkout	partial
@@ -8701,9 +8701,9 @@ t4216-log-bloom::bloom-reader-notices-out-of-bounds-filter-offsets	t4216-log-blo
 t4216-log-bloom::bloom-reader-notices-too-small-index-chunk	t4216-log-bloom	Bloom reader notices too-small index chunk	log	partial
 t4216-log-bloom::bloom-reader-notices-out-of-order-index-offsets	t4216-log-bloom	Bloom reader notices out-of-order index offsets	log	partial
 t4216-log-bloom::git-log-option-option-for-path-path	t4216-log-bloom	git log option: $option for path: $path	log	partial
-t4217-log-limit::setup-test	t4217-log-limit	setup test	log	pass
-t4217-log-limit::git-log-since-as-filter	t4217-log-limit	git log --since-as-filter=...	log	pass
-t4217-log-limit::git-log-children-since-as-filter	t4217-log-limit	git log --children --since-as-filter=...	log	pass
+t4217-log-limit::setup-test	t4217-log-limit	setup test	log	partial
+t4217-log-limit::git-log-since-as-filter	t4217-log-limit	git log --since-as-filter=...	log	partial
+t4217-log-limit::git-log-children-since-as-filter	t4217-log-limit	git log --children --since-as-filter=...	log	partial
 t4252-am-options::interrupted-am-whitespace-fix	t4252-am-options	interrupted am --whitespace=fix	am	partial
 t4252-am-options::interrupted-am-c1	t4252-am-options	interrupted am -C1	am	partial
 t4252-am-options::interrupted-am-p2	t4252-am-options	interrupted am -p2	am	partial
@@ -9182,15 +9182,15 @@ t5312-prune-corruption::destructive-repack-not-confused-by-dangling-symref	t5312
 t5312-prune-corruption::create-history-with-missing-tip-commit	t5312-prune-corruption	create history with missing tip commit	prune	not_ported
 t5312-prune-corruption::pruning-with-a-corrupted-tip-does-not-drop-history	t5312-prune-corruption	pruning with a corrupted tip does not drop history	prune	not_ported
 t5312-prune-corruption::pack-refs-does-not-silently-delete-broken-loose-ref	t5312-prune-corruption	pack-refs does not silently delete broken loose ref	prune	not_ported
-t5313-pack-bounds-checks::setup	t5313-pack-bounds-checks	setup	pack-objects	partial
-t5313-pack-bounds-checks::set-up-base-packfile-and-variables	t5313-pack-bounds-checks	set up base packfile and variables	pack-objects	partial
-t5313-pack-bounds-checks::pack-index-object-count-mismatch	t5313-pack-bounds-checks	pack/index object count mismatch	pack-objects	partial
-t5313-pack-bounds-checks::matched-bogus-object-count	t5313-pack-bounds-checks	matched bogus object count	pack-objects	partial
-t5313-pack-bounds-checks::bogus-object-offset-v1	t5313-pack-bounds-checks	bogus object offset (v1)	pack-objects	partial
-t5313-pack-bounds-checks::bogus-object-offset-v2-no-msb	t5313-pack-bounds-checks	bogus object offset (v2, no msb)	pack-objects	partial
-t5313-pack-bounds-checks::bogus-offset-into-v2-extended-table	t5313-pack-bounds-checks	bogus offset into v2 extended table	pack-objects	partial
-t5313-pack-bounds-checks::bogus-offset-inside-v2-extended-table	t5313-pack-bounds-checks	bogus offset inside v2 extended table	pack-objects	partial
-t5313-pack-bounds-checks::bogus-ofs-delta-in-packfile	t5313-pack-bounds-checks	bogus OFS_DELTA in packfile	pack-objects	partial
+t5313-pack-bounds-checks::setup	t5313-pack-bounds-checks	setup	pack-objects	not_ported
+t5313-pack-bounds-checks::set-up-base-packfile-and-variables	t5313-pack-bounds-checks	set up base packfile and variables	pack-objects	not_ported
+t5313-pack-bounds-checks::pack-index-object-count-mismatch	t5313-pack-bounds-checks	pack/index object count mismatch	pack-objects	not_ported
+t5313-pack-bounds-checks::matched-bogus-object-count	t5313-pack-bounds-checks	matched bogus object count	pack-objects	not_ported
+t5313-pack-bounds-checks::bogus-object-offset-v1	t5313-pack-bounds-checks	bogus object offset (v1)	pack-objects	not_ported
+t5313-pack-bounds-checks::bogus-object-offset-v2-no-msb	t5313-pack-bounds-checks	bogus object offset (v2, no msb)	pack-objects	not_ported
+t5313-pack-bounds-checks::bogus-offset-into-v2-extended-table	t5313-pack-bounds-checks	bogus offset into v2 extended table	pack-objects	not_ported
+t5313-pack-bounds-checks::bogus-offset-inside-v2-extended-table	t5313-pack-bounds-checks	bogus offset inside v2 extended table	pack-objects	not_ported
+t5313-pack-bounds-checks::bogus-ofs-delta-in-packfile	t5313-pack-bounds-checks	bogus OFS_DELTA in packfile	pack-objects	not_ported
 t5314-pack-cycle-detection::setup	t5314-pack-cycle-detection	setup	add	pass
 t5314-pack-cycle-detection::repack	t5314-pack-cycle-detection	repack	cat-file	pass
 t5315-pack-objects-compression::pack-objects-with-config	t5315-pack-objects-compression	pack-objects with $config	pack-objects	partial
@@ -14552,29 +14552,29 @@ t7424-submodule-mixed-ref-formats::recursive-clone-propagates-ref-storage-format
 t7424-submodule-mixed-ref-formats::clone-submodules-with-different-ref-storage-format	t7424-submodule-mixed-ref-formats	clone submodules with different ref storage format	submodule	partial
 t7424-submodule-mixed-ref-formats::status-with-mixed-submodule-ref-storages	t7424-submodule-mixed-ref-formats	status with mixed submodule ref storages	submodule	partial
 t7424-submodule-mixed-ref-formats::recursive-pull-with-mixed-formats	t7424-submodule-mixed-ref-formats	recursive pull with mixed formats	submodule	partial
-t7425-submodule-gitdir-path-extension::setup-allow-file-protocol	t7425-submodule-gitdir-path-extension	setup: allow file protocol	submodule	not_ported
-t7425-submodule-gitdir-path-extension::create-repo-with-mixed-extension-submodules	t7425-submodule-gitdir-path-extension	create repo with mixed extension submodules	submodule	not_ported
-t7425-submodule-gitdir-path-extension::verify-new-submodule-gitdir-config	t7425-submodule-gitdir-path-extension	verify new submodule gitdir config	submodule	not_ported
-t7425-submodule-gitdir-path-extension::manual-add-and-verify-legacy-submodule-gitdir-config	t7425-submodule-gitdir-path-extension	manual add and verify legacy submodule gitdir config	submodule	not_ported
-t7425-submodule-gitdir-path-extension::gitdir-config-path-is-relative-for-both-absolute-and-relative-urls	t7425-submodule-gitdir-path-extension	gitdir config path is relative for both absolute and relative urls	submodule	not_ported
-t7425-submodule-gitdir-path-extension::clone-from-repo-with-both-legacy-and-new-style-submodules	t7425-submodule-gitdir-path-extension	clone from repo with both legacy and new-style submodules	submodule	not_ported
-t7425-submodule-gitdir-path-extension::commit-and-push-changes-to-encoded-submodules	t7425-submodule-gitdir-path-extension	commit and push changes to encoded submodules	submodule	not_ported
-t7425-submodule-gitdir-path-extension::fetch-mixed-submodule-changes-and-verify-updates	t7425-submodule-gitdir-path-extension	fetch mixed submodule changes and verify updates	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-init-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git init` respects init.defaultSubmodulePathConfig	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-init-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git init` does not set extension by default	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-clone-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git clone` does not set extension by default	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` does not set extension by default	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-clone-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git clone` respects init.defaultSubmodulePathConfig	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` respects init.defaultSubmodulePathConfig	submodule	not_ported
-t7425-submodule-gitdir-path-extension::submodule-helper-migrates-legacy-modules	t7425-submodule-gitdir-path-extension	submodule--helper migrates legacy modules	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-works-after-migration	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` works after migration	submodule	not_ported
-t7425-submodule-gitdir-path-extension::setup-submodules-with-nested-git-dirs	t7425-submodule-gitdir-path-extension	setup submodules with nested git dirs	submodule	not_ported
-t7425-submodule-gitdir-path-extension::git-dirs-of-encoded-sibling-submodules-must-not-be-nested	t7425-submodule-gitdir-path-extension	git dirs of encoded sibling submodules must not be nested	submodule	not_ported
-t7425-submodule-gitdir-path-extension::submodule-git-dir-nesting-detection-must-work-with-parallel-cloning	t7425-submodule-gitdir-path-extension	submodule git dir nesting detection must work with parallel cloning	submodule	not_ported
-t7425-submodule-gitdir-path-extension::disabling-extensions-submodulepathconfig-prevents-nested-submodules	t7425-submodule-gitdir-path-extension	disabling extensions.submodulePathConfig prevents nested submodules	submodule	not_ported
-t7425-submodule-gitdir-path-extension::verify-case-folding-conflicts-are-correctly-encoded	t7425-submodule-gitdir-path-extension	verify case-folding conflicts are correctly encoded	submodule	not_ported
-t7425-submodule-gitdir-path-extension::verify-hashing-conflict-resolution-as-a-last-resort	t7425-submodule-gitdir-path-extension	verify hashing conflict resolution as a last resort	submodule	not_ported
-t7425-submodule-gitdir-path-extension::submodule-gitdir-conflicts-with-previously-encoded-name-local-config	t7425-submodule-gitdir-path-extension	submodule gitdir conflicts with previously encoded name (local config)	submodule	not_ported
+t7425-submodule-gitdir-path-extension::setup-allow-file-protocol	t7425-submodule-gitdir-path-extension	setup: allow file protocol	submodule	partial
+t7425-submodule-gitdir-path-extension::create-repo-with-mixed-extension-submodules	t7425-submodule-gitdir-path-extension	create repo with mixed extension submodules	submodule	partial
+t7425-submodule-gitdir-path-extension::verify-new-submodule-gitdir-config	t7425-submodule-gitdir-path-extension	verify new submodule gitdir config	submodule	partial
+t7425-submodule-gitdir-path-extension::manual-add-and-verify-legacy-submodule-gitdir-config	t7425-submodule-gitdir-path-extension	manual add and verify legacy submodule gitdir config	submodule	partial
+t7425-submodule-gitdir-path-extension::gitdir-config-path-is-relative-for-both-absolute-and-relative-urls	t7425-submodule-gitdir-path-extension	gitdir config path is relative for both absolute and relative urls	submodule	partial
+t7425-submodule-gitdir-path-extension::clone-from-repo-with-both-legacy-and-new-style-submodules	t7425-submodule-gitdir-path-extension	clone from repo with both legacy and new-style submodules	submodule	partial
+t7425-submodule-gitdir-path-extension::commit-and-push-changes-to-encoded-submodules	t7425-submodule-gitdir-path-extension	commit and push changes to encoded submodules	submodule	partial
+t7425-submodule-gitdir-path-extension::fetch-mixed-submodule-changes-and-verify-updates	t7425-submodule-gitdir-path-extension	fetch mixed submodule changes and verify updates	submodule	partial
+t7425-submodule-gitdir-path-extension::git-init-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git init` respects init.defaultSubmodulePathConfig	submodule	partial
+t7425-submodule-gitdir-path-extension::git-init-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git init` does not set extension by default	submodule	partial
+t7425-submodule-gitdir-path-extension::git-clone-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git clone` does not set extension by default	submodule	partial
+t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-does-not-set-extension-by-default	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` does not set extension by default	submodule	partial
+t7425-submodule-gitdir-path-extension::git-clone-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git clone` respects init.defaultSubmodulePathConfig	submodule	partial
+t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-respects-init-defaultsubmodulepathconfig	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` respects init.defaultSubmodulePathConfig	submodule	partial
+t7425-submodule-gitdir-path-extension::submodule-helper-migrates-legacy-modules	t7425-submodule-gitdir-path-extension	submodule--helper migrates legacy modules	submodule	partial
+t7425-submodule-gitdir-path-extension::git-clone-recurse-submodules-works-after-migration	t7425-submodule-gitdir-path-extension	`git clone --recurse-submodules` works after migration	submodule	partial
+t7425-submodule-gitdir-path-extension::setup-submodules-with-nested-git-dirs	t7425-submodule-gitdir-path-extension	setup submodules with nested git dirs	submodule	partial
+t7425-submodule-gitdir-path-extension::git-dirs-of-encoded-sibling-submodules-must-not-be-nested	t7425-submodule-gitdir-path-extension	git dirs of encoded sibling submodules must not be nested	submodule	partial
+t7425-submodule-gitdir-path-extension::submodule-git-dir-nesting-detection-must-work-with-parallel-cloning	t7425-submodule-gitdir-path-extension	submodule git dir nesting detection must work with parallel cloning	submodule	partial
+t7425-submodule-gitdir-path-extension::disabling-extensions-submodulepathconfig-prevents-nested-submodules	t7425-submodule-gitdir-path-extension	disabling extensions.submodulePathConfig prevents nested submodules	submodule	partial
+t7425-submodule-gitdir-path-extension::verify-case-folding-conflicts-are-correctly-encoded	t7425-submodule-gitdir-path-extension	verify case-folding conflicts are correctly encoded	submodule	partial
+t7425-submodule-gitdir-path-extension::verify-hashing-conflict-resolution-as-a-last-resort	t7425-submodule-gitdir-path-extension	verify hashing conflict resolution as a last resort	submodule	partial
+t7425-submodule-gitdir-path-extension::submodule-gitdir-conflicts-with-previously-encoded-name-local-config	t7425-submodule-gitdir-path-extension	submodule gitdir conflicts with previously encoded name (local config)	submodule	partial
 t7426-submodule-get-default-remote::setup	t7426-submodule-get-default-remote	setup	submodule	partial
 t7426-submodule-get-default-remote::setup-repositories	t7426-submodule-get-default-remote	setup repositories	submodule	partial
 t7426-submodule-get-default-remote::get-default-remote-returns-origin-for-initialized-submodule	t7426-submodule-get-default-remote	get-default-remote returns origin for initialized submodule	submodule	partial
@@ -16182,137 +16182,137 @@ t8002-blame::blame-abbrev-b-truncates-the-blank-boundary	t8002-blame	blame --abb
 t8002-blame::blame-with-excessive-abbrev-and-b-culls-to-hash-length	t8002-blame	blame with excessive --abbrev and -b culls to hash length	blame	not_ported
 t8002-blame::exclude-promisor-objects-does-not-bug-crash	t8002-blame	--exclude-promisor-objects does not BUG-crash	blame	not_ported
 t8002-blame::blame-with-uncommitted-edits-in-partial-clone-does-not-crash	t8002-blame	blame with uncommitted edits in partial clone does not crash	blame	not_ported
-t8003-blame-corner-cases::straight-copy-without-c	t8003-blame-corner-cases	straight copy without -C	blame	not_ported
-t8003-blame-corner-cases::straight-move-without-c	t8003-blame-corner-cases	straight move without -C	blame	not_ported
-t8003-blame-corner-cases::straight-copy-with-c	t8003-blame-corner-cases	straight copy with -C	blame	not_ported
-t8003-blame-corner-cases::straight-move-with-c	t8003-blame-corner-cases	straight move with -C	blame	not_ported
-t8003-blame-corner-cases::straight-copy-with-c-c	t8003-blame-corner-cases	straight copy with -C -C	blame	not_ported
-t8003-blame-corner-cases::straight-move-with-c-c	t8003-blame-corner-cases	straight move with -C -C	blame	not_ported
-t8003-blame-corner-cases::append-without-c	t8003-blame-corner-cases	append without -C	blame	not_ported
-t8003-blame-corner-cases::append-with-c	t8003-blame-corner-cases	append with -C	blame	not_ported
-t8003-blame-corner-cases::append-with-c-c	t8003-blame-corner-cases	append with -C -C	blame	not_ported
-t8003-blame-corner-cases::append-with-c-c-c	t8003-blame-corner-cases	append with -C -C -C	blame	not_ported
-t8003-blame-corner-cases::blame-wholesale-copy	t8003-blame-corner-cases	blame wholesale copy	blame	not_ported
-t8003-blame-corner-cases::blame-wholesale-copy-and-more	t8003-blame-corner-cases	blame wholesale copy and more	blame	not_ported
-t8003-blame-corner-cases::blame-wholesale-copy-and-more-in-the-index	t8003-blame-corner-cases	blame wholesale copy and more in the index	blame	not_ported
-t8003-blame-corner-cases::blame-during-cherry-pick-with-file-rename-conflict	t8003-blame-corner-cases	blame during cherry-pick with file rename conflict	blame	not_ported
-t8003-blame-corner-cases::blame-path-that-used-to-be-a-directory	t8003-blame-corner-cases	blame path that used to be a directory	blame	not_ported
-t8003-blame-corner-cases::blame-to-a-commit-with-no-author-name	t8003-blame-corner-cases	blame to a commit with no author name	blame	not_ported
-t8003-blame-corner-cases::blame-l-with-invalid-start	t8003-blame-corner-cases	blame -L with invalid start	blame	not_ported
-t8003-blame-corner-cases::blame-l-with-invalid-end	t8003-blame-corner-cases	blame -L with invalid end	blame	not_ported
-t8003-blame-corner-cases::blame-parses-end-part-of-l	t8003-blame-corner-cases	blame parses <end> part of -L	blame	not_ported
-t8003-blame-corner-cases::blame-ln-n-1	t8003-blame-corner-cases	blame -Ln,-(n+1)	blame	not_ported
-t8003-blame-corner-cases::indent-of-line-numbers-nine-lines	t8003-blame-corner-cases	indent of line numbers, nine lines	blame	not_ported
-t8003-blame-corner-cases::indent-of-line-numbers-ten-lines	t8003-blame-corner-cases	indent of line numbers, ten lines	blame	not_ported
-t8003-blame-corner-cases::setup-file-with-crlf-newlines	t8003-blame-corner-cases	setup file with CRLF newlines	blame	not_ported
-t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true	t8003-blame-corner-cases	blame file with CRLF core.autocrlf true	blame	not_ported
-t8003-blame-corner-cases::blame-file-with-crlf-attributes-text	t8003-blame-corner-cases	blame file with CRLF attributes text	blame	not_ported
-t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true-2	t8003-blame-corner-cases	blame file with CRLF core.autocrlf=true	blame	not_ported
-t8003-blame-corner-cases::setup-coalesce-tests	t8003-blame-corner-cases	setup coalesce tests	blame	not_ported
-t8003-blame-corner-cases::blame-coalesce	t8003-blame-corner-cases	blame coalesce	blame	not_ported
-t8003-blame-corner-cases::blame-does-not-coalesce-non-adjacent-result-lines	t8003-blame-corner-cases	blame does not coalesce non-adjacent result lines	blame	not_ported
+t8003-blame-corner-cases::straight-copy-without-c	t8003-blame-corner-cases	straight copy without -C	blame	pass
+t8003-blame-corner-cases::straight-move-without-c	t8003-blame-corner-cases	straight move without -C	blame	pass
+t8003-blame-corner-cases::straight-copy-with-c	t8003-blame-corner-cases	straight copy with -C	blame	pass
+t8003-blame-corner-cases::straight-move-with-c	t8003-blame-corner-cases	straight move with -C	blame	pass
+t8003-blame-corner-cases::straight-copy-with-c-c	t8003-blame-corner-cases	straight copy with -C -C	blame	pass
+t8003-blame-corner-cases::straight-move-with-c-c	t8003-blame-corner-cases	straight move with -C -C	blame	pass
+t8003-blame-corner-cases::append-without-c	t8003-blame-corner-cases	append without -C	blame	pass
+t8003-blame-corner-cases::append-with-c	t8003-blame-corner-cases	append with -C	blame	pass
+t8003-blame-corner-cases::append-with-c-c	t8003-blame-corner-cases	append with -C -C	blame	pass
+t8003-blame-corner-cases::append-with-c-c-c	t8003-blame-corner-cases	append with -C -C -C	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy	t8003-blame-corner-cases	blame wholesale copy	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy-and-more	t8003-blame-corner-cases	blame wholesale copy and more	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy-and-more-in-the-index	t8003-blame-corner-cases	blame wholesale copy and more in the index	blame	pass
+t8003-blame-corner-cases::blame-during-cherry-pick-with-file-rename-conflict	t8003-blame-corner-cases	blame during cherry-pick with file rename conflict	blame	pass
+t8003-blame-corner-cases::blame-path-that-used-to-be-a-directory	t8003-blame-corner-cases	blame path that used to be a directory	blame	pass
+t8003-blame-corner-cases::blame-to-a-commit-with-no-author-name	t8003-blame-corner-cases	blame to a commit with no author name	blame	pass
+t8003-blame-corner-cases::blame-l-with-invalid-start	t8003-blame-corner-cases	blame -L with invalid start	blame	pass
+t8003-blame-corner-cases::blame-l-with-invalid-end	t8003-blame-corner-cases	blame -L with invalid end	blame	pass
+t8003-blame-corner-cases::blame-parses-end-part-of-l	t8003-blame-corner-cases	blame parses <end> part of -L	blame	pass
+t8003-blame-corner-cases::blame-ln-n-1	t8003-blame-corner-cases	blame -Ln,-(n+1)	blame	pass
+t8003-blame-corner-cases::indent-of-line-numbers-nine-lines	t8003-blame-corner-cases	indent of line numbers, nine lines	blame	pass
+t8003-blame-corner-cases::indent-of-line-numbers-ten-lines	t8003-blame-corner-cases	indent of line numbers, ten lines	blame	pass
+t8003-blame-corner-cases::setup-file-with-crlf-newlines	t8003-blame-corner-cases	setup file with CRLF newlines	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true	t8003-blame-corner-cases	blame file with CRLF core.autocrlf true	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-attributes-text	t8003-blame-corner-cases	blame file with CRLF attributes text	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true-2	t8003-blame-corner-cases	blame file with CRLF core.autocrlf=true	blame	pass
+t8003-blame-corner-cases::setup-coalesce-tests	t8003-blame-corner-cases	setup coalesce tests	blame	pass
+t8003-blame-corner-cases::blame-coalesce	t8003-blame-corner-cases	blame coalesce	blame	pass
+t8003-blame-corner-cases::blame-does-not-coalesce-non-adjacent-result-lines	t8003-blame-corner-cases	blame does not coalesce non-adjacent result lines	blame	pass
 t8004-blame-with-conflicts::setup-first-case	t8004-blame-with-conflicts	setup first case	blame	pass
 t8004-blame-with-conflicts::blame-does-not-crash-with-conflicted-file-in-stages-1-3	t8004-blame-with-conflicts	blame does not crash with conflicted file in stages 1,3	blame	pass
 t8005-blame-i18n::setup-the-repository	t8005-blame-i18n	setup the repository	blame	not_ported
-t8006-blame-textconv::setup	t8006-blame-textconv	setup	blame	partial
-t8006-blame-textconv::no-filter-specified	t8006-blame-textconv	no filter specified	blame	partial
-t8006-blame-textconv::setup-textconv-filters	t8006-blame-textconv	setup textconv filters	blame	partial
-t8006-blame-textconv::blame-with-no-textconv	t8006-blame-textconv	blame with --no-textconv	blame	partial
-t8006-blame-textconv::basic-blame-on-last-commit	t8006-blame-textconv	basic blame on last commit	blame	partial
-t8006-blame-textconv::blame-textconv-going-through-revisions	t8006-blame-textconv	blame --textconv going through revisions	blame	partial
-t8006-blame-textconv::blame-textconv-with-local-changes	t8006-blame-textconv	blame --textconv with local changes	blame	partial
-t8006-blame-textconv::setup-cachetextconv	t8006-blame-textconv	setup +cachetextconv	blame	partial
-t8006-blame-textconv::blame-textconv-works-with-textconvcache	t8006-blame-textconv	blame --textconv works with textconvcache	blame	partial
-t8006-blame-textconv::setup-cachetextconv-2	t8006-blame-textconv	setup -cachetextconv	blame	partial
-t8006-blame-textconv::make-a-new-commit	t8006-blame-textconv	make a new commit	blame	partial
-t8006-blame-textconv::blame-from-previous-revision	t8006-blame-textconv	blame from previous revision	blame	partial
-t8006-blame-textconv::blame-with-no-textconv-on-symlink	t8006-blame-textconv	blame with --no-textconv (on symlink)	blame	partial
-t8006-blame-textconv::blame-textconv-on-symlink	t8006-blame-textconv	blame --textconv (on symlink)	blame	partial
-t8006-blame-textconv::make-another-new-commit	t8006-blame-textconv	make another new commit	blame	partial
-t8006-blame-textconv::blame-on-last-commit-c-c-symlink	t8006-blame-textconv	blame on last commit (-C -C, symlink)	blame	partial
-t8007-cat-file-textconv::setup	t8007-cat-file-textconv	setup	cat-file	not_ported
-t8007-cat-file-textconv::usage-bad-rev	t8007-cat-file-textconv	usage: <bad rev>	cat-file	not_ported
-t8007-cat-file-textconv::usage-bad-rev-bad-path	t8007-cat-file-textconv	usage: <bad rev>:<bad path>	cat-file	not_ported
-t8007-cat-file-textconv::usage-rev-bad-path	t8007-cat-file-textconv	usage: <rev>:<bad path>	cat-file	not_ported
-t8007-cat-file-textconv::usage-rev-with-no-path	t8007-cat-file-textconv	usage: <rev> with no <path>	cat-file	not_ported
-t8007-cat-file-textconv::usage-bad-rev-good-in-head-path	t8007-cat-file-textconv	usage: <bad rev>:<good (in HEAD) path>	cat-file	not_ported
-t8007-cat-file-textconv::no-filter-specified	t8007-cat-file-textconv	no filter specified	cat-file	not_ported
-t8007-cat-file-textconv::setup-textconv-filters	t8007-cat-file-textconv	setup textconv filters	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-without-textconv	t8007-cat-file-textconv	cat-file without --textconv	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-without-textconv-on-previous-commit	t8007-cat-file-textconv	cat-file without --textconv on previous commit	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-textconv-on-last-commit	t8007-cat-file-textconv	cat-file --textconv on last commit	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-textconv-on-previous-commit	t8007-cat-file-textconv	cat-file --textconv on previous commit	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-without-textconv-symlink	t8007-cat-file-textconv	cat-file without --textconv (symlink)	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-textconv-on-index-symlink	t8007-cat-file-textconv	cat-file --textconv on index (symlink)	cat-file	not_ported
-t8007-cat-file-textconv::cat-file-textconv-on-head-symlink	t8007-cat-file-textconv	cat-file --textconv on HEAD (symlink)	cat-file	not_ported
+t8006-blame-textconv::setup	t8006-blame-textconv	setup	blame	pass
+t8006-blame-textconv::no-filter-specified	t8006-blame-textconv	no filter specified	blame	pass
+t8006-blame-textconv::setup-textconv-filters	t8006-blame-textconv	setup textconv filters	blame	pass
+t8006-blame-textconv::blame-with-no-textconv	t8006-blame-textconv	blame with --no-textconv	blame	pass
+t8006-blame-textconv::basic-blame-on-last-commit	t8006-blame-textconv	basic blame on last commit	blame	pass
+t8006-blame-textconv::blame-textconv-going-through-revisions	t8006-blame-textconv	blame --textconv going through revisions	blame	pass
+t8006-blame-textconv::blame-textconv-with-local-changes	t8006-blame-textconv	blame --textconv with local changes	blame	pass
+t8006-blame-textconv::setup-cachetextconv	t8006-blame-textconv	setup +cachetextconv	blame	pass
+t8006-blame-textconv::blame-textconv-works-with-textconvcache	t8006-blame-textconv	blame --textconv works with textconvcache	blame	pass
+t8006-blame-textconv::setup-cachetextconv-2	t8006-blame-textconv	setup -cachetextconv	blame	pass
+t8006-blame-textconv::make-a-new-commit	t8006-blame-textconv	make a new commit	blame	pass
+t8006-blame-textconv::blame-from-previous-revision	t8006-blame-textconv	blame from previous revision	blame	pass
+t8006-blame-textconv::blame-with-no-textconv-on-symlink	t8006-blame-textconv	blame with --no-textconv (on symlink)	blame	pass
+t8006-blame-textconv::blame-textconv-on-symlink	t8006-blame-textconv	blame --textconv (on symlink)	blame	pass
+t8006-blame-textconv::make-another-new-commit	t8006-blame-textconv	make another new commit	blame	pass
+t8006-blame-textconv::blame-on-last-commit-c-c-symlink	t8006-blame-textconv	blame on last commit (-C -C, symlink)	blame	pass
+t8007-cat-file-textconv::setup	t8007-cat-file-textconv	setup	cat-file	pass
+t8007-cat-file-textconv::usage-bad-rev	t8007-cat-file-textconv	usage: <bad rev>	cat-file	pass
+t8007-cat-file-textconv::usage-bad-rev-bad-path	t8007-cat-file-textconv	usage: <bad rev>:<bad path>	cat-file	pass
+t8007-cat-file-textconv::usage-rev-bad-path	t8007-cat-file-textconv	usage: <rev>:<bad path>	cat-file	pass
+t8007-cat-file-textconv::usage-rev-with-no-path	t8007-cat-file-textconv	usage: <rev> with no <path>	cat-file	pass
+t8007-cat-file-textconv::usage-bad-rev-good-in-head-path	t8007-cat-file-textconv	usage: <bad rev>:<good (in HEAD) path>	cat-file	pass
+t8007-cat-file-textconv::no-filter-specified	t8007-cat-file-textconv	no filter specified	cat-file	pass
+t8007-cat-file-textconv::setup-textconv-filters	t8007-cat-file-textconv	setup textconv filters	cat-file	pass
+t8007-cat-file-textconv::cat-file-without-textconv	t8007-cat-file-textconv	cat-file without --textconv	cat-file	pass
+t8007-cat-file-textconv::cat-file-without-textconv-on-previous-commit	t8007-cat-file-textconv	cat-file without --textconv on previous commit	cat-file	pass
+t8007-cat-file-textconv::cat-file-textconv-on-last-commit	t8007-cat-file-textconv	cat-file --textconv on last commit	cat-file	pass
+t8007-cat-file-textconv::cat-file-textconv-on-previous-commit	t8007-cat-file-textconv	cat-file --textconv on previous commit	cat-file	pass
+t8007-cat-file-textconv::cat-file-without-textconv-symlink	t8007-cat-file-textconv	cat-file without --textconv (symlink)	cat-file	pass
+t8007-cat-file-textconv::cat-file-textconv-on-index-symlink	t8007-cat-file-textconv	cat-file --textconv on index (symlink)	cat-file	pass
+t8007-cat-file-textconv::cat-file-textconv-on-head-symlink	t8007-cat-file-textconv	cat-file --textconv on HEAD (symlink)	cat-file	pass
 t8008-blame-formats::setup	t8008-blame-formats	setup	blame	pass
 t8008-blame-formats::normal-blame-output	t8008-blame-formats	normal blame output	blame	pass
 t8008-blame-formats::blame-porcelain-output	t8008-blame-formats	blame --porcelain output	blame	pass
 t8008-blame-formats::blame-line-porcelain-output	t8008-blame-formats	blame --line-porcelain output	blame	pass
 t8008-blame-formats::porcelain-detects-first-non-blank-line-as-subject	t8008-blame-formats	--porcelain detects first non-blank line as subject	blame	pass
-t8009-blame-vs-topicbranches::blame-reverse-first-parent-finds-a1	t8009-blame-vs-topicbranches	blame --reverse --first-parent finds A1	blame	partial
-t8010-cat-file-filters::setup	t8010-cat-file-filters	setup	cat-file	partial
-t8010-cat-file-filters::no-filters-with-git-show	t8010-cat-file-filters	no filters with `git show`	cat-file	partial
-t8010-cat-file-filters::no-filters-with-cat-file	t8010-cat-file-filters	no filters with cat-file	cat-file	partial
-t8010-cat-file-filters::cat-file-filters-converts-to-worktree-version	t8010-cat-file-filters	cat-file --filters converts to worktree version	cat-file	partial
-t8010-cat-file-filters::cat-file-filters-path-path-works	t8010-cat-file-filters	cat-file --filters --path=<path> works	cat-file	partial
-t8010-cat-file-filters::cat-file-textconv-path-path-works	t8010-cat-file-filters	cat-file --textconv --path=<path> works	cat-file	partial
-t8010-cat-file-filters::path-path-complains-without-textconv-filters	t8010-cat-file-filters	--path=<path> complains without --textconv/--filters	cat-file	partial
-t8010-cat-file-filters::textconv-filters-complain-without-path	t8010-cat-file-filters	--textconv/--filters complain without path	cat-file	partial
-t8010-cat-file-filters::cat-file-textconv-batch-works	t8010-cat-file-filters	cat-file --textconv --batch works	cat-file	partial
-t8011-blame-split-file::setup-split-file-case	t8011-blame-split-file	setup split file case	blame	partial
-t8011-blame-split-file::setup-simulated-porcelain	t8011-blame-split-file	setup simulated porcelain	blame	partial
-t8011-blame-split-file::generate-output-output	t8011-blame-split-file	generate --$output output	blame	partial
-t8011-blame-split-file::output-output-finds-correct-commits	t8011-blame-split-file	$output output finds correct commits	blame	partial
-t8011-blame-split-file::output-output-shows-correct-filenames	t8011-blame-split-file	$output output shows correct filenames	blame	partial
-t8011-blame-split-file::output-output-shows-correct-previous-pointer	t8011-blame-split-file	$output output shows correct previous pointer	blame	partial
+t8009-blame-vs-topicbranches::blame-reverse-first-parent-finds-a1	t8009-blame-vs-topicbranches	blame --reverse --first-parent finds A1	blame	pass
+t8010-cat-file-filters::setup	t8010-cat-file-filters	setup	cat-file	pass
+t8010-cat-file-filters::no-filters-with-git-show	t8010-cat-file-filters	no filters with `git show`	cat-file	pass
+t8010-cat-file-filters::no-filters-with-cat-file	t8010-cat-file-filters	no filters with cat-file	cat-file	pass
+t8010-cat-file-filters::cat-file-filters-converts-to-worktree-version	t8010-cat-file-filters	cat-file --filters converts to worktree version	cat-file	pass
+t8010-cat-file-filters::cat-file-filters-path-path-works	t8010-cat-file-filters	cat-file --filters --path=<path> works	cat-file	pass
+t8010-cat-file-filters::cat-file-textconv-path-path-works	t8010-cat-file-filters	cat-file --textconv --path=<path> works	cat-file	pass
+t8010-cat-file-filters::path-path-complains-without-textconv-filters	t8010-cat-file-filters	--path=<path> complains without --textconv/--filters	cat-file	pass
+t8010-cat-file-filters::textconv-filters-complain-without-path	t8010-cat-file-filters	--textconv/--filters complain without path	cat-file	pass
+t8010-cat-file-filters::cat-file-textconv-batch-works	t8010-cat-file-filters	cat-file --textconv --batch works	cat-file	pass
+t8011-blame-split-file::setup-split-file-case	t8011-blame-split-file	setup split file case	blame	pass
+t8011-blame-split-file::setup-simulated-porcelain	t8011-blame-split-file	setup simulated porcelain	blame	pass
+t8011-blame-split-file::generate-output-output	t8011-blame-split-file	generate --$output output	blame	pass
+t8011-blame-split-file::output-output-finds-correct-commits	t8011-blame-split-file	$output output finds correct commits	blame	pass
+t8011-blame-split-file::output-output-shows-correct-filenames	t8011-blame-split-file	$output output shows correct filenames	blame	pass
+t8011-blame-split-file::output-output-shows-correct-previous-pointer	t8011-blame-split-file	$output output shows correct previous pointer	blame	pass
 t8012-blame-colors::colored-blame-colors-contiguous-lines	t8012-blame-colors	colored blame colors contiguous lines	blame	not_ported
 t8012-blame-colors::color-lines-becoming-contiguous-due-to-ignore-rev	t8012-blame-colors	color lines becoming contiguous due to --ignore-rev	blame	not_ported
 t8012-blame-colors::color-by-age-consistently-colors-old-code	t8012-blame-colors	color by age consistently colors old code	blame	not_ported
 t8012-blame-colors::blame-color-by-age-new-code-is-different	t8012-blame-colors	blame color by age: new code is different	blame	not_ported
-t8013-blame-ignore-revs::validate-ignore-rev	t8013-blame-ignore-revs	validate --ignore-rev	blame	partial
-t8013-blame-ignore-revs::validate-ignore-revs-file	t8013-blame-ignore-revs	validate --ignore-revs-file	blame	partial
-t8013-blame-ignore-revs::ignore-rev-changing-lines-i	t8013-blame-ignore-revs	ignore_rev_changing_lines ($I)	blame	partial
-t8013-blame-ignore-revs::mark-unblamable-lines-with-opt	t8013-blame-ignore-revs	mark_unblamable_lines with $opt	blame	partial
-t8013-blame-ignore-revs::mark-ignored-lines-with-opt	t8013-blame-ignore-revs	mark_ignored_lines with $opt	blame	partial
-t8014-blame-ignore-fuzzy::diff-chunks-with-no-suspects	t8014-blame-ignore-fuzzy	Diff chunks with no suspects	blame	partial
-t8014-blame-ignore-fuzzy::position-matching	t8014-blame-ignore-fuzzy	position matching	blame	partial
-t8014-blame-ignore-fuzzy::preserve-order	t8014-blame-ignore-fuzzy	preserve order	blame	partial
-t8014-blame-ignore-fuzzy::title	t8014-blame-ignore-fuzzy	$title	blame	partial
-t8015-blame-diff-algorithm::blame-uses-myers-diff-algorithm-by-default	t8015-blame-diff-algorithm	blame uses Myers diff algorithm by default	blame	partial
-t8015-blame-diff-algorithm::blame-honors-diff-algorithm-option	t8015-blame-diff-algorithm	blame honors --diff-algorithm option	blame	partial
-t8015-blame-diff-algorithm::blame-honors-diff-algorithm-config-variable	t8015-blame-diff-algorithm	blame honors diff.algorithm config variable	blame	partial
-t8015-blame-diff-algorithm::blame-gives-priority-to-diff-algorithm-over-diff-algorithm	t8015-blame-diff-algorithm	blame gives priority to --diff-algorithm over diff.algorithm	blame	partial
-t8015-blame-diff-algorithm::blame-honors-minimal-option	t8015-blame-diff-algorithm	blame honors --minimal option	blame	partial
-t8015-blame-diff-algorithm::blame-respects-the-order-of-diff-options	t8015-blame-diff-algorithm	blame respects the order of diff options	blame	partial
-t8020-last-modified::setup	t8020-last-modified	setup	status	not_ported
-t8020-last-modified::last-modified-non-recursive	t8020-last-modified	last-modified non-recursive	status	not_ported
-t8020-last-modified::last-modified-recursive	t8020-last-modified	last-modified recursive	status	not_ported
-t8020-last-modified::last-modified-on-annotated-tag	t8020-last-modified	last-modified on annotated tag	status	not_ported
-t8020-last-modified::last-modified-recursive-with-show-trees	t8020-last-modified	last-modified recursive with show-trees	status	not_ported
-t8020-last-modified::last-modified-non-recursive-with-show-trees	t8020-last-modified	last-modified non-recursive with show-trees	status	not_ported
-t8020-last-modified::last-modified-subdir	t8020-last-modified	last-modified subdir	status	not_ported
-t8020-last-modified::last-modified-in-sparse-checkout	t8020-last-modified	last-modified in sparse checkout	status	not_ported
-t8020-last-modified::last-modified-subdir-recursive	t8020-last-modified	last-modified subdir recursive	status	not_ported
-t8020-last-modified::last-modified-subdir-non-recursive	t8020-last-modified	last-modified subdir non-recursive	status	not_ported
-t8020-last-modified::last-modified-path-in-subdir-non-recursive	t8020-last-modified	last-modified path in subdir non-recursive	status	not_ported
-t8020-last-modified::last-modified-subdir-with-wildcard-non-recursive	t8020-last-modified	last-modified subdir with wildcard non-recursive	status	not_ported
-t8020-last-modified::last-modified-with-negative-max-depth	t8020-last-modified	last-modified with negative max-depth	status	not_ported
-t8020-last-modified::last-modified-with-max-depth-of-1	t8020-last-modified	last-modified with max-depth of 1	status	not_ported
-t8020-last-modified::last-modified-from-non-head-commit	t8020-last-modified	last-modified from non-HEAD commit	status	not_ported
-t8020-last-modified::last-modified-from-subdir-defaults-to-root	t8020-last-modified	last-modified from subdir defaults to root	status	not_ported
-t8020-last-modified::last-modified-from-subdir-uses-relative-pathspecs	t8020-last-modified	last-modified from subdir uses relative pathspecs	status	not_ported
-t8020-last-modified::limit-last-modified-traversal-by-count	t8020-last-modified	limit last-modified traversal by count	status	not_ported
-t8020-last-modified::limit-last-modified-traversal-by-commit	t8020-last-modified	limit last-modified traversal by commit	status	not_ported
-t8020-last-modified::only-last-modified-files-in-the-current-tree	t8020-last-modified	only last-modified files in the current tree	status	not_ported
-t8020-last-modified::subdirectory-modified-via-merge	t8020-last-modified	subdirectory modified via merge	status	not_ported
-t8020-last-modified::cross-merge-boundaries-in-blaming	t8020-last-modified	cross merge boundaries in blaming	status	not_ported
-t8020-last-modified::last-modified-merge-for-resolved-conflicts	t8020-last-modified	last-modified merge for resolved conflicts	status	not_ported
-t8020-last-modified::last-modified-merge-ignores-content-from-branch	t8020-last-modified	last-modified merge ignores content from branch	status	not_ported
-t8020-last-modified::last-modified-merge-undoes-changes	t8020-last-modified	last-modified merge undoes changes	status	not_ported
-t8020-last-modified::cannot-run-last-modified-on-two-commits	t8020-last-modified	cannot run last-modified on two commits	status	not_ported
-t8020-last-modified::last-modified-complains-about-unknown-arguments	t8020-last-modified	last-modified complains about unknown arguments	status	not_ported
-t8020-last-modified::last-modified-expects-commit-ish	t8020-last-modified	last-modified expects commit-ish	status	not_ported
+t8013-blame-ignore-revs::validate-ignore-rev	t8013-blame-ignore-revs	validate --ignore-rev	blame	pass
+t8013-blame-ignore-revs::validate-ignore-revs-file	t8013-blame-ignore-revs	validate --ignore-revs-file	blame	pass
+t8013-blame-ignore-revs::ignore-rev-changing-lines-i	t8013-blame-ignore-revs	ignore_rev_changing_lines ($I)	blame	pass
+t8013-blame-ignore-revs::mark-unblamable-lines-with-opt	t8013-blame-ignore-revs	mark_unblamable_lines with $opt	blame	pass
+t8013-blame-ignore-revs::mark-ignored-lines-with-opt	t8013-blame-ignore-revs	mark_ignored_lines with $opt	blame	pass
+t8014-blame-ignore-fuzzy::diff-chunks-with-no-suspects	t8014-blame-ignore-fuzzy	Diff chunks with no suspects	blame	pass
+t8014-blame-ignore-fuzzy::position-matching	t8014-blame-ignore-fuzzy	position matching	blame	pass
+t8014-blame-ignore-fuzzy::preserve-order	t8014-blame-ignore-fuzzy	preserve order	blame	pass
+t8014-blame-ignore-fuzzy::title	t8014-blame-ignore-fuzzy	$title	blame	pass
+t8015-blame-diff-algorithm::blame-uses-myers-diff-algorithm-by-default	t8015-blame-diff-algorithm	blame uses Myers diff algorithm by default	blame	pass
+t8015-blame-diff-algorithm::blame-honors-diff-algorithm-option	t8015-blame-diff-algorithm	blame honors --diff-algorithm option	blame	pass
+t8015-blame-diff-algorithm::blame-honors-diff-algorithm-config-variable	t8015-blame-diff-algorithm	blame honors diff.algorithm config variable	blame	pass
+t8015-blame-diff-algorithm::blame-gives-priority-to-diff-algorithm-over-diff-algorithm	t8015-blame-diff-algorithm	blame gives priority to --diff-algorithm over diff.algorithm	blame	pass
+t8015-blame-diff-algorithm::blame-honors-minimal-option	t8015-blame-diff-algorithm	blame honors --minimal option	blame	pass
+t8015-blame-diff-algorithm::blame-respects-the-order-of-diff-options	t8015-blame-diff-algorithm	blame respects the order of diff options	blame	pass
+t8020-last-modified::setup	t8020-last-modified	setup	status	pass
+t8020-last-modified::last-modified-non-recursive	t8020-last-modified	last-modified non-recursive	status	pass
+t8020-last-modified::last-modified-recursive	t8020-last-modified	last-modified recursive	status	pass
+t8020-last-modified::last-modified-on-annotated-tag	t8020-last-modified	last-modified on annotated tag	status	pass
+t8020-last-modified::last-modified-recursive-with-show-trees	t8020-last-modified	last-modified recursive with show-trees	status	pass
+t8020-last-modified::last-modified-non-recursive-with-show-trees	t8020-last-modified	last-modified non-recursive with show-trees	status	pass
+t8020-last-modified::last-modified-subdir	t8020-last-modified	last-modified subdir	status	pass
+t8020-last-modified::last-modified-in-sparse-checkout	t8020-last-modified	last-modified in sparse checkout	status	pass
+t8020-last-modified::last-modified-subdir-recursive	t8020-last-modified	last-modified subdir recursive	status	pass
+t8020-last-modified::last-modified-subdir-non-recursive	t8020-last-modified	last-modified subdir non-recursive	status	pass
+t8020-last-modified::last-modified-path-in-subdir-non-recursive	t8020-last-modified	last-modified path in subdir non-recursive	status	pass
+t8020-last-modified::last-modified-subdir-with-wildcard-non-recursive	t8020-last-modified	last-modified subdir with wildcard non-recursive	status	pass
+t8020-last-modified::last-modified-with-negative-max-depth	t8020-last-modified	last-modified with negative max-depth	status	pass
+t8020-last-modified::last-modified-with-max-depth-of-1	t8020-last-modified	last-modified with max-depth of 1	status	pass
+t8020-last-modified::last-modified-from-non-head-commit	t8020-last-modified	last-modified from non-HEAD commit	status	pass
+t8020-last-modified::last-modified-from-subdir-defaults-to-root	t8020-last-modified	last-modified from subdir defaults to root	status	pass
+t8020-last-modified::last-modified-from-subdir-uses-relative-pathspecs	t8020-last-modified	last-modified from subdir uses relative pathspecs	status	pass
+t8020-last-modified::limit-last-modified-traversal-by-count	t8020-last-modified	limit last-modified traversal by count	status	pass
+t8020-last-modified::limit-last-modified-traversal-by-commit	t8020-last-modified	limit last-modified traversal by commit	status	pass
+t8020-last-modified::only-last-modified-files-in-the-current-tree	t8020-last-modified	only last-modified files in the current tree	status	pass
+t8020-last-modified::subdirectory-modified-via-merge	t8020-last-modified	subdirectory modified via merge	status	pass
+t8020-last-modified::cross-merge-boundaries-in-blaming	t8020-last-modified	cross merge boundaries in blaming	status	pass
+t8020-last-modified::last-modified-merge-for-resolved-conflicts	t8020-last-modified	last-modified merge for resolved conflicts	status	pass
+t8020-last-modified::last-modified-merge-ignores-content-from-branch	t8020-last-modified	last-modified merge ignores content from branch	status	pass
+t8020-last-modified::last-modified-merge-undoes-changes	t8020-last-modified	last-modified merge undoes changes	status	pass
+t8020-last-modified::cannot-run-last-modified-on-two-commits	t8020-last-modified	cannot run last-modified on two commits	status	pass
+t8020-last-modified::last-modified-complains-about-unknown-arguments	t8020-last-modified	last-modified complains about unknown arguments	status	pass
+t8020-last-modified::last-modified-expects-commit-ish	t8020-last-modified	last-modified expects commit-ish	status	pass
 t9001-send-email::dump-aliases-must-be-used-alone	t9001-send-email	--dump-aliases must be used alone	send-email	not_ported
 t9002-column::setup	t9002-column	setup	column	not_ported
 t9002-column::never	t9002-column	never	column	not_ported

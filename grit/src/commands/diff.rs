@@ -902,6 +902,74 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let has_diff = !entries.is_empty();
 
+    // Handle GIT_EXTERNAL_DIFF: invoke the external diff for each changed file.
+    if let Ok(ext_diff) = std::env::var("GIT_EXTERNAL_DIFF") {
+        let wt = work_tree.unwrap_or_else(|| std::path::Path::new("."));
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let git_prefix = cwd
+            .strip_prefix(wt)
+            .map(|p| {
+                let s = p.to_string_lossy();
+                if s.is_empty() {
+                    String::new()
+                } else {
+                    format!("{s}/")
+                }
+            })
+            .unwrap_or_default();
+        for entry in &entries {
+            use std::process::Command;
+            let path = entry.path();
+            // Write old and new content to temp files.
+            let old_content = read_content_raw(&repo.odb, &entry.old_oid);
+            let new_content = read_content_raw(&repo.odb, &entry.new_oid);
+            let old_is_null = entry.old_oid.is_zero();
+            let new_is_null = entry.new_oid.is_zero();
+            let old_tmp = if old_is_null {
+                "/dev/null".to_string()
+            } else {
+                let mut f = tempfile::NamedTempFile::new().context("creating temp file")?;
+                use std::io::Write;
+                f.write_all(&old_content).context("writing temp file")?;
+                f.path().to_string_lossy().into_owned()
+            };
+            let new_path = wt.join(path);
+            let new_arg = if new_is_null || !new_path.exists() {
+                if new_is_null {
+                    "/dev/null".to_string()
+                } else {
+                    let mut f = tempfile::NamedTempFile::new().context("creating temp file")?;
+                    use std::io::Write;
+                    f.write_all(&new_content).context("writing temp file")?;
+                    f.path().to_string_lossy().into_owned()
+                }
+            } else {
+                new_path.to_string_lossy().into_owned()
+            };
+            let old_hex = entry.old_oid.to_hex();
+            let new_hex = entry.new_oid.to_hex();
+            let status = Command::new("sh")
+                .arg("-c")
+                .arg(format!("{ext_diff} \"$@\"",))
+                .arg("git-external-diff")
+                .arg(path)
+                .arg(&old_tmp)
+                .arg(&old_hex)
+                .arg(&entry.old_mode)
+                .arg(&new_arg)
+                .arg(&new_hex)
+                .arg(&entry.new_mode)
+                .env("GIT_PREFIX", &git_prefix)
+                .current_dir(wt)
+                .status()
+                .context("running GIT_EXTERNAL_DIFF")?;
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
+        return Ok(());
+    }
+
     // Determine color mode
     let use_color = match args.color.as_deref() {
         Some("always") => true,

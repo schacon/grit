@@ -1803,11 +1803,33 @@ fn get_alias_definition(name: &str) -> Option<String> {
 #[allow(dead_code)]
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     if let Some(shell_cmd) = alias.strip_prefix('!') {
+        // Real git runs shell aliases from the work-tree root and sets
+        // GIT_PREFIX to the path from the work-tree root to the cwd.
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let (work_tree, git_prefix) = if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+            let wt = repo.work_tree.unwrap_or_else(|| cwd.clone());
+            let prefix = cwd
+                .strip_prefix(&wt)
+                .map(|p| {
+                    let s = p.to_string_lossy();
+                    if s.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{s}/")
+                    }
+                })
+                .unwrap_or_default();
+            (wt, prefix)
+        } else {
+            (cwd.clone(), String::new())
+        };
         let status = std::process::Command::new("sh")
             .arg("-c")
             .arg(shell_cmd)
             .arg(format!("git-{name}"))
             .args(rest)
+            .current_dir(&work_tree)
+            .env("GIT_PREFIX", &git_prefix)
             .status()?;
         exit_with_status(status);
     }
