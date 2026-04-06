@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    81 |
+| Completed   |    82 |
 | In progress |     0 |
-| Remaining   |   686 |
+| Remaining   |   685 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0100-previous` — 6/6 tests pass (made `branch -d @{-N}` resolve prior-checkout shorthand to the underlying local branch ref, normalized merge commit message target naming so `merge @{-1}` reports the resolved branch name, and taught `log -g <rev>` reflog-walk input parsing to resolve symbolic refs including `@{-N}`)
 - `t1005-read-tree-reset` — 7/7 tests pass (fixed reset/checkout/read-tree cleanup for unmerged D/F remnants by removing non-stage0 entries during worktree updates; made index staging replace D/F-conflicting paths so file-vs-directory transitions don’t leave invalid index state; and unified `checkout -f` hard-reset path through tree-based cleanup logic)
 - `t1514-rev-parse-push` — 9/9 tests pass (implemented push-target resolution for `@{push}` honoring `push.default`, `branch.*.pushRemote`, and `remote.pushDefault`; added per-worktree ref namespace support (`main-worktree/*`, `worktrees/<id>/*`) plus ambiguity warnings in revision parsing; wired reflog lookup for cross-worktree refs; and ensured `git push` updates local remote-tracking refs so upstream setup and push-resolution semantics match native Git)
 - `t1415-worktree-refs` — 10/10 tests pass (implemented per-worktree ref resolution for `worktree/*`, `main-worktree/*`, and `worktrees/<id>/*` in `rev-parse`; added cross-worktree reflog lookup support; and fixed `for-each-ref` to include shared refs from the common dir while keeping per-worktree namespaces local)

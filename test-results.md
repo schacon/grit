@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after `t0100-previous` compatibility fixes in branch deletion shorthand, merge target naming, and reflog-walk revision normalization).
+- `rm -rf /workspace/tests/trash.t0100-previous && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t0100-previous.sh` (run from `/workspace/tests`): 6/6 passing.
+- `./scripts/run-tests.sh t0100-previous.sh`: 6/6 passing.
 - `cargo fmt`: success (after `t1005-read-tree-reset` fixes in `index`, `read-tree`, `reset`, and `checkout` worktree-update paths).
 - `cargo build --release -p grit-rs`: success.
 - `rm -rf /workspace/tests/trash.t1005-read-tree-reset && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1005-read-tree-reset.sh` (run from `/workspace/tests`): 7/7 passing.

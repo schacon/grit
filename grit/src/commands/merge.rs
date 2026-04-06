@@ -2652,6 +2652,41 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{}: {}", spec, e))
 }
 
+/// Derive a user-facing merge target name for commit messages.
+///
+/// This normalizes symbolic refs and `@{-N}` forms to a human-friendly
+/// short branch/tag name where possible.
+fn merge_target_display_name(repo: &Repository, spec: &str) -> String {
+    if spec.starts_with("@{-") {
+        if let Some(close) = spec[3..].find('}') {
+            let base_end = 3 + close + 1;
+            let base = &spec[..base_end];
+            if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, base) {
+                if let Some(short) = short_ref_display_name(&full) {
+                    return short;
+                }
+            }
+        }
+    }
+
+    if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, spec) {
+        if let Some(short) = short_ref_display_name(&full) {
+            return short;
+        }
+    }
+
+    spec.to_owned()
+}
+
+fn short_ref_display_name(full_ref: &str) -> Option<String> {
+    for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
+        if let Some(short) = full_ref.strip_prefix(prefix) {
+            return Some(short.to_owned());
+        }
+    }
+    None
+}
+
 /// Build the default merge commit message.
 /// Append Signed-off-by trailer to a message if not already present.
 fn append_signoff(msg: &str, name: &str, email: &str) -> String {
@@ -2672,15 +2707,16 @@ fn build_merge_message(
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
+    let display_name = merge_target_display_name(repo, branch_name);
     // Determine if the merge target is a tag, branch, or commit
-    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{display_name}")).is_ok() {
         "tag"
-    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{display_name}")).is_ok() {
         "remote-tracking branch"
     } else {
         "branch"
     };
-    let base_msg = format!("Merge {kind} '{branch_name}'");
+    let base_msg = format!("Merge {kind} '{display_name}'");
     // Append "into <branch>" if not merging into main/master
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {
