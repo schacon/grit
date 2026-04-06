@@ -102,7 +102,7 @@ commit → check it off → move on.
 - [x] `t1005-read-tree-reset` ████████████████████ 7/7 (0 left) — read-tree -u --reset
 - [x] `t0100-previous` ████████████████████ 6/6 (0 left) — previous branch syntax @{-n}
 - [x] `t1511-rev-parse-caret` ████████████████████ 17/17 (0 left) — tests for ref^{stuff}
-- [ ] `t1406-submodule-ref-store` ██████████░░░░░░░░░░ 8/15 (7 left) — test submodule ref store api
+- [x] `t1406-submodule-ref-store` ████████████████████ 15/15 (0 left) — test submodule ref store api
 - [ ] `t1309-early-config` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — Test read_early_config()
 - [ ] `t0614-reftable-fsck` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — Test reftable backend consistency check
 - [ ] `t1416-ref-transaction-hooks` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — reference transaction hooks
@@ -119,7 +119,7 @@ commit → check it off → move on.
 - [ ] `t1419-exclude-refs` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test exclude_patterns functionality in main ref store
 - [ ] `t0211-trace2-perf` ████░░░░░░░░░░░░░░░░ 4/17 (13 left) — test trace2 facility (perf target)
 - [ ] `t1508-at-combinations` ████████████░░░░░░░░ 21/35 (14 left) — test various @{X} syntax combinations together
-- [ ] `t1405-main-ref-store` ██░░░░░░░░░░░░░░░░░░ 2/16 (14 left) — test main ref store api
+- [x] `t1405-main-ref-store` ████████████████████ 16/16 (0 left) — test main ref store api
 - [ ] `t0210-trace2-normal` ░░░░░░░░░░░░░░░░░░░░ 0/14 (14 left) — test trace2 facility (normal target)
 - [ ] `t1050-large` █████████░░░░░░░░░░░ 14/29 (15 left) — adding and checking out large blobs
 - [ ] `t1507-rev-parse-upstream` ████████░░░░░░░░░░░░ 13/29 (16 left) — test <branch>@{upstream} syntax
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,713/24,806 tests passing, 16,093 failures remaining**
+**8,734/24,806 tests passing, 16,072 failures remaining**

@@ -1,46 +1,46 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
-add	Main Porcelain	yes	541	159	153	29.4
+add	Main Porcelain	yes	541	160	153	29.6
 am	Main Porcelain	yes	160	21	94	13.0
 archive	Main Porcelain	yes	114	42	27	37.1
 bisect	Main Porcelain	yes	96	16	0	16.7
 branch	Main Porcelain	yes	351	139	10	39.7
 checkout	Main Porcelain	yes	436	219	11	50.2
-cherry-pick	Main Porcelain	yes	189	76	6	40.3
+cherry-pick	Main Porcelain	yes	189	79	6	41.9
 clean	Main Porcelain	yes	87	28	0	32.6
-clone	Main Porcelain	yes	425	109	196	25.5
+clone	Main Porcelain	yes	425	110	196	25.8
 commit	Main Porcelain	yes	377	113	76	30.0
 describe	Main Porcelain	yes	59	16	0	27.0
-diff	Main Porcelain	yes	1002	341	41	34.0
-fetch	Main Porcelain	yes	699	69	411	9.9
+diff	Main Porcelain	yes	1002	344	41	34.3
+fetch	Main Porcelain	yes	699	67	411	9.6
 format-patch	Main Porcelain	yes	229	66	0	28.7
 gc	Main Porcelain	yes	50	29	0	57.9
 grep	Main Porcelain	yes	260	160	12	61.4
 init	Main Porcelain	yes	893	244	108	27.3
-log	Main Porcelain	yes	539	164	164	30.3
-merge	Main Porcelain	yes	657	238	101	36.3
+log	Main Porcelain	yes	539	164	164	30.5
+merge	Main Porcelain	yes	657	247	101	37.6
 mv	Main Porcelain	yes	77	40	0	52.0
 notes	Main Porcelain	yes	308	86	0	27.9
 pull	Main Porcelain	yes	142	25	16	17.6
-push	Main Porcelain	yes	233	75	90	32.4
+push	Main Porcelain	yes	233	77	90	33.1
 range-diff	Main Porcelain	yes	47	5	0	10.4
 rebase	Main Porcelain	yes	558	103	146	18.5
-reset	Main Porcelain	yes	119	66	11	55.1
+reset	Main Porcelain	yes	119	65	11	55.0
 restore	Main Porcelain	yes	40	9	0	21.8
 revert	Main Porcelain	yes	20	5	0	23.8
 rm	Main Porcelain	yes	97	55	0	56.5
 shortlog	Main Porcelain	yes	32	7	0	21.9
-show	Main Porcelain	yes	27	8	6	29.9
-stash	Main Porcelain	yes	204	79	0	38.6
+show	Main Porcelain	yes	27	8	6	30.5
+stash	Main Porcelain	yes	204	80	0	39.0
 status	Main Porcelain	yes	474	108	39	22.9
-submodule	Main Porcelain	yes	476	124	31	26.0
+submodule	Main Porcelain	yes	476	125	31	26.2
 switch	Main Porcelain	yes	16	16	0	100.0
 tag	Main Porcelain	yes	213	0	212	0.2
-worktree	Main Porcelain	yes	232	46	33	20.0
+worktree	Main Porcelain	yes	232	52	33	22.6
 annotate	Ancillary Porcelain	yes	1	0	1	0.0
 blame	Ancillary Porcelain	yes	98	30	24	30.7
 bundle	Ancillary Porcelain	yes	43	0	30	0.0
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
-config	Ancillary Porcelain	yes	663	170	267	25.7
+config	Ancillary Porcelain	yes	663	171	267	25.7
 count-objects	Ancillary Porcelain	yes	7	4	0	59.2
 cvsimport	Ancillary Porcelain	no	30	0	30	0.0
 cvsserver	Ancillary Porcelain	no	99	0	99	0.0
@@ -74,7 +74,7 @@ verify-commit	Ancillary Porcelain	yes	16	0	16	0.0
 verify-tag	Ancillary Porcelain	yes	30	0	30	0.0
 version	Ancillary Porcelain	yes	0	0	0	0.0
 whatchanged	Ancillary Porcelain	yes	0	0	0	0.0
-apply	Plumbing	yes	286	111	0	38.8
+apply	Plumbing	yes	286	110	0	38.6
 backfill	Plumbing	yes	10	0	10	0.0
 cat-file	Plumbing	yes	174	19	136	11.2
 check-attr	Plumbing	yes	55	17	0	30.9
@@ -89,7 +89,7 @@ credential	Plumbing	yes	57	4	0	7.0
 credential-cache	Plumbing	yes	6	1	0	11.5
 credential-store	Plumbing	yes	15	1	0	7.7
 daemon	Plumbing	yes	26	0	25	1.0
-diff-files	Plumbing	yes	6	4	0	65.1
+diff-files	Plumbing	yes	6	4	0	71.7
 diff-index	Plumbing	yes	9	3	0	34.9
 diff-tree	Plumbing	yes	3	2	0	62.7
 fetch-pack	Plumbing	yes	92	0	92	0.0
@@ -119,12 +119,12 @@ pack-objects	Plumbing	yes	264	67	44	25.3
 pack-redundant	Plumbing	yes	18	1	0	5.6
 patch-id	Plumbing	yes	25	25	0	100.0
 prune-packed	Plumbing	yes	0	0	0	0.0
-read-tree	Plumbing	yes	187	81	0	43.3
+read-tree	Plumbing	yes	187	89	0	47.5
 receive-pack	Plumbing	yes	23	11	3	46.9
 refs	Plumbing	yes	70	10	0	14.8
 replay	Plumbing	yes	31	6	0	19.4
 rev-list	Plumbing	yes	378	140	0	37.0
-rev-parse	Plumbing	yes	321	187	3	58.1
+rev-parse	Plumbing	yes	321	194	3	60.5
 send-pack	Plumbing	yes	28	15	0	55.0
 show-index	Plumbing	yes	0	0	0	0.0
 show-ref	Plumbing	yes	20	10	0	50.1

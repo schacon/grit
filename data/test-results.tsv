@@ -1447,13 +1447,13 @@ t1004-read-tree-m-u-wf::d-f-setup	t1004-read-tree-m-u-wf	D/F setup	read-tree	par
 t1004-read-tree-m-u-wf::d-f	t1004-read-tree-m-u-wf	D/F	read-tree	partial
 t1004-read-tree-m-u-wf::d-f-resolve	t1004-read-tree-m-u-wf	D/F resolve	read-tree	partial
 t1004-read-tree-m-u-wf::d-f-recursive	t1004-read-tree-m-u-wf	D/F recursive	read-tree	partial
-t1005-read-tree-reset::setup	t1005-read-tree-reset	setup	read-tree	partial
-t1005-read-tree-reset::reset-should-work	t1005-read-tree-reset	reset should work	read-tree	partial
-t1005-read-tree-reset::reset-should-remove-remnants-from-a-failed-merge	t1005-read-tree-reset	reset should remove remnants from a failed merge	read-tree	partial
-t1005-read-tree-reset::two-way-reset-should-remove-remnants-too	t1005-read-tree-reset	two-way reset should remove remnants too	read-tree	partial
-t1005-read-tree-reset::porcelain-reset-should-remove-remnants-too	t1005-read-tree-reset	Porcelain reset should remove remnants too	read-tree	partial
-t1005-read-tree-reset::porcelain-checkout-f-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f should remove remnants too	read-tree	partial
-t1005-read-tree-reset::porcelain-checkout-f-head-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f HEAD should remove remnants too	read-tree	partial
+t1005-read-tree-reset::setup	t1005-read-tree-reset	setup	read-tree	pass
+t1005-read-tree-reset::reset-should-work	t1005-read-tree-reset	reset should work	read-tree	pass
+t1005-read-tree-reset::reset-should-remove-remnants-from-a-failed-merge	t1005-read-tree-reset	reset should remove remnants from a failed merge	read-tree	pass
+t1005-read-tree-reset::two-way-reset-should-remove-remnants-too	t1005-read-tree-reset	two-way reset should remove remnants too	read-tree	pass
+t1005-read-tree-reset::porcelain-reset-should-remove-remnants-too	t1005-read-tree-reset	Porcelain reset should remove remnants too	read-tree	pass
+t1005-read-tree-reset::porcelain-checkout-f-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f should remove remnants too	read-tree	pass
+t1005-read-tree-reset::porcelain-checkout-f-head-should-remove-remnants-too	t1005-read-tree-reset	Porcelain checkout -f HEAD should remove remnants too	read-tree	pass
 t1006-cat-file::batch-check-with-objectmode	t1006-cat-file	--batch-check with %(objectmode)	cat-file	not_ported
 t1006-cat-file::compat-setup	t1006-cat-file	compat setup	cat-file	not_ported
 t1006-cat-file::setup-part-2	t1006-cat-file	setup part 2	cat-file	not_ported
@@ -2760,16 +2760,16 @@ t1414-reflog-walk::date-limiting-does-not-interfere-with-other-logs	t1414-reflog
 t1414-reflog-walk::min-max-age-uses-entry-date-to-limit	t1414-reflog-walk	min/max age uses entry date to limit	reflog	partial
 t1414-reflog-walk::walk-prefers-reflog-to-ref-tip	t1414-reflog-walk	walk prefers reflog to ref tip	reflog	partial
 t1414-reflog-walk::rev-list-g-complains-when-there-are-no-reflogs	t1414-reflog-walk	rev-list -g complains when there are no reflogs	reflog	partial
-t1415-worktree-refs::setup	t1415-worktree-refs	setup	worktree	partial
-t1415-worktree-refs::refs-worktree-are-per-worktree	t1415-worktree-refs	refs/worktree are per-worktree	worktree	partial
-t1415-worktree-refs::resolve-main-worktree-head	t1415-worktree-refs	resolve main-worktree/HEAD	worktree	partial
-t1415-worktree-refs::ambiguous-main-worktree-head	t1415-worktree-refs	ambiguous main-worktree/HEAD	worktree	partial
-t1415-worktree-refs::resolve-worktrees-xx-head	t1415-worktree-refs	resolve worktrees/xx/HEAD	worktree	partial
-t1415-worktree-refs::ambiguous-worktrees-xx-head	t1415-worktree-refs	ambiguous worktrees/xx/HEAD	worktree	partial
-t1415-worktree-refs::reflog-of-main-worktree-head	t1415-worktree-refs	reflog of main-worktree/HEAD	worktree	partial
-t1415-worktree-refs::reflog-of-worktrees-xx-head	t1415-worktree-refs	reflog of worktrees/xx/HEAD	worktree	partial
-t1415-worktree-refs::for-each-ref-from-main-worktree	t1415-worktree-refs	for-each-ref from main worktree	worktree	partial
-t1415-worktree-refs::for-each-ref-from-linked-worktree	t1415-worktree-refs	for-each-ref from linked worktree	worktree	partial
+t1415-worktree-refs::setup	t1415-worktree-refs	setup	worktree	pass
+t1415-worktree-refs::refs-worktree-are-per-worktree	t1415-worktree-refs	refs/worktree are per-worktree	worktree	pass
+t1415-worktree-refs::resolve-main-worktree-head	t1415-worktree-refs	resolve main-worktree/HEAD	worktree	pass
+t1415-worktree-refs::ambiguous-main-worktree-head	t1415-worktree-refs	ambiguous main-worktree/HEAD	worktree	pass
+t1415-worktree-refs::resolve-worktrees-xx-head	t1415-worktree-refs	resolve worktrees/xx/HEAD	worktree	pass
+t1415-worktree-refs::ambiguous-worktrees-xx-head	t1415-worktree-refs	ambiguous worktrees/xx/HEAD	worktree	pass
+t1415-worktree-refs::reflog-of-main-worktree-head	t1415-worktree-refs	reflog of main-worktree/HEAD	worktree	pass
+t1415-worktree-refs::reflog-of-worktrees-xx-head	t1415-worktree-refs	reflog of worktrees/xx/HEAD	worktree	pass
+t1415-worktree-refs::for-each-ref-from-main-worktree	t1415-worktree-refs	for-each-ref from main worktree	worktree	pass
+t1415-worktree-refs::for-each-ref-from-linked-worktree	t1415-worktree-refs	for-each-ref from linked worktree	worktree	pass
 t1416-ref-transaction-hooks::hook-allows-updating-ref-if-successful	t1416-ref-transaction-hooks	hook allows updating ref if successful	reset	partial
 t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-preparing-state	t1416-ref-transaction-hooks	hook aborts updating ref in preparing state	reset	partial
 t1416-ref-transaction-hooks::hook-aborts-updating-ref-in-prepared-state	t1416-ref-transaction-hooks	hook aborts updating ref in prepared state	reset	partial
@@ -3288,15 +3288,15 @@ t1513-rev-parse-prefix::prefix-ignored-with-head-top	t1513-rev-parse-prefix	pref
 t1513-rev-parse-prefix::disambiguate-path-with-valid-prefix	t1513-rev-parse-prefix	disambiguate path with valid prefix	rev-parse	pass
 t1513-rev-parse-prefix::file-and-refs-with-prefix	t1513-rev-parse-prefix	file and refs with prefix	rev-parse	pass
 t1513-rev-parse-prefix::two-levels-deep	t1513-rev-parse-prefix	two-levels deep	rev-parse	pass
-t1514-rev-parse-push::setup	t1514-rev-parse-push	setup	rev-parse	partial
-t1514-rev-parse-push::push-with-default-nothing	t1514-rev-parse-push	@{push} with default=nothing	rev-parse	partial
-t1514-rev-parse-push::push-with-default-simple	t1514-rev-parse-push	@{push} with default=simple	rev-parse	partial
-t1514-rev-parse-push::triangular-push-fails-with-default-simple	t1514-rev-parse-push	triangular @{push} fails with default=simple	rev-parse	partial
-t1514-rev-parse-push::push-with-default-current	t1514-rev-parse-push	@{push} with default=current	rev-parse	partial
-t1514-rev-parse-push::push-with-default-matching	t1514-rev-parse-push	@{push} with default=matching	rev-parse	partial
-t1514-rev-parse-push::push-with-pushremote-defined	t1514-rev-parse-push	@{push} with pushremote defined	rev-parse	partial
-t1514-rev-parse-push::push-with-push-refspecs	t1514-rev-parse-push	@{push} with push refspecs	rev-parse	partial
-t1514-rev-parse-push::resolving-push-fails-with-a-detached-head	t1514-rev-parse-push	resolving @{push} fails with a detached HEAD	rev-parse	partial
+t1514-rev-parse-push::setup	t1514-rev-parse-push	setup	rev-parse	pass
+t1514-rev-parse-push::push-with-default-nothing	t1514-rev-parse-push	@{push} with default=nothing	rev-parse	pass
+t1514-rev-parse-push::push-with-default-simple	t1514-rev-parse-push	@{push} with default=simple	rev-parse	pass
+t1514-rev-parse-push::triangular-push-fails-with-default-simple	t1514-rev-parse-push	triangular @{push} fails with default=simple	rev-parse	pass
+t1514-rev-parse-push::push-with-default-current	t1514-rev-parse-push	@{push} with default=current	rev-parse	pass
+t1514-rev-parse-push::push-with-default-matching	t1514-rev-parse-push	@{push} with default=matching	rev-parse	pass
+t1514-rev-parse-push::push-with-pushremote-defined	t1514-rev-parse-push	@{push} with pushremote defined	rev-parse	pass
+t1514-rev-parse-push::push-with-push-refspecs	t1514-rev-parse-push	@{push} with push refspecs	rev-parse	pass
+t1514-rev-parse-push::resolving-push-fails-with-a-detached-head	t1514-rev-parse-push	resolving @{push} fails with a detached HEAD	rev-parse	pass
 t1515-rev-parse-outside-repo::set-up-non-repo-directory	t1515-rev-parse-outside-repo	set up non-repo directory	rev-parse	pass
 t1515-rev-parse-outside-repo::rev-parse-sq-quote	t1515-rev-parse-outside-repo	rev-parse --sq-quote	rev-parse	pass
 t1515-rev-parse-outside-repo::rev-parse-local-env-vars	t1515-rev-parse-outside-repo	rev-parse --local-env-vars	rev-parse	pass
@@ -5724,15 +5724,15 @@ t3508-cherry-pick-many-commits::revert-first-fourth-works-2	t3508-cherry-pick-ma
 t3508-cherry-pick-many-commits::revert-fourth-fourth-1-fourth-2-works	t3508-cherry-pick-many-commits	revert fourth fourth~1 fourth~2 works	cherry-pick	partial
 t3508-cherry-pick-many-commits::cherry-pick-3-fourth-works	t3508-cherry-pick-many-commits	cherry-pick -3 fourth works	cherry-pick	partial
 t3508-cherry-pick-many-commits::cherry-pick-stdin-works	t3508-cherry-pick-many-commits	cherry-pick --stdin works	cherry-pick	partial
-t3509-cherry-pick-merge-df::initialize-repository	t3509-cherry-pick-merge-df	Initialize repository	cherry-pick	partial
-t3509-cherry-pick-merge-df::setup-rename-across-paths-each-below-d-f-conflicts	t3509-cherry-pick-merge-df	Setup rename across paths each below D/F conflicts	cherry-pick	partial
-t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-rename-across-d-f-conflicts	t3509-cherry-pick-merge-df	Cherry-pick succeeds with rename across D/F conflicts	cherry-pick	partial
-t3509-cherry-pick-merge-df::setup-rename-with-file-on-one-side-matching-directory-name-on-other	t3509-cherry-pick-merge-df	Setup rename with file on one side matching directory name on other	cherry-pick	partial
-t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-was-a-dir-file-was-a-dir-resolve	t3509-cherry-pick-merge-df	Cherry-pick succeeds with was_a_dir/file -> was_a_dir (resolve)	cherry-pick	partial
-t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-was-a-dir-file-was-a-dir-recursive	t3509-cherry-pick-merge-df	Cherry-pick succeeds with was_a_dir/file -> was_a_dir (recursive)	cherry-pick	partial
-t3509-cherry-pick-merge-df::setup-rename-with-file-on-one-side-matching-different-dirname-on-other	t3509-cherry-pick-merge-df	Setup rename with file on one side matching different dirname on other	cherry-pick	partial
-t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-resolve	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (resolve)	cherry-pick	partial
-t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-recursive	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (recursive)	cherry-pick	partial
+t3509-cherry-pick-merge-df::initialize-repository	t3509-cherry-pick-merge-df	Initialize repository	cherry-pick	pass
+t3509-cherry-pick-merge-df::setup-rename-across-paths-each-below-d-f-conflicts	t3509-cherry-pick-merge-df	Setup rename across paths each below D/F conflicts	cherry-pick	pass
+t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-rename-across-d-f-conflicts	t3509-cherry-pick-merge-df	Cherry-pick succeeds with rename across D/F conflicts	cherry-pick	pass
+t3509-cherry-pick-merge-df::setup-rename-with-file-on-one-side-matching-directory-name-on-other	t3509-cherry-pick-merge-df	Setup rename with file on one side matching directory name on other	cherry-pick	pass
+t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-was-a-dir-file-was-a-dir-resolve	t3509-cherry-pick-merge-df	Cherry-pick succeeds with was_a_dir/file -> was_a_dir (resolve)	cherry-pick	pass
+t3509-cherry-pick-merge-df::cherry-pick-succeeds-with-was-a-dir-file-was-a-dir-recursive	t3509-cherry-pick-merge-df	Cherry-pick succeeds with was_a_dir/file -> was_a_dir (recursive)	cherry-pick	pass
+t3509-cherry-pick-merge-df::setup-rename-with-file-on-one-side-matching-different-dirname-on-other	t3509-cherry-pick-merge-df	Setup rename with file on one side matching different dirname on other	cherry-pick	pass
+t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-resolve	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (resolve)	cherry-pick	pass
+t3509-cherry-pick-merge-df::cherry-pick-with-rename-to-different-d-f-conflict-succeeds-recursive	t3509-cherry-pick-merge-df	Cherry-pick with rename to different D/F conflict succeeds (recursive)	cherry-pick	pass
 t3510-cherry-pick-sequence::cherry-pick-persists-data-on-failure	t3510-cherry-pick-sequence	cherry-pick persists data on failure	cherry-pick	partial
 t3510-cherry-pick-sequence::cherry-pick-mid-cherry-pick-sequence	t3510-cherry-pick-sequence	cherry-pick mid-cherry-pick-sequence	cherry-pick	partial
 t3510-cherry-pick-sequence::cherry-pick-persists-opts-correctly	t3510-cherry-pick-sequence	cherry-pick persists opts correctly	cherry-pick	partial
@@ -7024,7 +7024,7 @@ t4022-diff-rewrite::no-newline-at-eof-is-on-its-own-line-with-b	t4022-diff-rewri
 t4023-diff-rename-typechange::cross-renames-to-be-detected-for-regular-files	t4023-diff-rename-typechange	cross renames to be detected for regular files	diff	partial
 t4023-diff-rename-typechange::cross-renames-to-be-detected-for-typechange	t4023-diff-rename-typechange	cross renames to be detected for typechange	diff	partial
 t4023-diff-rename-typechange::moves-and-renames	t4023-diff-rename-typechange	moves and renames	diff	partial
-t4024-diff-optimize-common::diff-u0	t4024-diff-optimize-common	diff -U0	diff	partial
+t4024-diff-optimize-common::diff-u0	t4024-diff-optimize-common	diff -U0	diff	pass
 t4025-hunk-header::hunk-header-truncation-with-an-overly-long-line	t4025-hunk-header	hunk header truncation with an overly long line	diff	pass
 t4026-color::reset	t4026-color	reset	config	partial
 t4026-color::empty-color-is-empty	t4026-color	empty color is empty	config	partial
@@ -7627,13 +7627,13 @@ t4064-diff-oidfind::set-up-merge-tests	t4064-diff-oidfind	set up merge tests	dif
 t4064-diff-oidfind::detect-merge-which-introduces-blob	t4064-diff-oidfind	detect merge which introduces blob	diff	partial
 t4064-diff-oidfind::detect-merge-which-removes-blob	t4064-diff-oidfind	detect merge which removes blob	diff	partial
 t4064-diff-oidfind::do-not-detect-merge-that-does-not-touch-blob	t4064-diff-oidfind	do not detect merge that does not touch blob	diff	partial
-t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	partial
-t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	partial
-t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	partial
-t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	partial
-t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	partial
-t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	partial
-t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	diff	partial
+t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	pass
+t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	pass
+t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	pass
+t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	pass
+t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	pass
+t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	pass
+t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	diff	pass
 t4066-diff-emit-delay::set-up-history-with-a-merge	t4066-diff-emit-delay	set up history with a merge	diff	pass
 t4066-diff-emit-delay::log-cc-p-stat-color-moved	t4066-diff-emit-delay	log --cc -p --stat --color-moved	diff	pass
 t4067-diff-partial-clone::git-show-batches-blobs	t4067-diff-partial-clone	git show batches blobs	diff	partial
@@ -9817,8 +9817,8 @@ t5500-fetch-pack::fetch-pack-diag-url-p-h-r-3	t5500-fetch-pack	fetch-pack --diag
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-4	t5500-fetch-pack	fetch-pack --diag-url $p://$h/~$r	fetch-pack	not_ported
 t5500-fetch-pack::fetch-pack-diag-url-h-r	t5500-fetch-pack	fetch-pack --diag-url ./$h:$r	fetch-pack	not_ported
 t5500-fetch-pack::fetch-pack-diag-url-p-h-r-5	t5500-fetch-pack	fetch-pack --diag-url ./$p:$h/~$r	fetch-pack	not_ported
-t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	pass
-t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	pass
+t5501-fetch-push-alternates::pushing-into-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	pushing into a repository with the same alternate	fetch	partial
+t5501-fetch-push-alternates::fetching-from-a-repository-with-the-same-alternate	t5501-fetch-push-alternates	fetching from a repository with the same alternate	fetch	partial
 t5502-quickfetch::clone-without-alternate	t5502-quickfetch	clone without alternate	count-objects	partial
 t5502-quickfetch::further-commits-in-the-original	t5502-quickfetch	further commits in the original	commit	partial
 t5502-quickfetch::copy-commit-and-tree-but-not-blob-by-hand	t5502-quickfetch	copy commit and tree but not blob by hand	count-objects	partial

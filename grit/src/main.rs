@@ -9,6 +9,7 @@ use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use grit_lib::objects::ObjectId;
 use sha1::Digest;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -637,16 +638,52 @@ fn run_test_tool_zlib(rest: &[String]) -> Result<()> {
 }
 
 fn test_tool_ref_store_usage() -> &'static str {
-    "usage: test-tool ref-store worktree:<id> <resolve-ref <ref> <flags>|create-symref <name> <target> <logmsg>>"
+    "usage: test-tool ref-store <main|submodule:<path>|worktree:<id>> <function> [args]"
 }
 
-fn resolve_test_tool_worktree_git_dir(spec: &str) -> Result<PathBuf> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestToolRefStoreBackendKind {
+    Main,
+    Submodule,
+    Worktree,
+}
+
+struct TestToolRefStoreBackend {
+    kind: TestToolRefStoreBackendKind,
+    git_dir: PathBuf,
+    is_read_only: bool,
+}
+
+const REF_NO_DEREF: u32 = 1 << 0;
+
+fn parse_test_tool_ref_store_flags(raw: &str) -> Result<u32> {
+    if raw == "0" {
+        return Ok(0);
+    }
+
+    let mut out = 0u32;
+    for flag in raw.split(',') {
+        match flag {
+            "REF_NO_DEREF" => out |= REF_NO_DEREF,
+            "REF_FORCE_CREATE_REFLOG"
+            | "REF_SKIP_OID_VERIFICATION"
+            | "REF_SKIP_REFNAME_VERIFICATION"
+            | "REF_SKIP_CREATE_REFLOG" => {}
+            _ => bail!("unknown flag \"{flag}\""),
+        }
+    }
+    Ok(out)
+}
+
+fn resolve_test_tool_worktree_git_dir(
+    repo: &grit_lib::repo::Repository,
+    spec: &str,
+) -> Result<PathBuf> {
     let Some(worktree_id) = spec.strip_prefix("worktree:") else {
-        bail!("{}", test_tool_ref_store_usage());
+        bail!("test-tool ref-store: unknown backend '{spec}'");
     };
-    let repo = grit_lib::repo::Repository::discover(None)?;
     if worktree_id == "main" {
-        return Ok(repo.git_dir);
+        return Ok(repo.git_dir.clone());
     }
     let worktree_git_dir = repo.git_dir.join("worktrees").join(worktree_id);
     if !worktree_git_dir.exists() {
@@ -655,40 +692,368 @@ fn resolve_test_tool_worktree_git_dir(spec: &str) -> Result<PathBuf> {
     Ok(worktree_git_dir)
 }
 
+fn resolve_test_tool_submodule_git_dir(
+    repo: &grit_lib::repo::Repository,
+    spec: &str,
+) -> Result<PathBuf> {
+    let Some(path_in_worktree) = spec.strip_prefix("submodule:") else {
+        bail!("test-tool ref-store: unknown backend '{spec}'");
+    };
+    let work_tree = repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("test-tool ref-store: no worktree for submodule backend"))?;
+    let submodule_path = work_tree.join(path_in_worktree);
+    let submodule_repo =
+        grit_lib::repo::Repository::discover(Some(&submodule_path)).map_err(|_| {
+            anyhow::anyhow!("test-tool ref-store: unknown submodule '{path_in_worktree}'")
+        })?;
+    Ok(submodule_repo.git_dir)
+}
+
+fn resolve_test_tool_ref_store_backend(spec: &str) -> Result<TestToolRefStoreBackend> {
+    let repo = grit_lib::repo::Repository::discover(None)?;
+    if spec == "main" {
+        return Ok(TestToolRefStoreBackend {
+            kind: TestToolRefStoreBackendKind::Main,
+            git_dir: repo.git_dir,
+            is_read_only: false,
+        });
+    }
+    if spec.starts_with("submodule:") {
+        return Ok(TestToolRefStoreBackend {
+            kind: TestToolRefStoreBackendKind::Submodule,
+            git_dir: resolve_test_tool_submodule_git_dir(&repo, spec)?,
+            is_read_only: true,
+        });
+    }
+    if spec.starts_with("worktree:") {
+        return Ok(TestToolRefStoreBackend {
+            kind: TestToolRefStoreBackendKind::Worktree,
+            git_dir: resolve_test_tool_worktree_git_dir(&repo, spec)?,
+            is_read_only: false,
+        });
+    }
+    bail!("test-tool ref-store: unknown backend '{spec}'")
+}
+
+fn resolve_ref_for_backend(
+    backend: &TestToolRefStoreBackend,
+    refname: &str,
+    no_deref: bool,
+) -> Result<(ObjectId, String, u32)> {
+    if !no_deref {
+        if let Some(target) = grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)? {
+            let oid = grit_lib::refs::resolve_ref(&backend.git_dir, &target)?;
+            return Ok((oid, target, 0x1));
+        }
+    }
+    let oid = grit_lib::refs::resolve_ref(&backend.git_dir, refname)?;
+    Ok((oid, refname.to_owned(), 0x0))
+}
+
+fn ensure_ref_store_write_allowed(backend: &TestToolRefStoreBackend, command: &str) -> Result<()> {
+    if backend.is_read_only {
+        bail!("test-tool ref-store: '{command}' not allowed for this backend");
+    }
+    Ok(())
+}
+
+fn zero_oid() -> ObjectId {
+    match ObjectId::from_bytes(&[0u8; 20]) {
+        Ok(oid) => oid,
+        Err(err) => panic!("20-byte zero OID should always be valid: {err}"),
+    }
+}
+
+fn validate_ref_update_old_oid(
+    backend: &TestToolRefStoreBackend,
+    refname: &str,
+    expected_old: &ObjectId,
+) -> Result<()> {
+    let current = grit_lib::refs::resolve_ref(&backend.git_dir, refname).ok();
+    if *expected_old == zero_oid() {
+        if current.is_some() {
+            bail!("cannot lock ref '{refname}': reference already exists");
+        }
+        return Ok(());
+    }
+    match current {
+        Some(cur) if cur == *expected_old => Ok(()),
+        Some(cur) => bail!(
+            "cannot lock ref '{refname}': is at {} but expected {}",
+            cur,
+            expected_old
+        ),
+        None => bail!("cannot lock ref '{refname}': reference does not exist"),
+    }
+}
+
 fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
     if rest.len() < 3 {
         bail!("{}", test_tool_ref_store_usage());
     }
-    let git_dir = resolve_test_tool_worktree_git_dir(&rest[1])?;
+    let backend = resolve_test_tool_ref_store_backend(&rest[1])?;
     match rest[2].as_str() {
         "resolve-ref" => {
             if rest.len() != 5 {
                 bail!("{}", test_tool_ref_store_usage());
             }
             let refname = &rest[3];
-            if refname == "HEAD" {
-                let resolved = grit_lib::refs::read_symbolic_ref(&git_dir, "HEAD")?
-                    .unwrap_or_else(|| "HEAD".to_owned());
-                let oid = grit_lib::refs::resolve_ref(&git_dir, &resolved)?;
-                println!("{oid} {resolved} 0x1");
-            } else {
-                let oid = grit_lib::refs::resolve_ref(&git_dir, refname)?;
-                println!("{oid} {refname} 0x0");
+            let flags = parse_test_tool_ref_store_flags(&rest[4])?;
+            let no_deref = (flags & REF_NO_DEREF) != 0;
+            match resolve_ref_for_backend(&backend, refname, no_deref) {
+                Ok((oid, resolved_name, out_flags)) => {
+                    println!("{oid} {resolved_name} 0x{out_flags:x}");
+                    Ok(())
+                }
+                Err(_) => {
+                    println!("{} (null) 0x0", zero_oid());
+                    std::process::exit(1);
+                }
             }
-            Ok(())
         }
         "create-symref" => {
             if rest.len() != 6 {
                 bail!("{}", test_tool_ref_store_usage());
             }
+            ensure_ref_store_write_allowed(&backend, "create-symref")?;
             let name = &rest[3];
             let target = &rest[4];
-            let path = git_dir.join(name);
+            let path = backend.git_dir.join(name);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(path, format!("ref: {target}\n"))?;
             Ok(())
+        }
+        "delete-refs" => {
+            if rest.len() < 6 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "delete-refs")?;
+            let flags = parse_test_tool_ref_store_flags(&rest[3])?;
+            let no_deref = (flags & REF_NO_DEREF) != 0;
+            let mut ok = true;
+            for refname in &rest[5..] {
+                let effective_refname = if no_deref {
+                    refname.clone()
+                } else {
+                    grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
+                        .unwrap_or_else(|| refname.clone())
+                };
+                if grit_lib::refs::delete_ref(&backend.git_dir, &effective_refname).is_err() {
+                    ok = false;
+                }
+            }
+            if ok {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "rename-ref" => {
+            if rest.len() < 5 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "rename-ref")?;
+            let old_ref = &rest[3];
+            let new_ref = &rest[4];
+            let old_oid = grit_lib::refs::resolve_ref(&backend.git_dir, old_ref)?;
+            grit_lib::refs::write_ref(&backend.git_dir, new_ref, &old_oid)?;
+            grit_lib::refs::delete_ref(&backend.git_dir, old_ref)?;
+            let old_log = grit_lib::reflog::reflog_path(&backend.git_dir, old_ref);
+            let new_log = grit_lib::reflog::reflog_path(&backend.git_dir, new_ref);
+            if old_log.is_file() {
+                if let Some(parent) = new_log.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(old_log, new_log)?;
+            }
+            Ok(())
+        }
+        "for-each-ref" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let prefix = &rest[3];
+            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
+            for (full_name, oid) in refs {
+                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
+                println!("{oid} {trimmed} 0x0");
+            }
+            Ok(())
+        }
+        "for-each-ref--exclude" => {
+            if rest.len() < 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let prefix = &rest[3];
+            let exclude_patterns: Vec<&str> = rest[4..].iter().map(String::as_str).collect();
+            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
+            for (full_name, oid) in refs {
+                if exclude_patterns
+                    .iter()
+                    .any(|p| grit_lib::refs::ref_matches_glob(&full_name, p))
+                {
+                    continue;
+                }
+                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
+                println!("{oid} {trimmed} 0x0");
+            }
+            Ok(())
+        }
+        "verify-ref" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let refname = &rest[3];
+            let refs = grit_lib::refs::list_refs(&backend.git_dir, "refs/")?;
+            let mut has_conflict = false;
+            for (existing, _) in refs {
+                if existing == *refname {
+                    continue;
+                }
+                if existing.starts_with(&format!("{refname}/"))
+                    || refname.starts_with(&format!("{existing}/"))
+                {
+                    has_conflict = true;
+                    break;
+                }
+            }
+            if has_conflict {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        "for-each-reflog" => {
+            if rest.len() != 3 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let mut reflogs = grit_lib::reflog::list_reflog_refs(&backend.git_dir)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            reflogs.sort();
+            for name in reflogs {
+                println!("{name}");
+            }
+            Ok(())
+        }
+        "for-each-reflog-ent" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let entries = grit_lib::reflog::read_reflog(&backend.git_dir, &rest[3])
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            for entry in entries {
+                println!(
+                    "{} {} {}\t{}",
+                    entry.old_oid, entry.new_oid, entry.identity, entry.message
+                );
+            }
+            Ok(())
+        }
+        "for-each-reflog-ent-reverse" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            let entries = grit_lib::reflog::read_reflog(&backend.git_dir, &rest[3])
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            for entry in entries.into_iter().rev() {
+                println!(
+                    "{} {} {}\t{}",
+                    entry.old_oid, entry.new_oid, entry.identity, entry.message
+                );
+            }
+            Ok(())
+        }
+        "reflog-exists" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            if grit_lib::reflog::reflog_exists(&backend.git_dir, &rest[3]) {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "delete-reflog" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "delete-reflog")?;
+            let path = grit_lib::reflog::reflog_path(&backend.git_dir, &rest[3]);
+            std::fs::remove_file(path)?;
+            Ok(())
+        }
+        "create-reflog" => {
+            if rest.len() != 4 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "create-reflog")?;
+            let path = grit_lib::reflog::reflog_path(&backend.git_dir, &rest[3]);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if !path.exists() {
+                std::fs::write(path, b"")?;
+            }
+            Ok(())
+        }
+        "delete-ref" => {
+            if rest.len() != 7 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "delete-ref")?;
+            let refname = &rest[4];
+            let expected_old: ObjectId = rest[5].parse()?;
+            let flags = parse_test_tool_ref_store_flags(&rest[6])?;
+            let no_deref = (flags & REF_NO_DEREF) != 0;
+            let effective_refname = if no_deref {
+                refname.clone()
+            } else {
+                grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
+                    .unwrap_or_else(|| refname.clone())
+            };
+            validate_ref_update_old_oid(&backend, &effective_refname, &expected_old)?;
+            grit_lib::refs::delete_ref(&backend.git_dir, &effective_refname)?;
+            Ok(())
+        }
+        "update-ref" => {
+            if rest.len() != 8 {
+                bail!("{}", test_tool_ref_store_usage());
+            }
+            ensure_ref_store_write_allowed(&backend, "update-ref")?;
+            let msg = &rest[3];
+            let refname = &rest[4];
+            let new_oid: ObjectId = rest[5].parse()?;
+            let expected_old: ObjectId = rest[6].parse()?;
+            let flags = parse_test_tool_ref_store_flags(&rest[7])?;
+            let no_deref = (flags & REF_NO_DEREF) != 0;
+            let effective_refname = if no_deref {
+                refname.clone()
+            } else {
+                grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
+                    .unwrap_or_else(|| refname.clone())
+            };
+            validate_ref_update_old_oid(&backend, &effective_refname, &expected_old)?;
+            let old_oid = grit_lib::refs::resolve_ref(&backend.git_dir, &effective_refname)
+                .unwrap_or_else(|_| zero_oid());
+            grit_lib::refs::write_ref(&backend.git_dir, &effective_refname, &new_oid)?;
+            let _ = grit_lib::refs::append_reflog(
+                &backend.git_dir,
+                &effective_refname,
+                &old_oid,
+                &new_oid,
+                "grit <grit> 0 +0000",
+                msg,
+            );
+            Ok(())
+        }
+        "pack-refs" => {
+            if backend.kind == TestToolRefStoreBackendKind::Submodule {
+                bail!("test-tool ref-store: 'pack-refs' not allowed for this backend");
+            }
+            std::process::exit(1);
         }
         other => bail!("test-tool ref-store: unknown subcommand '{other}'"),
     }

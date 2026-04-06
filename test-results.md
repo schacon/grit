@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after extending `test-tool ref-store` backend coverage in `grit/src/main.rs` for main/submodule/worktree store modes and helper subcommands used by upstream tests).
+- `rm -rf /workspace/tests/trash.t1406-submodule-ref-store && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1406-submodule-ref-store.sh` (run from `/workspace/tests`): 15/15 passing.
+- `rm -rf /workspace/tests/trash.t1405-main-ref-store && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1405-main-ref-store.sh` (run from `/workspace/tests`): 16/16 passing.
+- `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
+- `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo check -p grit-rs`: success.
 - `cargo build --release -p grit-rs`: success (after `t1511-rev-parse-caret` peel/message-search compatibility updates in `grit-lib/src/rev_parse.rs`).
 - `rm -rf /workspace/tests/trash.t1511-rev-parse-caret && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1511-rev-parse-caret.sh` (run from `/workspace/tests`): 17/17 passing.
 - `./scripts/run-tests.sh t1511-rev-parse-caret.sh`: 17/17 passing.

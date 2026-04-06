@@ -6,13 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    83 |
+| Completed   |    85 |
 | In progress |     0 |
-| Remaining   |   684 |
+| Remaining   |   682 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1406-submodule-ref-store` — 15/15 tests pass (extended `test-tool ref-store` backend handling to support `submodule:<path>` read-only stores and implemented missing API helpers used by upstream coverage: `for-each-ref`, `resolve-ref` with flags, `verify-ref`, `for-each-reflog`, reflog entry iteration, and `reflog-exists`, while preserving submodule write-operation rejection semantics)
+- `t1405-main-ref-store` — 16/16 tests pass (implemented full main ref-store helper surface in `test-tool ref-store`: `delete-refs`, `rename-ref`, `for-each-ref--exclude`, `delete-ref`, `update-ref`, reflog create/delete/list/entry traversal, and conflict-aware `verify-ref`, matching upstream helper expectations and ref/reflog side-effects)
 - `t1511-rev-parse-caret` — 17/17 tests pass (implemented additional `rev-parse` peel operators and commit-message search forms used by `^{...}` syntax: added `^{tag}` peeling semantics for annotated tags, `ref^{/pattern}` commit-subject/message search anchored to the specified revision, support for escaped positive `^{/!!...}` patterns, and negative search `^{/!-...}` semantics that select the first reachable commit whose message does not match the given pattern)
 - `t0100-previous` — 6/6 tests pass (made `branch -d @{-N}` resolve prior-checkout shorthand to the underlying local branch ref, normalized merge commit message target naming so `merge @{-1}` reports the resolved branch name, and taught `log -g <rev>` reflog-walk input parsing to resolve symbolic refs including `@{-N}`)
 - `t1005-read-tree-reset` — 7/7 tests pass (fixed reset/checkout/read-tree cleanup for unmerged D/F remnants by removing non-stage0 entries during worktree updates; made index staging replace D/F-conflicting paths so file-vs-directory transitions don’t leave invalid index state; and unified `checkout -f` hard-reset path through tree-based cleanup logic)
