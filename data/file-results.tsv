@@ -699,7 +699,7 @@ t6050-replace	yes	37	12	25	ok	12	37	0
 t6060-merge-index	yes	7	7	0	ok	7	7	0
 t6100-rev-list-in-order	yes	3	3	0	ok	3	3	0
 t6101-rev-parse-parents	yes	38	20	18	ok	20	38	0
-t6102-rev-list-unexpected-objects	yes	22	14	8	ok	14	22	0
+t6102-rev-list-unexpected-objects	yes	22	22	0	ok	22	22	0
 t6110-rev-list-sparse	yes	2	2	0	ok	2	2	0
 t6112-rev-list-filters-objects	yes	54	18	36	ok	18	54	0
 t6113-rev-list-bitmap-filters	yes	14	1	13	ok	1	14	0

@@ -4,6 +4,11 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `PATH="/tmp:$PATH" GUST_BIN=/workspace/target/release/grit bash tests/t6102-rev-list-unexpected-objects.sh`: 22/22 passing (direct validation with temporary `hex2oct` helper available in `PATH`; confirms `rev-list --objects` now handles unexpected object types and tag type-mismatch diagnostics as expected).
+- `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (now fully passing in harness when helper is available).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after object-root handling changes).
+- `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (rev-list regression check after object-root handling changes).
+- `./scripts/run-tests.sh t6131-pathspec-icase.sh`: 9/9 passing (pathspec/log regression check after rev-list object-root handling changes).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6131-pathspec-icase.sh`: 9/9 passing (direct validation after fixing `:(icase)` resolution in subdirectories for both `log` and `ls-files --full-name` semantics).
 - `./scripts/run-tests.sh t6131-pathspec-icase.sh`: 9/9 passing (now fully passing).
 - `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (regression check after shared pathspec magic resolution updates).

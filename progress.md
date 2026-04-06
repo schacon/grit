@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    69 |
+| Completed   |    70 |
 | In progress |     0 |
-| Remaining   |   698 |
+| Remaining   |   697 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6102-rev-list-unexpected-objects` — 22/22 tests pass (`rev-list --objects` now accepts non-commit positive tips as object roots while preserving commit walk semantics for standard tips; tree-walk validation now reports expected corruption diagnostics for wrong entry kinds and for tag-root type mismatches (e.g. `not a blob` / `not a tree` / `not a commit`), matching upstream object-type expectations in lone and seen-object traversal cases)
 - `t6131-pathspec-icase` — 9/9 tests pass (implemented robust `:(icase)` pathspec resolution from subdirectories by preserving a case-sensitive cwd prefix via internal `prefix:` magic; updated shared pathspec matcher plus `ls-files`/`log` pathspec normalization so magic pathspecs no longer over-match sibling directories when invoked from `-C`/subdir contexts)
 - `t6060-merge-index` — 7/7 tests pass (`merge-index` now supports Git-compatible `-o`/`-q`, argument ordering, and built-in dispatch for `git-merge-one-file`; helper now updates stage-0 index entries via effective `GIT_INDEX_FILE`, requires a work tree for working-tree writes, and writes merged content to index+worktree; `diff-files` now honors `--diff-filter` and `rev-parse` now resolves `:path`/`:N:path` against effective `GIT_INDEX_FILE`)
 - `t6427-diff3-conflict-markers` — 9/9 tests pass (merge conflict markers now use correct base/theirs labels and conflict styles across `diff3`/`zdiff3`; rebase now preserves diff3/zdiff3 conflict-marker files with backend-specific base labels; merge-file zealous diff3 handling now matches expected compact conflict shapes for shared prefix/suffix insertions)
@@ -59,4 +60,4 @@
 
 ## What Remains
 
-698 test files still pending. See `plan.md` for the full prioritized list.
+697 test files still pending. See `plan.md` for the full prioritized list.
