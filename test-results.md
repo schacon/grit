@@ -2,6 +2,12 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after aligning reflog `--updateref` semantics and refspec validation in `reflog delete`/`reflog expire` paths).
+- `rm -rf /workspace/tests/trash.t1417-reflog-updateref && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1417-reflog-updateref.sh` (run from `/workspace/tests`): 21/21 passing (improved from 15/21).
+- `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 3/12 passing.
 - `cargo build --release -p grit-rs`: success (after improving read-tree confusing-path validation for NTFS edge cases and preserving UTF-8 non-dotgit paths).
 - `rm -rf /workspace/tests/trash.t1014-read-tree-confusing && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 27/28 passing (improved from 19/28).
 - `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 27/28 passing.

@@ -107,7 +107,7 @@ commit → check it off → move on.
 - [x] `t0614-reftable-fsck` ████████████████████ 7/7 (0 left) — Test reftable backend consistency check
 - [ ] `t1416-ref-transaction-hooks` ██████████████████░░ 9/10 (1 left) — reference transaction hooks
 - [ ] `t1014-read-tree-confusing` ███████████████████░ 27/28 (1 left) — check that read-tree rejects confusing paths
-- [ ] `t1417-reflog-updateref` ███████████░░░░░░░░░ 12/21 (9 left) — git reflog --updateref
+- [x] `t1417-reflog-updateref` ████████████████████ 21/21 (0 left) — git reflog --updateref
 - [ ] `t1414-reflog-walk` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — various tests of reflog walk (log -g) behavior
 - [ ] `t1421-reflog-write` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Manually write reflog entries
 - [ ] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,763/24,806 tests passing, 16,043 failures remaining**
+**8,772/24,806 tests passing, 16,034 failures remaining**
