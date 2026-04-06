@@ -1464,6 +1464,34 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
             match find_worktree_name(&worktrees_dir, &abs) {
                 Ok(name) => names.push(name),
                 Err(_) => {
+                    // Maybe the worktree was moved — check if it has a .git file pointing to our admin
+                    let dotgit = abs.join(".git");
+                    if let Ok(content) = fs::read_to_string(&dotgit) {
+                        if let Some(admin_path) = content.trim().strip_prefix("gitdir: ") {
+                            let admin = PathBuf::from(admin_path);
+                            let admin_dir = if admin.is_absolute() {
+                                admin.clone()
+                            } else {
+                                abs.join(&admin)
+                            };
+                            let admin_dir = admin_dir.canonicalize().unwrap_or(admin_dir);
+                            // Check that this admin dir is under our worktrees_dir
+                            if admin_dir.starts_with(&worktrees_dir) {
+                                // The worktree was moved — update admin's gitdir
+                                let new_gitdir_path = abs.join(".git");
+                                let old_gitdir_file = admin_dir.join("gitdir");
+                                let reason = if !old_gitdir_file.exists() {
+                                    "gitdir unreadable"
+                                } else {
+                                    "gitdir incorrect"
+                                };
+                                let new_content = format!("{}\n", new_gitdir_path.display());
+                                fs::write(&old_gitdir_file, &new_content)?;
+                                eprintln!("repair: {}: {reason}", abs.display());
+                                continue;
+                            }
+                        }
+                    }
                     eprintln!("error: '{}': not a valid path", p.display());
                     std::process::exit(1);
                 }
