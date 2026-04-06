@@ -1213,6 +1213,11 @@ fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntr
         fs::create_dir_all(parent)?;
     }
 
+    if entry.mode == 0o160000 {
+        let _ = fs::create_dir_all(abs_path);
+        return Ok(());
+    }
+
     let obj = repo
         .odb
         .read(&entry.oid)

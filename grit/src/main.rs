@@ -1440,6 +1440,7 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if let Some(dir) = &opts.change_dir {
         if !dir.as_os_str().is_empty() {
             std::env::set_current_dir(dir)?;
+            std::env::set_var("PWD", std::env::current_dir()?);
         }
     }
     if let Some(git_dir) = &opts.git_dir {

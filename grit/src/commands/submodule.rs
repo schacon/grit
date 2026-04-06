@@ -83,6 +83,10 @@ pub struct UpdateArgs {
     /// Use the status of the submodule's remote-tracking branch.
     #[arg(long)]
     pub remote: bool,
+
+    /// Recurse into nested submodules.
+    #[arg(long)]
+    pub recursive: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -515,11 +519,12 @@ fn run_add(args: &AddArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
 
+        let resolved_url = resolve_submodule_url(work_tree, &repo.git_dir, &args.url);
         let status = Command::new(&git_bin)
             .arg("clone")
             .arg("--separate-git-dir")
             .arg(&modules_dir)
-            .arg(&args.url)
+            .arg(&resolved_url)
             .arg(&sub_path)
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_DIR")
@@ -545,6 +550,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     config.set(&format!("submodule.{name}.path"), &path)?;
     config.set(&format!("submodule.{name}.url"), &args.url)?;
+    if let Some(branch) = &args.branch {
+        config.set(&format!("submodule.{name}.branch"), branch)?;
+    }
     config.write()?;
 
     // Also register the submodule in the local .git/config (like git does).

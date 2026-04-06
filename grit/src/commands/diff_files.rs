@@ -116,6 +116,8 @@ struct Options {
     format: OutputFormat,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
+    /// Ignore submodule (gitlink) entries.
+    ignore_submodules: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -145,6 +147,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
+    let mut ignore_submodules = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -216,7 +219,13 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--no-ext-diff"
                 | "--no-prefix"
                 | "--no-renames"
-                | "--no-abbrev" => {}
+                | "--no-abbrev"
+                | "--ignore-submodules" => {
+                    ignore_submodules = true;
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    ignore_submodules = true;
+                }
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("-G")
                     || arg.starts_with("-S")
@@ -240,6 +249,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         abbrev,
         format,
         suppress_diff,
+        ignore_submodules,
     })
 }
 
@@ -284,6 +294,9 @@ fn collect_changes(
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
+            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                continue;
+            }
             if idx_entry.intent_to_add() {
                 let abs = work_tree.join(path);
                 if let Some((wt_mode, _wt_oid)) = read_worktree_info(repo, &abs)? {
@@ -321,6 +334,9 @@ fn collect_changes(
             match read_worktree_info_fast(repo, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Smudged(wt_mode) => {
+                    if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                        continue;
+                    }
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     let status = if wt_mode == 0 {
                         'D'
@@ -404,6 +420,9 @@ fn collect_changes(
     } else {
         // Stage-specific mode: compare requested stage entries against worktree.
         for (path, (idx_mode, idx_oid)) in &staged {
+            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
+                continue;
+            }
             let abs = work_tree.join(path);
             match read_worktree_info(repo, &abs)? {
                 Some((wt_mode, _wt_oid)) => {
@@ -468,6 +487,22 @@ fn read_worktree_info_fast(
     };
 
     let _ = repo;
+    let idx_mode = canonicalize_mode(index_entry.mode);
+
+    // Gitlink entries need special handling:
+    // - An existing directory without a nested `.git` is an uninitialized
+    //   submodule and is considered clean.
+    // - A populated submodule compares by checked out commit.
+    if idx_mode == MODE_GITLINK && meta.file_type().is_dir() {
+        if !abs_path.join(".git").exists() {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        let oid = read_submodule_head_oid(abs_path)?;
+        if oid == index_entry.oid {
+            return Ok(WorktreeStatus::Unchanged);
+        }
+        return Ok(WorktreeStatus::Modified(MODE_GITLINK, oid));
+    }
 
     // Entries created by read-tree start with zeroed stat information.
     // Until an explicit refresh (e.g. checkout-index -u / update-index

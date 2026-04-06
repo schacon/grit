@@ -538,6 +538,11 @@ pub fn diff_index_to_worktree(
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head(&sub_dir);
+            // An existing directory without a nested `.git` is an
+            // uninitialized submodule checkout and is considered clean.
+            if sub_head_oid.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
+                continue;
+            }
             if sub_head_oid.as_ref() != Some(&ie.oid) {
                 let path_owned = path_str_ref.to_owned();
                 let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
@@ -815,6 +820,10 @@ pub fn diff_tree_to_worktree(
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
                 let sub_head = read_submodule_head(&sub_dir);
+                // Uninitialized submodule directories are considered clean.
+                if sub_head.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
+                    continue;
+                }
                 if sub_head.as_ref() != Some(&te.oid) {
                     let new_oid = sub_head.unwrap_or_else(zero_oid);
                     result.push(DiffEntry {
@@ -2012,4 +2021,11 @@ fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
         // Detached HEAD — direct OID
         ObjectId::from_hex(head_content).ok()
     }
+}
+
+fn is_unpopulated_submodule_dir(sub_dir: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(sub_dir) else {
+        return false;
+    };
+    meta.is_dir() && !sub_dir.join(".git").exists()
 }

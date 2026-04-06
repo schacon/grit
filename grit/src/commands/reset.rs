@@ -17,7 +17,7 @@ use std::path::Path;
 
 use crate::commands::git_passthrough;
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::refs::{append_reflog, write_ref};
@@ -391,6 +391,9 @@ fn reset_paths(
         // Re-add from tree if present.
         if let Some(entry) = tree_map.get(&path_bytes) {
             index.add_or_replace(entry.clone());
+            if entry.mode == MODE_GITLINK {
+                continue;
+            }
         } else if intent_to_add {
             // With -N, keep removed paths as intent-to-add entries.
             let empty_oid = repo

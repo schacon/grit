@@ -43,7 +43,14 @@ pub struct Args {
     pub no_branch: bool,
 
     /// Show untracked files.
-    #[arg(short = 'u', long = "untracked-files", default_value = "normal")]
+    #[arg(
+        short = 'u',
+        long = "untracked-files",
+        value_name = "UNTRACKED",
+        num_args = 0..=1,
+        default_missing_value = "all",
+        default_value = "normal"
+    )]
     pub untracked: String,
 
     /// Show ignored files.

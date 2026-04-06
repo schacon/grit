@@ -1797,11 +1797,18 @@ fn checkout_paths(
                     // Write to working tree with CRLF conversion
                     write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode)?;
 
-                    // Read blob size for index entry
-                    let obj = repo
-                        .odb
-                        .read(&blob_oid)
-                        .with_context(|| format!("reading blob for '{rel}'"))?;
+                    // Read blob size for index entry. Gitlink entries point to
+                    // commits in the submodule repository and are not present
+                    // in the superproject ODB.
+                    let entry_size = if mode == 0o160000 {
+                        0
+                    } else {
+                        let obj = repo
+                            .odb
+                            .read(&blob_oid)
+                            .with_context(|| format!("reading blob for '{rel}'"))?;
+                        obj.data.len() as u32
+                    };
 
                     // Update index entry
                     let path_bytes = rel.as_bytes().to_vec();
@@ -1815,7 +1822,7 @@ fn checkout_paths(
                         mode,
                         uid: 0,
                         gid: 0,
-                        size: obj.data.len() as u32,
+                        size: entry_size,
                         oid: blob_oid,
                         flags: path_bytes.len().min(0xFFF) as u16,
                         flags_extended: None,
@@ -3026,6 +3033,16 @@ fn write_blob_to_worktree(
     oid: &ObjectId,
     mode: u32,
 ) -> Result<()> {
+    if mode == 0o160000 {
+        // Submodule (gitlink) entries store commit OIDs in the submodule
+        // repository, not blob data in the superproject. Ensure an empty
+        // directory exists and skip object checkout.
+        let sm_dir = work_tree.join(rel_path);
+        std::fs::create_dir_all(&sm_dir)
+            .with_context(|| format!("creating submodule directory '{}'", sm_dir.display()))?;
+        return Ok(());
+    }
+
     let obj = repo.odb.read(oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");

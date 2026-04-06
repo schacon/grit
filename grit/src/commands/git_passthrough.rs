@@ -23,19 +23,31 @@ pub fn run(subcommand: &str, args: &[String]) -> Result<()> {
     let mut full_args = Vec::with_capacity(args.len() + 1);
     full_args.push(subcommand.to_owned());
     full_args.extend(args.iter().cloned());
-    run_args(&full_args)
+    run_args_in_current_cwd(&full_args)
 }
 
-fn run_args(args: &[String]) -> Result<()> {
+fn run_args_in_current_cwd(args: &[String]) -> Result<()> {
+    let cwd = std::env::current_dir().ok();
+    run_args_with_cwd(args, cwd.as_deref())
+}
+
+fn run_args_in_original_cwd(args: &[String]) -> Result<()> {
+    let orig = std::env::var_os("GRIT_ORIG_CWD")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok());
+    run_args_with_cwd(args, orig.as_deref())
+}
+
+fn run_args_with_cwd(args: &[String], cwd: Option<&Path>) -> Result<()> {
     let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
     let mut cmd = Command::new(&git_bin);
     cmd.args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-
-    if let Some(orig_cwd) = std::env::var_os("GRIT_ORIG_CWD") {
-        cmd.current_dir(orig_cwd);
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+        cmd.env("PWD", dir);
     }
 
     // Ensure nested `git` subprocesses invoked by system Git also resolve to
@@ -69,7 +81,7 @@ pub fn run_current_invocation(subcommand: &str) -> Result<()> {
         bail!("failed to determine {subcommand} arguments");
     };
     let passthrough_args = argv.get(1..).map(|s| s.to_vec()).unwrap_or_default();
-    run_args(&passthrough_args)
+    run_args_in_original_cwd(&passthrough_args)
 }
 
 /// Return true when command execution started from a subdirectory of the
