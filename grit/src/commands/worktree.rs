@@ -109,6 +109,10 @@ pub struct ListArgs {
     /// Machine-readable output.
     #[arg(long)]
     pub porcelain: bool,
+
+    /// NUL-terminated output (for --porcelain).
+    #[arg(short = 'z')]
+    pub nul: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -773,40 +777,48 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
 
 fn cmd_list(args: ListArgs) -> Result<()> {
     let repo = Repository::discover(None)?;
+    // -z requires --porcelain
+    if args.nul && !args.porcelain {
+        bail!("--null requires --porcelain");
+    }
     let entries = collect_worktrees(&repo)?;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
     if args.porcelain {
+        // With -z, use NUL between fields and between entries; without -z use newlines.
+        let sep: u8 = if args.nul { 0 } else { b'\n' };
+        let entry_sep: &[u8] = if args.nul { b"\0" } else { b"\n" };
         for entry in &entries {
-            writeln!(out, "worktree {}", entry.path.display())?;
-            match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => {
-                    writeln!(out, "HEAD {}", oid.to_hex())?;
-                }
-                HeadState::Detached { oid } => {
-                    writeln!(out, "HEAD {}", oid.to_hex())?;
-                }
-                _ => {
-                    writeln!(out, "HEAD {}", "0".repeat(40))?;
-                }
-            }
+            out.write_all(format!("worktree {}", entry.path.display()).as_bytes())?;
+            out.write_all(&[sep])?;
+            let head_oid = match &entry.head {
+                HeadState::Branch { oid: Some(oid), .. } => oid.to_hex(),
+                HeadState::Detached { oid } => oid.to_hex(),
+                _ => "0".repeat(40),
+            };
+            out.write_all(format!("HEAD {head_oid}").as_bytes())?;
+            out.write_all(&[sep])?;
             match &entry.head {
                 HeadState::Branch { refname, .. } => {
-                    writeln!(out, "branch {}", refname)?;
+                    out.write_all(format!("branch {refname}").as_bytes())?;
+                    out.write_all(&[sep])?;
                 }
                 HeadState::Detached { .. } => {
-                    writeln!(out, "detached")?;
+                    out.write_all(b"detached")?;
+                    out.write_all(&[sep])?;
                 }
                 _ => {}
             }
             if entry.is_bare {
-                writeln!(out, "bare")?;
+                out.write_all(b"bare")?;
+                out.write_all(&[sep])?;
             }
             if entry.is_locked {
-                writeln!(out, "locked")?;
+                out.write_all(b"locked")?;
+                out.write_all(&[sep])?;
             }
-            writeln!(out)?;
+            out.write_all(entry_sep)?;
         }
     } else {
         // Compute max path display width for column alignment (min 40, use char count not bytes)
