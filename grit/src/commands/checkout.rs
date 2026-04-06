@@ -952,10 +952,20 @@ fn force_create_and_switch_branch(
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
                 Some(oid) => *oid,
-                None => bail!(
-                    "cannot create branch '{}': HEAD does not point to a commit",
-                    name
-                ),
+                None => {
+                    // Unborn HEAD: `checkout -B <name>` should still switch to the
+                    // named branch and leave it unborn.
+                    if branch_existed {
+                        refs::delete_ref(&repo.git_dir, &branch_ref)?;
+                    }
+                    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+                    if branch_existed {
+                        checkout_eprintln!("Switched to and reset branch '{}'", name);
+                    } else {
+                        checkout_eprintln!("Switched to a new branch '{}'", name);
+                    }
+                    return Ok(());
+                }
             }
         }
     };

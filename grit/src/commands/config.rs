@@ -42,10 +42,6 @@ pub struct Args {
     #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
 
-    /// Change to this directory before doing anything.
-    #[arg(short = 'C', value_name = "DIR", global = true)]
-    pub change_dir: Option<PathBuf>,
-
     /// Read config from a blob object (e.g. HEAD:.gitmodules).
     #[arg(long = "blob", value_name = "BLOB_ISH")]
     pub blob: Option<String>,
@@ -64,11 +60,11 @@ pub struct Args {
     pub get_regexp: Option<String>,
 
     /// Remove a key (legacy).
-    #[arg(long = "unset", value_name = "KEY")]
+    #[arg(long = "unset", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub unset_key: Option<String>,
 
     /// Remove all occurrences of a key (legacy).
-    #[arg(long = "unset-all", value_name = "KEY")]
+    #[arg(long = "unset-all", value_name = "KEY", num_args = 0..=1, default_missing_value = "")]
     pub unset_all_key: Option<String>,
 
     /// List all config entries (legacy).
@@ -288,16 +284,6 @@ pub struct EditArgs {}
 
 /// Run the `config` command.
 pub fn run(args: Args) -> Result<()> {
-    if let Some(dir) = &args.change_dir {
-        let target = if dir.is_absolute() {
-            dir.clone()
-        } else {
-            std::env::current_dir()?.join(dir)
-        };
-        std::env::set_current_dir(&target)
-            .with_context(|| format!("cannot change to directory '{}'", target.display()))?;
-    }
-
     // If --blob is given, read config from the blob and handle read-only ops
     if let Some(ref blob_spec) = args.blob {
         // --blob is incompatible with file-scope flags
@@ -313,9 +299,6 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
-    if should_validate_repository(&args) && git_dir.is_some() {
-        Repository::discover(None)?;
-    }
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
 
     // Handle subcommands first
@@ -455,21 +438,33 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if let Some(ref key) = args.unset_key {
-        let unset_args = UnsetArgs {
-            key: key.clone(),
-            all: false,
+    if let Some(ref key_raw) = args.unset_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let key = args.positional.first().cloned().unwrap_or_default();
+            let value_pattern = args.positional.get(1).map(|s| s.as_str());
+            (key, value_pattern)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
         };
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+        if key.is_empty() {
+            bail!("usage: git config --unset <key>");
+        }
+        let unset_args = UnsetArgs { key, all: false };
         return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
-    if let Some(ref key) = args.unset_all_key {
-        let unset_args = UnsetArgs {
-            key: key.clone(),
-            all: true,
+    if let Some(ref key_raw) = args.unset_all_key {
+        let (key, value_pattern) = if key_raw.is_empty() {
+            let key = args.positional.first().cloned().unwrap_or_default();
+            let value_pattern = args.positional.get(1).map(|s| s.as_str());
+            (key, value_pattern)
+        } else {
+            (key_raw.clone(), args.positional.first().map(|s| s.as_str()))
         };
-        let value_pattern = args.positional.first().map(|s| s.as_str());
+        if key.is_empty() {
+            bail!("usage: git config --unset-all <key>");
+        }
+        let unset_args = UnsetArgs { key, all: true };
         return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
     }
 
@@ -497,12 +492,6 @@ pub fn run(args: Args) -> Result<()> {
     // Legacy set: `git config key value`
     match args.positional.len() {
         0 => {
-            // Compatibility: some tests invoke `git config -C <dir>` via helper
-            // wrappers that drop key/value operands. In that narrow case, treat
-            // the call as a no-op success after changing directory.
-            if args.change_dir.is_some() {
-                return Ok(());
-            }
             // No args, no flags → show usage
             bail!("usage: grit config [<options>]");
         }
@@ -1198,11 +1187,6 @@ fn resolve_git_dir() -> Option<PathBuf> {
     }
 }
 
-/// Whether this invocation should validate repository format/extensions.
-fn should_validate_repository(args: &Args) -> bool {
-    !(args.system || args.global || args.file.is_some() || args.blob.is_some())
-}
-
 /// Determine which config file to write to based on flags.
 fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigScope, PathBuf)> {
     if let Some(ref path) = args.file {
@@ -1215,7 +1199,7 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         return Ok((ConfigScope::System, path));
     }
     if args.global {
-        let path = global_config_path_for_write()
+        let path = global_config_path()
             .ok_or_else(|| anyhow::anyhow!("cannot determine global config path"))?;
         return Ok((ConfigScope::Global, path));
     }
@@ -1228,7 +1212,7 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         Ok((ConfigScope::Local, gd.join("config")))
     } else {
         // Outside repo, default to global for read operations
-        let path = global_config_path_for_read().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
+        let path = global_config_path().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
         Ok((ConfigScope::Global, path))
     }
 }
@@ -1257,7 +1241,7 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 
     if args.global {
         let mut set = ConfigSet::new();
-        if let Some(path) = global_config_path_for_read() {
+        if let Some(path) = global_config_path() {
             if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
                 set.merge(&f);
             }
@@ -1280,57 +1264,13 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 }
 
 /// Get the path for the global config file.
-fn global_config_path_for_read() -> Option<PathBuf> {
+fn global_config_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
         return Some(PathBuf::from(p));
     }
-
-    let gitconfig = global_gitconfig_path();
-    let xdg = global_xdg_config_path();
-
-    if gitconfig.as_ref().is_some_and(|p| p.exists()) {
-        return gitconfig;
-    }
-    if xdg.as_ref().is_some_and(|p| p.exists()) {
-        return xdg;
-    }
-
-    gitconfig.or(xdg)
-}
-
-/// Get the path to write for `--global` config operations.
-fn global_config_path_for_write() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
-        return Some(PathBuf::from(p));
-    }
-
-    let gitconfig = global_gitconfig_path();
-    let xdg = global_xdg_config_path();
-    let gitconfig_exists = gitconfig.as_ref().is_some_and(|p| p.exists());
-    let xdg_exists = xdg.as_ref().is_some_and(|p| p.exists());
-
-    if !gitconfig_exists && xdg_exists {
-        return xdg;
-    }
-
-    gitconfig.or(xdg)
-}
-
-fn global_gitconfig_path() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|h| PathBuf::from(h).join(".gitconfig"))
-}
-
-fn global_xdg_config_path() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("git/config"));
-        }
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".config/git/config"))
 }
 
 /// Returns whether `--default` is valid for the selected operation.
@@ -1401,9 +1341,10 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 /// Returns true if the value should be skipped.
 fn is_optional_missing_path(args: &Args, val: &str) -> bool {
     let type_name = args.type_name.as_deref();
-    if (args.type_path || type_name == Some("path")) && val.starts_with(":(optional)") {
-        return grit_lib::config::parse_path_optional(val).is_none();
-    }
+    if (args.type_path || type_name == Some("path"))
+        && val.starts_with(":(optional)") {
+            return grit_lib::config::parse_path_optional(val).is_none();
+        }
     false
 }
 

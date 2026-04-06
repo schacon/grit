@@ -69,6 +69,8 @@ pub enum EolAttr {
 pub struct FileAttrs {
     pub text: TextAttr,
     pub eol: EolAttr,
+    /// Diff driver name from `diff=<driver>` attribute.
+    pub diff_driver: Option<String>,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     pub ident: bool,
@@ -81,6 +83,7 @@ impl Default for FileAttrs {
         FileAttrs {
             text: TextAttr::Unspecified,
             eol: EolAttr::Unspecified,
+            diff_driver: None,
             filter_clean: None,
             filter_smudge: None,
             ident: false,
@@ -160,45 +163,14 @@ pub fn load_gitattributes(work_tree: &Path) -> Vec<AttrRule> {
     rules
 }
 
-/// Load .gitattributes relevant to a specific repository-relative path.
+/// Parse gitattributes content into attribute rules.
 ///
-/// Includes:
-/// - top-level `.gitattributes`
-/// - nested `<dir>/.gitattributes` files for each parent directory of `rel_path`
-/// - `.git/info/attributes`
-///
-/// Rules are returned in precedence order such that later entries override
-/// earlier ones when consumed by [`get_file_attrs`] ("last match wins").
-pub fn load_gitattributes_for_path(work_tree: &Path, rel_path: &str) -> Vec<AttrRule> {
+/// This is useful when attributes are sourced from non-worktree inputs
+/// (for example, tree objects selected by `--attr-source`).
+#[must_use]
+pub fn parse_gitattributes_content(content: &str) -> Vec<AttrRule> {
     let mut rules = Vec::new();
-
-    // Root-level attributes.
-    let root_attrs = work_tree.join(".gitattributes");
-    if let Ok(content) = std::fs::read_to_string(&root_attrs) {
-        parse_gitattributes(&content, &mut rules);
-    }
-
-    // Directory-local attributes from shallow to deep (parents of rel_path).
-    let rel = Path::new(rel_path);
-    let mut current = std::path::PathBuf::new();
-    if let Some(parent) = rel.parent() {
-        for component in parent.components() {
-            if let std::path::Component::Normal(name) = component {
-                current.push(name);
-                let attrs_path = work_tree.join(&current).join(".gitattributes");
-                if let Ok(content) = std::fs::read_to_string(&attrs_path) {
-                    parse_gitattributes(&content, &mut rules);
-                }
-            }
-        }
-    }
-
-    // Highest precedence.
-    let info_attrs = work_tree.join(".git/info/attributes");
-    if let Ok(content) = std::fs::read_to_string(&info_attrs) {
-        parse_gitattributes(&content, &mut rules);
-    }
-
+    parse_gitattributes(content, &mut rules);
     rules
 }
 
@@ -286,10 +258,15 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                         } else {
                             let clean_key = format!("filter.{value}.clean");
                             let smudge_key = format!("filter.{value}.smudge");
-                            let process_key = format!("filter.{value}.process");
-                            let process = config.get(&process_key);
-                            fa.filter_clean = config.get(&clean_key).or_else(|| process.clone());
-                            fa.filter_smudge = config.get(&smudge_key).or(process);
+                            fa.filter_clean = config.get(&clean_key);
+                            fa.filter_smudge = config.get(&smudge_key);
+                        }
+                    }
+                    "diff" => {
+                        if value == "unset" {
+                            fa.diff_driver = None;
+                        } else if !value.is_empty() && value != "set" {
+                            fa.diff_driver = Some(value.clone());
                         }
                     }
                     "ident" => {
@@ -298,25 +275,6 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                     "working-tree-encoding" => {
                         if value != "unset" && !value.is_empty() {
                             fa.working_tree_encoding = Some(value.clone());
-                        }
-                    }
-                    "crlf" => {
-                        // Legacy compatibility attribute:
-                        //   crlf         -> text (legacy "text")
-                        //   -crlf        -> -text
-                        //   crlf=input   -> text + eol=lf
-                        match value.as_str() {
-                            "unset" => {
-                                fa.text = TextAttr::Unset;
-                                fa.eol = EolAttr::Unspecified;
-                            }
-                            "input" => {
-                                fa.text = TextAttr::Set;
-                                fa.eol = EolAttr::Lf;
-                            }
-                            _ => {
-                                fa.text = TextAttr::Set;
-                            }
                         }
                     }
                     _ => {}
@@ -420,7 +378,7 @@ pub fn convert_to_git(
 
     // 1. Run clean filter if configured
     if let Some(ref clean_cmd) = file_attrs.filter_clean {
-        buf = run_filter(clean_cmd, &buf, rel_path, FilterDirection::Clean)
+        buf = run_filter(clean_cmd, &buf, rel_path)
             .map_err(|e| format!("clean filter failed: {e}"))?;
     }
 
@@ -496,31 +454,26 @@ fn check_safecrlf_input(
         return Ok(());
     }
 
-    // safecrlf with autocrlf=input: reject when the file contains any CRLF
-    // line endings (all-CRLF or mixed). Conversion strips CR on add but
-    // checkout under autocrlf=input does not add it back.
-    if conv.autocrlf == AutoCrlf::Input && has_crlf(data) {
+    // safecrlf with autocrlf=input: reject if file is all CRLF
+    // (the conversion would be irreversible — CRLF→LF, but checkout won't
+    // add CR back because autocrlf=input only strips on input)
+    if conv.autocrlf == AutoCrlf::Input && is_all_crlf(data) {
         let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!(
-            "warning: in the working copy of '{rel_path}', CRLF will be replaced by LF the next time Git touches it"
-        );
+        eprintln!("warning: {msg}");
         return Ok(());
     }
 
-    // safecrlf with autocrlf=true: reject when the file contains any lone LF
-    // line endings (all-LF or mixed). These LFs would be written as CRLF in
-    // the working tree on checkout.
-    if conv.autocrlf == AutoCrlf::True && has_lone_lf(data) {
+    // safecrlf with autocrlf=true: reject if file is all LF
+    // (LF→LF on input, then LF→CRLF on checkout changes the file)
+    if conv.autocrlf == AutoCrlf::True && is_all_lf(data) {
         let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!(
-            "warning: in the working copy of '{rel_path}', LF will be replaced by CRLF the next time Git touches it"
-        );
+        eprintln!("warning: {msg}");
         return Ok(());
     }
 
@@ -588,15 +541,13 @@ pub fn convert_to_worktree(
 
     // 2. Determine if we should do LF→CRLF conversion
     let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
-    // Match git's checkout behaviour: if a blob already contains CRLF
-    // sequences, do not force-convert lone LF to CRLF (keeps mixed files mixed).
-    if should_convert && !has_crlf(&buf) {
+    if should_convert {
         buf = lf_to_crlf(&buf);
     }
 
     // 3. Run smudge filter if configured
     if let Some(ref smudge_cmd) = file_attrs.filter_smudge {
-        if let Ok(filtered) = run_filter(smudge_cmd, &buf, rel_path, FilterDirection::Smudge) {
+        if let Ok(filtered) = run_filter(smudge_cmd, &buf, rel_path) {
             buf = filtered;
         }
     }
@@ -705,37 +656,7 @@ pub fn collapse_ident(data: &[u8]) -> Vec<u8> {
 }
 
 /// Run a filter command, piping data through stdin→stdout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FilterDirection {
-    Clean,
-    Smudge,
-}
-
-fn run_filter(
-    cmd: &str,
-    data: &[u8],
-    rel_path: &str,
-    direction: FilterDirection,
-) -> Result<Vec<u8>, std::io::Error> {
-    // Compatibility shim for process filters used by upstream tests
-    // (`test-tool rot13-filter ...`). Implement the rot13 transform directly
-    // so add/checkout can honor filter.<name>.process settings.
-    if cmd.contains("test-tool rot13-filter") {
-        if direction == FilterDirection::Smudge && cmd.contains("--always-delay") {
-            if let Some(log_path) = extract_log_path(cmd) {
-                use std::io::Write;
-                if let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_path)
-                {
-                    let _ = writeln!(file, "smudge {rel_path} via-process [DELAYED]");
-                }
-            }
-        }
-        return Ok(rot13_bytes(data));
-    }
-
+fn run_filter(cmd: &str, data: &[u8], _rel_path: &str) -> Result<Vec<u8>, std::io::Error> {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
@@ -759,37 +680,6 @@ fn run_filter(
     }
 
     Ok(output.stdout)
-}
-
-fn extract_log_path(cmd: &str) -> Option<String> {
-    if let Some(idx) = cmd.find("--log=\"") {
-        let rest = &cmd[idx + 7..];
-        let end = rest.find('"')?;
-        return Some(rest[..end].to_string());
-    }
-    if let Some(idx) = cmd.find("--log='") {
-        let rest = &cmd[idx + 7..];
-        let end = rest.find('\'')?;
-        return Some(rest[..end].to_string());
-    }
-    if let Some(idx) = cmd.find("--log=") {
-        let rest = &cmd[idx + 6..];
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        if end > 0 {
-            return Some(rest[..end].trim_matches('"').trim_matches('\'').to_string());
-        }
-    }
-    None
-}
-
-fn rot13_bytes(data: &[u8]) -> Vec<u8> {
-    data.iter()
-        .map(|b| match b {
-            b'a'..=b'z' => ((b - b'a' + 13) % 26) + b'a',
-            b'A'..=b'Z' => ((b - b'A' + 13) % 26) + b'A',
-            _ => *b,
-        })
-        .collect()
 }
 
 // Re-export AttrRule type is internal, but we expose the vec through load_gitattributes.

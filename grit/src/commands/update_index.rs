@@ -7,7 +7,6 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
-use grit_lib::crlf;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -118,14 +117,12 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
+    let symlinks_enabled = core_symlinks_enabled(&repo);
 
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let conv = crlf::ConversionConfig::from_config(&config);
-    let attrs = crlf::load_gitattributes(work_tree);
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     if args.show_index_version {
@@ -134,7 +131,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.index_info {
-        return run_index_info(&mut index, &index_path, &repo.odb, args.null_terminated);
+        return run_index_info(&mut index, &index_path, &repo.odb);
     }
 
     if args.unresolve {
@@ -299,6 +296,7 @@ pub fn run(args: Args) -> Result<()> {
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
                 }
+                apply_chmod_to_worktree(&abs_path, chmod_val)?;
                 continue;
             }
             // With --add --chmod, fall through to add/update the file first,
@@ -332,61 +330,73 @@ pub fn run(args: Args) -> Result<()> {
                 let sub_git_dir = resolve_gitdir(&dot_git)?;
                 let head_path = sub_git_dir.join("HEAD");
                 let head_content = std::fs::read_to_string(&head_path)
-                    .with_context(|| format!("reading HEAD of submodule"))?;
+                    .with_context(|| "reading HEAD of submodule".to_string())?;
                 let head_content = head_content.trim();
                 let oid: ObjectId = if let Some(refname) = head_content.strip_prefix("ref: ") {
                     let ref_path = sub_git_dir.join(refname);
                     let ref_content = std::fs::read_to_string(&ref_path)
-                        .with_context(|| format!("reading ref in submodule"))?;
+                        .with_context(|| "reading ref in submodule".to_string())?;
                     ref_content.trim().parse().with_context(|| "invalid oid")?
                 } else {
                     head_content.parse().with_context(|| "invalid HEAD oid")?
                 };
                 let entry = IndexEntry {
-                    ctime_sec: 0, ctime_nsec: 0, mtime_sec: 0, mtime_nsec: 0,
-                    dev: 0, ino: 0, mode: grit_lib::index::MODE_GITLINK,
-                    uid: 0, gid: 0, size: 0, oid,
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: grit_lib::index::MODE_GITLINK,
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid,
                     flags: rel_bytes.len().min(0xFFF) as u16,
-                    flags_extended: None, path: rel_bytes.to_vec(),
+                    flags_extended: None,
+                    path: rel_bytes.to_vec(),
                 };
                 index.add_or_replace(entry);
             }
             continue;
         }
 
-        let mode = {
+        let mut mode = {
             use std::os::unix::fs::MetadataExt;
             normalize_mode(meta.mode())
         };
+        let existing_mode = index.get(&rel_bytes, 0).map(|e| e.mode);
+        // On filesystems without symlink support (core.symlinks=false), keep
+        // an existing symlink entry's mode even if the worktree stores it
+        // as a plain file containing the link target.
+        if !symlinks_enabled && !meta.file_type().is_symlink()
+            && existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
+                mode = grit_lib::index::MODE_SYMLINK;
+            }
 
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;
             target.to_string_lossy().into_owned().into_bytes()
         } else {
-            let raw = std::fs::read(&abs_path)
-                .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
-            let rel_path = rel_path.to_string_lossy();
-            let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
-            let mut conv_for_hash = conv.clone();
-            conv_for_hash.safecrlf = crlf::SafeCrlf::False;
-            crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw)
+            std::fs::read(&abs_path)
+                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
         };
 
         let oid = match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data) {
             Ok(oid) => oid,
             Err(err) => {
-                if is_unwritable_odb_error(&err) {
+                if is_permission_denied_error(&err) {
                     eprintln!(
                         "error: insufficient permission for adding an object to repository database .git/objects"
                     );
                     eprintln!(
                         "error: {}: failed to insert into database",
-                        rel_path.display()
+                        input_path.display()
                     );
-                    eprintln!("fatal: Unable to process path {}", rel_path.display());
-                    std::process::exit(1);
+                    eprintln!("fatal: Unable to process path {}", input_path.display());
+                    std::process::exit(128);
                 }
-                return Err(err.into());
+                return Err(anyhow::anyhow!("writing blob: {err}"));
             }
         };
 
@@ -405,6 +415,7 @@ pub fn run(args: Args) -> Result<()> {
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
             }
+            apply_chmod_to_worktree(&abs_path, chmod_val)?;
         }
     }
 
@@ -417,114 +428,85 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Process `--index-info` stdin.
-///
-/// Accepted record formats:
-/// - LF-terminated records (default)
-/// - NUL-terminated records when `--stdin -z` is used
-///
-/// Record syntax:
-/// - `<mode> <oid>\t<path>`
-/// - `<mode> <oid> <stage>\t<path>`
-/// - `<mode> <type> <oid>\t<path>` (legacy extended form)
-fn run_index_info(
-    index: &mut Index,
-    index_path: &std::path::Path,
-    _odb: &Odb,
-    null_terminated: bool,
-) -> Result<()> {
-    if null_terminated {
-        use std::io::Read;
-        let mut buf = Vec::new();
-        io::stdin().read_to_end(&mut buf)?;
-        for rec in buf.split(|&b| b == 0).filter(|r| !r.is_empty()) {
-            parse_index_info_record(index, rec)?;
+/// Process `--index-info` stdin: lines of `"<mode> <oid>\t<path>"`.
+fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -> Result<()> {
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
         }
-    } else {
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line?;
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+
+        // Format: "<mode> SP <oid> TAB <path>"
+        // or: "<mode> SP <type> SP <oid> TAB <path>" (extended)
+        let tab = line
+            .find('\t')
+            .ok_or_else(|| anyhow::anyhow!("bad --index-info line: no tab: '{line}'"))?;
+        let meta = &line[..tab];
+        let path = line.as_bytes()[tab + 1..].to_vec();
+
+        let parts: Vec<&str> = meta.split(' ').collect();
+
+        // Supported formats:
+        //   2-part: "<mode> <sha1>"              → stage 0
+        //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
+        //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
+        //
+        // Disambiguate the 3-part case: if parts[2] is a single decimal digit
+        // (0-3) it is a stage number; otherwise treat parts[1] as a type token
+        // and parts[2] as the sha1.
+        let (mode_str, oid_str, stage) = match parts.len() {
+            2 => (parts[0], parts[1], 0u8),
+            3 => {
+                let third = parts[2];
+                if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
+                    let s: u8 = third.parse().unwrap_or(0);
+                    (parts[0], parts[1], s)
+                } else {
+                    // Legacy: "<mode> <type> <sha1>"
+                    (parts[0], parts[2], 0u8)
+                }
             }
-            parse_index_info_record(index, line.as_bytes())?;
+            _ => bail!("bad --index-info line: '{line}'"),
+        };
+
+        if mode_str == "0" {
+            // Delete entry
+            index.remove(&path);
+            continue;
         }
+
+        let mode = u32::from_str_radix(mode_str, 8)
+            .with_context(|| format!("invalid mode '{mode_str}'"))?;
+        let oid: ObjectId = oid_str
+            .parse()
+            .with_context(|| format!("invalid oid '{oid_str}'"))?;
+
+        // Encode stage in the upper 2 bits of flags (bits 13-12).
+        let base_flags = path.len().min(0xFFF) as u16;
+        let flags = base_flags | ((stage as u16) << 12);
+
+        let entry = IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid,
+            flags,
+            flags_extended: None,
+            path,
+        };
+        index.add_or_replace(entry);
     }
 
     index.write(index_path).context("writing index")?;
-    Ok(())
-}
-
-fn parse_index_info_record(index: &mut Index, rec: &[u8]) -> Result<()> {
-    // Format: "<mode> SP <oid> TAB <path>"
-    // or: "<mode> SP <type> SP <oid> TAB <path>" (extended)
-    let tab = rec
-        .iter()
-        .position(|b| *b == b'\t')
-        .ok_or_else(|| anyhow::anyhow!("bad --index-info record: no tab"))?;
-    let meta = std::str::from_utf8(&rec[..tab])
-        .map_err(|_| anyhow::anyhow!("bad --index-info record: non-UTF-8 metadata"))?;
-    let path = rec[tab + 1..].to_vec();
-
-    let parts: Vec<&str> = meta.split(' ').collect();
-
-    // Supported formats:
-    //   2-part: "<mode> <sha1>"              → stage 0
-    //   3-part: "<mode> <sha1> <stage>"      → stage 0-3 (git standard)
-    //   3-part: "<mode> <type> <sha1>"       → stage 0 (extended, legacy)
-    //
-    // Disambiguate the 3-part case: if parts[2] is a single decimal digit
-    // (0-3) it is a stage number; otherwise treat parts[1] as a type token
-    // and parts[2] as the sha1.
-    let (mode_str, oid_str, stage) = match parts.len() {
-        2 => (parts[0], parts[1], 0u8),
-        3 => {
-            let third = parts[2];
-            if third.len() == 1 && matches!(third, "0" | "1" | "2" | "3") {
-                let s: u8 = third.parse().unwrap_or(0);
-                (parts[0], parts[1], s)
-            } else {
-                // Legacy: "<mode> <type> <sha1>"
-                (parts[0], parts[2], 0u8)
-            }
-        }
-        _ => bail!("bad --index-info record"),
-    };
-
-    if mode_str == "0" {
-        // Delete entry
-        index.remove(&path);
-        return Ok(());
-    }
-
-    let mode = u32::from_str_radix(mode_str, 8)
-        .with_context(|| format!("invalid mode '{mode_str}'"))?;
-    let oid: ObjectId = oid_str
-        .parse()
-        .with_context(|| format!("invalid oid '{oid_str}'"))?;
-
-    // Encode stage in the upper 2 bits of flags (bits 13-12).
-    let base_flags = path.len().min(0xFFF) as u16;
-    let flags = base_flags | ((stage as u16) << 12);
-
-    let entry = IndexEntry {
-        ctime_sec: 0,
-        ctime_nsec: 0,
-        mtime_sec: 0,
-        mtime_nsec: 0,
-        dev: 0,
-        ino: 0,
-        mode,
-        uid: 0,
-        gid: 0,
-        size: 0,
-        oid,
-        flags,
-        flags_extended: None,
-        path,
-    };
-    index.add_or_replace(entry);
     Ok(())
 }
 
@@ -622,12 +604,41 @@ fn normalize_path(path: &Path) -> PathBuf {
     out
 }
 
+fn apply_chmod_to_worktree(path: &Path, chmod_val: &str) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    if !meta.file_type().is_file() {
+        return Ok(());
+    }
+
+    let mut mode = meta.mode();
+    match chmod_val {
+        "+x" => mode |= 0o111,
+        "-x" => mode &= !0o111,
+        other => bail!("--chmod param '{}' must be either +x or -x", other),
+    }
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .with_context(|| format!("updating worktree mode for '{}'", path.display()))?;
+
+    Ok(())
+}
+
 fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     let meta = std::fs::symlink_metadata(dot_git)?;
-    if meta.is_dir() { return Ok(dot_git.to_path_buf()); }
+    if meta.is_dir() {
+        return Ok(dot_git.to_path_buf());
+    }
     let content = std::fs::read_to_string(dot_git)?;
     let content = content.trim();
-    let target = content.strip_prefix("gitdir: ")
+    let target = content
+        .strip_prefix("gitdir: ")
         .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
     let target_path = Path::new(target);
     if target_path.is_absolute() {
@@ -637,9 +648,14 @@ fn resolve_gitdir(dot_git: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-fn is_unwritable_odb_error(err: &grit_lib::error::Error) -> bool {
-    matches!(
-        err,
-        grit_lib::error::Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied
-    )
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
+}
+
+fn core_symlinks_enabled(repo: &Repository) -> bool {
+    ConfigSet::load(Some(repo.git_dir.as_path()), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.symlinks"))
+        .and_then(|v| v.ok())
+        .unwrap_or(true)
 }

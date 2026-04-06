@@ -80,6 +80,14 @@ pub fn run(args: Args) -> Result<()> {
         diff_entries
     };
 
+    let diff_entries = if options.ignore_all_space {
+        filter_entries_ignore_all_space(&repo, diff_entries)
+    } else if options.ignore_space_change {
+        filter_entries_ignore_space_change(&repo, diff_entries)
+    } else {
+        diff_entries
+    };
+
     // Compute cwd-relative prefix for --relative
     let rel_prefix = if options.relative {
         if let Some(wt) = &repo.work_tree {
@@ -138,7 +146,7 @@ pub fn run(args: Args) -> Result<()> {
             let mut out = stdout.lock();
             let wt = repo.work_tree.as_deref();
             for entry in &diff_entries {
-                write_patch_entry(&mut out, &repo, entry, options.context_lines, wt)?;
+                write_patch_entry(&mut out, &repo, &repo.odb, entry, options.context_lines, wt)?;
             }
         } else if options.name_status {
             for entry in &diff_entries {
@@ -187,6 +195,130 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn filter_entries_ignore_space_change(
+    repo: &Repository,
+    entries: Vec<DiffEntry>,
+) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let (old_raw, new_raw) = read_entry_raw_contents(repo, entry);
+            if is_binary_content(&old_raw) || is_binary_content(&new_raw) {
+                return true;
+            }
+            let old = String::from_utf8_lossy(&old_raw).into_owned();
+            let new = String::from_utf8_lossy(&new_raw).into_owned();
+            normalize_ignore_space_change(&old) != normalize_ignore_space_change(&new)
+        })
+        .collect()
+}
+
+fn filter_entries_ignore_all_space(repo: &Repository, entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let (old_raw, new_raw) = read_entry_raw_contents(repo, entry);
+            if is_binary_content(&old_raw) || is_binary_content(&new_raw) {
+                return true;
+            }
+            let old = String::from_utf8_lossy(&old_raw).into_owned();
+            let new = String::from_utf8_lossy(&new_raw).into_owned();
+            normalize_ignore_all_space(&old) != normalize_ignore_all_space(&new)
+        })
+        .collect()
+}
+
+fn read_entry_raw_contents(repo: &Repository, entry: &DiffEntry) -> (Vec<u8>, Vec<u8>) {
+    let old_raw = read_blob_raw(&repo.odb, &entry.old_oid);
+    let new_raw = if entry.new_oid == zero_oid()
+        && entry.status != DiffStatus::Deleted
+        && worktree_side_is_placeholder(repo, entry)
+    {
+        if let Some(wt) = repo.work_tree.as_ref() {
+            let path = entry.new_path.as_deref().unwrap_or(entry.path());
+            read_worktree_path_raw(&wt.join(path))
+        } else {
+            Vec::new()
+        }
+    } else {
+        read_blob_raw(&repo.odb, &entry.new_oid)
+    };
+    (old_raw, new_raw)
+}
+
+fn worktree_side_is_placeholder(repo: &Repository, entry: &DiffEntry) -> bool {
+    if !matches!(entry.status, DiffStatus::Modified | DiffStatus::TypeChanged) {
+        return false;
+    }
+
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return false;
+    };
+    let path = entry.new_path.as_deref().unwrap_or(entry.path());
+    let abs = wt.join(path);
+    match fs::symlink_metadata(&abs) {
+        Ok(meta) => {
+            let mode = canonicalize_mode(meta.permissions().mode());
+            mode == u32::from_str_radix(&entry.new_mode, 8).unwrap_or(MODE_REGULAR)
+        }
+        Err(_) => false,
+    }
+}
+
+fn is_binary_content(data: &[u8]) -> bool {
+    let check_len = data.len().min(8192);
+    data[..check_len].contains(&0)
+}
+
+fn normalize_ignore_space_change(content: &str) -> String {
+    content
+        .lines()
+        .map(normalize_ignore_space_change_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_ignore_all_space(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            line.chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_ignore_space_change_line(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut in_space = false;
+    for c in line.chars() {
+        if c.is_whitespace() {
+            if !in_space {
+                normalized.push(' ');
+                in_space = true;
+            }
+        } else {
+            normalized.push(c);
+            in_space = false;
+        }
+    }
+    normalized.trim_end().to_owned()
+}
+
 #[derive(Debug, Clone)]
 struct Options {
     tree_ish: String,
@@ -205,6 +337,8 @@ struct Options {
     stat: bool,
     numstat: bool,
     context_lines: usize,
+    ignore_space_change: bool,
+    ignore_all_space: bool,
     nul_terminated: bool,
     relative: bool,
 }
@@ -250,7 +384,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut name_only = false;
     let mut stat = false;
     let mut numstat = false;
-    let mut context_lines: usize = 3;
+    let mut context_lines: usize = diff_context_from_env().unwrap_or(3);
+    let mut ignore_space_change = false;
+    let mut ignore_all_space = false;
     let mut nul_terminated = false;
     let mut relative = false;
 
@@ -315,14 +451,23 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-r" => {
                     // recursive - default behavior for diff-index
                 }
-                "--ignore-submodules" => {
-                    // accepted for compatibility
-                }
-                _ if arg.starts_with("--ignore-submodules=") => {
-                    // accepted for compatibility
+                _ if arg.starts_with("--max-depth=") => {
+                    let val = &arg["--max-depth=".len()..];
+                    let parsed = val
+                        .parse::<i32>()
+                        .with_context(|| format!("invalid --max-depth value: `{val}`"))?;
+                    if parsed != -1 {
+                        bail!("unsupported option: {arg}");
+                    }
                 }
                 _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
                     context_lines = arg[2..].parse::<usize>().unwrap();
+                }
+                "-b" | "--ignore-space-change" => {
+                    ignore_space_change = true;
+                }
+                "-w" | "--ignore-all-space" => {
+                    ignore_all_space = true;
                 }
                 _ if arg.starts_with("--unified=") => {
                     context_lines = arg["--unified=".len()..].parse::<usize>().unwrap_or(3);
@@ -397,9 +542,44 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         stat,
         numstat,
         context_lines,
+        ignore_space_change,
+        ignore_all_space,
         nul_terminated,
         relative,
     })
+}
+
+/// Read diff context lines from `GIT_DIFF_OPTS` when provided.
+///
+/// We currently honor `--unified=<n>`, `-U<n>`, and `-u<n>` forms.
+/// Non-context tokens are ignored.
+fn diff_context_from_env() -> Option<usize> {
+    let opts = std::env::var("GIT_DIFF_OPTS").ok()?;
+    let mut result = None;
+    for token in opts.split_whitespace() {
+        if let Some(v) = token.strip_prefix("--unified=") {
+            if let Ok(parsed) = v.parse::<usize>() {
+                result = Some(parsed);
+            }
+            continue;
+        }
+        if let Some(v) = token.strip_prefix("-U") {
+            if !v.is_empty() {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    result = Some(parsed);
+                }
+            }
+            continue;
+        }
+        if let Some(v) = token.strip_prefix("-u") {
+            if !v.is_empty() {
+                if let Ok(parsed) = v.parse::<usize>() {
+                    result = Some(parsed);
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Resolve a revision to a tree OID without redundantly reading the tree object.
@@ -464,15 +644,12 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
-            (Some(old), Some(new)) => {
-                let status = if old.mode != new.mode { 'T' } else { 'M' };
-                changes.push(RawChange {
-                    path,
-                    status,
-                    old: Some(old),
-                    new: Some(new),
-                })
-            }
+            (Some(old), Some(new)) => changes.push(RawChange {
+                path,
+                status: 'M',
+                old: Some(old),
+                new: Some(new),
+            }),
             (Some(old), None) => changes.push(RawChange {
                 path,
                 status: 'D',
@@ -511,29 +688,12 @@ fn diff_tree_vs_worktree(
         .collect();
 
     let mut merged = BTreeMap::new();
-    let mut all_paths = BTreeSet::new();
-    all_paths.extend(tree_map.keys().cloned());
-    all_paths.extend(index_map.keys().cloned());
+    for change in diff_tree_vs_index(tree_map, index_map) {
+        merged.insert(change.path.clone(), change);
+    }
 
-    for path in all_paths {
-        let old = tree_map.get(&path).copied();
-        let index_snapshot = index_map.get(&path).copied();
-        let abs = work_tree.join(&path);
-
-        if has_symlink_ancestor(work_tree, &path) {
-            if let Some(old_snap) = old {
-                merged.insert(
-                    path.clone(),
-                    RawChange {
-                        path: path.clone(),
-                        status: 'D',
-                        old: Some(old_snap),
-                        new: None,
-                    },
-                );
-            }
-            continue;
-        }
+    for (path, index_snapshot) in index_map {
+        let abs = work_tree.join(path);
 
         // Fast path: use stat cache to skip unchanged files
         let meta = match fs::symlink_metadata(&abs) {
@@ -542,17 +702,16 @@ fn diff_tree_vs_worktree(
                 if match_missing {
                     continue;
                 }
-                if let Some(old_snap) = old {
-                    merged.insert(
-                        path.clone(),
-                        RawChange {
-                            path: path.clone(),
-                            status: 'D',
-                            old: Some(old_snap),
-                            new: None,
-                        },
-                    );
-                }
+                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
+                merged.insert(
+                    path.clone(),
+                    RawChange {
+                        path: path.clone(),
+                        status: 'D',
+                        old,
+                        new: None,
+                    },
+                );
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -566,32 +725,21 @@ fn diff_tree_vs_worktree(
         }
 
         // Stat differs — must read and hash the file
-        match read_worktree_snapshot_from_meta(repo, &abs, &path, &meta)? {
+        match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
             Some(worktree_snapshot) => {
-                let should_report = old
-                    .map(|old_snap| old_snap != worktree_snapshot)
-                    .unwrap_or_else(|| index_snapshot.is_some());
-                if should_report {
+                if worktree_snapshot != *index_snapshot {
+                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
                     // Use zero OID for worktree side — the blob is not
                     // in the object database, matching git's behaviour.
                     let wt_placeholder = Snapshot {
                         mode: worktree_snapshot.mode,
                         oid: zero_oid(),
                     };
-                    let status = if let Some(old_snap) = old {
-                        if old_snap.mode != wt_placeholder.mode {
-                            'T'
-                        } else {
-                            'M'
-                        }
-                    } else {
-                        'A'
-                    };
                     merged.insert(
                         path.clone(),
                         RawChange {
                             path: path.clone(),
-                            status,
+                            status: 'M',
                             old,
                             new: Some(wt_placeholder),
                         },
@@ -599,17 +747,7 @@ fn diff_tree_vs_worktree(
                 }
             }
             None => {
-                if let Some(old_snap) = old {
-                    merged.insert(
-                        path.clone(),
-                        RawChange {
-                            path: path.clone(),
-                            status: 'D',
-                            old: Some(old_snap),
-                            new: None,
-                        },
-                    );
-                }
+                // Not a regular file or symlink — treat as missing
             }
         }
     }
@@ -620,7 +758,6 @@ fn diff_tree_vs_worktree(
 fn read_worktree_snapshot_from_meta(
     _repo: &Repository,
     abs_path: &Path,
-    rel_path: &str,
     metadata: &fs::Metadata,
 ) -> Result<Option<Snapshot>> {
     if metadata.file_type().is_symlink() {
@@ -639,67 +776,7 @@ fn read_worktree_snapshot_from_meta(
         return Ok(Some(Snapshot { mode, oid }));
     }
 
-    if metadata.file_type().is_dir() {
-        let dot_git = abs_path.join(".git");
-        if dot_git.exists() {
-            let oid = read_submodule_head_oid(abs_path)
-                .with_context(|| format!("reading submodule HEAD for '{}'", rel_path))?;
-            return Ok(Some(Snapshot {
-                mode: MODE_GITLINK,
-                oid,
-            }));
-        }
-    }
-
     Ok(None)
-}
-
-fn read_submodule_head_oid(submodule_dir: &Path) -> Result<ObjectId> {
-    let dot_git = submodule_dir.join(".git");
-    let git_dir = resolve_gitdir(&dot_git)?;
-    let head = fs::read_to_string(git_dir.join("HEAD"))?;
-    let head = head.trim();
-    if let Some(refname) = head.strip_prefix("ref: ") {
-        let resolved = fs::read_to_string(git_dir.join(refname))?;
-        return resolved.trim().parse().context("invalid submodule ref oid");
-    }
-    head.parse().context("invalid submodule HEAD oid")
-}
-
-fn resolve_gitdir(dot_git: &Path) -> Result<PathBuf> {
-    let meta = fs::symlink_metadata(dot_git)?;
-    if meta.is_dir() {
-        return Ok(dot_git.to_path_buf());
-    }
-    let content = fs::read_to_string(dot_git)?;
-    let content = content.trim();
-    let target = content
-        .strip_prefix("gitdir: ")
-        .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
-    let target_path = Path::new(target);
-    if target_path.is_absolute() {
-        Ok(target_path.to_path_buf())
-    } else {
-        Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
-    }
-}
-
-fn has_symlink_ancestor(work_tree: &Path, rel_path: &str) -> bool {
-    let rel = Path::new(rel_path);
-    let mut current = work_tree.to_path_buf();
-    let components: Vec<_> = rel.components().collect();
-    if components.len() <= 1 {
-        return false;
-    }
-    for comp in components.iter().take(components.len() - 1) {
-        current.push(comp.as_os_str());
-        if let Ok(meta) = fs::symlink_metadata(&current) {
-            if meta.file_type().is_symlink() {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn canonicalize_mode(raw_mode: u32) -> u32 {
@@ -726,7 +803,7 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             // Glob pattern
             glob_match_pathspec(spec, path)
         } else if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
+            path.starts_with(&format!("{prefix}/"))
         } else {
             path == spec || path.starts_with(&format!("{spec}/"))
         }
@@ -866,11 +943,14 @@ fn render_raw_diff_entry(
 fn write_patch_entry(
     out: &mut impl std::io::Write,
     repo: &Repository,
+    odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
     work_tree: Option<&Path>,
 ) -> Result<()> {
     use grit_lib::diff::unified_diff;
+
+    validate_patch_entry_oids(entry)?;
 
     let old_path = entry
         .old_path
@@ -880,31 +960,46 @@ fn write_patch_entry(
         .new_path
         .as_deref()
         .unwrap_or(entry.old_path.as_deref().unwrap_or(""));
-    let old_patch_oid = patch_index_oid(repo, entry.old_oid)?;
-    let new_patch_oid = patch_index_oid(repo, entry.new_oid)?;
 
     writeln!(out, "diff --git a/{old_path} b/{new_path}")?;
 
     match entry.status {
         DiffStatus::Added => {
             writeln!(out, "new file mode {}", entry.new_mode)?;
-            writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
         }
         DiffStatus::Deleted => {
             writeln!(out, "deleted file mode {}", entry.old_mode)?;
-            writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
+            writeln!(
+                out,
+                "index {}..{}",
+                &entry.old_oid.to_hex()[..7],
+                &entry.new_oid.to_hex()[..7]
+            )?;
         }
         DiffStatus::Modified => {
             if entry.old_mode == entry.new_mode {
                 writeln!(
                     out,
                     "index {}..{} {}",
-                    old_patch_oid, new_patch_oid, entry.old_mode
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7],
+                    entry.old_mode
                 )?;
             } else {
                 writeln!(out, "old mode {}", entry.old_mode)?;
                 writeln!(out, "new mode {}", entry.new_mode)?;
-                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         DiffStatus::Renamed => {
@@ -913,7 +1008,12 @@ fn write_patch_entry(
             writeln!(out, "rename from {old_path}")?;
             writeln!(out, "rename to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         DiffStatus::Copied => {
@@ -922,7 +1022,12 @@ fn write_patch_entry(
             writeln!(out, "copy from {old_path}")?;
             writeln!(out, "copy to {new_path}")?;
             if entry.old_oid != entry.new_oid {
-                writeln!(out, "index {}..{}", old_patch_oid, new_patch_oid)?;
+                writeln!(
+                    out,
+                    "index {}..{}",
+                    &entry.old_oid.to_hex()[..7],
+                    &entry.new_oid.to_hex()[..7]
+                )?;
             }
         }
         _ => {}
@@ -936,21 +1041,28 @@ fn write_patch_entry(
     }
 
     // Read raw bytes for binary detection
-    let old_raw = read_blob_raw(&repo.odb, &entry.old_oid);
-    let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
+    let old_raw = read_blob_raw(odb, &entry.old_oid);
+    let new_raw = if entry.new_oid == zero_oid()
+        && entry.status != DiffStatus::Deleted
+        && worktree_side_is_placeholder(repo, entry)
+    {
         // Zero OID for non-deleted entries means worktree content
         if let Some(wt) = work_tree {
             let path = entry.new_path.as_deref().unwrap_or(new_path);
-            fs::read(wt.join(path)).unwrap_or_default()
+            read_worktree_path_raw(&wt.join(path))
         } else {
             Vec::new()
         }
     } else {
-        read_blob_raw(&repo.odb, &entry.new_oid)
+        read_blob_raw(odb, &entry.new_oid)
     };
 
     // Check for binary content
-    if is_binary(&old_raw) || is_binary(&new_raw) {
+    let treat_as_binary_by_driver = !mode_is_symlink(&entry.old_mode)
+        && !mode_is_symlink(&entry.new_mode)
+        && (is_binary_driver_path(repo, work_tree, old_path)
+            || is_binary_driver_path(repo, work_tree, new_path));
+    if treat_as_binary_by_driver || is_binary(&old_raw) || is_binary(&new_raw) {
         let display_old = if entry.status == DiffStatus::Added {
             "/dev/null"
         } else {
@@ -1000,6 +1112,24 @@ fn is_binary(data: &[u8]) -> bool {
     data[..check_len].contains(&0)
 }
 
+fn is_binary_driver_path(repo: &Repository, work_tree: Option<&Path>, path: &str) -> bool {
+    let Some(wt) = work_tree else {
+        return false;
+    };
+    let rules = grit_lib::crlf::load_gitattributes(wt);
+    let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) else {
+        return false;
+    };
+    let attrs = grit_lib::crlf::get_file_attrs(&rules, path, &config);
+    let Some(driver) = attrs.diff_driver else {
+        return false;
+    };
+    config
+        .get_bool(&format!("diff.{driver}.binary"))
+        .and_then(Result::ok)
+        .unwrap_or(false)
+}
+
 /// Read raw blob bytes, returning empty vec for zero OID.
 fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     if *oid == zero_oid() {
@@ -1009,12 +1139,32 @@ fn read_blob_raw(odb: &Odb, oid: &ObjectId) -> Vec<u8> {
     }
 }
 
-fn patch_index_oid(repo: &Repository, oid: ObjectId) -> Result<String> {
-    if oid == zero_oid() {
-        return Ok("0".repeat(7));
+fn read_worktree_path_raw(path: &Path) -> Vec<u8> {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return Vec::new();
+    };
+    if meta.file_type().is_symlink() {
+        return fs::read_link(path)
+            .map(|target| target.as_os_str().as_bytes().to_vec())
+            .unwrap_or_default();
     }
+    fs::read(path).unwrap_or_default()
+}
 
-    Ok(abbreviate_object_id(repo, oid, 7)?)
+fn mode_is_symlink(mode: &str) -> bool {
+    u32::from_str_radix(mode, 8).ok() == Some(MODE_SYMLINK)
+}
+
+fn validate_patch_entry_oids(entry: &DiffEntry) -> Result<()> {
+    let zero = zero_oid();
+    let old_bogus = entry.old_oid == zero && entry.old_mode != "000000";
+    let new_bogus = entry.new_oid == zero
+        && entry.new_mode != "000000"
+        && !matches!(entry.status, DiffStatus::Modified | DiffStatus::TypeChanged);
+    if old_bogus || new_bogus {
+        bail!("bogus object {}", zero.to_hex());
+    }
+    Ok(())
 }
 
 /// Write --stat output for diff-index.

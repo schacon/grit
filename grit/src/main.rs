@@ -7,13 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
-use grit_lib::objects::ObjectId;
-use sha1::Digest;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 mod commands;
 pub mod pathspec;
@@ -31,13 +25,14 @@ fn main() {
     let trace2_perf_path = std::env::var("GIT_TRACE2_PERF")
         .ok()
         .filter(|s| !s.is_empty());
-    let trace2_event_path = resolve_trace2_event_target();
-    init_trace2_event_writer(trace2_event_path.clone());
+    let trace2_event_path = std::env::var("GIT_TRACE2_EVENT")
+        .ok()
+        .filter(|s| !s.is_empty());
     let exit_code;
 
     // Write trace2 version event at startup
     if let Some(ref path) = trace2_path {
-        let _ = trace2_write_event(path, "version", &version_string());
+        let _ = trace2_write_event(path, "version", env!("CARGO_PKG_VERSION"));
         let cmd_line: Vec<String> = std::env::args().collect();
         let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
         let ancestry = get_process_ancestry();
@@ -49,7 +44,7 @@ fn main() {
     }
     if let Some(ref path) = trace2_perf_path {
         let cmd_line: Vec<String> = std::env::args().collect();
-        let _ = trace2_write_perf(path, "version", &version_string());
+        let _ = trace2_write_perf(path, "version", env!("CARGO_PKG_VERSION"));
         let _ = trace2_write_perf(path, "start", &cmd_line.join(" "));
         let ancestry = get_process_ancestry();
         let _ = trace2_write_perf(
@@ -58,7 +53,13 @@ fn main() {
             &format!("ancestry:[{}]", ancestry.join(" ")),
         );
     }
-    with_trace2_event_writer(|writer| writer.emit_startup());
+    if let Some(ref path) = trace2_event_path {
+        let cmd_line: Vec<String> = std::env::args().collect();
+        let _ = trace2_write_json_event(path, "version", env!("CARGO_PKG_VERSION"));
+        let _ = trace2_write_json_event(path, "start", &cmd_line.join(" "));
+        let ancestry = get_process_ancestry();
+        let _ = trace2_write_json_ancestry(path, &ancestry);
+    }
 
     match run() {
         Ok(()) => {
@@ -92,7 +93,14 @@ fn main() {
             &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
         );
     }
-    with_trace2_event_writer(|writer| writer.emit_exit(exit_code));
+    if let Some(ref path) = trace2_event_path {
+        let elapsed = start.elapsed();
+        let _ = trace2_write_json_event(
+            path,
+            "exit",
+            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
+        );
+    }
 
     std::process::exit(exit_code);
 }
@@ -151,443 +159,6 @@ fn get_process_ancestry() -> Vec<String> {
     result
 }
 
-static TRACE2_EVENT_WRITER: OnceLock<Mutex<Option<Trace2EventWriter>>> = OnceLock::new();
-
-/// Trace2 event-target writer state shared for this process.
-struct Trace2EventWriter {
-    output_path: PathBuf,
-    sid: String,
-    hierarchy: String,
-    command_name: String,
-    argv: Vec<String>,
-    discard_only: bool,
-    child_counter: u64,
-}
-
-impl Trace2EventWriter {
-    fn emit_startup(&mut self) {
-        self.emit_version();
-        if self.discard_only {
-            self.emit_too_many_files();
-            return;
-        }
-        let argv = self.argv.clone();
-        self.emit_start(&argv);
-        self.emit_cmd_name();
-        self.emit_cmd_ancestry();
-        self.emit_config_params();
-        self.emit_env_params();
-    }
-
-    fn emit_exit(&mut self, exit_code: i32) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event("exit", vec![("code", exit_code.to_string())]);
-    }
-
-    fn emit_error(&mut self, msg: &str) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event(
-            "error",
-            vec![
-                ("fmt", json_string("%s")),
-                ("msg", json_string(&redact_credentials(msg))),
-            ],
-        );
-    }
-
-    fn emit_data(&mut self, category: &str, key: &str, value: &str) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event(
-            "data",
-            vec![
-                ("category", json_string(category)),
-                ("key", json_string(key)),
-                ("value", json_string(&redact_credentials(value))),
-            ],
-        );
-    }
-
-    fn emit_cmd_start(&mut self, argv: &[String]) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event("cmd_start", vec![("argv", json_array(argv))]);
-    }
-
-    fn emit_exec(&mut self, argv: &[String]) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event("exec", vec![("argv", json_array(argv))]);
-    }
-
-    fn emit_def_param(&mut self, param: &str, value: &str) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event(
-            "def_param",
-            vec![
-                ("param", json_string(param)),
-                ("value", json_string(&redact_credentials(value))),
-            ],
-        );
-    }
-
-    fn next_child_id(&mut self) -> u64 {
-        let id = self.child_counter;
-        self.child_counter += 1;
-        id
-    }
-
-    fn emit_child_start(&mut self, child_id: u64, argv: &[String]) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event(
-            "child_start",
-            vec![
-                ("child_id", child_id.to_string()),
-                ("child_class", json_string("?")),
-                ("argv", json_array(argv)),
-                ("use_shell", "false".to_owned()),
-            ],
-        );
-    }
-
-    fn emit_child_exit(&mut self, child_id: u64, code: i32) {
-        if self.discard_only {
-            return;
-        }
-        self.emit_json_event(
-            "child_exit",
-            vec![
-                ("child_id", child_id.to_string()),
-                ("code", code.to_string()),
-            ],
-        );
-    }
-
-    fn emit_version(&mut self) {
-        self.emit_json_event("version", vec![("exe", json_string(&version_string()))]);
-    }
-
-    fn emit_start(&mut self, argv: &[String]) {
-        self.emit_json_event("start", vec![("argv", json_array(argv))]);
-    }
-
-    fn emit_cmd_name(&mut self) {
-        self.emit_json_event(
-            "cmd_name",
-            vec![
-                ("name", json_string(&self.command_name)),
-                ("hierarchy", json_string(&self.hierarchy)),
-            ],
-        );
-    }
-
-    fn emit_cmd_ancestry(&mut self) {
-        let ancestry = get_process_ancestry();
-        if ancestry.is_empty() {
-            return;
-        }
-        let ancestry = ancestry
-            .iter()
-            .map(|name| json_string(name))
-            .collect::<Vec<_>>()
-            .join(",");
-        self.emit_json_event("cmd_ancestry", vec![("ancestry", format!("[{ancestry}]"))]);
-    }
-
-    fn emit_too_many_files(&mut self) {
-        self.emit_json_event("too_many_files", Vec::new());
-    }
-
-    fn emit_config_params(&mut self) {
-        let Some(patterns_raw) = std::env::var("GIT_TRACE2_CONFIG_PARAMS")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-        else {
-            return;
-        };
-
-        let patterns: Vec<String> = patterns_raw
-            .split(',')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
-        if patterns.is_empty() {
-            return;
-        }
-
-        let git_dir = grit_lib::repo::Repository::discover(None)
-            .ok()
-            .map(|repo| repo.git_dir);
-        let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
-            return;
-        };
-
-        for entry in config.entries() {
-            if patterns
-                .iter()
-                .any(|pattern| wildcard_matches(pattern, &entry.key))
-            {
-                let value = entry.value.clone().unwrap_or_else(|| "true".to_owned());
-                self.emit_def_param(&entry.key, &value);
-            }
-        }
-    }
-
-    fn emit_env_params(&mut self) {
-        let Some(vars_raw) = std::env::var("GIT_TRACE2_ENV_VARS")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-        else {
-            return;
-        };
-
-        for var in vars_raw.split(',').map(str::trim).filter(|v| !v.is_empty()) {
-            if let Ok(value) = std::env::var(var) {
-                self.emit_def_param(var, &value);
-            }
-        }
-    }
-
-    fn emit_json_event(&mut self, event: &str, fields: Vec<(&str, String)>) {
-        let mut parts = Vec::with_capacity(fields.len() + 3);
-        parts.push(format!("\"event\":{}", json_string(event)));
-        parts.push(format!("\"sid\":{}", json_string(&self.sid)));
-        parts.push(format!("\"time\":{}", json_string(&chrono_now())));
-        for (key, value) in fields {
-            parts.push(format!("\"{key}\":{value}"));
-        }
-        let line = format!("{{{}}}\n", parts.join(","));
-        let _ = append_trace2_line(&self.output_path, &line);
-    }
-}
-
-fn resolve_trace2_event_target() -> Option<String> {
-    if let Some(path) = std::env::var("GIT_TRACE2_EVENT")
-        .ok()
-        .filter(|value| !value.is_empty())
-    {
-        return Some(path);
-    }
-
-    let git_dir = grit_lib::repo::Repository::discover(None)
-        .ok()
-        .map(|repo| repo.git_dir);
-    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
-        return None;
-    };
-    config
-        .get("trace2.eventTarget")
-        .filter(|value| !value.is_empty())
-}
-
-fn init_trace2_event_writer(target: Option<String>) {
-    let storage = TRACE2_EVENT_WRITER.get_or_init(|| Mutex::new(None));
-    let Ok(mut guard) = storage.lock() else {
-        return;
-    };
-    *guard = target.and_then(|path| Trace2EventWriter::new(&path));
-}
-
-fn with_trace2_event_writer<F>(f: F)
-where
-    F: FnOnce(&mut Trace2EventWriter),
-{
-    let Some(storage) = TRACE2_EVENT_WRITER.get() else {
-        return;
-    };
-    let Ok(mut guard) = storage.lock() else {
-        return;
-    };
-    let Some(writer) = guard.as_mut() else {
-        return;
-    };
-    f(writer);
-}
-
-impl Trace2EventWriter {
-    fn new(target: &str) -> Option<Self> {
-        let target_path = PathBuf::from(target);
-        let mut discard_only = false;
-
-        let output_path = if target_path.is_dir() {
-            let max_files = std::env::var("GIT_TRACE2_MAX_FILES")
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok());
-            if let Some(max) = max_files {
-                let existing_count = std::fs::read_dir(&target_path)
-                    .ok()?
-                    .filter_map(|entry| entry.ok())
-                    .count();
-                if existing_count >= max {
-                    discard_only = true;
-                    target_path.join("git-trace2-discard")
-                } else {
-                    target_path.join(format!("{}", existing_count + 1))
-                }
-            } else {
-                target_path.join(format!("git-trace2-event-{}", std::process::id()))
-            }
-        } else {
-            target_path
-        };
-
-        let args: Vec<String> = std::env::args().collect();
-        let command_name = trace2_command_name_from_args(&args);
-        let sid_segment = trace2_sid_segment();
-        let sid = if let Some(parent_sid) = std::env::var("GIT_TRACE2_PARENT_SID")
-            .ok()
-            .filter(|v| !v.is_empty())
-        {
-            format!("{parent_sid}/{sid_segment}")
-        } else {
-            sid_segment
-        };
-        let hierarchy = if let Some(parent_hierarchy) = std::env::var("GIT_TRACE2_PARENT_HIERARCHY")
-            .ok()
-            .filter(|v| !v.is_empty())
-        {
-            format!("{parent_hierarchy}/{command_name}")
-        } else {
-            command_name.clone()
-        };
-
-        Some(Self {
-            output_path,
-            sid,
-            hierarchy,
-            command_name,
-            argv: trace2_argv_for_event(),
-            discard_only,
-            child_counter: 0,
-        })
-    }
-}
-
-fn trace2_command_name_from_args(args: &[String]) -> String {
-    if args.len() >= 3 && args[1] == "test-tool" && args[2] == "trace2" {
-        return "trace2".to_owned();
-    }
-    args.get(1).cloned().unwrap_or_else(|| "grit".to_owned())
-}
-
-fn trace2_argv_for_event() -> Vec<String> {
-    let mut args: Vec<String> = std::env::args().collect();
-    if args.len() >= 3 && args[1] == "test-tool" && args[2] == "trace2" {
-        args.remove(1);
-    }
-    args
-}
-
-fn trace2_sid_segment() -> String {
-    let micros = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros();
-    format!("{micros}-{}", std::process::id())
-}
-
-fn append_trace2_line(path: &Path, line: &str) -> std::io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    file.write_all(line.as_bytes())
-}
-
-fn wildcard_matches(pattern: &str, text: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if !pattern.contains('*') {
-        return pattern == text;
-    }
-
-    let mut remaining = text;
-    let mut first = true;
-    for part in pattern.split('*') {
-        if part.is_empty() {
-            continue;
-        }
-        if first {
-            if !remaining.starts_with(part) {
-                return false;
-            }
-            remaining = &remaining[part.len()..];
-            first = false;
-            continue;
-        }
-        let Some(pos) = remaining.find(part) else {
-            return false;
-        };
-        remaining = &remaining[pos + part.len()..];
-    }
-
-    if !pattern.ends_with('*') {
-        return text.ends_with(pattern.rsplit('*').next().unwrap_or_default());
-    }
-    true
-}
-
-fn json_string(value: &str) -> String {
-    format!("\"{}\"", json_escape(value))
-}
-
-fn json_array(values: &[String]) -> String {
-    let escaped = values
-        .iter()
-        .map(|value| json_string(&redact_credentials(value)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("[{escaped}]")
-}
-
-fn json_escape(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-fn redact_credentials(value: &str) -> String {
-    let Some(scheme_pos) = value.find("://") else {
-        return value.to_owned();
-    };
-    let authority_start = scheme_pos + 3;
-    let authority = &value[authority_start..];
-    let slash_pos = authority.find('/').unwrap_or(authority.len());
-    let authority_part = &authority[..slash_pos];
-    let Some(at_pos) = authority_part.find('@') else {
-        return value.to_owned();
-    };
-    if !authority_part[..at_pos].contains(':') {
-        return value.to_owned();
-    }
-
-    let suffix_start = authority_start + at_pos + 1;
-    format!("{}{}", &value[..authority_start], &value[suffix_start..])
-}
-
 /// Write a trace2 normal-format event to the trace file.
 /// Write a GIT_TRACE line to the specified destination.
 ///
@@ -644,6 +215,43 @@ fn trace2_write_perf(path: &str, event: &str, data: &str) -> std::io::Result<()>
     Ok(())
 }
 
+/// Write a trace2 JSON event line.
+fn trace2_write_json_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        r#"{{"event":"{}","sid":"grit-0","time":"{}","data":"{}"}}"#,
+        event, now, data
+    )?;
+    Ok(())
+}
+
+/// Write a trace2 JSON cmd_ancestry event line with an ancestry array.
+fn trace2_write_json_ancestry(path: &str, ancestry: &[String]) -> std::io::Result<()> {
+    use std::io::Write;
+    let now = chrono_now();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let ancestry = ancestry
+        .iter()
+        .map(|name| format!(r#""{name}""#))
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(
+        file,
+        r#"{{"event":"cmd_ancestry","sid":"grit-0","time":"{}","ancestry":[{}]}}"#,
+        now, ancestry
+    )?;
+    Ok(())
+}
+
 /// Format current time as HH:MM:SS.microseconds for trace2 output.
 fn chrono_now() -> String {
     use std::time::SystemTime;
@@ -684,84 +292,16 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "001return" => {
             let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-            with_trace2_event_writer(|writer| writer.emit_exit(code));
             std::process::exit(code);
-        }
-        "003error" => {
-            for msg in &rest[2..] {
-                with_trace2_event_writer(|writer| writer.emit_error(msg));
-            }
-            Ok(())
         }
         "004child" => {
             if rest.len() <= 2 {
                 return Ok(());
             }
-
-            let mut child = std::process::Command::new(&rest[2]);
-            child.args(&rest[3..]);
-
-            let mut child_event_id: Option<u64> = None;
-            let mut parent_sid: Option<String> = None;
-            let mut parent_hierarchy: Option<String> = None;
-            with_trace2_event_writer(|writer| {
-                let child_id = writer.next_child_id();
-                let child_argv: Vec<String> = std::iter::once(rest[2].clone())
-                    .chain(rest[3..].iter().cloned())
-                    .collect();
-                writer.emit_child_start(child_id, &child_argv);
-                child_event_id = Some(child_id);
-                parent_sid = Some(writer.sid.clone());
-                parent_hierarchy = Some(writer.hierarchy.clone());
-            });
-
-            if let Some(sid) = parent_sid {
-                child.env("GIT_TRACE2_PARENT_SID", sid);
-            }
-            if let Some(hierarchy) = parent_hierarchy {
-                child.env("GIT_TRACE2_PARENT_HIERARCHY", hierarchy);
-            }
-
-            let status = child.status()?;
-            if let Some(child_id) = child_event_id {
-                let code = status
-                    .code()
-                    .unwrap_or_else(|| if status.success() { 0 } else { 1 });
-                with_trace2_event_writer(|writer| writer.emit_child_exit(child_id, code));
-            }
-            let code = status
-                .code()
-                .unwrap_or_else(|| if status.success() { 0 } else { 1 });
-            with_trace2_event_writer(|writer| writer.emit_exit(code));
+            let status = std::process::Command::new(&rest[2])
+                .args(&rest[3..])
+                .status()?;
             exit_with_status(status);
-        }
-        "006data" => {
-            for chunk in rest[2..].chunks(3) {
-                if chunk.len() == 3 {
-                    with_trace2_event_writer(|writer| {
-                        writer.emit_data(&chunk[0], &chunk[1], &chunk[2])
-                    });
-                }
-            }
-            Ok(())
-        }
-        "300redact_start" => {
-            with_trace2_event_writer(|writer| writer.emit_cmd_start(&rest[2..]));
-            Ok(())
-        }
-        "301redact_child_start" => {
-            with_trace2_event_writer(|writer| writer.emit_child_start(0, &rest[2..]));
-            Ok(())
-        }
-        "302redact_exec" => {
-            with_trace2_event_writer(|writer| writer.emit_exec(&rest[2..]));
-            Ok(())
-        }
-        "303redact_def_param" => {
-            if rest.len() >= 4 {
-                with_trace2_event_writer(|writer| writer.emit_def_param(&rest[2], &rest[3]));
-            }
-            Ok(())
         }
         "400ancestry" => {
             if rest.len() < 5 {
@@ -793,10 +333,6 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
             }
 
             let status = child.status()?;
-            let code = status
-                .code()
-                .unwrap_or_else(|| if status.success() { 0 } else { 1 });
-            with_trace2_event_writer(|writer| writer.emit_exit(code));
             exit_with_status(status);
         }
         other => bail!("test-tool trace2: unknown subcommand '{other}'"),
@@ -843,6 +379,92 @@ fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
         }
         other => bail!("test-tool mergesort: unknown subcommand '{other}'"),
     }
+}
+
+fn run_test_tool_hexdump(_rest: &[String]) -> Result<()> {
+    use std::io::{Read, Write};
+
+    let mut stdin = std::io::stdin().lock();
+    let mut stdout = std::io::stdout().lock();
+    let mut buf = [0u8; 1024];
+    let mut have_data = false;
+
+    loop {
+        let len = stdin.read(&mut buf)?;
+        if len == 0 {
+            break;
+        }
+
+        have_data = true;
+        for byte in &buf[..len] {
+            write!(stdout, "{:02x} ", *byte)?;
+        }
+    }
+
+    if have_data {
+        writeln!(stdout)?;
+    }
+
+    Ok(())
+}
+
+const BUILTIN_USERDIFF_DRIVERS: &[&str] = &[
+    "ada", "bash", "bibtex", "cpp", "csharp", "css", "dts", "elixir", "fortran", "fountain",
+    "golang", "html", "ini", "java", "kotlin", "markdown", "matlab", "objc", "pascal", "perl",
+    "php", "python", "r", "ruby", "rust", "scheme", "tex",
+];
+
+fn collect_custom_userdiff_drivers(config: &grit_lib::config::ConfigSet) -> Vec<String> {
+    let mut custom = std::collections::BTreeSet::new();
+
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("diff.") else {
+            continue;
+        };
+        let Some(driver) = rest
+            .strip_suffix(".funcname")
+            .or_else(|| rest.strip_suffix(".xfuncname"))
+        else {
+            continue;
+        };
+        if driver.is_empty() || BUILTIN_USERDIFF_DRIVERS.contains(&driver) {
+            continue;
+        }
+        custom.insert(driver.to_owned());
+    }
+
+    custom.into_iter().collect()
+}
+
+fn run_test_tool_userdiff(rest: &[String]) -> Result<()> {
+    if rest.len() != 2 {
+        bail!("usage: test-tool userdiff <list-drivers|list-builtin-drivers|list-custom-drivers>");
+    }
+
+    let (want_builtin, want_custom) = match rest[1].as_str() {
+        "list-drivers" => (true, true),
+        "list-builtin-drivers" => (true, false),
+        "list-custom-drivers" => (false, true),
+        other => bail!("test-tool userdiff: unknown argument '{other}'"),
+    };
+
+    if want_builtin {
+        for driver in BUILTIN_USERDIFF_DRIVERS {
+            println!("{driver}");
+        }
+    }
+
+    if want_custom {
+        let repo = grit_lib::repo::Repository::discover(None)?;
+        let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .unwrap_or_else(|_| grit_lib::config::ConfigSet::new());
+
+        for driver in collect_custom_userdiff_drivers(&config) {
+            println!("{driver}");
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
@@ -905,976 +527,6 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
 
     for path in packs {
         println!("{path}");
-    }
-    Ok(())
-}
-
-fn run_test_tool_online_cpus(rest: &[String]) -> Result<()> {
-    if rest.len() != 1 {
-        bail!("usage: test-tool online-cpus");
-    }
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1);
-    println!("{cpus}");
-    Ok(())
-}
-
-fn parse_usize_opt(value: &str, opt: &str) -> Result<usize> {
-    value
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("invalid value for {opt}: {value}"))
-}
-
-fn create_temp_file_from_template(template: &str) -> std::io::Result<()> {
-    use std::fs::OpenOptions;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    if let Some(pos) = template.rfind("XXXXXX") {
-        let before = &template[..pos];
-        let after = &template[pos + 6..];
-        let seed = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64
-            ^ u64::from(std::process::id());
-
-        for offset in 0..1024u64 {
-            let unique = format!("{:06x}", (seed.wrapping_add(offset)) % 0x0100_0000);
-            let candidate = format!("{before}{unique}{after}");
-            match OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&candidate)
-            {
-                Ok(_file) => return Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e),
-            }
-        }
-
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create unique temporary file",
-        ));
-    }
-
-    let _file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(template)?;
-    Ok(())
-}
-
-fn run_test_tool_mktemp(rest: &[String]) -> Result<()> {
-    if rest.len() != 2 {
-        bail!("usage: test-tool mktemp <template>");
-    }
-
-    let template = &rest[1];
-    if let Err(e) = create_temp_file_from_template(template) {
-        eprintln!("mktemp: {template}: {e}");
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
-fn run_test_tool_regex(rest: &[String]) -> Result<()> {
-    if rest.len() < 2 {
-        bail!(
-            "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
-        );
-    }
-
-    if rest[1] == "--bug" {
-        if rest.len() != 2 {
-            bail!(
-                "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
-            );
-        }
-        return Ok(());
-    }
-
-    let mut idx = 1usize;
-    let mut silent = false;
-    if rest.get(idx).map(String::as_str) == Some("--silent") {
-        silent = true;
-        idx += 1;
-    }
-
-    let Some(pattern) = rest.get(idx) else {
-        bail!(
-            "usage: test-tool regex --bug\n       test-tool regex [--silent] <pattern>\n       test-tool regex [--silent] <pattern> <string> [<options>]"
-        );
-    };
-    idx += 1;
-
-    let subject = rest.get(idx).cloned();
-    if subject.is_some() {
-        idx += 1;
-    }
-
-    let mut case_insensitive = false;
-    let mut multiline = false;
-    for flag in rest.iter().skip(idx) {
-        match flag.as_str() {
-            "EXTENDED" | "NOTBOL" | "NOTEOL" | "STARTEND" => {}
-            "ICASE" => case_insensitive = true,
-            "NEWLINE" => multiline = true,
-            _ => bail!("do not recognize flag {flag}"),
-        }
-    }
-
-    let mut builder = regex::RegexBuilder::new(pattern);
-    builder
-        .case_insensitive(case_insensitive)
-        .multi_line(multiline);
-
-    let regex = match builder.build() {
-        Ok(re) => re,
-        Err(err) => {
-            if silent {
-                std::process::exit(1);
-            }
-            bail!("failed regcomp() for pattern '{pattern}' ({err})");
-        }
-    };
-
-    if let Some(subject) = subject {
-        if regex.is_match(&subject) {
-            return Ok(());
-        }
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
-fn run_test_tool_hexdump(rest: &[String]) -> Result<()> {
-    if rest.len() != 2 {
-        bail!("usage: test-tool hexdump");
-    }
-
-    let mut data = Vec::new();
-    std::io::stdin().read_to_end(&mut data)?;
-
-    let mut out = std::io::stdout().lock();
-    for (idx, b) in data.iter().enumerate() {
-        if idx > 0 {
-            write!(out, " ")?;
-        }
-        write!(out, "{:02x}", b)?;
-    }
-    writeln!(out)?;
-    Ok(())
-}
-
-fn run_test_tool_default_hash(rest: &[String]) -> Result<()> {
-    if rest.len() > 1 {
-        bail!("usage: test-tool <sha1|sha256|...>");
-    }
-    let mut data = Vec::new();
-    std::io::stdin().read_to_end(&mut data)?;
-    let digest = sha1::Sha1::digest(&data);
-    println!("{}", hex::encode(digest));
-    Ok(())
-}
-
-fn run_test_tool_zlib(rest: &[String]) -> Result<()> {
-    if rest.len() != 2 || rest[1] != "deflate" {
-        bail!("usage: test-tool zlib deflate");
-    }
-    let mut input = Vec::new();
-    std::io::stdin().read_to_end(&mut input)?;
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(&input)?;
-    let compressed = encoder.finish()?;
-    std::io::stdout().write_all(&compressed)?;
-    Ok(())
-}
-
-fn test_tool_ref_store_usage() -> &'static str {
-    "usage: test-tool ref-store <main|submodule:<path>|worktree:<id>> <function> [args]"
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TestToolRefStoreBackendKind {
-    Main,
-    Submodule,
-    Worktree,
-}
-
-struct TestToolRefStoreBackend {
-    kind: TestToolRefStoreBackendKind,
-    git_dir: PathBuf,
-    is_read_only: bool,
-}
-
-const REF_NO_DEREF: u32 = 1 << 0;
-
-fn parse_test_tool_ref_store_flags(raw: &str) -> Result<u32> {
-    if raw == "0" {
-        return Ok(0);
-    }
-
-    let mut out = 0u32;
-    for flag in raw.split(',') {
-        match flag {
-            "REF_NO_DEREF" => out |= REF_NO_DEREF,
-            "REF_FORCE_CREATE_REFLOG"
-            | "REF_SKIP_OID_VERIFICATION"
-            | "REF_SKIP_REFNAME_VERIFICATION"
-            | "REF_SKIP_CREATE_REFLOG" => {}
-            _ => bail!("unknown flag \"{flag}\""),
-        }
-    }
-    Ok(out)
-}
-
-fn resolve_test_tool_worktree_git_dir(
-    repo: &grit_lib::repo::Repository,
-    spec: &str,
-) -> Result<PathBuf> {
-    let Some(worktree_id) = spec.strip_prefix("worktree:") else {
-        bail!("test-tool ref-store: unknown backend '{spec}'");
-    };
-    if worktree_id == "main" {
-        return Ok(repo.git_dir.clone());
-    }
-    let worktree_git_dir = repo.git_dir.join("worktrees").join(worktree_id);
-    if !worktree_git_dir.exists() {
-        bail!("test-tool ref-store: unknown worktree '{worktree_id}'");
-    }
-    Ok(worktree_git_dir)
-}
-
-fn resolve_test_tool_submodule_git_dir(
-    repo: &grit_lib::repo::Repository,
-    spec: &str,
-) -> Result<PathBuf> {
-    let Some(path_in_worktree) = spec.strip_prefix("submodule:") else {
-        bail!("test-tool ref-store: unknown backend '{spec}'");
-    };
-    let work_tree = repo
-        .work_tree
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("test-tool ref-store: no worktree for submodule backend"))?;
-    let submodule_path = work_tree.join(path_in_worktree);
-    let submodule_repo =
-        grit_lib::repo::Repository::discover(Some(&submodule_path)).map_err(|_| {
-            anyhow::anyhow!("test-tool ref-store: unknown submodule '{path_in_worktree}'")
-        })?;
-    Ok(submodule_repo.git_dir)
-}
-
-fn resolve_test_tool_ref_store_backend(spec: &str) -> Result<TestToolRefStoreBackend> {
-    let repo = grit_lib::repo::Repository::discover(None)?;
-    if spec == "main" {
-        return Ok(TestToolRefStoreBackend {
-            kind: TestToolRefStoreBackendKind::Main,
-            git_dir: repo.git_dir,
-            is_read_only: false,
-        });
-    }
-    if spec.starts_with("submodule:") {
-        return Ok(TestToolRefStoreBackend {
-            kind: TestToolRefStoreBackendKind::Submodule,
-            git_dir: resolve_test_tool_submodule_git_dir(&repo, spec)?,
-            is_read_only: true,
-        });
-    }
-    if spec.starts_with("worktree:") {
-        return Ok(TestToolRefStoreBackend {
-            kind: TestToolRefStoreBackendKind::Worktree,
-            git_dir: resolve_test_tool_worktree_git_dir(&repo, spec)?,
-            is_read_only: false,
-        });
-    }
-    bail!("test-tool ref-store: unknown backend '{spec}'")
-}
-
-fn resolve_ref_for_backend(
-    backend: &TestToolRefStoreBackend,
-    refname: &str,
-    no_deref: bool,
-) -> Result<(ObjectId, String, u32)> {
-    if !no_deref {
-        if let Some(target) = grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)? {
-            let oid = grit_lib::refs::resolve_ref(&backend.git_dir, &target)?;
-            return Ok((oid, target, 0x1));
-        }
-    }
-    let oid = grit_lib::refs::resolve_ref(&backend.git_dir, refname)?;
-    Ok((oid, refname.to_owned(), 0x0))
-}
-
-fn ensure_ref_store_write_allowed(backend: &TestToolRefStoreBackend, command: &str) -> Result<()> {
-    if backend.is_read_only {
-        bail!("test-tool ref-store: '{command}' not allowed for this backend");
-    }
-    Ok(())
-}
-
-fn zero_oid() -> ObjectId {
-    match ObjectId::from_bytes(&[0u8; 20]) {
-        Ok(oid) => oid,
-        Err(err) => panic!("20-byte zero OID should always be valid: {err}"),
-    }
-}
-
-fn validate_ref_update_old_oid(
-    backend: &TestToolRefStoreBackend,
-    refname: &str,
-    expected_old: &ObjectId,
-) -> Result<()> {
-    let current = grit_lib::refs::resolve_ref(&backend.git_dir, refname).ok();
-    if *expected_old == zero_oid() {
-        if current.is_some() {
-            bail!("cannot lock ref '{refname}': reference already exists");
-        }
-        return Ok(());
-    }
-    match current {
-        Some(cur) if cur == *expected_old => Ok(()),
-        Some(cur) => bail!(
-            "cannot lock ref '{refname}': is at {} but expected {}",
-            cur,
-            expected_old
-        ),
-        None => bail!("cannot lock ref '{refname}': reference does not exist"),
-    }
-}
-
-fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
-    if rest.len() < 3 {
-        bail!("{}", test_tool_ref_store_usage());
-    }
-    let backend = resolve_test_tool_ref_store_backend(&rest[1])?;
-    match rest[2].as_str() {
-        "resolve-ref" => {
-            if rest.len() != 5 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let refname = &rest[3];
-            let flags = parse_test_tool_ref_store_flags(&rest[4])?;
-            let no_deref = (flags & REF_NO_DEREF) != 0;
-            match resolve_ref_for_backend(&backend, refname, no_deref) {
-                Ok((oid, resolved_name, out_flags)) => {
-                    println!("{oid} {resolved_name} 0x{out_flags:x}");
-                    Ok(())
-                }
-                Err(_) => {
-                    println!("{} (null) 0x0", zero_oid());
-                    std::process::exit(1);
-                }
-            }
-        }
-        "create-symref" => {
-            if rest.len() != 6 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "create-symref")?;
-            let name = &rest[3];
-            let target = &rest[4];
-            let path = backend.git_dir.join(name);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::write(path, format!("ref: {target}\n"))?;
-            Ok(())
-        }
-        "delete-refs" => {
-            if rest.len() < 6 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "delete-refs")?;
-            let flags = parse_test_tool_ref_store_flags(&rest[3])?;
-            let no_deref = (flags & REF_NO_DEREF) != 0;
-            let mut ok = true;
-            for refname in &rest[5..] {
-                let effective_refname = if no_deref {
-                    refname.clone()
-                } else {
-                    grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
-                        .unwrap_or_else(|| refname.clone())
-                };
-                if grit_lib::refs::delete_ref(&backend.git_dir, &effective_refname).is_err() {
-                    ok = false;
-                }
-            }
-            if ok {
-                Ok(())
-            } else {
-                std::process::exit(1);
-            }
-        }
-        "rename-ref" => {
-            if rest.len() < 5 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "rename-ref")?;
-            let old_ref = &rest[3];
-            let new_ref = &rest[4];
-            let old_oid = grit_lib::refs::resolve_ref(&backend.git_dir, old_ref)?;
-            grit_lib::refs::write_ref(&backend.git_dir, new_ref, &old_oid)?;
-            grit_lib::refs::delete_ref(&backend.git_dir, old_ref)?;
-            let old_log = grit_lib::reflog::reflog_path(&backend.git_dir, old_ref);
-            let new_log = grit_lib::reflog::reflog_path(&backend.git_dir, new_ref);
-            if old_log.is_file() {
-                if let Some(parent) = new_log.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::rename(old_log, new_log)?;
-            }
-            Ok(())
-        }
-        "for-each-ref" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let prefix = &rest[3];
-            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
-            for (full_name, oid) in refs {
-                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
-                println!("{oid} {trimmed} 0x0");
-            }
-            Ok(())
-        }
-        "for-each-ref--exclude" => {
-            if rest.len() < 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let prefix = &rest[3];
-            let exclude_patterns: Vec<&str> = rest[4..].iter().map(String::as_str).collect();
-            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
-            for (full_name, oid) in refs {
-                if exclude_patterns
-                    .iter()
-                    .any(|p| grit_lib::refs::ref_matches_glob(&full_name, p))
-                {
-                    continue;
-                }
-                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
-                println!("{oid} {trimmed} 0x0");
-            }
-            Ok(())
-        }
-        "verify-ref" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let refname = &rest[3];
-            let refs = grit_lib::refs::list_refs(&backend.git_dir, "refs/")?;
-            let mut has_conflict = false;
-            for (existing, _) in refs {
-                if existing == *refname {
-                    continue;
-                }
-                if existing.starts_with(&format!("{refname}/"))
-                    || refname.starts_with(&format!("{existing}/"))
-                {
-                    has_conflict = true;
-                    break;
-                }
-            }
-            if has_conflict {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
-        "for-each-reflog" => {
-            if rest.len() != 3 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let mut reflogs = grit_lib::reflog::list_reflog_refs(&backend.git_dir)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            reflogs.sort();
-            for name in reflogs {
-                println!("{name}");
-            }
-            Ok(())
-        }
-        "for-each-reflog-ent" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let entries = grit_lib::reflog::read_reflog(&backend.git_dir, &rest[3])
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            for entry in entries {
-                println!(
-                    "{} {} {}\t{}",
-                    entry.old_oid, entry.new_oid, entry.identity, entry.message
-                );
-            }
-            Ok(())
-        }
-        "for-each-reflog-ent-reverse" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            let entries = grit_lib::reflog::read_reflog(&backend.git_dir, &rest[3])
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            for entry in entries.into_iter().rev() {
-                println!(
-                    "{} {} {}\t{}",
-                    entry.old_oid, entry.new_oid, entry.identity, entry.message
-                );
-            }
-            Ok(())
-        }
-        "reflog-exists" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            if grit_lib::reflog::reflog_exists(&backend.git_dir, &rest[3]) {
-                Ok(())
-            } else {
-                std::process::exit(1);
-            }
-        }
-        "delete-reflog" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "delete-reflog")?;
-            let path = grit_lib::reflog::reflog_path(&backend.git_dir, &rest[3]);
-            std::fs::remove_file(path)?;
-            Ok(())
-        }
-        "create-reflog" => {
-            if rest.len() != 4 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "create-reflog")?;
-            let path = grit_lib::reflog::reflog_path(&backend.git_dir, &rest[3]);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            if !path.exists() {
-                std::fs::write(path, b"")?;
-            }
-            Ok(())
-        }
-        "delete-ref" => {
-            if rest.len() != 7 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "delete-ref")?;
-            let refname = &rest[4];
-            let expected_old: ObjectId = rest[5].parse()?;
-            let flags = parse_test_tool_ref_store_flags(&rest[6])?;
-            let no_deref = (flags & REF_NO_DEREF) != 0;
-            let effective_refname = if no_deref {
-                refname.clone()
-            } else {
-                grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
-                    .unwrap_or_else(|| refname.clone())
-            };
-            validate_ref_update_old_oid(&backend, &effective_refname, &expected_old)?;
-            grit_lib::refs::delete_ref(&backend.git_dir, &effective_refname)?;
-            Ok(())
-        }
-        "update-ref" => {
-            if rest.len() != 8 {
-                bail!("{}", test_tool_ref_store_usage());
-            }
-            ensure_ref_store_write_allowed(&backend, "update-ref")?;
-            let msg = &rest[3];
-            let refname = &rest[4];
-            let new_oid: ObjectId = rest[5].parse()?;
-            let expected_old: ObjectId = rest[6].parse()?;
-            let flags = parse_test_tool_ref_store_flags(&rest[7])?;
-            let no_deref = (flags & REF_NO_DEREF) != 0;
-            let effective_refname = if no_deref {
-                refname.clone()
-            } else {
-                grit_lib::refs::read_symbolic_ref(&backend.git_dir, refname)?
-                    .unwrap_or_else(|| refname.clone())
-            };
-            validate_ref_update_old_oid(&backend, &effective_refname, &expected_old)?;
-            let old_oid = grit_lib::refs::resolve_ref(&backend.git_dir, &effective_refname)
-                .unwrap_or_else(|_| zero_oid());
-            grit_lib::refs::write_ref(&backend.git_dir, &effective_refname, &new_oid)?;
-            let _ = grit_lib::refs::append_reflog(
-                &backend.git_dir,
-                &effective_refname,
-                &old_oid,
-                &new_oid,
-                "grit <grit> 0 +0000",
-                msg,
-            );
-            Ok(())
-        }
-        "pack-refs" => {
-            if backend.kind == TestToolRefStoreBackendKind::Submodule {
-                bail!("test-tool ref-store: 'pack-refs' not allowed for this backend");
-            }
-            std::process::exit(1);
-        }
-        other => bail!("test-tool ref-store: unknown subcommand '{other}'"),
-    }
-}
-
-fn run_test_tool_config(rest: &[String]) -> Result<()> {
-    if rest.len() == 3 && rest[1] == "read_early_config" {
-        let key = &rest[2];
-        let maybe_repo = match grit_lib::repo::Repository::discover(None) {
-            Ok(repo) => Some(repo),
-            Err(grit_lib::error::Error::NotARepository(_)) => None,
-            Err(grit_lib::error::Error::UnsupportedRepositoryFormatVersion(version)) => {
-                eprintln!("warning: Expected git repo version <= 1, found {version}");
-                None
-            }
-            Err(grit_lib::error::Error::UnsupportedRepositoryExtension(extension)) => {
-                eprintln!(
-                    "warning: ignoring repository config due to unsupported extension '{extension}'"
-                );
-                None
-            }
-            Err(other) => return Err(other.into()),
-        };
-
-        let set = if let Some(repo) = maybe_repo {
-            match grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-                Ok(set) => set,
-                Err(grit_lib::error::Error::UnsupportedRepositoryFormatVersion(version)) => {
-                    eprintln!("warning: Expected git repo version <= 1, found {version}");
-                    grit_lib::config::ConfigSet::load(None, true)?
-                }
-                Err(grit_lib::error::Error::UnsupportedRepositoryExtension(extension)) => {
-                    eprintln!(
-                        "warning: ignoring repository config due to unsupported extension '{extension}'"
-                    );
-                    grit_lib::config::ConfigSet::load(None, true)?
-                }
-                Err(grit_lib::error::Error::ConfigError(_)) => {
-                    grit_lib::config::ConfigSet::load(None, true)?
-                }
-                Err(other) => return Err(other.into()),
-            }
-        } else {
-            grit_lib::config::ConfigSet::load(None, true)?
-        };
-
-        for value in set.get_all(key) {
-            println!("{value}");
-        }
-        return Ok(());
-    }
-
-    bail!("test-tool config: unknown or unsupported arguments")
-}
-
-enum TestPktLinePacket {
-    Eof,
-    Flush,
-    Delim,
-    ResponseEnd,
-    Data(Vec<u8>),
-}
-
-fn read_test_pkt_line_packet(r: &mut impl std::io::Read) -> std::io::Result<TestPktLinePacket> {
-    let mut len_buf = [0u8; 4];
-    let mut read = 0usize;
-    while read < len_buf.len() {
-        match r.read(&mut len_buf[read..]) {
-            Ok(0) => {
-                if read == 0 {
-                    return Ok(TestPktLinePacket::Eof);
-                }
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "unexpected disconnect",
-                ));
-            }
-            Ok(n) => read += n,
-            Err(e) => return Err(e),
-        }
-    }
-
-    let len_str = std::str::from_utf8(&len_buf)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let len = usize::from_str_radix(len_str, 16)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-
-    match len {
-        0 => Ok(TestPktLinePacket::Flush),
-        1 => Ok(TestPktLinePacket::Delim),
-        2 => Ok(TestPktLinePacket::ResponseEnd),
-        n if n < 4 => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid pkt-line length",
-        )),
-        n => {
-            let mut payload = vec![0u8; n - 4];
-            r.read_exact(&mut payload)?;
-            Ok(TestPktLinePacket::Data(payload))
-        }
-    }
-}
-
-fn write_test_pkt_line_packet(w: &mut impl std::io::Write, payload: &[u8]) -> std::io::Result<()> {
-    let len = payload.len() + 4;
-    write!(w, "{len:04x}")?;
-    w.write_all(payload)
-}
-
-fn chomp_trailing_newline(mut data: Vec<u8>) -> Vec<u8> {
-    if data.last().copied() == Some(b'\n') {
-        let _ = data.pop();
-    }
-    data
-}
-
-fn run_test_tool_pkt_line_pack_raw_stdin() -> Result<()> {
-    use std::io::{Read, Write};
-    let mut input = Vec::new();
-    std::io::stdin().read_to_end(&mut input)?;
-
-    let mut out = std::io::stdout().lock();
-    write_test_pkt_line_packet(&mut out, &input)?;
-    out.flush()?;
-    Ok(())
-}
-
-fn run_test_tool_pkt_line_send_split_sideband() -> Result<()> {
-    use std::io::Write;
-    let mut out = std::io::stdout().lock();
-
-    write_test_pkt_line_packet(&mut out, b"\x02Foo.\n")?;
-    write_test_pkt_line_packet(&mut out, b"\x02Bar.\n")?;
-    write_test_pkt_line_packet(&mut out, b"\x02Hello,")?;
-    write_test_pkt_line_packet(&mut out, b"\x01primary: regular output\n")?;
-    write_test_pkt_line_packet(&mut out, b"\x02 world!\n")?;
-    out.write_all(b"0002")?;
-    out.write_all(b"0000")?;
-    out.flush()?;
-    Ok(())
-}
-
-fn run_test_tool_pkt_line_receive_sideband() -> Result<()> {
-    use std::io::Write;
-
-    let mut input = std::io::stdin().lock();
-    let mut err = std::io::stderr().lock();
-
-    loop {
-        match read_test_pkt_line_packet(&mut input) {
-            Ok(TestPktLinePacket::Eof | TestPktLinePacket::Flush) => break,
-            Ok(TestPktLinePacket::Delim | TestPktLinePacket::ResponseEnd) => continue,
-            Ok(TestPktLinePacket::Data(payload)) => {
-                let Some((&band, body)) = payload.split_first() else {
-                    writeln!(err, "missing sideband designator")?;
-                    continue;
-                };
-
-                if band == 2 {
-                    err.write_all(body)?;
-                } else if !(1..=3).contains(&band) {
-                    writeln!(err, "missing sideband designator")?;
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                writeln!(err, "unexpected disconnect")?;
-                break;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    err.flush()?;
-    Ok(())
-}
-
-fn run_test_tool_pkt_line_unpack_sideband(args: &[String]) -> Result<()> {
-    use std::io::Write;
-
-    let mut reader_use_sideband = false;
-    let mut chomp_newline = true;
-
-    for arg in args {
-        match arg.as_str() {
-            "--reader-use-sideband" => reader_use_sideband = true,
-            "--chomp-newline" => chomp_newline = true,
-            "--no-chomp-newline" => chomp_newline = false,
-            _ => bail!(
-                "usage: test-tool pkt-line unpack-sideband [--reader-use-sideband] [--chomp-newline|--no-chomp-newline]"
-            ),
-        }
-    }
-
-    let mut input = std::io::stdin().lock();
-    let mut out = std::io::stdout().lock();
-    let mut err = std::io::stderr().lock();
-    let mut pending_remote = Vec::<u8>::new();
-
-    loop {
-        match read_test_pkt_line_packet(&mut input) {
-            Ok(TestPktLinePacket::Eof | TestPktLinePacket::Flush) => break,
-            Ok(TestPktLinePacket::Delim | TestPktLinePacket::ResponseEnd) => continue,
-            Ok(TestPktLinePacket::Data(payload)) => {
-                let Some((&band, body)) = payload.split_first() else {
-                    writeln!(err, "missing sideband designator")?;
-                    continue;
-                };
-
-                if reader_use_sideband {
-                    match band {
-                        1 => {
-                            let body = if chomp_newline {
-                                chomp_trailing_newline(body.to_vec())
-                            } else {
-                                body.to_vec()
-                            };
-                            out.write_all(&body)?;
-                        }
-                        2 => {
-                            pending_remote.extend_from_slice(body);
-                            while let Some(pos) = pending_remote.iter().position(|b| *b == b'\n') {
-                                let line = pending_remote[..pos].to_vec();
-                                pending_remote.drain(..=pos);
-                                err.write_all(b"remote: ")?;
-                                err.write_all(&line)?;
-                                err.write_all(b"        \n")?;
-                            }
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-
-                if band == 1 {
-                    let body = if chomp_newline {
-                        chomp_trailing_newline(body.to_vec())
-                    } else {
-                        body.to_vec()
-                    };
-                    out.write_all(&body)?;
-                } else if band == 2 {
-                    let body = if chomp_newline {
-                        chomp_trailing_newline(body.to_vec())
-                    } else {
-                        body.to_vec()
-                    };
-                    err.write_all(&body)?;
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                writeln!(err, "unexpected disconnect")?;
-                break;
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    out.flush()?;
-    err.flush()?;
-    Ok(())
-}
-
-fn run_test_tool_pkt_line(rest: &[String]) -> Result<()> {
-    let Some(sub) = rest.get(1).map(String::as_str) else {
-        bail!(
-            "usage: test-tool pkt-line <pack|pack-raw-stdin|unpack|send-split-sideband|receive-sideband|unpack-sideband>"
-        );
-    };
-
-    match sub {
-        "pack" => pkt_line::cmd_pack().map_err(Into::into),
-        "pack-raw-stdin" => run_test_tool_pkt_line_pack_raw_stdin(),
-        "unpack" => pkt_line::cmd_unpack().map_err(Into::into),
-        "send-split-sideband" => run_test_tool_pkt_line_send_split_sideband(),
-        "receive-sideband" => run_test_tool_pkt_line_receive_sideband(),
-        "unpack-sideband" => run_test_tool_pkt_line_unpack_sideband(&rest[2..]),
-        other => bail!("test-tool pkt-line: unknown subcommand '{other}'"),
-    }
-}
-
-fn run_test_tool_lazy_init_name_hash(rest: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: test-tool lazy-init-name-hash [--single|-s] [--multi|-m] [--count|-c <n>] [--dump|-d] [--perf|-p] [--analyze|-a <n>] [--step <n>]";
-
-    let mut single = false;
-    let mut multi = false;
-    let mut dump = false;
-    let mut perf = false;
-    let mut analyze: Option<usize> = None;
-    let mut i = 1usize;
-
-    while i < rest.len() {
-        let arg = &rest[i];
-        match arg.as_str() {
-            "-s" | "--single" => single = true,
-            "-m" | "--multi" => multi = true,
-            "-d" | "--dump" => dump = true,
-            "-p" | "--perf" => perf = true,
-            "-c" | "--count" => {
-                i += 1;
-                let Some(v) = rest.get(i) else {
-                    bail!("{USAGE}");
-                };
-                let _ = parse_usize_opt(v, "--count")?;
-            }
-            "-a" | "--analyze" => {
-                i += 1;
-                let Some(v) = rest.get(i) else {
-                    bail!("{USAGE}");
-                };
-                analyze = Some(parse_usize_opt(v, "--analyze")?);
-            }
-            "--step" => {
-                i += 1;
-                let Some(v) = rest.get(i) else {
-                    bail!("{USAGE}");
-                };
-                let _ = parse_usize_opt(v, "--step")?;
-            }
-            _ => {
-                if let Some(v) = arg.strip_prefix("--count=") {
-                    let _ = parse_usize_opt(v, "--count")?;
-                } else if let Some(v) = arg.strip_prefix("--analyze=") {
-                    analyze = Some(parse_usize_opt(v, "--analyze")?);
-                } else if let Some(v) = arg.strip_prefix("--step=") {
-                    let _ = parse_usize_opt(v, "--step")?;
-                } else {
-                    bail!("{USAGE}");
-                }
-            }
-        }
-        i += 1;
-    }
-
-    if dump {
-        if perf || analyze.is_some() {
-            bail!("{USAGE}");
-        }
-        if !single && !multi {
-            bail!("{USAGE}");
-        }
-        if single && multi {
-            bail!("{USAGE}");
-        }
-        return Ok(());
-    }
-
-    if perf {
-        if single || multi || analyze.is_some() {
-            bail!("{USAGE}");
-        }
-        return Ok(());
-    }
-
-    if analyze.is_some() {
-        if single || multi {
-            bail!("{USAGE}");
-        }
-        return Ok(());
-    }
-
-    if !single && !multi {
-        bail!("{USAGE}");
     }
     Ok(())
 }
@@ -2264,9 +916,9 @@ struct GlobalOpts {
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
+    attr_source: Option<String>,
     bare: bool,
     no_advice: bool,
-    literal_pathspecs: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -2337,6 +989,21 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --attr-source=<tree-ish> or --attr-source <tree-ish>
+        if let Some(val) = arg.strip_prefix("--attr-source=") {
+            opts.attr_source = Some(val.to_owned());
+            i += 1;
+            continue;
+        }
+        if arg == "--attr-source" {
+            i += 1;
+            if i < items.len() {
+                opts.attr_source = Some(items[i].clone());
+            }
+            i += 1;
+            continue;
+        }
+
         // --bare
         if arg == "--bare" {
             opts.bare = true;
@@ -2347,13 +1014,6 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
         // --no-advice
         if arg == "--no-advice" {
             opts.no_advice = true;
-            i += 1;
-            continue;
-        }
-
-        // --literal-pathspecs
-        if arg == "--literal-pathspecs" {
-            opts.literal_pathspecs = true;
             i += 1;
             continue;
         }
@@ -2414,54 +1074,10 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
     }
-    if opts.literal_pathspecs {
-        std::env::set_var("GIT_LITERAL_PATHSPECS", "1");
+    if let Some(attr_source) = &opts.attr_source {
+        std::env::set_var("GIT_ATTR_SOURCE", attr_source);
     }
     Ok(())
-}
-
-/// Compute `GIT_PREFIX` from the current directory and work tree.
-///
-/// Returns an empty string when the current directory is the work-tree root,
-/// and `None` when cwd is outside the work tree.
-fn compute_git_prefix(work_tree: &Path, cwd: &Path) -> Option<String> {
-    let work_tree = work_tree
-        .canonicalize()
-        .unwrap_or_else(|_| work_tree.to_path_buf());
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let rel = cwd.strip_prefix(&work_tree).ok()?;
-    if rel.as_os_str().is_empty() {
-        return Some(String::new());
-    }
-    Some(format!("{}/", rel.to_string_lossy()))
-}
-
-/// Set `GIT_PREFIX` for commands running inside a working tree.
-///
-/// Git exports `GIT_PREFIX` for built-ins and aliases invoked from
-/// subdirectories so shell aliases and external helpers can resolve paths
-/// relative to repository root.
-fn refresh_git_prefix_env() {
-    let repo = match grit_lib::repo::Repository::discover(None) {
-        Ok(repo) => repo,
-        Err(_) => {
-            std::env::remove_var("GIT_PREFIX");
-            return;
-        }
-    };
-    let Some(work_tree) = repo.work_tree.as_deref() else {
-        std::env::remove_var("GIT_PREFIX");
-        return;
-    };
-    let Ok(cwd) = std::env::current_dir() else {
-        std::env::remove_var("GIT_PREFIX");
-        return;
-    };
-    if let Some(prefix) = compute_git_prefix(work_tree, &cwd) {
-        std::env::set_var("GIT_PREFIX", prefix);
-    } else {
-        std::env::remove_var("GIT_PREFIX");
-    }
 }
 
 /// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
@@ -2488,9 +1104,6 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
             let _ = e.print();
             if matches!(subcmd, "tag" | "branch" | "bugreport") {
                 eprintln!("usage: git {subcmd}");
-            }
-            if subcmd == "reflog" && rest.first().map(String::as_str) == Some("write") {
-                eprintln!("usage: git reflog write <refname> <old-oid> <new-oid> <message>");
             }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
@@ -2540,7 +1153,6 @@ fn run() -> Result<()> {
     }
 
     apply_globals(&opts)?;
-    refresh_git_prefix_env();
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
     if let Ok(trace_val) = std::env::var("GIT_TRACE") {
@@ -2999,20 +1611,35 @@ fn print_list_cmds(categories: &str) {
 /// clap does not swallow it into the trailing var-arg positional.
 fn preprocess_diff_args(rest: &[String]) -> Vec<String> {
     let mut result = Vec::new();
-    let mut iter = rest.iter();
-    while let Some(arg) = iter.next() {
+    let mut i = 0usize;
+    let word_diff_modes = ["plain", "color", "porcelain", "none"];
+    while i < rest.len() {
+        let arg = &rest[i];
         if arg == "-U" {
             // `-U <N>` with a space — merge into `--unified=<N>`
-            if let Some(val) = iter.next() {
-                result.push(format!("--unified={val}"));
+            if i + 1 < rest.len() {
+                result.push(format!("--unified={}", rest[i + 1]));
+                i += 2;
             } else {
                 result.push(arg.clone());
+                i += 1;
+            }
+        } else if arg == "--word-diff" {
+            if i + 1 < rest.len() && word_diff_modes.contains(&rest[i + 1].as_str()) {
+                result.push(format!("--word-diff={}", rest[i + 1]));
+                i += 2;
+            } else {
+                // Prevent clap from consuming the first path argument as MODE.
+                result.push("--word-diff=plain".to_owned());
+                i += 1;
             }
         } else if let Some(n) = arg.strip_prefix("-U") {
             // `-U<N>` without a space
             result.push(format!("--unified={n}"));
+            i += 1;
         } else {
             result.push(arg.clone());
+            i += 1;
         }
     }
     result
@@ -3028,21 +1655,6 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
         } else {
             result.push(arg.clone());
         }
-    }
-    result
-}
-
-/// Preprocess reflog arguments:
-/// - convert `-<N>` shorthand to `-n <N>`
-/// - inject default `show` subcommand when none is provided.
-fn preprocess_reflog_args(rest: &[String]) -> Vec<String> {
-    let mut result = preprocess_log_args(rest);
-    let has_explicit_subcommand = matches!(
-        result.first().map(String::as_str),
-        Some("show" | "expire" | "delete" | "exists" | "write")
-    );
-    if !result.is_empty() && !has_explicit_subcommand {
-        result.insert(0, "show".to_string());
     }
     result
 }
@@ -3095,18 +1707,12 @@ fn get_alias_definition(name: &str) -> Option<String> {
 #[allow(dead_code)]
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     if let Some(shell_cmd) = alias.strip_prefix('!') {
-        let mut command = std::process::Command::new("sh");
-        command
+        let status = std::process::Command::new("sh")
             .arg("-c")
             .arg(shell_cmd)
             .arg(format!("git-{name}"))
-            .args(rest);
-        if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
-            if let Some(work_tree) = repo.work_tree.as_deref() {
-                command.current_dir(work_tree);
-            }
-        }
-        let status = command.status()?;
+            .args(rest)
+            .status()?;
         exit_with_status(status);
     }
 
@@ -3292,29 +1898,6 @@ const KNOWN_COMMANDS: &[&str] = &[
     "write-tree",
 ];
 
-fn run_legacy_merge_strategy(rest: &[String]) -> Result<()> {
-    // Legacy strategy helpers are invoked as:
-    //   git merge-resolve <base> -- <ours> <theirs>
-    //   git merge-recursive <base> -- <ours> <theirs>
-    if rest.len() != 4 || rest[1] != "--" {
-        bail!("usage: <merge-strategy> <base> -- <ours> <theirs>");
-    }
-
-    let read_tree_args = commands::read_tree::Args {
-        merge: true,
-        index_only: false,
-        update: true,
-        reset: false,
-        prefix: None,
-        aggressive: false,
-        dry_run: false,
-        exclude_per_directory: None,
-        empty: false,
-        trees: vec![rest[0].clone(), rest[2].clone(), rest[3].clone()],
-    };
-    commands::read_tree::run(read_tree_args)
-}
-
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -3445,8 +2028,6 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
         "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
         "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
-        "merge-resolve" => run_legacy_merge_strategy(rest),
-        "merge-recursive" => run_legacy_merge_strategy(rest),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
@@ -3480,7 +2061,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
-            let rest = preprocess_reflog_args(rest);
+            let rest = preprocess_log_args(rest);
             commands::reflog::run(parse_cmd_args(subcmd, &rest))
         }
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
@@ -3537,25 +2118,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
-            let mut tool_args = rest;
-            while tool_args.len() >= 2 && tool_args.first().map(String::as_str) == Some("-C") {
-                let dir = &tool_args[1];
-                std::env::set_current_dir(dir)?;
-                tool_args = &tool_args[2..];
-            }
-            refresh_git_prefix_env();
-
-            let sub = tool_args.first().map(|s| s.as_str()).unwrap_or("");
+            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
-                "" => run_test_tool_default_hash(tool_args),
                 "wildmatch" => {
                     // test-tool wildmatch <mode> <text> <pattern>
-                    if tool_args.len() < 4 {
+                    if rest.len() < 4 {
                         bail!("usage: test-tool wildmatch <mode> <text> <pattern>");
                     }
-                    let mode = &tool_args[1];
-                    let mut text = tool_args[2].clone();
-                    let pattern = tool_args[3].clone();
+                    let mode = &rest[1];
+                    let mut text = rest[2].clone();
+                    let pattern = rest[3].clone();
 
                     // Handle XXX/ prefix (substitute for leading /)
                     let text_bytes = if text.starts_with("XXX/") {
@@ -3587,24 +2159,17 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "trace2" => run_test_tool_trace2(tool_args),
-                "example-tap" => run_test_tool_example_tap(tool_args),
-                "advise" => run_test_tool_advise(tool_args),
-                "env-helper" => run_test_tool_env_helper(tool_args),
-                "dir-iterator" => run_test_tool_dir_iterator(tool_args),
-                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(tool_args),
-                "revision-walking" => run_test_tool_revision_walking(tool_args),
-                "mergesort" => run_test_tool_mergesort(tool_args),
-                "find-pack" => run_test_tool_find_pack(tool_args),
-                "online-cpus" => run_test_tool_online_cpus(tool_args),
-                "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(tool_args),
-                "mktemp" => run_test_tool_mktemp(tool_args),
-                "regex" => run_test_tool_regex(tool_args),
-                "config" => run_test_tool_config(tool_args),
-                "hexdump" => run_test_tool_hexdump(tool_args),
-                "zlib" => run_test_tool_zlib(tool_args),
-                "ref-store" => run_test_tool_ref_store(tool_args),
-                "pkt-line" => run_test_tool_pkt_line(tool_args),
+                "trace2" => run_test_tool_trace2(rest),
+                "example-tap" => run_test_tool_example_tap(rest),
+                "advise" => run_test_tool_advise(rest),
+                "env-helper" => run_test_tool_env_helper(rest),
+                "dir-iterator" => run_test_tool_dir_iterator(rest),
+                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
+                "revision-walking" => run_test_tool_revision_walking(rest),
+                "mergesort" => run_test_tool_mergesort(rest),
+                "hexdump" => run_test_tool_hexdump(rest),
+                "userdiff" => run_test_tool_userdiff(rest),
+                "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

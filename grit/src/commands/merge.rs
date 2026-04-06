@@ -3,7 +3,6 @@
 //! Implements fast-forward, three-way merge with conflict handling,
 //! `--squash`, `--no-ff`, `--ff-only`, `--abort`, and `--continue`.
 
-use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap};
@@ -211,12 +210,6 @@ pub fn run(mut args: Args) -> Result<()> {
     // Read merge.ff config and apply unless overridden by CLI flags.
     // CLI flags (--ff, --no-ff, --ff-only) take precedence over config.
     let repo = Repository::discover(None).context("not a git repository")?;
-    if git_passthrough::should_passthrough_from_subdir(&repo) {
-        return passthrough_current_merge_invocation();
-    }
-    if repo.git_dir.join("rr-cache").is_dir() {
-        return passthrough_current_merge_invocation();
-    }
     {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
@@ -350,7 +343,14 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("Not possible to fast-forward, aborting.");
         }
-        return do_octopus_merge(&repo, &head, head_oid, &args, favor, diff_algorithm.as_deref());
+        return do_octopus_merge(
+            &repo,
+            &head,
+            head_oid,
+            &args,
+            favor,
+            diff_algorithm.as_deref(),
+        );
     }
 
     // Resolve merge target
@@ -391,7 +391,15 @@ pub fn run(mut args: Args) -> Result<()> {
     if is_ancestor(&repo, head_oid, merge_oid)? {
         if args.no_ff && !args.ff_only {
             // Force a merge commit even though we could fast-forward
-            return do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref());
+            return do_real_merge(
+                &repo,
+                &head,
+                head_oid,
+                merge_oid,
+                &args,
+                favor,
+                diff_algorithm.as_deref(),
+            );
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
     }
@@ -409,7 +417,15 @@ pub fn run(mut args: Args) -> Result<()> {
         bail!("Not possible to fast-forward, aborting.");
     }
 
-    do_real_merge(&repo, &head, head_oid, merge_oid, &args, favor, diff_algorithm.as_deref())
+    do_real_merge(
+        &repo,
+        &head,
+        head_oid,
+        merge_oid,
+        &args,
+        favor,
+        diff_algorithm.as_deref(),
+    )
 }
 
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
@@ -463,7 +479,6 @@ fn do_fast_forward(
     let mut new_index = Index::new();
     new_index.entries = entries;
     new_index.sort();
-    apply_sparse_checkout_bits(repo, &mut new_index)?;
 
     if let Some(ref wt) = repo.work_tree {
         // Remove files that existed in old HEAD but not in new
@@ -645,17 +660,15 @@ fn do_real_merge(
         favor,
         diff_algorithm,
     )?;
-    let mut merge_index = merge_result.index.clone();
-    apply_sparse_checkout_bits(repo, &mut merge_index)?;
 
     // Write index
-    merge_index.write(&repo.index_path())?;
+    merge_result.index.write(&repo.index_path())?;
 
     // Update working tree
     if let Some(ref wt) = repo.work_tree {
         // Remove files that were in ours but are no longer in the merged index
-        remove_deleted_files(wt, &ours_entries, &merge_index)?;
-        checkout_entries(repo, wt, &merge_index)?;
+        remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
+        checkout_entries(repo, wt, &merge_result.index)?;
         // Write conflict files to working tree (with CRLF conversion if needed)
         let attr_rules = grit_lib::crlf::load_gitattributes(wt);
         let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
@@ -710,7 +723,7 @@ fn do_real_merge(
     }
 
     if args.squash {
-        return do_squash_from_merge(repo, &merge_index, head, head_oid, merge_oid, args);
+        return do_squash_from_merge(repo, &merge_result.index, head, head_oid, merge_oid, args);
     }
 
     if args.no_commit {
@@ -734,12 +747,19 @@ fn do_real_merge(
     // Create merge commit
     let tree_oid = write_tree_from_index(&repo.odb, &merge_result.index, "")?;
     let effective_custom_msg = if let Some(ref file_path) = args.file {
-        Some(fs::read_to_string(file_path)
-            .with_context(|| format!("could not read merge message file: {file_path}"))?)
+        Some(
+            fs::read_to_string(file_path)
+                .with_context(|| format!("could not read merge message file: {file_path}"))?,
+        )
     } else {
         args.message.clone()
     };
-    let mut msg = build_merge_message(head, &args.commits[0], effective_custom_msg.as_deref(), repo);
+    let mut msg = build_merge_message(
+        head,
+        &args.commits[0],
+        effective_custom_msg.as_deref(),
+        repo,
+    );
 
     // Append merge log if --log is set
     if let Some(max_log) = args.log {
@@ -1883,7 +1903,16 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                    match try_content_merge(
+                        repo,
+                        be,
+                        oe,
+                        te,
+                        ours_label,
+                        their_name,
+                        favor,
+                        diff_algorithm,
+                    )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
                             entry.oid = merged_oid;
@@ -2019,7 +2048,16 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
-                    match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                    match try_content_merge(
+                        repo,
+                        be,
+                        oe,
+                        te,
+                        ours_label,
+                        their_name,
+                        favor,
+                        diff_algorithm,
+                    )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
                             entry.oid = merged_oid;
@@ -2140,7 +2178,16 @@ fn merge_trees(
             // All three differ — content-level merge
             (Some(be), Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge(repo, be, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                match try_content_merge(
+                    repo,
+                    be,
+                    oe,
+                    te,
+                    ours_label,
+                    their_name,
+                    favor,
+                    diff_algorithm,
+                )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2214,7 +2261,15 @@ fn merge_trees(
             // Both added different content — try content merge with empty base
             (None, Some(oe), Some(te)) => {
                 let path_str = String::from_utf8_lossy(path).to_string();
-                match try_content_merge_add_add(repo, oe, te, ours_label, their_name, favor, diff_algorithm)? {
+                match try_content_merge_add_add(
+                    repo,
+                    oe,
+                    te,
+                    ours_label,
+                    their_name,
+                    favor,
+                    diff_algorithm,
+                )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
                         entry.oid = merged_oid;
@@ -2594,41 +2649,6 @@ fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{}: {}", spec, e))
 }
 
-/// Derive a user-facing merge target name for commit messages.
-///
-/// This normalizes symbolic refs and `@{-N}` forms to a human-friendly
-/// short branch/tag name where possible.
-fn merge_target_display_name(repo: &Repository, spec: &str) -> String {
-    if spec.starts_with("@{-") {
-        if let Some(close) = spec[3..].find('}') {
-            let base_end = 3 + close + 1;
-            let base = &spec[..base_end];
-            if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, base) {
-                if let Some(short) = short_ref_display_name(&full) {
-                    return short;
-                }
-            }
-        }
-    }
-
-    if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, spec) {
-        if let Some(short) = short_ref_display_name(&full) {
-            return short;
-        }
-    }
-
-    spec.to_owned()
-}
-
-fn short_ref_display_name(full_ref: &str) -> Option<String> {
-    for prefix in ["refs/heads/", "refs/tags/", "refs/remotes/"] {
-        if let Some(short) = full_ref.strip_prefix(prefix) {
-            return Some(short.to_owned());
-        }
-    }
-    None
-}
-
 /// Build the default merge commit message.
 /// Append Signed-off-by trailer to a message if not already present.
 fn append_signoff(msg: &str, name: &str, email: &str) -> String {
@@ -2649,16 +2669,15 @@ fn build_merge_message(
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
-    let display_name = merge_target_display_name(repo, branch_name);
     // Determine if the merge target is a tag, branch, or commit
-    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{display_name}")).is_ok() {
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
         "tag"
-    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{display_name}")).is_ok() {
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
         "remote-tracking branch"
     } else {
         "branch"
     };
-    let base_msg = format!("Merge {kind} '{display_name}'");
+    let base_msg = format!("Merge {kind} '{branch_name}'");
     // Append "into <branch>" if not merging into main/master
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {
@@ -2712,154 +2731,6 @@ fn remove_deleted_files(
     Ok(())
 }
 
-fn apply_sparse_checkout_bits(repo: &Repository, index: &mut Index) -> Result<()> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let sparse_enabled = config
-        .get("core.sparsecheckout")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    if !sparse_enabled {
-        return Ok(());
-    }
-
-    let sparse_path = repo.git_dir.join("info").join("sparse-checkout");
-    let patterns = match std::fs::read_to_string(&sparse_path) {
-        Ok(content) => content
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(|l| l.to_owned())
-            .collect::<Vec<_>>(),
-        Err(_) => return Ok(()),
-    };
-    if patterns.is_empty() {
-        return Ok(());
-    }
-
-    let mut any_skip = false;
-    for entry in &mut index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let path = String::from_utf8_lossy(&entry.path);
-        let mut include = false;
-        for raw in &patterns {
-            let pattern = raw.trim();
-            if pattern.is_empty() || pattern.starts_with('#') {
-                continue;
-            }
-            let (exclude, pat) = if let Some(rest) = pattern.strip_prefix('!') {
-                (true, rest)
-            } else {
-                (false, pattern)
-            };
-            if sparse_pattern_matches(pat, &path) {
-                include = !exclude;
-            }
-        }
-        entry.set_skip_worktree(!include);
-        if !include {
-            any_skip = true;
-        }
-    }
-
-    if any_skip && index.version < 3 {
-        index.version = 3;
-    }
-    Ok(())
-}
-
-fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
-    let pat = pattern.trim();
-    if pat.is_empty() {
-        return false;
-    }
-
-    let anchored = pat.starts_with('/');
-    let pat = pat.trim_start_matches('/');
-
-    if let Some(dir) = pat.strip_suffix('/') {
-        if anchored {
-            return path == dir || path.starts_with(&format!("{dir}/"));
-        }
-        return path == dir
-            || path.starts_with(&format!("{dir}/"))
-            || path.split('/').any(|component| component == dir);
-    }
-
-    if anchored {
-        return sparse_glob_match(pat.as_bytes(), path.as_bytes());
-    }
-    sparse_glob_match(pat.as_bytes(), path.as_bytes())
-        || path
-            .rsplit('/')
-            .next()
-            .is_some_and(|base| sparse_glob_match(pat.as_bytes(), base.as_bytes()))
-}
-
-fn sparse_glob_match(pattern: &[u8], text: &[u8]) -> bool {
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star_p, mut star_t) = (usize::MAX, 0);
-    while ti < text.len() {
-        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pattern.len() && pattern[pi] == b'*' {
-            star_p = pi;
-            star_t = ti;
-            pi += 1;
-        } else if star_p != usize::MAX {
-            pi = star_p + 1;
-            star_t += 1;
-            ti = star_t;
-        } else {
-            return false;
-        }
-    }
-    while pi < pattern.len() && pattern[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pattern.len()
-}
-
-fn remove_path_for_checkout(path: &Path) -> Result<()> {
-    let Ok(meta) = fs::symlink_metadata(path) else {
-        return Ok(());
-    };
-    if meta.is_dir() {
-        fs::remove_dir_all(path)?;
-    } else {
-        fs::remove_file(path)?;
-    }
-    Ok(())
-}
-
-fn ensure_directory(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) => {
-            if meta.is_dir() {
-                return Ok(());
-            }
-            remove_path_for_checkout(path)?;
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
-    }
-
-    if let Some(parent) = path.parent() {
-        ensure_directory(parent)?;
-    }
-    fs::create_dir_all(path)?;
-    Ok(())
-}
-
-fn ensure_parent_directory(path: &Path) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        ensure_directory(parent)?;
-    }
-    Ok(())
-}
-
 /// Checkout index entries to working tree.
 fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
     // Load gitattributes and config for CRLF conversion
@@ -2876,23 +2747,31 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
-        if entry.skip_worktree() {
-            remove_path_for_checkout(&abs_path)?;
-            continue;
+        if let Some(parent) = abs_path.parent() {
+            fs::create_dir_all(parent)?;
         }
 
-        ensure_parent_directory(&abs_path)?;
+        // Submodule entries (gitlinks) point to commits in a different object
+        // store; they should not be checked out as blobs.
+        if entry.mode == 0o160000 {
+            continue;
+        }
 
         let obj = repo.odb.read(&entry.oid)?;
         if obj.kind != ObjectKind::Blob {
             continue;
         }
 
-        remove_path_for_checkout(&abs_path)?;
+        if abs_path.is_dir() {
+            fs::remove_dir_all(&abs_path)?;
+        }
 
         if entry.mode == MODE_SYMLINK {
             let target = String::from_utf8(obj.data)
                 .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
+            if abs_path.exists() || abs_path.is_symlink() {
+                let _ = fs::remove_file(&abs_path);
+            }
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
             // Apply CRLF conversion if configured
@@ -2997,10 +2876,7 @@ fn cleanup_message(msg: &str, mode: &str) -> String {
         "whitespace" => {
             // Strip trailing whitespace from each line, leading and trailing blank lines
             let lines: Vec<&str> = msg.lines().collect();
-            let mut result: Vec<String> = lines
-                .iter()
-                .map(|l| l.trim_end().to_string())
-                .collect();
+            let mut result: Vec<String> = lines.iter().map(|l| l.trim_end().to_string()).collect();
             // Remove leading empty lines
             while result.first().is_some_and(|l| l.is_empty()) {
                 result.remove(0);
@@ -3079,8 +2955,4 @@ fn ensure_trailing_newline(s: &str) -> String {
     } else {
         format!("{s}\n")
     }
-}
-
-fn passthrough_current_merge_invocation() -> Result<()> {
-    git_passthrough::run_current_invocation("merge")
 }

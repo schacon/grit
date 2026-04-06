@@ -112,13 +112,12 @@ impl Repository {
                 repo.explicit_git_dir = true;
                 return Ok(repo);
             }
-            // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
-            // from the parent of the git directory (standard layout).
+            // When GIT_DIR is set without GIT_WORK_TREE, Git treats the
+            // current directory as the work tree for non-bare repositories.
             let mut repo = Self::open(&git_dir, None)?;
             if repo.work_tree.is_none() {
-                let canonical = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
                 // Check core.bare config
-                let config_path = canonical.join("config");
+                let config_path = repo.git_dir.join("config");
                 let is_bare = if config_path.exists() {
                     fs::read_to_string(&config_path)
                         .ok()
@@ -135,7 +134,8 @@ impl Repository {
                     false
                 };
                 if !is_bare {
-                    repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
+                    let cwd = env::current_dir()?;
+                    repo.work_tree = Some(cwd.canonicalize().unwrap_or(cwd));
                 }
             }
             repo.explicit_git_dir = true;
@@ -244,7 +244,18 @@ impl Repository {
         if std::env::var_os("GIT_NO_REPLACE_OBJECTS").is_some() {
             return self.odb.read(oid);
         }
-        let replace_ref = self.git_dir.join(format!("refs/replace/{}", oid.to_hex()));
+        let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "refs/replace/".to_owned());
+        let replace_base = if replace_base.ends_with('/') {
+            replace_base
+        } else {
+            format!("{replace_base}/")
+        };
+        let replace_ref = self
+            .git_dir
+            .join(format!("{}{}", replace_base, oid.to_hex()));
         if replace_ref.is_file() {
             if let Ok(content) = std::fs::read_to_string(&replace_ref) {
                 let hex = content.trim();

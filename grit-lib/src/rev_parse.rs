@@ -1225,6 +1225,15 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 Err(Error::InvalidRef("expected commit".to_owned()))
             }
         }
+        Some("blob") => {
+            oid = apply_peel(repo, oid, Some(""))?;
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Blob {
+                Ok(oid)
+            } else {
+                Err(Error::InvalidRef("expected blob".to_owned()))
+            }
+        }
         Some("tree") => {
             // Peel tags, then dereference a commit to its tree.
             oid = apply_peel(repo, oid, Some(""))?;

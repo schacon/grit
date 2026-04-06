@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{parse_bool, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
@@ -189,13 +189,25 @@ pub fn run(mut args: Args) -> Result<()> {
         None => None,
     };
 
+    // Resolve rename detection settings for status.
+    let status_rename_threshold = resolve_status_rename_threshold(&args, &config);
+
     // Diff: staged (index vs HEAD tree)
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
-    // Detect renames among staged entries (delete+add → rename at 50% threshold)
-    let staged = detect_renames(&repo.odb, staged_raw, 50);
+    // Detect renames among staged entries when enabled.
+    let staged = if let Some(threshold) = status_rename_threshold {
+        detect_renames(&repo.odb, staged_raw, threshold)
+    } else {
+        staged_raw
+    };
 
-    // Diff: unstaged (worktree vs index)
-    let unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    // Diff: unstaged (worktree vs index), with optional rename detection.
+    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged = if let Some(threshold) = status_rename_threshold {
+        detect_renames(&repo.odb, unstaged_raw, threshold)
+    } else {
+        unstaged_raw
+    };
 
     // Untracked and ignored files
     let show_all_untracked = untracked_mode == "all";
@@ -214,7 +226,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // relative to the user's current directory (matching git behavior).
     let cwd = std::env::current_dir().unwrap_or_default();
     let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let wt_canon = work_tree.canonicalize().unwrap_or_else(|_| work_tree.to_path_buf());
+    let wt_canon = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
     let prefix = cwd_canon.strip_prefix(&wt_canon).ok().and_then(|p| {
         if p.as_os_str().is_empty() {
             None
@@ -418,18 +432,11 @@ fn format_short(
     let mut unstaged_map: std::collections::HashMap<String, char> =
         std::collections::HashMap::new();
 
-    // Track rename pairs: old_path -> (status_char, display_string)
-    let mut staged_renames: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
-
     for entry in staged {
-        if entry.status == DiffStatus::Renamed {
-            let old = entry.old_path.as_deref().unwrap_or("").to_owned();
-            let new = entry.new_path.as_deref().unwrap_or("").to_owned();
-            let display = format!("{old} -> {new}");
-            staged_map.insert(new.clone(), 'R');
-            staged_renames.insert(new.clone(), (old, display));
-            paths.insert(new);
+        if entry.status == DiffStatus::Renamed || entry.status == DiffStatus::Copied {
+            let key = entry.path().to_owned();
+            staged_map.insert(key.clone(), entry.status.letter());
+            paths.insert(key);
         } else {
             let path = entry.path().to_owned();
             staged_map.insert(path.clone(), entry.status.letter());
@@ -446,11 +453,7 @@ fn format_short(
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
-        if let Some((_old, display)) = staged_renames.get(path) {
-            write!(out, "{x}{y} {display}{terminator}")?;
-        } else {
-            write!(out, "{x}{y} {path}{terminator}")?;
-        }
+        write!(out, "{x}{y} {path}{terminator}")?;
     }
 
     for path in untracked {
@@ -503,15 +506,16 @@ fn format_long(
     };
     let cp = comment_prefix;
 
-    // Determine if hints should be shown
-    let show_hints = if let Ok(v) = std::env::var("GIT_ADVICE") {
-        parse_bool(&v).unwrap_or(true)
-    } else {
-        match config.get("advice.statusHints") {
-            Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
-            _ => true,
-        }
+    // Determine if hints should be shown.
+    // `GIT_ADVICE` globally overrides per-advice config knobs.
+    let config_hints = match config.get("advice.statusHints") {
+        Some(v) if v == "false" || v == "no" || v == "off" || v == "0" => false,
+        _ => true,
     };
+    let show_hints = std::env::var("GIT_ADVICE")
+        .ok()
+        .and_then(|v| parse_bool_str(&v))
+        .unwrap_or(config_hints);
 
     // Branch info
     match head {
@@ -628,10 +632,11 @@ fn format_long(
                 DiffStatus::Deleted => "deleted",
                 DiffStatus::Modified => "modified",
                 DiffStatus::Renamed => "renamed",
+                DiffStatus::Copied => "copied",
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            cpw(out, cp, &format!("\t{label}:   {}", entry.display_path()))?;
         }
         cpw(out, cp, "")?;
     }
@@ -726,15 +731,11 @@ fn format_long(
         if hide_untracked {
             // When hiding untracked, don't say "working tree clean"
         } else if !ignored_files.is_empty() {
-            if show_hints {
-                cpw(
-                    out,
-                    cp,
-                    "nothing to commit but untracked files present (use \"git add\" to track)",
-                )?;
-            } else {
-                cpw(out, cp, "nothing to commit but untracked files present")?;
-            }
+            cpw(
+                out,
+                cp,
+                "nothing to commit but untracked files present (use \"git add\" to track)",
+            )?;
         } else {
             cpw(out, cp, "nothing to commit, working tree clean")?;
         }
@@ -754,7 +755,11 @@ fn format_long(
                 "nothing added to commit but untracked files present (use \"git add\" to track)",
             )?;
         } else {
-            cpw(out, cp, "nothing added to commit but untracked files present")?;
+            cpw(
+                out,
+                cp,
+                "nothing added to commit but untracked files present",
+            )?;
         }
     } else if staged.is_empty() {
         cpw(
@@ -765,6 +770,51 @@ fn format_long(
     }
 
     Ok(())
+}
+
+fn parse_bool_str(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Resolve rename-detection threshold for `status`.
+///
+/// Returns `Some(threshold_percent)` when rename detection should run,
+/// or `None` when disabled.
+fn resolve_status_rename_threshold(args: &Args, config: &ConfigSet) -> Option<u32> {
+    if args.no_renames || args.no_find_renames {
+        return None;
+    }
+
+    if let Some(value) = args.find_renames.as_deref() {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Some(50);
+        }
+        if let Some(flag) = parse_bool_str(trimmed) {
+            return if flag { Some(50) } else { None };
+        }
+        if let Some(percent) = trimmed.strip_suffix('%') {
+            return percent.parse::<u32>().ok().map(|n| n.min(100));
+        }
+        return trimmed.parse::<u32>().ok().map(|n| n.min(100));
+    }
+
+    match config.get("diff.renames") {
+        Some(val) => {
+            let lowered = val.to_lowercase();
+            match lowered.as_str() {
+                "false" | "no" | "off" | "0" => None,
+                "true" | "yes" | "on" | "1" | "" => Some(50),
+                "copies" | "copy" => Some(50),
+                _ => None,
+            }
+        }
+        None => Some(50),
+    }
 }
 
 /// Find untracked files in the working tree (raw, before ignore filtering).

@@ -260,6 +260,9 @@ fn run_show(args: ShowArgs) -> Result<()> {
         until: None,
         children: false,
         pathspecs: Vec::new(),
+        break_rewrites: None,
+        show_trees: false,
+        unified: None,
     })
 }
 

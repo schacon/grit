@@ -13,6 +13,7 @@ use grit_lib::crlf::{
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::fs::File;
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -441,6 +442,9 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    if let Ok(oid) = resolve_revision(repo, s) {
+        return Ok(oid);
+    }
     if let Ok(oid) = s.parse::<ObjectId>() {
         return Ok(oid);
     }

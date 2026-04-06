@@ -105,6 +105,10 @@ pub struct Args {
     #[arg(short = 'U', value_name = "N")]
     pub context_lines: Option<usize>,
 
+    /// Include binary diffs (accepted for compatibility).
+    #[arg(long = "binary")]
+    pub binary: bool,
+
     /// Do not use a/b/ prefix in diff output.
     #[arg(long = "no-prefix")]
     pub no_prefix: bool,
@@ -213,14 +217,21 @@ pub fn run(args: Args) -> Result<()> {
     // Load git configuration for format.* keys
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
-    // Determine the list of commits to format
-    let revision = args.revision.as_deref().unwrap_or("HEAD");
+    // Determine the list of commits to format.
+    // `-1 <rev>` should format exactly `<rev>`.
     let commits = if args.last_one {
-        collect_single_commit(&repo, revision)?
-    } else if args.root {
-        collect_root_commits(&repo, revision)?
+        if let Some(revision) = args.revision.as_deref() {
+            collect_single_commit(&repo, revision)?
+        } else {
+            collect_last_n_commits(&repo, 1)?
+        }
     } else {
-        collect_commits(&repo, revision)?
+        let revision = args.revision.as_deref().unwrap_or("-1");
+        if args.root {
+            collect_root_commits(&repo, revision)?
+        } else {
+            collect_commits(&repo, revision)?
+        }
     };
 
     if commits.is_empty() {
@@ -381,15 +392,6 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Collect exactly one commit identified by `revision`.
-fn collect_single_commit(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
-    let oid = resolve_revision(repo, revision)
-        .with_context(|| format!("unknown revision '{revision}'"))?;
-    let obj = repo.odb.read(&oid).context("reading commit")?;
-    let commit = parse_commit(&obj.data).context("parsing commit")?;
-    Ok(vec![(oid, commit)])
-}
-
 /// Collect commits to format, in patch order (oldest first).
 fn collect_commits(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
     // Check if it's a `-<n>` count form
@@ -517,6 +519,15 @@ fn collect_last_n_commits(repo: &Repository, count: usize) -> Result<Vec<(Object
 
     commits.reverse();
     Ok(commits)
+}
+
+/// Collect exactly one commit identified by `revision`.
+fn collect_single_commit(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
+    let oid = resolve_revision(repo, revision)
+        .with_context(|| format!("unknown revision '{revision}'"))?;
+    let obj = repo.odb.read(&oid).context("reading commit")?;
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+    Ok(vec![(oid, commit)])
 }
 
 /// Resolve HEAD to an ObjectId.

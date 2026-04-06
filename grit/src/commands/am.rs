@@ -12,13 +12,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::Path;
 
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
-use grit_lib::odb::Odb;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -37,6 +36,10 @@ pub struct Args {
     #[arg(long = "continue", alias = "resolved")]
     pub r#continue: bool,
 
+    /// Retry the current patch in an existing am session.
+    #[arg(long = "retry")]
+    pub retry: bool,
+
     /// Abort the current am session.
     #[arg(long = "abort")]
     pub abort: bool,
@@ -53,6 +56,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Disable quiet mode for resumed patch application.
+    #[arg(long = "no-quiet")]
+    pub no_quiet: bool,
+
     /// Do not apply the patch, just show what would be applied.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
@@ -61,13 +68,29 @@ pub struct Args {
     #[arg(long = "stdin")]
     pub stdin: bool,
 
+    /// Interactively choose whether to apply each patch.
+    #[arg(short = 'i', long = "interactive")]
+    pub interactive: bool,
+
     /// Add Signed-off-by trailer.
     #[arg(short = 's', long = "signoff")]
     pub signoff: bool,
 
+    /// Disable Signed-off-by trailer for resumed patch application.
+    #[arg(long = "no-signoff")]
+    pub no_signoff: bool,
+
     /// Keep the [PATCH] prefix in the subject.
     #[arg(short = 'k', long = "keep")]
     pub keep: bool,
+
+    /// Keep CR at end of lines.
+    #[arg(long = "keep-cr")]
+    pub keep_cr: bool,
+
+    /// Remove CR at end of lines.
+    #[arg(long = "no-keep-cr")]
+    pub no_keep_cr: bool,
 
     /// Keep non-patch bracket content in the subject.
     #[arg(long = "keep-non-patch")]
@@ -93,6 +116,14 @@ pub struct Args {
     #[arg(long = "no-verify")]
     pub no_verify: bool,
 
+    /// Leave rejected hunks in *.rej files.
+    #[arg(long = "reject")]
+    pub reject: bool,
+
+    /// Disable reject file generation.
+    #[arg(long = "no-reject")]
+    pub no_reject: bool,
+
     /// Add Message-Id trailer to commit messages.
     #[arg(long = "message-id")]
     pub message_id: bool,
@@ -116,6 +147,10 @@ pub struct Args {
     /// Use the current timestamp as author date instead of the patch's date.
     #[arg(long = "ignore-date")]
     pub ignore_date: bool,
+
+    /// How to handle quoted CRLF in patch payloads.
+    #[arg(long = "quoted-cr", value_name = "ACTION")]
+    pub quoted_cr: Option<String>,
 }
 
 /// A parsed patch from an mbox message.
@@ -135,16 +170,35 @@ struct MboxPatch {
 
 /// Run the `am` command.
 /// Options threaded through the apply loop.
+#[derive(Debug, Clone)]
 struct AmOptions {
     quiet: bool,
     three_way: bool,
+    keep_cr: bool,
     no_verify: bool,
     signoff: bool,
+    reject: bool,
     committer_date_is_author_date: bool,
     ignore_date: bool,
     message_id: bool,
     empty: String,
     allow_empty: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AmOptionOverrides {
+    quiet: Option<bool>,
+    three_way: Option<bool>,
+    keep_cr: Option<bool>,
+    signoff: Option<bool>,
+    reject: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuotedCrAction {
+    Warn,
+    Strip,
+    Nowarn,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -157,8 +211,13 @@ pub fn run(args: Args) -> Result<()> {
     if args.skip {
         return do_skip();
     }
+    let overrides = option_overrides_from_args(&args);
+
     if args.r#continue {
-        return do_continue(args.quiet);
+        return do_continue(args.interactive, &overrides);
+    }
+    if args.retry {
+        return do_retry(&overrides);
     }
 
     if args.mbox.is_empty() && !args.stdin {
@@ -190,6 +249,175 @@ fn is_am_in_progress(git_dir: &Path) -> bool {
     dir.exists() && dir.join("applying").exists()
 }
 
+fn parse_quoted_cr_action(value: &str) -> QuotedCrAction {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "strip" => QuotedCrAction::Strip,
+        "nowarn" => QuotedCrAction::Nowarn,
+        "warn" => QuotedCrAction::Warn,
+        _ => QuotedCrAction::Warn,
+    }
+}
+
+fn resolve_quoted_cr_action(cli_value: Option<&str>, config: &ConfigSet) -> QuotedCrAction {
+    if let Some(value) = cli_value {
+        return parse_quoted_cr_action(value);
+    }
+    if let Some(value) = config
+        .get("mailinfo.quotedCr")
+        .or_else(|| config.get("mailinfo.quotedcr"))
+    {
+        return parse_quoted_cr_action(&value);
+    }
+    QuotedCrAction::Warn
+}
+
+fn prompt_yes_no(prompt: &str) -> Result<bool> {
+    eprint!("{prompt}");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let normalized = answer.trim().to_ascii_lowercase();
+    Ok(matches!(normalized.as_str(), "y" | "yes"))
+}
+
+fn select_patches_interactively(patches: Vec<MboxPatch>) -> Result<Vec<MboxPatch>> {
+    let mut selected = Vec::new();
+    for patch in patches {
+        let subject = patch.message.lines().next().unwrap_or("(no subject)");
+        if prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
+            selected.push(patch);
+        }
+    }
+    Ok(selected)
+}
+
+fn merge_option_overrides(base: &mut AmOptions, overrides: AmOptionOverrides) {
+    if let Some(value) = overrides.quiet {
+        base.quiet = value;
+    }
+    if let Some(value) = overrides.three_way {
+        base.three_way = value;
+    }
+    if let Some(value) = overrides.keep_cr {
+        base.keep_cr = value;
+    }
+    if let Some(value) = overrides.signoff {
+        base.signoff = value;
+    }
+    if let Some(value) = overrides.reject {
+        base.reject = value;
+    }
+}
+
+fn config_bool(config: &ConfigSet, key: &str) -> Option<bool> {
+    config
+        .get(key)
+        .and_then(|value| parse_bool(value.trim()).ok())
+}
+
+fn resolve_keep_cr(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_keep_cr {
+        return false;
+    }
+    if args.keep_cr {
+        return true;
+    }
+    config_bool(config, "am.keepcr").unwrap_or(false)
+}
+
+fn build_am_options(args: &Args, config: &ConfigSet) -> AmOptions {
+    let three_way = if args.no_three_way {
+        false
+    } else if args.three_way {
+        true
+    } else {
+        config_bool(config, "am.threeWay")
+            .or_else(|| config_bool(config, "am.threeway"))
+            .unwrap_or(false)
+    };
+    let message_id = args.message_id || config_bool(config, "am.messageid").unwrap_or(false);
+    let keep_cr = resolve_keep_cr(args, config);
+    AmOptions {
+        quiet: if args.no_quiet { false } else { args.quiet },
+        three_way,
+        keep_cr,
+        no_verify: args.no_verify,
+        signoff: if args.no_signoff { false } else { args.signoff },
+        reject: if args.no_reject { false } else { args.reject },
+        committer_date_is_author_date: args.committer_date_is_author_date,
+        ignore_date: args.ignore_date,
+        message_id,
+        empty: args.empty.clone().unwrap_or_else(|| "stop".to_string()),
+        allow_empty: args.allow_empty,
+    }
+}
+
+fn continue_overrides_from_args(args: &Args) -> AmOptionOverrides {
+    let quiet = if args.no_quiet {
+        Some(false)
+    } else if args.quiet {
+        Some(true)
+    } else {
+        None
+    };
+    let three_way = if args.no_three_way {
+        Some(false)
+    } else if args.three_way {
+        Some(true)
+    } else {
+        None
+    };
+    let keep_cr = if args.no_keep_cr {
+        Some(false)
+    } else if args.keep_cr {
+        Some(true)
+    } else {
+        None
+    };
+    let signoff = if args.no_signoff {
+        Some(false)
+    } else if args.signoff {
+        Some(true)
+    } else {
+        None
+    };
+    let reject = if args.no_reject {
+        Some(false)
+    } else if args.reject {
+        Some(true)
+    } else {
+        None
+    };
+    AmOptionOverrides {
+        quiet,
+        three_way,
+        keep_cr,
+        signoff,
+        reject,
+    }
+}
+
+fn option_overrides_from_args(args: &Args) -> AmOptionOverrides {
+    continue_overrides_from_args(args)
+}
+
+fn merge_options(base: &AmOptions, overrides: &AmOptionOverrides) -> AmOptions {
+    let mut merged = base.clone();
+    merge_option_overrides(&mut merged, *overrides);
+    merged
+}
+
+fn do_retry(overrides: &AmOptionOverrides) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    if !is_am_in_progress(git_dir) {
+        bail!("operation not in progress");
+    }
+    let state_dir = am_dir(git_dir);
+    let opts = load_am_options(&state_dir);
+    apply_remaining(&repo, &opts, Some(overrides))
+}
+
 // ── Main flow ───────────────────────────────────────────────────────
 
 fn do_am(args: Args) -> Result<()> {
@@ -208,6 +436,9 @@ fn do_am(args: Args) -> Result<()> {
     let keep_non_patch = args.keep_non_patch;
     let scissors = args.scissors;
     let no_scissors = args.no_scissors;
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
+    let keep_cr = resolve_keep_cr(&args, &config);
 
     // Read and parse all mbox/patch files
     let mut all_patches = Vec::new();
@@ -227,6 +458,8 @@ fn do_am(args: Args) -> Result<()> {
                 keep_non_patch,
                 scissors,
                 no_scissors,
+                keep_cr,
+                quoted_cr_action,
             )?;
             all_patches.append(&mut patches);
         }
@@ -243,6 +476,13 @@ fn do_am(args: Args) -> Result<()> {
             println!("Patch {}/{}: {}", i + 1, all_patches.len(), subject);
         }
         return Ok(());
+    }
+
+    if args.interactive {
+        all_patches = select_patches_interactively(all_patches)?;
+        if all_patches.is_empty() {
+            return Ok(());
+        }
     }
 
     // Save state
@@ -267,37 +507,10 @@ fn do_am(args: Args) -> Result<()> {
     }
 
     // Apply patches
-    let config = ConfigSet::load(Some(git_dir), true)?;
-    let three_way = if args.no_three_way {
-        false
-    } else if args.three_way {
-        true
-    } else {
-        config
-            .get("am.threeWay")
-            .or_else(|| config.get("am.threeway"))
-            .map(|v| v == "true")
-            .unwrap_or(false)
-    };
-    let message_id = args.message_id
-        || config
-            .get("am.messageid")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-    let opts = AmOptions {
-        quiet: args.quiet,
-        three_way,
-        no_verify: args.no_verify,
-        signoff: args.signoff,
-        committer_date_is_author_date: args.committer_date_is_author_date,
-        ignore_date: args.ignore_date,
-        message_id,
-        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
-        allow_empty: args.allow_empty,
-    };
+    let opts = build_am_options(&args, &config);
     // Save options to state dir for --continue
     save_am_options(&state_dir, &opts)?;
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
 
     Ok(())
 }
@@ -319,13 +532,19 @@ fn do_am_stdin(args: Args) -> Result<()> {
         );
     }
 
-    let all_patches = parse_patches(
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let quoted_cr_action = resolve_quoted_cr_action(args.quoted_cr.as_deref(), &config);
+    let keep_cr = resolve_keep_cr(&args, &config);
+
+    let mut all_patches = parse_patches(
         &input,
         args.patch_format.as_deref(),
         args.keep,
         args.keep_non_patch,
         args.scissors,
         args.no_scissors,
+        keep_cr,
+        quoted_cr_action,
     )?;
     if all_patches.is_empty() {
         eprintln!("Patch format detection failed.");
@@ -338,6 +557,13 @@ fn do_am_stdin(args: Args) -> Result<()> {
             println!("Patch {}/{}: {}", i + 1, all_patches.len(), subject);
         }
         return Ok(());
+    }
+
+    if args.interactive {
+        all_patches = select_patches_interactively(all_patches)?;
+        if all_patches.is_empty() {
+            return Ok(());
+        }
     }
 
     let state_dir = am_dir(git_dir);
@@ -358,46 +584,24 @@ fn do_am_stdin(args: Args) -> Result<()> {
         fs::write(&patch_file, serialized)?;
     }
 
-    let config = ConfigSet::load(Some(git_dir), true)?;
-    let three_way = if args.no_three_way {
-        false
-    } else if args.three_way {
-        true
-    } else {
-        config
-            .get("am.threeWay")
-            .or_else(|| config.get("am.threeway"))
-            .map(|v| v == "true")
-            .unwrap_or(false)
-    };
-    let message_id = args.message_id
-        || config
-            .get("am.messageid")
-            .map(|v| v == "true")
-            .unwrap_or(false);
-    let opts = AmOptions {
-        quiet: args.quiet,
-        three_way,
-        no_verify: args.no_verify,
-        signoff: args.signoff,
-        committer_date_is_author_date: args.committer_date_is_author_date,
-        ignore_date: args.ignore_date,
-        message_id,
-        empty: args.empty.unwrap_or_else(|| "stop".to_string()),
-        allow_empty: args.allow_empty,
-    };
+    let opts = build_am_options(&args, &config);
     save_am_options(&state_dir, &opts)?;
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
     Ok(())
 }
 
 /// Apply all remaining patches.
-fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
+fn apply_remaining(
+    repo: &Repository,
+    opts: &AmOptions,
+    first_patch_overrides: Option<&AmOptionOverrides>,
+) -> Result<()> {
     let git_dir = &repo.git_dir;
     let state_dir = am_dir(git_dir);
 
     let last: usize = fs::read_to_string(state_dir.join("last"))?.trim().parse()?;
     let mut next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
+    let first_next = next;
 
     while next <= last {
         let patch_file = state_dir.join("patches").join(next.to_string());
@@ -440,11 +644,19 @@ fn apply_remaining(repo: &Repository, opts: &AmOptions) -> Result<()> {
             }
         }
 
-        match apply_one_patch(repo, &patch, opts) {
+        let effective_opts = if next == first_next {
+            first_patch_overrides
+                .map(|overrides| merge_options(opts, overrides))
+                .unwrap_or_else(|| opts.clone())
+        } else {
+            opts.clone()
+        };
+
+        match apply_one_patch(repo, &patch, &effective_opts) {
             Ok(()) => {
                 let subject = patch.message.lines().next().unwrap_or("");
-                if !opts.quiet {
-                    eprintln!("Applying: {}", subject);
+                if !effective_opts.quiet {
+                    println!("Applying: {}", subject);
                 }
                 next += 1;
                 fs::write(state_dir.join("next"), next.to_string())?;
@@ -555,32 +767,25 @@ fn apply_one_patch(repo: &Repository, patch: &MboxPatch, opts: &AmOptions) -> Re
         }
     }
 
-    let preimage_matches = patch_preimage_matches(repo, work_tree, &patch.diff)?;
-    if !preimage_matches {
-        if opts.three_way {
-            apply_three_way(repo, patch)?;
-        } else {
-            fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
-            bail!("patch does not apply");
-        }
-    } else {
-        // Try to apply the diff to the working tree
-        let apply_result = apply_patch_to_worktree(work_tree, &patch.diff);
+    // Try to apply the diff to the working tree
+    let apply_result = apply_patch_to_worktree(work_tree, &patch.diff, opts.keep_cr);
 
-        match apply_result {
-            Ok(affected_paths) => {
-                // Stage only the files that the patch touched
-                stage_affected_files(repo, &affected_paths)?;
-            }
-            Err(e) => {
-                if opts.three_way {
-                    // Attempt 3-way merge
-                    apply_three_way(repo, patch)?;
-                } else {
-                    // Save message for --continue
-                    fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
-                    return Err(e);
+    match apply_result {
+        Ok(affected_paths) => {
+            // Stage only the files that the patch touched
+            stage_affected_files(repo, &affected_paths)?;
+        }
+        Err(e) => {
+            if opts.three_way {
+                // Attempt 3-way merge
+                apply_three_way(repo, patch)?;
+            } else {
+                if opts.reject {
+                    let _ = write_reject_files_for_patch(work_tree, &patch.diff);
                 }
+                // Save message for --continue
+                fs::write(git_dir.join("MERGE_MSG"), &patch.message)?;
+                return Err(e);
             }
         }
     }
@@ -657,8 +862,22 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let rel_path = strip_components(path_str, 1);
-        let abs_path = work_tree.join(&rel_path);
-        affected_paths.push(rel_path.clone());
+        let mut effective_rel_path = rel_path.clone();
+        let mut abs_path = work_tree.join(&effective_rel_path);
+
+        if !abs_path.exists() {
+            let preimage = preimage_from_hunks(&fp.hunks);
+            if !preimage.is_empty() {
+                if let Some(matched_path) =
+                    find_tree_path_matching_content(repo, &head_commit.tree, &preimage)?
+                {
+                    effective_rel_path = matched_path;
+                    abs_path = work_tree.join(&effective_rel_path);
+                }
+            }
+        }
+
+        affected_paths.push(effective_rel_path.clone());
 
         if fp.is_new {
             // New file - just apply directly
@@ -684,23 +903,22 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             fs::read_to_string(&abs_path).unwrap_or_default()
         } else {
             // Try from HEAD tree
-            get_blob_from_tree(repo, &head_commit.tree, &rel_path).unwrap_or_default()
+            get_blob_from_tree(repo, &head_commit.tree, &effective_rel_path).unwrap_or_default()
         };
 
-        // Try to find the base blob from index preimage hash in the patch.
-        // Fall back to reconstructing from hunks when the hash cannot be read.
-        let base = if let Some(base_oid) = fp
-            .old_oid_hint
-            .as_deref()
-            .and_then(|hint| resolve_oid_hint(repo, hint).ok())
-        {
-            match repo.odb.read(&base_oid) {
-                Ok(obj) if obj.kind == ObjectKind::Blob => {
+        // Prefer patch index preimage blob when available.
+        let base = if let Some(old_oid_str) = fp.old_oid.as_deref() {
+            if let Ok(old_oid) = resolve_revision(repo, old_oid_str) {
+                if let Ok(obj) = repo.odb.read(&old_oid) {
                     String::from_utf8_lossy(&obj.data).into_owned()
+                } else {
+                    build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
                 }
-                _ => build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone()),
+            } else {
+                build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
             }
         } else {
+            // Fall back to deriving preimage from hunks.
             build_preimage_from_hunks(&ours, &fp.hunks).unwrap_or_else(|_| ours.clone())
         };
 
@@ -709,7 +927,10 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
             Ok(t) => t,
             Err(_) => {
                 // If we can't even apply to base, that's a real failure
-                bail!("Failed to apply patch to {} even in 3-way mode", rel_path);
+                bail!(
+                    "Failed to apply patch to {} even in 3-way mode",
+                    effective_rel_path
+                );
             }
         };
 
@@ -728,6 +949,61 @@ fn apply_three_way(repo: &Repository, patch: &MboxPatch) -> Result<()> {
         bail!("3-way merge has conflicts");
     }
 
+    Ok(())
+}
+
+fn preimage_from_hunks(hunks: &[Hunk]) -> String {
+    let mut out = String::new();
+    for hunk in hunks {
+        for line in &hunk.lines {
+            match line {
+                HunkLine::Context(s) | HunkLine::Remove(s) => {
+                    out.push_str(s);
+                    out.push('\n');
+                }
+                HunkLine::Add(_) | HunkLine::NoNewline => {}
+            }
+        }
+    }
+    out
+}
+
+fn find_tree_path_matching_content(
+    repo: &Repository,
+    tree_oid: &ObjectId,
+    content: &str,
+) -> Result<Option<String>> {
+    let entries = tree_to_index_entries(repo, tree_oid, "")?;
+    for entry in entries {
+        let obj = repo.odb.read(&entry.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            continue;
+        }
+        if obj.data == content.as_bytes() {
+            let path = String::from_utf8_lossy(&entry.path).to_string();
+            if !path.is_empty() {
+                return Ok(Some(path));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn write_reject_files_for_patch(work_tree: &Path, diff: &str) -> Result<()> {
+    let file_patches = parse_patch(diff)?;
+    for fp in &file_patches {
+        let Some(path_str) = fp.effective_path() else {
+            continue;
+        };
+        let rel_path = strip_components(path_str, 1);
+        let reject_path = work_tree.join(format!("{rel_path}.rej"));
+        if let Some(parent) = reject_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(&reject_path, diff.as_bytes())?;
+    }
     Ok(())
 }
 
@@ -863,9 +1139,18 @@ fn get_blob_from_tree(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Res
     bail!("path not found in tree: {}", path);
 }
 
+fn verify_old_oid_matches_content(expected_oid: &str, content: &str) -> Result<()> {
+    let actual_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, content.as_bytes());
+    let actual_hex = actual_oid.to_hex();
+    if !actual_hex.starts_with(expected_oid) {
+        bail!("patch does not apply");
+    }
+    Ok(())
+}
+
 /// Apply a unified diff to the working tree files.
 /// Returns the list of affected relative paths.
-fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> {
+fn apply_patch_to_worktree(work_tree: &Path, diff: &str, keep_cr: bool) -> Result<Vec<String>> {
     // Parse the diff into file patches using the same logic as `grit apply`
     let file_patches = parse_patch(diff)?;
     let mut affected = Vec::new();
@@ -897,6 +1182,9 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
                     }
                     let old_content = fs::read_to_string(&old_abs)
                         .with_context(|| format!("cannot read {}", old_abs.display()))?;
+                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                        verify_old_oid_matches_content(expected_oid, &old_content)?;
+                    }
                     let new_content = if fp.hunks.is_empty() {
                         old_content
                     } else {
@@ -917,12 +1205,22 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
 
         if fp.is_deleted {
             if path.exists() {
+                if keep_cr {
+                    if let Some(expected_oid) = fp.old_oid.as_deref() {
+                        let old_content = fs::read_to_string(&path)
+                            .with_context(|| format!("cannot read {}", path.display()))?;
+                        verify_old_oid_matches_content(expected_oid, &old_content)?;
+                    }
+                }
                 fs::remove_file(&path)?;
             }
             continue;
         }
 
         if fp.is_new {
+            if path.exists() || path.is_symlink() {
+                bail!("{rel_path}: already exists in index");
+            }
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
                     fs::create_dir_all(parent)?;
@@ -941,6 +1239,11 @@ fn apply_patch_to_worktree(work_tree: &Path, diff: &str) -> Result<Vec<String>> 
         // Modify existing file
         let old_content =
             fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        if keep_cr {
+            if let Some(expected_oid) = fp.old_oid.as_deref() {
+                verify_old_oid_matches_content(expected_oid, &old_content)?;
+            }
+        }
 
         if fp.hunks.is_empty() {
             #[cfg(unix)]
@@ -1221,20 +1524,10 @@ fn do_skip() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
-        let old_index = load_index(&repo)?;
-        if let Some(wt) = &repo.work_tree {
-            if let Some((path, is_dir)) = find_untracked_obstruction(wt, &old_index, &index) {
-                if is_dir {
-                    bail!("Updating '{}' would lose untracked files in it", path);
-                } else {
-                    bail!("Updating '{}' would lose untracked files.", path);
-                }
-            }
-        }
         index.write(&repo.index_path())?;
 
         if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &old_index, &index)?;
+            checkout_index_to_worktree(&repo, wt, &index)?;
         }
     }
 
@@ -1243,12 +1536,12 @@ fn do_skip() -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     let opts = load_am_options(&state_dir);
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &opts, None)?;
 
     Ok(())
 }
 
-fn do_continue(quiet: bool) -> Result<()> {
+fn do_continue(interactive: bool, overrides: &AmOptionOverrides) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
@@ -1295,19 +1588,26 @@ fn do_continue(quiet: bool) -> Result<()> {
     };
 
     let patched = MboxPatch { message, ..patch };
+    let subject = patched.message.lines().next().unwrap_or("");
 
-    // Load saved options
-    let mut opts = load_am_options(&state_dir);
-    opts.quiet = quiet;
+    let base_opts = load_am_options(&state_dir);
+    let effective_opts = merge_options(&base_opts, overrides);
+
+    if interactive && !prompt_yes_no(&format!("Apply patch '{}'? [y/N] ", subject))? {
+        let next: usize = fs::read_to_string(state_dir.join("next"))?.trim().parse()?;
+        fs::write(state_dir.join("next"), (next + 1).to_string())?;
+        let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+        apply_remaining(&repo, &base_opts, Some(overrides))?;
+        return Ok(());
+    }
 
     // Record rerere postimage before committing
     let _ = crate::commands::rerere::record_postimage(&repo);
 
-    create_am_commit(&repo, &index, &patched, &opts)?;
+    create_am_commit(&repo, &index, &patched, &effective_opts)?;
 
-    let subject = patched.message.lines().next().unwrap_or("");
-    if !quiet {
-        eprintln!("Applying: {}", subject);
+    if !effective_opts.quiet {
+        println!("Applying: {}", subject);
     }
 
     // Advance next
@@ -1316,7 +1616,7 @@ fn do_continue(quiet: bool) -> Result<()> {
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     // Continue with remaining
-    apply_remaining(&repo, &opts)?;
+    apply_remaining(&repo, &base_opts, None)?;
 
     Ok(())
 }
@@ -1352,20 +1652,10 @@ fn do_abort() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
-        let old_index = load_index(&repo)?;
-        if let Some(wt) = &repo.work_tree {
-            if let Some((path, is_dir)) = find_untracked_obstruction(wt, &old_index, &index) {
-                if is_dir {
-                    bail!("Updating '{}' would lose untracked files in it", path);
-                } else {
-                    bail!("Updating '{}' would lose untracked files.", path);
-                }
-            }
-        }
         index.write(&repo.index_path())?;
 
         if let Some(wt) = &repo.work_tree {
-            checkout_index_to_worktree(&repo, wt, &old_index, &index)?;
+            checkout_index_to_worktree(&repo, wt, &index)?;
         }
 
         // Restore HEAD — use saved head-name to restore branch state
@@ -1398,11 +1688,17 @@ fn save_am_options(state_dir: &Path, opts: &AmOptions) -> Result<()> {
     if opts.three_way {
         out.push_str("threeway\n");
     }
+    if opts.keep_cr {
+        out.push_str("keep-cr\n");
+    }
     if opts.no_verify {
         out.push_str("no-verify\n");
     }
     if opts.signoff {
         out.push_str("signoff\n");
+    }
+    if opts.reject {
+        out.push_str("reject\n");
     }
     if opts.quiet {
         out.push_str("quiet\n");
@@ -1426,8 +1722,10 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
     let mut opts = AmOptions {
         quiet: false,
         three_way: false,
+        keep_cr: false,
         no_verify: false,
         signoff: false,
+        reject: false,
         committer_date_is_author_date: false,
         ignore_date: false,
         message_id: false,
@@ -1437,8 +1735,10 @@ fn load_am_options(state_dir: &Path) -> AmOptions {
     for line in content.lines() {
         match line.trim() {
             "threeway" => opts.three_way = true,
+            "keep-cr" => opts.keep_cr = true,
             "no-verify" => opts.no_verify = true,
             "signoff" => opts.signoff = true,
+            "reject" => opts.reject = true,
             "quiet" => opts.quiet = true,
             "message-id" => opts.message_id = true,
             "allow-empty" => opts.allow_empty = true,
@@ -1770,12 +2070,22 @@ fn parse_patches(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    keep_cr: bool,
+    quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     let fmt = format.unwrap_or_else(|| detect_patch_format(input));
     match fmt {
         "stgit" => parse_stgit_patch(input),
         "hg" => parse_hg_patch(input),
-        _ => parse_mbox_with_opts(input, keep, keep_non_patch, scissors, no_scissors),
+        _ => parse_mbox_with_opts(
+            input,
+            keep,
+            keep_non_patch,
+            scissors,
+            no_scissors,
+            keep_cr,
+            quoted_cr_action,
+        ),
     }
 }
 
@@ -1816,12 +2126,24 @@ fn unflow_format_flowed(lines: &[&str]) -> Vec<String> {
     result
 }
 
+fn split_lines_preserve_cr(input: &str) -> Vec<&str> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<&str> = input.split('\n').collect();
+    if input.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
+
 fn unquote_mboxrd(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut in_body = false;
 
-    for line in input.lines() {
-        if line.starts_with("From ") && line.len() > 5 {
+    for line in split_lines_preserve_cr(input) {
+        let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+        if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
             // mbox separator - reset state
             in_body = false;
             result.push_str(line);
@@ -1830,7 +2152,7 @@ fn unquote_mboxrd(input: &str) -> String {
         }
 
         if !in_body {
-            if line.is_empty() {
+            if line_no_cr.is_empty() {
                 in_body = true;
             }
             result.push_str(line);
@@ -1839,7 +2161,9 @@ fn unquote_mboxrd(input: &str) -> String {
         }
 
         // In body: unquote >From lines
-        if line.starts_with(">From ") || line.starts_with(">>") && line.contains("From ") {
+        if line_no_cr.starts_with(">From ")
+            || (line_no_cr.starts_with(">>") && line_no_cr.contains("From "))
+        {
             // Strip one leading > if the line matches >+From pattern
             let stripped = line.strip_prefix(">").unwrap_or(line);
             result.push_str(stripped);
@@ -1857,6 +2181,106 @@ fn unquote_mboxrd(input: &str) -> String {
     result
 }
 
+fn base64_decode(input: &str) -> Result<Vec<u8>> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+
+    for &byte in input.as_bytes() {
+        if byte == b'=' {
+            break;
+        }
+        if byte.is_ascii_whitespace() {
+            continue;
+        }
+        let val = TABLE
+            .iter()
+            .position(|&c| c == byte)
+            .ok_or_else(|| anyhow::anyhow!("invalid base64 payload in mbox"))?;
+        buf = (buf << 6) | val as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+
+    Ok(output)
+}
+
+fn decode_transfer_payload(
+    payload: &str,
+    transfer_encoding: &str,
+    keep_cr: bool,
+    quoted_cr_action: QuotedCrAction,
+) -> Result<String> {
+    if transfer_encoding != "base64" {
+        if keep_cr {
+            return Ok(payload.to_string());
+        }
+        return Ok(payload.replace('\r', ""));
+    }
+
+    let decoded = base64_decode(payload)?;
+    let mut text = String::from_utf8_lossy(&decoded).into_owned();
+    if !keep_cr && text.contains('\r') {
+        match quoted_cr_action {
+            QuotedCrAction::Strip => {
+                text = text.replace('\r', "");
+            }
+            QuotedCrAction::Warn => {
+                eprintln!("warning: quoted CRLF detected");
+            }
+            QuotedCrAction::Nowarn => {}
+        }
+    }
+    Ok(text)
+}
+
+fn split_message_body_and_diff(payload_lines: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut body_lines = Vec::new();
+    let mut diff_lines = Vec::new();
+    let mut i = 0usize;
+    let mut in_diff = false;
+
+    while i < payload_lines.len() {
+        let line = payload_lines[i].as_str();
+        let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+        if !in_diff {
+            if line_no_cr == "---" {
+                i += 1;
+                while i < payload_lines.len() {
+                    let stat_line = payload_lines[i].as_str();
+                    let stat_line_no_cr = stat_line.strip_suffix('\r').unwrap_or(stat_line);
+                    if stat_line_no_cr.starts_with("diff --git ") {
+                        in_diff = true;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+            if line_no_cr.starts_with("diff --git ") {
+                in_diff = true;
+            } else {
+                body_lines.push(payload_lines[i].clone());
+                i += 1;
+                continue;
+            }
+        }
+
+        if line_no_cr == "-- " {
+            break;
+        }
+        diff_lines.push(payload_lines[i].clone());
+        i += 1;
+    }
+
+    (body_lines, diff_lines)
+}
+
 /// Parse an mbox file into individual patches with options.
 fn parse_mbox_with_opts(
     input: &str,
@@ -1864,11 +2288,14 @@ fn parse_mbox_with_opts(
     keep_non_patch: bool,
     scissors: bool,
     no_scissors: bool,
+    keep_cr: bool,
+    quoted_cr_action: QuotedCrAction,
 ) -> Result<Vec<MboxPatch>> {
     // Handle mboxrd: unquote >From lines
     let input = unquote_mboxrd(input);
     let mut patches = Vec::new();
-    let mut lines = input.lines().peekable();
+    let line_storage = split_lines_preserve_cr(&input);
+    let mut lines = line_storage.iter().copied().peekable();
 
     while lines.peek().is_some() {
         // Skip to next "From " line (mbox separator)
@@ -1883,19 +2310,20 @@ fn parse_mbox_with_opts(
 
         // Look for "From " separator line
         while let Some(&line) = lines.peek() {
-            if line.starts_with("From ") && line.len() > 5 {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
                 found_from = true;
                 lines.next(); // consume "From " line
                 break;
             }
             // If we haven't found any "From " line yet and we see headers, treat as raw patch
             if !found_from
-                && (line.starts_with("From:")
-                    || line.starts_with("Subject:")
-                    || line.starts_with("Date:")
-                    || line.starts_with("Message-ID:")
-                    || line.starts_with("Message-Id:")
-                    || line.starts_with("X-"))
+                && (line_no_cr.starts_with("From:")
+                    || line_no_cr.starts_with("Subject:")
+                    || line_no_cr.starts_with("Date:")
+                    || line_no_cr.starts_with("Message-ID:")
+                    || line_no_cr.starts_with("Message-Id:")
+                    || line_no_cr.starts_with("X-"))
             {
                 found_from = true;
                 break;
@@ -1915,30 +2343,34 @@ fn parse_mbox_with_opts(
         _in_headers = true;
         let mut last_header = String::new();
         let mut is_format_flowed = false;
+        let mut content_transfer_encoding = String::new();
 
         while let Some(&line) = lines.peek() {
-            if line.is_empty() {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.is_empty() {
                 lines.next();
                 _in_headers = false;
                 break;
             }
             // Continuation line (starts with whitespace)
-            if (line.starts_with(' ') || line.starts_with('\t')) && !last_header.is_empty() {
+            if (line_no_cr.starts_with(' ') || line_no_cr.starts_with('\t'))
+                && !last_header.is_empty()
+            {
                 if last_header == "subject" {
                     subject.push(' ');
-                    subject.push_str(line.trim());
+                    subject.push_str(line_no_cr.trim());
                 }
                 lines.next();
                 continue;
             }
 
-            if let Some(value) = line.strip_prefix("From: ") {
+            if let Some(value) = line_no_cr.strip_prefix("From: ") {
                 author = value.trim().to_string();
                 last_header = "from".to_string();
-            } else if let Some(value) = line.strip_prefix("Date: ") {
+            } else if let Some(value) = line_no_cr.strip_prefix("Date: ") {
                 date = value.trim().to_string();
                 last_header = "date".to_string();
-            } else if let Some(value) = line.strip_prefix("Subject: ") {
+            } else if let Some(value) = line_no_cr.strip_prefix("Subject: ") {
                 // Strip [PATCH ...] prefix unless --keep
                 let subj = if keep {
                     value.trim().to_string()
@@ -1949,93 +2381,99 @@ fn parse_mbox_with_opts(
                 };
                 subject = subj;
                 last_header = "subject".to_string();
-            } else if let Some(value) = line
+            } else if let Some(value) = line_no_cr
                 .strip_prefix("Message-ID: ")
-                .or_else(|| line.strip_prefix("Message-Id: "))
-                .or_else(|| line.strip_prefix("Message-id: "))
+                .or_else(|| line_no_cr.strip_prefix("Message-Id: "))
+                .or_else(|| line_no_cr.strip_prefix("Message-id: "))
             {
                 message_id = value.trim().to_string();
                 last_header = "message-id".to_string();
-            } else if let Some(value) = line
+            } else if let Some(value) = line_no_cr
                 .strip_prefix("Content-Type: ")
-                .or_else(|| line.strip_prefix("Content-type: "))
+                .or_else(|| line_no_cr.strip_prefix("Content-type: "))
             {
                 if value.to_lowercase().contains("format=flowed") {
                     is_format_flowed = true;
                 }
                 last_header = "content-type".to_string();
+            } else if let Some(value) = line_no_cr
+                .strip_prefix("Content-Transfer-Encoding: ")
+                .or_else(|| line_no_cr.strip_prefix("Content-transfer-encoding: "))
+            {
+                content_transfer_encoding = value.trim().to_ascii_lowercase();
+                last_header = "content-transfer-encoding".to_string();
             } else {
                 last_header = String::new();
             }
             lines.next();
         }
 
-        // Parse body (everything until "---" separator or diff start)
-        let mut in_diff = false;
-        let mut body_lines = Vec::new();
-        let mut diff_lines = Vec::new();
-
+        let mut raw_payload_lines = Vec::new();
         while let Some(&line) = lines.peek() {
-            // Check for next mbox message
-            if line.starts_with("From ") && line.len() > 5 && !diff_lines.is_empty() {
+            let line_no_cr = line.strip_suffix('\r').unwrap_or(line);
+            if line_no_cr.starts_with("From ") && line_no_cr.len() > 5 {
                 break;
             }
-
-            if !in_diff {
-                if line == "---" {
-                    // Separator between message body and diffstat/diff
-                    lines.next();
-                    // Now skip diffstat lines until we hit "diff --git"
-                    while let Some(&l) = lines.peek() {
-                        if l.starts_with("diff --git ") {
-                            in_diff = true;
-                            break;
-                        }
-                        if l.starts_with("From ") && l.len() > 5 {
-                            break;
-                        }
-                        lines.next();
-                    }
-                    continue;
-                }
-                if line.starts_with("diff --git ") {
-                    in_diff = true;
-                    // Don't consume — fall through to diff section
-                } else {
-                    body_lines.push(line);
-                    lines.next();
-                    continue;
-                }
-            }
-
-            if in_diff {
-                // Collect diff lines until "-- " (signature separator) or next message
-                if line == "-- " || line == "-- \n" {
-                    lines.next();
-                    // Skip remaining signature lines
-                    while let Some(&l) = lines.peek() {
-                        if l.starts_with("From ") && l.len() > 5 {
-                            break;
-                        }
-                        lines.next();
-                    }
-                    break;
-                }
-                if line.starts_with("From ") && line.len() > 5 {
-                    break;
-                }
-                diff_lines.push(line);
-                lines.next();
-            }
+            raw_payload_lines.push(line.to_string());
+            lines.next();
         }
 
-        // Build message from subject + body
-        let effective_body_lines: Vec<String> = if is_format_flowed {
-            unflow_format_flowed(&body_lines)
+        let raw_payload = raw_payload_lines.join("\n");
+        let decoded_payload = decode_transfer_payload(
+            &raw_payload,
+            &content_transfer_encoding,
+            keep_cr,
+            quoted_cr_action,
+        )?;
+        let mut payload_lines: Vec<String> = decoded_payload
+            .split('\n')
+            .map(|l| {
+                if keep_cr {
+                    l.to_string()
+                } else {
+                    l.strip_suffix('\r').unwrap_or(l).to_string()
+                }
+            })
+            .collect();
+        if payload_lines.last().is_some_and(String::is_empty) {
+            payload_lines.pop();
+        }
+        let (body_lines, diff_lines) = split_message_body_and_diff(&payload_lines);
+
+        // Build message from subject + body. Subject continuation lines in
+        // mailbox headers are folded in two ways:
+        // - default (`git am`): unwrap subject continuations into one line;
+        // - keep mode (`git am -k`): preserve continuation line breaks.
+        //
+        // `Subject:` continuation lines are captured in `body_lines` by this
+        // parser, so normalize here before constructing the final message.
+        let mut effective_body_lines: Vec<String> = if is_format_flowed {
+            let body_refs: Vec<&str> = body_lines.iter().map(String::as_str).collect();
+            unflow_format_flowed(&body_refs)
         } else {
-            body_lines.iter().map(|l| l.to_string()).collect()
+            body_lines.clone()
         };
         let mut body_str = effective_body_lines.join("\n").trim().to_string();
+        if !body_str.is_empty() && !subject.is_empty() {
+            let mut consumed = 0usize;
+            let mut continuation = Vec::new();
+            for line in &effective_body_lines {
+                if line.trim().is_empty() {
+                    break;
+                }
+                continuation.push(line.trim().to_string());
+                consumed += 1;
+            }
+            if !continuation.is_empty() {
+                if keep {
+                    subject = format!("{subject}\n{}", continuation.join("\n"));
+                } else {
+                    subject = format!("{subject} {}", continuation.join(" "));
+                }
+                effective_body_lines.drain(0..consumed);
+                body_str = effective_body_lines.join("\n").trim().to_string();
+            }
+        }
 
         // Handle --scissors: trim at scissors line, potentially replace subject
         if scissors && !no_scissors {
@@ -2058,9 +2496,10 @@ fn parse_mbox_with_opts(
             eprintln!(
                 "warning: Patch sent with format=flowed; space at the end of lines might be lost."
             );
-            unflow_format_flowed(&diff_lines)
+            let diff_refs: Vec<&str> = diff_lines.iter().map(String::as_str).collect();
+            unflow_format_flowed(&diff_refs)
         } else {
-            diff_lines.iter().map(|l| l.to_string()).collect()
+            diff_lines.clone()
         };
 
         let mut diff_section = effective_diff_lines.join("\n");
@@ -2342,11 +2781,16 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
     let mut msg_len = 0usize;
     let mut diff_len = 0usize;
 
-    let mut lines = data.lines();
-    for line in &mut lines {
-        if line.is_empty() {
-            break;
-        }
+    let split_at = data.find("\n\n").unwrap_or(data.len());
+    let header = &data[..split_at];
+    let remaining = if split_at < data.len() {
+        &data[split_at + 2..]
+    } else {
+        ""
+    };
+
+    for line in header.split('\n') {
+        let line = line.trim_end_matches('\r');
         if let Some(v) = line.strip_prefix("Author: ") {
             author = v.to_string();
         } else if let Some(v) = line.strip_prefix("Date: ") {
@@ -2360,22 +2804,13 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
         }
     }
 
-    // Remaining content is message + diff
-    let remaining: String = lines.collect::<Vec<&str>>().join("\n");
-    // Add back the newline that .lines() stripped
-    let remaining = if data.ends_with('\n') && !remaining.ends_with('\n') {
-        format!("{remaining}\n")
-    } else {
-        remaining
-    };
-
     let message = if msg_len > 0 && msg_len <= remaining.len() {
         remaining[..msg_len].to_string()
     } else {
-        remaining.clone()
+        remaining.to_string()
     };
 
-    let diff = if diff_len > 0 && msg_len + diff_len <= remaining.len() {
+    let diff = if diff_len > 0 && msg_len.saturating_add(diff_len) <= remaining.len() {
         remaining[msg_len..msg_len + diff_len].to_string()
     } else if msg_len < remaining.len() {
         remaining[msg_len..].to_string()
@@ -2398,10 +2833,9 @@ fn deserialize_mbox_patch(data: &str) -> Result<MboxPatch> {
 struct FilePatch {
     old_path: Option<String>,
     new_path: Option<String>,
-    old_oid_hint: Option<String>,
-    new_oid_hint: Option<String>,
     old_mode: Option<String>,
     new_mode: Option<String>,
+    old_oid: Option<String>,
     is_new: bool,
     is_deleted: bool,
     is_rename: bool,
@@ -2449,26 +2883,32 @@ enum HunkLine {
 }
 
 fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
-    let lines: Vec<&str> = input.lines().collect();
+    let mut lines: Vec<&str> = if input.is_empty() {
+        Vec::new()
+    } else {
+        input.split('\n').collect()
+    };
+    if lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
     let mut patches = Vec::new();
     let mut i = 0;
 
     while i < lines.len() {
-        if lines[i].starts_with("diff --git ") {
+        let line_no_cr = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+        if let Some(rest) = line_no_cr.strip_prefix("diff --git ") {
             let mut fp = FilePatch {
                 old_path: None,
                 new_path: None,
-                old_oid_hint: None,
-                new_oid_hint: None,
                 old_mode: None,
                 new_mode: None,
+                old_oid: None,
                 is_new: false,
                 is_deleted: false,
                 is_rename: false,
                 hunks: Vec::new(),
             };
 
-            let rest = &lines[i]["diff --git ".len()..];
             if let Some((a, b)) = split_diff_git_paths(rest) {
                 fp.old_path = Some(a);
                 fp.new_path = Some(b);
@@ -2476,23 +2916,24 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
             i += 1;
 
             while i < lines.len()
-                && !lines[i].starts_with("--- ")
-                && !lines[i].starts_with("diff --git ")
-                && !lines[i].starts_with("@@ ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("--- ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("diff --git ")
+                && !lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("@@ ")
             {
-                let line = lines[i];
+                let line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
                 if let Some(val) = line.strip_prefix("old mode ") {
                     fp.old_mode = Some(val.to_string());
                 } else if let Some(val) = line.strip_prefix("new mode ") {
                     fp.new_mode = Some(val.to_string());
-                } else if let Some(val) = line.strip_prefix("index ") {
-                    let mut parts = val.split_whitespace();
-                    if let Some(pair) = parts.next() {
-                        if let Some((old_oid, new_oid)) = pair.split_once("..") {
-                            fp.old_oid_hint = Some(old_oid.to_string());
-                            fp.new_oid_hint = Some(new_oid.to_string());
-                        }
-                    }
                 } else if let Some(val) = line.strip_prefix("new file mode ") {
                     fp.is_new = true;
                     fp.new_mode = Some(val.to_string());
@@ -2505,22 +2946,43 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 } else if let Some(val) = line.strip_prefix("rename to ") {
                     fp.is_rename = true;
                     fp.new_path = Some(val.to_string());
+                } else if let Some(val) = line.strip_prefix("index ") {
+                    if let Some((old, _rest)) = val.split_once("..") {
+                        fp.old_oid = Some(old.trim().to_string());
+                    }
                 }
                 i += 1;
             }
 
-            if i < lines.len() && lines[i].starts_with("--- ") {
-                let old_p = &lines[i]["--- ".len()..];
+            if i < lines.len()
+                && lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("--- ")
+            {
+                let old_line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+                let old_p = &old_line["--- ".len()..];
                 fp.old_path = Some(old_p.to_string());
                 i += 1;
-                if i < lines.len() && lines[i].starts_with("+++ ") {
-                    let new_p = &lines[i]["+++ ".len()..];
+                if i < lines.len()
+                    && lines[i]
+                        .strip_suffix('\r')
+                        .unwrap_or(lines[i])
+                        .starts_with("+++ ")
+                {
+                    let new_line = lines[i].strip_suffix('\r').unwrap_or(lines[i]);
+                    let new_p = &new_line["+++ ".len()..];
                     fp.new_path = Some(new_p.to_string());
                     i += 1;
                 }
             }
 
-            while i < lines.len() && lines[i].starts_with("@@ ") {
+            while i < lines.len()
+                && lines[i]
+                    .strip_suffix('\r')
+                    .unwrap_or(lines[i])
+                    .starts_with("@@ ")
+            {
                 let (hunk, next_i) = parse_hunk(&lines, i)?;
                 fp.hunks.push(hunk);
                 i = next_i;
@@ -2569,22 +3031,8 @@ fn strip_components(path: &str, n: usize) -> String {
     remaining.to_string()
 }
 
-fn resolve_oid_hint(repo: &Repository, hint: &str) -> Result<ObjectId> {
-    let h = hint.trim();
-    if h.is_empty() || !h.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("invalid object-id hint");
-    }
-    if h.chars().all(|c| c == '0') {
-        bail!("null object-id hint");
-    }
-    if h.len() == 40 {
-        return Ok(h.parse::<ObjectId>()?);
-    }
-    resolve_revision(repo, h).map_err(Into::into)
-}
-
 fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
-    let header = lines[start];
+    let header = lines[start].strip_suffix('\r').unwrap_or(lines[start]);
     let (old_start, old_count, new_start, new_count) =
         parse_hunk_header(header).with_context(|| format!("invalid hunk header: {header}"))?;
 
@@ -2646,56 +3094,16 @@ fn parse_range(s: &str) -> Result<(usize, usize)> {
     }
 }
 
-fn patch_preimage_matches(_repo: &Repository, work_tree: &Path, diff: &str) -> Result<bool> {
-    let file_patches = parse_patch(diff)?;
-    for fp in &file_patches {
-        let Some(hint_raw) = fp.old_oid_hint.as_deref() else {
-            continue;
-        };
-        let hint = hint_raw.trim().to_ascii_lowercase();
-        if hint.is_empty() || hint.chars().all(|c| c == '0') {
-            // New-file patches often use all-zero preimage.
-            continue;
-        }
-
-        let old_path = fp
-            .old_path
-            .as_deref()
-            .or_else(|| fp.effective_path())
-            .unwrap_or("");
-        if old_path == "/dev/null" {
-            continue;
-        }
-
-        let rel_path = strip_components(old_path, 1);
-        let abs_path = work_tree.join(&rel_path);
-        if !abs_path.exists() && !abs_path.is_symlink() {
-            return Ok(false);
-        }
-
-        let blob_bytes = if abs_path.is_symlink() {
-            let target = std::fs::read_link(&abs_path)?;
-            target.to_string_lossy().as_bytes().to_vec()
-        } else if abs_path.is_file() {
-            std::fs::read(&abs_path)?
-        } else {
-            return Ok(false);
-        };
-
-        let oid_hex = Odb::hash_object_data(ObjectKind::Blob, &blob_bytes).to_hex();
-        if !oid_hex.starts_with(&hint) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
     let has_trailing_newline = old_content.is_empty() || old_content.ends_with('\n');
     let old_lines: Vec<&str> = if old_content.is_empty() {
         Vec::new()
     } else {
-        old_content.lines().collect()
+        let mut lines: Vec<&str> = old_content.split('\n').collect();
+        if lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+        lines
     };
 
     let mut result: Vec<String> = Vec::new();
@@ -2897,34 +3305,14 @@ fn tree_to_index_entries(
     Ok(result)
 }
 
-fn checkout_index_to_worktree(
-    repo: &Repository,
-    work_tree: &Path,
-    old_index: &Index,
-    index: &Index,
-) -> Result<()> {
+fn checkout_index_to_worktree(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
     use grit_lib::index::{MODE_EXECUTABLE, MODE_SYMLINK};
-
-    if let Some((path, is_dir)) = find_untracked_obstruction(work_tree, old_index, index) {
-        if is_dir {
-            bail!("Updating '{}' would lose untracked files in it", path);
-        } else {
-            bail!("Updating '{}' would lose untracked files.", path);
-        }
-    }
 
     for entry in &index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
-        if abs_path.is_dir() {
-            fs::remove_dir_all(&abs_path)?;
-        }
-
         if let Some(parent) = abs_path.parent() {
-            if parent.exists() && !parent.is_dir() {
-                fs::remove_file(parent)?;
-            }
             fs::create_dir_all(parent)?;
         }
 
@@ -2949,94 +3337,4 @@ fn checkout_index_to_worktree(
     }
 
     Ok(())
-}
-
-fn find_untracked_obstruction(
-    work_tree: &Path,
-    old_index: &Index,
-    new_index: &Index,
-) -> Option<(String, bool)> {
-    let old_paths: std::collections::HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-    let new_paths: std::collections::HashSet<Vec<u8>> = new_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-
-    let dir_has_entries = |abs: &Path| -> bool {
-        fs::read_dir(abs)
-            .ok()
-            .and_then(|mut rd| rd.next())
-            .is_some()
-    };
-
-    for entry in &new_index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let rel = String::from_utf8_lossy(&entry.path).into_owned();
-        let abs = work_tree.join(&rel);
-        if !abs.exists() && !abs.is_symlink() {
-            continue;
-        }
-
-        let is_dir = fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_dir())
-            .unwrap_or(false);
-        // If the target wants a file/symlink but a directory exists there,
-        // replacing it would drop untracked contents.
-        if is_dir && entry.mode != 0o160000 && dir_has_entries(&abs) {
-            return Some((rel, true));
-        }
-
-        if old_paths.contains(&entry.path) {
-            continue;
-        }
-
-        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
-            let mut prefix = String::new();
-            for component in rel.split('/') {
-                if !prefix.is_empty() {
-                    prefix.push('/');
-                }
-                prefix.push_str(component);
-                if prefix.len() < rel.len() && old_paths.contains(prefix.as_bytes()) {
-                    return true;
-                }
-            }
-            false
-        });
-        if has_tracked_prefix {
-            continue;
-        }
-
-        let replaces_tracked_dir = old_paths.iter().any(|op| {
-            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
-        });
-        if replaces_tracked_dir {
-            continue;
-        }
-        return Some((rel, is_dir));
-    }
-
-    // Also protect deletions where a formerly tracked file path is now a
-    // directory containing untracked files (e.g. file -> dir replacement).
-    for old_path in old_paths.difference(&new_paths) {
-        let rel = String::from_utf8_lossy(old_path).into_owned();
-        let abs = work_tree.join(&rel);
-        let is_dir = fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_dir())
-            .unwrap_or(false);
-        if is_dir && dir_has_entries(&abs) {
-            return Some((rel, true));
-        }
-    }
-
-    None
 }

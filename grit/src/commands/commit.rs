@@ -19,6 +19,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use sha1::{Digest, Sha1};
 use time::OffsetDateTime;
@@ -172,7 +173,7 @@ pub struct Args {
     pub reset_author: bool,
 
     /// Pathspec — files to include in the commit (stages them first).
-    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    #[arg(allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
 }
 
@@ -784,19 +785,40 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
             });
         let rel_str = rel_path.to_string_lossy().to_string();
         if canon_path.exists() {
-            use std::os::unix::fs::MetadataExt;
             let meta = fs::symlink_metadata(&canon_path)?;
-            let data = if meta.file_type().is_symlink() {
-                let target = fs::read_link(&canon_path)?;
-                target.to_string_lossy().into_owned().into_bytes()
+            if meta.file_type().is_dir() {
+                if let Some(oid) = read_submodule_head_oid(&canon_path) {
+                    let entry = grit_lib::index::IndexEntry {
+                        ctime_sec: meta.ctime() as u32,
+                        ctime_nsec: meta.ctime_nsec() as u32,
+                        mtime_sec: meta.mtime() as u32,
+                        mtime_nsec: meta.mtime_nsec() as u32,
+                        dev: meta.dev() as u32,
+                        ino: meta.ino() as u32,
+                        mode: 0o160000,
+                        uid: meta.uid(),
+                        gid: meta.gid(),
+                        size: 0,
+                        oid,
+                        flags: rel_str.len().min(0xFFF) as u16,
+                        flags_extended: None,
+                        path: rel_str.as_bytes().to_vec(),
+                    };
+                    index.add_or_replace(entry);
+                }
             } else {
-                fs::read(&canon_path)?
-            };
-            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-            let mode = grit_lib::index::normalize_mode(meta.mode());
-            let raw_path = rel_str.as_bytes().to_vec();
-            let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
-            index.add_or_replace(entry);
+                let data = if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&canon_path)?;
+                    target.to_string_lossy().into_owned().into_bytes()
+                } else {
+                    fs::read(&canon_path)?
+                };
+                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+                let mode = grit_lib::index::normalize_mode(meta.mode());
+                let raw_path = rel_str.as_bytes().to_vec();
+                let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
+                index.add_or_replace(entry);
+            }
         } else {
             // File deleted — remove from index
             index.remove(rel_str.as_bytes());
@@ -805,6 +827,38 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
 
     index.write(&repo.index_path())?;
     Ok(())
+}
+
+/// Resolve a submodule worktree path to its current HEAD OID.
+fn read_submodule_head_oid(submodule_path: &Path) -> Option<ObjectId> {
+    let git_dir = resolve_submodule_git_dir(submodule_path)?;
+    let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let trimmed = head_content.trim();
+    let oid_text = if let Some(reference) = trimmed.strip_prefix("ref: ") {
+        fs::read_to_string(git_dir.join(reference))
+            .ok()?
+            .trim()
+            .to_owned()
+    } else {
+        trimmed.to_owned()
+    };
+    oid_text.parse::<ObjectId>().ok()
+}
+
+/// Resolve the gitdir backing a submodule checkout.
+fn resolve_submodule_git_dir(submodule_path: &Path) -> Option<PathBuf> {
+    let dot_git = submodule_path.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let content = fs::read_to_string(dot_git).ok()?;
+    let rel = content.trim().strip_prefix("gitdir: ")?;
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        Some(rel_path.to_path_buf())
+    } else {
+        Some(submodule_path.join(rel_path))
+    }
 }
 
 /// Auto-stage tracked files (for `commit -a`).
@@ -823,11 +877,12 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             (ie.path.clone(), path_str, ie.mode)
         })
         .collect();
+    let original_index = index.clone();
 
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
         let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
+        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
             // get the current commit OID instead of trying to read the
             // directory as a file.
@@ -846,7 +901,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                     };
                     if let Ok(oid) = oid_hex.parse::<ObjectId>() {
                         use std::os::unix::fs::MetadataExt;
-                        let meta = fs::symlink_metadata(&abs_path)?;
                         let entry = grit_lib::index::IndexEntry {
                             ctime_sec: meta.ctime() as u32,
                             ctime_nsec: meta.ctime_nsec() as u32,
@@ -869,8 +923,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 }
                 continue;
             }
-            use std::os::unix::fs::MetadataExt;
-            let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {
                 let target = fs::read_link(&abs_path)?;
                 target.to_string_lossy().into_owned().into_bytes()
@@ -883,7 +935,23 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             index.add_or_replace(entry);
             changed = true;
         } else {
+            if *idx_mode == 0o160000 {
+                // Keep existing gitlink entries when the submodule worktree is absent.
+                // This matches `git commit -a` behavior for non-checked-out submodules.
+                continue;
+            }
             index.remove(raw_path);
+            changed = true;
+        }
+    }
+
+    // Preserve gitlink entries that may have been dropped while staging non-submodule paths.
+    for original in &original_index.entries {
+        if original.mode != 0o160000 || original.stage() != 0 {
+            continue;
+        }
+        if index.get(&original.path, 0).is_none() {
+            index.add_or_replace(original.clone());
             changed = true;
         }
     }

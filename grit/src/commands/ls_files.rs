@@ -62,6 +62,10 @@ pub struct Args {
     #[arg(short = 't')]
     pub show_tag: bool,
 
+    /// Show lowercase tags for tracked files (`-v`).
+    #[arg(short = 'v')]
+    pub show_untracked_cache_tag: bool,
+
     /// Show verbose long format.
     #[arg(long)]
     pub long: bool,
@@ -124,16 +128,6 @@ pub fn run(args: Args) -> Result<()> {
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
-    let runtime_config =
-        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let sparse_enabled = runtime_config
-        .get("core.sparseCheckout")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let sparse_expect_files_outside = runtime_config
-        .get("sparse.expectFilesOutsideOfPatterns")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
-        .unwrap_or(false);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -241,9 +235,9 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
 
-        // For -d/-m with -t, compute tags. A deleted file with both -d and -m
+        // For -d/-m with -t/-v, compute tags. A deleted file with both -d and -m
         // produces TWO output lines: 'R path' and 'C path'.
-        let (tag, extra_tag) = if args.show_tag {
+        let (tag, extra_tag) = if args.show_tag || args.show_untracked_cache_tag {
             if (args.deleted || args.modified) && entry.stage() == 0 {
                 let full = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
                 if !full.exists() {
@@ -256,26 +250,16 @@ pub fn run(args: Args) -> Result<()> {
                 } else if is_modified(entry, &full) {
                     (Some('C'), None)
                 } else {
-                    (
-                        Some(status_tag(
-                            entry,
-                            work_tree,
-                            sparse_enabled,
-                            sparse_expect_files_outside,
-                        )),
-                        None,
-                    )
+                    (Some(status_tag(entry)), None)
                 }
             } else {
-                (
-                    Some(status_tag(
-                        entry,
-                        work_tree,
-                        sparse_enabled,
-                        sparse_expect_files_outside,
-                    )),
-                    None,
-                )
+                let base_tag = status_tag(entry);
+                let adjusted_tag = if args.show_untracked_cache_tag {
+                    base_tag.to_ascii_lowercase()
+                } else {
+                    base_tag
+                };
+                (Some(adjusted_tag), None)
             }
         } else {
             (None, None)
@@ -384,13 +368,7 @@ pub fn run(args: Args) -> Result<()> {
         let indexed_paths: BTreeSet<Vec<u8>> =
             index.entries.iter().map(|e| e.path.clone()).collect();
         let mut untracked = Vec::new();
-        walk_worktree(
-            work_tree,
-            work_tree,
-            &indexed_paths,
-            &mut untracked,
-            args.directory || args.no_empty_directory,
-        )?;
+        walk_worktree(work_tree, work_tree, &indexed_paths, &mut untracked)?;
         untracked.sort();
 
         let mut filtered_untracked: Vec<Vec<u8>> = Vec::new();
@@ -513,7 +491,6 @@ fn walk_worktree(
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
-    include_empty_dirs: bool,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -554,13 +531,7 @@ fn walk_worktree(
                 }
                 continue;
             }
-            let before_len = out.len();
-            walk_worktree(root, &path, indexed, out, include_empty_dirs)?;
-            if include_empty_dirs && out.len() == before_len {
-                let mut dir_entry = rel_bytes;
-                dir_entry.push(b'/');
-                out.push(dir_entry);
-            }
+            walk_worktree(root, &path, indexed, out)?;
         }
     }
     Ok(())
@@ -609,19 +580,7 @@ fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_ti = 0;
 
     while ti < text.len() {
-        if pi + 1 < pattern.len() && pattern[pi] == b'\\' {
-            // Backslash escapes the next byte as a literal.
-            if pattern[pi + 1] == text[ti] {
-                pi += 2;
-                ti += 1;
-            } else if star_pi != usize::MAX {
-                star_ti += 1;
-                ti = star_ti;
-                pi = star_pi + 1;
-            } else {
-                return false;
-            }
-        } else if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
+        if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
             pi += 1;
             ti += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
@@ -724,10 +683,7 @@ fn resolve_pathspec(
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        // Our glob matcher treats '\' as an escape character, so any literal
-        // backslashes originating from the cwd prefix must be escaped.
-        let escaped_prefix = prefix_str.replace('\\', "\\\\");
-        let pattern = format!("{}{}", escaped_prefix, pathspec_str);
+        let pattern = format!("{}{}", prefix_str, pathspec_str);
         return Ok(Pathspec::Glob(pattern));
     }
     let combined = if pathspec.is_absolute() {
@@ -867,7 +823,8 @@ fn is_modified(entry: &IndexEntry, path: &std::path::Path) -> bool {
     if mtime_sec != entry.mtime_sec || (entry.mtime_nsec != 0 && mtime_nsec != entry.mtime_nsec) {
         // Stat differs — fall back to content hash comparison
         if let Ok(data) = std::fs::read(path) {
-            let hash = grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
+            let hash =
+                grit_lib::odb::Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &data);
             return hash != entry.oid;
         }
         return true;
@@ -939,21 +896,10 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     }
 }
 
-fn status_tag(
-    entry: &IndexEntry,
-    work_tree: &std::path::Path,
-    sparse_enabled: bool,
-    sparse_expect_files_outside: bool,
-) -> char {
+fn status_tag(entry: &IndexEntry) -> char {
     if entry.stage() != 0 {
         'C' // unmerged (conflict)
     } else if entry.skip_worktree() {
-        if sparse_enabled && !sparse_expect_files_outside {
-            let abs = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
-            if abs.exists() || abs.is_symlink() {
-                return 'H';
-            }
-        }
         'S'
     } else if entry.assume_unchanged() {
         'h' // assume-unchanged uses lowercase

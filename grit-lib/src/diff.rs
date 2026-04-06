@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::index::{Index, IndexEntry};
 use crate::objects::{parse_tree, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
+use crate::userdiff::FuncnameMatcher;
 
 /// The kind of change between two sides of a diff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,26 @@ impl DiffEntry {
             .or(self.old_path.as_deref())
             .unwrap_or("")
     }
+
+    /// Return a human-oriented path display for this entry.
+    ///
+    /// For renames and copies this returns `old -> new`; for all other entry
+    /// kinds this returns the primary path.
+    #[must_use]
+    pub fn display_path(&self) -> String {
+        match self.status {
+            DiffStatus::Renamed | DiffStatus::Copied => {
+                let old = self.old_path.as_deref().unwrap_or("");
+                let new = self.new_path.as_deref().unwrap_or("");
+                if old.is_empty() || new.is_empty() {
+                    self.path().to_owned()
+                } else {
+                    format!("{old} -> {new}")
+                }
+            }
+            _ => self.path().to_owned(),
+        }
+    }
 }
 
 /// The zero (null) object ID used for "no object" in diff output.
@@ -104,6 +125,15 @@ pub fn zero_oid() -> ObjectId {
     ObjectId::from_bytes(&[0u8; 20]).unwrap_or_else(|_| {
         // This should never fail since we pass exactly 20 bytes
         panic!("internal error: failed to create zero OID");
+    })
+}
+
+/// Return the ObjectId for the empty blob object.
+#[must_use]
+pub fn empty_blob_oid() -> ObjectId {
+    ObjectId::from_hex("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391").unwrap_or_else(|_| {
+        // This should never fail since the object ID literal is valid.
+        panic!("internal error: failed to create empty blob OID");
     })
 }
 
@@ -407,15 +437,29 @@ pub fn diff_index_to_tree(
     }
 
     let mut result = Vec::new();
+    let mut stage0_paths = std::collections::BTreeSet::new();
+    let mut unmerged_modes: std::collections::BTreeMap<String, (u8, u32)> =
+        std::collections::BTreeMap::new();
 
     // Check index entries against tree
     for ie in &index.entries {
-        // Only look at stage 0 (merged) entries.
-        // Intent-to-add entries behave as absent in staged comparisons.
-        if ie.stage() != 0 || ie.intent_to_add() {
+        let path = String::from_utf8_lossy(&ie.path).to_string();
+        if ie.stage() != 0 {
+            let rank = match ie.stage() {
+                2 => 0u8,
+                3 => 1u8,
+                1 => 2u8,
+                _ => 3u8,
+            };
+            match unmerged_modes.get(&path) {
+                Some((existing_rank, _)) if *existing_rank <= rank => {}
+                _ => {
+                    unmerged_modes.insert(path, (rank, ie.mode));
+                }
+            }
             continue;
         }
-        let path = String::from_utf8_lossy(&ie.path).to_string();
+        stage0_paths.insert(path.clone());
         match tree_map.remove(path.as_str()) {
             Some(te) => {
                 // Present in both — check for differences
@@ -446,6 +490,23 @@ pub fn diff_index_to_tree(
                 });
             }
         }
+    }
+
+    for (path, (_, mode)) in &unmerged_modes {
+        if stage0_paths.contains(path) {
+            continue;
+        }
+        tree_map.remove(path.as_str());
+        result.push(DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(path.clone()),
+            new_path: Some(path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode: format_mode(*mode),
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
     }
 
     // Remaining tree entries not in index → deleted
@@ -495,59 +556,35 @@ pub fn diff_index_to_worktree(
     let attrs = crlf::load_gitattributes(work_tree);
 
     let mut result = Vec::new();
+    let mut unmerged_base: std::collections::BTreeMap<String, (u8, &IndexEntry)> =
+        std::collections::BTreeMap::new();
 
     for ie in &index.entries {
         if ie.stage() != 0 {
-            continue;
-        }
-        // Sparse-checkout paths marked skip-worktree should not participate
-        // in regular worktree diffs.
-        if ie.skip_worktree() {
+            let path = String::from_utf8_lossy(&ie.path).to_string();
+            let rank = match ie.stage() {
+                2 => 0u8,
+                3 => 1u8,
+                1 => 2u8,
+                _ => 3u8,
+            };
+            match unmerged_base.get(&path) {
+                Some((existing_rank, _)) if *existing_rank <= rank => {}
+                _ => {
+                    unmerged_base.insert(path, (rank, ie));
+                }
+            }
             continue;
         }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
-
-        // Intent-to-add entries behave as "path absent from index" for
-        // worktree comparisons: show as Added only when the file currently
-        // exists in the working tree.
-        if ie.intent_to_add() {
-            let file_path = work_tree.join(path_str_ref);
-            match fs::symlink_metadata(&file_path) {
-                Ok(meta) if !meta.is_dir() => {
-                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-                    let wt_oid =
-                        hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref, None)?;
-                    let wt_mode = mode_from_metadata(&meta);
-                    result.push(DiffEntry {
-                        status: DiffStatus::Added,
-                        old_path: None,
-                        new_path: Some(path_str_ref.to_owned()),
-                        old_mode: "000000".to_owned(),
-                        new_mode: format_mode(wt_mode),
-                        old_oid: zero_oid(),
-                        new_oid: wt_oid,
-                        score: None,
-                    });
-                }
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) if e.raw_os_error() == Some(20) /* ENOTDIR */ => {}
-                Err(e) => return Err(Error::Io(e)),
-            }
-            continue;
-        }
+        let is_intent_to_add = ie.intent_to_add();
 
         // Gitlink entries (submodules) are directories — compare HEAD commit.
         if ie.mode == 0o160000 {
             let sub_dir = work_tree.join(path_str_ref);
             let sub_head_oid = read_submodule_head(&sub_dir);
-            // An existing directory without a nested `.git` is an
-            // uninitialized submodule checkout and is considered clean.
-            if sub_head_oid.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
-                continue;
-            }
             if sub_head_oid.as_ref() != Some(&ie.oid) {
                 let path_owned = path_str_ref.to_owned();
                 let new_oid = sub_head_oid.unwrap_or_else(zero_oid);
@@ -566,6 +603,50 @@ pub fn diff_index_to_worktree(
         }
 
         let file_path = work_tree.join(path_str_ref);
+
+        if is_intent_to_add {
+            match fs::symlink_metadata(&file_path) {
+                Ok(meta) => {
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let worktree_oid = hash_worktree_file(
+                        odb,
+                        &file_path,
+                        &meta,
+                        &conv,
+                        &file_attrs,
+                        path_str_ref,
+                    )?;
+                    let worktree_mode = mode_from_metadata(&meta);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None,
+                        new_path: Some(path_str_ref.to_owned()),
+                        old_mode: "000000".to_owned(),
+                        new_mode: format_mode(worktree_mode),
+                        old_oid: zero_oid(),
+                        new_oid: worktree_oid,
+                        score: None,
+                    });
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::NotFound
+                        || e.raw_os_error() == Some(20) /* ENOTDIR */ =>
+                {
+                    result.push(DiffEntry {
+                        status: DiffStatus::Deleted,
+                        old_path: Some(path_str_ref.to_owned()),
+                        new_path: None,
+                        old_mode: format_mode(ie.mode),
+                        new_mode: "000000".to_owned(),
+                        old_oid: empty_blob_oid(),
+                        new_oid: zero_oid(),
+                        score: None,
+                    });
+                }
+                Err(e) => return Err(Error::Io(e)),
+            }
+            continue;
+        }
 
         // If any parent component of the path is a symlink, the file is effectively
         // deleted from the working tree (a symlink replaced a directory).
@@ -601,22 +682,13 @@ pub fn diff_index_to_worktree(
             Ok(meta) => {
                 // Check if the file has changed using stat data first
                 if stat_matches(ie, &meta) {
+                    // Stat data matches content-wise, but also check mode.
+                    // The index mode might have been changed via --chmod=+x.
                     let worktree_mode = mode_from_metadata(&meta);
-                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-                    let worktree_oid = hash_worktree_file(
-                        odb,
-                        &file_path,
-                        &meta,
-                        &conv,
-                        &file_attrs,
-                        path_str_ref,
-                        None,
-                    )?;
-
-                    if worktree_mode == ie.mode && worktree_oid == ie.oid {
-                        continue; // truly unchanged
+                    if worktree_mode == ie.mode {
+                        continue; // Fast path: stat+mode match, assume unchanged
                     }
-
+                    // Mode differs — emit a mode-only change entry.
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -625,7 +697,7 @@ pub fn diff_index_to_worktree(
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
-                        new_oid: worktree_oid,
+                        new_oid: ie.oid,
                         score: None,
                     });
                     continue;
@@ -633,15 +705,7 @@ pub fn diff_index_to_worktree(
 
                 // Stat differs — hash the file to check actual content
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-                let worktree_oid = hash_worktree_file(
-                    odb,
-                    &file_path,
-                    &meta,
-                    &conv,
-                    &file_attrs,
-                    path_str_ref,
-                    Some(ie.oid),
-                )?;
+                let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
                 let worktree_mode = mode_from_metadata(&meta);
 
                 if worktree_oid != ie.oid || worktree_mode != ie.mode {
@@ -673,6 +737,53 @@ pub fn diff_index_to_worktree(
                 });
             }
             Err(e) => return Err(Error::Io(e)),
+        }
+    }
+
+    for (path, (_, base_entry)) in unmerged_base {
+        let file_path = work_tree.join(&path);
+        let wt_meta = match fs::symlink_metadata(&file_path) {
+            Ok(meta) => Some(meta),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    || e.raw_os_error() == Some(20) /* ENOTDIR */ =>
+            {
+                None
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        let new_mode = wt_meta.as_ref().map_or_else(
+            || "000000".to_owned(),
+            |meta| format_mode(mode_from_metadata(meta)),
+        );
+        result.push(DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(path.clone()),
+            new_path: Some(path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode,
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
+
+        if let Some(meta) = wt_meta {
+            let file_attrs = crlf::get_file_attrs(&attrs, &path, &config);
+            let wt_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, &path)?;
+            let wt_mode = mode_from_metadata(&meta);
+            if wt_oid != base_entry.oid || wt_mode != base_entry.mode {
+                result.push(DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path.clone()),
+                    new_path: Some(path),
+                    old_mode: format_mode(base_entry.mode),
+                    new_mode: format_mode(wt_mode),
+                    old_oid: base_entry.oid,
+                    new_oid: wt_oid,
+                    score: None,
+                });
+            }
         }
     }
 
@@ -726,13 +837,12 @@ fn has_symlink_in_path(work_tree: &Path, rel_path: &str) -> bool {
 }
 
 fn hash_worktree_file(
-    odb: &Odb,
+    _odb: &Odb,
     path: &Path,
     meta: &fs::Metadata,
     conv: &crate::crlf::ConversionConfig,
     file_attrs: &crate::crlf::FileAttrs,
     rel_path: &str,
-    expected_oid: Option<ObjectId>,
 ) -> Result<ObjectId> {
     let data = if meta.file_type().is_symlink() {
         // For symlinks, hash the target path
@@ -740,19 +850,8 @@ fn hash_worktree_file(
         target.to_string_lossy().into_owned().into_bytes()
     } else {
         let raw = fs::read(path)?;
-        // If the expected blob already contains CRLF, compare raw bytes.
-        // This matches git behaviour for legacy CRLF blobs committed before
-        // autocrlf was enabled.
-        let expected_has_crlf = expected_oid
-            .and_then(|oid| odb.read(&oid).ok())
-            .map(|obj| obj.kind == ObjectKind::Blob && crate::crlf::has_crlf(&obj.data))
-            .unwrap_or(false);
-        if expected_has_crlf {
-            raw
-        } else {
-            // Apply clean conversion (CRLF→LF) so hash matches index blob
-            crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs).unwrap_or(raw)
-        }
+        // Apply clean conversion (CRLF→LF) so hash matches index blob
+        crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs).unwrap_or(raw)
     };
 
     Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
@@ -816,13 +915,6 @@ pub fn diff_tree_to_worktree(
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
-        // Intent-to-add entries should participate in tree-vs-worktree path
-        // union (so `diff HEAD` can show them as added), but they should not be
-        // treated as normal index baselines for content/mode comparisons.
-        if ie.intent_to_add() {
-            index_paths.insert(path);
-            continue;
-        }
         index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
     }
@@ -846,10 +938,6 @@ pub fn diff_tree_to_worktree(
             if let Some(te) = tree_entry {
                 let sub_dir = work_tree.join(path);
                 let sub_head = read_submodule_head(&sub_dir);
-                // Uninitialized submodule directories are considered clean.
-                if sub_head.is_none() && is_unpopulated_submodule_dir(&sub_dir) {
-                    continue;
-                }
                 if sub_head.as_ref() != Some(&te.oid) {
                     let new_oid = sub_head.unwrap_or_else(zero_oid);
                     result.push(DiffEntry {
@@ -877,29 +965,17 @@ pub fn diff_tree_to_worktree(
 
         match (tree_entry, wt_meta) {
             (Some(te), Some(ref meta)) => {
+                // Fast path: if the index entry matches the tree entry AND
+                // stat cache matches, the file is unchanged — skip hashing.
                 if let Some(ie) = index_entries.get(path.as_bytes()) {
                     if ie.oid == te.oid && ie.mode == te.mode && stat_matches(ie, meta) {
-                        let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
-                        let wt_oid =
-                            hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path, None)?;
-                        let wt_mode = mode_from_metadata(meta);
-                        if wt_oid == te.oid && wt_mode == te.mode {
-                            continue;
-                        }
+                        continue;
                     }
                 }
 
                 // Stat or content differs — hash the file
                 let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
-                let wt_oid = hash_worktree_file(
-                    odb,
-                    &file_path,
-                    meta,
-                    &conv,
-                    &file_attrs,
-                    path,
-                    Some(te.oid),
-                )?;
+                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 if wt_oid != te.oid || wt_mode != te.mode {
                     result.push(DiffEntry {
@@ -930,16 +1006,7 @@ pub fn diff_tree_to_worktree(
             (None, Some(ref meta)) => {
                 // In index but not in tree, and exists in worktree
                 let file_attrs = crlf::get_file_attrs(&attrs, path, &config);
-                let expected_oid = index_entries.get(path.as_bytes()).map(|ie| ie.oid);
-                let wt_oid = hash_worktree_file(
-                    odb,
-                    &file_path,
-                    meta,
-                    &conv,
-                    &file_attrs,
-                    path,
-                    expected_oid,
-                )?;
+                let wt_oid = hash_worktree_file(odb, &file_path, meta, &conv, &file_attrs, path)?;
                 let wt_mode = mode_from_metadata(meta);
                 result.push(DiffEntry {
                     status: DiffStatus::Added,
@@ -1450,6 +1517,14 @@ fn compute_similarity(old: &[u8], new: &[u8]) -> u32 {
     ((shared_bytes * 100) / max_size).min(100) as u32
 }
 
+/// Compute rename/copy similarity percentage (0–100) between two byte slices.
+///
+/// This uses the same scoring logic as internal rename detection.
+#[must_use]
+pub fn rename_similarity_score(old: &[u8], new: &[u8]) -> u32 {
+    compute_similarity(old, new)
+}
+
 // ── Output formatting ───────────────────────────────────────────────
 
 /// Format a diff entry in Git's raw diff format.
@@ -1547,9 +1622,61 @@ pub fn unified_diff_with_prefix(
     src_prefix: &str,
     dst_prefix: &str,
 ) -> String {
+    unified_diff_with_prefix_and_funcname(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        src_prefix,
+        dst_prefix,
+        None,
+    )
+}
+
+/// Same as [`unified_diff_with_prefix`] with optional custom hunk-header
+/// function-name matching.
+pub fn unified_diff_with_prefix_and_funcname(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> String {
+    unified_diff_with_prefix_and_funcname_and_algorithm(
+        old_content,
+        new_content,
+        old_path,
+        new_path,
+        context_lines,
+        src_prefix,
+        dst_prefix,
+        funcname_matcher,
+        similar::Algorithm::Myers,
+    )
+}
+
+/// Same as [`unified_diff_with_prefix_and_funcname`] but allows callers to
+/// choose the line diff algorithm used for hunk generation.
+pub fn unified_diff_with_prefix_and_funcname_and_algorithm(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    src_prefix: &str,
+    dst_prefix: &str,
+    funcname_matcher: Option<&FuncnameMatcher>,
+    algorithm: similar::Algorithm,
+) -> String {
     use similar::TextDiff;
 
-    let diff = TextDiff::from_lines(old_content, new_content);
+    let diff = TextDiff::configure()
+        .algorithm(algorithm)
+        .diff_lines(old_content, new_content);
 
     let mut output = String::new();
     if old_path == "/dev/null" {
@@ -1579,7 +1706,9 @@ pub fn unified_diff_with_prefix(
             let rest = &hunk_str[first_newline..];
 
             // Parse the old start line from the @@ header
-            if let Some(func_ctx) = extract_function_context(header_line, &old_lines) {
+            if let Some(func_ctx) =
+                extract_function_context(header_line, &old_lines, funcname_matcher)
+            {
                 output.push_str(header_line);
                 output.push(' ');
                 output.push_str(&func_ctx);
@@ -1869,8 +1998,11 @@ pub fn anchored_unified_diff(
 /// Given a hunk header like `@@ -8,7 +8,7 @@`, find the last line
 /// before line 8 in the old content that looks like a function header
 /// (starts with a non-whitespace character, like Git's default).
-
-fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> {
+fn extract_function_context(
+    header: &str,
+    old_lines: &[&str],
+    funcname_matcher: Option<&FuncnameMatcher>,
+) -> Option<String> {
     // Parse the old start line number from "@@ -<start>,<count> ..."
     let at_pos = header.find("-")?;
     let rest = &header[at_pos + 1..];
@@ -1887,27 +2019,33 @@ fn extract_function_context(header: &str, old_lines: &[&str]) -> Option<String> 
     // start_line is 1-indexed, so the hunk starts at old_lines[start_line-1].
     // We want to look at lines before that: old_lines[0..start_line-1].
     let search_end = (start_line - 1).min(old_lines.len());
+    let truncate = |text: &str| {
+        if text.len() > 80 {
+            let mut end = 80;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text[..end].to_owned()
+        } else {
+            text.to_owned()
+        }
+    };
+
     for i in (0..search_end).rev() {
         let line = old_lines[i];
-        if !line.is_empty() {
-            let first = line.as_bytes()[0];
-            // Git's default: line must start with a letter, digit, '_', '$',
-            // or certain other non-whitespace chars. We use a simpler heuristic:
-            // any line that doesn't start with whitespace.
-            if first != b' ' && first != b'\t' {
-                // Truncate to 80 bytes like Git does, respecting
-                // character boundaries.
-                let truncated = if line.len() > 80 {
-                    let mut end = 80;
-                    while end > 0 && !line.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    &line[..end]
-                } else {
-                    line
-                };
-                return Some(truncated.to_owned());
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(matcher) = funcname_matcher {
+            if let Some(matched) = matcher.match_line(line) {
+                return Some(truncate(&matched));
             }
+            continue;
+        }
+
+        let first = line.as_bytes()[0];
+        if first.is_ascii_alphabetic() || first == b'_' || first == b'$' {
+            return Some(truncate(line.trim_end_matches(char::is_whitespace)));
         }
     }
     None
@@ -2064,11 +2202,4 @@ fn read_submodule_head(sub_dir: &Path) -> Option<ObjectId> {
         // Detached HEAD — direct OID
         ObjectId::from_hex(head_content).ok()
     }
-}
-
-fn is_unpopulated_submodule_dir(sub_dir: &Path) -> bool {
-    let Ok(meta) = fs::symlink_metadata(sub_dir) else {
-        return false;
-    };
-    meta.is_dir() && !sub_dir.join(".git").exists()
 }
