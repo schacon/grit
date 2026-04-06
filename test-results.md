@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after implementing trace2 event-target compatibility for `test-tool trace2` verbs, including event JSON emission, child-process hierarchy/SID propagation, parameter/data events, credential redaction, and event-target file/discard handling).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0212-trace2-event.sh` (run from `/workspace/tests`): 11/11 passing (improved from 0/11).
+- `./scripts/run-tests.sh t0212-trace2-event.sh`: 11/11 passing.
+- regressions:
+  - `./scripts/run-tests.sh t0213-trace2-ancestry.sh`: 5/5 passing.
+  - `./scripts/run-tests.sh t1411-reflog-show.sh`: 17/17 passing.
+  - `./scripts/run-tests.sh t0211-trace2-perf.sh`: 4/17 passing (unchanged baseline).
+  - `./scripts/run-tests.sh t0210-trace2-normal.sh`: 0/14 passing (unchanged baseline).
+
 - `cargo build --release -p grit-rs`: success (after aligning reflog/log argument preprocessing, reflog-show delegation to log reflog-walk mode, reflog selector/date rendering, and reflog patch output behavior for `t1411`).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1411-reflog-show.sh` (run from `/workspace/tests`): 17/17 passing (improved from 7/17).
 - `./scripts/run-tests.sh t1411-reflog-show.sh`: 17/17 passing.

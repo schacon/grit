@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    96 |
+| Completed   |    97 |
 | In progress |     0 |
-| Remaining   |   671 |
+| Remaining   |   670 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0212-trace2-event` — 11/11 tests pass (implemented trace2 event-target JSON writer with per-process SID/hierarchy tracking, `start`/`cmd_name`/`exit`/`error`/`data`/`def_param`/`child_start`/`child_exit`/`exec` event emission for `test-tool trace2` verbs, config/env parameter emission for `GIT_TRACE2_CONFIG_PARAMS` and `GIT_TRACE2_ENV_VARS`, global `trace2.eventTarget` config fallback, credential redaction for URL-like values, and trace-directory discard behavior for `GIT_TRACE2_MAX_FILES`)
 - `t1411-reflog-show` — 17/17 tests pass (implemented `reflog` default/show argument preprocessing so `git reflog --format=short` maps to show mode, routed `reflog show` through `log -g` for full parity, taught reflog selectors to preserve index syntax for `@{N}` while rendering date selectors for `@{now}`/date queries and `--date=` output, normalized reflog identity header formatting in `Reflog:` lines, added reflog patch output in `log -g -p` against commit parents, and extended revision resolution to accept parent suffixes like `HEAD^` in update-ref flows used by reflog tests)
 - `t1306-xdg-files` — 21/21 tests pass (aligned global config path semantics for `--global` reads vs writes so XDG and `~/.gitconfig` precedence matches upstream behavior, taught ignore loading to read `core.excludesfile` via layered config with XDG default fallback, added global attributes loading support in `check-attr` with `core.attributesfile` + XDG default handling, and corrected local test harness behavior to match upstream expectations by avoiding implicit local identity writes and preserving working-directory changes across test blocks)
 - `t1004-read-tree-m-u-wf` — 17/17 tests pass (implemented `read-tree -m -u` worktree safety checks to detect untracked and locally modified overwrite hazards before update, added support for `--exclude-per-directory=.gitignore` to allow ignored-file clobbering in compatibility scenarios while validating unsupported forms, skipped no-op blob rewrites during checkout updates to preserve local edits not touched by the merge, and wired legacy `merge-resolve` / `merge-recursive` command aliases to the existing 3-way read-tree merge path used by upstream D/F resolve coverage)
@@ -89,4 +90,4 @@
 
 ## What Remains
 
-671 test files still pending. See `plan.md` for the full prioritized list.
+670 test files still pending. See `plan.md` for the full prioritized list.

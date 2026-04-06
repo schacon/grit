@@ -114,7 +114,7 @@ commit → check it off → move on.
 - [x] `t1306-xdg-files` ████████████████████ 21/21 (0 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
 - [x] `t1004-read-tree-m-u-wf` ████████████████████ 17/17 (0 left) — read-tree -m -u checks working tree files
 - [x] `t1411-reflog-show` ████████████████████ 17/17 (0 left) — Test reflog display routines
-- [ ] `t0212-trace2-event` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — test trace2 facility
+- [x] `t0212-trace2-event` ████████████████████ 11/11 (0 left) — test trace2 facility
 - [ ] `t0613-reftable-write-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — reftable write options
 - [ ] `t1419-exclude-refs` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test exclude_patterns functionality in main ref store
 - [ ] `t0211-trace2-perf` ████░░░░░░░░░░░░░░░░ 4/17 (13 left) — test trace2 facility (perf target)
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,835/24,806 tests passing, 15,971 failures remaining**
+**8,846/24,806 tests passing, 15,960 failures remaining**
