@@ -1097,6 +1097,32 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
             }
         }
+        Some("tag") => {
+            // Peel only if the object is a tag; otherwise error.
+            let obj = repo.odb.read(&oid)?;
+            match obj.kind {
+                ObjectKind::Tag => Ok(oid),
+                _ => {
+                    // Dereference tags until we get a non-tag, then error
+                    // if that's not a tag either. Real git: ^{tag} requires
+                    // the object (after dereffing) to be a tag.
+                    Err(Error::InvalidRef(format!("object {} is not a tag", oid)))
+                }
+            }
+        }
+        Some(other) if other.starts_with('/') => {
+            // `^{/pattern}` — find first commit in history whose message
+            // matches the regex (similar to `:/pattern` but starting from oid).
+            let pattern = &other[1..];
+            // Bare `!` not followed by `!` or `-` is reserved/invalid.
+            if pattern.starts_with('!') && !pattern.starts_with("!!") && !pattern.starts_with("!-")
+            {
+                return Err(Error::InvalidRef(format!(
+                    "invalid '^{{/{pattern}}}': '!' must be followed by '!' or '-'"
+                )));
+            }
+            resolve_commit_search_from(repo, oid, pattern)
+        }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
         ))),
@@ -1280,4 +1306,74 @@ fn resolve_commit_message_search(
     }
 
     Err(Error::ObjectNotFound(format!(":/{pattern}")))
+}
+
+/// Search commit history starting from `start_oid` for a commit whose message
+/// matches `pattern` (same rules as `:/pattern`).
+///
+/// Pattern rules:
+/// - `!-<pat>`: find first commit whose message does NOT contain `pat`
+/// - `!!<rest>`: literal `!` prefix, match message containing `!<rest>`
+/// - otherwise: match message containing `pattern`
+fn resolve_commit_search_from(
+    repo: &crate::repo::Repository,
+    start_oid: ObjectId,
+    pattern: &str,
+) -> Result<ObjectId> {
+    // Parse the pattern for negation / escaping.
+    let (negated, effective_pattern) = if let Some(rest) = pattern.strip_prefix("!-") {
+        (true, rest)
+    } else if let Some(rest) = pattern.strip_prefix("!!") {
+        (false, rest) // literal '!' followed by rest
+    } else {
+        (false, pattern)
+    };
+
+    // Compile the pattern as a regex; fall back to substring match.
+    let re = regex::Regex::new(effective_pattern).ok();
+    let matches = |msg: &str| -> bool {
+        let hit = if let Some(ref re) = re {
+            re.is_match(msg)
+        } else {
+            msg.contains(effective_pattern)
+        };
+        if negated {
+            !hit
+        } else {
+            hit
+        }
+    };
+
+    let mut visited = std::collections::HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(start_oid);
+    visited.insert(start_oid);
+
+    while let Some(oid) = queue.pop_front() {
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        if matches(&commit.message) {
+            return Ok(oid);
+        }
+
+        for parent in &commit.parents {
+            if visited.insert(*parent) {
+                queue.push_back(*parent);
+            }
+        }
+    }
+
+    Err(Error::ObjectNotFound(format!(
+        "no commit matching '^{{/{pattern}}}' found"
+    )))
 }
