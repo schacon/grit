@@ -147,6 +147,8 @@ case "$1" in
       normalize_path_copy) echo "$2" ;;
       *) echo "$@" ;;
     esac ;;
+  getcwd)
+    pwd ;;
   pkt-line)
     shift
     case "$1" in
