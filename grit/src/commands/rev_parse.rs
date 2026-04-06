@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
@@ -454,7 +455,28 @@ pub fn run(args: Args) -> Result<()> {
                             current.git_dir.join(path_arg)
                         }
                     } else {
-                        current.git_dir.join(path_arg)
+                        // Some paths are stored in the common dir (shared across worktrees)
+                        let common_paths = [
+                            "objects",
+                            "refs",
+                            "packed-refs",
+                            "info",
+                            "config",
+                            "ORIG_HEAD",
+                            "FETCH_HEAD",
+                            "logs",
+                            "shallow",
+                        ];
+                        let use_common = common_paths
+                            .iter()
+                            .any(|p| path_arg == *p || path_arg.starts_with(&format!("{}/", p)));
+                        if use_common {
+                            let common = refs::common_dir(&current.git_dir)
+                                .unwrap_or_else(|| current.git_dir.clone());
+                            common.join(path_arg)
+                        } else {
+                            current.git_dir.join(path_arg)
+                        }
                     };
                     println!("{}", resolved.display());
                 } else {
