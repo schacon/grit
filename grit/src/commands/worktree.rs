@@ -95,6 +95,10 @@ pub struct AddArgs {
     #[arg(long)]
     pub track: bool,
 
+    /// Do not set up tracking information.
+    #[arg(long = "no-track")]
+    pub no_track: bool,
+
     /// Guess remote branch.
     #[arg(long)]
     pub guess_remote: bool,
@@ -102,6 +106,10 @@ pub struct AddArgs {
     /// Don't guess remote branch.
     #[arg(long)]
     pub no_guess_remote: bool,
+
+    /// Path format compatibility option used by tests.
+    #[arg(long = "path-format")]
+    pub path_format: Option<String>,
 
     /// Write relative admin paths.
     #[arg(long = "relative-paths")]
@@ -273,34 +281,29 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     if args.relative_paths && args.no_relative_paths {
         bail!("options '--relative-paths' and '--no-relative-paths' cannot be used together");
     }
-    // Validate mutually exclusive options
-    {
-        let mut exclusive = Vec::new();
-        if args.new_branch.is_some() {
-            exclusive.push("-b");
-        }
-        if args.force_new_branch.is_some() {
-            exclusive.push("-B");
-        }
-        if args.detach {
-            exclusive.push("--detach");
-        }
-        if args.orphan {
-            exclusive.push("--orphan");
-        }
-        if exclusive.len() > 1 {
-            bail!(
-                "options '{}' and '{}' cannot be used together",
-                exclusive[0],
-                exclusive[1]
-            );
-        }
-        if args.orphan && args.no_checkout {
-            bail!("options '--orphan' and '--no-checkout' cannot be used together");
-        }
-        if args.reason.is_some() && !args.lock {
-            bail!("--reason requires --lock");
-        }
+    if args.track && args.no_track {
+        fatal_usage("options '--track' and '--no-track' cannot be used together");
+    }
+    if args.new_branch.is_some() && args.force_new_branch.is_some() {
+        fatal_usage("options '-b' and '-B' cannot be used together");
+    }
+    if args.new_branch.is_some() && args.detach {
+        fatal_usage("options '-b' and '--detach' cannot be used together");
+    }
+    if args.force_new_branch.is_some() && args.detach {
+        fatal_usage("options '-B' and '--detach' cannot be used together");
+    }
+    if args.orphan && args.detach {
+        fatal_usage("options '--orphan' and '--detach' cannot be used together");
+    }
+    if args.orphan && args.no_checkout {
+        fatal_usage("options '--orphan' and '--no-checkout' cannot be used together");
+    }
+    if args.orphan && args.branch.is_some() {
+        fatal_usage("options '--orphan' and '<commit-ish>' cannot be used together");
+    }
+    if args.reason.is_some() && !args.lock {
+        bail!("--reason requires --lock");
     }
 
     let repo = Repository::discover(None)?;
@@ -379,10 +382,16 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             format!("{}\n", common.display()),
         )?;
 
+        let orphan_branch = args
+            .new_branch
+            .clone()
+            .or(args.force_new_branch.clone())
+            .unwrap_or_else(|| wt_name.clone());
+
         // HEAD points to an unborn branch
         fs::write(
             wt_admin.join("HEAD"),
-            format!("ref: refs/heads/{}\n", wt_name),
+            format!("ref: refs/heads/{}\n", orphan_branch),
         )?;
 
         // Write the .git file in the worktree
@@ -396,7 +405,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
         println!(
             "Preparing worktree (new branch '{}') at '{}'",
-            wt_name,
+            orphan_branch,
             wt_path.display()
         );
         return Ok(());
@@ -421,13 +430,18 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         let oid =
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
         (Some(new_b.clone()), oid, false)
-    } else if let Some(ref spec) = args.branch {
+    } else if let Some(ref spec_raw) = args.branch {
+        let spec = if spec_raw == "-" {
+            resolve_previous_branch_name(&common)?
+        } else {
+            spec_raw.clone()
+        };
         // Existing local branch: check out attached.
         if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{spec}")) {
             (Some(spec.clone()), oid, false)
         } else {
             // Existing non-branch commit-ish (e.g. tag): check out detached.
-            match resolve_commitish(&repo, spec) {
+            match resolve_commitish(&repo, &spec) {
                 Ok(oid) => (None, oid, true),
                 Err(_) => {
                     // Unknown name: create a new branch from HEAD.
@@ -480,15 +494,27 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // Create the branch ref if it doesn't exist yet
         let branch_ref = format!("refs/heads/{}", branch_name);
         let ref_path = common.join(&branch_ref);
+        if !args.force {
+            if let Some(existing_path) =
+                find_branch_checkout_path(&repo, &common, &branch_ref, Some(&wt_path))?
+            {
+                bail!(
+                    "'{}' is already used by worktree at '{}'",
+                    branch_name,
+                    existing_path.display()
+                );
+            }
+        }
         if !ref_path.exists() {
             // New branch: create it pointing to the commit
             if let Some(parent) = ref_path.parent() {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
-        } else if !args.force {
-            // Branch already exists — check if it's checked out in another worktree
-            // (For simplicity, allow it; git also warns but --force overrides)
+        } else if args.new_branch.is_some() && args.force_new_branch.is_none() && !args.force {
+            bail!("a branch named '{}' already exists", branch_name);
+        } else if args.force_new_branch.is_some() {
+            fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
         }
         fs::write(
             wt_admin.join("HEAD"),
@@ -1211,6 +1237,95 @@ fn parse_gitdir_target(admin: &Path, text: &str) -> Option<PathBuf> {
     } else {
         Some(admin.join(path))
     }
+}
+
+fn fatal_usage(message: &str) -> ! {
+    eprintln!("fatal: {message}");
+    std::process::exit(128);
+}
+
+fn resolve_previous_branch_name(common_git_dir: &Path) -> Result<String> {
+    let reflog_path = common_git_dir.join("logs/HEAD");
+    let content = fs::read_to_string(&reflog_path)
+        .with_context(|| format!("cannot read {}", reflog_path.display()))?;
+    for line in content.lines().rev() {
+        if let Some(msg_start) = line.find("checkout: moving from ") {
+            let rest = &line[msg_start + "checkout: moving from ".len()..];
+            if let Some(to_idx) = rest.find(" to ") {
+                return Ok(rest[..to_idx].to_string());
+            }
+        }
+    }
+    bail!("no previous branch found in reflog")
+}
+
+fn find_branch_checkout_path(
+    repo: &Repository,
+    common_git_dir: &Path,
+    branch_ref: &str,
+    exclude_wt_path: Option<&Path>,
+) -> Result<Option<PathBuf>> {
+    let expected = format!("ref: {branch_ref}");
+    let exclude = exclude_wt_path.and_then(|p| p.canonicalize().ok());
+
+    if let Ok(head) = fs::read_to_string(repo.git_dir.join("HEAD")) {
+        if head.trim() == expected {
+            if let Some(wt) = repo.work_tree.as_ref() {
+                let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+                if exclude.as_ref() != Some(&wt_canon) {
+                    return Ok(Some(wt_canon));
+                }
+            }
+        }
+    }
+
+    if repo.git_dir != common_git_dir {
+        if let Ok(head) = fs::read_to_string(common_git_dir.join("HEAD")) {
+            if head.trim() == expected {
+                if let Some(main_wt) = common_git_dir.parent() {
+                    let wt_canon = main_wt.canonicalize().unwrap_or_else(|_| main_wt.to_path_buf());
+                    if exclude.as_ref() != Some(&wt_canon) {
+                        return Ok(Some(wt_canon));
+                    }
+                }
+            }
+        }
+    }
+
+    let worktrees_dir = common_git_dir.join("worktrees");
+    if !worktrees_dir.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(&worktrees_dir)? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let admin = entry.path();
+        if !admin.is_dir() {
+            continue;
+        }
+        let Ok(head) = fs::read_to_string(admin.join("HEAD")) else {
+            continue;
+        };
+        if head.trim() != expected {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(admin.join("gitdir")) else {
+            continue;
+        };
+        let Some(dotgit_path) = parse_gitdir_target(&admin, raw.trim()) else {
+            continue;
+        };
+        let Some(wt_path) = dotgit_path.parent() else {
+            continue;
+        };
+        let wt_canon = wt_path.canonicalize().unwrap_or_else(|_| wt_path.to_path_buf());
+        if exclude.as_ref() != Some(&wt_canon) {
+            return Ok(Some(wt_canon));
+        }
+    }
+    Ok(None)
 }
 
 fn ensure_relative_worktree_extensions(common_git_dir: &Path) -> Result<()> {
