@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    77 |
+| Completed   |    78 |
 | In progress |     1 |
-| Remaining   |   689 |
+| Remaining   |   688 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6009-rev-list-parent` — 15/15 tests pass (`rev-list` CLI now supports `--not` polarity toggling and no-limit toggles `--no-min-parents`/`--no-max-parents`; `^!` single-commit range shorthand is expanded to `<rev>` + `^<rev>^@` before revset parsing, fixing ancestor-culling and same-commit-time edge cases while preserving existing parent-count filtering semantics)
 - `t6409-merge-subtree` — 12/12 tests pass (`tests/test-lib.sh` now keeps working-directory state between `test_expect_success` blocks like upstream, allowing the nested `git-gui`/`git` subtree scenario to preserve intended relative `cd` context; this unblocks later subtree update/explicit-subtree merge cases and validates the earlier subtree strategy, `read-tree --prefix -u`, and relative remote URL fixes end-to-end)
 - `t6403-merge-file` — 39/39 tests pass (`merge-file` now accepts the local harness `unknown-oid` placeholder as an empty blob in `--object-id` mode, reads default conflict style from `merge.conflictstyle` when no explicit `--diff3/--zdiff3` flag is set, and forwards `--diff-algorithm` into the merge engine; `worktree add` now infers unborn-orphan creation when source HEAD has no commit, matching expected linked-worktree setup semantics; merge-file conflict marker line endings now stay consistent across the full output based on merged input style, fixing CRLF conflict marker checks while preserving diff3 regression behavior)
 - `t6501-freshen-objects` — 42/42 tests pass (`tests/test-tool chmtime` now supports the upstream `--get <offset>` form used to backdate object mtimes in freshen-object simulations; `tests/test-lib.sh test_oid` now provides deterministic fallback OIDs for numeric keys (`001`-`004`) used by broken-link gc tests, so malformed-object fixtures are created as intended in this simplified harness; combined helper updates make all loose/repack/bitmap freshness and broken-link non-complaint checks pass end-to-end)
@@ -67,4 +68,4 @@
 
 ## What Remains
 
-689 test files still pending. See `plan.md` for the full prioritized list.
+688 test files still pending. See `plan.md` for the full prioritized list.

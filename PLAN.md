@@ -738,7 +738,7 @@ commit → check it off → move on.
 - [ ] `t6406-merge-attr` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — per path merge controlled by merge attribute
 - [ ] `t6432-merge-recursive-space-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — merge-recursive space options
 
-- [ ] `t6009-rev-list-parent` ████░░░░░░░░░░░░░░░░ 3/15 (12 left) — ancestor culling and limiting by parent number
+- [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number
 - [ ] `t6426-merge-skip-unneeded-updates` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — merge cases
 - [ ] `t6113-rev-list-bitmap-filters` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — rev-list combining bitmaps and filters
 - [ ] `t6436-merge-overwrite` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git-merge

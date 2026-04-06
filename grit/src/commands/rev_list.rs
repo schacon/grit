@@ -59,6 +59,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut use_color = false;
     let mut disk_usage_format: Option<DiskUsageFormat> = None;
     let mut show_parents = false;
+    let mut not_mode = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -90,6 +91,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 "--quiet" => options.quiet = true,
                 "--stdin" => read_stdin = true,
+                "--not" => not_mode = !not_mode,
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
@@ -303,6 +305,8 @@ pub fn run(args: Args) -> Result<()> {
                     let value = arg.trim_start_matches("--max-parents=");
                     options.max_parents = Some(parse_non_negative(value, "--max-parents")?);
                 }
+                "--no-min-parents" => options.min_parents = None,
+                "--no-max-parents" => options.max_parents = None,
                 _ if arg.starts_with("--ancestry-path=") => {
                     let value = arg.trim_start_matches("--ancestry-path=");
                     let oid =
@@ -369,7 +373,15 @@ pub fn run(args: Args) -> Result<()> {
             i += 1;
             continue;
         }
-        revision_specs.push(arg.clone());
+        if not_mode {
+            if let Some(stripped) = arg.strip_prefix('^') {
+                revision_specs.push(stripped.to_owned());
+            } else {
+                revision_specs.push(format!("^{arg}"));
+            }
+        } else {
+            revision_specs.push(arg.clone());
+        }
         i += 1;
     }
 
@@ -427,13 +439,15 @@ pub fn run(args: Args) -> Result<()> {
     let mut symmetric_right: Option<String> = None;
     let mut processed_specs = Vec::new();
     for spec in &revision_specs {
-        if is_symmetric_diff(spec) {
-            if let Some((lhs, rhs)) = split_symmetric_diff(spec) {
-                symmetric_left = Some(lhs);
-                symmetric_right = Some(rhs);
+        for expanded in expand_parent_shorthand(&repo, spec)? {
+            if is_symmetric_diff(&expanded) {
+                if let Some((lhs, rhs)) = split_symmetric_diff(&expanded) {
+                    symmetric_left = Some(lhs);
+                    symmetric_right = Some(rhs);
+                }
+            } else {
+                processed_specs.push(expanded);
             }
-        } else {
-            processed_specs.push(spec.clone());
         }
     }
 
@@ -843,6 +857,25 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn expand_parent_shorthand(repo: &Repository, spec: &str) -> Result<Vec<String>> {
+    if let Some(base) = spec.strip_suffix("^!") {
+        let base_spec = if base.is_empty() { "HEAD" } else { base };
+        let base_oid = grit_lib::rev_parse::resolve_revision(repo, base_spec)
+            .with_context(|| format!("bad revision '{base_spec}'"))?;
+        let object = repo.odb.read(&base_oid)?;
+        let commit = parse_commit(&object.data)?;
+
+        let mut expanded = Vec::with_capacity(commit.parents.len() + 1);
+        expanded.push(base_spec.to_string());
+        for parent in commit.parents {
+            expanded.push(format!("^{}", parent.to_hex()));
+        }
+        return Ok(expanded);
+    }
+
+    Ok(vec![spec.to_string()])
 }
 
 fn split_trailing_pathspecs(
