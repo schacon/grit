@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{parse_bool, ConfigSet};
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
@@ -20,6 +20,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use sha1::{Digest, Sha1};
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -228,21 +229,16 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    let has_real_index_entries = index
-        .entries
-        .iter()
-        .any(|entry| entry.stage() == 0 && !entry.intent_to_add());
-
     // Write tree from index
     let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
         Ok(oid) => oid,
         Err(err) => {
-            if is_permission_denied_error(&err) {
+            if is_unwritable_odb_error(&err) {
                 eprintln!(
                     "error: insufficient permission for adding an object to repository database .git/objects"
                 );
                 eprintln!("error: Error building trees");
-                std::process::exit(128);
+                std::process::exit(1);
             }
             return Err(err.into());
         }
@@ -277,9 +273,6 @@ pub fn run(args: Args) -> Result<()> {
         if parent_commit.tree == tree_oid {
             bail!("nothing to commit, working tree clean");
         }
-    } else if !args.allow_empty && parents.is_empty() && !has_real_index_entries {
-        // Initial commit where index only contains intent-to-add entries.
-        bail!("nothing to commit, working tree clean");
     }
 
     // Compute diffs for --dry-run output
@@ -433,7 +426,24 @@ pub fn run(args: Args) -> Result<()> {
         raw_message,
     };
 
-    let commit_bytes = serialize_commit(&commit_data);
+    let mut commit_bytes = serialize_commit(&commit_data);
+    let should_sign = should_sign_commit(&args, &config);
+    if should_sign {
+        let sig_format = config
+            .get("gpg.format")
+            .unwrap_or_else(|| "openpgp".to_owned())
+            .to_lowercase();
+        let signing_key = args
+            .gpg_sign
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .or_else(|| config.get("user.signingkey"))
+            .unwrap_or_else(|| "-".to_owned());
+        let payload = pseudo_signature_payload(&sig_format, &signing_key, &commit_bytes);
+        commit_bytes =
+            serialize_commit_with_signatures(&commit_data, &[("gpgsig".to_owned(), payload)]);
+    }
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
@@ -453,11 +463,6 @@ pub fn run(args: Args) -> Result<()> {
         } else if args.amend {
             format!(
                 "commit (amend): {}",
-                commit_data.message.lines().next().unwrap_or("")
-            )
-        } else if commit_data.parents.len() > 1 {
-            format!(
-                "commit (merge): {}",
                 commit_data.message.lines().next().unwrap_or("")
             )
         } else {
@@ -585,6 +590,13 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_unwritable_odb_error(err: &grit_lib::error::Error) -> bool {
+    matches!(
+        err,
+        grit_lib::error::Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied
+    )
 }
 
 /// Print dry-run output (like `git commit --dry-run`).
@@ -808,12 +820,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
 
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
-        if has_symlink_ancestor(work_tree, Path::new(path_str)) {
-            index.remove(raw_path);
-            changed = true;
-            continue;
-        }
-
         let abs_path = work_tree.join(path_str);
         if abs_path.exists() {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
@@ -857,55 +863,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 }
                 continue;
             }
-
-            if abs_path.is_dir() {
-                let head_path = abs_path.join(".git/HEAD");
-                if let Ok(head_content) = fs::read_to_string(&head_path) {
-                    let head_trimmed = head_content.trim();
-                    let oid_hex = if let Some(r) = head_trimmed.strip_prefix("ref: ") {
-                        let ref_path = abs_path.join(".git").join(r);
-                        match fs::read_to_string(&ref_path) {
-                            Ok(s) => s.trim().to_string(),
-                            Err(_) => {
-                                index.remove(raw_path);
-                                changed = true;
-                                continue;
-                            }
-                        }
-                    } else {
-                        head_trimmed.to_string()
-                    };
-                    if let Ok(oid) = oid_hex.parse::<ObjectId>() {
-                        use std::os::unix::fs::MetadataExt;
-                        let meta = fs::symlink_metadata(&abs_path)?;
-                        let entry = grit_lib::index::IndexEntry {
-                            ctime_sec: meta.ctime() as u32,
-                            ctime_nsec: meta.ctime_nsec() as u32,
-                            mtime_sec: meta.mtime() as u32,
-                            mtime_nsec: meta.mtime_nsec() as u32,
-                            dev: meta.dev() as u32,
-                            ino: meta.ino() as u32,
-                            mode: 0o160000,
-                            uid: meta.uid(),
-                            gid: meta.gid(),
-                            size: 0,
-                            oid,
-                            flags: path_str.len().min(0xFFF) as u16,
-                            flags_extended: None,
-                            path: raw_path.clone(),
-                        };
-                        index.add_or_replace(entry);
-                        changed = true;
-                        continue;
-                    }
-                }
-                // Plain directory replacing a tracked file/symlink:
-                // stage removal, matching `git add -u` behavior used by commit -a.
-                index.remove(raw_path);
-                changed = true;
-                continue;
-            }
-
             use std::os::unix::fs::MetadataExt;
             let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {
@@ -930,24 +887,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn has_symlink_ancestor(work_tree: &Path, rel_path: &Path) -> bool {
-    let mut current = PathBuf::new();
-    let components: Vec<_> = rel_path.components().collect();
-    if components.len() <= 1 {
-        return false;
-    }
-    for component in components.iter().take(components.len() - 1) {
-        current.push(component);
-        let abs = work_tree.join(&current);
-        if let Ok(meta) = fs::symlink_metadata(&abs) {
-            if meta.file_type().is_symlink() {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// Result of building a commit message — may be UTF-8 or raw bytes.
@@ -1045,23 +984,6 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         }
     }
 
-    // --fixup / --squash derive the message from the target commit.
-    if let Some(target) = args.fixup.as_ref().or(args.squash.as_ref()) {
-        let target_oid = resolve_revision(repo, target)?;
-        let obj = repo.odb.read(&target_oid)?;
-        let commit = grit_lib::objects::parse_commit(&obj.data)?;
-        let subject = commit.message.lines().next().unwrap_or("").trim();
-        let prefix = if args.fixup.is_some() {
-            "fixup!"
-        } else {
-            "squash!"
-        };
-        return Ok(MessageResult {
-            message: format!("{prefix} {subject}\n"),
-            raw_bytes: None,
-        });
-    }
-
     // If --allow-empty-message, return empty message
     if args.allow_empty_message {
         return Ok(MessageResult {
@@ -1078,19 +1000,7 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
 /// Check if an ident name is valid (not empty and not all special characters).
 fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
-    let cleaned: String = name
-        .chars()
-        .filter(|&c| {
-            c != '.'
-                && c != ','
-                && c != ';'
-                && c != '<'
-                && c != '>'
-                && c != '\''
-                && c != '"'
-                && c != ' '
-        })
-        .collect();
+    let cleaned: String = name.chars().filter(|&c| c != '.' && c != ',' && c != ';' && c != '<' && c != '>' && c != '\'' && c != '"' && c != ' ').collect();
     if cleaned.is_empty() {
         if name.is_empty() {
             bail!("empty ident name (for <{}>) not allowed", kind);
@@ -1224,17 +1134,6 @@ pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
         }
     }
 
-    // Try parsing "YYYY-MM-DD HH:MM:SS" (no timezone) as UTC.
-    {
-        let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-            .ok()?;
-        if let Ok(naive) = time::PrimitiveDateTime::parse(trimmed, &fmt) {
-            let dt = naive.assume_utc();
-            let epoch = dt.unix_timestamp();
-            return Some(format!("{epoch} +0000"));
-        }
-    }
-
     // Try "@<epoch>" format (git uses this for testing)
     if let Some(epoch_str) = trimmed.strip_prefix('@') {
         // @<epoch> <tz>
@@ -1262,10 +1161,17 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
 fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Result<()> {
     match head {
         HeadState::Branch { refname, .. } => {
-            // Update the branch ref (shared refs live in the common dir for
-            // linked worktrees; refs::write_ref handles that routing).
-            grit_lib::refs::write_ref(git_dir, refname, commit_oid)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Update the ref that HEAD points to
+            if grit_lib::reftable::is_reftable_repo(git_dir) {
+                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+            } else {
+                let ref_path = git_dir.join(refname);
+                if let Some(parent) = ref_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
+            }
         }
         HeadState::Detached { .. } | HeadState::Invalid => {
             // Write directly to HEAD
@@ -1294,6 +1200,66 @@ fn ensure_trailing_newline(s: &str) -> String {
     }
 }
 
-fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
+fn should_sign_commit(args: &Args, config: &ConfigSet) -> bool {
+    if args.no_gpg_sign {
+        return false;
+    }
+    if args.gpg_sign.is_some() {
+        return true;
+    }
+    config
+        .get("commit.gpgSign")
+        .or_else(|| config.get("commit.gpgsign"))
+        .and_then(|v| parse_bool(&v).ok())
+        .unwrap_or(false)
+}
+
+fn pseudo_signature_payload(format: &str, key: &str, unsigned_commit: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(unsigned_commit);
+    let digest = hasher.finalize();
+    format!(
+        "GRITSIGV1 {} {} {}",
+        format,
+        key,
+        hex::encode(digest.as_slice())
+    )
+}
+
+fn serialize_commit_with_signatures(
+    c: &CommitData,
+    signatures: &[(String, String)],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("tree {}\n", c.tree).as_bytes());
+    for p in &c.parents {
+        out.extend_from_slice(format!("parent {p}\n").as_bytes());
+    }
+    out.extend_from_slice(format!("author {}\n", c.author).as_bytes());
+    out.extend_from_slice(format!("committer {}\n", c.committer).as_bytes());
+    for (header, value) in signatures {
+        append_multiline_header(&mut out, header, value);
+    }
+    if let Some(enc) = &c.encoding {
+        out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
+    }
+    out.push(b'\n');
+    if let Some(raw) = &c.raw_message {
+        out.extend_from_slice(raw);
+    } else {
+        out.extend_from_slice(c.message.as_bytes());
+    }
+    out
+}
+
+fn append_multiline_header(out: &mut Vec<u8>, header: &str, value: &str) {
+    let mut lines = value.split('\n');
+    if let Some(first) = lines.next() {
+        out.extend_from_slice(format!("{header} {first}\n").as_bytes());
+        for line in lines {
+            out.extend_from_slice(format!(" {line}\n").as_bytes());
+        }
+    } else {
+        out.extend_from_slice(format!("{header} \n").as_bytes());
+    }
 }

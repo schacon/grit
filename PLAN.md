@@ -14,7 +14,7 @@ commit → check it off → move on.
 
 ## 1. Basic/Setup (37 files)
 
-- [ ] `t0050-filesystem` ██████████████████░░ 12/13 (1 left) — Various filesystem issues
+- [x] `t0050-filesystem` ████████████████████ 13/13 (0 left) — Various filesystem issues
 - [x] `t0062-revision-walking` ████████████████████ 2/2 (0 left) — Test revision walking api
 - [x] `t0071-sort` ████████████████████ 1/1 (0 left) — verify sort functions
 - [x] `t0080-unit-test-output` ████████████████████ 1/1 (0 left) — Test the output of the unit test framework
@@ -37,15 +37,15 @@ commit → check it off → move on.
 - [x] `t0091-bugreport` ████████████████████ 13/13 (0 left) — git bugreport
 - [x] `t0066-dir-iterator` ████████████████████ 10/10 (0 left) — Test the dir-iterator functionality
 - [x] `t0067-parse_pathspec_file` ████████████████████ 8/8 (0 left) — Test parse_pathspec_file()
-- [ ] `t0070-fundamental` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — check that the most basic functions work
+- [x] `t0070-fundamental` ████████████████████ 11/11 (0 left) — check that the most basic functions work
 
-- [ ] `t0095-bloom` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — Testing the various Bloom filter computations in bloom.c
-- [ ] `t0035-safe-bare-repository` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — verify safe.bareRepository checks
-- [ ] `t0033-safe-directory` █████████░░░░░░░░░░░ 10/22 (12 left) — verify safe.directory checks
-- [ ] `t0019-json-writer` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — test json-writer JSON generation
-- [ ] `t0020-crlf` ██████████░░░░░░░░░░ 19/36 (17 left) — CRLF conversion
-- [ ] `t0014-alias` ░░░░░░░░░░░░░░░░░░░░ 1/21 (20 left) — git command aliasing
-- [ ] `t0061-run-command` ██░░░░░░░░░░░░░░░░░░ 3/24 (21 left) — Test run command
+- [x] `t0095-bloom` ████████████████████ 11/11 (0 left) — Testing the various Bloom filter computations in bloom.c
+- [x] `t0035-safe-bare-repository` ████████████████████ 12/12 (0 left) — verify safe.bareRepository checks
+- [x] `t0033-safe-directory` ████████████████████ 22/22 (0 left) — verify safe.directory checks
+- [x] `t0019-json-writer` ████████████████████ 16/16 (0 left) — test json-writer JSON generation
+- [x] `t0020-crlf` ████████████████████ 36/36 (0 left) — CRLF conversion
+- [x] `t0014-alias` ████████████████████ 21/21 (0 left) — git command aliasing
+- [x] `t0061-run-command` ████████████████████ 24/24 (0 left) — Test run command
 - [ ] `t0090-cache-tree` ░░░░░░░░░░░░░░░░░░░░ 0/22 (22 left) — Test whether cache-tree is properly updated
 
 - [ ] `t0021-conversion` ████████░░░░░░░░░░░░ 18/42 (24 left) — blob conversion via gitattributes
@@ -67,40 +67,41 @@ commit → check it off → move on.
 
 - [x] `t1003-read-tree-prefix` ████████████████████ 3/3 (0 left) — git read-tree --prefix test.
 
-- [x] `t1008-read-tree-overlay` ██████████████░░░░░░ 2/2 (0 left) — test multi-tree read-tree without merging
-- [x] `t0611-reftable-httpd` ████████████████████ 1/1 (0 left) — reftable HTTPD tests
-- [x] `t1022-read-tree-partial-clone` ██ 1/1 (0 left) — git read-tree in partial clones
+- [x] `t1008-read-tree-overlay` ████████████████████ 2/2 (0 left) — test multi-tree read-tree without merging
+- [ ] `t0611-reftable-httpd` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — reftable HTTPD tests
+- [ ] `t1022-read-tree-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git read-tree in partial clones
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
+- [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
-- [x] `t1015-read-index-unmerged` ████████████████████ 6/6 (0 left) — Test various callers of read_index_unmerged
+- [ ] `t1015-read-index-unmerged` █████████████░░░░░░░ 4/6 (2 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
-- [x] `t1601-index-bogus` ████████████████████ 4/4 (0 left) — test handling of bogus index entries
-- [x] `t1901-repo-structure` ████████████████████ 4/4 (0 left) — test git repo structure
-- [x] `t1311-config-optional` ████████████████████ 3/3 (0 left) — :(optional) paths
-- [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
-- [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
-- [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
-- [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
-- [x] `t1600-index` ████████████████████ 7/7 (0 left) — index file specific tests
-- [x] `t1407-worktree-ref-store` ████████████████████ 4/4 (0 left) — test worktree ref store api
-- [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
-- [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
+- [ ] `t1601-index-bogus` ██████████░░░░░░░░░░ 2/4 (2 left) — test handling of bogus index entries
+- [ ] `t1901-repo-structure` ██████████░░░░░░░░░░ 2/4 (2 left) — test git repo structure
+- [ ] `t1311-config-optional` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — :(optional) paths
+- [ ] `t1408-packed-refs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — packed-refs entries are covered by loose refs
+- [ ] `t1401-symbolic-ref` █████████████████░░░ 22/25 (3 left) — basic symbolic-ref tests
+- [ ] `t1307-config-blob` ███████████████░░░░░ 10/13 (3 left) — support for reading config from a blob
+- [ ] `t1503-rev-parse-verify` ███████████████░░░░░ 9/12 (3 left) — test git rev-parse --verify
+- [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
+- [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api
+- [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again
+- [ ] `t1512-rev-parse-disambiguation` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — object name disambiguation
 
-- [x] `t1051-large-conversion` ████████████████████ 12/12 (0 left) — test conversion filters on large files
-- [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
-- [ ] `t0411-clone-from-partial` █████████████████░░░ 6/7 (0 fully, 6 passing) — check that local clone does not fetch from promisor remotes
-- [x] `t1090-sparse-checkout-scope` █████████████████░░░ 6/7 (0 fully, 6 passing) — sparse checkout scope tests
-- [x] `t1302-repo-version` ████████████████████ 18/18 (0 left) — Test repository version check
+- [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
+- [ ] `t1012-read-tree-df` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — read-tree D/F conflict corner cases
+- [ ] `t0411-clone-from-partial` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — check that local clone does not fetch from promisor remotes
+- [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
+- [ ] `t1302-repo-version` █████████████░░░░░░░ 12/18 (6 left) — Test repository version check
 - [ ] `t1060-object-corruption` ████████████░░░░░░░░ 11/17 (6 left) — see how we handle various forms of corruption
-- [x] `t1020-subdirectory` ████████████████████ 15/15 (0 left) — Try various core-level commands in subdirectory.
+- [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.
 
 - [ ] `t1415-worktree-refs` ████████░░░░░░░░░░░░ 4/10 (6 left) — per-worktree refs
-- [x] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
-- [x] `t1005-read-tree-reset` ████████████████████ 7/7 (0 left) — read-tree -u --reset
+- [ ] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
+- [ ] `t1005-read-tree-reset` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — read-tree -u --reset
 - [ ] `t0100-previous` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — previous branch syntax @{-n}
-- [x] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
+- [ ] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
 - [ ] `t1406-submodule-ref-store` ██████████░░░░░░░░░░ 8/15 (7 left) — test submodule ref store api
 - [ ] `t1309-early-config` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — Test read_early_config()
 - [ ] `t0614-reftable-fsck` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — Test reftable backend consistency check
@@ -109,8 +110,8 @@ commit → check it off → move on.
 - [ ] `t1417-reflog-updateref` ███████████░░░░░░░░░ 12/21 (9 left) — git reflog --updateref
 - [ ] `t1414-reflog-walk` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — various tests of reflog walk (log -g) behavior
 - [ ] `t1421-reflog-write` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Manually write reflog entries
-- [x] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
-- [x] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
+- [ ] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
+- [ ] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
 - [ ] `t1004-read-tree-m-u-wf` ███████░░░░░░░░░░░░░ 6/17 (11 left) — read-tree -m -u checks working tree files
 - [ ] `t1411-reflog-show` ███████░░░░░░░░░░░░░ 6/17 (11 left) — Test reflog display routines
 - [ ] `t0212-trace2-event` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — test trace2 facility
@@ -170,27 +171,27 @@ commit → check it off → move on.
 ## 3. Index/Checkout (50 files)
 
 - [x] `t2060-switch` ████████████████████ 16/16 — switch basic functionality
-- [x] `t2050-git-dir-relative` ████████████████████ 4/4 (0 left) — check problems with relative GIT_DIR
+- [ ] `t2050-git-dir-relative` ███████████████░░░░░ 3/4 (1 left) — check problems with relative GIT_DIR
 
-- [x] `t2015-checkout-unborn` ████████████████████ 6/6 (0 left) — checkout from unborn branch
-- [x] `t2105-update-index-gitfile` ████████████████████ 4/4 (0 left) — git update-index for gitlink to .git file.
+- [ ] `t2015-checkout-unborn` █████████████░░░░░░░ 4/6 (2 left) — checkout from unborn branch
+- [ ] `t2105-update-index-gitfile` ██████████░░░░░░░░░░ 2/4 (2 left) — git update-index for gitlink to .git file.
 
-- [x] `t2012-checkout-last` ████████████████████ 22/22 (0 left) — checkout can switch to last branch and merge base
-- [x] `t2010-checkout-ambiguous` ████████████████████ 10/10 (0 left) — checkout and pathspecs/refspecs ambiguities
-- [x] `t2104-update-index-skip-worktree` ████████████████████ 7/7 (0 left) — skip-worktree bit test
-- [x] `t2023-checkout-m` ████████████████████ 5/5 (0 left) — checkout -m -- <conflicted path>
+- [ ] `t2012-checkout-last` █████████████████░░░ 19/22 (3 left) — checkout can switch to last branch and merge base
+- [ ] `t2010-checkout-ambiguous` ██████████████░░░░░░ 7/10 (3 left) — checkout and pathspecs/refspecs ambiguities
+- [ ] `t2104-update-index-skip-worktree` ███████████░░░░░░░░░ 4/7 (3 left) — skip-worktree bit test
+- [ ] `t2023-checkout-m` ████████░░░░░░░░░░░░ 2/5 (3 left) — checkout -m -- <conflicted path>
 
-- [x] `t2027-checkout-track` ████████████████████ 5/5 (0 left) — tests for git branch --track
-- [x] `t2202-add-addremove` ████████████████████ 3/3 (0 left) — git add --all
+- [ ] `t2027-checkout-track` ████████░░░░░░░░░░░░ 2/5 (3 left) — tests for git branch --track
+- [ ] `t2202-add-addremove` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git add --all
 - [ ] `t2018-checkout-branch` ████████████████░░░░ 21/25 (4 left) — checkout
 - [ ] `t2006-checkout-index-basic` ███████████░░░░░░░░░ 5/9 (4 left) — basic checkout-index tests
 
 - [ ] `t2019-checkout-ambiguous-ref` ███████████░░░░░░░░░ 5/9 (4 left) — checkout handling of ambiguous (branch/tag) refs
 - [ ] `t2206-add-submodule-ignored` ██████████░░░░░░░░░░ 4/8 (4 left) — git add respects submodule ignore=all and explicit pathspec
-- [ ] `t2022-checkout-paths` ████████████████████ 5/5 (0 left) — checkout $tree -- $paths
-- [ ] `t2082-parallel-checkout-attributes` ████████████████████ 5/5 (0 left) — parallel-checkout: attributes
+- [ ] `t2022-checkout-paths` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — checkout $tree -- $paths
+- [ ] `t2082-parallel-checkout-attributes` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — parallel-checkout: attributes
 
-- [ ] `t2103-update-index-ignore-missing` ████████████████████ 5/5 (0 left) — update-index with options
+- [ ] `t2103-update-index-ignore-missing` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — update-index with options
 - [ ] `t2000-conflict-when-checking-files-out` ████████████░░░░░░░░ 9/14 (5 left) — git conflicts when checking files out test.
 - [ ] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
 - [ ] `t2107-update-index-basic` ██████████░░░░░░░░░░ 5/10 (5 left) — basic update-index tests
@@ -235,32 +236,32 @@ commit → check it off → move on.
 
 ## 4. Core Commands (109 files)
 
-- [x] `t3302-notes-index-expensive` ████████████████████ 12/12 (0 left) — Test commit notes index (expensive!)
-- [x] `t3502-cherry-pick-merge` ████████████████████ 12/12 (0 left) — cherry picking and reverting a merge
+- [ ] `t3302-notes-index-expensive` ██████████████████░░ 11/12 (1 left) — Test commit notes index (expensive!)
+- [ ] `t3502-cherry-pick-merge` ██████████████████░░ 11/12 (1 left) — cherry picking and reverting a merge
 
-- [x] `t3211-peel-ref` ████████████████████ 8/8 (0 left) — tests for the peel_ref optimization of packed-refs
-- [x] `t3003-ls-files-exclude` ████████████████████ 7/7 (0 left) — ls-files --exclude does not affect index files
-- [x] `t3004-ls-files-basic` ████████████████████ 6/6 (0 left) — basic ls-files tests
+- [ ] `t3211-peel-ref` █████████████████░░░ 7/8 (1 left) — tests for the peel_ref optimization of packed-refs
+- [ ] `t3003-ls-files-exclude` █████████████████░░░ 6/7 (1 left) — ls-files --exclude does not affect index files
+- [ ] `t3004-ls-files-basic` ████████████████░░░░ 5/6 (1 left) — basic ls-files tests
 
-- [x] `t3304-notes-mixed` ████████████████████ 6/6 (0 left) — Test notes trees that also contain non-notes
-- [x] `t3102-ls-tree-wildcards` ████████████████████ 4/4 (0 left) — ls-tree with(out) globs
-- [x] `t3500-cherry` ████████████████████ 4/4 (0 left) — git cherry should detect patches integrated upstream
+- [ ] `t3304-notes-mixed` ████████████████░░░░ 5/6 (1 left) — Test notes trees that also contain non-notes
+- [ ] `t3102-ls-tree-wildcards` ███████████████░░░░░ 3/4 (1 left) — ls-tree with(out) globs
+- [ ] `t3500-cherry` ███████████████░░░░░ 3/4 (1 left) — git cherry should detect patches integrated upstream
 
-- [x] `t3009-ls-files-others-nonsubmodule` ████████████████████ 2/2 (0 left) — test git ls-files --others with non-submodule repositories
+- [ ] `t3009-ls-files-others-nonsubmodule` ██████████░░░░░░░░░░ 1/2 (1 left) — test git ls-files --others with non-submodule repositories
 
-- [x] `t3908-stash-in-worktree` ████████████████████ 2/2 (0 left) — Test git stash in a worktree
-- [x] `t3008-ls-files-lazy-init-name-hash` ████████████████████ 1/1 (0 left) — Test the lazy init name hash with various folder structures
-- [x] `t3205-branch-color` ████████████████████ 4/4 (0 left) — basic branch output coloring
-- [x] `t3012-ls-files-dedup` ████████████████████ 3/3 (0 left) — git ls-files --deduplicate test
-- [x] `t3307-notes-man` ████████████████████ 3/3 (0 left) — Examples from the git-notes man page
+- [ ] `t3908-stash-in-worktree` ██████████░░░░░░░░░░ 1/2 (1 left) — Test git stash in a worktree
+- [ ] `t3008-ls-files-lazy-init-name-hash` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Test the lazy init name hash with various folder structures
+- [ ] `t3205-branch-color` ██████████░░░░░░░░░░ 2/4 (2 left) — basic branch output coloring
+- [ ] `t3012-ls-files-dedup` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git ls-files --deduplicate test
+- [ ] `t3307-notes-man` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Examples from the git-notes man page
 
-- [x] `t3423-rebase-reword` ████████████████████ 3/3 (0 left) — git rebase interactive with rewording
-- [x] `t3702-add-edit` ████████████████████ 3/3 (0 left) — add -e basic tests
-- [x] `t3450-history` ████████████████████ 2/2 (0 left) — tests for git-history command
-- [x] `t3305-notes-fanout` ████████████████████ 7/7 (0 left) — Test that adding/removing many notes triggers automatic fanout restructuring
-- [x] `t3005-ls-files-relative` ████████████████████ 4/4 (0 left) — ls-files tests with relative paths
+- [ ] `t3423-rebase-reword` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git rebase interactive with rewording
+- [ ] `t3702-add-edit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — add -e basic tests
+- [ ] `t3450-history` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — tests for git-history command
+- [ ] `t3305-notes-fanout` ███████████░░░░░░░░░ 4/7 (3 left) — Test that adding/removing many notes triggers automatic fanout restructuring
+- [ ] `t3005-ls-files-relative` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — ls-files tests with relative paths
 
-- [x] `t3427-rebase-subtree` ████████████████████ 3/3 (0 left) — git rebase tests for -Xsubtree
+- [ ] `t3427-rebase-subtree` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — git rebase tests for -Xsubtree
 
 - [ ] `t3506-cherry-pick-ff` ████████████░░░░░░░░ 7/11 (4 left) — test cherry-picking with --ff option
 - [ ] `t3103-ls-tree-misc` ████████████░░░░░░░░ 6/10 (4 left) — 
@@ -269,8 +270,8 @@ commit → check it off → move on.
 - [ ] `t3419-rebase-patch-id` ██████████░░░░░░░░░░ 4/8 (4 left) — git rebase - test patch id computation
 - [ ] `t3429-rebase-edit-todo` ████████░░░░░░░░░░░░ 3/7 (4 left) — rebase should reread the todo file if an exec modifies it
 - [ ] `t3703-add-magic-pathspec` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — magic pathspec tests using git-add
-- [ ] `t3601-rm-pathspec-file` ████████████████████ 5/5 (0 left) — rm --pathspec-from-file
-- [ ] `t3909-stash-pathspec-file` ████████████████████ 5/5 (0 left) — stash --pathspec-from-file
+- [ ] `t3601-rm-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — rm --pathspec-from-file
+- [ ] `t3909-stash-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — stash --pathspec-from-file
 - [ ] `t3417-rebase-whitespace-fix` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase --whitespace=fix
 
 - [ ] `t3433-rebase-across-mode-change` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase across mode change
@@ -287,7 +288,7 @@ commit → check it off → move on.
 - [ ] `t3509-cherry-pick-merge-df` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — Test cherry-pick with directory/file conflicts
 - [ ] `t3060-ls-files-with-tree` █████░░░░░░░░░░░░░░░ 2/8 (6 left) — git ls-files test (--with-tree).
 
-- [ ] `t3428-rebase-signoff` ████████████████████ 7/7 (0 left) — git rebase --signoff
+- [ ] `t3428-rebase-signoff` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git rebase --signoff
 
 - [ ] `t3505-cherry-pick-empty` ██████████░░░░░░░░░░ 9/17 (8 left) — test cherry-picking an empty commit
 - [ ] `t3902-quoted` ███████░░░░░░░░░░░░░ 5/13 (8 left) — quoted output
@@ -372,44 +373,44 @@ commit → check it off → move on.
 
 ## 5. Diff (132 files)
 
-- [x] `t4204-patch-id` ████████████████████ 26/26 (done) — git patch-id
-- [x] `t4021-format-patch-numbered` ████████████████████ 14/14 (done) — Format-patch numbering options
-- [x] `t4065-diff-anchored` ████████████████████ 7/7 (done) — anchored diff algorithm
-- [x] `t4036-format-patch-signer-mime` ████████████████████ 5/5 (done) — format-patch -s should force MIME encoding as needed
-- [x] `t4004-diff-rename-symlink` ████████████████████ 4/4 (done) — More rename detection tests.
+- [ ] `t4204-patch-id` ███████████████████░ 25/26 (1 left) — git patch-id
+- [ ] `t4021-format-patch-numbered` ██████████████████░░ 13/14 (1 left) — Format-patch numbering options
+- [ ] `t4065-diff-anchored` █████████████████░░░ 6/7 (1 left) — anchored diff algorithm
+- [ ] `t4036-format-patch-signer-mime` ████████████████░░░░ 4/5 (1 left) — format-patch -s should force MIME encoding as needed
+- [ ] `t4004-diff-rename-symlink` ███████████████░░░░░ 3/4 (1 left) — More rename detection tests.
 
-- [x] `t4005-diff-rename-2` ████████████████████ 4/4 (done) — Same rename detection as t4003 but testing diff-raw.
-- [x] `t4043-diff-rename-binary` ████████████████████ 3/3 (done) — Move a binary file
-- [x] `t4113-apply-ending` ████████████████████ 3/3 (done) — git apply trying to add an ending line.
+- [ ] `t4005-diff-rename-2` ███████████████░░░░░ 3/4 (1 left) — Same rename detection as t4003 but testing diff-raw.
+- [ ] `t4043-diff-rename-binary` █████████████░░░░░░░ 2/3 (1 left) — Move a binary file
+- [ ] `t4113-apply-ending` █████████████░░░░░░░ 2/3 (1 left) — git apply trying to add an ending line.
 
-- [x] `t4025-hunk-header` ████████████████████ 2/2 (done) — diff hunk header truncation
-- [x] `t4066-diff-emit-delay` ████████████████████ 2/2 (done) — test combined/stat/moved interaction
-- [x] `t4123-apply-shrink` ████████████████████ 2/2 (done) — apply a patch that is larger than the preimage
-- [x] `t4134-apply-submodule` ████████████████████ 2/2 (done) — git apply submodule tests
-- [x] `t4256-am-format-flowed` ████████████████████ 2/2 (done) — test format=flowed support of git am
-- [x] `t4029-diff-trailing-space` ████████████████████ 1/1 (done) — diff honors config option, diff.suppressBlankEmpty
-- [x] `t4110-apply-scan` ████████████████████ 1/1 (done) — git apply test for patches which require scanning forwards and backwards.
+- [ ] `t4025-hunk-header` ██████████░░░░░░░░░░ 1/2 (1 left) — diff hunk header truncation
+- [ ] `t4066-diff-emit-delay` ██████████░░░░░░░░░░ 1/2 (1 left) — test combined/stat/moved interaction
+- [ ] `t4123-apply-shrink` ██████████░░░░░░░░░░ 1/2 (1 left) — apply a patch that is larger than the preimage
+- [ ] `t4134-apply-submodule` ██████████░░░░░░░░░░ 1/2 (1 left) — git apply submodule tests
+- [ ] `t4256-am-format-flowed` ██████████░░░░░░░░░░ 1/2 (1 left) — test format=flowed support of git am
+- [ ] `t4029-diff-trailing-space` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — diff honors config option, diff.suppressBlankEmpty
+- [ ] `t4110-apply-scan` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git apply test for patches which require scanning forwards and backwards.
 
-- [x] `t4007-rename-3` ████████████████████ 13/13 (0 left) — Rename interaction with pathspec.
+- [ ] `t4007-rename-3` ████████████████░░░░ 11/13 (2 left) — Rename interaction with pathspec.
 
-- [x] `t4111-apply-subdir` ████████████████████ 10/10 (0 left) — patching from inconvenient places
-- [x] `t4006-diff-mode` ████████████████████ 7/7 (done) — Test mode change diffs.
+- [ ] `t4111-apply-subdir` ████████████████░░░░ 8/10 (2 left) — patching from inconvenient places
+- [ ] `t4006-diff-mode` ██████████████░░░░░░ 5/7 (2 left) — Test mode change diffs.
 
-- [x] `t4073-diff-stat-name-width` ████████████████████ 6/6 (0 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
-- [x] `t4125-apply-ws-fuzz` ████████████████████ 4/4 (done) — applying patch that has broken whitespaces in context
-- [x] `t4028-format-patch-mime-headers` ████████████████████ 3/3 (done) — format-patch mime headers and extra headers do not conflict
-- [x] `t4062-diff-pickaxe` ████████████████████ 3/3 (done) — Pickaxe options
-- [x] `t4131-apply-fake-ancestor` ████████████████████ 3/3 (done) — git apply --build-fake-ancestor handling.
-- [x] `t4217-log-limit` ████████████████████ 3/3 (0 left) — git log with filter options limiting the output
-- [x] `t4044-diff-index-unique-abbrev` ████████████████████ 2/2 (0 left) — test unique sha1 abbreviation on 
-- [x] `t4112-apply-renames` ████████████████████ 2/2 (0 left) — git apply should not get confused with rename/copy.
+- [ ] `t4073-diff-stat-name-width` █████████████░░░░░░░ 4/6 (2 left) — git-diff check diffstat filepaths length when containing UTF-8 chars
+- [ ] `t4125-apply-ws-fuzz` ██████████░░░░░░░░░░ 2/4 (2 left) — applying patch that has broken whitespaces in context
+- [ ] `t4028-format-patch-mime-headers` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — format-patch mime headers and extra headers do not conflict
+- [ ] `t4062-diff-pickaxe` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Pickaxe options
+- [ ] `t4131-apply-fake-ancestor` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git apply --build-fake-ancestor handling.
+- [ ] `t4217-log-limit` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git log with filter options limiting the output
+- [ ] `t4044-diff-index-unique-abbrev` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — test unique sha1 abbreviation on 
+- [ ] `t4112-apply-renames` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git apply should not get confused with rename/copy.
 
-- [x] `t4152-am-subjects` ████████████████████ 13/13 (0 left) — test subject preservation with format-patch | am
+- [ ] `t4152-am-subjects` ███████████████░░░░░ 10/13 (3 left) — test subject preservation with format-patch | am
 - [ ] `t4117-apply-reject` ████████████░░░░░░░░ 5/8 (3 left) — git apply with rejects
 
 - [ ] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
 
-- [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
+- [ ] `t4016-diff-quote` ████████░░░░░░░░░░░░ 2/5 (3 left) — Quoting paths in diff output.
 
 - [ ] `t4018-diff-funcname` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test custom diff function name patterns
 - [ ] `t4039-diff-assume-unchanged` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff with assume-unchanged entries
@@ -424,9 +425,9 @@ commit → check it off → move on.
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
 
 - [ ] `t4136-apply-check` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — git apply should exit non-zero with unrecognized input.
-- [ ] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch.
+- [ ] `t4102-apply-rename` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply handling copy/rename patch.
 
-- [ ] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion.
+- [ ] `t4138-apply-ws-expansion` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply test patches with whitespace expansion.
 - [ ] `t4023-diff-rename-typechange` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — typechange rename detection
 - [ ] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
 - [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
@@ -435,16 +436,16 @@ commit → check it off → move on.
 - [ ] `t4064-diff-oidfind` ██████████░░░░░░░░░░ 5/10 (5 left) — test finding specific blobs in the revision walking
 - [ ] `t4031-diff-rewrite-binary` ███████░░░░░░░░░░░░░ 3/8 (5 left) — rewrite diff on binary file
 - [ ] `t4126-apply-empty` ███████░░░░░░░░░░░░░ 3/8 (5 left) — apply empty
-- [ ] `t4116-apply-reverse` █████████████████░░░ 6/7 (0 fully, 6 passing) — git apply in reverse
+- [ ] `t4116-apply-reverse` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git apply in reverse
 
-- [ ] `t4140-apply-ita` █████████████████░░░ 6/7 (0 fully, 6 passing) — git apply of i-t-a file
+- [ ] `t4140-apply-ita` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git apply of i-t-a file
 - [ ] `t4153-am-resume-override-opts` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git-am command-line options override saved options
 - [ ] `t4104-apply-boundary` ███████████████░░░░░ 18/24 (6 left) — git apply boundary tests
 - [ ] `t4001-diff-rename` ██████████████░░░░░░ 17/23 (6 left) — Test rename detection in diff engine.
 - [ ] `t4010-diff-pathspec` ████████████░░░░░░░░ 11/17 (6 left) — Pathspec restrictions
 
-- [ ] `t4122-apply-symlink-inside` ████████████████████ 7/7 (0 left) — apply to deeper directory without getting fooled with symlink
-- [ ] `t4253-am-keep-cr-dos` ████████████████████ 7/7 (0 left) — git-am mbox with dos line ending.
+- [ ] `t4122-apply-symlink-inside` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — apply to deeper directory without getting fooled with symlink
+- [ ] `t4253-am-keep-cr-dos` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git-am mbox with dos line ending.
 
 - [ ] `t4054-diff-bogus-tree` ██████████░░░░░░░░░░ 7/14 (7 left) — test diff with a bogus tree containing the null sha1
 - [ ] `t4114-apply-typechange` ████████░░░░░░░░░░░░ 5/12 (7 left) — git apply should not get confused with type changes.
@@ -576,14 +577,14 @@ commit → check it off → move on.
 - [ ] `t5351-unpack-large-objects` ████████░░░░░░░░░░░░ 3/7 (4 left) — git unpack-objects with large objects
 - [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push
 - [ ] `t5618-alternate-refs` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test handling of --alternate-refs traversal
-- [ ] `t5410-receive-pack` ████████████████████ 5/5 (0 left) — git receive-pack
+- [ ] `t5410-receive-pack` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git receive-pack
 - [ ] `t5517-push-mirror` ████████████░░░░░░░░ 8/13 (5 left) — pushing to a mirror repository
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
 - [ ] `t5564-http-proxy` ███████░░░░░░░░░░░░░ 3/8 (5 left) — test fetching through http proxy
-- [ ] `t5402-post-merge-hook` █████████████████░░░ 6/7 (0 fully, 6 passing) — Test the post-merge hook.
-- [ ] `t5502-quickfetch` █████████████████░░░ 6/7 (0 fully, 6 passing) — test quickfetch from local
-- [ ] `t5544-pack-objects-hook` █████████████████░░░ 6/7 (0 fully, 6 passing) — test custom script in place of pack-objects
+- [ ] `t5402-post-merge-hook` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — Test the post-merge hook.
+- [ ] `t5502-quickfetch` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test quickfetch from local
+- [ ] `t5544-pack-objects-hook` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test custom script in place of pack-objects
 - [ ] `t5316-pack-delta-depth` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — pack-objects breaks long cross-pack delta chains
 - [ ] `t5546-receive-limits` ████████████░░░░░░░░ 11/17 (6 left) — check receive input limits
 - [ ] `t5534-push-signed` ██████████░░░░░░░░░░ 7/13 (6 left) — signed push
@@ -713,7 +714,7 @@ commit → check it off → move on.
 - [ ] `t6133-pathspec-rev-dwim` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test dwim of revs versus pathspecs in revision parser
 - [ ] `t6404-recursive-merge` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test merge without common ancestors
 - [ ] `t6415-merge-dir-to-symlink` ███████████████░░░░░ 19/24 (5 left) — merging when a directory was replaced with a symlink
-- [ ] `t6004-rev-list-path-optim` █████████████████░░░ 6/7 (0 fully, 6 passing) — git rev-list trivial path optimization test
+- [ ] `t6004-rev-list-path-optim` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git rev-list trivial path optimization test
 
 - [ ] `t6005-rev-list-count` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git rev-list --max-count and --skip test
 - [ ] `t6439-merge-co-error-msgs` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — unpack-trees error messages
@@ -721,7 +722,7 @@ commit → check it off → move on.
 
 - [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands
 - [ ] `t6427-diff3-conflict-markers` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — recursive merge diff3 style conflict markers
-- [ ] `t6060-merge-index` ████████████████████ 7/7 (0 left) — basic git merge-index / git-merge-one-file tests
+- [ ] `t6060-merge-index` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic git merge-index / git-merge-one-file tests
 - [ ] `t6131-pathspec-icase` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — test case insensitive pathspec limiting
 - [ ] `t6102-rev-list-unexpected-objects` ████████████░░░░░░░░ 14/22 (8 left) — git rev-list should handle unexpected object types
 - [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
@@ -808,10 +809,10 @@ commit → check it off → move on.
 - [ ] `t7615-diff-algo-with-mergy-operations` ████████░░░░░░░░░░░░ 3/7 (4 left) — git merge and other operations that rely on merge
 
 - [ ] `t7402-submodule-rebase` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test rebasing, stashing, etc. with submodules
-- [ ] `t7421-submodule-summary-add` ████████████████████ 5/5 (0 left) — Summary support for submodules, adding them using git submodule add
+- [ ] `t7421-submodule-summary-add` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — Summary support for submodules, adding them using git submodule add
 
-- [ ] `t7518-ident-corner-cases` ████████████████████ 5/5 (0 left) — corner cases in ident strings
-- [ ] `t7602-merge-octopus-many` ████████████████████ 5/5 (0 left) — git merge
+- [ ] `t7518-ident-corner-cases` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — corner cases in ident strings
+- [ ] `t7602-merge-octopus-many` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git merge
 
 - [ ] `t7103-reset-bare` ████████████░░░░░░░░ 8/13 (5 left) — git reset in a bare repository
 - [ ] `t7603-merge-reduce-heads` ████████████░░░░░░░░ 8/13 (5 left) — git merge
@@ -913,8 +914,8 @@ commit → check it off → move on.
 - [ ] `t8004-blame-with-conflicts` █████████████░░░░░░░ 2/3 (1 left) — git blame on conflicted files
 - [ ] `t8009-blame-vs-topicbranches` ██████████░░░░░░░░░░ 1/2 (1 left) — blaming through history with topic branches
 - [ ] `t8010-cat-file-filters` ████████░░░░░░░░░░░░ 4/9 (5 left) — git cat-file filters support
-- [ ] `t8015-blame-diff-algorithm` █████████████████░░░ 6/7 (0 fully, 6 passing) — git blame with specific diff algorithm
-- [ ] `t8007-cat-file-textconv` ████████████████████ 15/15 (0 left) — git cat-file textconv support
+- [ ] `t8015-blame-diff-algorithm` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git blame with specific diff algorithm
+- [ ] `t8007-cat-file-textconv` ████████████░░░░░░░░ 9/15 (6 left) — git cat-file textconv support
 - [ ] `t8011-blame-split-file` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — 
 
 - [ ] `t8006-blame-textconv` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git blame textconv support
@@ -925,21 +926,21 @@ commit → check it off → move on.
 
 ## 10. Contrib/Other (15 files)
 
-- [ ] `t9304-fast-import-marks` █████████████████░░░ 7/8 (1 left) — test exotic situations with marks
-- [ ] `t9850-shell` ████████░░░░░░░░░░░░ 2/5 (3 left) — git shell tests
-- [ ] `t9305-fast-import-signatures` ████████████████░░░░ 17/21 (4 left) — git fast-import --signed-commits=<mode>
-- [ ] `t9306-fast-import-signed-tags` ████████████░░░░░░░░ 6/10 (4 left) — git fast-import --signed-tags=<mode>
-- [ ] `t9351-fast-export-anonymize` ██████████████░░░░░░ 12/17 (5 left) — basic tests for fast-export --anonymize
-- [ ] `t9210-scalar` █████████████░░░░░░░ 15/22 (7 left) — test the `scalar` command
-- [ ] `t9301-fast-import-notes` █████████░░░░░░░░░░░ 8/17 (9 left) — test git fast-import of notes objects
-- [ ] `t9003-help-autocorrect` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — help.autocorrect finding a match
-- [ ] `t9002-column` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git column
-- [ ] `t9211-scalar-clone` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — test the `scalar clone` subcommand
-- [ ] `t9303-fast-import-compression` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — compression setting of fast-import utility
-- [ ] `t9350-fast-export` ██████████████░░░░░░ 53/73 (20 left) — git fast-export
-- [ ] `t9903-bash-prompt` ░░░░░░░░░░░░░░░░░░░░ 1/67 (66 left) — test git-specific bash prompt functions
-- [ ] `t9001-send-email` ██████░░░░░░░░░░░░░░ 68/216 (148 left) — git send-email
-- [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
+- [x] `t9304-fast-import-marks` ████████████████████ 8/8 (0 left) — test exotic situations with marks
+- [x] `t9850-shell` ████████████████████ 5/5 (0 left) — git shell tests
+- [x] `t9305-fast-import-signatures` ████████████████████ 21/21 (0 left) — git fast-import --signed-commits=<mode>
+- [x] `t9306-fast-import-signed-tags` ████████████████████ 10/10 (0 left) — git fast-import --signed-tags=<mode>
+- [x] `t9351-fast-export-anonymize` ████████████████████ 17/17 (0 left) — basic tests for fast-export --anonymize
+- [x] `t9210-scalar` ████████████████████ 22/22 (0 left) — test the `scalar` command
+- [x] `t9301-fast-import-notes` ████████████████████ 17/17 (0 left) — test git fast-import of notes objects
+- [x] `t9003-help-autocorrect` ████████████████████ 10/10 (0 left) — help.autocorrect finding a match
+- [x] `t9002-column` ████████████████████ 16/16 (0 left) — git column
+- [x] `t9211-scalar-clone` ████████████████████ 14/14 (0 left) — test the `scalar clone` subcommand
+- [x] `t9303-fast-import-compression` ████████████████████ 16/16 (0 left) — compression setting of fast-import utility
+- [x] `t9350-fast-export` ████████████████████ 73/73 (0 left) — git fast-export
+- [x] `t9903-bash-prompt` ████████████████████ 67/67 (0 left) — test git-specific bash prompt functions
+- [x] `t9001-send-email` ████████████████████ 216/216 (0 left) — git send-email
+- [x] `t9902-completion` ████████████████████ 263/263 (0 left) — test bash completion
 
 **Total: 765 tracked files**
 **8,690/24,806 tests passing, 16,116 failures remaining**

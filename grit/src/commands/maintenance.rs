@@ -6,7 +6,7 @@
 //! - `stop` — stop scheduled maintenance
 //! - `register` — register repo for maintenance
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::repo::Repository;
@@ -228,14 +228,127 @@ fn detect_scheduler() -> &'static str {
     }
 }
 
+#[derive(Debug)]
+enum SchedulerCmd {
+    Command(String),
+    Unavailable,
+}
+
+fn scheduler_command(name: &str) -> SchedulerCmd {
+    let testing = match std::env::var("GIT_TEST_MAINT_SCHEDULER") {
+        Ok(v) => v,
+        Err(_) => return SchedulerCmd::Command(name.to_string()),
+    };
+
+    for entry in testing.split(',') {
+        let mut parts = entry.splitn(2, ':');
+        let Some(key) = parts.next() else { continue };
+        let Some(value) = parts.next() else { continue };
+        if key != name {
+            continue;
+        }
+
+        return match value {
+            "false" => SchedulerCmd::Unavailable,
+            "true" => SchedulerCmd::Command(name.to_string()),
+            other => SchedulerCmd::Command(other.to_string()),
+        };
+    }
+
+    // If test override exists but no matching scheduler entry was specified,
+    // treat it as unavailable (matches upstream test behavior).
+    SchedulerCmd::Unavailable
+}
+
+fn split_command(cmdline: &str) -> Vec<String> {
+    cmdline
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+}
+
+fn run_scheduler_output(cmdline: &str, extra_arg: Option<&str>) -> Result<(bool, String)> {
+    let parts = split_command(cmdline);
+    if parts.is_empty() {
+        return Ok((false, String::new()));
+    }
+
+    let mut cmd = if parts[0] == "test-tool" {
+        let mut c = Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit")));
+        c.arg("test-tool");
+        c.args(&parts[1..]);
+        c
+    } else {
+        let mut c = Command::new(&parts[0]);
+        c.args(&parts[1..]);
+        c
+    };
+    if let Some(arg) = extra_arg {
+        cmd.arg(arg);
+    }
+
+    let out = cmd
+        .output()
+        .with_context(|| format!("failed to spawn scheduler command '{}'", parts[0]))?;
+    Ok((out.status.success(), String::from_utf8_lossy(&out.stdout).to_string()))
+}
+
+fn run_scheduler_status(cmdline: &str, extra_arg: Option<&str>) -> Result<bool> {
+    let parts = split_command(cmdline);
+    if parts.is_empty() {
+        return Ok(false);
+    }
+
+    let mut cmd = if parts[0] == "test-tool" {
+        let mut c = Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("grit")));
+        c.arg("test-tool");
+        c.args(&parts[1..]);
+        c
+    } else {
+        let mut c = Command::new(&parts[0]);
+        c.args(&parts[1..]);
+        c
+    };
+    if let Some(arg) = extra_arg {
+        cmd.arg(arg);
+    }
+
+    let status = cmd
+        .status()
+        .with_context(|| format!("failed to spawn scheduler command '{}'", parts[0]))?;
+    Ok(status.success())
+}
+
+fn write_crontab_via_scheduler(cmdline: &str, content: &str) -> Result<()> {
+    let tmp_path = std::env::temp_dir().join(format!(
+        "grit-maint-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    fs::write(&tmp_path, content)?;
+
+    let success = run_scheduler_status(cmdline, Some(&tmp_path.to_string_lossy()))?;
+    let _ = fs::remove_file(&tmp_path);
+    if !success {
+        bail!("scheduler command failed");
+    }
+    Ok(())
+}
+
 fn install_crontab(grit_bin: &std::path::Path) -> Result<()> {
     let grit = grit_bin.display();
 
+    let scheduler = match scheduler_command("crontab") {
+        SchedulerCmd::Unavailable => bail!("scheduler 'crontab' unavailable"),
+        SchedulerCmd::Command(cmd) => cmd,
+    };
+
     // Read existing crontab.
-    let existing = Command::new("crontab")
-        .arg("-l")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    let existing = run_scheduler_output(&scheduler, Some("-l"))
+        .map(|(_, out)| out)
         .unwrap_or_default();
 
     // Remove any existing grit maintenance lines.
@@ -260,26 +373,11 @@ fn install_crontab(grit_bin: &std::path::Path) -> Result<()> {
         "0 0 * * 0 {grit} maintenance run --schedule=weekly\n"
     ));
 
-    // Install.
-    let mut child = Command::new("crontab")
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to spawn crontab")?;
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        stdin.write_all(new_crontab.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if status.success() {
+    if write_crontab_via_scheduler(&scheduler, &new_crontab).is_ok() {
         eprintln!("Scheduled maintenance via crontab");
-    } else {
-        eprintln!("warning: failed to install crontab entries");
+        return Ok(());
     }
-
-    Ok(())
+    bail!("failed to install crontab entries")
 }
 
 // ── maintenance stop ─────────────────────────────────────────────────
@@ -299,10 +397,13 @@ fn run_stop(args: &StopArgs) -> Result<()> {
 }
 
 fn remove_crontab() -> Result<()> {
-    let existing = Command::new("crontab")
-        .arg("-l")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    let scheduler = match scheduler_command("crontab") {
+        SchedulerCmd::Unavailable => bail!("scheduler 'crontab' unavailable"),
+        SchedulerCmd::Command(cmd) => cmd,
+    };
+
+    let existing = run_scheduler_output(&scheduler, Some("-l"))
+        .map(|(_, out)| out)
         .unwrap_or_default();
 
     let filtered: Vec<&str> = existing
@@ -312,23 +413,11 @@ fn remove_crontab() -> Result<()> {
 
     let new_crontab = filtered.join("\n") + "\n";
 
-    let mut child = Command::new("crontab")
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to spawn crontab")?;
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        stdin.write_all(new_crontab.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if status.success() {
+    if write_crontab_via_scheduler(&scheduler, &new_crontab).is_ok() {
         eprintln!("Removed grit maintenance from crontab");
+        return Ok(());
     }
-
-    Ok(())
+    bail!("failed to update crontab entries")
 }
 
 // ── maintenance register / unregister ────────────────────────────────

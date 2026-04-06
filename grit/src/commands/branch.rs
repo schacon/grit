@@ -491,29 +491,29 @@ fn sort_branches(
         }
         Some("committerdate") => {
             branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid);
-                let tb = committer_time(&repo.odb, &b.oid);
+                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 ta.cmp(&tb)
             });
         }
         Some("-committerdate") => {
             branches.sort_by(|a, b| {
-                let ta = committer_time(&repo.odb, &a.oid);
-                let tb = committer_time(&repo.odb, &b.oid);
+                let ta = committer_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = committer_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 tb.cmp(&ta)
             });
         }
         Some("authordate") => {
             branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid);
-                let tb = author_time(&repo.odb, &b.oid);
+                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 ta.cmp(&tb)
             });
         }
         Some("-authordate") => {
             branches.sort_by(|a, b| {
-                let ta = author_time(&repo.odb, &a.oid);
-                let tb = author_time(&repo.odb, &b.oid);
+                let ta = author_time(&repo.odb, &a.oid, &a.name, a.is_remote);
+                let tb = author_time(&repo.odb, &b.oid, &b.name, b.is_remote);
                 tb.cmp(&ta)
             });
         }
@@ -1026,8 +1026,18 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let new_ref = format!("refs/heads/{new_name}");
 
     // Resolve old branch - check both loose and packed refs
-    let old_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &old_ref)
-        .map_err(|_| anyhow::anyhow!("branch '{old_name}' not found."))?;
+    let old_oid = if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, &old_ref) {
+        oid
+    } else if head.branch_name() == Some(old_name) && head.oid().is_none() {
+        // Allow renaming an unborn current branch (e.g. immediately after init).
+        let head_path = repo.git_dir.join("HEAD");
+        let head_content = format!("ref: refs/heads/{new_name}\n");
+        fs::write(head_path, head_content)?;
+        rename_branch_config(repo, old_name, new_name)?;
+        return Ok(());
+    } else {
+        return Err(anyhow::anyhow!("branch '{old_name}' not found."));
+    };
 
     // Check if new name already exists (unless force; -M or -m -f)
     let force = args.force_rename || args.force;
@@ -1321,27 +1331,57 @@ fn commit_subject(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> Option<String> {
 }
 
 /// Extract committer timestamp from a commit for sorting.
-fn committer_time(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> i64 {
+fn committer_time(
+    odb: &grit_lib::odb::Odb,
+    oid: &ObjectId,
+    branch_name: &str,
+    is_remote: bool,
+) -> i64 {
     let obj = match odb.read(oid) {
         Ok(o) => o,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     let commit = match parse_commit(&obj.data) {
         Ok(c) => c,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     parse_signature_time(&commit.committer)
 }
 
 /// Extract author timestamp from a commit for sorting.
-fn author_time(odb: &grit_lib::odb::Odb, oid: &ObjectId) -> i64 {
+fn author_time(
+    odb: &grit_lib::odb::Odb,
+    oid: &ObjectId,
+    branch_name: &str,
+    is_remote: bool,
+) -> i64 {
     let obj = match odb.read(oid) {
         Ok(o) => o,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     let commit = match parse_commit(&obj.data) {
         Ok(c) => c,
-        Err(_) => return 0,
+        Err(_) => {
+            if is_remote && branch_name.ends_with("/HEAD") {
+                return i64::MAX;
+            }
+            return 0;
+        }
     };
     parse_signature_time(&commit.author)
 }

@@ -15,129 +15,6 @@ use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
 
-/// Detailed information for an ambiguous abbreviated object name.
-#[derive(Debug, Clone)]
-pub struct AmbiguousAbbrevReport {
-    /// Candidate objects matching the abbreviated prefix.
-    pub candidates: Vec<AmbiguousAbbrevCandidate>,
-    /// Extra diagnostics that Git prints while probing candidate objects.
-    pub diagnostics: Vec<String>,
-    /// Fatal condition that stops candidate rendering.
-    pub fatal: Option<AmbiguousAbbrevFatal>,
-}
-
-/// A single ambiguous abbreviated-object candidate.
-#[derive(Debug, Clone)]
-pub struct AmbiguousAbbrevCandidate {
-    /// Full object ID of the candidate.
-    pub oid: ObjectId,
-    /// Candidate type as presented to the user.
-    pub kind: AmbiguousAbbrevKind,
-}
-
-/// The rendered kind for an ambiguous abbreviated-object candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AmbiguousAbbrevKind {
-    /// A blob object.
-    Blob,
-    /// A tree object.
-    Tree,
-    /// A commit object.
-    Commit,
-    /// A tag object.
-    Tag,
-    /// A corrupt or unreadable object.
-    BadObject,
-}
-
-impl std::fmt::Display for AmbiguousAbbrevKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Blob => f.write_str("blob"),
-            Self::Tree => f.write_str("tree"),
-            Self::Commit => f.write_str("commit"),
-            Self::Tag => f.write_str("tag"),
-            Self::BadObject => f.write_str("[bad object]"),
-        }
-    }
-}
-
-/// A fatal abbreviated-object ambiguity condition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AmbiguousAbbrevFatal {
-    /// One or more candidates had an invalid object type header.
-    InvalidObjectType,
-}
-
-/// Inspect an abbreviated object prefix for Git-style ambiguity reporting.
-///
-/// Returns `Ok(None)` when the prefix is not ambiguous. When ambiguous, the
-/// report includes candidate kinds and any diagnostics observed while reading
-/// candidate objects.
-///
-/// # Errors
-///
-/// Returns I/O or object database errors unrelated to candidate probing.
-pub fn inspect_ambiguous_abbrev(
-    repo: &Repository,
-    prefix: &str,
-) -> Result<Option<AmbiguousAbbrevReport>> {
-    let matches = find_abbrev_matches(repo, prefix)?;
-    if matches.len() <= 1 {
-        return Ok(None);
-    }
-
-    let mut report = AmbiguousAbbrevReport {
-        candidates: Vec::with_capacity(matches.len()),
-        diagnostics: Vec::new(),
-        fatal: None,
-    };
-
-    for oid in matches {
-        match repo.odb.read(&oid) {
-            Ok(object) => {
-                let kind = match object.kind {
-                    ObjectKind::Blob => AmbiguousAbbrevKind::Blob,
-                    ObjectKind::Tree => AmbiguousAbbrevKind::Tree,
-                    ObjectKind::Commit => AmbiguousAbbrevKind::Commit,
-                    ObjectKind::Tag => AmbiguousAbbrevKind::Tag,
-                };
-                report
-                    .candidates
-                    .push(AmbiguousAbbrevCandidate { oid, kind });
-            }
-            Err(Error::UnknownObjectType(_)) => {
-                report.fatal = Some(AmbiguousAbbrevFatal::InvalidObjectType);
-                return Ok(Some(report));
-            }
-            Err(Error::Zlib(message)) => {
-                let rendered = render_inflate_error(&message);
-                for _ in 0..2 {
-                    report
-                        .diagnostics
-                        .push(format!("error: inflate: data stream error ({rendered})"));
-                    report
-                        .diagnostics
-                        .push(format!("error: unable to unpack {oid} header"));
-                }
-                report.candidates.push(AmbiguousAbbrevCandidate {
-                    oid,
-                    kind: AmbiguousAbbrevKind::BadObject,
-                });
-            }
-            Err(Error::CorruptObject(_)) => {
-                report.candidates.push(AmbiguousAbbrevCandidate {
-                    oid,
-                    kind: AmbiguousAbbrevKind::BadObject,
-                });
-            }
-            Err(err) => return Err(err),
-        }
-    }
-
-    Ok(Some(report))
-}
-
 /// Return `Some(repo)` when a repository can be discovered at `start`.
 ///
 /// # Parameters
@@ -149,14 +26,17 @@ pub fn inspect_ambiguous_abbrev(
 /// Returns errors other than "not a repository" (for example I/O and path
 /// canonicalization failures).
 pub fn discover_optional(start: Option<&Path>) -> Result<Option<Repository>> {
+    let cwd = std::env::current_dir()?;
+    let probe_start = start.unwrap_or(&cwd);
+    let probe_start = if probe_start.is_absolute() {
+        probe_start.to_path_buf()
+    } else {
+        cwd.join(probe_start)
+    };
+
     match Repository::discover(start) {
         Ok(repo) => Ok(Some(repo)),
-        Err(Error::NotARepository(msg))
-            if msg.contains("not a regular file") || msg.contains("invalid gitfile format") =>
-        {
-            Err(Error::NotARepository(msg))
-        }
-        Err(Error::NotARepository(_)) => Ok(None),
+        Err(Error::NotARepository(msg)) if msg == probe_start.display().to_string() => Ok(None),
         Err(err) => Err(err),
     }
 }
@@ -223,12 +103,8 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     {
         return resolve_upstream_ref(repo, base);
     }
-    {
-        let lower = spec.to_lowercase();
-        if let Some(base_lower) = lower.strip_suffix("@{push}") {
-            let base = &spec[..base_lower.len()];
-            return resolve_push_ref(repo, base);
-        }
+    if let Some(base) = spec.strip_suffix("@{push}") {
+        return resolve_push_ref(repo, base);
     }
 
     // Handle @{-N} syntax: return symbolic ref of Nth previously checked out branch
@@ -327,122 +203,9 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 /// Resolve `@{push}` for a given branch.
 fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
-    let branch_name = if branch.is_empty() {
-        match refs::read_head(&repo.git_dir) {
-            Ok(Some(target)) => target.strip_prefix("refs/heads/")?.to_owned(),
-            _ => return None,
-        }
-    } else {
-        branch.to_owned()
-    };
-
-    let config = crate::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
-
-    // push.default setting
-    let push_default = config
-        .get("push.default")
-        .unwrap_or_else(|| "simple".to_owned());
-
-    // With push.default=nothing, @{push} fails UNLESS push refspecs are configured.
-    // We check refspecs below; only return None if no refspecs match.
-    let nothing_mode = push_default == "nothing";
-
-    // Determine push remote: branch.<name>.pushRemote > remote.pushDefault > branch.<name>.remote
-    let push_remote = config
-        .get(&format!("branch.{branch_name}.pushRemote"))
-        .or_else(|| config.get("remote.pushDefault"))
-        .or_else(|| config.get(&format!("branch.{branch_name}.remote")));
-
-    let upstream_remote = config.get(&format!("branch.{branch_name}.remote"));
-    let upstream_merge = config.get(&format!("branch.{branch_name}.merge"));
-
-    let push_remote_name = push_remote.as_deref()?.to_owned();
-
-    // With push.default=simple: push remote must match upstream remote,
-    // AND the branch name must match the upstream merge branch name.
-    if push_default == "simple" {
-        // Triangular: push remote differs from upstream remote → fail
-        if let Some(ref upstream) = upstream_remote {
-            if *upstream != push_remote_name {
-                return None; // triangular, fails with simple
-            }
-        }
-        // Also fail if branch name doesn't match the merge branch (non-simple tracking)
-        if let Some(ref merge) = upstream_merge {
-            let merge_branch = merge.strip_prefix("refs/heads/").unwrap_or(merge);
-            if merge_branch != branch_name {
-                return None; // branch name != merge branch, fails with simple
-            }
-            return Some(format!("refs/remotes/{push_remote_name}/{merge_branch}"));
-        }
-        return None;
-    }
-
-    // push.default=current or matching: push branch_name to push_remote/branch_name
-    if push_default == "current" || push_default == "matching" {
-        // Check if branch exists on the remote's refspec mapping
-        // For simplicity: refs/remotes/<push_remote>/<branch_name>
-        let tracking = format!("refs/remotes/{push_remote_name}/{branch_name}");
-        if refs::resolve_ref(&repo.git_dir, &tracking).is_ok() {
-            return Some(tracking);
-        }
-        // Even if not yet tracked, current/matching pushes to same-named branch
-        return Some(tracking);
-    }
-
-    // push.default=upstream/tracking: same as @{upstream}
-    if push_default == "upstream" || push_default == "tracking" {
-        return resolve_upstream_ref(repo, branch);
-    }
-
-    // Check configured push refspecs for the remote.
-    // Look for explicit refspecs that map this branch.
-    if let Some(refspecs_str) = config.get(&format!("remote.{push_remote_name}.push")) {
-        for spec in refspecs_str.split_whitespace() {
-            let spec_noforce = spec.trim_start_matches('+');
-            if let Some((src, dst)) = spec_noforce.split_once(':') {
-                // Handle glob refspecs: refs/heads/*:refs/heads/magic/*
-                if src.ends_with('*') && dst.ends_with('*') {
-                    let src_prefix = src.trim_end_matches('*');
-                    let dst_prefix = dst.trim_end_matches('*');
-                    let full_src = format!("refs/heads/{branch_name}");
-                    if full_src.starts_with(src_prefix) {
-                        let rest = &full_src[src_prefix.len()..];
-                        let dst_ref = format!("{dst_prefix}{rest}");
-                        let dst_branch = dst_ref.strip_prefix("refs/heads/").unwrap_or(&dst_ref);
-                        return Some(format!("refs/remotes/{push_remote_name}/{dst_branch}"));
-                    }
-                } else {
-                    let src_branch = src.strip_prefix("refs/heads/").unwrap_or(src);
-                    if src_branch == branch_name || src == branch_name {
-                        let dst_branch = dst.strip_prefix("refs/heads/").unwrap_or(dst);
-                        return Some(format!("refs/remotes/{push_remote_name}/{dst_branch}"));
-                    }
-                }
-            } else {
-                // Symmetric refspec
-                let b = spec_noforce
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(spec_noforce);
-                if b == branch_name {
-                    return Some(format!("refs/remotes/{push_remote_name}/{branch_name}"));
-                }
-            }
-        }
-    }
-
-    // In nothing mode with no matching refspecs, fail.
-    if nothing_mode {
-        return None;
-    }
-
-    // Default: use upstream tracking ref
-    if let Some(ref merge) = upstream_merge {
-        let branch_part = merge.strip_prefix("refs/heads/")?;
-        return Some(format!("refs/remotes/{push_remote_name}/{branch_part}"));
-    }
-
-    None
+    // @{push} is typically the same as @{upstream} unless push remote differs
+    // For simplicity, treat it the same way
+    resolve_upstream_ref(repo, branch)
 }
 
 /// Parse branch tracking configuration from git config content.
@@ -500,14 +263,6 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if let Some(pattern) = spec.strip_prefix(":/") {
         if !pattern.is_empty() {
             return resolve_commit_message_search(repo, pattern);
-        }
-    }
-
-    // Handle A^! (meaning "A, excluding parents" in revision ranges).
-    // For single-object resolution, this should resolve like plain `A`.
-    if let Some(base) = spec.strip_suffix("^!") {
-        if !base.is_empty() {
-            return resolve_revision(repo, base);
         }
     }
 
@@ -588,10 +343,7 @@ fn peel_to_tree(repo: &Repository, oid: ObjectId) -> Result<ObjectId> {
 fn resolve_tree_path(repo: &Repository, tree_oid: &ObjectId, path: &str) -> Result<ObjectId> {
     let obj = repo.odb.read(tree_oid)?;
     let entries = crate::objects::parse_tree(&obj.data)?;
-    let components: Vec<&str> = path
-        .split('/')
-        .filter(|c| !c.is_empty() && *c != ".")
-        .collect();
+    let components: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
     if components.is_empty() {
         return Ok(*tree_oid);
     }
@@ -850,7 +602,6 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     for candidate in &[
-        format!("refs/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),
@@ -1032,10 +783,6 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
-    if let Some(ts) = parse_relative_approxidate(s) {
-        return Some(ts);
-    }
-
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
         // Scan for 4-digit year followed by -MM-DD
@@ -1067,49 +814,6 @@ fn approxidate(s: &str) -> Option<i64> {
         None
     };
     re_like(s)
-}
-
-fn parse_relative_approxidate(input: &str) -> Option<i64> {
-    let normalized = input.trim().replace(['.', ','], " ").to_ascii_lowercase();
-    let tokens: Vec<&str> = normalized.split_whitespace().collect();
-    if tokens.is_empty() {
-        return None;
-    }
-
-    if tokens == ["now"] {
-        return Some(time::OffsetDateTime::now_utc().unix_timestamp());
-    }
-
-    let mut idx = 0usize;
-    let mut total = time::Duration::ZERO;
-    let mut saw_component = false;
-
-    while idx < tokens.len() {
-        if tokens[idx] == "ago" {
-            return if saw_component && idx + 1 == tokens.len() {
-                Some((time::OffsetDateTime::now_utc() - total).unix_timestamp())
-            } else {
-                None
-            };
-        }
-
-        let count = tokens[idx].parse::<i64>().ok()?;
-        let unit = *tokens.get(idx + 1)?;
-        total += match unit {
-            "second" | "seconds" => time::Duration::seconds(count),
-            "minute" | "minutes" => time::Duration::minutes(count),
-            "hour" | "hours" => time::Duration::hours(count),
-            "day" | "days" => time::Duration::days(count),
-            "week" | "weeks" => time::Duration::weeks(count),
-            "month" | "months" => time::Duration::days(count * 30),
-            "year" | "years" => time::Duration::days(count * 365),
-            _ => return None,
-        };
-        saw_component = true;
-        idx += 2;
-    }
-
-    None
 }
 
 /// Try to resolve `@{upstream}`, `@{u}`, `@{push}` style suffixes.
@@ -1145,19 +849,10 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
     let index_path = repo.index_path();
     let index =
         Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
-    let normalized = normalize_index_lookup_path(path);
-    match index.get(normalized.as_bytes(), stage) {
+    match index.get(path.as_bytes(), stage) {
         Some(entry) => Ok(entry.oid),
         None => Err(Error::ObjectNotFound(format!(":{stage}:{path}"))),
     }
-}
-
-fn normalize_index_lookup_path(path: &str) -> String {
-    let mut p = path;
-    while let Some(rest) = p.strip_prefix("./") {
-        p = rest;
-    }
-    p.trim_start_matches('/').to_string()
 }
 
 fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
@@ -1234,32 +929,6 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 ObjectKind::Commit => Ok(parse_commit(&obj.data)?.tree),
                 _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
             }
-        }
-        Some("tag") => {
-            // Peel only if the object is a tag; otherwise error.
-            let obj = repo.odb.read(&oid)?;
-            match obj.kind {
-                ObjectKind::Tag => Ok(oid),
-                _ => {
-                    // Dereference tags until we get a non-tag, then error
-                    // if that's not a tag either. Real git: ^{tag} requires
-                    // the object (after dereffing) to be a tag.
-                    Err(Error::InvalidRef(format!("object {} is not a tag", oid)))
-                }
-            }
-        }
-        Some(other) if other.starts_with('/') => {
-            // `^{/pattern}` — find first commit in history whose message
-            // matches the regex (similar to `:/pattern` but starting from oid).
-            let pattern = &other[1..];
-            // Bare `!` not followed by `!` or `-` is reserved/invalid.
-            if pattern.starts_with('!') && !pattern.starts_with("!!") && !pattern.starts_with("!-")
-            {
-                return Err(Error::InvalidRef(format!(
-                    "invalid '^{{/{pattern}}}': '!' must be followed by '!' or '-'"
-                )));
-            }
-            resolve_commit_search_from(repo, oid, pattern)
         }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
@@ -1361,14 +1030,6 @@ fn is_hex_prefix(text: &str) -> bool {
     !text.is_empty() && text.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
-fn render_inflate_error(message: &str) -> &str {
-    if message.contains("corrupt deflate stream") {
-        "incorrect header check"
-    } else {
-        message
-    }
-}
-
 fn path_is_within(path: &Path, container: &Path) -> bool {
     if path == container {
         return true;
@@ -1444,74 +1105,4 @@ fn resolve_commit_message_search(
     }
 
     Err(Error::ObjectNotFound(format!(":/{pattern}")))
-}
-
-/// Search commit history starting from `start_oid` for a commit whose message
-/// matches `pattern` (same rules as `:/pattern`).
-///
-/// Pattern rules:
-/// - `!-<pat>`: find first commit whose message does NOT contain `pat`
-/// - `!!<rest>`: literal `!` prefix, match message containing `!<rest>`
-/// - otherwise: match message containing `pattern`
-fn resolve_commit_search_from(
-    repo: &crate::repo::Repository,
-    start_oid: ObjectId,
-    pattern: &str,
-) -> Result<ObjectId> {
-    // Parse the pattern for negation / escaping.
-    let (negated, effective_pattern) = if let Some(rest) = pattern.strip_prefix("!-") {
-        (true, rest)
-    } else if let Some(rest) = pattern.strip_prefix("!!") {
-        (false, rest) // literal '!' followed by rest
-    } else {
-        (false, pattern)
-    };
-
-    // Compile the pattern as a regex; fall back to substring match.
-    let re = regex::Regex::new(effective_pattern).ok();
-    let matches = |msg: &str| -> bool {
-        let hit = if let Some(ref re) = re {
-            re.is_match(msg)
-        } else {
-            msg.contains(effective_pattern)
-        };
-        if negated {
-            !hit
-        } else {
-            hit
-        }
-    };
-
-    let mut visited = std::collections::HashSet::new();
-    let mut queue = std::collections::VecDeque::new();
-    queue.push_back(start_oid);
-    visited.insert(start_oid);
-
-    while let Some(oid) = queue.pop_front() {
-        let obj = match repo.odb.read(&oid) {
-            Ok(o) => o,
-            Err(_) => continue,
-        };
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let commit = match parse_commit(&obj.data) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        if matches(&commit.message) {
-            return Ok(oid);
-        }
-
-        for parent in &commit.parents {
-            if visited.insert(*parent) {
-                queue.push_back(*parent);
-            }
-        }
-    }
-
-    Err(Error::ObjectNotFound(format!(
-        "no commit matching '^{{/{pattern}}}' found"
-    )))
 }

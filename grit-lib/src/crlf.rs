@@ -300,6 +300,25 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             fa.working_tree_encoding = Some(value.clone());
                         }
                     }
+                    "crlf" => {
+                        // Legacy compatibility attribute:
+                        //   crlf         -> text (legacy "text")
+                        //   -crlf        -> -text
+                        //   crlf=input   -> text + eol=lf
+                        match value.as_str() {
+                            "unset" => {
+                                fa.text = TextAttr::Unset;
+                                fa.eol = EolAttr::Unspecified;
+                            }
+                            "input" => {
+                                fa.text = TextAttr::Set;
+                                fa.eol = EolAttr::Lf;
+                            }
+                            _ => {
+                                fa.text = TextAttr::Set;
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -477,26 +496,31 @@ fn check_safecrlf_input(
         return Ok(());
     }
 
-    // safecrlf with autocrlf=input: reject if file is all CRLF
-    // (the conversion would be irreversible — CRLF→LF, but checkout won't
-    // add CR back because autocrlf=input only strips on input)
-    if conv.autocrlf == AutoCrlf::Input && is_all_crlf(data) {
+    // safecrlf with autocrlf=input: reject when the file contains any CRLF
+    // line endings (all-CRLF or mixed). Conversion strips CR on add but
+    // checkout under autocrlf=input does not add it back.
+    if conv.autocrlf == AutoCrlf::Input && has_crlf(data) {
         let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!("warning: {msg}");
+        eprintln!(
+            "warning: in the working copy of '{rel_path}', CRLF will be replaced by LF the next time Git touches it"
+        );
         return Ok(());
     }
 
-    // safecrlf with autocrlf=true: reject if file is all LF
-    // (LF→LF on input, then LF→CRLF on checkout changes the file)
-    if conv.autocrlf == AutoCrlf::True && is_all_lf(data) {
+    // safecrlf with autocrlf=true: reject when the file contains any lone LF
+    // line endings (all-LF or mixed). These LFs would be written as CRLF in
+    // the working tree on checkout.
+    if conv.autocrlf == AutoCrlf::True && has_lone_lf(data) {
         let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!("warning: {msg}");
+        eprintln!(
+            "warning: in the working copy of '{rel_path}', LF will be replaced by CRLF the next time Git touches it"
+        );
         return Ok(());
     }
 
@@ -564,7 +588,9 @@ pub fn convert_to_worktree(
 
     // 2. Determine if we should do LF→CRLF conversion
     let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
-    if should_convert {
+    // Match git's checkout behaviour: if a blob already contains CRLF
+    // sequences, do not force-convert lone LF to CRLF (keeps mixed files mixed).
+    if should_convert && !has_crlf(&buf) {
         buf = lf_to_crlf(&buf);
     }
 

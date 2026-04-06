@@ -8,10 +8,12 @@ use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
+use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -269,6 +271,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
         for path_str in matches {
             match safety_check(
+                &repo,
                 &index,
                 &repo.odb,
                 work_tree,
@@ -396,6 +399,7 @@ fn error_message(kind: &RmErrorKind, count: usize, args: &Args) -> (String, Opti
 ///
 /// Returns `Ok(())` when safe, `Err(kind)` with the error category otherwise.
 fn safety_check(
+    repo: &Repository,
     index: &Index,
     odb: &grit_lib::odb::Odb,
     work_tree: &Path,
@@ -435,7 +439,7 @@ fn safety_check(
     // working tree differs from index.
     let abs_path = work_tree.join(path_str);
     let worktree_differs = if abs_path.exists() {
-        worktree_differs_from_index(odb, &abs_path, &index_oid).unwrap_or(false)
+        worktree_differs_from_index(repo, odb, &abs_path, path_str, &index_oid).unwrap_or(false)
     } else {
         false
     };
@@ -467,12 +471,45 @@ fn safety_check(
 
 /// Returns `true` if the working tree file content differs from the index OID.
 fn worktree_differs_from_index(
-    _odb: &grit_lib::odb::Odb,
+    repo: &Repository,
+    odb: &grit_lib::odb::Odb,
     abs_path: &Path,
+    rel_path: &str,
     index_oid: &grit_lib::objects::ObjectId,
 ) -> Result<bool> {
-    let data = fs::read(abs_path)?;
-    let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &data);
+    let meta = fs::symlink_metadata(abs_path)?;
+    let data = if meta.file_type().is_symlink() {
+        let target = fs::read_link(abs_path)?;
+        target.to_string_lossy().into_owned().into_bytes()
+    } else {
+        let raw = fs::read(abs_path)?;
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = {
+            let mut c = crlf::ConversionConfig::from_config(&config);
+            c.safecrlf = crlf::SafeCrlf::False;
+            c
+        };
+        let attrs = repo
+            .work_tree
+            .as_deref()
+            .map(crlf::load_gitattributes)
+            .unwrap_or_default();
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+
+        // Keep raw bytes for legacy CRLF blobs committed before autocrlf.
+        let expected_has_crlf = odb
+            .read(index_oid)
+            .ok()
+            .map(|obj| obj.kind == ObjectKind::Blob && crlf::has_crlf(&obj.data))
+            .unwrap_or(false);
+        if expected_has_crlf {
+            raw
+        } else {
+            crlf::convert_to_git(&raw, rel_path, &conv, &file_attrs).unwrap_or(raw)
+        }
+    };
+
+    let wt_oid = Odb::hash_object_data(ObjectKind::Blob, &data);
     Ok(wt_oid != *index_oid)
 }
 

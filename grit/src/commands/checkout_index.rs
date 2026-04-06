@@ -6,8 +6,8 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::objects::ObjectKind;
 use std::io::{self, BufRead};
-use std::collections::BTreeSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::Component;
+use std::path::PathBuf;
 
 use grit_lib::index::{Index, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::repo::Repository;
@@ -55,59 +55,20 @@ pub struct Args {
     #[arg(long)]
     pub temp: bool,
 
-    /// Disable temporary-file output.
-    #[arg(long = "no-temp")]
-    pub no_temp: bool,
-
     /// Directory for temporary files (used with --temp).
     #[arg(long = "tmpdir", value_name = "dir")]
     pub tmpdir: Option<PathBuf>,
 
-    /// Stage to check out (1, 2, 3, or all).
-    #[arg(long = "stage", value_parser = parse_stage_arg, action = clap::ArgAction::Append)]
-    pub stage: Vec<StageArg>,
+    /// Stage to check out (1, 2, or 3).
+    #[arg(long = "stage")]
+    pub stage: Option<u8>,
 
     /// Files to check out (if not --all or --stdin).
     pub files: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StageArg {
-    All,
-    Number(u8),
-}
-
-fn parse_stage_arg(value: &str) -> std::result::Result<StageArg, String> {
-    if value.eq_ignore_ascii_case("all") {
-        return Ok(StageArg::All);
-    }
-    match value.parse::<u8>() {
-        Ok(1) => Ok(StageArg::Number(1)),
-        Ok(2) => Ok(StageArg::Number(2)),
-        Ok(3) => Ok(StageArg::Number(3)),
-        _ => Err("stage must be 1, 2, 3, or all".to_owned()),
-    }
-}
-
-struct SelectedPath {
-    repo_path: Vec<u8>,
-    display_path: String,
-}
-
 /// Run `grit checkout-index`.
-pub fn run(mut args: Args) -> Result<()> {
-    let effective_stage = args.stage.last().copied();
-    let stage_all = matches!(effective_stage, Some(StageArg::All));
-    if stage_all && args.no_temp {
-        bail!("options '--stage=all' and '--no-temp' cannot be used together");
-    }
-    if stage_all {
-        args.temp = true;
-    }
-    if args.no_temp {
-        args.temp = false;
-    }
-
+pub fn run(args: Args) -> Result<()> {
     if args.tmpdir.is_some() && !args.temp {
         bail!("--tmpdir requires --temp");
     }
@@ -122,125 +83,66 @@ pub fn run(mut args: Args) -> Result<()> {
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
 
-    let target_stage = match effective_stage {
-        Some(StageArg::Number(n)) => n,
-        _ => 0,
-    };
+    let target_stage = args.stage.unwrap_or(0);
     let cwd = std::env::current_dir().context("resolving current directory")?;
-    let cwd_prefix = pathdiff(&cwd, &work_tree);
 
     let prefix = args.prefix.as_deref().unwrap_or("");
     let symlinks_enabled = core_symlinks_enabled(&repo);
-    let mut selected_paths: Vec<SelectedPath> = Vec::new();
+    let mut selected_paths: Vec<Vec<u8>> = Vec::new();
     let mut index_needs_write = false;
 
     if args.all {
-        let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
         for entry in &index.entries {
-            if !path_has_prefix(&entry.path, cwd_prefix.as_deref()) {
+            if entry.stage() != target_stage {
                 continue;
             }
-            if stage_all {
-                if entry.stage() == 0 || !seen.insert(entry.path.clone()) {
-                    continue;
-                }
-            } else if entry.stage() != target_stage {
-                continue;
-            }
-            selected_paths.push(SelectedPath {
-                display_path: display_repo_path(&entry.path, cwd_prefix.as_deref()),
-                repo_path: entry.path.clone(),
-            });
+            selected_paths.push(entry.path.clone());
         }
     } else if args.stdin {
         let paths = read_stdin_paths(args.null_terminated)?;
         for input_path in paths {
             let repo_path = resolve_repo_path(&work_tree, &cwd, &input_path)?;
             let path_bytes = path_to_bytes(&repo_path);
-            let present = if stage_all {
-                index.entries.iter().any(|e| e.path == path_bytes)
-            } else {
-                index.get(&path_bytes, target_stage).is_some()
-            };
-            if !present {
+            if index.get(&path_bytes, target_stage).is_none() {
                 if args.quiet {
                     continue;
                 }
                 bail!("'{}' is not in the cache", input_path.display());
             }
-            selected_paths.push(SelectedPath {
-                repo_path: path_bytes,
-                display_path: input_path.to_string_lossy().into_owned(),
-            });
+            selected_paths.push(path_bytes);
         }
     } else {
         for input_path in &args.files {
             let repo_path = resolve_repo_path(&work_tree, &cwd, input_path)?;
             let path_bytes = path_to_bytes(&repo_path);
-            let present = if stage_all {
-                index.entries.iter().any(|e| e.path == path_bytes)
-            } else {
-                index.get(&path_bytes, target_stage).is_some()
-            };
-            if !present {
+            if index.get(&path_bytes, target_stage).is_none() {
                 if args.quiet {
                     continue;
                 }
                 bail!("'{}' is not in the cache", input_path.display());
             }
-            selected_paths.push(SelectedPath {
-                repo_path: path_bytes,
-                display_path: input_path.to_string_lossy().into_owned(),
-            });
+            selected_paths.push(path_bytes);
         }
     }
 
     let mut has_errors = false;
-    for selected in selected_paths {
-        if stage_all {
-            match checkout_all_stages_for_path(
-                &repo,
-                &index,
-                &selected.repo_path,
-                &selected.display_path,
-                &work_tree,
-                &args,
-            ) {
-                Ok(Some(line)) => println!("{line}"),
-                Ok(None) => {}
-                Err(_) => has_errors = true,
+    for path in selected_paths {
+        let entry = index
+            .get(&path, target_stage)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path)))?;
+        match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
+            Ok(outcome) => {
+                if let Some(updated) = outcome.updated_entry {
+                    index.add_or_replace(updated);
+                    index_needs_write = true;
+                }
+                if let Some(line) = outcome.temp_output {
+                    println!("{line}");
+                }
             }
-        } else {
-            let entry = index
-                .get(&selected.repo_path, target_stage)
-                .cloned()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "'{}' is not in the cache",
-                        String::from_utf8_lossy(&selected.repo_path)
-                    )
-                })?;
-            match checkout_entry(
-                &repo,
-                &entry,
-                &work_tree,
-                prefix,
-                symlinks_enabled,
-                &args,
-                &selected.display_path,
-            ) {
-                Ok(outcome) => {
-                    if let Some(updated) = outcome.updated_entry {
-                        index.add_or_replace(updated);
-                        index_needs_write = true;
-                    }
-                    if let Some(line) = outcome.temp_output {
-                        println!("{line}");
-                    }
-                }
-                Err(_) => {
-                    has_errors = true;
-                }
+            Err(_) => {
+                has_errors = true;
             }
         }
     }
@@ -269,7 +171,6 @@ fn checkout_entry(
     prefix: &str,
     symlinks_enabled: bool,
     args: &Args,
-    display_path: &str,
 ) -> Result<CheckoutOutcome> {
     let path_str = String::from_utf8_lossy(&entry.path).into_owned();
     let rel_path = format!("{prefix}{path_str}");
@@ -301,8 +202,8 @@ fn checkout_entry(
     }
 
     if args.temp {
-        let tmp_path = write_temp_blob(entry, &obj.data, args, work_tree)?;
-        outcome.temp_output = Some(format!("{}\t{display_path}", tmp_path.display()));
+        let tmp_path = write_temp_blob(entry, &obj.data, args)?;
+        outcome.temp_output = Some(format!("{}\t{path_str}", tmp_path.display()));
         return Ok(outcome);
     }
 
@@ -315,19 +216,8 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
-        let preserve_prefix_components = prefix_preserve_components(prefix);
-        if args.mkdir || args.force || args.all {
-            ensure_parent_dirs(
-                parent,
-                work_tree,
-                args.force,
-                &rel_path,
-                preserve_prefix_components,
-            )?;
-        } else if !parent.exists() {
-            bail!("'{rel_path}': leading directories do not exist");
-        } else if !std::fs::symlink_metadata(parent)?.file_type().is_dir() {
-            bail!("'{rel_path}': leading path is not a directory");
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)?;
         }
     }
 
@@ -346,7 +236,12 @@ fn checkout_entry(
         let data = {
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let attrs = crlf::load_gitattributes_for_path(work_tree, &path_str);
+            let mut attrs = crlf::load_gitattributes(work_tree);
+            if attrs.is_empty() {
+                if let Ok(idx) = Index::load(&repo.index_path()) {
+                    attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+                }
+            }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
@@ -367,74 +262,6 @@ fn checkout_entry(
     }
 
     Ok(outcome)
-}
-
-fn ensure_parent_dirs(
-    parent: &Path,
-    work_tree: &Path,
-    force: bool,
-    rel_path: &str,
-    preserve_prefix_components: usize,
-) -> Result<()> {
-    let rel_parent = parent.strip_prefix(work_tree).unwrap_or(parent);
-    let mut current = work_tree.to_path_buf();
-    let mut rel_depth = 0usize;
-
-    for component in rel_parent.components() {
-        current.push(component.as_os_str());
-        if matches!(component, Component::Normal(_)) {
-            rel_depth += 1;
-        }
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) => {
-                if meta.file_type().is_dir() {
-                    continue;
-                }
-                let preserve_symlink = meta.file_type().is_symlink()
-                    && rel_depth <= preserve_prefix_components
-                    && std::fs::metadata(&current)
-                        .map(|m| m.file_type().is_dir())
-                        .unwrap_or(false);
-                if preserve_symlink {
-                    continue;
-                }
-                if !force {
-                    bail!(
-                        "'{rel_path}': cannot create directory '{}': File exists",
-                        current.display()
-                    );
-                }
-                if meta.file_type().is_symlink() || meta.is_file() {
-                    std::fs::remove_file(&current)?;
-                } else {
-                    std::fs::remove_dir_all(&current)?;
-                }
-                std::fs::create_dir(&current)?;
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&current)?;
-            }
-            Err(err) => return Err(err.into()),
-        }
-    }
-    Ok(())
-}
-
-fn prefix_preserve_components(prefix: &str) -> usize {
-    let trimmed = prefix.trim_end_matches('/');
-    if trimmed.is_empty() {
-        return 0;
-    }
-    let prefix_path = Path::new(trimmed);
-    let preserve_path = if prefix.ends_with('/') {
-        prefix_path
-    } else {
-        prefix_path.parent().unwrap_or_else(|| Path::new(""))
-    };
-    preserve_path
-        .components()
-        .filter(|c| matches!(c, Component::Normal(_)))
-        .count()
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
@@ -486,19 +313,17 @@ fn write_temp_blob(
     entry: &grit_lib::index::IndexEntry,
     data: &[u8],
     args: &Args,
-    work_tree: &Path,
 ) -> Result<PathBuf> {
     use std::fs::OpenOptions;
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let (base_dir, default_emit_name_only) = args
+    let base_dir = args
         .tmpdir
         .as_ref()
         .cloned()
-        .map(|p| (p, false))
-        .unwrap_or_else(|| (work_tree.to_path_buf(), true));
+        .unwrap_or_else(|| PathBuf::from("."));
     if !base_dir.exists() {
         std::fs::create_dir_all(&base_dir).with_context(|| {
             format!(
@@ -515,7 +340,7 @@ fn write_temp_blob(
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         let name = format!(".merge_file_{pid}_{nanos}_{attempt}");
-        let candidate = base_dir.join(&name);
+        let candidate = base_dir.join(name);
         let mut file = match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -541,9 +366,6 @@ fn write_temp_blob(
             std::fs::set_permissions(&candidate, perms)?;
         }
 
-        if default_emit_name_only {
-            return Ok(PathBuf::from(name));
-        }
         return Ok(candidate);
     }
 
@@ -605,81 +427,6 @@ fn resolve_repo_path(
         .strip_prefix(work_tree)
         .with_context(|| format!("path '{}' is outside repository work tree", input.display()))?;
     Ok(rel.to_path_buf())
-}
-
-fn checkout_all_stages_for_path(
-    repo: &Repository,
-    index: &Index,
-    path: &[u8],
-    display_path: &str,
-    work_tree: &Path,
-    args: &Args,
-) -> Result<Option<String>> {
-    let mut cols: Vec<String> = Vec::with_capacity(3);
-    let mut found = false;
-    for stage in 1..=3 {
-        let Some(entry) = index.get(path, stage) else {
-            cols.push(".".to_owned());
-            continue;
-        };
-        found = true;
-        if entry.mode == 0o160000 {
-            let path_str = String::from_utf8_lossy(path);
-            eprintln!("cannot create temporary submodule {path_str}");
-            return Err(anyhow::anyhow!("cannot create temporary submodule {path_str}"));
-        }
-        let obj = repo.odb.read(&entry.oid).map_err(|_| {
-            let path_str = String::from_utf8_lossy(path);
-            anyhow::anyhow!("unable to read sha1 file of {path_str} ({})", entry.oid)
-        })?;
-        if obj.kind != ObjectKind::Blob {
-            let path_str = String::from_utf8_lossy(path);
-            bail!("cannot checkout non-blob at '{path_str}'");
-        }
-        let tmp = write_temp_blob(entry, &obj.data, args, work_tree)?;
-        cols.push(tmp.display().to_string());
-    }
-    if !found {
-        return Ok(None);
-    }
-    Ok(Some(format!("{}\t{display_path}", cols.join(" "))))
-}
-
-fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
-    let cwd_norm = normalize_path(cwd);
-    let wt_norm = normalize_path(work_tree);
-    if cwd_norm == wt_norm {
-        return None;
-    }
-    let rel = cwd_norm.strip_prefix(&wt_norm).ok()?;
-    if rel.as_os_str().is_empty() {
-        return None;
-    }
-    Some(rel.to_string_lossy().to_string())
-}
-
-fn path_has_prefix(path: &[u8], prefix: Option<&str>) -> bool {
-    let Some(prefix) = prefix else {
-        return true;
-    };
-    let prefix_bytes = prefix.as_bytes();
-    path == prefix_bytes
-        || (path.starts_with(prefix_bytes) && path.get(prefix_bytes.len()) == Some(&b'/'))
-}
-
-fn display_repo_path(path: &[u8], prefix: Option<&str>) -> String {
-    let path_str = String::from_utf8_lossy(path).to_string();
-    let Some(prefix) = prefix else {
-        return path_str;
-    };
-    let expected = format!("{prefix}/");
-    if let Some(rest) = path_str.strip_prefix(&expected) {
-        return rest.to_owned();
-    }
-    if path_str == prefix {
-        return ".".to_owned();
-    }
-    path_str
 }
 
 fn normalize_path(path: &std::path::Path) -> PathBuf {

@@ -29,15 +29,13 @@ pub struct Args {
     #[arg(long = "symref")]
     pub symref: bool,
 
+    /// Path to git-upload-pack on the remote host.
+    #[arg(long = "upload-pack", alias = "exec")]
+    pub upload_pack: Option<String>,
+
     /// Quiet: suppress output, only set the exit status.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
-
-    /// Path to git-upload-pack on the remote side.
-    ///
-    /// Accepted for compatibility; local-path transport ignores this.
-    #[arg(long = "upload-pack")]
-    pub upload_pack: Option<String>,
 
     /// Path to the local repository (bare or non-bare).
     #[arg(value_name = "REPOSITORY")]
@@ -56,6 +54,9 @@ pub struct Args {
 ///
 /// Exits with status 1 when no refs match (same behaviour as `git ls-remote`).
 pub fn run(args: Args) -> Result<()> {
+    // Accepted for compatibility; local-path implementation does not use it.
+    let _ = &args.upload_pack;
+
     // If the repository argument is a configured remote name, resolve its URL
     let effective_path = resolve_remote_or_path(&args.repository);
 
@@ -74,7 +75,8 @@ pub fn run(args: Args) -> Result<()> {
         patterns: args.patterns,
     };
 
-    let entries = ls_remote(&repo.git_dir, &repo.odb, &opts)?;
+    let refs_git_dir = common_git_dir_or_self(&repo.git_dir);
+    let entries = ls_remote(&refs_git_dir, &repo.odb, &opts)?;
 
     if entries.is_empty() {
         // git ls-remote exits 0 even when no refs match patterns
@@ -114,29 +116,31 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
         }
     };
     let path = &effective_path;
-    if !path.exists() {
-        anyhow::bail!(
-            "'{}' does not appear to be a git repository: {}",
-            path.display(),
-            "not a git repository (or any of the parent directories)"
-        );
-    }
 
-    // Discover supports all relevant local layouts:
-    // - bare repositories
-    // - non-bare repositories with .git directory
-    // - gitfile indirection (`.git` file)
-    // - linked worktrees and explicit `<repo>/.git` paths
-    if let Ok(repo) = Repository::discover(Some(path)) {
-        return Ok(repo);
-    }
-
-    // Fallback: explicit open attempts (kept for compatibility with existing behavior).
+    // Bare repository or explicit git-dir directory.
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).with_context(|| {
+
+    // Explicit gitfile path (e.g. ".../foo/.git" where ".git" is a file).
+    if path.is_file() {
+        if let Ok(git_dir) = resolve_gitdir_from_gitfile_path(path) {
+            return Ok(Repository::open(&git_dir, path.parent())?);
+        }
+    }
+
+    // Standard working-tree repository path.
+    let dot_git = path.join(".git");
+    if dot_git.is_file() {
+        if let Ok(git_dir) = resolve_gitdir_from_gitfile_path(&dot_git) {
+            return Ok(Repository::open(&git_dir, Some(path))?);
+        }
+    }
+    if dot_git.is_dir() {
+        return Ok(Repository::open(&dot_git, Some(path))?);
+    }
+
+    Repository::open(&dot_git, Some(path)).with_context(|| {
         format!(
             "'{}' does not appear to be a git repository: {}",
             path.display(),
@@ -145,21 +149,49 @@ fn open_local_repo(path: &Path) -> Result<Repository> {
     })
 }
 
+fn resolve_gitdir_from_gitfile_path(gitfile_path: &Path) -> Result<PathBuf> {
+    let content = std::fs::read_to_string(gitfile_path).with_context(|| {
+        format!(
+            "'{}' does not appear to be a git repository: {}",
+            gitfile_path.display(),
+            "not a git repository (or any of the parent directories)"
+        )
+    })?;
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("gitdir:") {
+            let rel = rest.trim();
+            if rel.is_empty() {
+                break;
+            }
+            let candidate = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                gitfile_path
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .join(rel)
+            };
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "'{}' does not appear to be a git repository: not a git repository (or any of the parent directories)",
+        gitfile_path.display()
+    )
+}
+
 /// If the repository argument matches a configured remote name, resolve to its URL.
 /// Otherwise return the original path.
 fn resolve_remote_or_path(path: &Path) -> PathBuf {
     let path_str = path.to_string_lossy();
 
-    // Try remote resolution first for simple names (no path separators).
-    // Remote config takes precedence over filesystem directories with the
-    // same name, matching git's behaviour.
-    if !path_str.contains('/') && !path_str.contains('\\') {
-        if let Ok(repo) = Repository::discover(None) {
-            let config_path = repo.git_dir.join("config");
-            if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Some(url) = parse_remote_url(&content, &path_str) {
-                    return PathBuf::from(url);
-                }
+    // Remote config takes precedence over filesystem paths, even when the
+    // remote name itself contains slashes.
+    if let Ok(repo) = Repository::discover(None) {
+        let config_path = repo.git_dir.join("config");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Some(url) = parse_remote_url(&content, &path_str) {
+                return PathBuf::from(url);
             }
         }
     }
@@ -265,4 +297,21 @@ fn parse_remote_url(config: &str, remote_name: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn common_git_dir_or_self(git_dir: &Path) -> PathBuf {
+    let commondir_path = git_dir.join("commondir");
+    let Ok(raw) = std::fs::read_to_string(commondir_path) else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let candidate = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    candidate.canonicalize().unwrap_or(candidate)
 }

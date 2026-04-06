@@ -99,22 +99,6 @@ pub struct ConfigSet {
     entries: Vec<ConfigEntry>,
 }
 
-fn common_git_dir(git_dir: &Path) -> PathBuf {
-    let commondir_file = git_dir.join("commondir");
-    if let Ok(raw) = fs::read_to_string(&commondir_file) {
-        let rel = raw.trim();
-        if !rel.is_empty() {
-            let candidate = if Path::new(rel).is_absolute() {
-                PathBuf::from(rel)
-            } else {
-                git_dir.join(rel)
-            };
-            return candidate.canonicalize().unwrap_or(candidate);
-        }
-    }
-    git_dir.to_path_buf()
-}
-
 // ── Canonical key helpers ────────────────────────────────────────────
 
 /// Normalise a config key to canonical form.
@@ -521,8 +505,7 @@ impl ConfigFile {
     ///
     /// Returns [`Error::ConfigError`] on malformed input.
     pub fn parse(path: &Path, content: &str, scope: ConfigScope) -> Result<Self> {
-        let raw_lines: Vec<String> = content
-            .lines()
+        let raw_lines: Vec<String> = content.lines()
             .map(|l| l.strip_suffix('\r').unwrap_or(l))
             .map(String::from)
             .collect();
@@ -1216,9 +1199,6 @@ impl ConfigFile {
 // ── ConfigSet ───────────────────────────────────────────────────────
 
 impl ConfigSet {
-    /// Maximum nesting level for include processing before we abort.
-    const MAX_INCLUDE_DEPTH: usize = 10;
-
     /// Create an empty config set.
     #[must_use]
     pub fn new() -> Self {
@@ -1345,23 +1325,15 @@ impl ConfigSet {
 
         // Local config
         if let Some(gd) = git_dir {
-            let common = common_git_dir(gd);
-
-            let local_path = common.join("config");
+            let local_path = gd.join("config");
             if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
                 Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
 
-            // Worktree config is only active when the extension is enabled.
-            let worktree_enabled = set
-                .get_bool("extensions.worktreeConfig")
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
-            if worktree_enabled {
-                let wt_path = gd.join("config.worktree");
-                if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                    Self::merge_with_includes(&mut set, &f, true, 0)?;
-                }
+            // Worktree config
+            let wt_path = gd.join("config.worktree");
+            if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
+                Self::merge_with_includes(&mut set, &f, true, 0)?;
             }
         }
 
@@ -1390,9 +1362,6 @@ impl ConfigSet {
         if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
             for entry in parse_config_parameters(&params) {
                 if let Some((key, val)) = entry.split_once('=') {
-                    // Preserve value verbatim; Git allows values containing
-                    // significant leading/trailing whitespace and newlines.
-                    // Validation/parsing happens in command-specific callers.
                     let _ = set.add_command_override(key.trim(), val);
                 } else {
                     // Bare key (boolean true)
@@ -1409,15 +1378,14 @@ impl ConfigSet {
         set: &mut Self,
         file: &ConfigFile,
         process_includes: bool,
-        include_depth: usize,
+        depth: usize,
     ) -> Result<()> {
-        if include_depth > Self::MAX_INCLUDE_DEPTH {
+        const MAX_INCLUDE_DEPTH: usize = 10;
+        if depth > MAX_INCLUDE_DEPTH {
             return Err(Error::ConfigError(format!(
-                "exceeded maximum include depth while including '{}'",
-                file.path.display()
+                "exceeded maximum include depth ({MAX_INCLUDE_DEPTH})"
             )));
         }
-
         // First pass: find include paths
         let mut includes: Vec<(String, Option<String>)> = Vec::new();
 
@@ -1449,7 +1417,7 @@ impl ConfigSet {
 
                 let resolved = resolve_include_path(&inc_path, file.path.parent());
                 if let Ok(Some(inc_file)) = ConfigFile::from_path(&resolved, file.scope) {
-                    Self::merge_with_includes(set, &inc_file, true, include_depth + 1)?;
+                    Self::merge_with_includes(set, &inc_file, true, depth + 1)?;
                 }
             }
         }
@@ -1462,11 +1430,17 @@ impl ConfigSet {
 
 /// Parse a Git boolean value.
 ///
-/// Accepts: `true`, `yes`, `on`, `1` (and bare key / empty) as true.
-/// Accepts: `false`, `no`, `off`, `0` as false.
+/// Accepts: `true`, `yes`, `on`, `1` as true.
+/// Accepts: `false`, `no`, `off`, `0` (and explicit empty value) as false.
+///
+/// Note: bare config keys are represented as `None` in [`ConfigEntry`] and
+/// are normalized to `"true"` by higher-level readers (`ConfigSet::get`).
+/// This parser only sees string values and therefore treats `""` as an
+/// explicitly empty assignment (`key =`), which Git interprets as false.
 pub fn parse_bool(s: &str) -> std::result::Result<bool, String> {
     match s.to_lowercase().as_str() {
-        "true" | "yes" | "on" | "" => Ok(true),
+        "true" | "yes" | "on" => Ok(true),
+        "" => Ok(false),
         "false" | "no" | "off" => Ok(false),
         _ => {
             // Try parsing as integer: 0 → false, non-zero → true
@@ -1725,28 +1699,76 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Parse `GIT_CONFIG_PARAMETERS` — single-quoted `'key=value'` entries
-/// separated by whitespace.
+/// Parse `GIT_CONFIG_PARAMETERS` payloads.
+///
+/// We support the common formats seen in tests and wrappers:
+/// - single-quoted entries: `'key=value'`
+/// - double-quoted entries: `"key=value"`
+/// - unquoted `key=value` tokens separated by whitespace
+///
+/// Backslash escapes are interpreted minimally inside double quotes.
 fn parse_config_parameters(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut iter = raw.chars().peekable();
-    while let Some(&c) = iter.peek() {
-        if c == '\'' {
-            iter.next();
-            let mut s = String::new();
-            loop {
-                match iter.next() {
-                    Some('\'') | None => break,
-                    Some(x) => s.push(x),
-                }
+    let mut buf = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if in_single {
+            if ch == '\'' {
+                in_single = false;
+            } else {
+                buf.push(ch);
             }
-            if !s.is_empty() {
-                out.push(s);
-            }
-        } else {
-            iter.next();
+            continue;
         }
+        if in_double {
+            if ch == '"' {
+                in_double = false;
+                continue;
+            }
+            if ch == '\\' {
+                if let Some(next) = chars.next() {
+                    let mapped = match next {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '"' => '"',
+                        '\\' => '\\',
+                        other => other,
+                    };
+                    buf.push(mapped);
+                }
+                continue;
+            }
+            buf.push(ch);
+            continue;
+        }
+
+        if ch == '\'' {
+            in_single = true;
+            continue;
+        }
+        if ch == '"' {
+            in_double = true;
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !buf.is_empty() {
+                out.push(std::mem::take(&mut buf));
+            }
+            continue;
+        }
+
+        buf.push(ch);
     }
+
+    if !buf.is_empty() {
+        out.push(buf);
+    }
+
     out
 }
 

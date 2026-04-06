@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use clap::Args as ClapArgs;
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 /// Config variable names for completion (from `git help --config-for-completion`).
@@ -161,6 +162,14 @@ pub fn run(args: Args) -> Result<()> {
         for cmd in ALL_COMMANDS {
             writeln!(out, "   {cmd}")?;
         }
+        let aliases = load_alias_names();
+        if !aliases.is_empty() {
+            writeln!(out)?;
+            writeln!(out, "Aliases:")?;
+            for alias in aliases {
+                writeln!(out, "   {alias}")?;
+            }
+        }
         writeln!(out)?;
         writeln!(
             out,
@@ -212,4 +221,39 @@ pub fn run(args: Args) -> Result<()> {
         )?;
         Ok(())
     }
+}
+
+fn load_alias_names() -> Vec<String> {
+    let Ok(repo) = grit_lib::repo::Repository::discover(None) else {
+        return Vec::new();
+    };
+    let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) else {
+        return Vec::new();
+    };
+
+    let mut names = BTreeSet::new();
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("alias.") else {
+            continue;
+        };
+
+        if let Some(name) = rest.strip_suffix(".command") {
+            if !name.is_empty() {
+                names.insert(name.to_owned());
+            }
+            continue;
+        }
+
+        if let Some(name) = rest.strip_prefix('.') {
+            if !name.is_empty() && !name.contains('.') {
+                names.insert(name.to_owned());
+            }
+            continue;
+        }
+
+        if !rest.is_empty() && !rest.contains('.') {
+            names.insert(rest.to_owned());
+        }
+    }
+    names.into_iter().collect()
 }

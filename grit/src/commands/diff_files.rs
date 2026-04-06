@@ -5,6 +5,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -116,8 +118,6 @@ struct Options {
     format: OutputFormat,
     /// Suppress diff output (-s / --no-patch).
     suppress_diff: bool,
-    /// Ignore submodule (gitlink) entries.
-    ignore_submodules: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -133,8 +133,6 @@ struct Change {
     new_mode: u32,
     /// Index-side OID.
     old_oid: ObjectId,
-    /// Working-tree-side OID (or zero for deleted/unknown).
-    new_oid: ObjectId,
 }
 
 // ── Option parsing ───────────────────────────────────────────────────
@@ -147,7 +145,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
-    let mut ignore_submodules = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -219,13 +216,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 | "--no-ext-diff"
                 | "--no-prefix"
                 | "--no-renames"
-                | "--no-abbrev"
-                | "--ignore-submodules" => {
-                    ignore_submodules = true;
-                }
-                _ if arg.starts_with("--ignore-submodules=") => {
-                    ignore_submodules = true;
-                }
+                | "--no-abbrev" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("-G")
                     || arg.starts_with("-S")
@@ -249,7 +240,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         abbrev,
         format,
         suppress_diff,
-        ignore_submodules,
     })
 }
 
@@ -294,88 +284,20 @@ fn collect_changes(
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
-            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
-                continue;
-            }
-            if idx_entry.intent_to_add() {
-                let abs = work_tree.join(path);
-                if let Some((wt_mode, _wt_oid)) = read_worktree_info(repo, &abs)? {
-                    changes.insert(
-                        path.clone(),
-                        Change {
-                            path: path.clone(),
-                            status: 'A',
-                            old_mode: 0,
-                            new_mode: wt_mode,
-                            old_oid: zero_oid(),
-                            new_oid: _wt_oid,
-                        },
-                    );
-                }
-                continue;
-            }
-
-            if has_symlink_ancestor(work_tree, Path::new(path)) {
-                changes.insert(
-                    path.clone(),
-                    Change {
-                        path: path.clone(),
-                        status: 'D',
-                        old_mode: canonicalize_mode(*idx_mode),
-                        new_mode: 0,
-                        old_oid: *idx_oid,
-                        new_oid: zero_oid(),
-                    },
-                );
-                continue;
-            }
-
             let abs = work_tree.join(path);
             match read_worktree_info_fast(repo, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
-                WorktreeStatus::Smudged(wt_mode) => {
-                    if options.ignore_submodules && *idx_mode == MODE_GITLINK {
-                        continue;
-                    }
-                    let idx_canonical = canonicalize_mode(*idx_mode);
-                    let status = if wt_mode == 0 {
-                        'D'
-                    } else if wt_mode != idx_canonical {
-                        'T'
-                    } else {
-                        'M'
-                    };
-                    changes.insert(
-                        path.clone(),
-                        Change {
-                            path: path.clone(),
-                            status,
-                            old_mode: idx_canonical,
-                            new_mode: wt_mode,
-                            old_oid: *idx_oid,
-                            new_oid: zero_oid(),
-                        },
-                    );
-                }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical {
-                        let status = if wt_mode == 0 {
-                            'D'
-                        } else if wt_mode != idx_canonical {
-                            'T'
-                        } else {
-                            'M'
-                        };
                         changes.insert(
                             path.clone(),
                             Change {
                                 path: path.clone(),
-                                status,
+                                status: 'M',
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
-                                new_oid: wt_oid,
                             },
                         );
                     }
@@ -390,7 +312,6 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
-                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -413,16 +334,12 @@ fn collect_changes(
                     old_mode: 0,
                     new_mode: 0,
                     old_oid: zero_oid(),
-                    new_oid: zero_oid(),
                 },
             );
         }
     } else {
         // Stage-specific mode: compare requested stage entries against worktree.
         for (path, (idx_mode, idx_oid)) in &staged {
-            if options.ignore_submodules && *idx_mode == MODE_GITLINK {
-                continue;
-            }
             let abs = work_tree.join(path);
             match read_worktree_info(repo, &abs)? {
                 Some((wt_mode, _wt_oid)) => {
@@ -434,7 +351,6 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
-                            new_oid: _wt_oid,
                         },
                     );
                 }
@@ -447,7 +363,6 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
-                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -464,8 +379,6 @@ fn collect_changes(
 enum WorktreeStatus {
     /// File is unchanged according to stat info — no need to hash.
     Unchanged,
-    /// Index entry has zeroed stat info and should appear modified.
-    Smudged(u32),
     /// File exists and may be modified (mode, oid from full hash).
     Modified(u32, ObjectId),
     /// File is missing from the working tree.
@@ -486,46 +399,14 @@ fn read_worktree_info_fast(
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo;
-    let idx_mode = canonicalize_mode(index_entry.mode);
-
-    // Gitlink entries need special handling:
-    // - An existing directory without a nested `.git` is an uninitialized
-    //   submodule and is considered clean.
-    // - A populated submodule compares by checked out commit.
-    if idx_mode == MODE_GITLINK && meta.file_type().is_dir() {
-        if !abs_path.join(".git").exists() {
-            return Ok(WorktreeStatus::Unchanged);
-        }
-        let oid = read_submodule_head_oid(abs_path)?;
-        if oid == index_entry.oid {
-            return Ok(WorktreeStatus::Unchanged);
-        }
-        return Ok(WorktreeStatus::Modified(MODE_GITLINK, oid));
-    }
-
-    // Entries created by read-tree start with zeroed stat information.
-    // Until an explicit refresh (e.g. checkout-index -u / update-index
-    // --refresh), Git reports them as modified in diff-files.
-    if has_uninitialized_stat(index_entry) {
-        if meta.file_type().is_symlink() {
-            return Ok(WorktreeStatus::Smudged(MODE_SYMLINK));
-        }
-        if meta.file_type().is_file() {
-            let wt_mode = if meta.permissions().mode() & 0o111 != 0 {
-                MODE_EXECUTABLE
-            } else {
-                MODE_REGULAR
-            };
-            return Ok(WorktreeStatus::Smudged(wt_mode));
-        }
-        if meta.file_type().is_dir() {
-            if abs_path.join(".git").exists() {
-                return Ok(WorktreeStatus::Smudged(MODE_GITLINK));
-            }
-            return Ok(WorktreeStatus::Smudged(0));
-        }
-    }
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
+    let rel_path = index_entry_path(index_entry);
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
@@ -550,88 +431,22 @@ fn read_worktree_info_fast(
         return Ok(WorktreeStatus::Modified(MODE_SYMLINK, oid));
     }
 
-    if meta.file_type().is_dir() {
-        if abs_path.join(".git").exists() {
-            let oid = read_submodule_head_oid(abs_path)?;
-            return Ok(WorktreeStatus::Modified(MODE_GITLINK, oid));
-        }
-        return Ok(WorktreeStatus::Modified(0, zero_oid()));
-    }
-
     if meta.file_type().is_file() {
         let mode = if meta.permissions().mode() & 0o111 != 0 {
             MODE_EXECUTABLE
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
+        let raw = fs::read(abs_path)?;
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+        let mut conv_for_hash = conv.clone();
+        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
 
     Ok(WorktreeStatus::Missing)
-}
-
-fn read_submodule_head_oid(submodule_dir: &Path) -> Result<ObjectId> {
-    let dot_git = submodule_dir.join(".git");
-    let git_dir = resolve_gitdir(&dot_git)?;
-    let head = fs::read_to_string(git_dir.join("HEAD"))
-        .with_context(|| format!("cannot read {}", git_dir.join("HEAD").display()))?;
-    let head = head.trim();
-    if let Some(refname) = head.strip_prefix("ref: ") {
-        let resolved = fs::read_to_string(git_dir.join(refname))
-            .with_context(|| format!("cannot read {}", git_dir.join(refname).display()))?;
-        return resolved.trim().parse().context("invalid submodule ref oid");
-    }
-    head.parse().context("invalid submodule HEAD oid")
-}
-
-fn resolve_gitdir(dot_git: &Path) -> Result<PathBuf> {
-    let meta = fs::symlink_metadata(dot_git)?;
-    if meta.is_dir() {
-        return Ok(dot_git.to_path_buf());
-    }
-    let content = fs::read_to_string(dot_git)?;
-    let content = content.trim();
-    let target = content
-        .strip_prefix("gitdir: ")
-        .ok_or_else(|| anyhow::anyhow!("invalid .git file"))?;
-    let target_path = Path::new(target);
-    if target_path.is_absolute() {
-        Ok(target_path.to_path_buf())
-    } else {
-        Ok(dot_git.parent().unwrap_or(Path::new(".")).join(target_path))
-    }
-}
-
-fn has_symlink_ancestor(work_tree: &Path, rel_path: &Path) -> bool {
-    let mut current = PathBuf::new();
-    let components: Vec<_> = rel_path.components().collect();
-    if components.len() <= 1 {
-        return false;
-    }
-    for component in components.iter().take(components.len() - 1) {
-        current.push(component);
-        let abs = work_tree.join(&current);
-        if let Ok(meta) = fs::symlink_metadata(&abs) {
-            if meta.file_type().is_symlink() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn has_uninitialized_stat(entry: &IndexEntry) -> bool {
-    entry.ctime_sec == 0
-        && entry.ctime_nsec == 0
-        && entry.mtime_sec == 0
-        && entry.mtime_nsec == 0
-        && entry.dev == 0
-        && entry.ino == 0
-        && entry.uid == 0
-        && entry.gid == 0
-        && entry.size == 0
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.
@@ -645,7 +460,13 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         Err(e) => return Err(e.into()),
     };
 
-    let _ = repo;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
 
     if meta.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
@@ -659,7 +480,17 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
+        let raw = fs::read(abs_path)?;
+        let rel_path = repo
+            .work_tree
+            .as_deref()
+            .and_then(|wt| abs_path.strip_prefix(wt).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+        let mut conv_for_hash = conv.clone();
+        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(Some((mode, oid)));
     }
@@ -678,14 +509,9 @@ fn render_raw(change: &Change, repo: &Repository, abbrev: Option<usize>) -> Resu
     let old_oid = format_oid(change.old_oid, repo, abbrev, width)?;
     // Working-tree OID is always zeros in diff-files output.
     let new_oid = "0".repeat(width);
-    let status = if change.status == 'M' && change.old_mode != change.new_mode {
-        'T'
-    } else {
-        change.status
-    };
     Ok(format!(
         ":{:06o} {:06o} {} {} {}\t{}",
-        change.old_mode, change.new_mode, old_oid, new_oid, status, change.path
+        change.old_mode, change.new_mode, old_oid, new_oid, change.status, change.path
     ))
 }
 
@@ -706,11 +532,6 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
 
     // Build mode header lines
     let mut header = format!("diff --git a/{path} b/{path}");
-    let abbr = |oid: ObjectId| -> String {
-        let hex = oid.to_hex();
-        hex[..7.min(hex.len())].to_owned()
-    };
-
     if change.status == 'D' {
         header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
     } else if change.status == 'A' {
@@ -721,28 +542,8 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
             change.old_mode, change.new_mode
         ));
     }
-    if change.status == 'A' {
-        header.push_str(&format!("\nindex 0000000..{}", abbr(change.new_oid)));
-    } else if change.status == 'D' {
-        header.push_str(&format!("\nindex {}..0000000", abbr(change.old_oid)));
-    } else if change.old_mode == change.new_mode {
-        header.push_str(&format!(
-            "\nindex {}..{} {:06o}",
-            abbr(change.old_oid),
-            abbr(change.new_oid),
-            change.old_mode
-        ));
-    } else {
-        header.push_str(&format!(
-            "\nindex {}..{}",
-            abbr(change.old_oid),
-            abbr(change.new_oid)
-        ));
-    }
 
-    if old_content == new_content
-        && (change.status == 'A' || change.status == 'D' || change.old_mode != change.new_mode)
-    {
+    if old_content == new_content && change.old_mode != change.new_mode {
         // Mode-only change, no content diff needed
         println!("{header}");
     } else if old_content != new_content {
@@ -898,4 +699,8 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
+}
+
+fn index_entry_path(entry: &IndexEntry) -> String {
+    String::from_utf8_lossy(&entry.path).into_owned()
 }

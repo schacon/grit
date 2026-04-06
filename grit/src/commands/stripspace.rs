@@ -53,7 +53,7 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Resolve and validate the comment character from git config.
+/// Resolve the comment character from the git config, defaulting to `"#"`.
 ///
 /// Tries to discover a repository and read `core.commentchar`.  Falls back
 /// to `"#"` when outside a repository or when the key is unset.
@@ -74,11 +74,11 @@ fn resolve_comment_char() -> Result<String> {
     Ok("#".to_owned())
 }
 
-fn validate_comment_char(value: &str) -> Result<()> {
-    if value.is_empty() {
+fn validate_comment_char(comment_char: &str) -> Result<()> {
+    if comment_char.is_empty() {
         bail!("core.commentchar must have at least one character");
     }
-    if value.contains('\n') {
+    if comment_char.contains('\n') {
         bail!("core.commentchar cannot contain newline");
     }
     Ok(())

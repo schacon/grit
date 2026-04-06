@@ -815,6 +815,7 @@ status.submoduleSummary
 submodule.<name>.active
 submodule.<name>.branch
 submodule.<name>.fetchRecurseSubmodules
+submodule.<name>.gitdir
 submodule.<name>.ignore
 submodule.<name>.update
 submodule.<name>.url

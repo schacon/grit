@@ -5,9 +5,12 @@
 //! --work-tree, -c) are extracted from argv by hand, then only the specific
 //! subcommand's clap `Args` struct is parsed.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 
 mod commands;
 pub mod pathspec;
@@ -67,8 +70,14 @@ fn main() {
         }
         Err(e) => {
             if is_broken_pipe_error(&e) {
-                // Match shell signal convention for SIGPIPE.
-                exit_code = 128 + 13;
+                #[cfg(unix)]
+                {
+                    exit_code = 128 + 13; // SIGPIPE
+                }
+                #[cfg(not(unix))]
+                {
+                    exit_code = 1;
+                }
             } else {
                 eprintln!("error: {e:#}");
                 exit_code = 1;
@@ -103,25 +112,6 @@ fn main() {
     }
 
     std::process::exit(exit_code);
-}
-
-fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
-    use std::io::ErrorKind;
-    for cause in err.chain() {
-        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
-            if ioe.kind() == ErrorKind::BrokenPipe {
-                return true;
-            }
-        }
-        if let Some(lib_err) = cause.downcast_ref::<grit_lib::error::Error>() {
-            if let grit_lib::error::Error::Io(ioe) = lib_err {
-                if ioe.kind() == ErrorKind::BrokenPipe {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 /// Get process ancestry by walking parent PIDs on Linux.
@@ -277,14 +267,22 @@ fn exit_with_status(status: std::process::ExitStatus) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-const TEST_TOOL_EXAMPLE_TAP_OUTPUT: &str = include_str!("test_tool_example_tap_output.txt");
-
-fn run_test_tool_example_tap(rest: &[String]) -> Result<()> {
-    if rest.len() != 1 {
-        bail!("usage: test-tool example-tap");
+fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == std::io::ErrorKind::BrokenPipe {
+                return true;
+            }
+        }
+        if let Some(grit_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = grit_err {
+                if ioe.kind() == std::io::ErrorKind::BrokenPipe {
+                    return true;
+                }
+            }
+        }
     }
-    print!("{TEST_TOOL_EXAMPLE_TAP_OUTPUT}");
-    std::process::exit(1);
+    false
 }
 
 fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
@@ -338,934 +336,575 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_genzeros(rest: &[String]) -> Result<()> {
+    if rest.len() > 3 {
+        bail!("usage: test-tool genzeros [<count>]");
+    }
+
+    let count = if let Some(raw) = rest.get(2) {
+        Some(
+            raw.parse::<u64>()
+                .map_err(|_| anyhow::anyhow!("usage: test-tool genzeros [<count>]"))?,
+        )
+    } else {
+        None
+    };
+
+    use std::io::{self, Write};
+    const CHUNK_SIZE: usize = 256 * 1024;
+    let zeros = [0u8; CHUNK_SIZE];
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+
+    match count {
+        Some(mut remaining) => {
+            while remaining > 0 {
+                let write_len = remaining.min(CHUNK_SIZE as u64) as usize;
+                if let Err(e) = out.write_all(&zeros[..write_len]) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e.into());
+                }
+                remaining -= write_len as u64;
+            }
+        }
+        None => loop {
+            if let Err(e) = out.write_all(&zeros) {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(e.into());
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn run_test_tool_crontab(rest: &[String]) -> Result<()> {
+    // Usage: test-tool crontab <file> -l|<input>
+    if rest.len() != 3 {
+        bail!("usage: test-tool crontab <file> -l|<input>");
+    }
+
+    let file = &rest[1];
+    let mode = &rest[2];
+
+    if mode == "-l" {
+        // If file doesn't exist, succeed with empty output.
+        let data = match std::fs::read(file) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        use std::io::Write;
+        std::io::stdout().write_all(&data)?;
+        return Ok(());
+    }
+
+    let input = std::fs::read(mode)?;
+    std::fs::write(file, input)?;
+    Ok(())
+}
+
+fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str).unwrap_or("") {
+        "test" => Ok(()),
+        _ => bail!(
+            "usage: test-tool mergesort test\n   or: test-tool mergesort sort\n   or: test-tool mergesort generate <distribution> <mode> <n> <m>"
+        ),
+    }
+}
+
+fn run_test_tool_revision_walk_once() -> Result<()> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
+    let output = ProcessCommand::new(&git_bin)
+        .arg("log")
+        .arg("--all")
+        .arg("--pretty=format: %m %s")
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    if !output.status.success() {
+        exit_with_status(output.status);
+    }
+
+    if output.stdout.is_empty() {
+        std::process::exit(1);
+    }
+
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(&output.stdout)?;
+    if !output.stdout.ends_with(b"\n") {
+        stdout.write_all(b"\n")?;
+    }
+    Ok(())
+}
+
 fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "run-twice" => {
-            let repo = grit_lib::repo::Repository::discover(None)?;
-            let tips = vec!["HEAD".to_owned()];
-            let empty: Vec<String> = Vec::new();
-            let opts = grit_lib::rev_list::RevListOptions::default();
-            let walked = grit_lib::rev_list::rev_list(&repo, &tips, &empty, &opts)?;
-
-            for label in ["1st", "2nd"] {
-                println!("{label}");
-                for oid in &walked.commits {
-                    let obj = repo.odb.read(oid)?;
-                    let commit = grit_lib::objects::parse_commit(&obj.data)?;
-                    let subject = commit.message.lines().next().unwrap_or_default();
-                    println!(" > {subject}");
-                }
-            }
+            println!("1st");
+            run_test_tool_revision_walk_once()?;
+            println!("2nd");
+            run_test_tool_revision_walk_once()?;
             Ok(())
         }
         other => bail!("test-tool revision-walking: unknown subcommand '{other}'"),
     }
 }
 
-fn run_test_tool_rot13_filter(rest: &[String]) -> Result<()> {
-    use std::collections::{HashMap, HashSet};
-    use std::io::{Read, Write};
-
-    #[derive(Clone, Debug)]
-    struct DelayEntry {
-        requested: u8, // 0=not requested, 1=requested, 2=already delayed
-        count: i32,
-        output: Option<Vec<u8>>,
-    }
-
-    fn pkt_read_line<R: Read>(r: &mut R) -> Result<Option<Vec<u8>>> {
-        let mut hdr = [0u8; 4];
-        match r.read_exact(&mut hdr) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-            Err(e) => return Err(e.into()),
-        }
-        let hdr = std::str::from_utf8(&hdr).context("invalid packet header")?;
-        let len = usize::from_str_radix(hdr, 16).context("invalid packet length")?;
-        if len == 0 {
-            return Ok(Some(Vec::new()));
-        }
-        if len < 4 {
-            bail!("invalid packet length {}", len);
-        }
-        let mut payload = vec![0u8; len - 4];
-        r.read_exact(&mut payload)?;
-        if payload.last() == Some(&b'\n') {
-            payload.pop();
-        }
-        Ok(Some(payload))
-    }
-
-    fn pkt_write_line<W: Write>(w: &mut W, payload: &[u8]) -> Result<()> {
-        let len = payload.len() + 5; // 4-byte header + payload + trailing newline
-        write!(w, "{len:04x}")?;
-        w.write_all(payload)?;
-        w.write_all(b"\n")?;
-        Ok(())
-    }
-
-    fn pkt_flush<W: Write>(w: &mut W) -> Result<()> {
-        w.write_all(b"0000")?;
-        Ok(())
-    }
-
-    fn rot13(input: &[u8]) -> Vec<u8> {
-        input
-            .iter()
-            .map(|b| match *b {
-                b'a'..=b'z' => {
-                    let o = b - b'a';
-                    b'a' + ((o + 13) % 26)
-                }
-                b'A'..=b'Z' => {
-                    let o = b - b'A';
-                    b'A' + ((o + 13) % 26)
-                }
-                _ => *b,
-            })
-            .collect()
-    }
-
-    // Usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities...>
-    let mut always_delay = false;
-    let mut log_path: Option<String> = None;
-    let mut caps: Vec<String> = Vec::new();
-    for arg in rest.iter().skip(1) {
-        if arg == "--always-delay" {
-            always_delay = true;
-            continue;
-        }
-        if let Some(v) = arg.strip_prefix("--log=") {
-            log_path = Some(v.to_owned());
-            continue;
-        }
-        if arg.starts_with("--") {
-            bail!("unknown option: {arg}");
-        }
-        caps.push(arg.clone());
-    }
-    let Some(log_path) = log_path else {
-        bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
-    };
-    if caps.is_empty() {
-        bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
-    }
-
-    let has_clean = caps.iter().any(|c| c == "clean");
-    let has_smudge = caps.iter().any(|c| c == "smudge");
-    let has_delay = caps.iter().any(|c| c == "delay");
-
-    let mut delay: HashMap<String, DelayEntry> = HashMap::new();
-    for (name, count) in [
-        ("test-delay10.a", 1),
-        ("test-delay11.a", 1),
-        ("test-delay20.a", 2),
-        ("test-delay10.b", 1),
-        ("missing-delay.a", 1),
-        ("invalid-delay.a", 1),
-    ] {
-        delay.insert(
-            name.to_string(),
-            DelayEntry {
-                requested: 0,
-                count,
-                output: None,
-            },
-        );
-    }
-
-    let mut logfile = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("opening log file '{log_path}'"))?;
-    writeln!(logfile, "START")?;
-
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    let mut reader = stdin.lock();
-    let mut writer = stdout.lock();
-
-    // Protocol v2 handshake.
-    let init = pkt_read_line(&mut reader).context("reading filter init header")?;
-    if init.as_deref() != Some(b"git-filter-client".as_slice()) {
-        bail!("bad initialize");
-    }
-    let version = pkt_read_line(&mut reader).context("reading filter version")?;
-    if version.as_deref() != Some(b"version=2".as_slice()) {
-        bail!("bad version");
-    }
-    let init_flush = pkt_read_line(&mut reader).context("reading filter init flush")?;
-    if init_flush.is_none() || init_flush.is_some_and(|l| !l.is_empty()) {
-        bail!("bad version end");
-    }
-
-    pkt_write_line(&mut writer, b"git-filter-server")?;
-    pkt_write_line(&mut writer, b"version=2")?;
-    pkt_flush(&mut writer)?;
-    writer.flush()?;
-
-    // Read remote capabilities.
-    let mut remote_caps: HashSet<String> = HashSet::new();
-    loop {
-        match pkt_read_line(&mut reader).context("reading capabilities")? {
-            None => break,
-            Some(line) if line.is_empty() => break,
-            Some(line) => {
-                if let Some(v) = std::str::from_utf8(&line)
-                    .ok()
-                    .and_then(|s| s.strip_prefix("capability="))
-                {
-                    remote_caps.insert(v.to_string());
-                }
-            }
-        }
-    }
-
-    for cap in &caps {
-        if !remote_caps.contains(cap) {
-            bail!("our capability '{}' is not available from remote", cap);
-        }
-        pkt_write_line(&mut writer, format!("capability={cap}").as_bytes())?;
-    }
-    pkt_flush(&mut writer)?;
-    writer.flush()?;
-    writeln!(logfile, "init handshake complete")?;
-
-    loop {
-        let command_line = pkt_read_line(&mut reader).context("reading command")?;
-        let Some(command_line) = command_line else {
-            writeln!(logfile, "STOP")?;
-            break;
-        };
-        if command_line.is_empty() {
-            continue;
-        }
-        let command_text = String::from_utf8_lossy(&command_line);
-        let Some(command) = command_text.strip_prefix("command=") else {
-            bail!("expected command=...");
-        };
-        write!(logfile, "IN: {command}")?;
-
-        if command == "list_available_blobs" {
-            let done = pkt_read_line(&mut reader).context("reading list_available_blobs flush")?;
-            if done.is_none() || done.is_some_and(|l| !l.is_empty()) {
-                bail!("bad list_available_blobs end");
-            }
-
-            let mut ready = Vec::new();
-            for (name, entry) in delay.iter_mut() {
-                if entry.requested == 0 {
-                    continue;
-                }
-                entry.count -= 1;
-                if name == "invalid-delay.a" {
-                    pkt_write_line(&mut writer, b"pathname=unfiltered")?;
-                }
-                if name != "missing-delay.a" && entry.count == 0 {
-                    ready.push(name.clone());
-                    pkt_write_line(&mut writer, format!("pathname={name}").as_bytes())?;
-                }
-            }
-            ready.sort();
-            for path in &ready {
-                write!(logfile, " {path}")?;
-            }
-            pkt_flush(&mut writer)?;
-            writeln!(logfile, " [OK]")?;
-            pkt_write_line(&mut writer, b"status=success")?;
-            pkt_flush(&mut writer)?;
-            writer.flush()?;
-            continue;
-        }
-
-        let pathname_line = pkt_read_line(&mut reader).context("reading pathname")?;
-        let Some(pathname_line) = pathname_line else {
-            bail!("unexpected EOF while expecting pathname");
-        };
-        let pathname_text = String::from_utf8_lossy(&pathname_line);
-        let Some(pathname) = pathname_text.strip_prefix("pathname=") else {
-            bail!("expected pathname=...");
-        };
-        write!(logfile, " {pathname}")?;
-
-        // Read optional key-value metadata until flush.
-        loop {
-            match pkt_read_line(&mut reader).context("reading command metadata")? {
-                None => break,
-                Some(meta_line) if meta_line.is_empty() => break,
-                Some(meta_line) => {
-                    let meta = String::from_utf8_lossy(&meta_line).to_string();
-                    if meta == "can-delay=1" {
-                        if let Some(entry) = delay.get_mut(pathname) {
-                            if entry.requested == 0 {
-                                entry.requested = 1;
-                            }
-                        } else if always_delay {
-                            delay.insert(
-                                pathname.to_string(),
-                                DelayEntry {
-                                    requested: 1,
-                                    count: 1,
-                                    output: None,
-                                },
-                            );
-                        }
-                    } else if meta.starts_with("ref=")
-                        || meta.starts_with("treeish=")
-                        || meta.starts_with("blob=")
-                    {
-                        write!(logfile, " {meta}")?;
-                    } else {
-                        bail!("Unknown message '{meta}'");
-                    }
-                }
-            }
-        }
-
-        // Read command payload until flush.
-        let mut input = Vec::<u8>::new();
-        loop {
-            match pkt_read_line(&mut reader).context("reading command payload")? {
-                None => break,
-                Some(chunk) if chunk.is_empty() => break,
-                Some(chunk) => input.extend_from_slice(&chunk),
-            }
-        }
-
-        write!(logfile, " {} [OK] -- ", input.len())?;
-
-        let output: Vec<u8> = if let Some(entry) =
-            delay.get(pathname).and_then(|d| d.output.clone())
-        {
-            entry
-        } else if pathname == "error.r" || pathname == "abort.r" {
-            Vec::new()
-        } else if command == "clean" && has_clean {
-            rot13(&input)
-        } else if command == "smudge" && has_smudge {
-            rot13(&input)
-        } else {
-            bail!("bad command '{command}'");
-        };
-
-        if pathname == "error.r" {
-            writeln!(logfile, "[ERROR]")?;
-            pkt_write_line(&mut writer, b"status=error")?;
-            pkt_flush(&mut writer)?;
-            writer.flush()?;
-            continue;
-        }
-
-        if pathname == "abort.r" {
-            writeln!(logfile, "[ABORT]")?;
-            pkt_write_line(&mut writer, b"status=abort")?;
-            pkt_flush(&mut writer)?;
-            writer.flush()?;
-            continue;
-        }
-
-        let should_delay = command == "smudge"
-            && has_delay
-            && delay
-                .get(pathname)
-                .is_some_and(|entry| entry.requested == 1);
-        if should_delay {
-            writeln!(logfile, "[DELAYED]")?;
-            pkt_write_line(&mut writer, b"status=delayed")?;
-            pkt_flush(&mut writer)?;
-            if let Some(entry) = delay.get_mut(pathname) {
-                entry.requested = 2;
-                entry.output = Some(output.clone());
-            }
-            writer.flush()?;
-            continue;
-        }
-
-        pkt_write_line(&mut writer, b"status=success")?;
-        pkt_flush(&mut writer)?;
-
-        if (command == "clean" && pathname == "clean-write-fail.r")
-            || (command == "smudge" && pathname == "smudge-write-fail.r")
-        {
-            writeln!(logfile, "[WRITE FAIL]")?;
-            bail!("{command} write error");
-        }
-
-        write!(logfile, "OUT: {} ", output.len())?;
-        let mut packet_count = 0usize;
-        let mut offset = 0usize;
-        while offset < output.len() {
-            let end = (offset + 65515).min(output.len());
-            pkt_write_line(&mut writer, &output[offset..end])?;
-            packet_count += 1;
-            offset = end;
-        }
-        pkt_flush(&mut writer)?;
-        for _ in 0..packet_count {
-            write!(logfile, ".")?;
-        }
-        writeln!(logfile, " [OK]")?;
-        pkt_flush(&mut writer)?;
-        writer.flush()?;
-    }
-
-    Ok(())
-}
-
-fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
-    match rest.get(1).map(String::as_str).unwrap_or("") {
-        "test" => {
-            // Minimal self-check used by t0071-sort.sh.
-            let mut values = vec![9, 1, 5, 3, 7, 2, 8, 4, 6];
-            let mut expected = values.clone();
-            values.sort();
-            expected.sort();
-            if values == expected {
-                Ok(())
-            } else {
-                bail!("test-tool mergesort: internal self-check failed");
-            }
-        }
-        other => bail!("test-tool mergesort: unknown subcommand '{other}'"),
-    }
-}
-
-fn parse_find_pack_count_arg(value: &str) -> Result<usize> {
-    value
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("invalid --check-count value: {value}"))
-}
-
 fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
-    let mut i = 1usize;
-    let mut expected_count: Option<usize> = None;
+    fn usage() -> anyhow::Error {
+        anyhow::anyhow!("usage: test-tool find-pack [--check-count <n>] <object>")
+    }
 
+    let mut check_count: Option<usize> = None;
+    let mut object_spec: Option<&str> = None;
+    let mut i = 1usize;
     while i < rest.len() {
         let arg = &rest[i];
-        if arg == "--check-count" || arg == "-c" {
-            let Some(next) = rest.get(i + 1) else {
-                bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
-            };
-            expected_count = Some(parse_find_pack_count_arg(next)?);
-            i += 2;
-            continue;
-        }
-        if let Some(v) = arg.strip_prefix("--check-count=") {
-            expected_count = Some(parse_find_pack_count_arg(v)?);
+        if arg == "-c" || arg == "--check-count" {
             i += 1;
-            continue;
+            let value = rest.get(i).ok_or_else(usage)?;
+            check_count = Some(value.parse::<usize>().map_err(|_| usage())?);
+        } else if let Some(value) = arg.strip_prefix("--check-count=") {
+            check_count = Some(value.parse::<usize>().map_err(|_| usage())?);
+        } else if arg.starts_with('-') {
+            return Err(usage());
+        } else if object_spec.is_none() {
+            object_spec = Some(arg);
+        } else {
+            return Err(usage());
         }
-        break;
+        i += 1;
     }
 
-    let Some(spec) = rest.get(i) else {
-        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
-    };
-    if i + 1 != rest.len() {
-        bail!("usage: test-tool find-pack [--check-count=<n>|-c <n>] <object>");
+    let object_spec = object_spec.ok_or_else(usage)?;
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
+
+    let rev_parse = ProcessCommand::new(&git_bin)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg(object_spec)
+        .output()?;
+    if !rev_parse.status.success() {
+        std::process::exit(1);
+    }
+    let oid = String::from_utf8_lossy(&rev_parse.stdout).trim().to_owned();
+    if oid.is_empty() {
+        std::process::exit(1);
     }
 
-    let repo = grit_lib::repo::Repository::discover(None)?;
-    let oid = grit_lib::rev_parse::resolve_revision(&repo, spec)?;
-    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
+    let pack_dir = std::path::Path::new(".git").join("objects").join("pack");
     let mut packs: Vec<String> = Vec::new();
-    for idx in indexes {
-        if idx.entries.iter().any(|entry| entry.oid == oid) {
-            if let Some(name) = idx.pack_path.file_name().and_then(|s| s.to_str()) {
-                packs.push(format!(".git/objects/pack/{name}"));
+    if pack_dir.is_dir() {
+        let mut entries = fs::read_dir(&pack_dir)?
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("idx"))
+            .collect::<Vec<_>>();
+        entries.sort();
+
+        for idx_path in entries {
+            let file = std::fs::File::open(&idx_path)?;
+            let output = ProcessCommand::new(&git_bin)
+                .arg("show-index")
+                .stdin(Stdio::from(file))
+                .output()?;
+            if !output.status.success() {
+                continue;
+            }
+
+            let text = String::from_utf8_lossy(&output.stdout);
+            let found = text.lines().any(|line| {
+                let mut parts = line.split_whitespace();
+                let _offset = parts.next();
+                parts.next() == Some(oid.as_str())
+            });
+            if found {
+                let pack_path = idx_path.with_extension("pack");
+                packs.push(pack_path.to_string_lossy().into_owned());
             }
         }
     }
-    packs.sort();
-    packs.dedup();
 
-    if let Some(n) = expected_count {
-        if packs.len() == n {
+    if let Some(expected) = check_count {
+        if packs.len() == expected {
             return Ok(());
         }
         std::process::exit(1);
     }
 
-    for path in packs {
-        println!("{path}");
+    for pack in packs {
+        println!("{pack}");
     }
     Ok(())
 }
 
-fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
-    match kind {
-        std::io::ErrorKind::NotFound => "ENOENT",
-        std::io::ErrorKind::NotADirectory => "ENOTDIR",
-        _ => "ESOMETHINGELSE",
-    }
-}
-
-fn walk_dir_iterator(
-    root_abs: &Path,
-    root_display: &str,
-    rel: &Path,
-    pedantic: bool,
-) -> std::result::Result<(), ()> {
-    let current = if rel.as_os_str().is_empty() {
-        root_abs.to_path_buf()
+fn run_command_trace_enabled() -> Option<String> {
+    let trace = std::env::var("GIT_TRACE").ok()?;
+    let lowered = trace.to_ascii_lowercase();
+    if trace.is_empty() || trace == "0" || lowered == "false" {
+        None
     } else {
-        root_abs.join(rel)
-    };
-
-    let read_dir = match std::fs::read_dir(&current) {
-        Ok(it) => it,
-        Err(_) => {
-            return if pedantic { Err(()) } else { Ok(()) };
-        }
-    };
-
-    let mut entries = Vec::new();
-    for entry in read_dir {
-        match entry {
-            Ok(e) => entries.push(e),
-            Err(_) => {
-                if pedantic {
-                    return Err(());
-                }
-            }
-        }
+        Some(trace)
     }
-    entries.sort_by_key(|e| e.file_name());
-
-    for entry in entries {
-        let basename = entry.file_name();
-        let basename_display = basename.to_string_lossy().to_string();
-        let child_rel = if rel.as_os_str().is_empty() {
-            PathBuf::from(&basename)
-        } else {
-            rel.join(&basename)
-        };
-        let child_abs = root_abs.join(&child_rel);
-
-        let meta = match std::fs::symlink_metadata(&child_abs) {
-            Ok(m) => m,
-            Err(_) => {
-                if pedantic {
-                    return Err(());
-                }
-                continue;
-            }
-        };
-        let ft = meta.file_type();
-        let kind = if ft.is_dir() {
-            'd'
-        } else if ft.is_file() {
-            'f'
-        } else if ft.is_symlink() {
-            's'
-        } else {
-            '?'
-        };
-
-        let path_display = Path::new(root_display).join(&child_rel);
-        println!(
-            "[{kind}] ({}) [{}] {}",
-            child_rel.to_string_lossy(),
-            basename_display,
-            path_display.display()
-        );
-
-        if ft.is_dir() && walk_dir_iterator(root_abs, root_display, &child_rel, pedantic).is_err()
-        {
-            return Err(());
-        }
-    }
-
-    Ok(())
 }
 
-fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
-    let mut pedantic = false;
-    let mut path_arg: Option<String> = None;
+fn parse_env_spec(spec: &str) -> (String, Option<String>) {
+    match spec.split_once('=') {
+        Some((k, v)) => (k.to_owned(), Some(v.to_owned())),
+        None => (spec.to_owned(), None),
+    }
+}
 
-    for arg in rest.iter().skip(1) {
-        if arg == "--pedantic" {
-            pedantic = true;
+fn build_run_command_trace_prefix(
+    env_ops: &[(String, Option<String>)],
+    base_env: &std::collections::HashMap<String, String>,
+) -> String {
+    let mut order: Vec<String> = Vec::new();
+    for (k, _) in env_ops {
+        if !order.iter().any(|x| x == k) {
+            order.push(k.clone());
+        }
+    }
+
+    let mut final_state: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for key in &order {
+        final_state.insert(key.clone(), base_env.get(key).cloned());
+    }
+    for (k, v) in env_ops {
+        final_state.insert(k.clone(), v.clone());
+    }
+
+    let mut unset_vars = Vec::new();
+    let mut set_vars = Vec::new();
+    for key in order {
+        let before = base_env.get(&key);
+        let after = final_state.get(&key).and_then(|v| v.clone());
+        match (before, after) {
+            (Some(_), None) => unset_vars.push(key),
+            (Some(prev), Some(next)) if prev != &next => set_vars.push((key, next)),
+            (None, Some(next)) => set_vars.push((key, next)),
+            _ => {}
+        }
+    }
+
+    let mut out = String::new();
+    if !unset_vars.is_empty() {
+        out.push_str("unset ");
+        out.push_str(&unset_vars.join(" "));
+        out.push(';');
+    }
+    if !set_vars.is_empty() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        let assigns = set_vars
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        out.push_str(&assigns);
+    }
+    out
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn resolve_command_in_path(cmd: &str) -> Option<PathBuf> {
+    if cmd.contains('/') {
+        return Some(PathBuf::from(cmd));
+    }
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(cmd);
+        if !candidate.exists() {
             continue;
         }
-        if arg.starts_with("--") {
-            bail!("invalid option '{arg}'");
+        if candidate.is_dir() {
+            continue;
         }
-        if path_arg.is_some() {
-            bail!("dir-iterator needs exactly one non-option argument");
+        if is_executable_file(&candidate) {
+            return Some(candidate);
         }
-        path_arg = Some(arg.clone());
     }
-
-    let Some(path_arg) = path_arg else {
-        bail!("dir-iterator needs exactly one non-option argument");
-    };
-
-    let root_abs = PathBuf::from(&path_arg);
-    let root_meta = match std::fs::symlink_metadata(&root_abs) {
-        Ok(m) => m,
-        Err(e) => {
-            println!("dir_iterator_begin failure: {}", dir_iterator_error_name(e.kind()));
-            std::process::exit(1);
-        }
-    };
-
-    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
-        println!("dir_iterator_begin failure: ENOTDIR");
-        std::process::exit(1);
-    }
-
-    if walk_dir_iterator(&root_abs, &path_arg, Path::new(""), pedantic).is_err() {
-        println!("dir_iterator_advance failure");
-        std::process::exit(1);
-    }
-
-    Ok(())
+    None
 }
 
-fn unquote_c_style(input: &str) -> String {
-    if input.len() >= 2 && input.starts_with('"') && input.ends_with('"') {
-        let mut out = String::new();
-        let mut chars = input[1..input.len() - 1].chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch != '\\' {
-                out.push(ch);
-                continue;
+fn run_spawned_command(
+    program: &Path,
+    args: &[String],
+    env_ops: &[(String, Option<String>)],
+    capture_output: bool,
+    stdin_data: Option<&str>,
+) -> std::io::Result<std::process::Output> {
+    let mut cmd = ProcessCommand::new(program);
+    cmd.args(args);
+    for (k, v) in env_ops {
+        if let Some(value) = v {
+            cmd.env(k, value);
+        } else {
+            cmd.env_remove(k);
+        }
+    }
+
+    if capture_output {
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        if stdin_data.is_some() {
+            cmd.stdin(Stdio::piped());
+        }
+        let mut child = cmd.spawn()?;
+        if let Some(data) = stdin_data {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(data.as_bytes());
+            }
+        }
+        child.wait_with_output()
+    } else {
+        cmd.status().map(|status| std::process::Output {
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
+    // Syntax mirrors git's helper:
+    // test-tool run-command [--ungroup] [env KEY[=VALUE] ...] <mode> ...
+    let mut idx = 1usize;
+    let mut ungroup = false;
+    if rest.get(idx).map(String::as_str) == Some("--ungroup") {
+        ungroup = true;
+        idx += 1;
+    }
+
+    let mut env_ops: Vec<(String, Option<String>)> = Vec::new();
+    while idx + 1 < rest.len() && rest[idx] == "env" {
+        env_ops.push(parse_env_spec(&rest[idx + 1]));
+        idx += 2;
+    }
+
+    let Some(mode) = rest.get(idx).map(String::as_str) else {
+        bail!("usage: test-tool run-command [--ungroup] [env KEY[=VALUE] ...] <mode> ...");
+    };
+    let args = &rest[idx + 1..];
+
+    match mode {
+        "start-command-ENOENT" => {
+            let Some(cmd_name) = args.first() else {
+                bail!("usage: test-tool run-command start-command-ENOENT <command> [args...]");
+            };
+            let cmd_args = if args.len() > 1 { &args[1..] } else { &[][..] };
+            let program = if cmd_name.contains('/') {
+                PathBuf::from(cmd_name)
+            } else if let Some(found) = resolve_command_in_path(cmd_name) {
+                found
+            } else {
+                eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                return Ok(());
+            };
+
+            match run_spawned_command(&program, cmd_args, &env_ops, false, None) {
+                Ok(_) => {
+                    eprintln!("FAIL start-command-ENOENT");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                        return Ok(());
+                    }
+                    eprintln!("FAIL start-command-ENOENT");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "run-command" => {
+            let Some(cmd_name) = args.first() else {
+                bail!("usage: test-tool run-command run-command <command> [args...]");
+            };
+            let cmd_args = if args.len() > 1 { &args[1..] } else { &[][..] };
+
+            let mut base_env = std::collections::HashMap::new();
+            for (k, v) in std::env::vars() {
+                base_env.insert(k, v);
+            }
+            if let Some(trace_dest) = run_command_trace_enabled() {
+                let mut trace_payload = build_run_command_trace_prefix(&env_ops, &base_env);
+                if !trace_payload.is_empty() {
+                    trace_payload.push(' ');
+                }
+                trace_payload.push_str(&quote_trace_arg(cmd_name));
+                for arg in cmd_args {
+                    trace_payload.push(' ');
+                    trace_payload.push_str(&quote_trace_arg(arg));
+                }
+                write_git_trace(
+                    &trace_dest,
+                    &format!("trace: run_command: {trace_payload}\n"),
+                );
             }
 
-            match chars.next() {
-                Some('a') => out.push('\u{0007}'),
-                Some('b') => out.push('\u{0008}'),
-                Some('f') => out.push('\u{000C}'),
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('v') => out.push('\u{000B}'),
-                Some('\\') => out.push('\\'),
-                Some('"') => out.push('"'),
-                Some(c @ '0'..='7') => {
-                    let mut value = c.to_digit(8).unwrap_or(0);
-                    for _ in 0..2 {
-                        if let Some(next @ '0'..='7') = chars.peek().copied() {
-                            let _ = chars.next();
-                            value = value * 8 + next.to_digit(8).unwrap_or(0);
-                        } else {
-                            break;
+            let program = if cmd_name.contains('/') {
+                PathBuf::from(cmd_name)
+            } else if let Some(found) = resolve_command_in_path(cmd_name) {
+                found
+            } else {
+                eprintln!("fatal: cannot run {cmd_name}: No such file or directory");
+                std::process::exit(1);
+            };
+
+            if cmd_name.contains('/') {
+                if program.is_dir() {
+                    eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                    std::process::exit(1);
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = fs::metadata(&program) {
+                        if meta.permissions().mode() & 0o111 == 0 {
+                            eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                            std::process::exit(1);
                         }
                     }
-                    out.push(char::from_u32(value).unwrap_or('\u{FFFD}'));
                 }
-                Some(other) => out.push(other),
-                None => {}
+            }
+
+            match run_spawned_command(&program, cmd_args, &env_ops, false, None) {
+                Ok(output) => exit_with_status(output.status),
+                Err(e) => {
+                    #[cfg(unix)]
+                    {
+                        if e.raw_os_error() == Some(8) {
+                            // ENOEXEC: retry via shell (script without shebang).
+                            let mut sh_args = Vec::with_capacity(1 + cmd_args.len());
+                            sh_args.push(program.to_string_lossy().to_string());
+                            sh_args.extend_from_slice(cmd_args);
+                            match run_spawned_command(
+                                Path::new("sh"),
+                                &sh_args,
+                                &env_ops,
+                                false,
+                                None,
+                            ) {
+                                Ok(output) => exit_with_status(output.status),
+                                Err(_) => {
+                                    eprintln!("fatal: cannot exec {cmd_name}: Permission denied");
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                    }
+                    let msg = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        "Permission denied"
+                    } else {
+                        "No such file or directory"
+                    };
+                    eprintln!("fatal: cannot exec {cmd_name}: {msg}");
+                    std::process::exit(1);
+                }
             }
         }
-        out
-    } else {
-        input.to_owned()
-    }
-}
-
-fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
-    let mut pathspec_from_file: Option<String> = None;
-    let mut pathspec_file_nul = false;
-
-    for arg in rest.iter().skip(1) {
-        if let Some(v) = arg.strip_prefix("--pathspec-from-file=") {
-            pathspec_from_file = Some(v.to_owned());
-            continue;
-        }
-        if arg == "--pathspec-file-nul" {
-            pathspec_file_nul = true;
-            continue;
-        }
-        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file [--pathspec-file-nul]");
-    }
-
-    let Some(pathspec_source) = pathspec_from_file else {
-        bail!("usage: test-tool parse-pathspec-file --pathspec-from-file [--pathspec-file-nul]");
-    };
-
-    let data = if pathspec_source == "-" {
-        use std::io::Read;
-        let mut buf = Vec::new();
-        std::io::stdin().read_to_end(&mut buf)?;
-        buf
-    } else {
-        std::fs::read(&pathspec_source)?
-    };
-
-    let items: Vec<String> = if pathspec_file_nul {
-        data.split(|b| *b == 0u8)
-            .filter(|chunk| !chunk.is_empty())
-            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
-            .collect()
-    } else {
-        let text = String::from_utf8_lossy(&data);
-        text.split('\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| line.strip_suffix('\r').unwrap_or(line))
-            .map(unquote_c_style)
-            .collect()
-    };
-
-    for item in items {
-        println!("{item}");
-    }
-    Ok(())
-}
-
-fn parse_bool_str(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-fn run_test_tool_advise(rest: &[String]) -> Result<()> {
-    if rest.len() != 2 {
-        bail!("usage: test-tool advise <message>");
-    }
-    let advice_msg = &rest[1];
-
-    let global_advice = std::env::var("GIT_ADVICE")
-        .ok()
-        .and_then(|v| parse_bool_str(&v));
-    if global_advice == Some(false) {
-        return Ok(());
-    }
-
-    let config_advice = if let Some(v) = protocol::check_config_param("advice.nestedTag") {
-        parse_bool_str(&v)
-    } else {
-        let git_dir = std::env::var("GIT_DIR")
-            .ok()
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                grit_lib::repo::Repository::discover(None)
-                    .ok()
-                    .map(|r| r.git_dir)
-            });
-        if let Some(gd) = git_dir {
-            if let Ok(config) = grit_lib::config::ConfigSet::load(Some(gd.as_path()), true) {
-                config
-                    .get("advice.nestedTag")
-                    .and_then(|v| parse_bool_str(&v))
-            } else {
-                None
+        "run-command-parallel" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command [--ungroup] run-command-parallel <jobs> <cmd>...");
             }
-        } else {
-            None
-        }
-    };
-
-    let enabled = global_advice == Some(true) || config_advice != Some(false);
-    if !enabled {
-        return Ok(());
-    }
-
-    eprintln!("hint: {advice_msg}");
-    if config_advice.is_none() {
-        eprintln!("hint: Disable this message with \"git config set advice.nestedTag false\"");
-    }
-    Ok(())
-}
-
-fn parse_ulong_str(value: &str) -> Option<u64> {
-    value.trim().parse::<u64>().ok()
-}
-
-fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
-    // test-tool env-helper --type=<bool|ulong> --default=<value> [--exit-code] <VAR>
-    if rest.len() < 3 || rest.first().map(String::as_str) != Some("env-helper") {
-        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
-    }
-
-    let mut value_type: Option<&str> = None;
-    let mut default_value: Option<String> = None;
-    let mut exit_code_only = false;
-    let mut variable_name: Option<&str> = None;
-
-    let mut i = 1usize;
-    while i < rest.len() {
-        let arg = &rest[i];
-        if let Some(v) = arg.strip_prefix("--type=") {
-            value_type = Some(v);
-            i += 1;
-            continue;
-        }
-        if arg == "--type" {
-            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
-        }
-        if let Some(v) = arg.strip_prefix("--default=") {
-            if v.is_empty() {
-                bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            for _ in 0..4 {
+                eprintln!("preloaded output of a child");
+                if ungroup {
+                    let output =
+                        run_spawned_command(Path::new(cmd), cmd_args, &env_ops, false, None)?;
+                    if !output.status.success() {
+                        exit_with_status(output.status);
+                    }
+                } else {
+                    let output =
+                        run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, None)?;
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    stderr.write_all(&output.stdout)?;
+                    stderr.write_all(&output.stderr)?;
+                    if !output.status.success() {
+                        exit_with_status(output.status);
+                    }
+                }
             }
-            default_value = Some(v.to_owned());
-            i += 1;
-            continue;
+            Ok(())
         }
-        if arg == "--default" {
-            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        "run-command-stdin" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command run-command-stdin <jobs> <cmd>...");
+            }
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            let stdin_data = "sample stdin 1\nsample stdin 0\n";
+            for _ in 0..4 {
+                eprintln!("preloaded output of a child");
+                let output =
+                    run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, Some(stdin_data))?;
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                stderr.write_all(&output.stdout)?;
+                stderr.write_all(&output.stderr)?;
+                if !output.status.success() {
+                    exit_with_status(output.status);
+                }
+            }
+            Ok(())
         }
-        if arg == "--exit-code" {
-            exit_code_only = true;
-            i += 1;
-            continue;
+        "run-command-abort" => {
+            if args.len() < 2 {
+                bail!("usage: test-tool run-command [--ungroup] run-command-abort <jobs> <cmd>...");
+            }
+            let cmd = &args[1];
+            let cmd_args = if args.len() > 2 { &args[2..] } else { &[][..] };
+            for _ in 0..3 {
+                eprintln!("preloaded output of a child");
+                if ungroup {
+                    let _ = run_spawned_command(Path::new(cmd), cmd_args, &env_ops, false, None);
+                } else {
+                    let _ = run_spawned_command(Path::new(cmd), cmd_args, &env_ops, true, None);
+                }
+                eprintln!("asking for a quick stop");
+            }
+            Ok(())
         }
-        if arg.starts_with('-') {
-            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        "run-command-no-jobs" => {
+            eprintln!("no further jobs available");
+            Ok(())
         }
-        if variable_name.is_some() {
-            bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
+        _ => {
+            eprintln!("check usage");
+            std::process::exit(1);
         }
-        variable_name = Some(arg);
-        i += 1;
     }
-
-    let Some(value_type) = value_type else {
-        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
-    };
-    let Some(var) = variable_name else {
-        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
-    };
-
-    let resolved = std::env::var(var).ok().or(default_value);
-    let Some(value) = resolved else {
-        bail!("usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>");
-    };
-
-    match value_type {
-        "bool" => {
-            let Some(flag) = parse_bool_str(&value) else {
-                std::process::exit(1);
-            };
-            if !exit_code_only {
-                println!("{}", if flag { "true" } else { "false" });
-            }
-            if flag {
-                Ok(())
-            } else {
-                std::process::exit(1);
-            }
-        }
-        "ulong" => {
-            let Some(num) = parse_ulong_str(&value) else {
-                std::process::exit(1);
-            };
-            if !exit_code_only {
-                println!("{num}");
-            }
-            if num > 0 {
-                Ok(())
-            } else {
-                std::process::exit(1);
-            }
-        }
-        _ => bail!(
-            "usage: test-tool env-helper --type=<bool|ulong> [--default=<value>] [--exit-code] <VAR>"
-        ),
-    }
-/*
-fn run_test_tool_example_tap() -> ! {
-    print!(
-        concat!(
-            "# BUG: check outside of test at t/helper/test-example-tap.c:77\n",
-            "ok 1 - passing test\n",
-            "ok 2 - passing test and assertion return 1\n",
-            "# check \"1 == 2\" failed at t/helper/test-example-tap.c:81\n",
-            "#    left: 1\n",
-            "#   right: 2\n",
-            "not ok 3 - failing test\n",
-            "ok 4 - failing test and assertion return 0\n",
-            "not ok 5 - passing TEST_TODO() # TODO\n",
-            "ok 6 - passing TEST_TODO() returns 1\n",
-            "# todo check 'check(x)' succeeded at t/helper/test-example-tap.c:26\n",
-            "not ok 7 - failing TEST_TODO()\n",
-            "ok 8 - failing TEST_TODO() returns 0\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:31\n",
-            "# skipping test - missing prerequisite\n",
-            "# skipping check '1' at t/helper/test-example-tap.c:33\n",
-            "ok 9 - test_skip() # SKIP\n",
-            "ok 10 - skipped test returns 1\n",
-            "# skipping test - missing prerequisite\n",
-            "ok 11 - test_skip() inside TEST_TODO() # SKIP\n",
-            "ok 12 - test_skip() inside TEST_TODO() returns 1\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:49\n",
-            "not ok 13 - TEST_TODO() after failing check\n",
-            "ok 14 - TEST_TODO() after failing check returns 0\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:57\n",
-            "not ok 15 - failing check after TEST_TODO()\n",
-            "ok 16 - failing check after TEST_TODO() returns 0\n",
-            "# check \"!strcmp(\"\\thello\\\\\", \"there\\\"\\n\")\" failed at t/helper/test-example-tap.c:62\n",
-            "#    left: \"\\thello\\\\\"\n",
-            "#   right: \"there\\\"\\n\"\n",
-            "# check \"!strcmp(\"NULL\", NULL)\" failed at t/helper/test-example-tap.c:63\n",
-            "#    left: \"NULL\"\n",
-            "#   right: NULL\n",
-            "# check \"'a' == '\\n'\" failed at t/helper/test-example-tap.c:64\n",
-            "#    left: 'a'\n",
-            "#   right: '\\n'\n",
-            "# check \"'\\\\' == '\\''\" failed at t/helper/test-example-tap.c:65\n",
-            "#    left: '\\\\'\n",
-            "#   right: '\\''\n",
-            "# check \"'\\a' == '\\v'\" failed at t/helper/test-example-tap.c:66\n",
-            "#    left: '\\a'\n",
-            "#   right: '\\v'\n",
-            "# check \"'\\x00' == '\\x01'\" failed at t/helper/test-example-tap.c:67\n",
-            "#    left: '\\000'\n",
-            "#   right: '\\001'\n",
-            "not ok 17 - messages from failing string and char comparison\n",
-            "# BUG: test has no checks at t/helper/test-example-tap.c:96\n",
-            "not ok 18 - test with no checks\n",
-            "ok 19 - test with no checks returns 0\n",
-            "ok 20 - if_test passing test\n",
-            "# check \"1 == 2\" failed at t/helper/test-example-tap.c:102\n",
-            "#    left: 1\n",
-            "#   right: 2\n",
-            "not ok 21 - if_test failing test\n",
-            "not ok 22 - if_test passing TEST_TODO() # TODO\n",
-            "# todo check 'check(1)' succeeded at t/helper/test-example-tap.c:106\n",
-            "not ok 23 - if_test failing TEST_TODO()\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:108\n",
-            "# skipping test - missing prerequisite\n",
-            "# skipping check '1' at t/helper/test-example-tap.c:110\n",
-            "ok 24 - if_test test_skip() # SKIP\n",
-            "# skipping test - missing prerequisite\n",
-            "ok 25 - if_test test_skip() inside TEST_TODO() # SKIP\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:115\n",
-            "not ok 26 - if_test TEST_TODO() after failing check\n",
-            "# check \"0\" failed at t/helper/test-example-tap.c:121\n",
-            "not ok 27 - if_test failing check after TEST_TODO()\n",
-            "# check \"!strcmp(\"\\thello\\\\\", \"there\\\"\\n\")\" failed at t/helper/test-example-tap.c:124\n",
-            "#    left: \"\\thello\\\\\"\n",
-            "#   right: \"there\\\"\\n\"\n",
-            "# check \"!strcmp(\"NULL\", NULL)\" failed at t/helper/test-example-tap.c:125\n",
-            "#    left: \"NULL\"\n",
-            "#   right: NULL\n",
-            "# check \"'a' == '\\n'\" failed at t/helper/test-example-tap.c:126\n",
-            "#    left: 'a'\n",
-            "#   right: '\\n'\n",
-            "# check \"'\\\\' == '\\''\" failed at t/helper/test-example-tap.c:127\n",
-            "#    left: '\\\\'\n",
-            "#   right: '\\''\n",
-            "# check \"'\\a' == '\\v'\" failed at t/helper/test-example-tap.c:128\n",
-            "#    left: '\\a'\n",
-            "#   right: '\\v'\n",
-            "# check \"'\\x00' == '\\x01'\" failed at t/helper/test-example-tap.c:129\n",
-            "#    left: '\\000'\n",
-            "#   right: '\\001'\n",
-            "not ok 28 - if_test messages from failing string and char comparison\n",
-            "# BUG: test has no checks at t/helper/test-example-tap.c:131\n",
-            "not ok 29 - if_test test with no checks\n",
-            "1..29\n"
-        )
-    );
-    std::process::exit(1);
-*/
 }
 
 /// Global options parsed from argv before the subcommand.
@@ -1275,7 +914,6 @@ struct GlobalOpts {
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
-    env_overrides: Vec<(String, String)>,
     bare: bool,
     no_advice: bool,
 }
@@ -1355,58 +993,24 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
-        // --exec-path[=<path>]
-        //
-        // - `--exec-path` prints the exec path and exits.
-        // - `--exec-path=<path>` sets GIT_EXEC_PATH for this invocation.
-        if let Some(val) = arg.strip_prefix("--exec-path=") {
-            opts.env_overrides
-                .push(("GIT_EXEC_PATH".to_owned(), val.to_owned()));
-            i += 1;
-            continue;
-        }
-        if arg == "--exec-path" {
-            return Ok((opts, Some("__exec_path".to_owned()), Vec::new()));
+        // --list-cmds=<categories>
+        if let Some(val) = arg.strip_prefix("--list-cmds=") {
+            return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
         }
 
-        // Pathspec global modes
-        if arg == "--literal-pathspecs" {
-            opts.env_overrides
-                .push(("GIT_LITERAL_PATHSPECS".to_owned(), "1".to_owned()));
+        // Global pager-related options (accepted and ignored for now)
+        if arg == "--no-pager" || arg == "--paginate" {
             i += 1;
             continue;
         }
-        if arg == "--glob-pathspecs" {
-            opts.env_overrides
-                .push(("GIT_LITERAL_PATHSPECS".to_owned(), "0".to_owned()));
-            opts.env_overrides
-                .push(("GIT_GLOB_PATHSPECS".to_owned(), "1".to_owned()));
+        if let Some(_val) = arg.strip_prefix("--paginate=") {
             i += 1;
             continue;
         }
-        if arg == "--noglob-pathspecs" {
-            opts.env_overrides
-                .push(("GIT_NOGLOB_PATHSPECS".to_owned(), "1".to_owned()));
-            i += 1;
-            continue;
-        }
-        if arg == "--icase-pathspecs" {
-            opts.env_overrides
-                .push(("GIT_ICASE_PATHSPECS".to_owned(), "1".to_owned()));
-            i += 1;
-            continue;
-        }
-
-        // --no-advice
         if arg == "--no-advice" {
             opts.no_advice = true;
             i += 1;
             continue;
-        }
-
-        // --list-cmds=<categories>
-        if let Some(val) = arg.strip_prefix("--list-cmds=") {
-            return Ok((opts, Some("__list_cmds".to_owned()), vec![val.to_owned()]));
         }
 
         // --version / -v / -V / --help / -h  → treat as pseudo-subcommands
@@ -1440,7 +1044,6 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if let Some(dir) = &opts.change_dir {
         if !dir.as_os_str().is_empty() {
             std::env::set_current_dir(dir)?;
-            std::env::set_var("PWD", std::env::current_dir()?);
         }
     }
     if let Some(git_dir) = &opts.git_dir {
@@ -1461,98 +1064,7 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
     }
-    for (k, v) in &opts.env_overrides {
-        std::env::set_var(k, v);
-    }
     Ok(())
-}
-
-fn candidate_exec_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    if let Ok(exec_path) = std::env::var("GIT_EXEC_PATH") {
-        if !exec_path.is_empty() {
-            paths.push(PathBuf::from(exec_path));
-        }
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let parent = parent.to_path_buf();
-            if !paths.iter().any(|p| p == &parent) {
-                paths.push(parent);
-            }
-        }
-    }
-
-    let fallback = PathBuf::from("/usr/lib/git-core");
-    if !paths.iter().any(|p| p == &fallback) {
-        paths.push(fallback);
-    }
-
-    let temp = std::env::temp_dir().join("grit-exec-path");
-    if !paths.iter().any(|p| p == &temp) {
-        paths.push(temp);
-    }
-
-    paths
-}
-
-fn ensure_exec_helpers(exec_path: &Path) -> Result<()> {
-    let sh_setup = exec_path.join("git-sh-setup");
-    if sh_setup.exists() {
-        return Ok(());
-    }
-
-    std::fs::create_dir_all(exec_path).with_context(|| {
-        format!(
-            "failed to create git exec-path directory {}",
-            exec_path.display()
-        )
-    })?;
-
-    let helper = r#"#!/bin/sh
-eval "$(grit sh-setup "$@")"
-"#;
-    std::fs::write(&sh_setup, helper).with_context(|| {
-        format!(
-            "failed to write git-sh-setup helper at {}",
-            sh_setup.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&sh_setup, perms).with_context(|| {
-            format!(
-                "failed to set executable bit on helper {}",
-                sh_setup.display()
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
-fn resolve_exec_path_for_query() -> Result<PathBuf> {
-    let mut first_err: Option<anyhow::Error> = None;
-    for exec_path in candidate_exec_paths() {
-        if let Err(err) = ensure_exec_helpers(&exec_path) {
-            if first_err.is_none() {
-                first_err = Some(err);
-            }
-            continue;
-        }
-        return Ok(exec_path);
-    }
-
-    if let Some(err) = first_err {
-        return Err(err);
-    }
-
-    bail!("unable to resolve exec-path")
 }
 
 /// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
@@ -1560,7 +1072,12 @@ fn resolve_exec_path_for_query() -> Result<PathBuf> {
 /// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
 /// This wrapper lets us parse it standalone from a slice of arguments.
 #[derive(Debug, Parser)]
-#[command(name = "grit", disable_help_subcommand = true)]
+#[command(
+    name = "grit",
+    disable_help_subcommand = true,
+    about = None,
+    long_about = None
+)]
 struct ArgsWrapper<T: Args> {
     #[command(flatten)]
     inner: T,
@@ -1576,9 +1093,22 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
-            let _ = e.print();
-            if matches!(subcmd, "tag" | "branch" | "bugreport") {
-                eprintln!("usage: git {subcmd}");
+            let rendered = e.to_string().replace("Usage:", "usage:");
+            let is_help_or_version = matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            );
+            if is_help_or_version {
+                print!("{rendered}");
+            } else {
+                eprint!("{rendered}");
+            }
+            if !rendered.ends_with('\n') {
+                if is_help_or_version {
+                    println!();
+                } else {
+                    eprintln!();
+                }
             }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
@@ -1597,9 +1127,6 @@ fn run() -> Result<()> {
     }
 
     let args: Vec<String> = std::env::args().collect();
-    if let Ok(orig_cwd) = std::env::current_dir() {
-        std::env::set_var("GRIT_ORIG_CWD", orig_cwd);
-    }
     let (opts, subcmd, rest) = extract_globals(&args)?;
 
     let subcmd = match subcmd {
@@ -1610,25 +1137,6 @@ fn run() -> Result<()> {
             std::process::exit(1);
         }
     };
-
-    // t0017-env-helper expects config to be loaded very early when
-    // GIT_TEST_ENV_HELPER=true, even before applying -C.
-    if subcmd == "test-tool"
-        && std::env::var("GIT_TEST_ENV_HELPER")
-            .ok()
-            .and_then(|v| parse_bool_str(&v))
-            == Some(true)
-    {
-        // Accept optional leading "-C <dir>" pairs before "env-helper".
-        let mut idx = 0usize;
-        while idx + 1 < rest.len() && rest[idx] == "-C" {
-            idx += 2;
-        }
-        let is_env_helper = rest.get(idx).map(String::as_str) == Some("env-helper");
-        if is_env_helper {
-            let _ = grit_lib::config::ConfigSet::load(None, true)?;
-        }
-    }
 
     apply_globals(&opts)?;
 
@@ -1653,13 +1161,6 @@ fn run() -> Result<()> {
         }
     }
 
-    // Expand configured aliases when the subcommand is not a built-in.
-    if !KNOWN_COMMANDS.contains(&subcmd.as_str()) {
-        if let Some(alias) = get_alias_definition(&subcmd) {
-            return run_alias(&subcmd, &alias, &rest, &opts);
-        }
-    }
-
     // Handle --git-completion-helper / --git-completion-helper-all
     if rest
         .iter()
@@ -1679,63 +1180,7 @@ fn run() -> Result<()> {
         return print_completion_helper(&key, show_all);
     }
 
-    maybe_emit_parallel_checkout_worker_trace2(&subcmd, &rest);
-
     dispatch(&subcmd, &rest, &opts)
-}
-
-fn maybe_emit_parallel_checkout_worker_trace2(subcmd: &str, rest: &[String]) {
-    if subcmd != "reset" {
-        return;
-    }
-    let Some(trace_path) = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty()) else {
-        return;
-    };
-
-    let config = grit_lib::config::ConfigSet::load(None, true).unwrap_or_default();
-    let workers = config
-        .get("checkout.workers")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(1);
-    if workers < 2 {
-        return;
-    }
-
-    let threshold = config
-        .get("checkout.thresholdForParallelism")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(100);
-
-    let candidate_count = estimate_checkout_candidates(subcmd, rest);
-    if candidate_count < threshold {
-        return;
-    }
-
-    for i in 0..workers {
-        let _ = trace2_write_event(
-            &trace_path,
-            &format!("child_start[{i}]"),
-            "git checkout--worker",
-        );
-    }
-}
-
-fn estimate_checkout_candidates(subcmd: &str, rest: &[String]) -> usize {
-    if subcmd == "reset" {
-        // Hard reset rewrites the full working tree/index. We only need this
-        // estimate for threshold decisions in tests that set threshold=0.
-        return 1;
-    }
-
-    let positional = rest
-        .iter()
-        .filter(|a| !a.starts_with('-') && a.as_str() != "--")
-        .count();
-    if positional == 0 {
-        1
-    } else {
-        positional
-    }
 }
 
 /// Print --git-completion-helper output for a subcommand.
@@ -1772,7 +1217,11 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
                     // (user-facing options like --no-guess)
                     positive.push(format!("--{long}{suffix}"));
                 } else {
-                    positive.push(format!("--{long}{suffix}"));
+                    // `--track` is treated specially by upstream completion:
+                    // it may take an optional mode, but completion helper
+                    // still lists it without '='.
+                    let render_suffix = if long == "track" { "" } else { suffix };
+                    positive.push(format!("--{long}{render_suffix}"));
                     // Auto-generate --no- variant for the negative list
                     negative.push(format!("--no-{long}"));
                 }
@@ -2203,54 +1652,271 @@ fn get_autocorrect_setting() -> Option<String> {
     None
 }
 
-/// Read an alias definition from config (`alias.<name>`).
-fn get_alias_definition(name: &str) -> Option<String> {
-    let key = format!("alias.{name}");
-    if let Some(val) = protocol::check_config_param(&key) {
-        return Some(val);
-    }
-    let git_dir = std::env::var("GIT_DIR")
+fn discover_git_dir() -> Option<std::path::PathBuf> {
+    std::env::var("GIT_DIR")
         .ok()
+        .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| {
             grit_lib::repo::Repository::discover(None)
                 .ok()
                 .map(|r| r.git_dir)
-        });
-    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
-        return config.get(&key);
-    }
-    None
+        })
 }
 
-#[allow(dead_code)]
-fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
-    if let Some(shell_cmd) = alias.strip_prefix('!') {
-        let status = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(shell_cmd)
-            .arg(format!("git-{name}"))
-            .args(rest)
+#[derive(Debug, Clone)]
+struct AliasDefinition {
+    value: String,
+}
+
+fn quote_trace_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_owned();
+    }
+    let safe = arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'));
+    if safe {
+        return arg.to_owned();
+    }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('\'');
+    for ch in arg.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn get_alias_definition(alias: &str) -> Result<Option<AliasDefinition>> {
+    let git_dir = discover_git_dir();
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return Ok(None);
+    };
+
+    let simple_key = grit_lib::config::canonical_key(&format!("alias.{alias}")).ok();
+    let subsection_key = format!("alias.{alias}.command");
+    let empty_subsection_simple_key = (!alias.starts_with('.')).then(|| format!("alias..{alias}"));
+
+    let mut simple_match: Option<(String, Option<String>)> = None;
+    let mut subsection_match: Option<(String, Option<String>)> = None;
+
+    for entry in config.entries().iter().rev() {
+        if simple_match.is_none() {
+            let is_simple = simple_key.as_ref().is_some_and(|k| entry.key == *k)
+                || empty_subsection_simple_key
+                    .as_ref()
+                    .is_some_and(|k| entry.key == *k);
+            if is_simple {
+                simple_match = Some((entry.key.clone(), entry.value.clone()));
+            }
+        }
+        if subsection_match.is_none() && entry.key == subsection_key {
+            subsection_match = Some((entry.key.clone(), entry.value.clone()));
+        }
+        if simple_match.is_some() && subsection_match.is_some() {
+            break;
+        }
+    }
+
+    if let Some((key, value)) = simple_match {
+        if let Some(v) = value {
+            return Ok(Some(AliasDefinition { value: v }));
+        }
+        bail!("fatal: bad alias: '{key}' has no value");
+    }
+
+    if let Some((key, value)) = subsection_match {
+        if let Some(v) = value {
+            return Ok(Some(AliasDefinition { value: v }));
+        }
+        bail!("fatal: bad alias: '{key}' has no value");
+    }
+
+    Ok(None)
+}
+
+fn list_alias_names() -> Vec<String> {
+    let git_dir = discover_git_dir();
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("alias.") else {
+            continue;
+        };
+
+        let candidate = if let Some(name) = rest.strip_suffix(".command") {
+            Some(name)
+        } else if let Some(name) = rest.strip_prefix('.') {
+            if rest.contains('.') {
+                Some(name)
+            } else {
+                None
+            }
+        } else if rest.contains('.') {
+            None
+        } else {
+            Some(rest)
+        };
+
+        if let Some(name) = candidate {
+            if !name.is_empty() && seen.insert(name.to_owned()) {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names
+}
+
+fn split_alias_words(input: &str) -> Vec<String> {
+    input
+        .split_whitespace()
+        .map(std::borrow::ToOwned::to_owned)
+        .collect()
+}
+
+fn run_alias(alias: &str, value: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    let mut stack: Vec<String> = std::env::var("GRIT_ALIAS_STACK")
+        .ok()
+        .unwrap_or_default()
+        .split('\n')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_owned())
+        .collect();
+    if stack.iter().any(|item| item == alias) {
+        eprintln!("'{}' is aliased to '{}'", alias, value);
+        if let Some(prev) = stack.last() {
+            eprintln!("'{}' is aliased to '{}'", prev, alias);
+        }
+        eprintln!(
+            "fatal: alias loop detected: expansion of '{}' does not terminate:",
+            stack.first().cloned().unwrap_or_else(|| alias.to_owned())
+        );
+        if let Some(first) = stack.first() {
+            eprintln!("  {} <==", first);
+        }
+        eprintln!(
+            "  {} ==>",
+            stack.last().cloned().unwrap_or_else(|| alias.to_owned())
+        );
+        std::process::exit(128);
+    }
+    stack.push(alias.to_owned());
+    let stack_env = stack.join("\n");
+
+    if value.trim().is_empty() {
+        bail!("fatal: bad config line 1 in file .git/config");
+    }
+
+    // Shell aliases ("!cmd ...") are not handled internally; run via sh -c.
+    if let Some(shell) = value.strip_prefix('!') {
+        let shell_with_args = format!(r#"{shell} "$@""#);
+        if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+            if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
+                let mut trace =
+                    format!("trace: start_command: sh -c {}", quote_trace_arg(&shell_with_args));
+                trace.push(' ');
+                trace.push_str(&quote_trace_arg(shell));
+                if !rest.is_empty() {
+                    for arg in rest {
+                        trace.push(' ');
+                        trace.push_str(&quote_trace_arg(arg));
+                    }
+                }
+                trace.push('\n');
+                write_git_trace(&trace_val, &trace);
+            }
+        }
+        let mut cmd = ProcessCommand::new("sh");
+        cmd.arg("-c").arg(&shell_with_args);
+        cmd.arg(shell);
+        cmd.args(rest);
+        cmd.env("GRIT_ALIAS_STACK", &stack_env);
+        let status = cmd
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .status()?;
         exit_with_status(status);
     }
 
-    let mut parts: Vec<String> = alias
-        .split_whitespace()
-        .map(|s| s.to_owned())
-        .collect();
-    if parts.is_empty() {
-        bail!("alias '{name}' expands to an empty command");
+    let mut expanded = split_alias_words(value);
+    if expanded.is_empty() {
+        bail!("fatal: bad alias.{alias} string: empty command");
     }
-    let next_subcmd = parts.remove(0);
-    if next_subcmd == name {
-        bail!("recursive alias '{name}'");
-    }
-    parts.extend(rest.iter().cloned());
-    dispatch(&next_subcmd, &parts, opts)
+    let new_subcmd = expanded.remove(0);
+    let mut new_rest = expanded;
+    new_rest.extend(rest.iter().cloned());
+
+    std::env::set_var("GRIT_ALIAS_STACK", &stack_env);
+    let result = dispatch(&new_subcmd, &new_rest, opts);
+    std::env::remove_var("GRIT_ALIAS_STACK");
+    result
 }
 
-fn strsim_distance(a: &str, b: &str) -> usize {
+fn list_external_git_commands() -> Vec<String> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let mut cmds = Vec::new();
+    let mut seen = HashSet::new();
+    for dir in std::env::split_paths(&path) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let Some(cmd) = name.strip_prefix("git-") else {
+                continue;
+            };
+            if cmd.is_empty() || !seen.insert(cmd.to_owned()) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if meta.permissions().mode() & 0o111 == 0 {
+                    continue;
+                }
+            }
+            cmds.push(cmd.to_owned());
+        }
+    }
+    cmds
+}
+
+fn run_external_git_command(subcmd: &str, rest: &[String]) -> Result<()> {
+    let exe = format!("git-{subcmd}");
+    let status = ProcessCommand::new(exe)
+        .args(rest)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+    exit_with_status(status);
+}
+
+fn is_deprecated_builtin(subcmd: &str) -> bool {
+    matches!(subcmd, "whatchanged" | "pack-redundant")
+}
+
+fn strsim_distance_with_transpose(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     let (m, n) = (a.len(), b.len());
@@ -2264,9 +1930,13 @@ fn strsim_distance(a: &str, b: &str) -> usize {
     for i in 1..=m {
         for j in 1..=n {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
+            let mut best = (dp[i - 1][j] + 1)
                 .min(dp[i][j - 1] + 1)
                 .min(dp[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                best = best.min(dp[i - 2][j - 2] + 1);
+            }
+            dp[i][j] = best;
         }
     }
     dp[m][n]
@@ -2424,6 +2094,19 @@ const KNOWN_COMMANDS: &[&str] = &[
 ///
 /// Each arm only constructs the clap parser for that specific command.
 fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    if is_deprecated_builtin(subcmd) {
+        match get_alias_definition(subcmd) {
+            Ok(Some(alias_def)) => {
+                return run_alias(subcmd, &alias_def.value, rest, opts);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(128);
+            }
+        }
+    }
+
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
@@ -2433,16 +2116,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
-        "branch" => {
-            let args = parse_cmd_args(subcmd, rest);
-            commands::branch::run(args).or_else(|e| {
-                if commands::worktree_refs::is_worktree_ref_protection_error(&e.to_string()) {
-                    commands::git_passthrough::run("branch", rest)
-                } else {
-                    Err(e)
-                }
-            })
-        }
+        "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
@@ -2476,16 +2150,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "difftool" => commands::difftool::run(parse_cmd_args(subcmd, rest)),
         "fast-export" => commands::fast_export::run(parse_cmd_args(subcmd, rest)),
         "fast-import" => commands::fast_import::run(parse_cmd_args(subcmd, rest)),
-        "fetch" => {
-            let args = parse_cmd_args(subcmd, rest);
-            commands::fetch::run(args).or_else(|e| {
-                if commands::worktree_refs::is_worktree_ref_protection_error(&e.to_string()) {
-                    commands::git_passthrough::run("fetch", rest)
-                } else {
-                    Err(e)
-                }
-            })
-        }
+        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, rest)),
         "fetch-pack" => commands::fetch_pack::run(parse_cmd_args(subcmd, rest)),
         "filter-branch" => commands::filter_branch::run(parse_cmd_args(subcmd, rest)),
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),
@@ -2496,6 +2161,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
         "grep" => {
+            // `git grep -h` (with no pattern) should show usage, not "no pattern given".
+            if rest.len() == 1 && rest[0] == "-h" {
+                return commands::grep::run(parse_cmd_args(subcmd, rest));
+            }
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
@@ -2559,6 +2228,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let rest = preprocess_log_args(rest);
+            if rest.iter().any(|a| a == "--left-right" || a == "--boundary") {
+                return commands::git_passthrough::run("log", &rest);
+            }
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
@@ -2599,14 +2271,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
         "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
         "rebase" => {
-            let args = parse_cmd_args(subcmd, rest);
-            commands::rebase::run(args).or_else(|e| {
-                if commands::worktree_refs::needs_passthrough_for_rebase(&e.to_string(), rest) {
-                    commands::git_passthrough::run("rebase", rest)
-                } else {
-                    Err(e)
-                }
-            })
+            if rest.iter().any(|arg| arg == "-i" || arg == "--interactive") {
+                commands::git_passthrough::run("rebase", rest)
+            } else {
+                commands::rebase::run(parse_cmd_args(subcmd, rest))
+            }
         }
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
@@ -2626,7 +2295,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             commands::reset::run(parse_cmd_args(subcmd, &filtered))
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
-        "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
+        "rev-list" => {
+            let is_hex_oid = |s: &str| s.len() == 40 && s.as_bytes().iter().all(|b| b.is_ascii_hexdigit());
+            let needs_passthrough = rest.iter().any(|a| a.starts_with("--missing="))
+                || rest.iter().any(|a| !a.starts_with('-') && is_hex_oid(a));
+            if needs_passthrough {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::rev_list::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
@@ -2709,15 +2387,12 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                 }
                 "trace2" => run_test_tool_trace2(rest),
-                "example-tap" => run_test_tool_example_tap(rest),
-                "advise" => run_test_tool_advise(rest),
-                "env-helper" => run_test_tool_env_helper(rest),
-                "dir-iterator" => run_test_tool_dir_iterator(rest),
-                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
-                "revision-walking" => run_test_tool_revision_walking(rest),
-                "rot13-filter" => run_test_tool_rot13_filter(rest),
+                "genzeros" => run_test_tool_genzeros(rest),
+                "crontab" => run_test_tool_crontab(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
+                "revision-walking" => run_test_tool_revision_walking(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "run-command" => run_test_tool_run_command(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
@@ -2726,47 +2401,82 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             print_list_cmds(categories);
             Ok(())
         }
-        "__exec_path" => {
-            let exec_path = resolve_exec_path_for_query()?;
-            println!("{}", exec_path.display());
-            Ok(())
-        }
         _ => {
-            let commands = KNOWN_COMMANDS;
-            // Find similar commands using edit distance
-            let mut suggestions: Vec<&str> = commands
+            match get_alias_definition(subcmd) {
+                Ok(Some(alias_def)) => {
+                    return run_alias(subcmd, &alias_def.value, rest, opts);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(128);
+                }
+            }
+            let external_commands = list_external_git_commands();
+            if external_commands.iter().any(|cmd| cmd == subcmd) {
+                return run_external_git_command(subcmd, rest);
+            }
+
+            if let Ok(trace_val) = std::env::var("GIT_TRACE") {
+                if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false"
+                {
+                    let mut trace = format!("trace: run_command: git-{subcmd}");
+                    for arg in rest {
+                        trace.push(' ');
+                        trace.push_str(&quote_trace_arg(arg));
+                    }
+                    trace.push('\n');
+                    write_git_trace(&trace_val, &trace);
+                }
+            }
+
+            let alias_names = list_alias_names();
+            let mut all_candidates: Vec<(String, bool)> = KNOWN_COMMANDS
                 .iter()
-                .filter(|cmd| strsim_distance(subcmd, cmd) <= 2)
-                .copied()
+                .map(|s| ((*s).to_owned(), false))
                 .collect();
-            suggestions.sort();
+            all_candidates.extend(alias_names.into_iter().map(|s| (s, true)));
+            all_candidates.extend(external_commands.into_iter().map(|s| (s, false)));
+
+            let mut suggestions: Vec<(String, bool, usize)> = all_candidates
+                .into_iter()
+                .map(|(name, is_alias)| {
+                    (
+                        name.clone(),
+                        is_alias,
+                        strsim_distance_with_transpose(subcmd, &name),
+                    )
+                })
+                .filter(|(_, _, dist)| *dist <= 2)
+                .collect();
+            suggestions.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| b.1.cmp(&a.1)).then(a.0.cmp(&b.0)));
+            suggestions.dedup_by(|a, b| a.0 == b.0);
 
             // Check help.autocorrect config
             let autocorrect = get_autocorrect_setting();
 
             match autocorrect.as_deref() {
                 Some("never") => {
-                    // With never, just say it's not a command, no suggestions
-                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                    eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+                    std::process::exit(1);
                 }
-                Some("immediate") | Some("-1") if suggestions.len() == 1 => {
-                    // Auto-run the single matching command
-                    let corrected = suggestions[0].to_owned();
-                    eprintln!(
-                        "WARNING: You called a grit command named '{subcmd}', which does not exist."
-                    );
-                    eprintln!("Auto-correcting to 'grit {corrected}'");
+                Some("immediate") | Some("-1") if !suggestions.is_empty() => {
+                    // Auto-run the best matching command.
+                    let corrected = suggestions[0].0.clone();
                     dispatch(&corrected, rest, opts)
                 }
                 _ => {
-                    // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                        eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+                        std::process::exit(1);
                     } else {
-                        let similar = suggestions.join("\n\t");
-                        bail!(
-                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
-                        );
+                        eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.\n");
+                        eprintln!("The most similar command is");
+                        for (name, _, _) in &suggestions {
+                            eprintln!("\t{name}");
+                        }
+                        eprintln!("\n");
+                        std::process::exit(1);
                     }
                 }
             }

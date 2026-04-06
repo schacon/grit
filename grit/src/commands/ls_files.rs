@@ -1,11 +1,11 @@
 //! `grit ls-files` — list information about files in the index and working tree.
 
-use crate::commands::git_passthrough;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::Component;
+use std::path::PathBuf;
 
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry};
@@ -14,10 +14,6 @@ use grit_lib::repo::Repository;
 /// Arguments for `grit ls-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
-    /// Show resolve-undo information.
-    #[arg(long = "resolve-undo")]
-    pub resolve_undo: bool,
-
     /// Show cached (staged) files (default).
     #[arg(short = 'c', long)]
     pub cached: bool,
@@ -108,10 +104,6 @@ pub struct Args {
 
 /// Run `grit ls-files`.
 pub fn run(args: Args) -> Result<()> {
-    if args.resolve_undo {
-        return passthrough_current_ls_files_invocation();
-    }
-
     // Handle -C flag: change directory before doing anything else
     if let Some(ref dir) = args.change_dir {
         let target = if dir.is_absolute() {
@@ -130,7 +122,6 @@ pub fn run(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot ls-files in bare repository"))?;
     let cwd = std::env::current_dir().context("resolving current directory")?;
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
-    let main_git_dir = repo.git_dir.canonicalize().unwrap_or_else(|_| repo.git_dir.clone());
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
 
@@ -266,7 +257,7 @@ pub fn run(args: Args) -> Result<()> {
 
         if args.eol {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(&display);
+            let name = String::from_utf8_lossy(display);
             let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
 
             // Determine index line endings
@@ -315,7 +306,7 @@ pub fn run(args: Args) -> Result<()> {
             out.write_all(&[term])?;
         } else if show_stage {
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(&display);
+            let name = String::from_utf8_lossy(display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -343,7 +334,7 @@ pub fn run(args: Args) -> Result<()> {
                 last_dedup_path = Some(entry.path.clone());
             }
             let display = display_path_from_cwd(&entry.path, &cwd_prefix);
-            let name = String::from_utf8_lossy(&display);
+            let name = String::from_utf8_lossy(display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
                 write!(out, "{} ", t)?;
@@ -372,7 +363,7 @@ pub fn run(args: Args) -> Result<()> {
             work_tree,
             &indexed_paths,
             &mut untracked,
-            &main_git_dir,
+            args.directory || args.no_empty_directory,
         )?;
         untracked.sort();
 
@@ -416,16 +407,12 @@ pub fn run(args: Args) -> Result<()> {
 
             // Make path relative to cwd before collecting
             let display = display_path_from_cwd(path_bytes, &cwd_prefix);
-            filtered_untracked.push(display);
+            filtered_untracked.push(display.to_vec());
         }
 
         // Collapse to directories if --directory (after making paths cwd-relative)
         let output_paths = if args.directory {
-            let mut collapsed = if args.ignored {
-                collapse_ignored_directories(&filtered_untracked, &repo, &index, &mut matcher)
-            } else {
-                collapse_to_directories_with_cwd(&filtered_untracked, &cwd_prefix)
-            };
+            let mut collapsed = collapse_to_directories(&filtered_untracked);
             if args.no_empty_directory {
                 // Remove directory entries that have no file children
                 // (empty directory markers from walk_worktree end with '/')
@@ -500,7 +487,7 @@ fn walk_worktree(
     dir: &std::path::Path,
     indexed: &BTreeSet<Vec<u8>>,
     out: &mut Vec<Vec<u8>>,
-    main_git_dir: &std::path::Path,
+    include_empty_dirs: bool,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -527,11 +514,6 @@ fn walk_worktree(
         } else if ft.is_dir() {
             let dot_git = path.join(".git");
             if dot_git.exists() {
-                let dot_git_canon = dot_git.canonicalize().unwrap_or(dot_git.clone());
-                if dot_git_canon == main_git_dir {
-                    walk_worktree(root, &path, indexed, out, main_git_dir)?;
-                    continue;
-                }
                 // Untracked git repository: emit as a directory entry
                 // (git treats these as opaque and doesn't recurse into them)
                 let dir_prefix_str = format!("{}/", String::from_utf8_lossy(&rel_bytes));
@@ -546,7 +528,13 @@ fn walk_worktree(
                 }
                 continue;
             }
-            walk_worktree(root, &path, indexed, out, main_git_dir)?;
+            let before_len = out.len();
+            walk_worktree(root, &path, indexed, out, include_empty_dirs)?;
+            if include_empty_dirs && out.len() == before_len {
+                let mut dir_entry = rel_bytes;
+                dir_entry.push(b'/');
+                out.push(dir_entry);
+            }
         }
     }
     Ok(())
@@ -595,7 +583,19 @@ fn glob_match_inner(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_ti = 0;
 
     while ti < text.len() {
-        if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
+        if pi + 1 < pattern.len() && pattern[pi] == b'\\' {
+            // Backslash escapes the next byte as a literal.
+            if pattern[pi + 1] == text[ti] {
+                pi += 2;
+                ti += 1;
+            } else if star_pi != usize::MAX {
+                star_ti += 1;
+                ti = star_ti;
+                pi = star_pi + 1;
+            } else {
+                return false;
+            }
+        } else if pi < pattern.len() && pattern[pi] == b'?' && text[ti] != b'/' {
             pi += 1;
             ti += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
@@ -698,7 +698,10 @@ fn resolve_pathspec(
         // For glob pathspecs, prepend the cwd prefix (relative to work_tree)
         let prefix = cwd_prefix_bytes(work_tree, cwd)?;
         let prefix_str = String::from_utf8_lossy(&prefix).into_owned();
-        let pattern = format!("{}{}", prefix_str, pathspec_str);
+        // Our glob matcher treats '\' as an escape character, so any literal
+        // backslashes originating from the cwd prefix must be escaped.
+        let escaped_prefix = prefix_str.replace('\\', "\\\\");
+        let pattern = format!("{}{}", escaped_prefix, pathspec_str);
         return Ok(Pathspec::Glob(pattern));
     }
     let combined = if pathspec.is_absolute() {
@@ -732,24 +735,11 @@ fn cwd_prefix_bytes(work_tree: &std::path::Path, cwd: &std::path::Path) -> Resul
     Ok(bytes)
 }
 
-fn display_path_from_cwd(path: &[u8], cwd_prefix: &[u8]) -> Vec<u8> {
+fn display_path_from_cwd<'a>(path: &'a [u8], cwd_prefix: &[u8]) -> &'a [u8] {
     if cwd_prefix.is_empty() {
-        return path.to_vec();
+        return path;
     }
-    if let Some(stripped) = path.strip_prefix(cwd_prefix) {
-        return stripped.to_vec();
-    }
-
-    let depth = cwd_prefix
-        .split(|b| *b == b'/')
-        .filter(|part| !part.is_empty())
-        .count();
-    let mut out = Vec::with_capacity(depth.saturating_mul(3) + path.len());
-    for _ in 0..depth {
-        out.extend_from_slice(b"../");
-    }
-    out.extend_from_slice(path);
-    out
+    path.strip_prefix(cwd_prefix).unwrap_or(path)
 }
 
 fn normalize_path(path: &std::path::Path) -> PathBuf {
@@ -786,108 +776,6 @@ fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
             result.push(p.clone());
         }
     }
-    result
-}
-
-/// Collapse paths for `--directory` while respecting cwd-relative display.
-///
-/// When invoked from a subdirectory, Git collapses entries inside that cwd to
-/// `./`, while keeping parent-relative files (e.g. `../file`) as files.
-fn collapse_to_directories_with_cwd(paths: &[Vec<u8>], cwd_prefix: &[u8]) -> Vec<Vec<u8>> {
-    if cwd_prefix.is_empty() {
-        return collapse_to_directories(paths);
-    }
-
-    let mut seen = BTreeSet::new();
-    let mut result = Vec::new();
-    let mut emitted_dot = false;
-
-    for p in paths {
-        let out = if p.starts_with(b"../") {
-            collapse_parent_relative_path(p)
-        } else if !emitted_dot {
-            emitted_dot = true;
-            b"./".to_vec()
-        } else {
-            continue;
-        };
-        if seen.insert(out.clone()) {
-            result.push(out);
-        }
-    }
-
-    result
-}
-
-fn collapse_parent_relative_path(path: &[u8]) -> Vec<u8> {
-    let mut idx = 0usize;
-    while path.get(idx..idx + 3) == Some(b"../") {
-        idx += 3;
-    }
-    let prefix = &path[..idx];
-    let rest = &path[idx..];
-    if rest.is_empty() {
-        return path.to_vec();
-    }
-    if let Some(pos) = rest.iter().position(|&b| b == b'/') {
-        // Keep existing directory marker, otherwise collapse to first component.
-        if pos == rest.len() - 1 {
-            return path.to_vec();
-        }
-        let mut out = Vec::with_capacity(prefix.len() + pos + 1);
-        out.extend_from_slice(prefix);
-        out.extend_from_slice(&rest[..=pos]);
-        return out;
-    }
-    // file directly in parent/ancestor: keep as file, do not collapse
-    path.to_vec()
-}
-
-fn collapse_ignored_directories(
-    paths: &[Vec<u8>],
-    repo: &Repository,
-    index: &Index,
-    matcher: &mut Option<IgnoreMatcher>,
-) -> Vec<Vec<u8>> {
-    let mut seen = BTreeSet::new();
-    let mut result = Vec::new();
-
-    for p in paths {
-        let out = if p.ends_with(b"/") {
-            p.clone()
-        } else {
-            let path_str = String::from_utf8_lossy(p);
-            let parent_ignored = Path::new(path_str.as_ref())
-                .parent()
-                .and_then(|parent| {
-                    let parent_str = parent.to_string_lossy();
-                    if parent_str.is_empty() || parent_str == "." {
-                        return None;
-                    }
-                    let mut parent_slash = parent_str.to_string();
-                    parent_slash.push('/');
-                    let ignored = matcher
-                        .as_mut()
-                        .and_then(|m| {
-                            m.check_path(repo, Some(index), &parent_slash, true)
-                                .ok()
-                                .map(|(i, _)| i)
-                        })
-                        .unwrap_or(false);
-                    if ignored {
-                        Some(parent_slash.into_bytes())
-                    } else {
-                        None
-                    }
-                });
-            parent_ignored.unwrap_or_else(|| p.clone())
-        };
-
-        if seen.insert(out.clone()) {
-            result.push(out);
-        }
-    }
-
     result
 }
 
@@ -1035,16 +923,4 @@ fn status_tag(entry: &IndexEntry) -> char {
     } else {
         'H' // regular cached
     }
-}
-
-fn passthrough_current_ls_files_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "ls-files") else {
-        bail!("failed to determine ls-files arguments");
-    };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
-    git_passthrough::run("ls-files", &passthrough_args)
 }

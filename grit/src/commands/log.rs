@@ -5,21 +5,18 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
-use crate::commands::git_passthrough;
-use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
-use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::collections::HashSet;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -163,10 +160,6 @@ pub struct Args {
     /// Suppress diff output for submodules.
     #[arg(long = "no-ext-diff")]
     pub no_ext_diff: bool,
-
-    /// Control whether to ignore submodule changes in displayed commit diffs.
-    #[arg(long = "ignore-submodules", value_name = "WHEN", num_args = 0..=1, default_missing_value = "all")]
-    pub ignore_submodules: Option<String>,
 
     /// Show stat with patch.
     #[arg(long = "patch-with-stat")]
@@ -370,10 +363,6 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if repo_uses_grafts(&repo) {
-        return passthrough_current_log_invocation();
-    }
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -383,25 +372,23 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         // Check config for color.diff / color.ui
         let mut c = false;
-        if let Some(val) = config.get("color.diff") {
-            match val.as_str() {
-                "always" | "true" => c = true,
-                "auto" => {
-                    c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                        || std::env::var_os("GIT_PAGER_IN_USE").is_some()
-                }
-                _ => {}
-            }
-        }
-        if !c {
-            if let Some(val) = config.get("color.ui") {
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("color.diff") {
                 match val.as_str() {
                     "always" | "true" => c = true,
-                    "auto" => {
-                        c = std::io::IsTerminal::is_terminal(&std::io::stdout())
-                            || std::env::var_os("GIT_PAGER_IN_USE").is_some()
-                    }
+                    "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                        || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
                     _ => {}
+                }
+            }
+            if !c {
+                if let Some(val) = config.get("color.ui") {
+                    match val.as_str() {
+                        "always" | "true" => c = true,
+                        "auto" => c = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some(),
+                        _ => {}
+                    }
                 }
             }
         }
@@ -412,13 +399,6 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.no_graph {
         args.graph = false;
     }
-
-    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
-    let gitmodules_ignores = repo
-        .work_tree
-        .as_deref()
-        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
-        .unwrap_or_default();
 
     // Detect conflicting flag combinations
     if args.graph {
@@ -458,7 +438,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
     // ancestors" — standard git revision range syntax.
     let (start_oids, exclude_oids) = if args.all {
-        (collect_all_ref_oids(&repo.git_dir)?, Vec::new())
+        (collect_all_ref_oids(&repo)?, Vec::new())
     } else if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
         match head.oid() {
@@ -528,25 +508,37 @@ pub fn run(mut args: Args) -> Result<()> {
         .transpose()
         .context("invalid --grep regex")?;
 
-    let format_requires_decorations = args
-        .format
-        .as_deref()
-        .map(|fmt| {
-            let template = fmt
-                .strip_prefix("format:")
-                .or_else(|| fmt.strip_prefix("tformat:"))
-                .unwrap_or(fmt);
-            template.contains("%d") || template.contains("%D")
-        })
-        .unwrap_or(false);
-
     // Collect ref decorations — manually determine last-wins for
     // --decorate / --no-decorate so that flag order is respected.
     let (show_decorations, decorate_full) = {
-        // Default: decorations off, except when the chosen format asks for
-        // `%d` / `%D` placeholders.
-        let mut show = format_requires_decorations;
-        let mut full = format_requires_decorations;
+        // Default: decorations off (git only decorates for terminal/auto)
+        let mut show = false;
+        let mut full = false;
+        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+            if let Some(val) = config.get("log.decorate") {
+                match val.as_str() {
+                    "full" => {
+                        show = true;
+                        full = true;
+                    }
+                    "short" => {
+                        show = true;
+                        full = false;
+                    }
+                    "auto" => {
+                        show = std::io::IsTerminal::is_terminal(&std::io::stdout())
+                            || std::env::var_os("GIT_PAGER_IN_USE").is_some();
+                        full = false;
+                    }
+                    _ => {
+                        if let Ok(parsed) = grit_lib::config::parse_bool(&val) {
+                            show = parsed;
+                            full = false;
+                        }
+                    }
+                }
+            }
+        }
         for arg in std::env::args() {
             if arg == "--no-decorate" {
                 show = false;
@@ -715,14 +707,7 @@ pub fn run(mut args: Args) -> Result<()> {
         )?;
 
         if show_diff {
-            write_commit_diff(
-                &mut out,
-                &repo.odb,
-                commit_data,
-                &args,
-                ignore_submodules_mode,
-                &gitmodules_ignores,
-            )?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
         }
     }
 
@@ -730,14 +715,7 @@ pub fn run(mut args: Args) -> Result<()> {
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
-pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
-    let gitmodules_ignores = repo
-        .work_tree
-        .as_deref()
-        .and_then(|work_tree| load_submodule_ignore_settings(work_tree, &config).ok())
-        .unwrap_or_default();
-
+fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
     let mut oids = Vec::new();
     if args.revisions.is_empty() {
         let head = resolve_head(&repo.git_dir)?;
@@ -758,8 +736,6 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
     let decorations = if args.no_decorate {
         None
     } else {
-        // In no-walk mode, match regular `git log` behavior by decorating
-        // commits by default unless explicitly disabled.
         Some(collect_decorations(repo, decorate_full)?)
     };
 
@@ -804,7 +780,6 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc;
-    let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -822,14 +797,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
-            write_commit_diff(
-                &mut out,
-                &repo.odb,
-                commit_data,
-                args,
-                ignore_submodules_mode,
-                &gitmodules_ignores,
-            )?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
     }
 
@@ -1474,15 +1442,68 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
         Err(_) => return map,
     };
 
-    for entry in entries {
-        let name = String::from_utf8_lossy(&entry.name);
-        if let Ok(commit_oid) = name.parse::<ObjectId>() {
-            // Read the blob to get note content
+    // Notes trees may use fanout (e.g. "ab/cdef..."), and imported notes can
+    // even have deeper split paths. Traverse recursively and interpret any blob
+    // whose slash-stripped path is a full 40-hex object id as a note entry.
+    fn walk_notes_tree(
+        repo: &Repository,
+        entries: &[grit_lib::objects::TreeEntry],
+        prefix: &str,
+        map: &mut std::collections::HashMap<ObjectId, Vec<u8>>,
+    ) {
+        for entry in entries {
+            let name = String::from_utf8_lossy(&entry.name);
+            let path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
+
+            if entry.mode == 0o040000 {
+                let Ok(sub_obj) = repo.odb.read(&entry.oid) else {
+                    continue;
+                };
+                if sub_obj.kind != grit_lib::objects::ObjectKind::Tree {
+                    continue;
+                }
+                let Ok(sub_entries) = parse_tree(&sub_obj.data) else {
+                    continue;
+                };
+                walk_notes_tree(repo, &sub_entries, &path, map);
+                continue;
+            }
+
+            // Flatten fanout path segments, then try parsing as commit OID.
+            let oid_hex: String = path.chars().filter(|&c| c != '/').collect();
+            if oid_hex.len() != 40 || !oid_hex.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let Ok(commit_oid) = oid_hex.parse::<ObjectId>() else {
+                continue;
+            };
+
+            // Read the blob to get note content.
             if let Ok(blob) = repo.odb.read(&entry.oid) {
-                map.insert(commit_oid, blob.data);
+                if blob.kind == grit_lib::objects::ObjectKind::Blob {
+                    if let Some(existing) = map.get_mut(&commit_oid) {
+                        // Multiple note blobs can refer to the same commit
+                        // (e.g. mixed fanout/non-fanout paths). Git displays
+                        // them concatenated with a blank line separator in
+                        // tree traversal order.
+                        if existing.ends_with(b"\n") {
+                            existing.extend_from_slice(b"\n");
+                        } else {
+                            existing.extend_from_slice(b"\n\n");
+                        }
+                        existing.extend_from_slice(&blob.data);
+                    } else {
+                        map.insert(commit_oid, blob.data);
+                    }
+                }
             }
         }
     }
+    walk_notes_tree(repo, &entries, "", &mut map);
 
     map
 }
@@ -2554,7 +2575,7 @@ fn collect_decorations(
     full: bool,
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
     let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut head_target: Option<(String, String)> = None;
+    let mut head_branch_short: Option<String> = None;
 
     // HEAD
     let head = resolve_head(&repo.git_dir)?;
@@ -2562,12 +2583,7 @@ fn collect_decorations(
         let hex = oid.to_hex();
         let label = match &head {
             HeadState::Branch { short_name, .. } => {
-                let branch_label = if full {
-                    format!("refs/heads/{short_name}")
-                } else {
-                    short_name.to_owned()
-                };
-                head_target = Some((hex.clone(), branch_label));
+                head_branch_short = Some(short_name.clone());
                 if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
@@ -2576,7 +2592,7 @@ fn collect_decorations(
             }
             _ => "HEAD".to_owned(),
         };
-        map.entry(hex).or_default().push(label);
+        add_decoration(&mut map, hex, label);
     }
 
     if full {
@@ -2586,6 +2602,7 @@ fn collect_decorations(
             "refs/heads/",
             "refs/heads/",
             &mut map,
+            head_branch_short.as_deref(),
         )?;
         collect_refs_from_dir(
             &repo.odb,
@@ -2593,6 +2610,7 @@ fn collect_decorations(
             "refs/tags/",
             "tag: refs/tags/",
             &mut map,
+            None,
         )?;
     } else {
         collect_refs_from_dir(
@@ -2601,6 +2619,7 @@ fn collect_decorations(
             "refs/heads/",
             "",
             &mut map,
+            head_branch_short.as_deref(),
         )?;
         collect_refs_from_dir(
             &repo.odb,
@@ -2608,24 +2627,22 @@ fn collect_decorations(
             "refs/tags/",
             "tag: ",
             &mut map,
+            None,
         )?;
     }
 
-    // Avoid duplicate current branch decoration when we already show
-    // "HEAD -> <branch>" for the same commit.
-    if let Some((head_hex, branch_label)) = head_target {
-        if let Some(refs) = map.get_mut(&head_hex) {
-            refs.retain(|r| r != &branch_label || r.starts_with("HEAD -> "));
-        }
-    }
-
-    // De-duplicate while preserving order.
-    for refs in map.values_mut() {
-        let mut seen = std::collections::HashSet::new();
-        refs.retain(|r| seen.insert(r.clone()));
-    }
-
     Ok(map)
+}
+
+fn add_decoration(
+    map: &mut std::collections::HashMap<String, Vec<String>>,
+    hex: String,
+    label: String,
+) {
+    let entry = map.entry(hex).or_default();
+    if !entry.contains(&label) {
+        entry.push(label);
+    }
 }
 
 /// Recursively collect refs from a directory.
@@ -2635,6 +2652,7 @@ fn collect_refs_from_dir(
     strip_prefix: &str,
     display_prefix: &str,
     map: &mut std::collections::HashMap<String, Vec<String>>,
+    skip_name: Option<&str>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -2645,12 +2663,15 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
+            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map, skip_name)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
             let hex = content.trim();
             let full_ref = path.to_string_lossy();
             if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
+                if skip_name.is_some_and(|s| s == name) {
+                    continue;
+                }
                 let label = format!("{display_prefix}{name}");
                 // Dereference annotated tags to the commit they point at
                 let resolved_hex = if display_prefix.contains("tag") {
@@ -2658,7 +2679,7 @@ fn collect_refs_from_dir(
                 } else {
                     hex.to_owned()
                 };
-                map.entry(resolved_hex).or_default().push(label);
+                add_decoration(map, resolved_hex, label);
             }
         }
     }
@@ -2779,25 +2800,16 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
-    ignore_submodules_mode: &'static str,
-    gitmodules_ignores: &HashMap<String, String>,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
-    let entries = compute_commit_diff(odb, info)?;
+    let mut entries = compute_commit_diff(odb, info)?;
     if entries.is_empty() {
         return Ok(());
     }
 
     // Apply orderfile sorting if specified
-    let mut entries = if let Some(ref order_path) = args.order_file {
-        crate::commands::diff::apply_orderfile_entries(entries, order_path)
-    } else {
-        entries
-    };
-
-    entries.retain(|e| !should_hide_submodule_log_entry(e, ignore_submodules_mode, gitmodules_ignores));
-    if entries.is_empty() {
-        return Ok(());
+    if let Some(ref order_path) = args.order_file {
+        entries = crate::commands::diff::apply_orderfile_entries(entries, order_path);
     }
 
     // For --cc mode on merge commits, compute combined diff entries
@@ -3050,17 +3062,20 @@ fn log_read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> 
 }
 
 /// Collect all commit OIDs from all refs (branches, tags, etc.) for --all.
-fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
+fn collect_all_ref_oids(repo: &Repository) -> Result<Vec<ObjectId>> {
     use std::fs;
     let mut oids = Vec::new();
     let mut seen = HashSet::new();
+    let git_dir = &repo.git_dir;
 
     // Reftable backend
     if grit_lib::reftable::is_reftable_repo(git_dir) {
         if let Ok(refs) = grit_lib::reftable::reftable_list_refs(git_dir, "refs/") {
             for (_name, oid) in refs {
-                if seen.insert(oid) {
-                    oids.push(oid);
+                if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                    if seen.insert(commit_oid) {
+                        oids.push(commit_oid);
+                    }
                 }
             }
         }
@@ -3068,7 +3083,7 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
     }
 
     // Loose refs
-    collect_oids_from_dir(git_dir, &git_dir.join("refs"), &mut oids, &mut seen)?;
+    collect_oids_from_dir(repo, &git_dir.join("refs"), &mut oids, &mut seen)?;
 
     // Packed refs
     let packed_path = git_dir.join("packed-refs");
@@ -3079,8 +3094,10 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
             }
             if let Some(hex) = line.split_whitespace().next() {
                 if let Ok(oid) = hex.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
+                    if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                        if seen.insert(commit_oid) {
+                            oids.push(commit_oid);
+                        }
                     }
                 }
             }
@@ -3091,7 +3108,7 @@ fn collect_all_ref_oids(git_dir: &std::path::Path) -> Result<Vec<ObjectId>> {
 }
 
 fn collect_oids_from_dir(
-    git_dir: &std::path::Path,
+    repo: &Repository,
     dir: &std::path::Path,
     oids: &mut Vec<ObjectId>,
     seen: &mut HashSet<ObjectId>,
@@ -3105,26 +3122,46 @@ fn collect_oids_from_dir(
         let entry = entry?;
         let ft = entry.file_type()?;
         if ft.is_dir() {
-            collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;
+            collect_oids_from_dir(repo, &entry.path(), oids, seen)?;
         } else if ft.is_file() {
             if let Ok(content) = fs::read_to_string(entry.path()) {
                 let raw = content.trim();
                 if let Some(target) = raw.strip_prefix("ref: ") {
                     // Symbolic ref — resolve it
-                    if let Ok(oid) = grit_lib::refs::resolve_ref(git_dir, target) {
-                        if seen.insert(oid) {
-                            oids.push(oid);
+                    if let Ok(oid) = grit_lib::refs::resolve_ref(&repo.git_dir, target) {
+                        if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                            if seen.insert(commit_oid) {
+                                oids.push(commit_oid);
+                            }
                         }
                     }
                 } else if let Ok(oid) = raw.parse::<ObjectId>() {
-                    if seen.insert(oid) {
-                        oids.push(oid);
+                    if let Some(commit_oid) = peel_to_commit_oid(repo, oid) {
+                        if seen.insert(commit_oid) {
+                            oids.push(commit_oid);
+                        }
                     }
                 }
             }
         }
     }
     Ok(())
+}
+
+fn peel_to_commit_oid(repo: &Repository, oid: ObjectId) -> Option<ObjectId> {
+    let mut current = oid;
+    for _ in 0..16 {
+        let obj = repo.odb.read(&current).ok()?;
+        match obj.kind {
+            ObjectKind::Commit => return Some(current),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data).ok()?;
+                current = tag.object;
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Check if a commit has any changes matching the specified diff-filter status letters.
@@ -3417,129 +3454,5 @@ fn resolve_pretty_alias_with_config(fmt: &str, repo: &Repository) -> String {
         } else {
             return current;
         }
-    }
-}
-
-fn should_hide_submodule_log_entry(
-    entry: &DiffEntry,
-    ignore_submodules_mode: &str,
-    gitmodules_ignores: &HashMap<String, String>,
-) -> bool {
-    let is_submodule = entry.old_mode == "160000" || entry.new_mode == "160000";
-    if !is_submodule {
-        return false;
-    }
-
-    match ignore_submodules_mode {
-        "none" => false,
-        "default" => {
-            let key = normalize_repo_relpath(entry.path());
-            gitmodules_ignores
-                .get(&key)
-                .is_some_and(|v| v.eq_ignore_ascii_case("all"))
-        }
-        _ => true,
-    }
-}
-
-fn load_submodule_ignore_settings(
-    work_tree: &Path,
-    config: &ConfigSet,
-) -> Result<HashMap<String, String>> {
-    let mut map = HashMap::new();
-    let gitmodules_path = work_tree.join(".gitmodules");
-    let content = match fs::read_to_string(&gitmodules_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(map),
-        Err(e) => return Err(e.into()),
-    };
-
-    let parsed = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)
-        .with_context(|| format!("failed to parse {}", gitmodules_path.display()))?;
-
-    let mut name_to_path: HashMap<String, String> = HashMap::new();
-    let mut name_to_ignore: HashMap<String, String> = HashMap::new();
-    for entry in parsed.entries {
-        if !entry.key.starts_with("submodule.") {
-            continue;
-        }
-        let rest = &entry.key["submodule.".len()..];
-        if let Some(name) = rest.strip_suffix(".path") {
-            if let Some(path) = entry.value {
-                name_to_path.insert(name.to_string(), normalize_repo_relpath(&path));
-            }
-        } else if let Some(name) = rest.strip_suffix(".ignore") {
-            if let Some(ignore) = entry.value {
-                name_to_ignore.insert(name.to_string(), ignore);
-            }
-        }
-    }
-
-    for (name, path) in name_to_path {
-        let key = format!("submodule.{name}.ignore");
-        if let Some(value) = config.get(&key).or_else(|| name_to_ignore.get(&name).cloned()) {
-            map.insert(path, value);
-        }
-    }
-
-    Ok(map)
-}
-
-fn normalize_repo_relpath(path: &str) -> String {
-    let mut out = PathBuf::new();
-    for comp in Path::new(path).components() {
-        match comp {
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(seg) => out.push(seg),
-            std::path::Component::ParentDir => out.push(".."),
-            _ => {}
-        }
-    }
-    let s = out.to_string_lossy().to_string();
-    if s.is_empty() {
-        path.trim_end_matches('/').to_string()
-    } else {
-        s
-    }
-}
-
-fn repo_uses_grafts(repo: &Repository) -> bool {
-    if repo.git_dir.join("info/grafts").exists() {
-        return true;
-    }
-    resolve_common_git_dir_for_log(&repo.git_dir)
-        .join("info/grafts")
-        .exists()
-}
-
-fn resolve_common_git_dir_for_log(git_dir: &Path) -> PathBuf {
-    let commondir_file = git_dir.join("commondir");
-    if let Ok(raw) = fs::read_to_string(&commondir_file) {
-        let rel = raw.trim();
-        if !rel.is_empty() {
-            let path = if Path::new(rel).is_absolute() {
-                PathBuf::from(rel)
-            } else {
-                git_dir.join(rel)
-            };
-            return path.canonicalize().unwrap_or(path);
-        }
-    }
-    git_dir.to_path_buf()
-}
-
-fn passthrough_current_log_invocation() -> Result<()> {
-    git_passthrough::run_current_invocation("log")
-}
-
-fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {
-    match raw {
-        Some(v) if v.eq_ignore_ascii_case("all") => "all",
-        Some(v) if v.eq_ignore_ascii_case("none") => "none",
-        Some(v) if v.eq_ignore_ascii_case("dirty") => "dirty",
-        Some(v) if v.eq_ignore_ascii_case("untracked") => "untracked",
-        Some(v) if v.eq_ignore_ascii_case("default") => "default",
-        Some(_) => "default",
-        None => "default",
     }
 }

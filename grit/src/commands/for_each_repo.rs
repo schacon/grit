@@ -7,65 +7,54 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::process::Command;
 
+use grit_lib::config::canonical_key;
 use grit_lib::config::ConfigSet;
-use grit_lib::repo::Repository;
+use grit_lib::config::parse_path;
 
 /// Arguments for `grit for-each-repo`.
 #[derive(Debug, ClapArgs)]
+#[command(trailing_var_arg = true)]
 pub struct Args {
     /// Config key containing the list of repos.
     #[arg(long = "config")]
     pub config_key: String,
 
-    /// Continue processing repos even if one fails.
+    /// Keep going even if one repository command fails.
     #[arg(long = "keep-going")]
     pub keep_going: bool,
 
     /// Command and arguments to run in each repo.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    #[arg(allow_hyphen_values = true)]
     pub command: Vec<String>,
 }
 
 /// Run `grit for-each-repo`.
 pub fn run(args: Args) -> Result<()> {
     // Validate config key format first.
-    if !valid_config_key(&args.config_key) {
-        eprintln!("error: got bad config key: {}", args.config_key);
+    if canonical_key(&args.config_key).is_err() {
+        eprintln!("error: got bad config --config={}", args.config_key);
         std::process::exit(129);
     }
-    let canon_key = args.config_key.to_ascii_lowercase();
 
     // Load git config to find the repo list.
-    let config = if let Ok(repo) = Repository::discover(None) {
-        ConfigSet::load(Some(&repo.git_dir), true).context("loading config")?
-    } else {
-        ConfigSet::load(None, true).context("loading config")?
-    };
+    // for-each-repo is expected to work outside repositories too.
+    let config = ConfigSet::load(None, true).context("loading config")?;
 
-    // Existing key with no value is an error.
-    if config
-        .entries()
-        .iter()
-        .any(|entry| entry.key == canon_key && entry.value.is_none())
-    {
+    let repos = config.get_all(&args.config_key);
+    if repos.iter().any(|v| v.is_empty()) {
         eprintln!("error: missing value for '{}'", args.config_key);
         std::process::exit(129);
     }
-
-    let repos = config
-        .get_all(&args.config_key)
-        .into_iter()
-        .filter(|v| !v.trim().is_empty())
-        .collect::<Vec<_>>();
     if repos.is_empty() {
         // Nothing to do — no repos configured.
         return Ok(());
     }
 
-    let mut command = args.command;
-    if command.first().map(String::as_str) == Some("--") {
-        command.remove(0);
-    }
+    let command = if args.command.first().is_some_and(|s| s == "--") {
+        args.command[1..].to_vec()
+    } else {
+        args.command.clone()
+    };
     if command.is_empty() {
         eprintln!("error: missing -- <command>");
         std::process::exit(129);
@@ -77,62 +66,36 @@ pub fn run(args: Args) -> Result<()> {
     let cmd_name = git_exe.as_os_str();
     let cmd_args = &command[..];
 
-    let mut had_error = false;
+    let mut result = 0;
 
     for repo_path in &repos {
-        let expanded = grit_lib::config::parse_path(repo_path);
-        let path = std::path::Path::new(&expanded);
-        if !path.is_dir() {
-            eprintln!("error: cannot change to '{}'", expanded);
-            had_error = true;
+        let expanded = parse_path(repo_path);
+        if !std::path::Path::new(&expanded).is_dir() {
+            eprintln!("fatal: cannot change to '{}': No such file or directory", expanded);
             if !args.keep_going {
                 std::process::exit(1);
             }
+            result = 1;
             continue;
         }
 
         let status = Command::new(cmd_name)
+            .arg("-C")
+            .arg(&expanded)
             .args(cmd_args)
-            .current_dir(path)
-            .status();
-        let status = match status {
-            Ok(s) => s,
-            Err(_) => {
-                eprintln!("error: cannot change to '{}'", expanded);
-                had_error = true;
-                if !args.keep_going {
-                    std::process::exit(1);
-                }
-                continue;
-            }
-        };
+            .status()?;
 
         if !status.success() {
-            had_error = true;
             if !args.keep_going {
                 std::process::exit(status.code().unwrap_or(1));
             }
+            result = 1;
         }
     }
 
-    if had_error {
-        std::process::exit(1);
+    if result != 0 {
+        std::process::exit(result);
     }
 
     Ok(())
-}
-
-fn valid_config_key(key: &str) -> bool {
-    // Require at least section.key with no empty components.
-    if key.is_empty() || !key.contains('.') || key.starts_with('.') || key.ends_with('.') {
-        return false;
-    }
-    let parts: Vec<&str> = key.split('.').collect();
-    if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
-        return false;
-    }
-    parts.iter().all(|part| {
-        part.chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
-    })
 }

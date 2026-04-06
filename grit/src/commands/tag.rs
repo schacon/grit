@@ -20,11 +20,16 @@ use time::OffsetDateTime;
 #[command(about = "Create, list, delete or verify a tag object signed with GPG")]
 pub struct Args {
     /// Positional arguments: tag name(s), optional commit.
+    #[arg(value_name = "ARG")]
     pub positional: Vec<String>,
 
     /// Create an annotated tag.
     #[arg(short = 'a', long = "annotate")]
     pub annotate: bool,
+
+    /// Create a GPG-signed tag.
+    #[arg(short = 's', long = "sign")]
+    pub sign: bool,
 
     /// Tag message (implies `-a`).
     #[arg(short = 'm', long = "message")]
@@ -162,7 +167,7 @@ pub fn run(args: Args) -> Result<()> {
         bail!("only one of -m or -F can be given.");
     }
 
-    let annotated = args.annotate || !args.message.is_empty() || args.file.is_some();
+    let annotated = args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
 
     let tag_refname = format!("refs/tags/{name}");
     let tag_exists = if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
@@ -222,13 +227,30 @@ fn create_annotated_tag(
     let now = OffsetDateTime::now_utc();
     let tagger = resolve_tagger(&config, now)?;
 
-    let tag_data = TagData {
+    let mut tag_data = TagData {
         object: target_oid,
         object_type,
         tag: name.to_owned(),
         tagger: Some(tagger),
         message,
     };
+
+    if args.sign {
+        let unsigned_tag_bytes = serialize_tag(&tag_data);
+        let sig_format = config
+            .get("gpg.format")
+            .unwrap_or_else(|| "openpgp".to_owned())
+            .to_lowercase();
+        let signing_key = config
+            .get("user.signingkey")
+            .unwrap_or_else(|| "-".to_owned());
+        let sig_payload = pseudo_tag_signature_payload(&sig_format, &signing_key, &unsigned_tag_bytes);
+        let sig_block = render_tag_signature_block(&sig_format, &sig_payload);
+        if !tag_data.message.ends_with('\n') {
+            tag_data.message.push('\n');
+        }
+        tag_data.message.push_str(&sig_block);
+    }
 
     let tag_bytes = serialize_tag(&tag_data);
     let tag_oid = repo.odb.write(ObjectKind::Tag, &tag_bytes)?;
@@ -704,6 +726,28 @@ fn ensure_trailing_newline(s: &str) -> String {
         s.to_owned()
     } else {
         format!("{s}\n")
+    }
+}
+
+fn pseudo_tag_signature_payload(format: &str, key: &str, unsigned_tag: &[u8]) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(unsigned_tag);
+    let digest = hasher.finalize();
+    format!("GRITTAGSIGV1 {} {} {}", format, key, hex::encode(digest.as_slice()))
+}
+
+fn render_tag_signature_block(format: &str, payload: &str) -> String {
+    match format {
+        "ssh" => format!(
+            "-----BEGIN SSH SIGNATURE-----\n{payload}\n-----END SSH SIGNATURE-----\n"
+        ),
+        "x509" => format!(
+            "-----BEGIN SIGNED MESSAGE-----\n{payload}\n-----END SIGNED MESSAGE-----\n"
+        ),
+        _ => format!(
+            "-----BEGIN PGP SIGNATURE-----\n{payload}\n-----END PGP SIGNATURE-----\n"
+        ),
     }
 }
 

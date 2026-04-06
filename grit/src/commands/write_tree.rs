@@ -30,27 +30,34 @@ pub fn run(args: Args) -> Result<()> {
         .context("building tree from index")
     {
         Ok(oid) => oid,
-        Err(err) => {
-            if is_permission_denied(&err) {
-                eprintln!(
-                    "error: insufficient permission for adding an object to repository database .git/objects"
-                );
-                eprintln!("fatal: git-write-tree: error building trees");
-                std::process::exit(128);
-            }
-            return Err(err);
+        Err(err) if is_permission_denied_error(&err) => {
+            eprintln!("error: insufficient permission for adding an object to repository database .git/objects");
+            eprintln!("fatal: git-write-tree: error building trees");
+            std::process::exit(1);
         }
+        Err(err) => return Err(err),
     };
 
     println!("{oid}");
     Ok(())
 }
 
-fn is_permission_denied(err: &anyhow::Error) -> bool {
-    err.chain().any(|cause| {
-        let msg = cause.to_string();
-        msg.contains("Permission denied") || msg.contains("permission denied")
-    })
+fn is_permission_denied_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(ioe) = cause.downcast_ref::<std::io::Error>() {
+            if ioe.kind() == std::io::ErrorKind::PermissionDenied {
+                return true;
+            }
+        }
+        if let Some(grit_err) = cause.downcast_ref::<grit_lib::error::Error>() {
+            if let grit_lib::error::Error::Io(ioe) = grit_err {
+                if ioe.kind() == std::io::ErrorKind::PermissionDenied {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Build and write tree objects from the index, return the root tree OID.
@@ -70,7 +77,7 @@ pub fn write_tree_from_index(
     let entries: Vec<_> = index
         .entries
         .iter()
-        .filter(|e| e.stage() == 0 && !e.intent_to_add() && e.path.starts_with(prefix_bytes))
+        .filter(|e| e.stage() == 0 && e.path.starts_with(prefix_bytes))
         .collect();
 
     // Check for null SHA1 entries

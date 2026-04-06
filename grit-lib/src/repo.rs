@@ -17,6 +17,8 @@
 
 use std::env;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -31,6 +33,10 @@ pub struct Repository {
     pub work_tree: Option<PathBuf>,
     /// Loose object database.
     pub odb: Odb,
+    /// Discovery provenance: true when opened via `GIT_DIR` env or explicit API.
+    ///
+    /// This suppresses safe.bareRepository implicit checks.
+    pub explicit_git_dir: bool,
 }
 
 impl Repository {
@@ -45,16 +51,8 @@ impl Repository {
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
 
-        if fs::symlink_metadata(git_dir.join("HEAD")).is_err() {
+        if !git_dir.join("HEAD").exists() {
             return Err(Error::NotARepository(git_dir.display().to_string()));
-        }
-
-        // Validate repositoryformatversion and extensions.
-        let config_path = git_dir.join("config");
-        if config_path.exists() {
-            if let Ok(config_text) = fs::read_to_string(&config_path) {
-                validate_repo_format(&config_text).map_err(|e| Error::UnsupportedFormat(e))?;
-            }
         }
 
         // For git worktrees the `objects/` directory lives in the common git
@@ -98,6 +96,7 @@ impl Repository {
             git_dir,
             work_tree,
             odb,
+            explicit_git_dir: false,
         })
     }
 
@@ -113,49 +112,40 @@ impl Repository {
         // GIT_DIR override
         if let Ok(dir) = env::var("GIT_DIR") {
             let git_dir = PathBuf::from(&dir);
-            let cwd = env::current_dir()?;
-            let git_dir_abs = if git_dir.is_absolute() {
-                git_dir.clone()
-            } else {
-                cwd.join(&git_dir)
-            };
-            let mut effective_git_dir = git_dir.clone();
-            let mut inferred_work_tree_from_gitfile: Option<PathBuf> = None;
-            if git_dir_abs.is_file() {
-                let content =
-                    fs::read_to_string(&git_dir_abs).map_err(|e| Error::NotARepository(e.to_string()))?;
-                let base = git_dir_abs.parent().unwrap_or(&cwd);
-                effective_git_dir = parse_gitfile(&content, base)?;
-                inferred_work_tree_from_gitfile = git_dir_abs.parent().map(PathBuf::from);
+            let work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
+            if work_tree.is_some() {
+                let mut repo = Self::open(&git_dir, work_tree.as_deref())?;
+                repo.explicit_git_dir = true;
+                return Ok(repo);
             }
-            if let Ok(wt_raw) = env::var("GIT_WORK_TREE") {
-                let wt = if Path::new(&wt_raw).is_absolute() {
-                    PathBuf::from(wt_raw)
+            // When GIT_DIR is set without GIT_WORK_TREE, infer the work tree
+            // from the parent of the git directory (standard layout).
+            let mut repo = Self::open(&git_dir, None)?;
+            if repo.work_tree.is_none() {
+                let canonical = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
+                // Check core.bare config
+                let config_path = canonical.join("config");
+                let is_bare = if config_path.exists() {
+                    fs::read_to_string(&config_path)
+                        .ok()
+                        .and_then(|c| {
+                            c.lines()
+                                .find(|l| {
+                                    let trimmed = l.trim();
+                                    trimmed.starts_with("bare") && trimmed.contains("true")
+                                })
+                                .map(|_| true)
+                        })
+                        .unwrap_or(false)
                 } else {
-                    cwd.join(wt_raw)
+                    false
                 };
-                return Self::open(&effective_git_dir, Some(&wt));
+                if !is_bare {
+                    repo.work_tree = canonical.parent().map(|p| p.to_path_buf());
+                }
             }
-
-            // With GIT_DIR set and no explicit GIT_WORK_TREE:
-            // - if core.worktree is set, honor it
-            // - else if core.bare=true, treat as bare
-            // - else default worktree is the current working directory
-            //   (matches Git's --git-dir behavior).
-            let canonical_git = effective_git_dir
-                .canonicalize()
-                .unwrap_or_else(|_| effective_git_dir.clone());
-            let (core_bare, core_worktree) = read_core_bare_and_worktree(&canonical_git);
-            if let Some(wt) = core_worktree {
-                return Self::open(&effective_git_dir, Some(&wt));
-            }
-            if core_bare.unwrap_or(false) {
-                return Self::open(&effective_git_dir, None);
-            }
-            if let Some(wt) = inferred_work_tree_from_gitfile {
-                return Self::open(&effective_git_dir, Some(&wt));
-            }
-            return Self::open(&effective_git_dir, Some(&cwd));
+            repo.explicit_git_dir = true;
+            return Ok(repo);
         }
 
         // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it
@@ -190,6 +180,7 @@ impl Repository {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
                 }
+                repo.enforce_safe_directory()?;
                 return Ok(repo);
             }
             match current.parent() {
@@ -222,13 +213,28 @@ impl Repository {
     /// Whether this is a bare repository (no working tree).
     #[must_use]
     pub fn is_bare(&self) -> bool {
-        if let Ok(cfg) = crate::config::ConfigSet::load(Some(&self.git_dir), true) {
-            if let Some(Ok(v)) = cfg.get_bool("core.bare") {
-                return v;
-            }
-        }
         if self.work_tree.is_some() {
             return false;
+        }
+        // Check core.bare in the repo config.  A .git directory of a
+        // non-bare repo has objects/ and HEAD but core.bare=false.
+        let config_path = self.git_dir.join("config");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            let mut in_core = false;
+            for line in content.lines() {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_core = t.eq_ignore_ascii_case("[core]");
+                    continue;
+                }
+                if in_core {
+                    if let Some((k, v)) = t.split_once('=') {
+                        if k.trim().eq_ignore_ascii_case("bare") {
+                            return v.trim().eq_ignore_ascii_case("true");
+                        }
+                    }
+                }
+            }
         }
         // No core.bare setting — if work_tree is None, assume bare
         true
@@ -259,54 +265,6 @@ impl Repository {
     }
 }
 
-fn read_core_bare_and_worktree(git_dir: &Path) -> (Option<bool>, Option<PathBuf>) {
-    let config_path = git_dir.join("config");
-    let Ok(content) = fs::read_to_string(&config_path) else {
-        return (None, None);
-    };
-
-    let mut in_core = false;
-    let mut bare = None;
-    let mut worktree = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            continue;
-        }
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_core = trimmed.eq_ignore_ascii_case("[core]");
-            continue;
-        }
-        if !in_core {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = value.trim().trim_matches('"');
-        if key.eq_ignore_ascii_case("bare") {
-            let v = value.to_ascii_lowercase();
-            bare = match v.as_str() {
-                "true" | "yes" | "on" | "1" => Some(true),
-                "false" | "no" | "off" | "0" => Some(false),
-                _ => bare,
-            };
-        } else if key.eq_ignore_ascii_case("worktree") && !value.is_empty() {
-            let path = PathBuf::from(value);
-            let abs = if path.is_absolute() {
-                path
-            } else {
-                git_dir.join(path)
-            };
-            worktree = Some(abs.canonicalize().unwrap_or(abs));
-        }
-    }
-
-    (bare, worktree)
-}
-
 /// Try to open a repository rooted exactly at `dir`.
 ///
 /// Returns `Ok(None)` when `dir` is not a repository root (the caller should
@@ -323,12 +281,10 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             let ft = meta.file_type();
             if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
                 return Err(Error::NotARepository(format!(
-                    "invalid gitfile format: '{}' is not a regular file",
+                    "invalid gitfile format: {} is not a regular file",
                     dot_git.display()
                 )));
             }
-            // A symlink may point to an unsupported file type (e.g. FIFO).
-            // Reject it explicitly instead of silently walking up.
             if ft.is_symlink() {
                 if let Ok(target_meta) = fs::metadata(&dot_git) {
                     let tft = target_meta.file_type();
@@ -338,17 +294,11 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                         || tft.is_char_device()
                     {
                         return Err(Error::NotARepository(format!(
-                            "invalid gitfile format: '{}' is not a regular file",
+                            "invalid gitfile format: {} is not a regular file",
                             dot_git.display()
                         )));
                     }
                 }
-            }
-            if ft.is_symlink() && !dot_git.exists() {
-                return Err(Error::NotARepository(format!(
-                    "invalid gitfile format: '{}' is not a regular file",
-                    dot_git.display()
-                )));
             }
         }
     }
@@ -358,8 +308,7 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         let content =
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
-        let mut repo = Repository::open(&git_dir, Some(dir))?;
-        apply_core_worktree_override(&mut repo);
+        let repo = Repository::open(&git_dir, Some(dir))?;
         return Ok(Some(repo));
     }
 
@@ -387,31 +336,33 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                     };
                     repo.git_dir = abs_dot_git;
                 }
-                apply_core_worktree_override(&mut repo);
                 return Ok(Some(repo));
-            }
-            // Unsupported format version or unknown extension: stop discovery
-            // immediately and propagate the error (do not walk up to parent).
-            Err(Error::UnsupportedFormat(_)) => {
-                return Err(Error::UnsupportedFormat(format!(
-                    "repo at '{}' has unsupported format",
-                    dir.display()
-                )))
             }
             Err(Error::NotARepository(_)) => return Ok(None),
             Err(e) => return Err(e),
         }
     }
 
+    // Linked-worktree gitdir/admin directories contain HEAD and commondir,
+    // and can be opened as repositories even without a local objects/ dir.
+    if dir.join("HEAD").is_file() && dir.join("commondir").is_file() {
+        maybe_trace_implicit_bare_repository(dir);
+        let repo = Repository::open(dir, None)?;
+        return Ok(Some(repo));
+    }
+
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
     if dir.join("objects").is_dir() && dir.join("HEAD").is_file() {
+        maybe_trace_implicit_bare_repository(dir);
         // Check safe.bareRepository policy before opening bare repos.
         // When set to "explicit", implicit bare repo discovery is forbidden
         // unless GIT_DIR was set (handled earlier in discover()).
-        if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
-            if let Some(val) = cfg.get("safe.bareRepository") {
-                if val == "explicit" {
-                    return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+        if !is_inside_dot_git(dir) {
+            if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
+                if let Some(val) = cfg.get("safe.bareRepository") {
+                    if val.eq_ignore_ascii_case("explicit") {
+                        return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+                    }
                 }
             }
         }
@@ -422,13 +373,235 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     Ok(None)
 }
 
-fn apply_core_worktree_override(repo: &mut Repository) {
-    let (core_bare, core_worktree) = read_core_bare_and_worktree(&repo.git_dir);
-    if let Some(wt) = core_worktree {
-        repo.work_tree = Some(wt);
-    } else if core_bare == Some(true) {
-        repo.work_tree = None;
+fn is_inside_dot_git(path: &Path) -> bool {
+    path.components().any(|c| c.as_os_str() == ".git")
+}
+
+fn maybe_trace_implicit_bare_repository(dir: &Path) {
+    let path = match std::env::var("GIT_TRACE2_PERF") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(
+            file,
+            "setup: implicit-bare-repository:{}",
+            dir.display()
+        );
     }
+}
+
+impl Repository {
+    /// Enforce `safe.directory` ownership checks, matching upstream behavior.
+    ///
+    /// When `GIT_TEST_ASSUME_DIFFERENT_OWNER=1`, ownership is considered unsafe
+    /// unless a matching `safe.directory` value is configured in system/global/
+    /// command scopes (repository-local config is ignored).
+    pub fn enforce_safe_directory(&self) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+
+        if self.explicit_git_dir {
+            return Ok(());
+        }
+
+        // In normal discovery, ownership is checked against worktree paths
+        // unless invocation starts inside the gitdir, in which case gitdir is
+        // checked.
+        let checked = if let Some(wt) = &self.work_tree {
+            let cwd = std::env::current_dir().ok();
+            if let Some(cwd) = cwd {
+                if cwd
+                    .canonicalize()
+                    .ok()
+                    .is_some_and(|c| c.starts_with(&self.git_dir))
+                {
+                    self.git_dir
+                        .canonicalize()
+                        .unwrap_or_else(|_| self.git_dir.clone())
+                } else {
+                    wt.canonicalize().unwrap_or_else(|_| wt.clone())
+                }
+            } else {
+                wt.canonicalize().unwrap_or_else(|_| wt.clone())
+            }
+        } else {
+            self.git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| self.git_dir.clone())
+        };
+
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!(
+                "debug-safe-directory checked={} git_dir={} work_tree={:?} cwd={:?}",
+                checked.display(),
+                self.git_dir.display(),
+                self.work_tree,
+                std::env::current_dir().ok()
+            );
+        }
+        self.enforce_safe_directory_checked(&checked)
+    }
+
+    /// Enforce safe.directory checks using the repository git-dir path.
+    ///
+    /// Used by operations that explicitly open another repository by path
+    /// (e.g. local clone source).
+    pub fn enforce_safe_directory_git_dir(&self) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+        let checked = self
+            .git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.git_dir.clone());
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!(
+                "debug-safe-directory(gitdir) checked={} git_dir={} work_tree={:?}",
+                checked.display(),
+                self.git_dir.display(),
+                self.work_tree
+            );
+        }
+        self.enforce_safe_directory_checked(&checked)
+    }
+
+    /// Enforce safe.directory checks against an explicit checked path.
+    pub fn enforce_safe_directory_git_dir_with_path(&self, checked: &Path) -> Result<()> {
+        let assume_different = std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+            .ok()
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                v == "1" || lower == "true" || lower == "yes" || lower == "on"
+            })
+            .unwrap_or(false);
+        if !assume_different {
+            return Ok(());
+        }
+        self.enforce_safe_directory_checked(checked)
+    }
+
+    fn enforce_safe_directory_checked(&self, checked: &Path) -> Result<()> {
+        let cfg = crate::config::ConfigSet::load(Some(&self.git_dir), true)
+            .unwrap_or_else(|_| crate::config::ConfigSet::new());
+        let mut values: Vec<String> = Vec::new();
+        for e in cfg.entries() {
+            if e.key == "safe.directory"
+                && e.scope != crate::config::ConfigScope::Local
+                && e.scope != crate::config::ConfigScope::Worktree
+            {
+                values.push(e.value.clone().unwrap_or_else(|| "true".to_owned()));
+            }
+        }
+
+        // Last empty assignment resets the list.
+        let mut effective: Vec<String> = Vec::new();
+        for v in values {
+            if v.is_empty() {
+                effective.clear();
+            } else {
+                effective.push(v);
+            }
+        }
+
+        let checked_s = checked.to_string_lossy().to_string();
+        if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
+            eprintln!("debug-safe-directory values={:?}", effective);
+        }
+        if effective.iter().any(|v| safe_directory_matches(v, &checked_s)) {
+            return Ok(());
+        }
+
+        Err(Error::DubiousOwnership(checked_s))
+    }
+}
+
+fn normalize_fs_path(raw: &str) -> String {
+    use std::path::Component;
+    let p = std::path::Path::new(raw);
+    let mut parts: Vec<String> = Vec::new();
+    let mut absolute = false;
+    for c in p.components() {
+        match c {
+            Component::RootDir => {
+                absolute = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !parts.is_empty() {
+                    parts.pop();
+                }
+            }
+            Component::Normal(s) => parts.push(s.to_string_lossy().to_string()),
+            Component::Prefix(_) => {}
+        }
+    }
+    let mut out = if absolute {
+        String::from("/")
+    } else {
+        String::new()
+    };
+    out.push_str(&parts.join("/"));
+    out
+}
+
+fn safe_directory_matches(config_value: &str, checked: &str) -> bool {
+    if config_value == "*" {
+        return true;
+    }
+    if config_value == "." {
+        // CWD only.
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_s = normalize_fs_path(&cwd.to_string_lossy());
+            let checked_s = normalize_fs_path(checked);
+            return cwd_s == checked_s;
+        }
+        return false;
+    }
+
+    let canonicalize_or_normalize = |raw: &str| -> String {
+        let p = std::path::Path::new(raw);
+        if p.exists() {
+            p.canonicalize()
+                .map(|c| c.to_string_lossy().to_string())
+                .map(|s| normalize_fs_path(&s))
+                .unwrap_or_else(|_| normalize_fs_path(raw))
+        } else {
+            normalize_fs_path(raw)
+        }
+    };
+
+    let config_norm = canonicalize_or_normalize(config_value);
+    let checked_norm = normalize_fs_path(checked);
+
+    if config_norm.ends_with("/*") {
+        let prefix_raw = &config_norm[..config_norm.len() - 2];
+        let prefix_norm = canonicalize_or_normalize(prefix_raw);
+        let mut prefix = prefix_norm;
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        return checked_norm.starts_with(&prefix);
+    }
+
+    config_norm == checked_norm
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.
@@ -441,10 +614,15 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
             } else {
                 base.join(rel)
             };
+            if !path.exists() {
+                return Err(Error::NotARepository(path.display().to_string()));
+            }
             return Ok(path);
         }
     }
-    Err(Error::NotARepository("invalid gitfile format".to_owned()))
+    Err(Error::NotARepository(
+        "invalid gitfile format".to_owned(),
+    ))
 }
 
 /// Initialise a new Git repository at the given path.
@@ -592,103 +770,28 @@ fn is_ceiling_blocked(dir: &Path, ceilings: &[PathBuf]) -> bool {
     false
 }
 
-/// Validate the repository format version and extensions from a config file text.
-///
-/// Called by commands that need to refuse to operate on unsupported repos.
+/// Validate the repository format version from config text.
+/// Returns Ok if the format is supported, Err with message if not.
 pub fn validate_repo_config(config_text: &str) -> std::result::Result<(), String> {
-    validate_repo_format(config_text)
-}
-
-fn validate_repo_format_inner(config_text: &str) -> std::result::Result<(), String> {
-    validate_repo_format(config_text)
-}
-
-/// Internal implementation of repository format validation.
-///
-/// Git's rules:
-/// - version 0: any extensions are ignored
-/// - version 1: only known extensions are allowed; unknown extensions abort
-/// - version >= 2: currently unsupported (abort)
-///
-/// Known extensions (case-insensitive): `noop`, `noop-v1`, `preciousobjects`,
-/// `worktreeconfig`, `refformat`, `objectformat`, `refstorage`.
-fn validate_repo_format(config_text: &str) -> std::result::Result<(), String> {
     let mut version: u32 = 0;
     let mut in_core = false;
-    let mut in_extensions = false;
-    let mut extensions: Vec<String> = Vec::new();
-
     for line in config_text.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            let section = trimmed.trim_start_matches('[').to_lowercase();
-            in_core = section.starts_with("core]") || section.starts_with("core ");
-            in_extensions =
-                section.starts_with("extensions]") || section.starts_with("extensions ");
+            in_core = trimmed.to_lowercase().starts_with("[core");
             continue;
         }
         if in_core {
             if let Some(rest) = trimmed.strip_prefix("repositoryformatversion") {
-                let rest = rest
-                    .trim_start_matches(|c: char| c == ' ' || c == '=')
-                    .trim();
-                if let Ok(v) = rest.parse::<u32>() {
+                let val = rest.trim_start_matches(|c: char| c == ' ' || c == '=').trim();
+                if let Ok(v) = val.parse::<u32>() {
                     version = v;
                 }
             }
         }
-        if in_extensions {
-            if let Some((key, _)) = trimmed.split_once('=') {
-                let key = key.trim().to_lowercase();
-                if !key.is_empty() {
-                    extensions.push(key);
-                }
-            } else if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with(';')
-            {
-                extensions.push(trimmed.to_lowercase());
-            }
-        }
     }
-
-    // Version 0: most extensions ignored, but some v1-only extensions abort
-    if version == 0 {
-        // noop-v1 aborts on version 0 — it signals "this repo requires v1"
-        const V0_ABORT: &[&str] = &["noop-v1"];
-        for ext in &extensions {
-            if V0_ABORT.contains(&ext.as_str()) {
-                return Err(format!(
-                    "error: extension '{ext}' is not supported with repositoryformatversion 0"
-                ));
-            }
-        }
-        return Ok(());
-    }
-
-    // Version >= 2: unsupported
     if version >= 2 {
-        return Err(format!(
-            "error: unknown repository format version: {version}"
-        ));
+        return Err(format!("unknown repository format version: {version}"));
     }
-
-    // Version 1: unknown extensions abort
-    // Known extensions (case-insensitive) for version 1
-    const KNOWN_V1: &[&str] = &[
-        "noop",
-        "noop-v1",
-        "preciousobjects",
-        "worktreeconfig",
-        "refformat",
-        "objectformat",
-        "refstorage",
-        "partialclone",
-        "fetchpromisor",
-    ];
-    for ext in &extensions {
-        if !KNOWN_V1.contains(&ext.as_str()) {
-            return Err(format!("error: unknown repository format extension: {ext}"));
-        }
-    }
-
     Ok(())
 }

@@ -98,9 +98,8 @@ pub struct Args {
     /// Allow updating the current branch head (normally refused).
     #[arg(long)]
     pub update_head_ok: bool,
-
-    /// Internal compatibility flag accepted by tests.
-    #[arg(long = "update-refs", hide = true)]
+    /// Update remote-tracking refs after fetch.
+    #[arg(long = "update-refs")]
     pub update_refs: bool,
 }
 
@@ -131,46 +130,22 @@ pub fn run(args: Args) -> Result<()> {
         }
         Ok(())
     } else {
-        let remote_name_owned;
-        let remote_name = if let Some(explicit) = args.remote.as_deref() {
-            explicit
-        } else {
-            let remotes = collect_remote_names(&config);
-            let Some(default_remote) = select_default_remote(&remotes) else {
-                // Native git treats plain `git fetch` with no determinable default
-                // remote as a no-op.
-                return Ok(());
-            };
-            remote_name_owned = default_remote;
-            remote_name_owned.as_str()
-        };
-        // Detect path-based remote: contains '/' or starts with '.'
-        // Also check if it's a local directory path (for `git fetch <dir> ...`)
-        if remote_name.contains('/') || remote_name.starts_with('.') {
+        let remote_name = args.remote.as_deref().unwrap_or("origin");
+        // Remote config takes precedence over path-like names, even if the
+        // remote name contains '/' or matches an existing directory.
+        let url_key = format!("remote.{remote_name}.url");
+        if config.get(&url_key).is_some() {
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
+        } else if remote_name.starts_with('.')
+            || remote_name.contains('/')
+            || std::path::Path::new(remote_name).is_dir()
+        {
+            // Treat as a local directory path.
             fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
         } else {
-            // Check if it's a configured remote name first
-            let url_key = format!("remote.{remote_name}.url");
-            if config.get(&url_key).is_some() {
-                fetch_remote(&git_dir, &config, remote_name, None, &args)
-            } else if std::path::Path::new(remote_name).is_dir() {
-                // Treat as a local directory path
-                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
-            } else {
-                fetch_remote(&git_dir, &config, remote_name, None, &args)
-            }
+            fetch_remote(&git_dir, &config, remote_name, None, &args)
         }
     }
-}
-
-fn select_default_remote(remotes: &[String]) -> Option<String> {
-    if remotes.iter().any(|r| r == "origin") {
-        return Some("origin".to_owned());
-    }
-    if remotes.len() == 1 {
-        return Some(remotes[0].clone());
-    }
-    None
 }
 
 /// Fetch from a single remote.
@@ -184,8 +159,6 @@ fn fetch_remote(
     url_override: Option<&str>,
     args: &Args,
 ) -> Result<()> {
-    let local_repo = Repository::discover(None).ok();
-
     // Determine remote URL: use override (path-based) or config lookup
     let url = if let Some(u) = url_override {
         u.to_owned()
@@ -294,8 +267,7 @@ fn fetch_remote(
 
         // Pre-check: detect conflicting CLI refspec mappings
         {
-            let mut dst_to_src: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
+            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             let remote_all_refs = refs::list_refs(&remote_repo.git_dir, "refs/")?;
             for spec in cli_refspecs {
                 if spec.starts_with('^') {
@@ -303,10 +275,7 @@ fn fetch_remote(
                 }
                 let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
                 let (src, dst) = if let Some(idx) = spec_clean.find(':') {
-                    (
-                        spec_clean[..idx].to_owned(),
-                        spec_clean[idx + 1..].to_owned(),
-                    )
+                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
                 } else {
                     continue;
                 };
@@ -322,13 +291,7 @@ fn fetch_remote(
                             let local_ref = dst.replacen('*', matched, 1);
                             if let Some(prev_src) = dst_to_src.get(&local_ref) {
                                 if prev_src != refname {
-                                    {
-                                        eprintln!(
-                                            "fatal: Cannot fetch both {} and {} to {}",
-                                            prev_src, refname, local_ref
-                                        );
-                                        std::process::exit(128);
-                                    }
+                                    { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
                                 }
                             } else {
                                 dst_to_src.insert(local_ref, refname.clone());
@@ -348,13 +311,7 @@ fn fetch_remote(
                     };
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != &remote_ref {
-                            {
-                                eprintln!(
-                                    "fatal: Cannot fetch both {} and {} to {}",
-                                    prev_src, remote_ref, local_ref
-                                );
-                                std::process::exit(128);
-                            }
+                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, remote_ref, local_ref); std::process::exit(128); }
                         }
                     } else {
                         dst_to_src.insert(local_ref, remote_ref);
@@ -393,11 +350,6 @@ fn fetch_remote(
                     }
                     if let Some(matched) = match_glob_pattern(&src, refname) {
                         let local_ref = dst.replacen('*', matched, 1);
-                        ensure_fetch_dest_not_occupied(
-                            local_repo.as_ref(),
-                            &local_ref,
-                            args.update_head_ok,
-                        )?;
                         let old_oid = read_ref_oid(git_dir, &local_ref);
                         if old_oid.as_ref() == Some(remote_oid) {
                             continue;
@@ -464,11 +416,6 @@ fn fetch_remote(
                 } else {
                     format!("refs/heads/{dst}")
                 };
-                ensure_fetch_dest_not_occupied(
-                    local_repo.as_ref(),
-                    &local_ref,
-                    args.update_head_ok,
-                )?;
 
                 let old_oid = read_ref_oid(git_dir, &local_ref);
 
@@ -524,10 +471,7 @@ fn fetch_remote(
                 }
                 let spec_clean = spec.strip_prefix('+').unwrap_or(spec.as_str());
                 let (src, dst) = if let Some(idx) = spec_clean.find(':') {
-                    (
-                        spec_clean[..idx].to_owned(),
-                        spec_clean[idx + 1..].to_owned(),
-                    )
+                    (spec_clean[..idx].to_owned(), spec_clean[idx + 1..].to_owned())
                 } else {
                     continue;
                 };
@@ -558,19 +502,12 @@ fn fetch_remote(
     } else {
         // Pre-check: detect conflicting refspec mappings (multiple src → same dst)
         if !refspecs.is_empty() {
-            let mut dst_to_src: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
+            let mut dst_to_src: std::collections::HashMap<String, String> = std::collections::HashMap::new();
             for (refname, _) in &remote_heads {
                 if let Some(local_ref) = map_ref_through_refspecs(refname, &refspecs) {
                     if let Some(prev_src) = dst_to_src.get(&local_ref) {
                         if prev_src != refname {
-                            {
-                                eprintln!(
-                                    "fatal: Cannot fetch both {} and {} to {}",
-                                    prev_src, refname, local_ref
-                                );
-                                std::process::exit(128);
-                            }
+                            { eprintln!("fatal: Cannot fetch both {} and {} to {}", prev_src, refname, local_ref); std::process::exit(128); }
                         }
                     } else {
                         dst_to_src.insert(local_ref, refname.clone());
@@ -593,7 +530,6 @@ fn fetch_remote(
                     None => continue, // ref not matched by any refspec, skip
                 }
             };
-            ensure_fetch_dest_not_occupied(local_repo.as_ref(), &local_ref, args.update_head_ok)?;
             updated_refs.push(local_ref.clone());
 
             // Build FETCH_HEAD entry
@@ -713,6 +649,27 @@ fn fetch_remote(
         prune_stale_refs(git_dir, &dst_prefix, &updated_refs, remote_name, args.quiet)?;
     }
 
+    // Update refs/remotes/<remote>/HEAD to mirror the remote's default branch.
+    // We store it as a direct ref to keep completion and ref lookups aligned.
+    if let Some(default_branch) = remote_head_branch.as_deref() {
+        let head_source = format!("refs/heads/{default_branch}");
+        let mapped_default = if refspecs.is_empty() {
+            Some(format!("{dst_prefix}{default_branch}"))
+        } else {
+            map_ref_through_refspecs(&head_source, &refspecs)
+        };
+        if let Some(mapped_default_ref) = mapped_default {
+            if let Ok(default_oid) = refs::resolve_ref(git_dir, &mapped_default_ref) {
+                let remote_head_ref = format!("refs/remotes/{remote_name}/HEAD");
+                updated_refs.push(remote_head_ref.clone());
+                if read_ref_oid(git_dir, &remote_head_ref).as_ref() != Some(&default_oid) {
+                    refs::write_ref(git_dir, &remote_head_ref, &default_oid)
+                        .with_context(|| format!("updating ref {remote_head_ref}"))?;
+                }
+            }
+        }
+    }
+
     // Write FETCH_HEAD (default branch first, then not-for-merge entries)
     if !fetch_head_entries.is_empty() {
         // Sort so entries without "not-for-merge" come first
@@ -784,28 +741,6 @@ fn determine_remote_head(remote_git_dir: &Path) -> Option<String> {
 /// Read a ref to get its OID, returning None if it doesn't exist.
 fn read_ref_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     refs::resolve_ref(git_dir, refname).ok()
-}
-
-fn ensure_fetch_dest_not_occupied(
-    repo: Option<&Repository>,
-    local_ref: &str,
-    update_head_ok: bool,
-) -> Result<()> {
-    if update_head_ok || !local_ref.starts_with("refs/heads/") {
-        return Ok(());
-    }
-    let Some(repo) = repo else {
-        return Ok(());
-    };
-    let occupied = crate::commands::worktree_refs::occupied_branch_refs(repo);
-    if let Some(path) = occupied.get(local_ref) {
-        bail!(
-            "refusing to fetch into branch '{}' checked out at '{}'",
-            local_ref,
-            path
-        );
-    }
-    Ok(())
 }
 
 /// Copy all objects (loose + packs) from remote to local.
@@ -880,7 +815,10 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
 
 /// Verify that all objects reachable from the given OIDs exist in the local ODB.
 /// This is used after copying objects from a remote to detect incomplete transfers.
-fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
+fn check_connectivity(
+    git_dir: &Path,
+    tip_oids: &[ObjectId],
+) -> Result<()> {
     use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
     use grit_lib::odb::Odb;
     use std::collections::HashSet;
@@ -893,9 +831,9 @@ fn check_connectivity(git_dir: &Path, tip_oids: &[ObjectId]) -> Result<()> {
         if !seen.insert(oid) {
             continue;
         }
-        let obj = odb
-            .read(&oid)
-            .with_context(|| "remote did not send all necessary objects".to_string())?;
+        let obj = odb.read(&oid).with_context(|| {
+            "remote did not send all necessary objects".to_string()
+        })?;
         match obj.kind {
             ObjectKind::Commit => {
                 if let Ok(commit) = parse_commit(&obj.data) {

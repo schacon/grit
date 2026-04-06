@@ -297,7 +297,7 @@ fn parse_args(args: Vec<String>) -> Result<Options> {
             continue;
         }
         if arg.starts_with('-') {
-            bail!("unsupported option: {arg}");
+            bail!("usage: git for-each-ref [--count=<count>] [--sort=<key>] [--format=<format>] [--points-at=<object>] [--merged[=<object>]] [--no-merged[=<object>]] [--contains[=<object>]] [--no-contains[=<object>]] [--exclude=<pattern>] [--stdin] [<pattern>...]");
         }
         opts.patterns.push(arg.clone());
         i += 1;

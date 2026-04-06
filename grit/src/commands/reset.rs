@@ -1015,6 +1015,30 @@ fn checkout_index_to_worktree(
             std::fs::create_dir_all(parent)?;
         }
 
+        if entry.mode == MODE_GITLINK {
+            // Submodules are represented as gitlinks: their OIDs are commit
+            // objects in the submodule's object store, not blobs in ours.
+            // Materialize only the directory path in the superproject.
+            if abs_path.is_file() || abs_path.is_symlink() {
+                std::fs::remove_file(&abs_path)?;
+            }
+            std::fs::create_dir_all(&abs_path)?;
+
+            if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                use std::os::unix::fs::MetadataExt;
+                entry.ctime_sec = meta.ctime() as u32;
+                entry.ctime_nsec = meta.ctime_nsec() as u32;
+                entry.mtime_sec = meta.mtime() as u32;
+                entry.mtime_nsec = meta.mtime_nsec() as u32;
+                entry.dev = meta.dev() as u32;
+                entry.ino = meta.ino() as u32;
+                entry.uid = meta.uid();
+                entry.gid = meta.gid();
+                entry.size = meta.len() as u32;
+            }
+            continue;
+        }
+
         let obj = repo
             .odb
             .read(&entry.oid)
