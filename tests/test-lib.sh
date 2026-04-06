@@ -398,6 +398,8 @@ test_oid () {
 	hexsz) echo "40" ;;
 	algo) echo "sha1" ;;
 	zero) echo "$ZERO_OID" ;;
+	empty_tree) echo "$EMPTY_TREE" ;;
+	empty_blob) echo "$EMPTY_BLOB" ;;
 	*) echo "unknown-oid" ;;
 	esac
 }

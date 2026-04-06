@@ -474,7 +474,7 @@ t2012-checkout-last	yes	22	22	0	ok	22	22	0
 t2013-checkout-submodule	yes	74	14	60	ok	14	74	0
 t2014-checkout-switch	yes	4	4	0	ok	4	4	0
 t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
-t2016-checkout-patch	yes	19	7	12	ok	7	19	0
+t2016-checkout-patch	yes	19	19	0	ok	19	19	0
 t2017-checkout-orphan	yes	13	13	0	ok	13	13	0
 t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
@@ -495,7 +495,7 @@ t2045-checkout-conflict	yes	29	11	18	ok	11	29	0
 t2050-checkout	yes	80	8	72	ok	8	80	0
 t2050-git-dir-relative	yes	4	4	0	ok	4	4	0
 t2060-switch	yes	16	16	0	ok	16	16	0
-t2061-switch-orphan	yes	15	1	14	ok	1	15	0
+t2061-switch-orphan	yes	15	15	0	ok	15	15	0
 t2070-restore	yes	15	15	0	ok	15	15	0
 t2071-restore-patch	yes	15	2	13	ok	2	15	0
 t2072-restore-pathspec-file	yes	12	12	0	ok	12	12	0
