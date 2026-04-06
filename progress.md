@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    74 |
+| Completed   |    75 |
 | In progress |     0 |
-| Remaining   |   693 |
+| Remaining   |   692 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6403-merge-file` — 39/39 tests pass (`merge-file` now accepts the local harness `unknown-oid` placeholder as an empty blob in `--object-id` mode, reads default conflict style from `merge.conflictstyle` when no explicit `--diff3/--zdiff3` flag is set, and forwards `--diff-algorithm` into the merge engine; `worktree add` now infers unborn-orphan creation when source HEAD has no commit, matching expected linked-worktree setup semantics; merge-file conflict marker line endings now stay consistent across the full output based on merged input style, fixing CRLF conflict marker checks while preserving diff3 regression behavior)
 - `t6001-rev-list-graft` — 14/14 tests pass (`rev-list` path arguments are now correctly parsed as path limits when no `--` separator is used after the first revision, matching `git rev-list <rev> <path>` behavior; `--parents` and `--parents --pretty=raw` now rewrite printed parent lists using active graft mappings while preserving traversal semantics from the library; `show` now warns when `.git/info/grafts` exists and `advice.graftFileDeprecated` is enabled, with a migration hint to `git replace --convert-graft-file`)
 - `t6115-rev-list-du` — 17/17 tests pass (`rev-list` now accepts `--disk-usage`, `--disk-usage=human`, `--use-bitmap-index`, and `--unpacked`; `--disk-usage` computes byte totals from selected commit/object outputs using loose object file sizes plus pack slot sizes from local `.idx`/`.pack` offsets; invalid `--disk-usage=<format>` now emits the expected fatal diagnostic; `cat-file --batch-check` now supports `%(objectsize:disk)` formatting used by disk-usage validation pipeline)
 - `t6418-merge-text-auto` — 11/11 tests pass (`merge` now supports `merge.renormalize` and `-X renormalize`/`-X no-renormalize`; three-way merge content inputs now renormalize CRLF→LF when enabled and intentionally produce conflict markers for pure line-ending-only divergences when disabled; modify/delete resolution now treats normalization-only edits as unchanged under renormalize; merge checkout now loads `.gitattributes` from the post-merge index when present; `diff --no-index --ignore-cr-at-eol` now honors whitespace normalization; `checkout --merge` now maps to merge-style branch switching behavior for these CRLF transition scenarios)
@@ -64,4 +65,4 @@
 
 ## What Remains
 
-695 test files still pending. See `plan.md` for the full prioritized list.
+692 test files still pending. See `plan.md` for the full prioritized list.

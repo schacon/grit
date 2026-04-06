@@ -25,6 +25,10 @@
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge frontend updates for `t6433`).
 - `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (regression check after merge frontend updates for `t6433`).
 - `./scripts/run-tests.sh t6409-merge-subtree.sh`: 7/12 passing (snapshot check; remains partial in current harness).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6403-merge-file.sh`: 39/39 passing (direct validation after merge-file command compatibility fixes plus merge-file core conflict-marker line-ending handling for CRLF scenarios).
+- `./scripts/run-tests.sh t6403-merge-file.sh`: 39/39 passing (now fully passing).
+- `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (regression check after merge-file marker-EOL update).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after merge-file marker-EOL update).
 - `PATH="/tmp:$PATH" GUST_BIN=/workspace/target/release/grit bash tests/t6102-rev-list-unexpected-objects.sh`: 22/22 passing (direct validation with temporary `hex2oct` helper available in `PATH`; confirms `rev-list --objects` now handles unexpected object types and tag type-mismatch diagnostics as expected).
 - `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (now fully passing in harness when helper is available).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after object-root handling changes).

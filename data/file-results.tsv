@@ -721,7 +721,7 @@ t6302-for-each-ref-filter	yes	62	12	50	ok	12	62	0
 t6400-merge-df	yes	7	7	0	ok	7	7	0
 t6401-merge-criss-cross	yes	4	4	0	ok	4	4	0
 t6402-merge-rename	yes	46	6	40	ok	6	46	0
-t6403-merge-file	yes	39	29	10	ok	29	39	0
+t6403-merge-file	yes	39	39	0	ok	39	39	0
 t6404-recursive-merge	yes	6	6	0	ok	6	6	0
 t6405-merge-symlinks	yes	7	7	0	ok	7	7	0
 t6406-merge-attr	yes	13	2	11	ok	2	13	0

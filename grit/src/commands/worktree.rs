@@ -299,37 +299,14 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Handle --orphan: create worktree with unborn branch
     if args.orphan {
-        // Create the working tree directory
-        fs::create_dir_all(&wt_path)
-            .with_context(|| format!("cannot create directory '{}'", wt_path.display()))?;
-
-        // Create the admin directory
-        fs::create_dir_all(&wt_admin)
-            .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
-
-        // Write gitdir file
-        let gitdir_content = format!("{}\n", wt_path.join(".git").display());
-        fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
-        fs::write(
-            wt_admin.join("commondir"),
-            format!("{}\n", common.display()),
+        setup_unborn_worktree(
+            &common,
+            &wt_admin,
+            &wt_path,
+            &wt_name,
+            args.lock,
+            args.reason.as_deref(),
         )?;
-
-        // HEAD points to an unborn branch
-        fs::write(
-            wt_admin.join("HEAD"),
-            format!("ref: refs/heads/{}\n", wt_name),
-        )?;
-
-        // Write the .git file in the worktree
-        let dotgit_content = format!("gitdir: {}\n", wt_admin.display());
-        fs::write(wt_path.join(".git"), &dotgit_content)?;
-
-        println!(
-            "Preparing worktree (new branch '{}') at '{}'",
-            wt_name,
-            wt_path.display()
-        );
         return Ok(());
     }
 
@@ -342,38 +319,60 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     //   otherwise create a new branch from HEAD.
     // `worktree add <path> <commit-ish>` — check out detached HEAD at that commit.
     // `worktree add -b <new> <path>` — always create a new branch from HEAD.
+    let mut inferred_orphan = false;
     let (branch_name, commit_oid, implicit_detach) = if let Some(ref new_b) = args.force_new_branch
     {
         // -B: create or reset branch
         let oid =
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
-        (Some(new_b.clone()), oid, false)
+        (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref new_b) = args.new_branch {
         let oid =
             head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
-        (Some(new_b.clone()), oid, false)
+        (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref spec) = args.branch {
         // Existing local branch: check out attached.
         if let Ok(oid) = refs::resolve_ref(&common, &format!("refs/heads/{spec}")) {
-            (Some(spec.clone()), oid, false)
+            (Some(spec.clone()), Some(oid), false)
         } else {
             // Existing non-branch commit-ish (e.g. tag): check out detached.
             match resolve_commitish(&repo, spec) {
-                Ok(oid) => (None, oid, true),
+                Ok(oid) => (None, Some(oid), true),
                 Err(_) => {
                     // Unknown name: create a new branch from HEAD.
                     let oid = head_oid.ok_or_else(|| {
                         anyhow::anyhow!("'{}' is not a commit and HEAD is invalid", spec)
                     })?;
-                    (Some(spec.clone()), oid, false)
+                    (Some(spec.clone()), Some(oid), false)
                 }
             }
         }
     } else {
-        let oid = head_oid.ok_or_else(|| {
-            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
-        })?;
-        (Some(wt_name.clone()), oid, false)
+        match head_oid {
+            Some(oid) => (Some(wt_name.clone()), Some(oid), false),
+            None => {
+                inferred_orphan = true;
+                (Some(wt_name.clone()), None, false)
+            }
+        }
+    };
+
+    if inferred_orphan {
+        if !args.quiet {
+            eprintln!("No possible source branch, inferring '--orphan'");
+        }
+        let branch = branch_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal error: missing orphan branch name"))?;
+        setup_unborn_worktree(
+            &common,
+            &wt_admin,
+            &wt_path,
+            branch,
+            args.lock,
+            args.reason.as_deref(),
+        )?;
+        return Ok(());
     };
 
     // Create the working tree directory
@@ -398,11 +397,17 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Write HEAD — either branch or detached
     let detach_head = args.detach || implicit_detach;
     if detach_head {
+        let commit_oid = commit_oid.ok_or_else(|| {
+            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
+        })?;
         fs::write(wt_admin.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
     } else {
         let branch_name = branch_name
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("internal error: missing branch name"))?;
+        let commit_oid = commit_oid.ok_or_else(|| {
+            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
+        })?;
         // Create the branch ref if it doesn't exist yet
         let branch_ref = format!("refs/heads/{}", branch_name);
         let ref_path = common.join(&branch_ref);
@@ -433,6 +438,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     if detach_head {
+        let commit_oid = commit_oid.ok_or_else(|| {
+            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
+        })?;
         println!(
             "Preparing worktree (detached HEAD {}) at '{}'",
             &commit_oid.to_hex()[..7],
@@ -451,9 +459,55 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Populate the working tree by checking out the commit
     if !args.no_checkout {
+        let commit_oid = commit_oid.ok_or_else(|| {
+            anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
+        })?;
         populate_worktree(&repo.odb, &common, &commit_oid, &wt_path, &wt_admin)?;
     }
 
+    Ok(())
+}
+
+fn setup_unborn_worktree(
+    common: &Path,
+    wt_admin: &Path,
+    wt_path: &Path,
+    branch_name: &str,
+    lock: bool,
+    reason: Option<&str>,
+) -> Result<()> {
+    fs::create_dir_all(wt_path)
+        .with_context(|| format!("cannot create directory '{}'", wt_path.display()))?;
+    fs::create_dir_all(wt_admin)
+        .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
+
+    let gitdir_content = format!("{}\n", wt_path.join(".git").display());
+    fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
+    fs::write(
+        wt_admin.join("commondir"),
+        format!("{}\n", common.display()),
+    )?;
+    fs::write(
+        wt_admin.join("HEAD"),
+        format!("ref: refs/heads/{}\n", branch_name),
+    )?;
+    fs::write(
+        wt_path.join(".git"),
+        format!("gitdir: {}\n", wt_admin.display()),
+    )?;
+
+    if lock {
+        fs::write(
+            wt_admin.join("locked"),
+            format!("{}\n", reason.unwrap_or("")),
+        )?;
+    }
+
+    println!(
+        "Preparing worktree (new branch '{}') at '{}'",
+        branch_name,
+        wt_path.display()
+    );
     Ok(())
 }
 

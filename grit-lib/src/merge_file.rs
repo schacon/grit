@@ -86,6 +86,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let base_lines = split_lines(input.base);
     let ours_lines = split_lines(input.ours);
     let theirs_lines = split_lines(input.theirs);
+    let marker_eol = conflict_marker_eol(&base_lines, &ours_lines, &theirs_lines);
 
     let algo = input
         .diff_algorithm
@@ -104,6 +105,11 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         &theirs_lines,
         &ours_ops,
         &theirs_ops,
+    );
+    hunks = coalesce_nearby_conflicts(
+        hunks,
+        3,
+        matches!(algo, Algorithm::Myers) && matches!(input.style, ConflictStyle::Merge),
     );
     if matches!(input.style, ConflictStyle::ZealousDiff3) {
         hunks = adjust_zealous_hunks(hunks);
@@ -183,6 +189,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
+                                marker_eol,
                             );
                             if suffix_len > 0 {
                                 append_lines(&mut content, &ours[ours.len() - suffix_len..]);
@@ -198,6 +205,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
+                                marker_eol,
                             );
                         }
                     }
@@ -272,48 +280,76 @@ fn emit_conflict(
     label_theirs: &str,
     style: ConflictStyle,
     marker: usize,
+    marker_eol: &[u8],
 ) {
     let open = "<".repeat(marker);
     let eq = "=".repeat(marker);
     let close = ">".repeat(marker);
+    let marker_terminator: &[u8] = if marker_eol == b"\r\n" {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
 
     // Ensure ours section starts on a new line if the previous content didn't
     // end with one.
     if !out.is_empty() && !out.ends_with(b"\n") {
-        out.push(b'\n');
+        out.extend_from_slice(marker_terminator);
     }
 
-    out.extend_from_slice(format!("{open} {label_ours}\n").as_bytes());
+    write_conflict_marker_line(out, &open, Some(label_ours), marker_terminator);
     for line in ours {
         out.extend_from_slice(line);
     }
     // Ensure separator starts on its own line.
     if out.last().copied() != Some(b'\n') {
-        out.push(b'\n');
+        out.extend_from_slice(marker_terminator);
     }
     match style {
         ConflictStyle::Diff3 | ConflictStyle::ZealousDiff3 => {
             let pipe = "|".repeat(marker);
-            out.extend_from_slice(format!("{pipe} {label_base}\n").as_bytes());
+            write_conflict_marker_line(out, &pipe, Some(label_base), marker_terminator);
             for line in base {
                 out.extend_from_slice(line);
             }
             if out.last().copied() != Some(b'\n') {
-                out.push(b'\n');
+                out.extend_from_slice(marker_terminator);
             }
-            out.extend_from_slice(format!("{eq}\n").as_bytes());
+            write_conflict_marker_line(out, &eq, None, marker_terminator);
         }
         ConflictStyle::Merge => {
-            out.extend_from_slice(format!("{eq}\n").as_bytes());
+            write_conflict_marker_line(out, &eq, None, marker_terminator);
         }
     }
     for line in theirs {
         out.extend_from_slice(line);
     }
     if out.last().copied() != Some(b'\n') {
-        out.push(b'\n');
+        out.extend_from_slice(marker_terminator);
     }
-    out.extend_from_slice(format!("{close} {label_theirs}\n").as_bytes());
+    write_conflict_marker_line(out, &close, Some(label_theirs), marker_terminator);
+}
+
+fn conflict_marker_eol(base: &[Vec<u8>], ours: &[Vec<u8>], theirs: &[Vec<u8>]) -> &'static [u8] {
+    if base
+        .iter()
+        .chain(ours.iter())
+        .chain(theirs.iter())
+        .any(|line| line.ends_with(b"\r\n"))
+    {
+        b"\r\n"
+    } else {
+        b"\n"
+    }
+}
+
+fn write_conflict_marker_line(out: &mut Vec<u8>, marker: &str, label: Option<&str>, eol: &[u8]) {
+    out.extend_from_slice(marker.as_bytes());
+    if let Some(label) = label {
+        out.push(b' ');
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.extend_from_slice(eol);
 }
 
 /// A classified merge region (owns its lines).
@@ -628,6 +664,61 @@ fn adjust_zealous_hunks(hunks: Vec<Hunk>) -> Vec<Hunk> {
 
         push_hunk_with_unchanged_merge(&mut out, hunks[i].clone());
         i += 1;
+    }
+
+    out
+}
+
+fn coalesce_nearby_conflicts(hunks: Vec<Hunk>, max_gap_lines: usize, enable: bool) -> Vec<Hunk> {
+    if !enable {
+        return hunks;
+    }
+    let mut out: Vec<Hunk> = Vec::new();
+    let mut i = 0usize;
+
+    while i < hunks.len() {
+        let Some(Hunk::Conflict { base, ours, theirs }) = hunks.get(i) else {
+            out.push(hunks[i].clone());
+            i += 1;
+            continue;
+        };
+
+        let mut merged_base = base.clone();
+        let mut merged_ours = ours.clone();
+        let mut merged_theirs = theirs.clone();
+        let mut j = i;
+
+        loop {
+            let Some(Hunk::Unchanged(gap)) = hunks.get(j + 1) else {
+                break;
+            };
+            let Some(Hunk::Conflict {
+                base: next_base,
+                ours: next_ours,
+                theirs: next_theirs,
+            }) = hunks.get(j + 2)
+            else {
+                break;
+            };
+            if gap.len() > max_gap_lines {
+                break;
+            }
+
+            merged_base.extend(gap.iter().cloned());
+            merged_base.extend(next_base.iter().cloned());
+            merged_ours.extend(gap.iter().cloned());
+            merged_ours.extend(next_ours.iter().cloned());
+            merged_theirs.extend(gap.iter().cloned());
+            merged_theirs.extend(next_theirs.iter().cloned());
+            j += 2;
+        }
+
+        out.push(Hunk::Conflict {
+            base: merged_base,
+            ours: merged_ours,
+            theirs: merged_theirs,
+        });
+        i = j + 1;
     }
 
     out
