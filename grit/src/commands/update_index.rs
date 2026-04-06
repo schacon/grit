@@ -422,8 +422,19 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if args.refresh || args.really_refresh || args.again {
-        // Re-stat all entries
-        refresh_index(&mut index, work_tree, &repo.odb, args.unmerged)?;
+        // Re-stat all entries; exit 1 if any files need updating.
+        let uptodate = refresh_index(
+            &mut index,
+            work_tree,
+            &repo.odb,
+            args.unmerged,
+            args.ignore_missing,
+        )?;
+        index.write(&index_path).context("writing index")?;
+        if !uptodate {
+            std::process::exit(1);
+        }
+        return Ok(());
     }
 
     index.write(&index_path).context("writing index")?;
@@ -516,9 +527,11 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 fn refresh_index(
     index: &mut Index,
     work_tree: &std::path::Path,
-    _odb: &Odb,
+    odb: &Odb,
     allow_unmerged: bool,
-) -> Result<()> {
+    ignore_missing: bool,
+) -> Result<bool> {
+    // Returns true if all files are up-to-date, false if any are modified.
     if !allow_unmerged {
         if let Some(entry) = index.entries.iter().find(|entry| entry.stage() != 0) {
             let rel = std::str::from_utf8(&entry.path)
@@ -527,22 +540,60 @@ fn refresh_index(
         }
     }
 
+    let mut all_uptodate = true;
     for entry in &mut index.entries {
-        let path = std::path::Path::new(
-            std::str::from_utf8(&entry.path)
-                .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?,
-        );
+        if entry.stage() != 0 {
+            continue;
+        }
+        // Skip gitlinks (submodules) — they're not regular files
+        if entry.mode == 0o160000 {
+            continue;
+        }
+        let path_str = std::str::from_utf8(&entry.path)
+            .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+        let path = std::path::Path::new(path_str);
         let abs = work_tree.join(path);
-        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
-            use std::os::unix::fs::MetadataExt;
-            entry.ctime_sec = meta.ctime() as u32;
-            entry.ctime_nsec = meta.ctime_nsec() as u32;
-            entry.mtime_sec = meta.mtime() as u32;
-            entry.mtime_nsec = meta.mtime_nsec() as u32;
-            entry.size = meta.size() as u32;
+        match std::fs::symlink_metadata(&abs) {
+            Ok(meta) => {
+                use std::os::unix::fs::MetadataExt;
+                // Check if stat data differs from index
+                let stat_changed =
+                    entry.mtime_sec != meta.mtime() as u32 || entry.size != meta.size() as u32;
+                if stat_changed {
+                    // Check if content actually changed
+                    let content_changed = if let Ok(data) = std::fs::read(&abs) {
+                        let actual_oid = odb.write(grit_lib::objects::ObjectKind::Blob, &data).ok();
+                        actual_oid.map(|o| o != entry.oid).unwrap_or(true)
+                    } else {
+                        true
+                    };
+                    if content_changed {
+                        eprintln!("{path_str}: needs update");
+                        all_uptodate = false;
+                    } else {
+                        // Update stat info
+                        entry.ctime_sec = meta.ctime() as u32;
+                        entry.ctime_nsec = meta.ctime_nsec() as u32;
+                        entry.mtime_sec = meta.mtime() as u32;
+                        entry.mtime_nsec = meta.mtime_nsec() as u32;
+                        entry.size = meta.size() as u32;
+                    }
+                } else {
+                    // Stat matches, update ctime
+                    entry.ctime_sec = meta.ctime() as u32;
+                    entry.ctime_nsec = meta.ctime_nsec() as u32;
+                }
+            }
+            Err(_) => {
+                // File missing
+                if !ignore_missing {
+                    eprintln!("{path_str}: does not exist and --remove not set");
+                    all_uptodate = false;
+                }
+            }
         }
     }
-    Ok(())
+    Ok(all_uptodate)
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {
