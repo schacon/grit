@@ -585,12 +585,63 @@ fn update_tracked(
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
+    // If explicit pathspecs given with -u, validate that each matches a tracked file.
+    let explicit_pathspecs = !args.pathspec.is_empty();
+    if explicit_pathspecs {
+        let pfx = prefix.unwrap_or("");
+        for spec in &args.pathspec {
+            // Build the full path as it would appear in the index
+            let full_spec = if pfx.is_empty() || spec.starts_with('/') {
+                spec.clone()
+            } else {
+                format!("{pfx}/{spec}")
+            };
+            let matches_tracked = spec == "."
+                || spec.is_empty()
+                || index.entries.iter().any(|ie| {
+                    let p = String::from_utf8_lossy(&ie.path);
+                    p == full_spec.as_str()
+                        || p.starts_with(&format!("{full_spec}/"))
+                        || p == spec.as_str()
+                        || p.starts_with(&format!("{spec}/"))
+                });
+            if !matches_tracked {
+                bail!("error: pathspec '{spec}' did not match any file(s) known to git");
+            }
+        }
+    }
+
     let tracked: Vec<(Vec<u8>, String)> = index
         .entries
         .iter()
         .filter(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path);
-            prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
+            // Apply prefix filter ONLY when explicit pathspecs are given.
+            // Without explicit pathspecs, git add -u updates ALL tracked files from root.
+            let prefix_ok = if explicit_pathspecs {
+                prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
+            } else {
+                true // update everything from root
+            };
+            // Apply explicit pathspec filter
+            let pathspec_ok = if explicit_pathspecs {
+                let pfx2 = prefix.unwrap_or("");
+                args.pathspec.iter().any(|spec| {
+                    let full = if pfx2.is_empty() {
+                        spec.clone()
+                    } else {
+                        format!("{pfx2}/{spec}")
+                    };
+                    spec == "."
+                        || path_str == full.as_str()
+                        || path_str.starts_with(&format!("{full}/"))
+                        || path_str == spec.as_str()
+                        || path_str.starts_with(&format!("{spec}/"))
+                })
+            } else {
+                true
+            };
+            prefix_ok && pathspec_ok
         })
         .map(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path).to_string();
@@ -601,10 +652,24 @@ fn update_tracked(
     for (raw_path, path_str) in &tracked {
         let abs_path = work_tree.join(path_str);
         if abs_path.exists() {
-            stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+            if args.dry_run {
+                // For dry-run, hash without writing to ODB
+                if let Ok(data) = std::fs::read(&abs_path) {
+                    let oid = grit_lib::odb::Odb::hash_object_data(
+                        grit_lib::objects::ObjectKind::Blob,
+                        &data,
+                    );
+                    let current = index.get(raw_path, 0);
+                    if current.map(|e| e.oid != oid).unwrap_or(false) {
+                        println!("add '{path_str}'");
+                    }
+                }
+            } else {
+                stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+            }
         } else {
-            if args.verbose {
-                eprintln!("remove '{path_str}'");
+            if args.verbose || args.dry_run {
+                println!("remove '{path_str}'");
             }
             if !args.dry_run {
                 index.remove(raw_path);

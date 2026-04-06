@@ -966,6 +966,10 @@ struct GlobalOpts {
     attr_source: Option<String>,
     bare: bool,
     no_advice: bool,
+    literal_pathspecs: bool,
+    glob_pathspecs: bool,
+    noglob_pathspecs: bool,
+    icase_pathspecs: bool,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1061,6 +1065,33 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
         // --no-advice
         if arg == "--no-advice" {
             opts.no_advice = true;
+            i += 1;
+            continue;
+        }
+
+        // Pathspec parsing globals accepted by Git before the subcommand.
+        if arg == "--literal-pathspecs" {
+            opts.literal_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--glob-pathspecs" {
+            opts.glob_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--noglob-pathspecs" {
+            opts.noglob_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--icase-pathspecs" {
+            opts.icase_pathspecs = true;
+            i += 1;
+            continue;
+        }
+        // Pager controls (no-op)
+        if arg == "--no-pager" || arg == "--paginate" {
             i += 1;
             continue;
         }

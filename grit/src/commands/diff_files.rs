@@ -226,6 +226,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--diff-filter=") => {
                     diff_filter = Some(arg.trim_start_matches("--diff-filter=").to_string());
                 }
+                // Global flags passed through that we accept but ignore
+                "--literal-pathspecs"
+                | "--glob-pathspecs"
+                | "--noglob-pathspecs"
+                | "--icase-pathspecs" => {}
                 _ if arg.starts_with("-G")
                     || arg.starts_with("-S")
                     || arg.starts_with("-O")
