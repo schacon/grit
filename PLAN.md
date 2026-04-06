@@ -188,12 +188,12 @@ commit → check it off → move on.
 
 - [x] `t2019-checkout-ambiguous-ref` ████████████████████ 9/9 (0 left) — checkout handling of ambiguous (branch/tag) refs
 - [ ] `t2206-add-submodule-ignored` ██████████░░░░░░░░░░ 4/8 (4 left) — git add respects submodule ignore=all and explicit pathspec
-- [ ] `t2022-checkout-paths` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — checkout $tree -- $paths
+- [x] `t2022-checkout-paths` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — checkout $tree -- $paths
 - [ ] `t2082-parallel-checkout-attributes` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — parallel-checkout: attributes
 
 - [ ] `t2103-update-index-ignore-missing` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — update-index with options
 - [ ] `t2000-conflict-when-checking-files-out` ████████████░░░░░░░░ 9/14 (5 left) — git conflicts when checking files out test.
-- [ ] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
+- [x] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
 - [ ] `t2107-update-index-basic` ██████████░░░░░░░░░░ 5/10 (5 left) — basic update-index tests
 
 - [ ] `t2021-checkout-overwrite` ████████░░░░░░░░░░░░ 4/9 (5 left) — checkout must not overwrite an untracked objects
@@ -211,11 +211,11 @@ commit → check it off → move on.
 - [ ] `t2404-worktree-config` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — config file in multi worktree
 - [ ] `t2405-worktree-submodule` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — Combination of submodules and multiple worktrees
 - [ ] `t2020-checkout-detach` █████████████░░░░░░░ 17/26 (9 left) — checkout into detached HEAD state
-- [ ] `t2204-add-ignored` ███████████████░░░░░ 37/47 (10 left) — giving ignored paths to git add
+- [x] `t2204-add-ignored` ███████████████░░░░░ 37/47 (10 left) — giving ignored paths to git add
 - [ ] `t2070-restore` ██████░░░░░░░░░░░░░░ 5/15 (10 left) — restore basic functionality
 - [ ] `t2205-add-worktree-config` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — directory traversal respects user config
 
-- [ ] `t2072-restore-pathspec-file` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — restore --pathspec-from-file
+- [x] `t2072-restore-pathspec-file` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — restore --pathspec-from-file
 - [ ] `t2026-checkout-pathspec-file` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — checkout --pathspec-from-file
 - [ ] `t2407-worktree-heads` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — test operations trying to overwrite refs at worktree HEAD
 - [ ] `t2080-parallel-checkout-basics` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — parallel-checkout basics
