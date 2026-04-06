@@ -29,6 +29,12 @@
 - `./scripts/run-tests.sh t6403-merge-file.sh`: 39/39 passing (now fully passing).
 - `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (regression check after merge-file marker-EOL update).
 - `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after merge-file marker-EOL update).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6501-freshen-objects.sh`: 42/42 passing (direct validation after test harness helper compatibility updates: `test-tool chmtime --get` support and deterministic `test_oid` fallbacks for broken-link fixture OIDs).
+- `./scripts/run-tests.sh t6501-freshen-objects.sh`: 42/42 passing (now fully passing).
+- `./scripts/run-tests.sh t6403-merge-file.sh`: 39/39 passing (regression check after harness helper updates).
+- `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (regression check after harness helper updates; one transient 6/9 harness run was reproduced as a harness-state flake and immediately re-run clean at 9/9).
+- `./scripts/run-tests.sh t6001-rev-list-graft.sh`: 14/14 passing (regression check after harness helper updates).
+- `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (regression check after harness helper updates).
 - `PATH="/tmp:$PATH" GUST_BIN=/workspace/target/release/grit bash tests/t6102-rev-list-unexpected-objects.sh`: 22/22 passing (direct validation with temporary `hex2oct` helper available in `PATH`; confirms `rev-list --objects` now handles unexpected object types and tag type-mismatch diagnostics as expected).
 - `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (now fully passing in harness when helper is available).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after object-root handling changes).

@@ -725,7 +725,7 @@ commit → check it off → move on.
 - [x] `t6060-merge-index` ████████████████████ 7/7 (0 left) — basic git merge-index / git-merge-one-file tests
 - [x] `t6131-pathspec-icase` ████████████████████ 9/9 (0 left) — test case insensitive pathspec limiting
 - [x] `t6102-rev-list-unexpected-objects` ████████████████████ 22/22 (0 left) — git rev-list should handle unexpected object types
-- [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
+- [x] `t6501-freshen-objects` ████████████████████ 42/42 (0 left) — check pruning of dependent objects
 - [x] `t6433-merge-toplevel` ████████████████████ 15/15 (0 left) — 
 - [ ] `t6409-merge-subtree` ████████████░░░░░░░░ 7/12 (5 left) — subtree merge strategy
 - [x] `t6418-merge-text-auto` ████████████████████ 11/11 (0 left) — CRLF merge conflict across text=auto change

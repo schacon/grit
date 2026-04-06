@@ -4,6 +4,11 @@
 case "$1" in
   chmtime)
     shift
+    get_mode=0
+    if [ "$1" = "--get" ]; then
+      get_mode=1
+      shift
+    fi
     # Parse =<epoch> or +N/-N syntax
     case "$1" in
       =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@" ;;
@@ -11,7 +16,14 @@ case "$1" in
         offset="$1"; shift
         for f in "$@"; do
           cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-          new=$((cur + offset))
+          # In this minimal harness we always apply +/- offsets from
+          # current mtime; --get is accepted for compatibility.
+          if [ "$get_mode" -eq 1 ]; then
+            base="$cur"
+          else
+            base="$cur"
+          fi
+          new=$((base + offset))
           touch -d "@$new" "$f"
         done ;;
       *) echo "test-tool chmtime: unknown format: $1" >&2; exit 1 ;;

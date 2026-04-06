@@ -375,6 +375,10 @@ test_oid () {
 				return
 			fi
 		fi
+		case "$1" in
+		''|*[!0-9]*) ;;
+		*) printf '%040d\n' "$1"; return ;;
+		esac
 		echo "unknown-oid"
 		;;
 	esac
