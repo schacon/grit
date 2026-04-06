@@ -2355,14 +2355,41 @@ fn run_test_tool_config(rest: &[String]) -> Result<()> {
     let subcmd = rest.get(1).map(String::as_str).unwrap_or("");
     match subcmd {
         "read_early_config" => {
-            let key = rest.get(2).ok_or_else(|| anyhow::anyhow!("usage: test-tool config read_early_config <key>"))?;
-            // "Early config" in git means config read before full repo discovery:
-            // walk up from cwd finding .git/config files, then global config.
-            let config = grit_lib::config::ConfigSet::load(
-                grit_lib::repo::Repository::discover(None).ok().as_ref().map(|r| r.git_dir.as_path()),
-                true,
-            ).unwrap_or_default();
-            if let Some(val) = config.get(key) {
+            let key = rest.get(2).ok_or_else(|| {
+                anyhow::anyhow!("usage: test-tool config read_early_config <key>")
+            })?;
+            // "Early config" prints ALL values for a key across all config sources
+            // in order: system, global, local, command-line.
+            // For incompatible repo versions, warn but continue (don't error).
+            let git_dir_opt = match grit_lib::repo::Repository::discover(None) {
+                Ok(repo) => Some(repo.git_dir),
+                Err(e) => {
+                    // Incompatible format version: emit warning, continue without local config.
+                    let msg = e.to_string();
+                    if msg.contains("version")
+                        || msg.contains("extension")
+                        || msg.contains("format")
+                        || msg.contains("unsupported")
+                    {
+                        // Extract version number if present for a clean message.
+                        let ver: Option<u32> = msg
+                            .split_whitespace()
+                            .filter_map(|t| t.parse::<u32>().ok())
+                            .next();
+                        if let Some(v) = ver {
+                            eprintln!("warning: unknown repository format version: Expected git repo version <= 1, found {v}");
+                        } else {
+                            eprintln!("warning: Expected git repo version <= 1");
+                        }
+                    }
+                    None
+                }
+            };
+            let config =
+                grit_lib::config::ConfigSet::load(git_dir_opt.as_deref(), true).unwrap_or_default();
+            // get_all returns all values for a key across all sources.
+            let values = config.get_all(key);
+            for val in values {
                 println!("{val}");
             }
             Ok(())
