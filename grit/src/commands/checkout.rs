@@ -755,6 +755,40 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
     }
 
     // If a start point is given, populate the index/worktree from it
+    // But first check for local changes that would be overwritten
+    if start_point.is_some() {
+        let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let work_tree = repo.work_tree.as_ref();
+        if let Some(wt) = work_tree {
+            let mut dirty_files = Vec::new();
+            for entry in &index.entries {
+                if entry.stage() != 0 {
+                    continue;
+                }
+                let rel = String::from_utf8_lossy(&entry.path);
+                let abs = wt.join(rel.as_ref());
+                if let Ok(data) = std::fs::read(&abs) {
+                    let oid = grit_lib::odb::Odb::hash_object_data(
+                        grit_lib::objects::ObjectKind::Blob,
+                        &data,
+                    );
+                    if oid != entry.oid {
+                        dirty_files.push(rel.into_owned());
+                    }
+                }
+            }
+            if !dirty_files.is_empty() {
+                eprintln!("error: Your local changes to the following files would be overwritten by checkout:");
+                for f in &dirty_files {
+                    eprintln!("\t{f}");
+                }
+                eprintln!("Please commit your changes or stash them before you switch branches.");
+                eprintln!("Aborting");
+                std::process::exit(1);
+            }
+        }
+    }
+
     if let Some(start) = start_point {
         let start_oid = resolve_to_commit(repo, start)
             .with_context(|| format!("invalid start point '{start}'"))?;
