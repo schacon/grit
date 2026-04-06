@@ -1742,6 +1742,15 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn run(args: Args) -> Result<()> {
+    // Validate repository format if operating on the index or doing a check that requires it
+    if args.cached || args.index || args.check {
+        if let Some(git_dir) = crate::commands::config::resolve_git_dir_pub() {
+            if let Err(e) = grit_lib::repo::validate_repo_format(&git_dir) {
+                bail!("{}", e);
+            }
+        }
+    }
+
     // Read patch input
     let input = if args.patches.is_empty() {
         let mut buf = String::new();

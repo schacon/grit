@@ -304,6 +304,11 @@ fn repository_config_path(git_dir: &Path) -> Option<PathBuf> {
 ///
 /// Supports repository format versions 0 and 1, with extension handling that
 /// matches Git's compatibility expectations in upstream repo-version tests.
+/// Public wrapper for validate_repository_format.
+pub fn validate_repo_format(git_dir: &Path) -> Result<()> {
+    validate_repository_format(git_dir)
+}
+
 fn validate_repository_format(git_dir: &Path) -> Result<()> {
     let Some(config_path) = repository_config_path(git_dir) else {
         return Ok(());

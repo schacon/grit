@@ -299,6 +299,12 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
+    // Validate repository format if we found a git dir
+    if let Some(ref dir) = git_dir {
+        if let Err(e) = grit_lib::repo::validate_repo_format(dir) {
+            bail!("{}", e);
+        }
+    }
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
 
     // Handle subcommands first
@@ -1148,6 +1154,11 @@ fn filter_values_by_pattern(
         });
     }
     Ok(())
+}
+
+/// Resolve the git directory (best-effort; returns None outside a repo).
+pub fn resolve_git_dir_pub() -> Option<PathBuf> {
+    resolve_git_dir()
 }
 
 /// Resolve the git directory (best-effort; returns None outside a repo).
