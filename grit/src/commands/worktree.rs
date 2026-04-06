@@ -931,6 +931,57 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
 
 /// Find a worktree admin directory name by matching the path recorded in its
 /// `gitdir` file.
+/// Check if a worktree was checked out recently (relative to an expire time like "2.days.ago").
+/// Returns true if it was checked out AFTER the expire threshold (i.e., not expired).
+fn is_recently_checked_out(admin: &Path, expire: &str) -> bool {
+    // Parse expire string like "2.days.ago", "1.hour.ago", "now"
+    let threshold_secs = parse_expire_to_secs(expire);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let threshold = now - threshold_secs;
+
+    // Check the gitdir file's mtime
+    let gitdir_file = admin.join("gitdir");
+    if let Ok(meta) = std::fs::metadata(&gitdir_file) {
+        if let Ok(mtime) = meta.modified() {
+            if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                return (d.as_secs() as i64) > threshold;
+            }
+        }
+    }
+    false
+}
+
+/// Parse git's expire format like "2.days.ago", "1.hour.ago", "2.weeks.ago", "now".
+/// Returns number of seconds to subtract from now to get the threshold.
+fn parse_expire_to_secs(expire: &str) -> i64 {
+    if expire == "now" {
+        return 0;
+    }
+    // Format: N.unit.ago
+    let parts: Vec<&str> = expire.split('.').collect();
+    if parts.len() >= 3 && parts[2] == "ago" {
+        if let Ok(n) = parts[0].parse::<i64>() {
+            let secs = match parts[1] {
+                "seconds" | "second" => n,
+                "minutes" | "minute" => n * 60,
+                "hours" | "hour" => n * 3600,
+                "days" | "day" => n * 86400,
+                "weeks" | "week" => n * 604800,
+                _ => n * 86400,
+            };
+            return secs;
+        }
+    }
+    // Default: treat as days if just a number
+    if let Ok(n) = expire.parse::<i64>() {
+        return n * 86400;
+    }
+    0
+}
+
 /// Check if a worktree has untracked files.
 fn has_untracked_files(work_tree: &Path, index: &grit_lib::index::Index) -> bool {
     let staged: std::collections::HashSet<Vec<u8>> = index
@@ -1088,26 +1139,33 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
         let (is_stale, stale_reason) = if !gitdir_file.exists() {
             (true, "gitdir file does not exist")
         } else {
-            let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-            let target_str = raw.trim();
-            let target = PathBuf::from(target_str);
-            // Validate gitdir target
-            if target_str.is_empty() {
-                (true, "gitdir file is empty")
-            } else if !target.exists() {
-                (true, "gitdir file points to non-existent location")
-            } else {
-                (false, "")
+            match fs::read_to_string(&gitdir_file) {
+                Err(_) => (true, "unable to read gitdir file"),
+                Ok(raw) => {
+                    let target_str = raw.trim();
+                    if target_str.is_empty() {
+                        (true, "invalid gitdir file")
+                    } else {
+                        let target = PathBuf::from(target_str);
+                        if !target.exists() {
+                            (true, "gitdir file points to non-existent location")
+                        } else {
+                            (false, "")
+                        }
+                    }
+                }
             }
         };
 
         if !is_stale {
-            // Check expiry time if --expire was set
-            if let Some(ref expire) = args.expire {
-                // Parse expire time and check checkout time
-                let _ = expire; // TODO: implement expire time check
+            continue; // Not stale, keep it
+        }
+
+        // Stale: if --expire is set, only prune if older than expire time
+        if let Some(ref expire_str) = args.expire {
+            if is_recently_checked_out(&admin, expire_str) {
+                continue; // Recent enough, don't prune
             }
-            continue;
         }
 
         // Skip locked worktrees
