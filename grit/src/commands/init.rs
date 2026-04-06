@@ -310,15 +310,17 @@ fn create_git_dir(
         }
     }
 
+    // Always create essential directories (hooks, info) regardless of template.
+    // Git does this unconditionally so that hook installation always works.
+    fs::create_dir_all(git_dir.join("info"))?;
+    fs::create_dir_all(git_dir.join("hooks"))?;
+
     // Apply templates or built-in defaults
     if let Some(tmpl) = template_dir {
         if tmpl.is_dir() {
             copy_template(tmpl, git_dir)?;
         }
     } else if !skip_default_templates {
-        // Create built-in default template content
-        fs::create_dir_all(git_dir.join("info"))?;
-        fs::create_dir_all(git_dir.join("hooks"))?;
         // Write info/exclude (default template content)
         let exclude_path = git_dir.join("info").join("exclude");
         if !exclude_path.exists() {

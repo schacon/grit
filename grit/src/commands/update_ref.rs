@@ -403,19 +403,24 @@ fn run_ref_transaction_hook(
         Some(stdin_bytes),
     ) {
         HookResult::Failed(code) => {
-            bail!("reference-transaction hook (preparing) exited with status {code}");
+            bail!("ref updates aborted by hook: in 'preparing' phase, update aborted by the reference-transaction hook");
         }
         HookResult::NotFound => return Ok(()),
         HookResult::Success => {}
     }
 
-    // Phase 2: prepared — informational (don't abort)
-    let _ = run_hook(
+    // Phase 2: prepared — abort if hook fails
+    match run_hook(
         repo,
         "reference-transaction",
         &["prepared"],
         Some(stdin_bytes),
-    );
+    ) {
+        HookResult::Failed(_) => {
+            bail!("ref updates aborted by hook: in 'prepared' phase, update aborted by the reference-transaction hook");
+        }
+        _ => {}
+    }
 
     // Phase 3: committed — informational (don't abort)
     let _ = run_hook(
