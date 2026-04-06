@@ -5,7 +5,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::refs::{read_ref_file, Ref};
 use grit_lib::repo::Repository;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 /// Run `grit test-tool ref-store`.
@@ -19,6 +19,18 @@ pub fn run(args: &[String]) -> Result<()> {
     match args[1].as_str() {
         "resolve-ref" => cmd_resolve_ref(&store, &args[2..]),
         "create-symref" => cmd_create_symref(&store, &args[2..]),
+        "for-each-ref" => cmd_for_each_ref(&store, &args[2..]),
+        "for-each-reflog" => cmd_for_each_reflog(&store),
+        "for-each-reflog-ent" => cmd_for_each_reflog_ent(&store, &args[2..]),
+        "for-each-reflog-ent-reverse" => cmd_for_each_reflog_ent_reverse(&store, &args[2..]),
+        "reflog-exists" => cmd_reflog_exists(&store, &args[2..]),
+        "verify-ref" => cmd_verify_ref(&store, &args[2..]),
+        "delete-reflog" | "create-reflog" | "delete-refs" | "rename-ref" | "pack-refs" => {
+            bail!(
+                "test-tool ref-store: '{}' not supported on submodule ref store",
+                args[1]
+            )
+        }
         other => bail!("test-tool ref-store: unknown function '{other}'"),
     }
 }
@@ -27,12 +39,30 @@ pub fn run(args: &[String]) -> Result<()> {
 struct RefStore {
     git_dir: PathBuf,
     common_dir: PathBuf,
+    is_submodule: bool,
 }
 
 fn open_store(repo: &Repository, spec: &str) -> Result<RefStore> {
     let common_dir = common_dir(&repo.git_dir)?;
     let git_dir = match spec {
         "main" | "worktree:main" => common_dir.clone(),
+        _ if spec.starts_with("submodule:") => {
+            // submodule:<name> -> try multiple locations:
+            // 1. .git/modules/<name> (standard submodule internals)
+            // 2. <name>/.git (direct submodule with separate git dir)
+            let name = spec.strip_prefix("submodule:").unwrap();
+            let modules_dir = common_dir.join("modules").join(name);
+            if modules_dir.join("HEAD").exists() {
+                modules_dir
+            } else {
+                let sub_git = PathBuf::from(name).join(".git");
+                if sub_git.join("HEAD").exists() {
+                    sub_git
+                } else {
+                    bail!("no such submodule: {name}");
+                }
+            }
+        }
         _ => {
             let Some(id) = spec.strip_prefix("worktree:") else {
                 bail!("unknown backend {spec}");
@@ -45,9 +75,11 @@ fn open_store(repo: &Repository, spec: &str) -> Result<RefStore> {
         }
     };
 
+    let is_submodule = spec.starts_with("submodule:");
     Ok(RefStore {
         git_dir,
         common_dir,
+        is_submodule,
     })
 }
 
@@ -65,6 +97,9 @@ fn cmd_resolve_ref(store: &RefStore, args: &[String]) -> Result<()> {
 }
 
 fn cmd_create_symref(store: &RefStore, args: &[String]) -> Result<()> {
+    if store.is_submodule {
+        bail!("cannot create symref in submodule ref store");
+    }
     if args.len() < 2 {
         bail!("usage: test-tool ref-store <store> create-symref <refname> <target> [logmsg]");
     }
@@ -206,4 +241,173 @@ fn lookup_packed_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> 
     }
 
     Ok(None)
+}
+
+/// List refs matching an optional prefix, outputting "<oid> <refname> <flags>".
+fn cmd_for_each_ref(store: &RefStore, args: &[String]) -> Result<()> {
+    let prefix = args.first().map(String::as_str).unwrap_or("");
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let base_dir = if store.is_submodule {
+        &store.git_dir
+    } else {
+        &store.common_dir
+    };
+    let refs_dir = base_dir.join("refs");
+    let mut refs = collect_refs(&refs_dir, "", prefix)?;
+    // Also check packed-refs
+    let packed = base_dir.join("packed-refs");
+    if packed.exists() {
+        for line in fs::read_to_string(&packed)?.lines() {
+            if line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            let parts: Vec<&str> = line.splitn(2, ' ').collect();
+            if parts.len() == 2 {
+                let (oid_str, refname) = (parts[0], parts[1]);
+                if refname.starts_with(prefix) && !refs.iter().any(|(_, r)| r == refname) {
+                    refs.push((oid_str.to_owned(), refname.to_owned()));
+                }
+            }
+        }
+    }
+    refs.sort_by(|a, b| a.1.cmp(&b.1));
+    for (oid, refname) in refs {
+        // Strip the prefix from the output refname
+        let display = refname.strip_prefix(prefix).unwrap_or(&refname);
+        writeln!(out, "{oid} {display} 0x0")?;
+    }
+    Ok(())
+}
+
+fn collect_refs(dir: &Path, prefix_path: &str, filter: &str) -> Result<Vec<(String, String)>> {
+    let mut result = Vec::new();
+    if !dir.exists() {
+        return Ok(result);
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let rel = if prefix_path.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix_path}/{name}")
+        };
+        let path = entry.path();
+        if path.is_dir() {
+            result.extend(collect_refs(&path, &rel, filter)?);
+        } else if path.is_file() {
+            let full_ref = format!("refs/{rel}");
+            if filter.is_empty() || full_ref.starts_with(filter) {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    let oid = content.trim();
+                    if oid.len() == 40 && oid.chars().all(|c| c.is_ascii_hexdigit()) {
+                        result.push((oid.to_owned(), full_ref));
+                    }
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+/// List all reflog refs.
+fn cmd_for_each_reflog(store: &RefStore) -> Result<()> {
+    let logs_dir = store.git_dir.join("logs");
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut logs = collect_log_refs(&logs_dir, "")?;
+    logs.sort();
+    for r in logs {
+        writeln!(out, "{r}")?;
+    }
+    Ok(())
+}
+
+fn collect_log_refs(dir: &Path, prefix: &str) -> Result<Vec<String>> {
+    let mut result = Vec::new();
+    if !dir.exists() {
+        return Ok(result);
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if entry.path().is_dir() {
+            result.extend(collect_log_refs(&entry.path(), &rel)?);
+        } else {
+            result.push(rel);
+        }
+    }
+    Ok(result)
+}
+
+/// Print reflog entries for a ref.
+fn cmd_for_each_reflog_ent(store: &RefStore, args: &[String]) -> Result<()> {
+    let refname = args.first().map(String::as_str).unwrap_or("HEAD");
+    let entries = grit_lib::reflog::read_reflog(&store.git_dir, refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    for e in &entries {
+        writeln!(
+            out,
+            "{} {} {}\t{}",
+            e.old_oid.to_hex(),
+            e.new_oid.to_hex(),
+            e.identity,
+            e.message
+        )?;
+    }
+    Ok(())
+}
+
+/// Print reflog entries in reverse order.
+fn cmd_for_each_reflog_ent_reverse(store: &RefStore, args: &[String]) -> Result<()> {
+    let refname = args.first().map(String::as_str).unwrap_or("HEAD");
+    let entries = grit_lib::reflog::read_reflog(&store.git_dir, refname)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    for e in entries.iter().rev() {
+        writeln!(
+            out,
+            "{} {} {}\t{}",
+            e.old_oid.to_hex(),
+            e.new_oid.to_hex(),
+            e.identity,
+            e.message
+        )?;
+    }
+    Ok(())
+}
+
+/// Check if reflog exists for a ref.
+fn cmd_reflog_exists(store: &RefStore, args: &[String]) -> Result<()> {
+    let refname = args.first().map(String::as_str).unwrap_or("HEAD");
+    let log_path = store.git_dir.join("logs").join(refname);
+    if log_path.exists() {
+        Ok(())
+    } else {
+        anyhow::bail!("reflog does not exist for {refname}");
+    }
+}
+
+/// Verify a ref exists and output its OID.
+fn cmd_verify_ref(store: &RefStore, args: &[String]) -> Result<()> {
+    let refname = args
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage: verify-ref <refname>"))?;
+    match grit_lib::refs::resolve_ref(&store.git_dir, refname) {
+        Ok(oid) => {
+            use std::io::Write;
+            writeln!(io::stdout(), "{}", oid.to_hex())?;
+            Ok(())
+        }
+        Err(_) => anyhow::bail!("ref {refname} not found"),
+    }
 }
