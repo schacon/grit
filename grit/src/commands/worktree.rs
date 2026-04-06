@@ -843,6 +843,11 @@ fn cmd_list(args: ListArgs) -> Result<()> {
                 }
                 out.write_all(&[sep])?;
             }
+            // prunable: worktree path no longer exists on disk
+            if !entry.is_bare && !entry.path.exists() {
+                out.write_all(b"prunable gitdir file points to non-existent location")?;
+                out.write_all(&[sep])?;
+            }
             out.write_all(entry_sep)?;
         }
     } else {
@@ -873,14 +878,21 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             };
 
             let lock_marker = if entry.is_locked { " locked" } else { "" };
+            // "prunable" annotation for worktrees whose path no longer exists
+            let prunable_marker = if !entry.is_bare && !entry.path.exists() {
+                " prunable"
+            } else {
+                ""
+            };
             let path_str = entry.path.display().to_string();
             writeln!(
                 out,
-                "{:<width$} {} {}{}",
+                "{:<width$} {} {}{}{}",
                 path_str,
                 sha,
                 branch_info,
                 lock_marker,
+                prunable_marker,
                 width = max_path_len,
             )?;
         }
