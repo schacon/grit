@@ -305,7 +305,9 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
                 return Ok(tree_oid);
             }
             // Navigate into the tree by path
-            return resolve_tree_path(repo, &tree_oid, after);
+            // Strip leading ./ prefix (e.g., first:./file.t → file.t)
+            let clean_path = after.strip_prefix("./").unwrap_or(after);
+            return resolve_tree_path(repo, &tree_oid, clean_path);
         }
     }
 
@@ -563,13 +565,16 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
                 if let Some(stage_char) = rest.chars().next() {
                     if let Some(stage) = stage_char.to_digit(10) {
                         if stage <= 3 {
-                            let path = &rest[2..];
+                            let raw_path = &rest[2..];
+                            let path = raw_path.strip_prefix("./").unwrap_or(raw_path);
                             return resolve_index_path_at_stage(repo, path, stage as u8);
                         }
                     }
                 }
             }
-            return resolve_index_path(repo, rest);
+            // Strip leading ./ prefix for index paths (e.g., :./file.t)
+            let clean_rest = rest.strip_prefix("./").unwrap_or(rest);
+            return resolve_index_path(repo, clean_rest);
         }
     }
 
