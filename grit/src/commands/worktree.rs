@@ -191,6 +191,14 @@ pub struct MoveArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct RepairArgs {
+    /// Rewrite admin/gitfile links as relative paths.
+    #[arg(long = "relative-paths")]
+    pub relative_paths: bool,
+
+    /// Rewrite admin/gitfile links as absolute paths.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
+
     /// Paths to repair (defaults to all linked worktrees).
     pub paths: Vec<PathBuf>,
 }
@@ -1344,85 +1352,280 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn cmd_repair(args: RepairArgs) -> Result<()> {
+    if args.relative_paths && args.no_relative_paths {
+        bail!("options '--relative-paths' and '--no-relative-paths' cannot be used together");
+    }
+
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
+    let use_relative = if args.relative_paths {
+        true
+    } else if args.no_relative_paths {
+        false
+    } else {
+        config_use_relative_paths(&common)
+    };
 
-    if !worktrees_dir.is_dir() {
-        return Ok(());
-    }
-
-    // If specific paths were given, only repair those; otherwise repair all.
-    let entries_to_repair: Vec<String> = if args.paths.is_empty() {
-        // All linked worktrees
-        fs::read_dir(&worktrees_dir)?
+    if args.paths.is_empty() {
+        if let (Some(current_name), Some(current_wt)) =
+            (current_linked_worktree_name(&repo.git_dir), repo.work_tree.clone())
+        {
+            if current_wt.is_dir() {
+                repair_explicit_worktree(&worktrees_dir, &current_wt, use_relative)?;
+            } else if worktrees_dir.join(&current_name).is_dir() {
+                // Keep Git behavior: don't fail implicit repair just because the
+                // linked worktree path is currently missing.
+            }
+        }
+        if !worktrees_dir.is_dir() {
+            return Ok(());
+        }
+        let mut names: Vec<String> = fs::read_dir(&worktrees_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
             .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect()
-    } else {
-        // Find matching admin entries for the given paths
-        let mut names = Vec::new();
-        for p in &args.paths {
-            let abs = if p.is_absolute() {
-                p.clone()
-            } else {
-                std::env::current_dir()?.join(p)
-            };
-            let abs = abs.canonicalize().unwrap_or(abs);
-            match find_worktree_name(&worktrees_dir, &abs) {
-                Ok(name) => names.push(name),
-                Err(e) => eprintln!("warning: {}", e),
-            }
+            .collect();
+        names.sort();
+        for name in names {
+            repair_implicit_worktree(&worktrees_dir, &name, use_relative)?;
         }
-        names
-    };
+        return Ok(());
+    }
 
-    for name in &entries_to_repair {
-        let admin = worktrees_dir.join(name);
-        let gitdir_file = admin.join("gitdir");
-
-        if !gitdir_file.exists() {
-            continue;
+    for path in &args.paths {
+        let abs = absolutize_from_cwd(path)?;
+        if !abs.exists() {
+            bail!("not a valid path: {}", abs.display());
         }
-
-        let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-        let recorded = PathBuf::from(raw.trim());
-        // gitdir points to <worktree>/.git
-        let wt_dotgit = &recorded;
-        let wt_path = recorded.parent().unwrap_or(&recorded);
-
-        // Repair 1: If the worktree .git file exists, make sure it points back to admin
-        if wt_dotgit.exists() {
-            let dotgit_content = fs::read_to_string(wt_dotgit).unwrap_or_default();
-            let expected_prefix = "gitdir: ";
-            if let Some(current_target) = dotgit_content.trim().strip_prefix(expected_prefix) {
-                let current_path = PathBuf::from(current_target);
-                let admin_canonical = admin.canonicalize().unwrap_or_else(|_| admin.clone());
-                let current_canonical = current_path.canonicalize().unwrap_or(current_path.clone());
-                if current_canonical != admin_canonical {
-                    // Fix the .git file
-                    let fixed = format!("gitdir: {}\n", admin.display());
-                    fs::write(wt_dotgit, &fixed)?;
-                    eprintln!(
-                        "repair: {}: repaired gitfile to point to {}",
-                        wt_path.display(),
-                        admin.display()
-                    );
-                }
-            }
+        if !abs.is_dir() {
+            bail!("not a directory: {}", abs.display());
         }
-
-        // Repair 2: Verify gitdir file in admin points to an existing location
-        if !wt_dotgit.exists() && wt_path.exists() {
-            // The worktree exists but .git file is missing — recreate it
-            let dotgit_content = format!("gitdir: {}\n", admin.display());
-            fs::write(wt_path.join(".git"), &dotgit_content)?;
-            eprintln!("repair: {}: recreated gitfile", wt_path.display());
-        }
+        repair_explicit_worktree(&worktrees_dir, &abs, use_relative)?;
     }
 
     Ok(())
+}
+
+fn repair_implicit_worktree(worktrees_dir: &Path, name: &str, use_relative: bool) -> Result<()> {
+    let admin = worktrees_dir.join(name);
+    let gitdir_file = admin.join("gitdir");
+    if !gitdir_file.exists() {
+        return Ok(());
+    }
+    let raw = match fs::read_to_string(&gitdir_file) {
+        Ok(raw) => raw,
+        Err(_) => return Ok(()),
+    };
+    let Some(wt_dotgit) = parse_gitdir_target(&admin, raw.trim()) else {
+        return Ok(());
+    };
+    let wt_path = wt_dotgit.parent().unwrap_or(&wt_dotgit).to_path_buf();
+    if !wt_path.exists() {
+        // Missing linked worktree: intentionally skipped.
+        return Ok(());
+    }
+    if !wt_path.is_dir() {
+        bail!("not a directory: {}", wt_path.display());
+    }
+
+    let dotgit = wt_path.join(".git");
+    if let Ok(meta) = fs::symlink_metadata(&dotgit) {
+        if meta.is_dir() {
+            bail!(".git is not a file: {}", wt_path.display());
+        }
+    }
+
+    let mut needs_repair = false;
+    let mut reason = ".git file broken";
+    if let Ok(parsed) = parse_worktree_gitfile(&dotgit) {
+        if !parsed.resolved.exists() {
+            needs_repair = true;
+            reason = ".git file broken";
+        } else if normalize_path_for_compare(&parsed.resolved) != normalize_path_for_compare(&admin)
+            || parsed.is_relative != use_relative
+        {
+            needs_repair = true;
+            reason = ".git file incorrect";
+        }
+    } else {
+        needs_repair = true;
+        reason = ".git file broken";
+    }
+
+    if needs_repair {
+        write_worktree_gitfile(&dotgit, &wt_path, &admin, use_relative)?;
+        eprintln!("repair: {reason}: {}", wt_path.display());
+    }
+    Ok(())
+}
+
+fn repair_explicit_worktree(worktrees_dir: &Path, wt_path: &Path, use_relative: bool) -> Result<()> {
+    let dotgit = wt_path.join(".git");
+    let dotgit_meta = fs::symlink_metadata(&dotgit).map_err(|_| {
+        anyhow::anyhow!(
+            "unable to locate repository; .git file broken: {}",
+            dotgit.display()
+        )
+    })?;
+    if dotgit_meta.is_dir() {
+        bail!("unable to locate repository; .git is not a file: {}", dotgit.display());
+    }
+
+    let parsed_dotgit = parse_worktree_gitfile(&dotgit).map_err(|_| {
+        anyhow::anyhow!(
+            "unable to locate repository; .git file broken: {}",
+            dotgit.display()
+        )
+    })?;
+    let parsed_under_worktrees = normalize_path_for_compare(&parsed_dotgit.resolved)
+        .starts_with(normalize_path_for_compare(worktrees_dir));
+
+    let Some(name) = extract_worktree_name_from_gitdir_target(&parsed_dotgit.resolved) else {
+        if !parsed_dotgit.resolved.exists() {
+            bail!(
+                "unable to locate repository; .git file broken: {}",
+                dotgit.display()
+            );
+        }
+        bail!(
+            "unable to locate repository; .git file does not reference a repository: {}",
+            dotgit.display()
+        );
+    };
+    let admin = worktrees_dir.join(name);
+    if !admin.is_dir() {
+        if !parsed_dotgit.resolved.exists() && !parsed_under_worktrees {
+            bail!(
+                "unable to locate repository; .git file broken: {}",
+                dotgit.display()
+            );
+        }
+        bail!(
+            "unable to locate repository; .git file does not reference a repository: {}",
+            dotgit.display()
+        );
+    }
+
+    let gitdir_file = admin.join("gitdir");
+    let mut gitdir_state = "gitdir incorrect";
+    let mut needs_gitdir_fix = true;
+    if let Ok(raw) = fs::read_to_string(&gitdir_file) {
+        let is_relative = !Path::new(raw.trim()).is_absolute();
+        if let Some(recorded) = parse_gitdir_target(&admin, raw.trim()) {
+            if normalize_path_for_compare(&recorded) == normalize_path_for_compare(&dotgit)
+                && is_relative == use_relative
+            {
+                needs_gitdir_fix = false;
+            } else {
+                gitdir_state = "gitdir incorrect";
+            }
+        } else {
+            gitdir_state = "gitdir unreadable";
+        }
+    } else {
+        gitdir_state = "gitdir unreadable";
+    }
+    if needs_gitdir_fix {
+        write_admin_gitdir(&gitdir_file, &admin, &dotgit, use_relative)?;
+        eprintln!("repair: {gitdir_state}: {}", gitdir_file.display());
+    }
+
+    let gitfile_state = if normalize_path_for_compare(&parsed_dotgit.resolved)
+        != normalize_path_for_compare(&admin)
+        || parsed_dotgit.is_relative != use_relative
+    {
+        Some(".git file incorrect")
+    } else {
+        None
+    };
+    if let Some(state) = gitfile_state {
+        write_worktree_gitfile(&dotgit, wt_path, &admin, use_relative)?;
+        eprintln!("repair: {state}: {}", wt_path.display());
+    }
+
+    Ok(())
+}
+
+struct ParsedGitfileTarget {
+    resolved: PathBuf,
+    is_relative: bool,
+}
+
+fn parse_worktree_gitfile(dotgit: &Path) -> Result<ParsedGitfileTarget> {
+    let content = fs::read_to_string(dotgit)?;
+    let target = content
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| anyhow::anyhow!("invalid gitfile"))?;
+    let target_path = Path::new(target);
+    let resolved = if target_path.is_absolute() {
+        target_path.to_path_buf()
+    } else {
+        dotgit.parent().unwrap_or(Path::new(".")).join(target_path)
+    };
+    Ok(ParsedGitfileTarget {
+        resolved,
+        is_relative: !target_path.is_absolute(),
+    })
+}
+
+fn write_admin_gitdir(gitdir_file: &Path, admin: &Path, wt_dotgit: &Path, use_relative: bool) -> Result<()> {
+    let content = if use_relative {
+        format!("{}\n", relativize_path(admin, wt_dotgit).display())
+    } else {
+        format!("{}\n", wt_dotgit.display())
+    };
+    fs::write(gitdir_file, content)?;
+    Ok(())
+}
+
+fn write_worktree_gitfile(dotgit: &Path, wt_path: &Path, admin: &Path, use_relative: bool) -> Result<()> {
+    let target = if use_relative {
+        relativize_path(wt_path, admin)
+    } else {
+        admin.to_path_buf()
+    };
+    fs::write(dotgit, format!("gitdir: {}\n", target.display()))?;
+    Ok(())
+}
+
+fn extract_worktree_name_from_gitdir_target(target: &Path) -> Option<String> {
+    let components: Vec<_> = target.components().collect();
+    for i in 0..components.len() {
+        if components[i].as_os_str() == "worktrees" {
+            if let Some(name) = components.get(i + 1) {
+                if let std::path::Component::Normal(n) = name {
+                    return Some(n.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn normalize_path_for_compare(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn current_linked_worktree_name(git_dir: &Path) -> Option<String> {
+    let parent = git_dir.parent()?;
+    if parent.file_name()? != "worktrees" {
+        return None;
+    }
+    git_dir
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
 }
 
 // ---------------------------------------------------------------------------
