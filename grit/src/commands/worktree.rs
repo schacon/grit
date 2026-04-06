@@ -228,6 +228,15 @@ fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
     if let Ok(oid) = ObjectId::from_hex(spec) {
         return Ok(oid);
     }
+    // Try as a revision with navigation (e.g., HEAD~1, main^2)
+    if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, spec) {
+        // Ensure it's a commit or can be resolved to one
+        if let Ok(obj) = repo.odb.read(&oid) {
+            if obj.kind == grit_lib::objects::ObjectKind::Commit {
+                return Ok(oid);
+            }
+        }
+    }
     bail!("not a valid commit-ish: '{spec}'");
 }
 
