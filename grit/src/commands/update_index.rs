@@ -344,6 +344,27 @@ pub fn run(args: Args) -> Result<()> {
             }
         };
 
+        // Check for D/F conflicts in the index before adding.
+        if args.add {
+            let rel_str = String::from_utf8_lossy(&rel_bytes);
+            // Check if any ancestor path is already a file in the index
+            let mut prefix = rel_str.as_ref();
+            while let Some(pos) = prefix.rfind('/') {
+                prefix = &prefix[..pos];
+                if index.get(prefix.as_bytes(), 0).is_some() {
+                    bail!("error: invalid path '{}'", rel_str);
+                }
+            }
+            // Check if any existing index entry has this path as a prefix (we're adding a dir-level path)
+            let dir_prefix = format!("{rel_str}/");
+            if index.entries.iter().any(|e| {
+                let p = String::from_utf8_lossy(&e.path);
+                p.starts_with(dir_prefix.as_str())
+            }) {
+                bail!("error: invalid path '{}'", rel_str);
+            }
+        }
+
         // Without --add, reject files not yet in the index.
         if !args.add && index.get(&rel_bytes, 0).is_none() {
             if args.ignore_missing {
