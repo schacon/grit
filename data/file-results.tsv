@@ -476,7 +476,7 @@ t2014-checkout-switch	yes	4	4	0	ok	4	4	0
 t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
 t2016-checkout-patch	yes	0	0	0	timeout	0	0	0
 t2017-checkout-orphan	yes	13	13	0	ok	13	13	0
-t2018-checkout-branch	yes	25	24	1	ok	24	25	0
+t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
 t2020-checkout-detach	yes	26	24	2	ok	24	26	0
 t2021-checkout-overwrite	yes	9	9	0	ok	9	9	0

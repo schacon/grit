@@ -500,6 +500,11 @@ pub fn diff_index_to_worktree(
         if ie.stage() != 0 {
             continue;
         }
+        // Sparse-checkout paths marked skip-worktree should not participate
+        // in regular worktree diffs.
+        if ie.skip_worktree() {
+            continue;
+        }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
