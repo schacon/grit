@@ -1489,8 +1489,18 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
         };
         if let Some(reason) = need_repair_reason {
             if wt_path.exists() {
+                if !wt_path.is_dir() {
+                    eprintln!("error: {}: not a directory", wt_path.display());
+                    std::process::exit(1);
+                }
+                // Don't clobber an existing .git directory (real repo)
+                let dotgit_path = wt_path.join(".git");
+                if dotgit_path.is_dir() {
+                    eprintln!("error: {}: .git is not a file", wt_path.display());
+                    std::process::exit(1);
+                }
                 let dotgit_content = format!("gitdir: {}\n", admin.display());
-                fs::write(wt_path.join(".git"), &dotgit_content)?;
+                fs::write(&dotgit_path, &dotgit_content)?;
                 eprintln!(
                     "repair: {wt_path}: {reason}; recreated gitfile",
                     wt_path = wt_path.display()
