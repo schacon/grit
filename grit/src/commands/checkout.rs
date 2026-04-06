@@ -159,9 +159,29 @@ macro_rules! checkout_eprintln {
     };
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     let repo = Repository::discover(None).context("not a git repository")?;
+
+    // Read pathspecs from file if --pathspec-from-file is given
+    if let Some(ref file) = args.pathspec_from_file {
+        let content = if file == "-" {
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
+                .context("reading stdin")?;
+            s
+        } else {
+            std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?
+        };
+        let sep = if args.pathspec_file_nul { b'\0' } else { b'\n' };
+        let pathspecs: Vec<String> = content
+            .split(|c: char| c as u8 == sep)
+            .map(|s| s.trim_end_matches(|c: char| c == '\r').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // Append to existing rest args
+        args.rest.extend(pathspecs);
+    }
     let switch_force = args.force || args.merge;
 
     // Detect if `--` was used in the original command line. Clap strips a
