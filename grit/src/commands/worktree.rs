@@ -1405,15 +1405,41 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
 
-    // If specific paths were given, validate them even if worktrees_dir doesn't exist
-    if !args.paths.is_empty() && !worktrees_dir.is_dir() {
+    // Pre-validate specific paths before checking worktrees_dir
+    if !args.paths.is_empty() {
         for p in &args.paths {
-            eprintln!("error: '{}': not a valid path", p.display());
+            let abs = if p.is_absolute() {
+                p.clone()
+            } else {
+                std::env::current_dir()?.join(p)
+            };
+            let abs = abs.canonicalize().unwrap_or_else(|_| abs.clone());
+            // Real git repos (with .git directory) are not worktrees
+            if abs.join(".git").is_dir() {
+                eprintln!("error: '{}': .git is not a file", abs.display());
+                std::process::exit(1);
+            }
+            // .git file pointing to non-git location
+            let git_file = abs.join(".git");
+            if git_file.is_file() {
+                let content = fs::read_to_string(&git_file).unwrap_or_default();
+                let target = content.trim().strip_prefix("gitdir: ").unwrap_or("");
+                if !std::path::Path::new(target).exists() && !target.contains("worktrees") {
+                    eprintln!("error: '{}': .git file broken", abs.display());
+                    std::process::exit(1);
+                }
+            }
         }
-        std::process::exit(1);
     }
 
     if !worktrees_dir.is_dir() {
+        // If paths given but no worktrees dir, they're invalid
+        if !args.paths.is_empty() {
+            for p in &args.paths {
+                eprintln!("error: '{}': not a valid path", p.display());
+            }
+            std::process::exit(1);
+        }
         return Ok(());
     }
 
