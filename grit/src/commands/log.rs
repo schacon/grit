@@ -19,7 +19,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 /// Arguments for `grit log`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Default, ClapArgs)]
 #[command(about = "Show commit logs")]
 pub struct Args {
     /// Revisions and pathspecs (separated by --).
@@ -667,7 +667,6 @@ pub fn run(mut args: Args) -> Result<()> {
         .as_deref()
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
-
     let show_diff = args.patch
         || args.patch_u
         || args.stat
@@ -776,7 +775,6 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         .as_deref()
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
-
     let show_diff = args.patch
         || args.patch_u
         || args.stat
@@ -816,29 +814,36 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         display_name: String,
         index_from_newest: usize,
         timestamp: Option<i64>,
+        tz_offset: Option<String>,
         entry: grit_lib::reflog::ReflogEntry,
+        selector_force_index: bool,
+        selector_force_date: bool,
     }
 
-    let mut reflog_refs: Vec<(String, String)> = Vec::new();
-    let mut seen_refs = HashSet::new();
+    let mut reflog_refs: Vec<(String, String, bool, bool, bool)> = Vec::new();
+    let mut seen_refs = std::collections::HashMap::new();
     if args.revisions.is_empty() {
-        seen_refs.insert("HEAD".to_string());
-        reflog_refs.push(("HEAD".to_string(), "HEAD".to_string()));
+        seen_refs.insert("HEAD".to_string(), 0usize);
+        reflog_refs.push(("HEAD".to_string(), "HEAD".to_string(), false, false, true));
     } else {
         for rev in &args.revisions {
-            let base = if let Some((b, _)) = rev.split_once("@{") {
-                if b.is_empty() {
-                    "HEAD"
-                } else {
-                    b
-                }
-            } else {
-                rev
-            };
-            let Some(refname) = resolve_reflog_walk_ref(repo, base) else {
+            let (base_ref, selector_force_index, selector_force_date, has_selector) =
+                parse_reflog_walk_revision(rev);
+            let Some(refname) = resolve_reflog_walk_ref(repo, &base_ref) else {
                 continue;
             };
-            if seen_refs.insert(refname.clone()) {
+            if let Some(existing_idx) = seen_refs.get(&refname).copied() {
+                let existing = &mut reflog_refs[existing_idx];
+                existing.2 = existing.2 || selector_force_index;
+                existing.3 = existing.3 || selector_force_date;
+                existing.4 = existing.4 || !has_selector;
+                if existing.4 {
+                    existing.3 = false;
+                }
+                if existing.3 {
+                    existing.2 = false;
+                }
+            } else {
                 let display_name = if refname.starts_with("refs/heads/") {
                     refname
                         .strip_prefix("refs/heads/")
@@ -847,16 +852,28 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 } else {
                     refname.clone()
                 };
-                reflog_refs.push((display_name, refname));
+                let idx = reflog_refs.len();
+                seen_refs.insert(refname.clone(), idx);
+                reflog_refs.push((
+                    display_name,
+                    refname,
+                    selector_force_index,
+                    selector_force_date,
+                    !has_selector,
+                ));
             }
         }
     }
     if reflog_refs.is_empty() {
-        reflog_refs.push(("HEAD".to_string(), "HEAD".to_string()));
+        reflog_refs.push(("HEAD".to_string(), "HEAD".to_string(), false, false, true));
     }
 
     let mut candidates = Vec::new();
-    for (ref_order, (display_name, refname)) in reflog_refs.iter().enumerate() {
+    for (
+        ref_order,
+        (display_name, refname, selector_force_index, selector_force_date, _plain_ref_requested),
+    ) in reflog_refs.iter().enumerate()
+    {
         let entries = read_reflog(&repo.git_dir, refname).map_err(|e| anyhow::anyhow!("{e}"))?;
         for (index_from_newest, entry) in entries.iter().rev().enumerate() {
             candidates.push(ReflogWalkCandidate {
@@ -864,7 +881,10 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 display_name: display_name.clone(),
                 index_from_newest,
                 timestamp: parse_reflog_timestamp_from_identity(&entry.identity),
+                tz_offset: parse_reflog_offset_from_identity(&entry.identity),
                 entry: entry.clone(),
+                selector_force_index: *selector_force_index,
+                selector_force_date: *selector_force_date,
             });
         }
     }
@@ -901,6 +921,13 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         .as_deref()
         .map(|f| f.starts_with("format:"))
         .unwrap_or(false);
+    let show_diff = args.patch
+        || args.patch_u
+        || args.stat
+        || args.name_only
+        || args.name_status
+        || args.raw
+        || args.cc;
 
     let mut shown = 0usize;
     let mut skipped = 0usize;
@@ -949,21 +976,19 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             continue;
         }
 
-        let selector = if args.date.as_deref() == Some("unix") {
-            if let Some(ts) = candidate.timestamp {
-                format!("{}@{{{}}}", candidate.display_name, ts)
-            } else {
-                format!(
-                    "{}@{{{}}}",
-                    candidate.display_name, candidate.index_from_newest
-                )
-            }
-        } else {
-            format!(
-                "{}@{{{}}}",
-                candidate.display_name, candidate.index_from_newest
-            )
-        };
+        if shown > 0 && show_diff && !args.oneline && args.format.is_none() {
+            writeln!(out)?;
+        }
+
+        let selector = format_reflog_selector(
+            &candidate.display_name,
+            candidate.index_from_newest,
+            candidate.timestamp,
+            candidate.tz_offset.as_deref(),
+            candidate.selector_force_index,
+            candidate.selector_force_date,
+            args.date.as_deref(),
+        );
 
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
         if args.null_terminator && shown > 0 && !is_oneline_fmt {
@@ -982,14 +1007,25 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     }
                 }
                 "short" => {
-                    writeln!(out, "commit {}", candidate.entry.new_oid.to_hex())?;
-                    let author_name = extract_name(&commit_data.author);
-                    writeln!(out, "Author: {author_name}")?;
+                    let abbrev_len = parse_abbrev(&args.abbrev);
+                    let oid_hex = candidate.entry.new_oid.to_hex();
+                    writeln!(out, "commit {}", &oid_hex[..abbrev_len.min(oid_hex.len())])?;
+                    writeln!(
+                        out,
+                        "Reflog: {} ({})",
+                        selector,
+                        format_ident_for_header(&candidate.entry.identity)
+                    )?;
+                    writeln!(out, "Reflog message: {}", candidate.entry.message)?;
+                    writeln!(
+                        out,
+                        "Author: {}",
+                        format_ident_for_header(&commit_data.author)
+                    )?;
                     writeln!(out)?;
                     for line in commit_data.message.lines().take(1) {
                         writeln!(out, "    {line}")?;
                     }
-                    writeln!(out)?;
                 }
                 "medium" => {
                     writeln!(out, "commit {}", candidate.entry.new_oid.to_hex())?;
@@ -1119,7 +1155,12 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             }
         } else {
             writeln!(out, "commit {}", candidate.entry.new_oid.to_hex())?;
-            writeln!(out, "Reflog: {} ({})", selector, candidate.entry.identity)?;
+            writeln!(
+                out,
+                "Reflog: {} ({})",
+                selector,
+                format_ident_for_header(&candidate.entry.identity)
+            )?;
             writeln!(out, "Reflog message: {}", candidate.entry.message)?;
             writeln!(
                 out,
@@ -1133,6 +1174,17 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 writeln!(out, "    {}", line)?;
             }
             writeln!(out)?;
+        }
+
+        if show_diff {
+            let commit_info = CommitInfo {
+                tree: commit_data.tree,
+                parents: commit_data.parents.clone(),
+                author: commit_data.author.clone(),
+                committer: commit_data.committer.clone(),
+                message: commit_data.message.clone(),
+            };
+            write_commit_diff(&mut out, &repo.odb, &commit_info, args)?;
         }
 
         shown += 1;
@@ -1169,6 +1221,112 @@ fn parse_reflog_timestamp_from_identity(identity: &str) -> Option<i64> {
     } else {
         None
     }
+}
+
+fn parse_reflog_offset_from_identity(identity: &str) -> Option<String> {
+    let parts: Vec<&str> = identity.rsplitn(3, ' ').collect();
+    let Some(offset) = parts.first() else {
+        return None;
+    };
+    if is_valid_tz_offset(offset) {
+        Some((*offset).to_owned())
+    } else {
+        None
+    }
+}
+
+fn parse_reflog_walk_revision(rev: &str) -> (String, bool, bool, bool) {
+    let Some((base, selector_raw)) = rev.split_once("@{") else {
+        return (rev.to_owned(), false, false, false);
+    };
+    let base_ref = if base.is_empty() {
+        "HEAD".to_owned()
+    } else {
+        base.to_owned()
+    };
+    let selector = selector_raw
+        .strip_suffix('}')
+        .unwrap_or(selector_raw)
+        .trim();
+    if selector.chars().all(|ch| ch.is_ascii_digit()) {
+        return (base_ref, true, false, true);
+    }
+    if selector.eq_ignore_ascii_case("upstream") || selector.eq_ignore_ascii_case("push") {
+        return (base_ref, false, false, true);
+    }
+    (base_ref, false, true, true)
+}
+
+fn format_reflog_selector(
+    display_name: &str,
+    index_from_newest: usize,
+    timestamp: Option<i64>,
+    offset: Option<&str>,
+    selector_force_index: bool,
+    selector_force_date: bool,
+    date_mode: Option<&str>,
+) -> String {
+    let should_render_date = selector_force_date || (!selector_force_index && date_mode.is_some());
+    if !should_render_date {
+        return format!("{display_name}@{{{index_from_newest}}}");
+    }
+
+    let Some(ts) = timestamp else {
+        return format!("{display_name}@{{{index_from_newest}}}");
+    };
+    let tz = offset.unwrap_or("+0000");
+    let rendered = match date_mode {
+        Some("raw") => format!("{ts} {tz}"),
+        Some("unix") => ts.to_string(),
+        _ => format_reflog_selector_date(ts, tz),
+    };
+    format!("{display_name}@{{{rendered}}}")
+}
+
+fn format_reflog_selector_date(ts: i64, offset_str: &str) -> String {
+    let tz_offset_secs = parse_tz_offset(offset_str);
+    let adjusted = ts + tz_offset_secs;
+    let dt = time::OffsetDateTime::from_unix_timestamp(adjusted)
+        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+    let weekday = match dt.weekday() {
+        time::Weekday::Monday => "Mon",
+        time::Weekday::Tuesday => "Tue",
+        time::Weekday::Wednesday => "Wed",
+        time::Weekday::Thursday => "Thu",
+        time::Weekday::Friday => "Fri",
+        time::Weekday::Saturday => "Sat",
+        time::Weekday::Sunday => "Sun",
+    };
+    let month = match dt.month() {
+        time::Month::January => "Jan",
+        time::Month::February => "Feb",
+        time::Month::March => "Mar",
+        time::Month::April => "Apr",
+        time::Month::May => "May",
+        time::Month::June => "Jun",
+        time::Month::July => "Jul",
+        time::Month::August => "Aug",
+        time::Month::September => "Sep",
+        time::Month::October => "Oct",
+        time::Month::November => "Nov",
+        time::Month::December => "Dec",
+    };
+    format!(
+        "{weekday} {month} {} {:02}:{:02}:{:02} {} {offset_str}",
+        dt.day(),
+        dt.hour(),
+        dt.minute(),
+        dt.second(),
+        dt.year()
+    )
+}
+
+fn is_valid_tz_offset(offset: &str) -> bool {
+    if offset.len() != 5 {
+        return false;
+    }
+    let mut chars = offset.chars();
+    matches!(chars.next(), Some('+') | Some('-')) && chars.all(|ch| ch.is_ascii_digit())
 }
 
 fn reflog_commit_touches_paths(
@@ -2659,7 +2817,7 @@ fn format_date_with_mode(ident: &str, date_mode: Option<&str>) -> String {
                 time::Month::December => "Dec",
             };
             format!(
-                "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+                "{} {} {} {:02}:{:02}:{:02} {} {}",
                 weekday,
                 month,
                 dt.day(),

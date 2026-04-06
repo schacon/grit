@@ -2573,6 +2573,21 @@ fn preprocess_log_args(rest: &[String]) -> Vec<String> {
     result
 }
 
+/// Preprocess reflog arguments:
+/// - convert `-<N>` shorthand to `-n <N>`
+/// - inject default `show` subcommand when none is provided.
+fn preprocess_reflog_args(rest: &[String]) -> Vec<String> {
+    let mut result = preprocess_log_args(rest);
+    let has_explicit_subcommand = matches!(
+        result.first().map(String::as_str),
+        Some("show" | "expire" | "delete" | "exists" | "write")
+    );
+    if !result.is_empty() && !has_explicit_subcommand {
+        result.insert(0, "show".to_string());
+    }
+    result
+}
+
 /// Levenshtein edit distance between two strings.
 /// Read the `help.autocorrect` config setting.
 /// Returns None if not set, or Some(value) where value is the config string.
@@ -3006,7 +3021,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
-            let rest = preprocess_log_args(rest);
+            let rest = preprocess_reflog_args(rest);
             commands::reflog::run(parse_cmd_args(subcmd, &rest))
         }
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),

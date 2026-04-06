@@ -828,8 +828,9 @@ fn create_branch(
 
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Create reflog if --create-reflog is specified
-    if args.create_reflog {
+    // Create reflog when explicitly requested or when core.logAllRefUpdates
+    // enables branch reflogs for this repository.
+    if args.create_reflog || should_log_ref_updates(repo) {
         let reflog_path = repo.git_dir.join("logs").join(&refname);
         if let Some(parent) = reflog_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -876,6 +877,17 @@ fn create_branch(
     }
 
     Ok(())
+}
+
+fn should_log_ref_updates(repo: &Repository) -> bool {
+    ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get("core.logallrefupdates"))
+        .map(|v| {
+            let lowered = v.trim().to_ascii_lowercase();
+            lowered == "true" || lowered == "always"
+        })
+        .unwrap_or(false)
 }
 
 /// Delete a branch.

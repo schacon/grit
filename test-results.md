@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after aligning reflog/log argument preprocessing, reflog-show delegation to log reflog-walk mode, reflog selector/date rendering, and reflog patch output behavior for `t1411`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1411-reflog-show.sh` (run from `/workspace/tests`): 17/17 passing (improved from 7/17).
+- `./scripts/run-tests.sh t1411-reflog-show.sh`: 17/17 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing (fixed temporary selector-date regression by restricting date selector rendering to refs with explicit reflog selectors).
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after implementing XDG/global config precedence fixes in `config`, global ignore resolution via layered config + XDG defaults in `ignore`, and global attributes loading in `check-attr`).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1306-xdg-files.sh` (run from `/workspace/tests`): 21/21 passing (improved from 10/21).
 - `./scripts/run-tests.sh t1306-xdg-files.sh`: 21/21 passing.

@@ -171,40 +171,96 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn run_show(args: ShowArgs) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let refname = resolve_refname(&repo, &args.refname)?;
-    let display_name = display_refname(&refname);
-    let (reflog_git_dir, reflog_refname) = reflog_location_for_ref(&repo, &refname);
-    let entries =
-        read_reflog(&reflog_git_dir, &reflog_refname).map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    if entries.is_empty() {
-        return Ok(());
+    let oneline = args.format.is_none();
+    let format = args.format;
+    if matches!(format.as_deref(), Some("short")) {
+        // Keep "short" so log's reflog-walk short formatter is used.
     }
 
-    // Entries are in file order (oldest first); display newest first.
-    let iter = entries.iter().rev().enumerate();
-    let max = args.max_count.unwrap_or(usize::MAX);
-
-    for (i, entry) in iter {
-        if i >= max {
-            break;
-        }
-        if let Some(format) = args.format.as_deref() {
-            if format == "%gs" {
-                println!("{}", entry.message);
-                continue;
-            }
-        }
-        let oid_str = if args.no_abbrev_commit {
-            entry.new_oid.to_hex()
+    crate::commands::log::run(crate::commands::log::Args {
+        revisions: vec![args.refname],
+        max_count: args.max_count,
+        oneline,
+        format,
+        reverse: false,
+        first_parent: false,
+        root: false,
+        graph: false,
+        decorate: None,
+        no_decorate: false,
+        no_walk: None,
+        source: false,
+        ancestry_path: false,
+        simplify_by_decoration: false,
+        skip: None,
+        author: None,
+        committer_filter: None,
+        grep: None,
+        no_merges: false,
+        merges: false,
+        date: args.date,
+        walk_reflogs: true,
+        patch: false,
+        patch_u: false,
+        stat: false,
+        name_only: false,
+        name_status: false,
+        raw: false,
+        all: false,
+        follow: false,
+        diff_filter: None,
+        find_object: None,
+        abbrev: if args.no_abbrev_commit {
+            Some("40".to_owned())
+        } else if args.abbrev_commit {
+            Some("7".to_owned())
         } else {
-            abbreviate_oid(&entry.new_oid, 7)
-        };
-        println!("{oid_str} {display_name}@{{{i}}}: {}", entry.message);
-    }
-
-    Ok(())
+            None
+        },
+        null_terminator: false,
+        no_ext_diff: false,
+        patch_with_stat: false,
+        no_renames: false,
+        find_renames: None,
+        find_copies: None,
+        diff_merges: None,
+        no_diff_merges: false,
+        cc: false,
+        color_moved: None,
+        abbrev_commit: args.abbrev_commit,
+        color: None,
+        no_color: false,
+        decorate_refs: Vec::new(),
+        decorate_refs_exclude: Vec::new(),
+        line_prefix: None,
+        no_graph: false,
+        show_linear_break: None,
+        show_signature: false,
+        no_abbrev: args.no_abbrev_commit,
+        grep_patterns: Vec::new(),
+        invert_grep: false,
+        regexp_ignore_case: false,
+        all_match: false,
+        basic_regexp: false,
+        extended_regexp: false,
+        fixed_strings: false,
+        perl_regexp: false,
+        end_of_options: false,
+        date_order: false,
+        topo_order: false,
+        ignore_missing: false,
+        clear_decorations: false,
+        shortstat: false,
+        bisect: false,
+        order_file: None,
+        full_index: false,
+        binary: false,
+        since_as_filter: None,
+        since: None,
+        until: None,
+        children: false,
+        pathspecs: Vec::new(),
+    })
 }
 
 fn run_expire(args: ExpireArgs) -> Result<()> {
@@ -458,16 +514,6 @@ fn resolve_refname(repo: &Repository, input: &str) -> Result<String> {
 }
 
 /// Format refname for display: `HEAD` stays, `refs/heads/main` stays.
-fn display_refname(refname: &str) -> &str {
-    refname
-}
-
-/// Abbreviate an OID to the given hex length.
-fn abbreviate_oid(oid: &ObjectId, len: usize) -> String {
-    let hex = oid.to_hex();
-    hex[..len.min(hex.len())].to_string()
-}
-
 /// Parse a `ref@{n}` spec into (refname, index).
 fn parse_reflog_spec(spec: &str) -> Result<(String, usize)> {
     let Some(at_pos) = spec.find("@{") else {
