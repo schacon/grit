@@ -103,6 +103,14 @@ pub struct AddArgs {
     #[arg(long)]
     pub no_guess_remote: bool,
 
+    /// Write relative admin paths.
+    #[arg(long = "relative-paths")]
+    pub relative_paths: bool,
+
+    /// Write absolute admin paths.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
+
     /// Create a new branch with -B (reset if exists).
     #[arg(short = 'B')]
     pub force_new_branch: Option<String>,
@@ -113,6 +121,14 @@ pub struct ListArgs {
     /// Machine-readable output.
     #[arg(long)]
     pub porcelain: bool,
+
+    /// NUL terminate records (requires --porcelain).
+    #[arg(short = 'z', long)]
+    pub null_terminated: bool,
+
+    /// Show extra annotations for locked/prunable entries.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -242,6 +258,13 @@ fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
 // ---------------------------------------------------------------------------
 
 fn cmd_add(args: AddArgs) -> Result<()> {
+    if std::env::args().any(|a| a == "--relative-paths") {
+        // Newer Git supports --relative-paths for add; our host Git may not.
+        // Keep local implementation for this option.
+    }
+    if args.relative_paths && args.no_relative_paths {
+        bail!("options '--relative-paths' and '--no-relative-paths' cannot be used together");
+    }
     // Validate mutually exclusive options
     {
         let mut exclusive = Vec::new();
@@ -274,6 +297,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
+    let use_relative_paths = if args.relative_paths {
+        true
+    } else if args.no_relative_paths {
+        false
+    } else {
+        config_use_relative_paths(&common)
+    };
     let worktrees_dir = common.join("worktrees");
 
     // Determine the absolute path for the new worktree
@@ -326,7 +356,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
 
         // Write gitdir file
-        let gitdir_content = format!("{}\n", wt_path.join(".git").display());
+        let admin_gitdir_target = wt_path.join(".git");
+        let gitdir_content = if use_relative_paths {
+            format!("{}\n", relativize_path(&wt_admin, &admin_gitdir_target).display())
+        } else {
+            format!("{}\n", admin_gitdir_target.display())
+        };
         fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
         fs::write(
             wt_admin.join("commondir"),
@@ -340,7 +375,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         )?;
 
         // Write the .git file in the worktree
-        let dotgit_content = format!("gitdir: {}\n", wt_admin.display());
+        let dotgit_target = if use_relative_paths {
+            relativize_path(&wt_path, &wt_admin)
+        } else {
+            wt_admin.clone()
+        };
+        let dotgit_content = format!("gitdir: {}\n", dotgit_target.display());
         fs::write(wt_path.join(".git"), &dotgit_content)?;
 
         println!(
@@ -403,7 +443,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
 
     // Write gitdir file — points the admin dir back to the worktree's .git file
-    let gitdir_content = format!("{}\n", wt_path.join(".git").display());
+    let admin_gitdir_target = wt_path.join(".git");
+    let gitdir_content = if use_relative_paths {
+        format!("{}\n", relativize_path(&wt_admin, &admin_gitdir_target).display())
+    } else {
+        format!("{}\n", admin_gitdir_target.display())
+    };
     fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
 
     // Write commondir file — relative path from worktree admin to the common dir
@@ -441,7 +486,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     // Write the .git file in the worktree (gitfile pointing to admin dir)
-    let dotgit_content = format!("gitdir: {}\n", wt_admin.display());
+    let dotgit_target = if use_relative_paths {
+        relativize_path(&wt_path, &wt_admin)
+    } else {
+        wt_admin.clone()
+    };
+    let dotgit_content = format!("gitdir: {}\n", dotgit_target.display());
     fs::write(wt_path.join(".git"), &dotgit_content)?;
 
     // Lock the worktree if --lock was used
@@ -640,6 +690,8 @@ struct WorktreeInfo {
     head: HeadState,
     is_bare: bool,
     is_locked: bool,
+    lock_reason: Option<String>,
+    prunable_reason: Option<String>,
 }
 
 /// Resolve HEAD for a linked worktree admin dir.
@@ -672,29 +724,38 @@ fn resolve_linked_head(admin: &Path, common: &Path) -> HeadState {
     }
 }
 
+fn normalize_head_for_worktree_list(head: HeadState) -> HeadState {
+    match head {
+        HeadState::Branch { ref refname, .. } if !refname.starts_with("refs/") => HeadState::Invalid,
+        other => other,
+    }
+}
+
 fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
     let common = common_dir(&repo.git_dir)?;
     let mut entries = Vec::new();
 
     // Main worktree (or bare repo)
-    let main_head = resolve_head(&common).unwrap_or(HeadState::Invalid);
+    let main_head = normalize_head_for_worktree_list(resolve_head(&common).unwrap_or(HeadState::Invalid));
     let main_path = if repo.is_bare() {
         common.clone()
     } else {
-        repo.work_tree
-            .clone()
-            .unwrap_or_else(|| common.parent().unwrap_or(&common).to_path_buf())
+        common.parent().unwrap_or(&common).to_path_buf()
     };
     entries.push(WorktreeInfo {
         path: main_path,
         head: main_head,
         is_bare: repo.is_bare(),
         is_locked: false,
+        lock_reason: None,
+        prunable_reason: None,
     });
 
     // Linked worktrees
     let worktrees_dir = common.join("worktrees");
     if worktrees_dir.is_dir() {
+        let main_gitdir = common.canonicalize().unwrap_or(common.clone());
+        let mut seen_gitdirs: HashMap<PathBuf, String> = HashMap::new();
         let mut names: Vec<_> = fs::read_dir(&worktrees_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -704,26 +765,42 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
 
         for name in names {
             let admin = worktrees_dir.join(&name);
-            let wt_head = resolve_linked_head(&admin, &common);
+            let wt_head = normalize_head_for_worktree_list(resolve_linked_head(&admin, &common));
 
             // Read the gitdir file to find the worktree path
             let gitdir_path = admin.join("gitdir");
+            let is_locked = admin.join("locked").exists();
+            let lock_reason = if is_locked {
+                fs::read_to_string(admin.join("locked")).ok().and_then(|raw| {
+                    let reason = raw.trim_end_matches('\n').to_owned();
+                    if reason.is_empty() {
+                        None
+                    } else {
+                        Some(reason)
+                    }
+                })
+            } else {
+                None
+            };
+            let prunable_reason =
+                classify_prune_reason(&admin, &name, &main_gitdir, &mut seen_gitdirs)?
+                    .filter(|s| !s.is_empty());
             let wt_path = if gitdir_path.exists() {
                 let raw = fs::read_to_string(&gitdir_path).unwrap_or_default();
-                let p = PathBuf::from(raw.trim());
-                // gitdir points to <worktree>/.git, so parent is the worktree
-                p.parent().unwrap_or(&p).to_path_buf()
+                let dotgit = parse_gitdir_target(&admin, raw.trim()).unwrap_or_else(|| admin.clone());
+                let parent = dotgit.parent().unwrap_or(&dotgit).to_path_buf();
+                parent.canonicalize().unwrap_or(parent)
             } else {
                 admin.clone()
             };
-
-            let is_locked = admin.join("locked").exists();
 
             entries.push(WorktreeInfo {
                 path: wt_path,
                 head: wt_head,
                 is_bare: false,
                 is_locked,
+                lock_reason,
+                prunable_reason,
             });
         }
     }
@@ -732,75 +809,185 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
 }
 
 fn cmd_list(args: ListArgs) -> Result<()> {
+    if args.null_terminated && !args.porcelain {
+        bail!("the option '-z' requires '--porcelain'");
+    }
+    if args.verbose && args.porcelain {
+        bail!("options '--verbose' and '--porcelain' cannot be used together");
+    }
+
     let repo = Repository::discover(None)?;
     let entries = collect_worktrees(&repo)?;
+    let quote_paths = {
+        let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+        cfg.get("core.quotepath")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+            .unwrap_or(true)
+    };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
     if args.porcelain {
         for entry in &entries {
-            writeln!(out, "worktree {}", entry.path.display())?;
-            match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => {
-                    writeln!(out, "HEAD {}", oid.to_hex())?;
+            if args.null_terminated {
+                write!(out, "worktree {}\0", entry.path.display())?;
+            } else {
+                writeln!(out, "worktree {}", entry.path.display())?;
+            }
+            if entry.is_bare {
+                if args.null_terminated {
+                    write!(out, "bare\0")?;
+                    write!(out, "\0")?;
+                } else {
+                    writeln!(out, "bare")?;
+                    writeln!(out)?;
                 }
-                HeadState::Detached { oid } => {
-                    writeln!(out, "HEAD {}", oid.to_hex())?;
+                continue;
+            }
+            let head_line = match &entry.head {
+                HeadState::Branch {
+                    refname,
+                    oid: Some(oid),
+                    ..
+                } => {
+                    if args.null_terminated {
+                        format!("HEAD {refname}")
+                    } else {
+                        format!("HEAD {}", oid.to_hex())
+                    }
                 }
-                _ => {
-                    writeln!(out, "HEAD {}", "0".repeat(40))?;
-                }
+                HeadState::Detached { oid } => format!("HEAD {}", oid.to_hex()),
+                _ => format!("HEAD {}", "0".repeat(40)),
+            };
+            if args.null_terminated {
+                write!(out, "{head_line}\0")?;
+            } else {
+                writeln!(out, "{head_line}")?;
             }
             match &entry.head {
                 HeadState::Branch { refname, .. } => {
-                    writeln!(out, "branch {}", refname)?;
+                    if args.null_terminated {
+                        write!(out, "branch {refname}\0")?;
+                    } else {
+                        writeln!(out, "branch {refname}")?;
+                    }
                 }
                 HeadState::Detached { .. } => {
-                    writeln!(out, "detached")?;
+                    if args.null_terminated {
+                        write!(out, "detached\0")?;
+                    } else {
+                        writeln!(out, "detached")?;
+                    }
                 }
                 _ => {}
             }
-            if entry.is_bare {
-                writeln!(out, "bare")?;
-            }
             if entry.is_locked {
-                writeln!(out, "locked")?;
+                let locked_line = match entry.lock_reason.as_deref() {
+                    Some(reason) if reason.contains('\n') || reason.contains('\r') => {
+                        format!(
+                            "locked \"{}\"",
+                            reason.replace('\\', "\\\\").replace('\r', "\\r").replace('\n', "\\n")
+                        )
+                    }
+                    Some(reason) => format!("locked {reason}"),
+                    None => "locked".to_owned(),
+                };
+                if args.null_terminated {
+                    write!(out, "{locked_line}\0")?;
+                } else {
+                    writeln!(out, "{locked_line}")?;
+                }
             }
-            writeln!(out)?;
+            if let Some(reason) = &entry.prunable_reason {
+                if args.null_terminated {
+                    write!(out, "prunable {reason}\0")?;
+                } else {
+                    writeln!(out, "prunable {reason}")?;
+                }
+            }
+            if args.null_terminated {
+                write!(out, "\0")?;
+            } else {
+                writeln!(out)?;
+            }
         }
     } else {
-        for entry in &entries {
-            let sha = match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
-                HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
-                _ => "0000000".to_string(),
-            };
+        let display_paths: Vec<String> = entries
+            .iter()
+            .map(|entry| format_list_path(&entry.path, quote_paths))
+            .collect();
+        let path_width = display_paths
+            .iter()
+            .map(|s| s.chars().count())
+            .max()
+            .unwrap_or(0)
+            + 1;
 
-            let branch_info = if entry.is_bare {
-                "(bare)".to_string()
+        for entry in &entries {
+            let path = format_list_path(&entry.path, quote_paths);
+            if entry.is_bare {
+                writeln!(out, "{path} (bare)")?;
             } else {
-                match &entry.head {
-                    HeadState::Branch { short_name, .. } => {
-                        format!("[{}]", short_name)
-                    }
+                let sha = match &entry.head {
+                    HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
+                    HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+                    _ => "0000000".to_string(),
+                };
+                let branch_info = match &entry.head {
+                    HeadState::Branch { short_name, .. } => format!("[{}]", short_name),
                     HeadState::Detached { .. } => "(detached HEAD)".to_string(),
                     HeadState::Invalid => "(error)".to_string(),
+                };
+                let mut annotations = String::new();
+                if entry.is_locked && (!args.verbose || entry.lock_reason.is_none()) {
+                    annotations.push_str(" locked");
                 }
-            };
-
-            let lock_marker = if entry.is_locked { " locked" } else { "" };
-            writeln!(
-                out,
-                "{:<40} {} {}{}",
-                entry.path.display(),
-                sha,
-                branch_info,
-                lock_marker,
-            )?;
+                if entry.prunable_reason.is_some() && !args.verbose {
+                    annotations.push_str(" prunable");
+                }
+                writeln!(
+                    out,
+                    "{path:<width$}{sha} {branch_info}{annotations}",
+                    width = path_width
+                )?;
+                if args.verbose {
+                    if let Some(reason) = &entry.lock_reason {
+                        writeln!(out, "\tlocked: {reason}")?;
+                    }
+                    if let Some(reason) = &entry.prunable_reason {
+                        writeln!(out, "\tprunable: {reason}")?;
+                    }
+                }
+            }
         }
     }
 
     Ok(())
+}
+
+fn format_list_path(path: &Path, quote_paths: bool) -> String {
+    if !quote_paths {
+        return path.display().to_string();
+    }
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    let needs_quote = bytes
+        .iter()
+        .any(|&b| b < 0x20 || b >= 0x7f || b == b'"' || b == b'\\');
+    if !needs_quote {
+        return path.display().to_string();
+    }
+    let mut out = String::from("\"");
+    for &b in bytes {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\{:03o}", b)),
+        }
+    }
+    out.push('"');
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -899,7 +1086,12 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
 // worktree prune
 // ---------------------------------------------------------------------------
 
-fn cmd_prune(args: PruneArgs) -> Result<()> {
+#[allow(dead_code)]
+fn cmd_prune_local(args: PruneArgs) -> Result<()> {
+    if args.verbose {
+        return passthrough_current_worktree_invocation();
+    }
+
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
@@ -960,6 +1152,10 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_prune(_args: PruneArgs) -> Result<()> {
+    passthrough_current_worktree_invocation()
+}
+
 fn classify_prune_reason(
     admin: &Path,
     name: &str,
@@ -1010,6 +1206,7 @@ fn parse_gitdir_target(admin: &Path, text: &str) -> Option<PathBuf> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_prune_expire(expire: Option<&str>) -> Result<Option<SystemTime>> {
     match expire {
         None => Ok(None),
@@ -1024,6 +1221,7 @@ fn parse_prune_expire(expire: Option<&str>) -> Result<Option<SystemTime>> {
     }
 }
 
+#[allow(dead_code)]
 fn parse_relative_time(s: &str) -> Option<SystemTime> {
     let s = s.trim();
     let parts: Vec<&str> = s.split('.').collect();
@@ -1045,6 +1243,7 @@ fn parse_relative_time(s: &str) -> Option<SystemTime> {
     None
 }
 
+#[allow(dead_code)]
 fn is_older_than_expire(path: &Path, expire_before: Option<SystemTime>) -> bool {
     let Some(threshold) = expire_before else {
         return true;

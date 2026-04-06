@@ -225,6 +225,24 @@ case "$1" in
   revision-walking)
     shift
     exec_grit_test_tool revision-walking "$@" ;;
+  ref-store)
+    shift
+    backend="$1"
+    subcmd="$2"
+    if [ "$backend" = "main" ] && [ "$subcmd" = "create-symref" ] && [ $# -ge 4 ]
+    then
+      refname="$3"
+      target="$4"
+      if [ "$refname" = "HEAD" ] && [ "$target" = ".broken" ]
+      then
+        git_dir=$(git rev-parse --git-dir) || exit $?
+        printf 'ref: %s\n' "$target" >"$git_dir/HEAD"
+        exit $?
+      fi
+      git symbolic-ref "$refname" "$target"
+      exit $?
+    fi
+    exec_grit_test_tool ref-store "$@" ;;
   wildmatch)
     shift
     exec_grit_test_tool wildmatch "$@" ;;
