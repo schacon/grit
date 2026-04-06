@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::pack::read_local_pack_indexes;
@@ -38,6 +39,9 @@ pub struct Args {
 /// Run `grit prune`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
+    if repository_has_precious_objects(&repo)? {
+        anyhow::bail!("cannot prune in a precious-objects repo");
+    }
     let objects_dir = repo.git_dir.join("objects");
     let odb = Odb::new(&objects_dir);
 
@@ -96,6 +100,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Whether this repository declares `extensions.preciousObjects = true`.
+fn repository_has_precious_objects(repo: &Repository) -> Result<bool> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let Some(value) = config.get("extensions.preciousobjects") else {
+        return Ok(false);
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    Ok(matches!(normalized.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 /// Parse the `--expire` value into a [`SystemTime`] threshold.

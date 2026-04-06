@@ -18,6 +18,14 @@ pub enum Error {
     #[error("cannot use bare repository '{0}' (safe.bareRepository is 'explicit')")]
     ForbiddenBareRepository(String),
 
+    /// Repository format version is not supported by this implementation.
+    #[error("unsupported repository format version '{0}'")]
+    UnsupportedRepositoryFormatVersion(u32),
+
+    /// Repository declares an unsupported extension.
+    #[error("unknown repository extension '{0}'")]
+    UnsupportedRepositoryExtension(String),
+
     /// A supplied object ID string was not valid hex or the wrong length.
     #[error("invalid object id '{0}'")]
     InvalidObjectId(String),

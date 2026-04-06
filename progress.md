@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    75 |
+| Completed   |    76 |
 | In progress |     0 |
-| Remaining   |   692 |
+| Remaining   |   691 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1302-repo-version` — 18/18 tests pass (added repository format/extension validation for supported v0/v1 repos and expected extension semantics, enforced local config operations against unsupported repos, blocked `apply --check --index` on invalid repositories, and made `prune` refuse precious-objects repositories while preserving existing `repack -ad` protections)
 - `t1090-sparse-checkout-scope` — 7/7 tests pass (implemented sparse-checkout scope compatibility across checkout/merge/fetch paths: added `checkout-index --ignore-skip-worktree-bits`, `clone --template` acceptance for sparse fixture setup, `config -C <path>` compatibility/no-op behavior, `fetch --filter=blob:none` sparse-aware blob retention, and `rev-list --missing=print` support used by partial sparse validation)
 - `t0411-clone-from-partial` — 7/7 tests pass (implemented blob:none partial-clone shaping for local clone fixtures, disabled clone-time lazy fetch by default with `lazy fetching disabled` diagnostics, and added promisor lazy-fetch attempt for `pack-objects --revs` via configured `remote.origin.uploadpack`)
 - `t1012-read-tree-df` — 5/5 tests pass (fixed `read-tree -m` 3-way merge to preserve and advance existing unmerged stages from the current index so D/F conflict cases maintain expected stage-1/2/3 entries without collapsing to stage-0)
@@ -68,4 +69,4 @@
 
 ## What Remains
 
-692 test files still pending. See `plan.md` for the full prioritized list.
+691 test files still pending. See `plan.md` for the full prioritized list.

@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after repository-format/repo-version compatibility changes).
+- `cargo build --release -p grit-rs`: success.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing.
+- `_prereq_DEFAULT_REPO_FORMAT=set GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1302-repo-version.sh`: 18/18 passing with expected non-zero behavior for unsupported repo version/extensions and precious-objects prune protection.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 7/7 passing (regression check).
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing (regression check).
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
 - `cargo build --release -p grit-rs`: success.

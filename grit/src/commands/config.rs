@@ -313,6 +313,9 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
+    if should_validate_repository(&args) && git_dir.is_some() {
+        Repository::discover(None)?;
+    }
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
 
     // Handle subcommands first
@@ -1193,6 +1196,11 @@ fn resolve_git_dir() -> Option<PathBuf> {
         }
         cur = cur.parent()?;
     }
+}
+
+/// Whether this invocation should validate repository format/extensions.
+fn should_validate_repository(args: &Args) -> bool {
+    !(args.system || args.global || args.file.is_some() || args.blob.is_some())
 }
 
 /// Determine which config file to write to based on flags.

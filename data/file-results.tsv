@@ -105,7 +105,7 @@ t1092-sparse-checkout-compatibility	yes	106	3	103	ok	1	104	2
 t1100-commit-tree-options	yes	5	4	1	ok	4	5	0
 t1300-config	yes	0	0	0	timeout	0	0	0
 t1301-shared-repo	yes	22	2	20	ok	2	22	0
-t1302-repo-version	yes	18	12	6	ok	12	18	0
+t1302-repo-version	yes	18	18	0	ok	18	18	0
 t1303-wacky-config	yes	11	11	0	ok	11	11	0
 t1304-default-acl	yes	4	4	0	ok	4	4	0
 t1305-config-include	yes	37	12	25	ok	12	37	0
