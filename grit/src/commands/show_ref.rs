@@ -250,7 +250,7 @@ fn print_peeled_tag(
     if obj.kind != ObjectKind::Tag {
         return Ok(());
     }
-    let Some(peeled) = parse_tag_target(&obj.data) else {
+    let Some(peeled) = peel_tag_target(repo, *oid) else {
         return Ok(());
     };
     let hash = abbreviate_oid(&peeled, abbrev_len);
@@ -270,6 +270,16 @@ fn parse_tag_target(data: &[u8]) -> Option<ObjectId> {
         }
     }
     None
+}
+
+fn peel_tag_target(repo: &Repository, mut oid: ObjectId) -> Option<ObjectId> {
+    loop {
+        let obj = repo.odb.read(&oid).ok()?;
+        if obj.kind != ObjectKind::Tag {
+            return Some(oid);
+        }
+        oid = parse_tag_target(&obj.data)?;
+    }
 }
 
 fn abbreviate_oid(oid: &ObjectId, len: usize) -> String {

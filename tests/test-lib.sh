@@ -696,12 +696,12 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author= append=
+	local notick= signoff= indir= tag=yes annotate= message= file= contents= author= append=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
-		--annotate) shift ;;
+		--annotate) annotate=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
@@ -727,7 +727,11 @@ test_commit () {
 		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
-			git tag "$message"
+			if test -n "$annotate"; then
+				git tag -a -m "$message" "$message"
+			else
+				git tag "$message"
+			fi
 		fi
 	)
 }

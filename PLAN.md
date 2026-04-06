@@ -110,7 +110,7 @@ commit → check it off → move on.
 - [x] `t1417-reflog-updateref` ████████████████████ 21/21 (0 left) — git reflog --updateref
 - [x] `t1414-reflog-walk` ████████████████████ 12/12 (0 left) — various tests of reflog walk (log -g) behavior
 - [x] `t1421-reflog-write` ████████████████████ 10/10 (0 left) — Manually write reflog entries
-- [ ] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
+- [x] `t1403-show-ref` ████████████████████ 12/12 (0 left) — show-ref
 - [ ] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
 - [ ] `t1004-read-tree-m-u-wf` ███████░░░░░░░░░░░░░ 6/17 (11 left) — read-tree -m -u checks working tree files
 - [ ] `t1411-reflog-show` ███████░░░░░░░░░░░░░ 6/17 (11 left) — Test reflog display routines
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,790/24,806 tests passing, 16,016 failures remaining**
+**8,800/24,806 tests passing, 16,006 failures remaining**
