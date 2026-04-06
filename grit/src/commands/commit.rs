@@ -975,19 +975,7 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
 /// Check if an ident name is valid (not empty and not all special characters).
 fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
-    let cleaned: String = name
-        .chars()
-        .filter(|&c| {
-            c != '.'
-                && c != ','
-                && c != ';'
-                && c != '<'
-                && c != '>'
-                && c != '\''
-                && c != '"'
-                && c != ' '
-        })
-        .collect();
+    let cleaned: String = name.chars().filter(|&c| c != '.' && c != ',' && c != ';' && c != '<' && c != '>' && c != '\'' && c != '"' && c != ' ').collect();
     if cleaned.is_empty() {
         if name.is_empty() {
             bail!("empty ident name (for <{}>) not allowed", kind);
@@ -1083,22 +1071,17 @@ fn resolve_committer(config: &ConfigSet, now: OffsetDateTime) -> Result<String> 
 pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
     let trimmed = date_str.trim();
 
-    if let Some(rest) = trimmed.strip_prefix('@') {
-        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-        if parts.len() == 2 && parts[0].parse::<i64>().is_ok() && is_git_tz(parts[1]) {
-            return Some(format!("{} {}", parts[0], parts[1]));
-        }
-    }
-
     // Already in `<epoch> <offset>` format? (epoch is all digits)
-    if let Some((epoch, offset)) = trimmed.split_once(' ') {
-        if epoch.chars().all(|c| c.is_ascii_digit()) && is_git_tz(offset) {
+    let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
+    if parts.len() == 2 {
+        let maybe_epoch = parts[1];
+        if maybe_epoch.chars().all(|c| c.is_ascii_digit()) {
+            // Already epoch + offset
             return None;
         }
     }
 
     // Try parsing "YYYY-MM-DD HH:MM:SS <tz>" format
-    let parts: Vec<&str> = trimmed.rsplitn(2, ' ').collect();
     if parts.len() == 2 {
         let tz = parts[0];
         let datetime = parts[1];
@@ -1126,52 +1109,29 @@ pub fn parse_date_to_git_timestamp(date_str: &str) -> Option<String> {
         }
     }
 
-    let default_tz = time::UtcOffset::UTC;
+    // Try parsing "YYYY-MM-DD HH:MM:SS" (no timezone) as UTC.
     {
-        if let Ok(fmt) = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]") {
-            if let Ok(naive) = time::PrimitiveDateTime::parse(trimmed, &fmt) {
-                let dt = naive.assume_offset(default_tz);
-                return Some(format!(
-                    "{} {}",
-                    dt.unix_timestamp(),
-                    format_git_offset(default_tz)
-                ));
-            }
+        let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
+            .ok()?;
+        if let Ok(naive) = time::PrimitiveDateTime::parse(trimmed, &fmt) {
+            let dt = naive.assume_utc();
+            let epoch = dt.unix_timestamp();
+            return Some(format!("{epoch} +0000"));
         }
+    }
 
-        if let Ok(fmt) =
-            time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
-        {
-            if let Ok(naive) = time::PrimitiveDateTime::parse(trimmed, &fmt) {
-                let dt = naive.assume_offset(default_tz);
-                return Some(format!(
-                    "{} {}",
-                    dt.unix_timestamp(),
-                    format_git_offset(default_tz)
-                ));
+    // Try "@<epoch>" format (git uses this for testing)
+    if let Some(epoch_str) = trimmed.strip_prefix('@') {
+        // @<epoch> <tz>
+        let ep_parts: Vec<&str> = epoch_str.splitn(2, ' ').collect();
+        if ep_parts.len() == 2 {
+            if let Ok(_epoch) = ep_parts[0].parse::<i64>() {
+                return Some(format!("{} {}", ep_parts[0], ep_parts[1]));
             }
         }
     }
 
     None
-}
-
-fn is_git_tz(value: &str) -> bool {
-    if value.len() != 5 {
-        return false;
-    }
-
-    let bytes = value.as_bytes();
-    matches!(bytes[0], b'+' | b'-') && bytes[1..].iter().all(u8::is_ascii_digit)
-}
-
-fn format_git_offset(offset: time::UtcOffset) -> String {
-    let total = offset.whole_seconds();
-    let sign = if total < 0 { '-' } else { '+' };
-    let abs = total.unsigned_abs();
-    let hours = abs / 3600;
-    let mins = (abs % 3600) / 60;
-    format!("{sign}{hours:02}{mins:02}")
 }
 
 /// Format a timestamp in Git's format: `<epoch> <offset>`.
@@ -1227,5 +1187,6 @@ fn ensure_trailing_newline(s: &str) -> String {
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
+    err.to_string().contains("Permission denied")
+        || err.to_string().contains("permission denied")
 }
