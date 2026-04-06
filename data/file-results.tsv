@@ -6,7 +6,7 @@ t0003-attributes	yes	55	15	40	ok	15	55	0
 t0004-unwritable	yes	9	9	0	ok	9	9	0
 t0005-signals	yes	5	5	0	ok	5	5	0
 t0006-date	yes	129	16	113	ok	16	129	0
-t0007-git-var	yes	27	26	1	ok	26	27	0
+t0007-git-var	yes	27	27	0	ok	27	27	0
 t0008-ignores	yes	0	0	0	ok	0	0	0
 t0009-git-dir-validation	yes	6	6	0	ok	6	6	0
 t0010-racy-git	yes	10	10	0	ok	10	10	0
@@ -187,7 +187,7 @@ t2018-checkout-branch	yes	0	0	0	ok	0	0	0
 t2019-checkout-ambiguous-ref	yes	9	7	2	ok	7	9	0
 t2020-checkout-detach	yes	26	16	10	ok	16	26	0
 t2021-checkout-overwrite	yes	9	6	3	ok	6	9	0
-t2022-checkout-paths	yes	5	4	1	ok	4	5	0
+t2022-checkout-paths	yes	5	5	0	ok	5	5	0
 t2023-checkout-m	yes	5	4	1	ok	4	5	0
 t2024-checkout-dwim	yes	0	0	0	ok	0	0	0
 t2025-checkout-no-overlay	yes	6	1	5	ok	1	6	0
@@ -230,7 +230,7 @@ t3000-ls-files-others	yes	15	6	9	ok	6	15	0
 t3001-ls-files-others-exclude	yes	27	10	17	ok	10	27	0
 t3002-ls-files-dashpath	yes	6	6	0	ok	6	6	0
 t3003-ls-files-exclude	yes	7	7	0	ok	7	7	0
-t3004-ls-files-basic	yes	6	5	1	ok	5	6	0
+t3004-ls-files-basic	yes	6	6	0	ok	6	6	0
 t3005-ls-files-relative	yes	4	4	0	ok	4	4	0
 t3006-ls-files-long	yes	3	3	0	ok	3	3	0
 t3007-ls-files-recurse-submodules	yes	0	0	0	ok	0	0	0
