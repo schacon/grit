@@ -835,7 +835,9 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
                 let raw = fs::read_to_string(&gitdir_path).unwrap_or_default();
                 let p = PathBuf::from(raw.trim());
                 // gitdir points to <worktree>/.git, so parent is the worktree
-                p.parent().unwrap_or(&p).to_path_buf()
+                let parent = p.parent().unwrap_or(&p).to_path_buf();
+                // Canonicalize to resolve relative paths like '../there'
+                parent.canonicalize().unwrap_or(parent)
             } else {
                 admin.clone()
             };
