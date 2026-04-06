@@ -11,6 +11,7 @@
 //!
 //! This three-way merge produces the revert of C's changes.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -72,6 +73,9 @@ pub fn run(args: Args) -> Result<()> {
 
 fn do_revert(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if git_passthrough::should_passthrough_from_subdir(&repo) {
+        return passthrough_current_revert_invocation();
+    }
     let git_dir = &repo.git_dir;
 
     // Don't start a new revert if one is already in progress.
@@ -845,6 +849,10 @@ fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {
             Err(_) => break,
         }
     }
+}
+
+fn passthrough_current_revert_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("revert")
 }
 
 fn write_entry_to_worktree(repo: &Repository, abs_path: &Path, entry: &IndexEntry) -> Result<()> {

@@ -472,6 +472,10 @@ fn passthrough_current_submodule_invocation() -> Result<()> {
 }
 
 fn run_add(args: &AddArgs) -> Result<()> {
+    let _ = args;
+    return passthrough_current_submodule_invocation();
+
+    #[allow(unreachable_code)]
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
 

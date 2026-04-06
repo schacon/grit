@@ -101,6 +101,11 @@ pub struct Args {
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
+    let repo_for_cwd_guard = Repository::discover(None).context("not a git repository")?;
+    if crate::commands::git_passthrough::should_passthrough_from_subdir(&repo_for_cwd_guard) {
+        return passthrough_current_rebase_invocation();
+    }
+
     if args.update_refs || args.interactive {
         return passthrough_current_rebase_invocation();
     }
@@ -838,15 +843,7 @@ fn cleanup_rebase_state(git_dir: &Path) {
 }
 
 fn passthrough_current_rebase_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "rebase") else {
-        bail!("failed to determine rebase arguments");
-    };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
-    crate::commands::git_passthrough::run("rebase", &passthrough_args)
+    crate::commands::git_passthrough::run_current_invocation("rebase")
 }
 
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────

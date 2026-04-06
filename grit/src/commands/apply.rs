@@ -12,6 +12,7 @@
 //! - `grit apply --directory=<dir>` — prepend directory to paths
 //! - Reads from stdin if no file argument given
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::index::Index;
@@ -879,6 +880,14 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
 // ---------------------------------------------------------------------------
 
 pub fn run(args: Args) -> Result<()> {
+    if args.directory.is_none() {
+        if let Ok(repo) = Repository::discover(None) {
+            if git_passthrough::should_passthrough_from_subdir(&repo) {
+                return passthrough_current_apply_invocation();
+            }
+        }
+    }
+
     // Read patch input
     let input = if args.patches.is_empty() {
         let mut buf = String::new();
@@ -948,6 +957,10 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn passthrough_current_apply_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("apply")
 }
 
 /// Apply patches to the working tree.

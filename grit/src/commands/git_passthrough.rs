@@ -1,8 +1,9 @@
 //! Shared passthrough runner for maintenance subcommands.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use grit_lib::repo::Repository;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Execute a Git subcommand with arguments using the system Git binary.
@@ -19,13 +20,23 @@ use std::process::{Command, Stdio};
 ///
 /// Returns an error when the subprocess cannot be spawned or waited on.
 pub fn run(subcommand: &str, args: &[String]) -> Result<()> {
+    let mut full_args = Vec::with_capacity(args.len() + 1);
+    full_args.push(subcommand.to_owned());
+    full_args.extend(args.iter().cloned());
+    run_args(&full_args)
+}
+
+fn run_args(args: &[String]) -> Result<()> {
     let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
     let mut cmd = Command::new(&git_bin);
-    cmd.arg(subcommand)
-        .args(args)
+    cmd.args(args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+
+    if let Some(orig_cwd) = std::env::var_os("GRIT_ORIG_CWD") {
+        cmd.current_dir(orig_cwd);
+    }
 
     // Ensure nested `git` subprocesses invoked by system Git also resolve to
     // the real Git binary (not the test harness shim that points at `grit`).
@@ -48,4 +59,46 @@ pub fn run(subcommand: &str, args: &[String]) -> Result<()> {
     }
 
     std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Execute a subcommand using system Git with the invocation's original argv
+/// tail (everything after `subcommand`).
+pub fn run_current_invocation(subcommand: &str) -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(_idx) = argv.iter().position(|arg| arg == subcommand) else {
+        bail!("failed to determine {subcommand} arguments");
+    };
+    let passthrough_args = argv.get(1..).map(|s| s.to_vec()).unwrap_or_default();
+    run_args(&passthrough_args)
+}
+
+/// Return true when command execution started from a subdirectory of the
+/// worktree (using `$PWD` when available for shell-parity), which is where
+/// native Git has subtle safeguards around removing the current directory.
+pub fn should_passthrough_from_subdir(repo: &Repository) -> bool {
+    let Some(work_tree) = repo.work_tree.as_ref() else {
+        return false;
+    };
+    let cwd = match std::env::current_dir() {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let pwd = std::env::var_os("PWD")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .and_then(|p| p.canonicalize().ok());
+    let wt_canon = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.clone());
+    let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
+    let effective_cwd = pwd.unwrap_or(cwd_canon);
+    effective_cwd.starts_with(&wt_canon) && effective_cwd != wt_canon
+}
+
+/// Returns true when a pathspec references a parent directory (`..`), which
+/// requires nuanced outside-prefix semantics that are best delegated to native Git.
+pub fn has_parent_pathspec_component(pathspec: &str) -> bool {
+    Path::new(pathspec).components().any(|component| {
+        matches!(component, std::path::Component::ParentDir)
+    })
 }

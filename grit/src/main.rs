@@ -1596,6 +1596,9 @@ fn run() -> Result<()> {
     }
 
     let args: Vec<String> = std::env::args().collect();
+    if let Ok(orig_cwd) = std::env::current_dir() {
+        std::env::set_var("GRIT_ORIG_CWD", orig_cwd);
+    }
     let (opts, subcmd, rest) = extract_globals(&args)?;
 
     let subcmd = match subcmd {

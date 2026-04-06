@@ -490,8 +490,8 @@ t2030-checkout-index-basic	yes	27	27	0	ok	27	27	0
 t2030-unresolve-info	yes	14	14	0	ok	14	14	0
 t2031-checkout-index-symlink	yes	25	25	0	ok	25	25	0
 t2032-checkout-index-parallel	yes	28	28	0	ok	28	28	0
-t2040-checkout-file-modes	yes	28	12	16	ok	12	28	0
-t2045-checkout-conflict	yes	29	11	18	ok	11	29	0
+t2040-checkout-file-modes	yes	28	28	0	ok	28	28	0
+t2045-checkout-conflict	yes	29	29	0	ok	29	29	0
 t2050-checkout	yes	80	8	72	ok	8	80	0
 t2050-git-dir-relative	yes	4	4	0	ok	4	4	0
 t2060-switch	yes	16	16	0	ok	16	16	0
@@ -528,7 +528,7 @@ t2405-worktree-submodule	yes	11	11	0	ok	10	10	1
 t2406-worktree-repair	yes	24	24	0	ok	24	24	0
 t2407-worktree-heads	yes	12	12	0	ok	12	12	0
 t2500-untracked-overwriting	yes	10	10	0	ok	8	8	2
-t2501-cwd-empty	yes	24	3	21	ok	3	24	0
+t2501-cwd-empty	yes	24	24	0	ok	24	24	0
 t3000-ls-files-others	yes	15	4	11	ok	4	15	0
 t3001-ls-files-others-exclude	yes	27	11	16	ok	11	27	0
 t3002-ls-files-dashpath	yes	6	6	0	ok	6	6	0

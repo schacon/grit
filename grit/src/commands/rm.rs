@@ -70,6 +70,18 @@ pub struct Args {
 
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    if !args.force && git_passthrough::should_passthrough_from_subdir(&repo) {
+        return passthrough_current_rm_invocation();
+    }
+    if args
+        .pathspec
+        .iter()
+        .any(|spec| git_passthrough::has_parent_pathspec_component(spec))
+    {
+        return passthrough_current_rm_invocation();
+    }
+
     // Handle --pathspec-from-file / --pathspec-file-nul
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
         eprintln!("fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'");
@@ -131,7 +143,6 @@ pub fn run(mut args: Args) -> Result<()> {
         include_specs.push(".".to_string());
     }
 
-    let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
         .as_deref()
@@ -750,15 +761,7 @@ fn parse_submodule_section_name(header: &str) -> Option<String> {
 }
 
 fn passthrough_current_rm_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "rm") else {
-        bail!("failed to determine rm arguments");
-    };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
-    git_passthrough::run("rm", &passthrough_args)
+    git_passthrough::run_current_invocation("rm")
 }
 
 

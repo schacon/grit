@@ -211,6 +211,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // Read merge.ff config and apply unless overridden by CLI flags.
     // CLI flags (--ff, --no-ff, --ff-only) take precedence over config.
     let repo = Repository::discover(None).context("not a git repository")?;
+    if git_passthrough::should_passthrough_from_subdir(&repo) {
+        return passthrough_current_merge_invocation();
+    }
     if repo.git_dir.join("rr-cache").is_dir() {
         return passthrough_current_merge_invocation();
     }
@@ -2894,13 +2897,5 @@ fn ensure_trailing_newline(s: &str) -> String {
 }
 
 fn passthrough_current_merge_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "merge") else {
-        bail!("failed to determine merge arguments");
-    };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
-    git_passthrough::run("merge", &passthrough_args)
+    git_passthrough::run_current_invocation("merge")
 }
