@@ -400,11 +400,27 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             match resolve_commitish(&repo, spec) {
                 Ok(oid) => (None, Some(oid), true),
                 Err(_) => {
-                    // Unknown name: create a new branch from HEAD.
-                    let oid = head_oid.ok_or_else(|| {
-                        anyhow::anyhow!("'{}' is not a commit and HEAD is invalid", spec)
-                    })?;
-                    (Some(spec.clone()), Some(oid), false)
+                    // Unknown name: fail unless DWIM via remote is available
+                    // Try DWIM from remote tracking refs
+                    let remote_refs =
+                        grit_lib::refs::list_refs(&common, "refs/remotes/").unwrap_or_default();
+                    let matching: Vec<_> = remote_refs
+                        .iter()
+                        .filter(|(r, _)| {
+                            let parts: Vec<&str> = r
+                                .trim_start_matches("refs/remotes/")
+                                .splitn(2, '/')
+                                .collect();
+                            parts.len() == 2 && parts[1] == spec
+                        })
+                        .collect();
+                    if matching.len() == 1 {
+                        // DWIM: create tracking branch from remote
+                        let oid = matching[0].1;
+                        (Some(spec.clone()), Some(oid), false)
+                    } else {
+                        bail!("fatal: invalid reference: '{}'", spec);
+                    }
                 }
             }
         }
