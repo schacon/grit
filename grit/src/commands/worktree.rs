@@ -52,11 +52,11 @@ pub struct AddArgs {
     pub branch: Option<String>,
 
     /// Create a new branch with this name.
-    #[arg(short = 'b', long)]
+    #[arg(short = 'b', long, conflicts_with_all = ["force_new_branch", "detach", "orphan"])]
     pub new_branch: Option<String>,
 
     /// Detach HEAD in the new worktree.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["new_branch", "force_new_branch", "orphan"])]
     pub detach: bool,
 
     /// Force creation even if the branch is already checked out elsewhere.
@@ -100,7 +100,7 @@ pub struct AddArgs {
     pub no_guess_remote: bool,
 
     /// Create a new branch with -B (reset if exists).
-    #[arg(short = 'B')]
+    #[arg(short = 'B', conflicts_with_all = ["new_branch", "detach", "orphan"])]
     pub force_new_branch: Option<String>,
 }
 
