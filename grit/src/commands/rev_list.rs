@@ -58,6 +58,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut no_commit_header = false;
     let mut use_color = false;
     let mut disk_usage_format: Option<DiskUsageFormat> = None;
+    let mut show_parents = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -83,7 +84,10 @@ pub fn run(args: Args) -> Result<()> {
                 "--date-order" => options.ordering = OrderingMode::Date,
                 "--reverse" => options.reverse = true,
                 "--count" => options.count = true,
-                "--parents" => options.output_mode = OutputMode::Parents,
+                "--parents" => {
+                    options.output_mode = OutputMode::Parents;
+                    show_parents = true;
+                }
                 "--quiet" => options.quiet = true,
                 "--stdin" => read_stdin = true,
                 "--end-of-options" => end_of_options = true,
@@ -375,6 +379,16 @@ pub fn run(args: Args) -> Result<()> {
         options.filter = Some(grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64));
     }
 
+    if options.paths.is_empty() {
+        let keep_at_least = if options.all_refs { 0 } else { 1 };
+        let (revs, trailing_paths) =
+            split_trailing_pathspecs(&repo, &revision_specs, keep_at_least);
+        revision_specs = revs;
+        if !trailing_paths.is_empty() {
+            options.paths.extend(trailing_paths);
+        }
+    }
+
     // Check config for color settings if not explicitly set via --color/--no-color
     if !use_color {
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
@@ -517,6 +531,8 @@ pub fn run(args: Args) -> Result<()> {
         }
     };
 
+    let graft_parents = load_graft_parents(&repo.git_dir);
+    let included_commits: HashSet<ObjectId> = result.commits.iter().copied().collect();
     {
         let mut obj_offset = 0usize;
         for (ci, oid) in result.commits.iter().enumerate() {
@@ -545,7 +561,20 @@ pub fn run(args: Args) -> Result<()> {
                         "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
                     );
                     if !no_commit_header && !is_oneline {
-                        println!("commit {prefix}{oid}");
+                        let mut header = format!("commit {prefix}{oid}");
+                        if show_parents {
+                            let parents = visible_parents_for_output(
+                                &repo,
+                                *oid,
+                                &included_commits,
+                                &graft_parents,
+                            )?;
+                            for parent in parents {
+                                header.push(' ');
+                                header.push_str(&parent.to_hex());
+                            }
+                        }
+                        println!("{header}");
                     }
                     let rendered = render_commit_with_color(
                         &repo,
@@ -561,6 +590,20 @@ pub fn run(args: Args) -> Result<()> {
                         }
                     } else {
                         println!("{rendered}");
+                    }
+                }
+                OutputMode::Parents => {
+                    let parents =
+                        visible_parents_for_output(&repo, *oid, &included_commits, &graft_parents)?;
+                    if parents.is_empty() {
+                        println!("{prefix}{oid}");
+                    } else {
+                        let rendered_parents = parents
+                            .iter()
+                            .map(ObjectId::to_hex)
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        println!("{prefix}{oid} {rendered_parents}");
                     }
                 }
                 _ => {
@@ -666,6 +709,132 @@ fn validate_tree_depth_limit(
     Ok(())
 }
 
+fn commit_touches_paths_for_show(
+    repo: &Repository,
+    oid: ObjectId,
+    paths: &[String],
+) -> Result<bool> {
+    let object = repo.odb.read(&oid)?;
+    let commit = parse_commit(&object.data)?;
+    let commit_entries = flatten_tree_for_show(repo, commit.tree, "")?;
+    let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
+
+    if commit.parents.is_empty() {
+        return Ok(commit_map.keys().any(|path| {
+            paths
+                .iter()
+                .any(|spec| pathspec_matches_for_show(spec, path))
+        }));
+    }
+
+    if commit.parents.len() == 1 {
+        let parent_object = repo.odb.read(&commit.parents[0])?;
+        let parent_commit = parse_commit(&parent_object.data)?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree_for_show(repo, parent_commit.tree, "")?
+                .into_iter()
+                .collect();
+        return Ok(path_differs_for_specs_for_show(
+            &commit_map,
+            &parent_map,
+            paths,
+        ));
+    }
+
+    let mut treesame_parents = 0usize;
+    let mut differs_any = false;
+    for parent_oid in &commit.parents {
+        let parent_object = repo.odb.read(parent_oid)?;
+        let parent_commit = parse_commit(&parent_object.data)?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree_for_show(repo, parent_commit.tree, "")?
+                .into_iter()
+                .collect();
+        let differs = path_differs_for_specs_for_show(&commit_map, &parent_map, paths);
+        if differs {
+            differs_any = true;
+        } else {
+            treesame_parents += 1;
+        }
+    }
+    if treesame_parents == 1 {
+        return Ok(false);
+    }
+    Ok(differs_any)
+}
+
+fn path_differs_for_specs_for_show(
+    current: &HashMap<String, ObjectId>,
+    parent: &HashMap<String, ObjectId>,
+    specs: &[String],
+) -> bool {
+    let mut paths = std::collections::BTreeSet::new();
+    paths.extend(current.keys().cloned());
+    paths.extend(parent.keys().cloned());
+
+    for path in &paths {
+        if !specs
+            .iter()
+            .any(|spec| pathspec_matches_for_show(spec, path))
+        {
+            continue;
+        }
+        if current.get(path) != parent.get(path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn pathspec_matches_for_show(spec: &str, path: &str) -> bool {
+    let normalized = spec.strip_prefix("./").unwrap_or(spec);
+    if normalized == "." || normalized.is_empty() {
+        return true;
+    }
+    if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
+        return grit_lib::wildmatch::wildmatch(
+            normalized.as_bytes(),
+            path.as_bytes(),
+            grit_lib::wildmatch::WM_PATHNAME,
+        );
+    }
+    if let Some(prefix) = normalized.strip_suffix('/') {
+        return path == prefix || path.starts_with(&format!("{prefix}/"));
+    }
+    path == normalized || path.starts_with(&format!("{normalized}/"))
+}
+
+fn flatten_tree_for_show(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    prefix: &str,
+) -> Result<Vec<(String, ObjectId)>> {
+    let mut result = Vec::new();
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(result),
+    };
+    if object.kind != grit_lib::objects::ObjectKind::Tree {
+        return Ok(result);
+    }
+    let entries = parse_tree(&object.data)?;
+    for entry in entries {
+        let name = String::from_utf8_lossy(&entry.name).to_string();
+        let path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let child = repo.odb.read(&entry.oid)?;
+        if child.kind == grit_lib::objects::ObjectKind::Tree {
+            result.extend(flatten_tree_for_show(repo, entry.oid, &path)?);
+        } else {
+            result.push((path, entry.oid));
+        }
+    }
+    Ok(result)
+}
+
 fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
     let value = text
         .parse::<isize>()
@@ -674,6 +843,40 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn split_trailing_pathspecs(
+    repo: &Repository,
+    specs: &[String],
+    keep_at_least: usize,
+) -> (Vec<String>, Vec<String>) {
+    let mut revisions = specs.to_vec();
+    let mut paths = Vec::new();
+
+    while revisions.len() > keep_at_least {
+        let Some(candidate) = revisions.last() else {
+            break;
+        };
+        if candidate.starts_with('^')
+            || candidate.starts_with('-')
+            || candidate.contains("..")
+            || candidate.contains("...")
+        {
+            break;
+        }
+        if grit_lib::rev_parse::resolve_revision(repo, candidate).is_ok() {
+            break;
+        }
+        let candidate_path = Path::new(candidate);
+        if !candidate_path.exists() {
+            break;
+        }
+        paths.push(candidate.clone());
+        revisions.pop();
+    }
+
+    paths.reverse();
+    (revisions, paths)
 }
 
 fn collect_packed_object_sizes(objects_dir: &Path) -> Result<HashMap<ObjectId, u64>> {
@@ -717,6 +920,99 @@ fn object_disk_usage(
     }
 
     Ok(pack_sizes.get(&oid).copied().unwrap_or(0))
+}
+
+fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
+    let graft_path = git_dir.join("info/grafts");
+    let mut grafts = HashMap::new();
+    let Ok(contents) = std::fs::read_to_string(&graft_path) else {
+        return grafts;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(commit_hex) = fields.next() else {
+            continue;
+        };
+        let Ok(commit_oid) = commit_hex.parse::<ObjectId>() else {
+            continue;
+        };
+        let mut parents = Vec::new();
+        let mut valid = true;
+        for parent_hex in fields {
+            match parent_hex.parse::<ObjectId>() {
+                Ok(parent_oid) => parents.push(parent_oid),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            grafts.insert(commit_oid, parents);
+        }
+    }
+    grafts
+}
+
+fn commit_parents_for_output(
+    repo: &Repository,
+    oid: ObjectId,
+    graft_parents: &HashMap<ObjectId, Vec<ObjectId>>,
+) -> Result<Vec<ObjectId>> {
+    if let Some(grafted) = graft_parents.get(&oid) {
+        return Ok(grafted.clone());
+    }
+    let object = repo.odb.read(&oid)?;
+    let commit = parse_commit(&object.data)?;
+    Ok(commit.parents)
+}
+
+fn collect_visible_parent(
+    repo: &Repository,
+    candidate: ObjectId,
+    included: &HashSet<ObjectId>,
+    graft_parents: &HashMap<ObjectId, Vec<ObjectId>>,
+    seen: &mut HashSet<ObjectId>,
+    out: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if !seen.insert(candidate) {
+        return Ok(());
+    }
+    if included.contains(&candidate) {
+        out.push(candidate);
+        return Ok(());
+    }
+    let parents = commit_parents_for_output(repo, candidate, graft_parents)?;
+    for parent in parents {
+        collect_visible_parent(repo, parent, included, graft_parents, seen, out)?;
+    }
+    Ok(())
+}
+
+fn visible_parents_for_output(
+    repo: &Repository,
+    oid: ObjectId,
+    included: &HashSet<ObjectId>,
+    graft_parents: &HashMap<ObjectId, Vec<ObjectId>>,
+) -> Result<Vec<ObjectId>> {
+    let direct_parents = commit_parents_for_output(repo, oid, graft_parents)?;
+    let mut seen = HashSet::new();
+    let mut visible = Vec::new();
+    for parent in direct_parents {
+        collect_visible_parent(
+            repo,
+            parent,
+            included,
+            graft_parents,
+            &mut seen,
+            &mut visible,
+        )?;
+    }
+    Ok(visible)
 }
 
 /// Read pseudo-missing object IDs from the internal promisor marker.

@@ -2038,17 +2038,20 @@ struct CommitGraph<'r> {
     parents: HashMap<ObjectId, Vec<ObjectId>>,
     committer_time: HashMap<ObjectId, i64>,
     shallow_boundaries: HashSet<ObjectId>,
+    graft_parents: HashMap<ObjectId, Vec<ObjectId>>,
 }
 
 impl<'r> CommitGraph<'r> {
     fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
         let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+        let graft_parents = load_graft_parents(&repo.git_dir);
         Self {
             repo,
             first_parent_only,
             parents: HashMap::new(),
             committer_time: HashMap::new(),
             shallow_boundaries,
+            graft_parents,
         }
     }
 
@@ -2075,6 +2078,9 @@ impl<'r> CommitGraph<'r> {
         } else {
             commit.parents
         };
+        if let Some(graft_parents) = self.graft_parents.get(&oid) {
+            parents = graft_parents.clone();
+        }
         if self.first_parent_only && parents.len() > 1 {
             parents.truncate(1);
         }
@@ -2100,6 +2106,43 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
         }
     }
     set
+}
+
+/// Load commit parent overrides from `.git/info/grafts`.
+fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
+    let graft_path = git_dir.join("info/grafts");
+    let mut grafts = HashMap::new();
+    let Ok(contents) = fs::read_to_string(&graft_path) else {
+        return grafts;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(commit_hex) = fields.next() else {
+            continue;
+        };
+        let Ok(commit_oid) = commit_hex.parse::<ObjectId>() else {
+            continue;
+        };
+        let mut parents = Vec::new();
+        let mut valid = true;
+        for parent_hex in fields {
+            match parent_hex.parse::<ObjectId>() {
+                Ok(parent_oid) => parents.push(parent_oid),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            grafts.insert(commit_oid, parents);
+        }
+    }
+    grafts
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

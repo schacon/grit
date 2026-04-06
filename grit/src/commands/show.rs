@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry,
 };
@@ -149,6 +150,7 @@ pub struct Args {
 /// Run the `show` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    maybe_warn_deprecated_grafts(&repo)?;
 
     let specs: Vec<&str> = if args.objects.is_empty() {
         vec!["HEAD"]
@@ -187,6 +189,37 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn maybe_warn_deprecated_grafts(repo: &Repository) -> Result<()> {
+    let graft_file = repo.git_dir.join("info/grafts");
+    let contents = match std::fs::read_to_string(&graft_file) {
+        Ok(contents) => contents,
+        Err(_) => return Ok(()),
+    };
+    if contents.lines().all(|line| {
+        let trimmed = line.trim();
+        trimmed.is_empty() || trimmed.starts_with('#')
+    }) {
+        return Ok(());
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let show_warning = config
+        .get("advice.graftFileDeprecated")
+        .map(|raw| {
+            !matches!(
+                raw.to_ascii_lowercase().as_str(),
+                "false" | "no" | "off" | "0"
+            )
+        })
+        .unwrap_or(true);
+    if show_warning {
+        eprintln!(
+            "warning: grafts are deprecated; use 'git replace --convert-graft-file' to migrate."
+        );
+    }
     Ok(())
 }
 

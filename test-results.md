@@ -4,6 +4,11 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6001-rev-list-graft.sh`: 14/14 passing (direct validation after wiring `.git/info/grafts` parent rewrites into rev-list commit graph traversal, fixing mixed rev/path token parsing to treat non-revision args as pathspecs after the first path token, and emitting graft deprecation advice from `show` when grafts are present unless `advice.graftFileDeprecated=false`).
+- `./scripts/run-tests.sh t6001-rev-list-graft.sh`: 14/14 passing (now fully passing).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after parser/graph updates).
+- `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (rev-list regression check after parser/graph updates).
+- `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (rev-list object traversal regression check in this harness; helper `hex2oct` provided via `/tmp`).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6115-rev-list-du.sh`: 17/17 passing (direct validation after adding `rev-list --disk-usage`/`--disk-usage=human` parsing and byte aggregation logic plus `cat-file --batch-check` `%(objectsize:disk)` support).
 - `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (now fully passing).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after disk-usage option parsing additions).
