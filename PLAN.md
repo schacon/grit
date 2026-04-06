@@ -88,11 +88,11 @@ commit → check it off → move on.
 - [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
 - [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
 
-- [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
-- [ ] `t1012-read-tree-df` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — read-tree D/F conflict corner cases
+- [x] `t1051-large-conversion` ████████████████████ 12/12 (0 left) — test conversion filters on large files
+- [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
 - [ ] `t0411-clone-from-partial` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — check that local clone does not fetch from promisor remotes
 - [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
-- [ ] `t1302-repo-version` █████████████░░░░░░░ 12/18 (6 left) — Test repository version check
+- [x] `t1302-repo-version` ████████████████████ 18/18 (0 left) — Test repository version check
 - [ ] `t1060-object-corruption` ████████████░░░░░░░░ 11/17 (6 left) — see how we handle various forms of corruption
 - [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.
 
@@ -187,10 +187,10 @@ commit → check it off → move on.
 
 - [ ] `t2019-checkout-ambiguous-ref` ███████████░░░░░░░░░ 5/9 (4 left) — checkout handling of ambiguous (branch/tag) refs
 - [ ] `t2206-add-submodule-ignored` ██████████░░░░░░░░░░ 4/8 (4 left) — git add respects submodule ignore=all and explicit pathspec
-- [ ] `t2022-checkout-paths` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — checkout $tree -- $paths
-- [ ] `t2082-parallel-checkout-attributes` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — parallel-checkout: attributes
+- [ ] `t2022-checkout-paths` ████████████████████ 5/5 (0 left) — checkout $tree -- $paths
+- [ ] `t2082-parallel-checkout-attributes` ████████████████████ 5/5 (0 left) — parallel-checkout: attributes
 
-- [ ] `t2103-update-index-ignore-missing` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — update-index with options
+- [ ] `t2103-update-index-ignore-missing` ████████████████████ 5/5 (0 left) — update-index with options
 - [ ] `t2000-conflict-when-checking-files-out` ████████████░░░░░░░░ 9/14 (5 left) — git conflicts when checking files out test.
 - [ ] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
 - [ ] `t2107-update-index-basic` ██████████░░░░░░░░░░ 5/10 (5 left) — basic update-index tests
@@ -269,8 +269,8 @@ commit → check it off → move on.
 - [ ] `t3419-rebase-patch-id` ██████████░░░░░░░░░░ 4/8 (4 left) — git rebase - test patch id computation
 - [ ] `t3429-rebase-edit-todo` ████████░░░░░░░░░░░░ 3/7 (4 left) — rebase should reread the todo file if an exec modifies it
 - [ ] `t3703-add-magic-pathspec` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — magic pathspec tests using git-add
-- [ ] `t3601-rm-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — rm --pathspec-from-file
-- [ ] `t3909-stash-pathspec-file` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — stash --pathspec-from-file
+- [ ] `t3601-rm-pathspec-file` ████████████████████ 5/5 (0 left) — rm --pathspec-from-file
+- [ ] `t3909-stash-pathspec-file` ████████████████████ 5/5 (0 left) — stash --pathspec-from-file
 - [ ] `t3417-rebase-whitespace-fix` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase --whitespace=fix
 
 - [ ] `t3433-rebase-across-mode-change` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — git rebase across mode change
@@ -424,9 +424,9 @@ commit → check it off → move on.
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
 
 - [ ] `t4136-apply-check` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — git apply should exit non-zero with unrecognized input.
-- [ ] `t4102-apply-rename` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply handling copy/rename patch.
+- [ ] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch.
 
-- [ ] `t4138-apply-ws-expansion` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply test patches with whitespace expansion.
+- [ ] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion.
 - [ ] `t4023-diff-rename-typechange` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — typechange rename detection
 - [ ] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
 - [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
@@ -576,7 +576,7 @@ commit → check it off → move on.
 - [ ] `t5351-unpack-large-objects` ████████░░░░░░░░░░░░ 3/7 (4 left) — git unpack-objects with large objects
 - [ ] `t5404-tracking-branches` ████████░░░░░░░░░░░░ 3/7 (4 left) — tracking branch update checks for git push
 - [ ] `t5618-alternate-refs` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test handling of --alternate-refs traversal
-- [ ] `t5410-receive-pack` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git receive-pack
+- [ ] `t5410-receive-pack` ████████████████████ 5/5 (0 left) — git receive-pack
 - [ ] `t5517-push-mirror` ████████████░░░░░░░░ 8/13 (5 left) — pushing to a mirror repository
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
@@ -808,10 +808,10 @@ commit → check it off → move on.
 - [ ] `t7615-diff-algo-with-mergy-operations` ████████░░░░░░░░░░░░ 3/7 (4 left) — git merge and other operations that rely on merge
 
 - [ ] `t7402-submodule-rebase` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test rebasing, stashing, etc. with submodules
-- [ ] `t7421-submodule-summary-add` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — Summary support for submodules, adding them using git submodule add
+- [ ] `t7421-submodule-summary-add` ████████████████████ 5/5 (0 left) — Summary support for submodules, adding them using git submodule add
 
-- [ ] `t7518-ident-corner-cases` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — corner cases in ident strings
-- [ ] `t7602-merge-octopus-many` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git merge
+- [ ] `t7518-ident-corner-cases` ████████████████████ 5/5 (0 left) — corner cases in ident strings
+- [ ] `t7602-merge-octopus-many` ████████████████████ 5/5 (0 left) — git merge
 
 - [ ] `t7103-reset-bare` ████████████░░░░░░░░ 8/13 (5 left) — git reset in a bare repository
 - [ ] `t7603-merge-reduce-heads` ████████████░░░░░░░░ 8/13 (5 left) — git merge
