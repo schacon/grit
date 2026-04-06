@@ -458,8 +458,11 @@ fn three_way_merge(
                 // Added by them only
                 out.entries.push((*te).clone());
             }
-            (Some(_), None, None) => {
-                // Deleted by both: skip
+            (Some(be), None, None) => {
+                // `git read-tree -m <base> <ours> <theirs>` keeps a stage-1-only
+                // unmerged entry when both sides deleted a path that existed in base.
+                // This is relied upon by checkout-index --stage=all workflows.
+                stage_entry(&mut out, be, 1);
             }
             (Some(be), None, Some(te)) => {
                 // Deleted by us, modified by them: conflict
