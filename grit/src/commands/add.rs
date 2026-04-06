@@ -800,6 +800,23 @@ fn add_path(
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
     if is_real_dir {
+        // For explicitly named directories, honor ignore rules on the
+        // directory path itself (e.g. `git add sub` when `sub` is ignored).
+        if !args.force {
+            if let Some(ref mut matcher) = ignore_matcher {
+                let (is_ignored, _match_info) = matcher
+                    .check_path(repo, Some(&*index), path, true)
+                    .map_err(|e| AddPathError::Other(e.into()))?;
+                if is_ignored {
+                    return Err(AddPathError::Ignored(format!(
+                        "The following paths are ignored by one of your .gitignore files:\n\
+                         {path}\n\
+                         Use -f if you really want to add them."
+                    )));
+                }
+            }
+        }
+
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
         if embedded_git.exists() {
