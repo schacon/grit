@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after improving read-tree confusing-path validation for NTFS edge cases and preserving UTF-8 non-dotgit paths).
+- `rm -rf /workspace/tests/trash.t1014-read-tree-confusing && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 27/28 passing (improved from 19/28).
+- `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 27/28 passing.
+- `rm -rf /workspace/tests/trash.t1416-ref-transaction-hooks && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1416-ref-transaction-hooks.sh` (run from `/workspace/tests`): 9/10 passing (improved from 2/10).
+- `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+  - `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
+  - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing.
 - `cargo build --release -p grit-rs`: success (after reftable fsck compatibility updates across `init`, `worktree add`, and `refs verify` paths).
 - `./scripts/run-tests.sh t0614-reftable-fsck.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check).

@@ -108,7 +108,40 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         bail!("invalid path '{}'", String::from_utf8_lossy(name));
     }
 
+    if prot.protect_ntfs {
+        // Backslashes are treated as path separators on NTFS, so reject
+        // confusing names that rely on '\' being a regular byte.
+        if name.contains(&b'\\') {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+
+        // Reject NTFS-equivalent ".git" names such as ".git ", ".git...",
+        // and alternate stream forms like ".git...:stream".
+        if ntfs_equivalent_to_dotgit(name) {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+    }
+
     Ok(())
+}
+
+fn ntfs_equivalent_to_dotgit(name: &[u8]) -> bool {
+    if name.len() < 4 || !name[..4].eq_ignore_ascii_case(b".git") {
+        return false;
+    }
+
+    let rest = &name[4..];
+    if rest.is_empty() {
+        return true;
+    }
+
+    let head = rest.split(|b| *b == b':').next().unwrap_or(rest);
+    let mut trimmed_len = head.len();
+    while trimmed_len > 0 && matches!(head[trimmed_len - 1], b'.' | b' ') {
+        trimmed_len -= 1;
+    }
+
+    trimmed_len == 0
 }
 
 /// Run `grit read-tree`.

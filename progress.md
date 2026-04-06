@@ -13,6 +13,7 @@
 
 ## Recently completed
 
+- `t1014-read-tree-confusing` — 27/28 tests passing (hardened `read-tree` path-component validation for NTFS confusion cases by rejecting backslashes and `.git`-equivalent suffix/ADS names like `.git. ` and `.git...:stream`; remaining failure depends on harness Unicode variable setup for `${u200c}` case)
 - `t0614-reftable-fsck` — 7/7 tests pass (implemented reftable-aware `refs verify` checks covering main/worktree stacks with Git-compatible corruption diagnostics, ensured `init` honors default ref-format environment/config precedence used by upstream tests, and initialized per-worktree reftable stacks during `worktree add` so verification works immediately across linked worktrees)
 - `t1309-early-config` — 10/10 tests pass (added `test-tool config read_early_config` compatibility in `grit` and aligned early-config behavior with upstream: repository-only parsing path with fallback to non-repo config on incompatible repository format, while preserving invalid-config handling for expected-failure cases)
 - `t1406-submodule-ref-store` — 15/15 tests pass (extended `test-tool ref-store` backend handling to support `submodule:<path>` read-only stores and implemented missing API helpers used by upstream coverage: `for-each-ref`, `resolve-ref` with flags, `verify-ref`, `for-each-reflog`, reflog entry iteration, and `reflog-exists`, while preserving submodule write-operation rejection semantics)
