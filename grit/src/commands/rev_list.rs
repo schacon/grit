@@ -267,25 +267,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
                 "--reflog" | "--walk-reflogs" | "-g" => {
-                    // Walk reflog: output all OIDs in the reflog
-                    let refname = if revision_specs.is_empty() {
-                        "HEAD".to_string()
-                    } else {
-                        let r = &revision_specs[0];
-                        if r == "HEAD" || r.starts_with("refs/") {
-                            r.clone()
-                        } else {
-                            format!("refs/heads/{r}")
-                        }
-                    };
-                    let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
-                    let stdout = std::io::stdout();
-                    let mut out = stdout.lock();
-                    for entry in entries.iter().rev() {
-                        writeln!(out, "{}", entry.new_oid.to_hex())?;
-                    }
-                    return Ok(());
+                    options.walk_reflogs = true;
                 }
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
@@ -348,6 +330,47 @@ pub fn run(args: Args) -> Result<()> {
         if decorated.is_empty() {
             options.simplify_by_decoration = false;
         }
+    }
+
+    // Handle --walk-reflogs / -g mode
+    if options.walk_reflogs {
+        if revision_specs.is_empty() {
+            bail!("error: no revisions passed to rev-list -g");
+        }
+        let refname = {
+            let r = &revision_specs[0];
+            if r == "HEAD" || r.starts_with("refs/") {
+                r.clone()
+            } else {
+                format!("refs/heads/{r}")
+            }
+        };
+        let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        let show_parents = options.output_mode == OutputMode::Parents;
+        let max_count: usize = options.max_count.unwrap_or(usize::MAX);
+        for (count, entry) in entries.iter().rev().enumerate() {
+            if count >= max_count {
+                break;
+            }
+            if show_parents {
+                if let Ok(obj) = repo.odb.read(&entry.new_oid) {
+                    if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {
+                        let mut line = entry.new_oid.to_hex();
+                        for parent in &commit.parents {
+                            line.push(' ');
+                            line.push_str(&parent.to_hex());
+                        }
+                        writeln!(out, "{line}")?;
+                        continue;
+                    }
+                }
+            }
+            writeln!(out, "{}", entry.new_oid.to_hex())?;
+        }
+        return Ok(());
     }
 
     // Apply --default when no revision specs given

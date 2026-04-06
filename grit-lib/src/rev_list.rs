@@ -187,6 +187,8 @@ pub struct RevListOptions {
     pub no_object_names: bool,
     /// Show boundary commits with `-` prefix.
     pub boundary: bool,
+    /// Walk reflog instead of commit graph.
+    pub walk_reflogs: bool,
     /// Show left/right markers for symmetric diff.
     pub left_right: bool,
     /// Filter to left-only commits in symmetric diff.
@@ -239,6 +241,7 @@ impl Default for RevListOptions {
             objects: false,
             no_object_names: false,
             boundary: false,
+            walk_reflogs: false,
             left_right: false,
             left_only: false,
             right_only: false,

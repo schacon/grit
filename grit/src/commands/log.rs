@@ -809,35 +809,77 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 }
 
 /// Run the reflog walk mode (`log -g` / `log --walk-reflogs`).
-fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
-    // Determine which ref to walk
-    let refname = if args.revisions.is_empty() {
-        "HEAD".to_string()
+fn resolve_reflog_name(repo: &Repository, r: &str) -> String {
+    if r == "HEAD" || r.starts_with("refs/") {
+        r.to_string()
     } else {
-        let r = &args.revisions[0];
-        if r == "HEAD" || r.starts_with("refs/") {
-            r.clone()
+        let candidate = format!("refs/heads/{r}");
+        if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            candidate
         } else {
-            let candidate = format!("refs/heads/{r}");
-            if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
-                candidate
-            } else {
-                r.clone()
+            r.to_string()
+        }
+    }
+}
+
+fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
+    // Determine which refs to walk (may be multiple)
+    let refs_to_walk: Vec<String> = if args.revisions.is_empty() {
+        vec!["HEAD".to_string()]
+    } else {
+        args.revisions
+            .iter()
+            .map(|r| resolve_reflog_name(repo, r))
+            .collect()
+    };
+
+    // For a single ref, use the simple path; for multiple, merge by timestamp.
+    let (entries, display_names): (Vec<_>, Vec<_>) = {
+        let mut all_entries: Vec<(grit_lib::reflog::ReflogEntry, String)> = Vec::new();
+        for refname in &refs_to_walk {
+            let display = refname
+                .strip_prefix("refs/heads/")
+                .unwrap_or(refname)
+                .to_string();
+            if let Ok(ref_entries) = read_reflog(&repo.git_dir, refname) {
+                for e in ref_entries {
+                    all_entries.push((e, display.clone()));
+                }
             }
         }
+        // Sort by timestamp descending (newest first within each position)
+        // For multiple refs, interleave by timestamp
+        if refs_to_walk.len() > 1 {
+            // Parse timestamps and sort
+            all_entries.sort_by(|a, b| {
+                // Parse timestamp from identity string "Name <email> <epoch> <tz>"
+                let ts_a =
+                    a.0.identity
+                        .split_whitespace()
+                        .rev()
+                        .nth(1)
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(0);
+                let ts_b =
+                    b.0.identity
+                        .split_whitespace()
+                        .rev()
+                        .nth(1)
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .unwrap_or(0);
+                ts_b.cmp(&ts_a).then(b.1.cmp(&a.1))
+            });
+        } else {
+            all_entries.reverse(); // oldest-first in file → newest-first for display
+        }
+        all_entries.into_iter().unzip()
     };
-
-    let display_name = if refname.starts_with("refs/heads/") {
-        refname.strip_prefix("refs/heads/").unwrap_or(&refname)
-    } else {
-        &refname
-    };
-
-    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if entries.is_empty() {
         return Ok(());
     }
+    let refname = refs_to_walk[0].clone();
+    let display_name_single = refname.strip_prefix("refs/heads/").unwrap_or(&refname);
 
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
@@ -855,7 +897,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
     let mut shown = 0usize;
     let mut skipped = 0usize;
 
-    for (i, entry) in entries.iter().rev().enumerate() {
+    for (i, (entry, display)) in entries.iter().zip(display_names.iter()).enumerate() {
         if shown >= max {
             break;
         }
@@ -881,8 +923,22 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         if args.merges && commit_data.parents.len() <= 1 {
             continue;
         }
+        // Apply pathspec filter
+        if !args.pathspecs.is_empty() {
+            let info = CommitInfo {
+                tree: commit_data.tree,
+                parents: commit_data.parents.clone(),
+                author: commit_data.author.clone(),
+                committer: commit_data.committer.clone(),
+                message: commit_data.message.clone(),
+            };
+            match commit_touches_paths(&repo.odb, &info, &args.pathspecs) {
+                Ok(false) => continue,
+                _ => {}
+            }
+        }
 
-        let selector = format!("{}@{{{}}}", display_name, i);
+        let selector = format!("{}@{{{}}}", display, i);
 
         // NUL separator between entries for multi-line formats
         let is_oneline_fmt = args.format.as_deref() == Some("oneline") || args.oneline;
@@ -1030,17 +1086,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         } else if args.oneline {
             let abbrev = &entry.new_oid.to_hex()[..7];
             if args.null_terminator {
-                write!(
-                    out,
-                    "{} {}@{{{}}}: {}\0",
-                    abbrev, display_name, i, entry.message
-                )?;
+                write!(out, "{} {}@{{{}}}: {}\0", abbrev, display, i, entry.message)?;
             } else {
-                writeln!(
-                    out,
-                    "{} {}@{{{}}}: {}",
-                    abbrev, display_name, i, entry.message
-                )?;
+                writeln!(out, "{} {}@{{{}}}: {}", abbrev, display, i, entry.message)?;
             }
         } else {
             // Full format with Reflog headers
