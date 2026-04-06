@@ -384,6 +384,10 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     fs::create_dir_all(&wt_admin)
         .with_context(|| format!("cannot create '{}'", wt_admin.display()))?;
 
+    if grit_lib::reftable::is_reftable_repo(&common) {
+        initialize_worktree_reftable_stack(&wt_admin)?;
+    }
+
     // Write gitdir file — points the admin dir back to the worktree's .git file
     let gitdir_content = format!("{}\n", wt_path.join(".git").display());
     fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
@@ -449,9 +453,37 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         );
     }
 
+    if grit_lib::reftable::is_reftable_repo(&common) {
+        initialize_worktree_reftable_stack(&wt_admin)?;
+    }
+
     // Populate the working tree by checking out the commit
     if !args.no_checkout {
         populate_worktree(&repo.odb, &common, &commit_oid, &wt_path, &wt_admin)?;
+    }
+
+    Ok(())
+}
+
+fn initialize_worktree_reftable_stack(worktree_admin_dir: &Path) -> Result<()> {
+    let reftable_dir = worktree_admin_dir.join("reftable");
+    fs::create_dir_all(&reftable_dir)?;
+
+    let table_name = "00000000-00000000-00000000.ref";
+    let table_path = reftable_dir.join(table_name);
+    if !table_path.exists() {
+        let writer = grit_lib::reftable::ReftableWriter::new(
+            grit_lib::reftable::WriteOptions::default(),
+            0,
+            0,
+        );
+        let data = writer.finish()?;
+        fs::write(&table_path, data)?;
+    }
+
+    let tables_list_path = reftable_dir.join("tables.list");
+    if !tables_list_path.exists() {
+        fs::write(&tables_list_path, format!("{table_name}\n"))?;
     }
 
     Ok(())

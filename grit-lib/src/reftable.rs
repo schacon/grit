@@ -1349,9 +1349,11 @@ impl ReftableStack {
 
 /// Detect whether a git directory uses the reftable backend.
 pub fn is_reftable_repo(git_dir: &Path) -> bool {
-    // Check for extensions.refStorage = reftable in config
-    let config_path = git_dir.join("config");
-    if let Ok(content) = fs::read_to_string(&config_path) {
+    fn config_uses_reftable(config_path: &Path) -> bool {
+        let Ok(content) = fs::read_to_string(config_path) else {
+            return false;
+        };
+
         let mut in_extensions = false;
         for line in content.lines() {
             let trimmed = line.trim();
@@ -1369,7 +1371,31 @@ pub fn is_reftable_repo(git_dir: &Path) -> bool {
                 }
             }
         }
+        false
     }
+
+    let local_config = git_dir.join("config");
+    if config_uses_reftable(&local_config) {
+        return true;
+    }
+
+    // Linked worktrees typically store the shared repository configuration
+    // in the common directory pointed to by `commondir`.
+    if let Ok(raw) = fs::read_to_string(git_dir.join("commondir")) {
+        let rel = raw.trim();
+        if !rel.is_empty() {
+            let common = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                git_dir.join(rel)
+            };
+            let common_config = common.canonicalize().unwrap_or(common).join("config");
+            if config_uses_reftable(&common_config) {
+                return true;
+            }
+        }
+    }
+
     false
 }
 

@@ -104,7 +104,7 @@ commit → check it off → move on.
 - [x] `t1511-rev-parse-caret` ████████████████████ 17/17 (0 left) — tests for ref^{stuff}
 - [x] `t1406-submodule-ref-store` ████████████████████ 15/15 (0 left) — test submodule ref store api
 - [x] `t1309-early-config` ████████████████████ 10/10 (0 left) — Test read_early_config()
-- [ ] `t0614-reftable-fsck` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — Test reftable backend consistency check
+- [x] `t0614-reftable-fsck` ████████████████████ 7/7 (0 left) — Test reftable backend consistency check
 - [ ] `t1416-ref-transaction-hooks` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — reference transaction hooks
 - [ ] `t1014-read-tree-confusing` █████████████░░░░░░░ 19/28 (9 left) — check that read-tree rejects confusing paths
 - [ ] `t1417-reflog-updateref` ███████████░░░░░░░░░ 12/21 (9 left) — git reflog --updateref
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,741/24,806 tests passing, 16,065 failures remaining**
+**8,748/24,806 tests passing, 16,058 failures remaining**
