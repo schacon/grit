@@ -297,11 +297,17 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         }
     }
 
-    let wt_path = wt_path.canonicalize().unwrap_or_else(|_| {
-        // Path may not exist yet; create it then canonicalize
-        let _ = fs::create_dir_all(&wt_path);
+    // Canonicalize the path (don't create it yet — that happens later after validation)
+    let wt_path = if wt_path.exists() {
         wt_path.canonicalize().unwrap_or(wt_path.clone())
-    });
+    } else {
+        // Not created yet — use absolute path from cwd
+        if wt_path.is_absolute() {
+            wt_path.clone()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(&wt_path)
+        }
+    };
 
     // Worktree name is derived from the basename of the path
     let wt_name = wt_path
@@ -395,6 +401,54 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         )?;
         return Ok(());
     };
+
+    // Check if the branch is already checked out in another worktree
+    // Only applies when NOT in detach mode
+    let detach_head_mode = args.detach || implicit_detach;
+    if !detach_head_mode {
+        if let Some(ref name) = branch_name {
+            if !args.force {
+                let branch_ref = format!("refs/heads/{name}");
+                // Check all worktrees (main + linked)
+                let main_head = resolve_head(&common).unwrap_or(HeadState::Invalid);
+                if let HeadState::Branch { ref refname, .. } = main_head {
+                    if *refname == branch_ref {
+                        bail!(
+                            "fatal: '{}' is already checked out at '{}'",
+                            name,
+                            common.parent().unwrap_or(&common).display()
+                        );
+                    }
+                }
+                // Check linked worktrees
+                let wt_dir = common.join("worktrees");
+                if wt_dir.is_dir() {
+                    for entry in std::fs::read_dir(&wt_dir).into_iter().flatten().flatten() {
+                        let head_file = entry.path().join("HEAD");
+                        if let Ok(content) = std::fs::read_to_string(&head_file) {
+                            if let Some(refname) = content.trim().strip_prefix("ref: ") {
+                                if refname == branch_ref {
+                                    let gitdir_file = entry.path().join("gitdir");
+                                    let wt_path_str =
+                                        if let Ok(raw) = std::fs::read_to_string(&gitdir_file) {
+                                            let p = std::path::Path::new(raw.trim());
+                                            p.parent().unwrap_or(p).display().to_string()
+                                        } else {
+                                            entry.file_name().to_string_lossy().to_string()
+                                        };
+                                    bail!(
+                                        "fatal: '{}' is already checked out at '{}'",
+                                        name,
+                                        wt_path_str
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } // end detach_head_mode check
 
     // Create the working tree directory
     fs::create_dir_all(&wt_path)
