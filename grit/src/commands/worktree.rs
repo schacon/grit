@@ -1449,24 +1449,43 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
         let wt_dotgit = &recorded;
         let wt_path = recorded.parent().unwrap_or(&recorded);
 
-        // Repair 1: If the worktree .git file exists, make sure it points back to admin
+        // Repair 1: If the worktree .git file exists and points to the correct admin dir, it's fine.
+        // If it exists but points to an EXISTING but different admin dir, repair the pointer.
+        // If it exists but points to a NON-EXISTENT location, fall through to Repair 2.
         if wt_dotgit.exists() {
             let dotgit_content = fs::read_to_string(wt_dotgit).unwrap_or_default();
             let expected_prefix = "gitdir: ";
             if let Some(current_target) = dotgit_content.trim().strip_prefix(expected_prefix) {
                 let current_path = PathBuf::from(current_target);
-                let admin_canonical = admin.canonicalize().unwrap_or_else(|_| admin.clone());
-                let current_canonical = current_path.canonicalize().unwrap_or(current_path.clone());
-                if current_canonical != admin_canonical {
-                    // Fix the .git file
-                    let fixed = format!("gitdir: {}\n", admin.display());
-                    fs::write(wt_dotgit, &fixed)?;
-                    eprintln!(
-                        "repair: {}: repaired gitfile to point to {}",
-                        wt_path.display(),
-                        admin.display()
-                    );
+                // Only repair if the target exists but is wrong
+                if current_path.exists() {
+                    let admin_canonical = admin.canonicalize().unwrap_or_else(|_| admin.clone());
+                    let current_canonical =
+                        current_path.canonicalize().unwrap_or(current_path.clone());
+                    if current_canonical != admin_canonical {
+                        // Check if the current target is our own admin dir or a different one
+                        // If it points to a different valid git admin, report as "incorrect"
+                        let is_our_admin = current_target.contains("worktrees");
+                        if !is_our_admin {
+                            eprintln!(
+                                "repair: {}: .git file incorrect; repaired",
+                                wt_path.display()
+                            );
+                        } else {
+                            eprintln!(
+                                "repair: {}: repaired gitfile to point to {}",
+                                wt_path.display(),
+                                admin.display()
+                            );
+                        }
+                        // Fix the .git file (it points to different valid location)
+                        let fixed = format!("gitdir: {}\n", admin.display());
+                        fs::write(wt_dotgit, &fixed)?;
+                    }
+                    // If already correct, nothing to do
+                    continue;
                 }
+                // current_path doesn't exist → fall through to Repair 2
             }
         }
 
