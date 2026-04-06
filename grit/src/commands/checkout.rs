@@ -539,6 +539,12 @@ fn switch_branch(
                     if !admin.is_dir() {
                         continue;
                     }
+                    // Skip the current worktree (admin = current git_dir)
+                    if admin.canonicalize().unwrap_or(admin.clone())
+                        == repo.git_dir.canonicalize().unwrap_or(repo.git_dir.clone())
+                    {
+                        continue;
+                    }
                     let wt_head = admin.join("HEAD");
                     if let Ok(content) = std::fs::read_to_string(&wt_head) {
                         let content = content.trim();
