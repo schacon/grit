@@ -410,8 +410,9 @@ pub fn diff_index_to_tree(
 
     // Check index entries against tree
     for ie in &index.entries {
-        // Only look at stage 0 (merged) entries
-        if ie.stage() != 0 {
+        // Only look at stage 0 (merged) entries.
+        // Intent-to-add entries behave as absent in staged comparisons.
+        if ie.stage() != 0 || ie.intent_to_add() {
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
@@ -502,6 +503,36 @@ pub fn diff_index_to_worktree(
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+
+        // Intent-to-add entries behave as "path absent from index" for
+        // worktree comparisons: show as Added only when the file currently
+        // exists in the working tree.
+        if ie.intent_to_add() {
+            let file_path = work_tree.join(path_str_ref);
+            match fs::symlink_metadata(&file_path) {
+                Ok(meta) if !meta.is_dir() => {
+                    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+                    let wt_oid =
+                        hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+                    let wt_mode = mode_from_metadata(&meta);
+                    result.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None,
+                        new_path: Some(path_str_ref.to_owned()),
+                        old_mode: "000000".to_owned(),
+                        new_mode: format_mode(wt_mode),
+                        old_oid: zero_oid(),
+                        new_oid: wt_oid,
+                        score: None,
+                    });
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) if e.raw_os_error() == Some(20) /* ENOTDIR */ => {}
+                Err(e) => return Err(Error::Io(e)),
+            }
+            continue;
+        }
 
         // Gitlink entries (submodules) are directories — compare HEAD commit.
         if ie.mode == 0o160000 {
@@ -754,6 +785,13 @@ pub fn diff_tree_to_worktree(
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
+        // Intent-to-add entries should participate in tree-vs-worktree path
+        // union (so `diff HEAD` can show them as added), but they should not be
+        // treated as normal index baselines for content/mode comparisons.
+        if ie.intent_to_add() {
+            index_paths.insert(path);
+            continue;
+        }
         index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
     }

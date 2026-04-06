@@ -228,6 +228,11 @@ pub fn run(args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
+    let has_real_index_entries = index
+        .entries
+        .iter()
+        .any(|entry| entry.stage() == 0 && !entry.intent_to_add());
+
     // Write tree from index
     let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
         Ok(oid) => oid,
@@ -272,6 +277,9 @@ pub fn run(args: Args) -> Result<()> {
         if parent_commit.tree == tree_oid {
             bail!("nothing to commit, working tree clean");
         }
+    } else if !args.allow_empty && parents.is_empty() && !has_real_index_entries {
+        // Initial commit where index only contains intent-to-add entries.
+        bail!("nothing to commit, working tree clean");
     }
 
     // Compute diffs for --dry-run output

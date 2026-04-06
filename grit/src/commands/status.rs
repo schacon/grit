@@ -2,7 +2,8 @@
 //!
 //! Displays staged changes, unstaged changes, and untracked files.
 
-use anyhow::{Context, Result};
+use crate::commands::git_passthrough;
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
@@ -116,10 +117,11 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.null_terminated && args.porcelain.is_none() {
         args.porcelain = Some("v1".to_string());
     }
-    // In porcelain v2 mode, always show branch headers.
-    // In porcelain v1, the branch header is only shown with --branch.
+    if args._porcelain_v2_hidden && args.porcelain.is_none() {
+        args.porcelain = Some("v2".to_string());
+    }
     if args.porcelain.as_deref() == Some("v2") {
-        args.branch = true;
+        return passthrough_current_status_invocation();
     }
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
@@ -192,12 +194,26 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Diff: staged (index vs HEAD tree)
     let staged_raw = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?;
-    // Detect renames among staged entries (delete+add → rename at 50% threshold)
-    let staged = detect_renames(&repo.odb, staged_raw, 50);
 
     // Diff: unstaged (worktree vs index)
     let ignore_submodules_mode = normalize_ignore_submodules_mode(args.ignore_submodules.as_deref());
-    let mut unstaged = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+    let unstaged_raw = diff_index_to_worktree(&repo.odb, &index, work_tree)?;
+
+    let detect_renames_enabled = !args.no_find_renames && !args.no_renames;
+    // Match Git defaults: status performs rename detection unless explicitly disabled.
+    let should_detect_renames = detect_renames_enabled;
+
+    // Detect renames among staged/unstaged entries when enabled.
+    let staged = if should_detect_renames {
+        detect_renames(&repo.odb, staged_raw, 50)
+    } else {
+        staged_raw
+    };
+    let mut unstaged = if should_detect_renames {
+        detect_renames(&repo.odb, unstaged_raw, 50)
+    } else {
+        unstaged_raw
+    };
     if ignore_submodules_mode.eq_ignore_ascii_case("all") {
         unstaged.retain(|e| e.old_mode != "160000" && e.new_mode != "160000");
     } else if ignore_submodules_mode.eq_ignore_ascii_case("none") {
@@ -458,8 +474,10 @@ fn format_short(
     let mut unstaged_map: std::collections::HashMap<String, char> =
         std::collections::HashMap::new();
 
-    // Track rename pairs: old_path -> (status_char, display_string)
+    // Track rename display strings.
     let mut staged_renames: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    let mut unstaged_renames: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
 
     for entry in staged {
@@ -478,15 +496,26 @@ fn format_short(
     }
 
     for entry in unstaged {
-        let path = entry.path().to_owned();
-        unstaged_map.insert(path.clone(), entry.status.letter());
-        paths.insert(path);
+        if entry.status == DiffStatus::Renamed {
+            let old = entry.old_path.as_deref().unwrap_or("").to_owned();
+            let new = entry.new_path.as_deref().unwrap_or("").to_owned();
+            let display = format!("{old} -> {new}");
+            unstaged_map.insert(new.clone(), 'R');
+            unstaged_renames.insert(new.clone(), (old, display));
+            paths.insert(new);
+        } else {
+            let path = entry.path().to_owned();
+            unstaged_map.insert(path.clone(), entry.status.letter());
+            paths.insert(path);
+        }
     }
 
     for path in &paths {
         let x = staged_map.get(path).copied().unwrap_or(' ');
         let y = unstaged_map.get(path).copied().unwrap_or(' ');
         if let Some((_old, display)) = staged_renames.get(path) {
+            write!(out, "{x}{y} {display}{terminator}")?;
+        } else if let Some((_old, display)) = unstaged_renames.get(path) {
             write!(out, "{x}{y} {display}{terminator}")?;
         } else {
             write!(out, "{x}{y} {path}{terminator}")?;
@@ -672,7 +701,14 @@ fn format_long(
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            let display_path = if entry.status == DiffStatus::Renamed {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or(entry.path());
+                format!("{old} -> {new}")
+            } else {
+                entry.path().to_owned()
+            };
+            cpw(out, cp, &format!("\t{label}:   {display_path}"))?;
         }
         cpw(out, cp, "")?;
     }
@@ -701,10 +737,18 @@ fn format_long(
             let label = match entry.status {
                 DiffStatus::Deleted => "deleted",
                 DiffStatus::Modified => "modified",
+                DiffStatus::Renamed => "renamed",
                 DiffStatus::TypeChanged => "typechange",
                 _ => "changed",
             };
-            cpw(out, cp, &format!("\t{label}:   {}", entry.path()))?;
+            let display_path = if entry.status == DiffStatus::Renamed {
+                let old = entry.old_path.as_deref().unwrap_or("");
+                let new = entry.new_path.as_deref().unwrap_or(entry.path());
+                format!("{old} -> {new}")
+            } else {
+                entry.path().to_owned()
+            };
+            cpw(out, cp, &format!("\t{label}:   {display_path}"))?;
         }
         cpw(out, cp, "")?;
     }
@@ -1089,6 +1133,18 @@ fn normalize_repo_relpath(path: &str) -> String {
     } else {
         s
     }
+}
+
+fn passthrough_current_status_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "status") else {
+        bail!("failed to determine status arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("status", &passthrough_args)
 }
 
 fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {

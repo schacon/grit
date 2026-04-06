@@ -77,6 +77,10 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// Add new files to the index as intent-to-add entries.
+    #[arg(long = "intent-to-add")]
+    pub intent_to_add: bool,
+
     /// How to handle whitespace errors.
     #[arg(long = "whitespace", value_name = "ACTION", default_value = "warn")]
     pub whitespace: String,
@@ -930,6 +934,11 @@ pub fn run(args: Args) -> Result<()> {
         apply_to_index(&patches, &args)?;
     } else if args.check {
         check_patches(&patches, &args)?;
+    } else if args.intent_to_add {
+        // Match Git: --intent-to-add applies the patch to the working tree and
+        // records index entries as intent-to-add (for new files).
+        apply_to_worktree(&patches, &args)?;
+        apply_to_index(&patches, &args)?;
     } else if args.index {
         verify_worktree_matches_index(&patches, &args)?;
         apply_to_worktree(&patches, &args)?;
@@ -1159,6 +1168,38 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
 
         // Get old content from index (or empty for new files)
         let old_content = if fp.is_new {
+            if args.intent_to_add {
+                let empty_oid = repo
+                    .odb
+                    .write(ObjectKind::Blob, b"")
+                    .context("writing empty blob for intent-to-add")?;
+                if index.version < 3 {
+                    index.version = 3;
+                }
+                let mut entry = grit_lib::index::IndexEntry {
+                    ctime_sec: 0,
+                    ctime_nsec: 0,
+                    mtime_sec: 0,
+                    mtime_nsec: 0,
+                    dev: 0,
+                    ino: 0,
+                    mode: fp
+                        .new_mode
+                        .as_deref()
+                        .map(parse_mode)
+                        .unwrap_or(0o100644),
+                    uid: 0,
+                    gid: 0,
+                    size: 0,
+                    oid: empty_oid,
+                    flags: ((adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+                    flags_extended: None,
+                    path: adjusted.clone().into_bytes(),
+                };
+                entry.set_intent_to_add(true);
+                index.add_or_replace(entry);
+                continue;
+            }
             String::new()
         } else {
             let entry = index

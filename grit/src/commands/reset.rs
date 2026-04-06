@@ -387,8 +387,10 @@ fn reset_paths(
             index.add_or_replace(entry.clone());
         } else if intent_to_add {
             // With -N, keep removed paths as intent-to-add entries.
-            let empty_oid = ObjectId::from_hex("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
-                .expect("empty blob oid is valid");
+            let empty_oid = repo
+                .odb
+                .write(grit_lib::objects::ObjectKind::Blob, b"")
+                .context("writing empty blob for intent-to-add")?;
             let mut ita_entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -406,6 +408,9 @@ fn reset_paths(
                 path: path_bytes.clone(),
             };
             ita_entry.set_intent_to_add(true);
+            if index.version < 3 {
+                index.version = 3;
+            }
             index.add_or_replace(ita_entry);
         }
         // If not in tree and no -N, path is removed from index (staged deletion).

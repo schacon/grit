@@ -13,11 +13,21 @@ use crate::odb::Odb;
 ///
 /// The `prefix` argument optionally limits the write to a subtree path.
 pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<ObjectId> {
+    // Ensure implicit empty blobs used by intent-to-add entries exist.
+    // These entries are skipped from tree construction below, but callers
+    // like commit/write-tree may still validate object presence and expect
+    // canonical empty-blob availability.
+    let _ = odb.write(ObjectKind::Blob, b"");
+
     let prefix_bytes = prefix.as_bytes();
     let mut entries: Vec<&IndexEntry> = index
         .entries
         .iter()
-        .filter(|entry| entry.stage() == 0 && entry.path.starts_with(prefix_bytes))
+        .filter(|entry| {
+            entry.stage() == 0
+                && !entry.intent_to_add()
+                && entry.path.starts_with(prefix_bytes)
+        })
         .collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
     build_tree(odb, &entries, prefix_bytes)

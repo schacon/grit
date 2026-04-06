@@ -131,6 +131,8 @@ struct Change {
     new_mode: u32,
     /// Index-side OID.
     old_oid: ObjectId,
+    /// Working-tree-side OID (or zero for deleted/unknown).
+    new_oid: ObjectId,
 }
 
 // ── Option parsing ───────────────────────────────────────────────────
@@ -282,6 +284,24 @@ fn collect_changes(
         // Normal mode: compare stage-0 entries against worktree.
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
+            if idx_entry.intent_to_add() {
+                let abs = work_tree.join(path);
+                if let Some((wt_mode, _wt_oid)) = read_worktree_info(repo, &abs)? {
+                    changes.insert(
+                        path.clone(),
+                        Change {
+                            path: path.clone(),
+                            status: 'A',
+                            old_mode: 0,
+                            new_mode: wt_mode,
+                            old_oid: zero_oid(),
+                            new_oid: _wt_oid,
+                        },
+                    );
+                }
+                continue;
+            }
+
             if has_symlink_ancestor(work_tree, Path::new(path)) {
                 changes.insert(
                     path.clone(),
@@ -291,6 +311,7 @@ fn collect_changes(
                         old_mode: canonicalize_mode(*idx_mode),
                         new_mode: 0,
                         old_oid: *idx_oid,
+                        new_oid: zero_oid(),
                     },
                 );
                 continue;
@@ -316,6 +337,7 @@ fn collect_changes(
                             old_mode: idx_canonical,
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -337,6 +359,7 @@ fn collect_changes(
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
+                                new_oid: wt_oid,
                             },
                         );
                     }
@@ -351,6 +374,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -373,6 +397,7 @@ fn collect_changes(
                     old_mode: 0,
                     new_mode: 0,
                     old_oid: zero_oid(),
+                    new_oid: zero_oid(),
                 },
             );
         }
@@ -390,6 +415,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
+                            new_oid: _wt_oid,
                         },
                     );
                 }
@@ -402,6 +428,7 @@ fn collect_changes(
                             old_mode: canonicalize_mode(*idx_mode),
                             new_mode: 0,
                             old_oid: *idx_oid,
+                            new_oid: zero_oid(),
                         },
                     );
                 }
@@ -644,6 +671,11 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
 
     // Build mode header lines
     let mut header = format!("diff --git a/{path} b/{path}");
+    let abbr = |oid: ObjectId| -> String {
+        let hex = oid.to_hex();
+        hex[..7.min(hex.len())].to_owned()
+    };
+
     if change.status == 'D' {
         header.push_str(&format!("\ndeleted file mode {:06o}", change.old_mode));
     } else if change.status == 'A' {
@@ -654,8 +686,28 @@ fn print_patch(change: &Change, repo: &Repository, work_tree: &Path) -> Result<(
             change.old_mode, change.new_mode
         ));
     }
+    if change.status == 'A' {
+        header.push_str(&format!("\nindex 0000000..{}", abbr(change.new_oid)));
+    } else if change.status == 'D' {
+        header.push_str(&format!("\nindex {}..0000000", abbr(change.old_oid)));
+    } else if change.old_mode == change.new_mode {
+        header.push_str(&format!(
+            "\nindex {}..{} {:06o}",
+            abbr(change.old_oid),
+            abbr(change.new_oid),
+            change.old_mode
+        ));
+    } else {
+        header.push_str(&format!(
+            "\nindex {}..{}",
+            abbr(change.old_oid),
+            abbr(change.new_oid)
+        ));
+    }
 
-    if old_content == new_content && change.old_mode != change.new_mode {
+    if old_content == new_content
+        && (change.status == 'A' || change.status == 'D' || change.old_mode != change.new_mode)
+    {
         // Mode-only change, no content diff needed
         println!("{header}");
     } else if old_content != new_content {

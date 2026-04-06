@@ -1847,7 +1847,6 @@ fn write_patch_with_prefix(
         let old_content = String::from_utf8_lossy(&old_content_raw).into_owned();
         let new_content = String::from_utf8_lossy(&new_content_raw).into_owned();
 
-        // For Added files, show --- /dev/null; for Deleted files, show +++ /dev/null
         let display_old = if entry.status == DiffStatus::Added {
             "/dev/null"
         } else {
@@ -1858,6 +1857,15 @@ fn write_patch_with_prefix(
         } else {
             new_path
         };
+
+        // For empty additions/deletions (intent-to-add placeholders), Git
+        // prints only the header (new/deleted file mode + index) without a
+        // unified patch body.
+        if old_content == new_content
+            && matches!(entry.status, DiffStatus::Added | DiffStatus::Deleted)
+        {
+            continue;
+        }
 
         if word_diff {
             let patch = word_diff_output(

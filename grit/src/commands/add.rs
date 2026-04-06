@@ -1086,6 +1086,17 @@ fn stage_file(
     let meta = fs::symlink_metadata(abs_path)?;
 
     if args.intent_to_add {
+        if index.version < 3 {
+            index.version = 3;
+        }
+        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
+            // Match Git: `add -N` should not clobber an existing stage-0 entry
+            // that is already tracked with real content.
+            if !existing.intent_to_add() {
+                return Ok(());
+            }
+        }
+
         let mode = if meta.file_type().is_symlink() {
             0o120000
         } else if add_cfg.core_filemode {
@@ -1093,7 +1104,11 @@ fn stage_file(
         } else {
             0o100644 // When core.filemode=false, default to regular
         };
-        let entry = IndexEntry {
+        let empty_oid = Odb::hash_object_data(ObjectKind::Blob, b"");
+        // Ensure the canonical empty blob exists in the object store so later
+        // commands (checkout/diff/commit) can read it by OID.
+        let _ = odb.write(ObjectKind::Blob, b"");
+        let mut entry = IndexEntry {
             ctime_sec: meta.ctime() as u32,
             ctime_nsec: meta.ctime_nsec() as u32,
             mtime_sec: meta.mtime() as u32,
@@ -1104,11 +1119,12 @@ fn stage_file(
             uid: meta.uid(),
             gid: meta.gid(),
             size: 0,
-            oid: grit_lib::diff::zero_oid(),
+            oid: empty_oid,
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
         };
+        entry.set_intent_to_add(true);
         index.add_or_replace(entry);
         if args.verbose {
             println!("add '{rel_path}'");

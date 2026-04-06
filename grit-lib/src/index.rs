@@ -378,12 +378,12 @@ impl Index {
         // Determine which version to write.
         // Version 4 requires path compression, which we do not implement yet.
         // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
-            if self.entries.iter().any(|e| e.flags_extended.is_some()) {
-                3
-            } else {
-                2
-            }
+        let write_version = if self.entries.iter().any(|e| e.flags_extended.is_some()) {
+            // Extended flags (e.g. intent-to-add / skip-worktree) require index v3+.
+            3
+        } else if self.version >= 3 {
+            // We don't implement v4 path compression on write yet.
+            2
         } else {
             self.version
         };

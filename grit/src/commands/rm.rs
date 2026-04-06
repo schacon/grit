@@ -393,7 +393,7 @@ fn safety_check(
     };
 
     let index_oid = entry.oid;
-    let is_intent_to_add = index_oid == zero_oid();
+    let is_intent_to_add = entry.intent_to_add() || index_oid == zero_oid();
 
     if is_intent_to_add {
         // Intent-to-add entries: only allow removal with --cached.
