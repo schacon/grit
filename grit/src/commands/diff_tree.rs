@@ -94,6 +94,8 @@ struct Options {
     stat_too: bool,
     /// Limit recursion depth for --name-only etc.
     max_depth: Option<i32>,
+    /// Ignore changes in amount of whitespace (`-b`).
+    ignore_space_change: bool,
     /// Exit with 1 if there are differences.
     exit_code: bool,
     /// Suppress all output, implies exit_code.
@@ -127,6 +129,7 @@ impl Default for Options {
             pretty: None,
             stat_too: false,
             max_depth: None,
+            ignore_space_change: false,
             exit_code: false,
             quiet: false,
         }
@@ -171,6 +174,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-status" => opts.format = OutputFormat::NameStatus,
                 "--summary" => opts.summary = true,
                 "--exit-code" => opts.exit_code = true,
+                "-b" | "--ignore-space-change" => opts.ignore_space_change = true,
                 "-q" | "--quiet" => {
                     opts.quiet = true;
                     opts.exit_code = true;
@@ -346,7 +350,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
     let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
-    let filtered = filter_entries(entries, opts);
+    let filtered = filter_entries(entries, opts, &repo.odb);
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
         print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
@@ -369,7 +373,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-                    let filtered = filter_entries(entries, opts);
+                    let filtered = filter_entries(entries, opts, &repo.odb);
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
@@ -380,7 +384,7 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
                 let entries =
                     diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-                let filtered = filter_entries(entries, opts);
+                let filtered = filter_entries(entries, opts, &repo.odb);
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
@@ -497,7 +501,7 @@ fn process_stdin_commit(
     let has_diff = if parent_oids.is_empty() {
         if opts.root {
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
-            let filtered = filter_entries(entries, opts);
+            let filtered = filter_entries(entries, opts, &repo.odb);
             let hd = !filtered.is_empty();
             print_diff(out, &repo.odb, &filtered, opts, None)?;
             hd
@@ -507,7 +511,7 @@ fn process_stdin_commit(
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
         let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-        let filtered = filter_entries(entries, opts);
+        let filtered = filter_entries(entries, opts, &repo.odb);
         let hd = !filtered.is_empty();
         print_diff(out, &repo.odb, &filtered, opts, None)?;
         hd
@@ -536,7 +540,7 @@ fn process_stdin_two_trees(
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
     let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
-    let filtered = filter_entries(entries, opts);
+    let filtered = filter_entries(entries, opts, &repo.odb);
     print_diff(out, &repo.odb, &filtered, opts, None)
 }
 
@@ -1390,14 +1394,72 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
-/// Apply all post-diff filters: pathspecs and max-depth.
-fn filter_entries(entries: Vec<DiffEntry>, opts: &Options) -> Vec<DiffEntry> {
+/// Apply all post-diff filters.
+fn filter_entries(entries: Vec<DiffEntry>, opts: &Options, odb: &Odb) -> Vec<DiffEntry> {
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    if let Some(depth) = opts.max_depth {
+    let filtered = if let Some(depth) = opts.max_depth {
         filter_max_depth(filtered, depth, &opts.pathspecs)
     } else {
         filtered
+    };
+    if opts.ignore_space_change {
+        filter_ignore_space_change(filtered, odb)
+    } else {
+        filtered
     }
+}
+
+fn filter_ignore_space_change(entries: Vec<DiffEntry>, odb: &Odb) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let old_content = read_blob_content(odb, &entry.old_oid);
+            let new_content = read_blob_content(odb, &entry.new_oid);
+            normalize_ignore_space_change(&old_content)
+                != normalize_ignore_space_change(&new_content)
+        })
+        .collect()
+}
+
+fn read_blob_content(odb: &Odb, oid: &ObjectId) -> String {
+    if *oid == grit_lib::diff::zero_oid() {
+        String::new()
+    } else {
+        odb.read(oid)
+            .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
+            .unwrap_or_default()
+    }
+}
+
+fn normalize_ignore_space_change(content: &str) -> String {
+    content
+        .lines()
+        .map(normalize_ignore_space_change_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_ignore_space_change_line(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut in_space = false;
+    for c in line.chars() {
+        if c.is_whitespace() {
+            if !in_space {
+                normalized.push(' ');
+                in_space = true;
+            }
+        } else {
+            normalized.push(c);
+            in_space = false;
+        }
+    }
+    normalized.trim_end().to_owned()
 }
 
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {

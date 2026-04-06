@@ -52,6 +52,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
     let mut diff_entries = changes_to_diff_entries(&changes, options.reverse);
+    diff_entries =
+        apply_whitespace_filters_for_diff_entries(diff_entries, &repo, &work_tree, &options);
 
     if options.find_copies {
         let source_entries = collect_copy_sources(&repo, &index, &work_tree, &options)?;
@@ -158,6 +160,14 @@ struct Options {
     find_copies: bool,
     /// Consider all source-side files for copy detection.
     find_copies_harder: bool,
+    /// Ignore changes in amount of whitespace (`-b`).
+    ignore_space_change: bool,
+    /// Ignore all whitespace (`-w`).
+    ignore_all_space: bool,
+    /// Ignore whitespace at end of line.
+    ignore_space_at_eol: bool,
+    /// Ignore changes whose lines are all blank.
+    ignore_blank_lines: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -186,6 +196,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut reverse = false;
     let mut find_copies = false;
     let mut find_copies_harder = false;
+    let mut ignore_space_change = false;
+    let mut ignore_all_space = false;
+    let mut ignore_space_at_eol = false;
+    let mut ignore_blank_lines = false;
     let mut abbrev: Option<usize> = None;
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
@@ -261,6 +275,18 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-1" => stage = 1,
                 "-2" => stage = 2,
                 "-3" => stage = 3,
+                "-b" | "--ignore-space-change" => {
+                    ignore_space_change = true;
+                }
+                "-w" | "--ignore-all-space" => {
+                    ignore_all_space = true;
+                }
+                "--ignore-space-at-eol" => {
+                    ignore_space_at_eol = true;
+                }
+                "--ignore-blank-lines" => {
+                    ignore_blank_lines = true;
+                }
                 "--abbrev" => abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
                     let value = arg.trim_start_matches("--abbrev=");
@@ -270,18 +296,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     abbrev = Some(parsed);
                 }
                 // Silently accept diff options we don't fully implement yet
-                "-w"
-                | "--ignore-all-space"
-                | "-b"
-                | "--ignore-space-change"
-                | "--ignore-space-at-eol"
-                | "--ignore-blank-lines"
-                | "--diff-filter"
-                | "--full-index"
-                | "--no-ext-diff"
-                | "--no-prefix"
-                | "--no-renames"
-                | "--no-abbrev" => {}
+                "--diff-filter" | "--full-index" | "--no-ext-diff" | "--no-prefix"
+                | "--no-renames" | "--no-abbrev" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("-G")
                     || arg.starts_with("-S")
@@ -308,6 +324,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         reverse,
         find_copies,
         find_copies_harder,
+        ignore_space_change,
+        ignore_all_space,
+        ignore_space_at_eol,
+        ignore_blank_lines,
     })
 }
 
@@ -912,6 +932,125 @@ fn load_patch_contents(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e.into()),
         }
+    };
+
+    Ok((old_content, new_content))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WhitespaceMode {
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_blank_lines: bool,
+}
+
+impl WhitespaceMode {
+    fn any(&self) -> bool {
+        self.ignore_all_space
+            || self.ignore_space_change
+            || self.ignore_space_at_eol
+            || self.ignore_blank_lines
+    }
+
+    fn normalize(&self, s: &str) -> String {
+        let mut lines: Vec<String> = s.lines().map(|line| self.normalize_line(line)).collect();
+        if self.ignore_blank_lines {
+            lines.retain(|line| !line.trim().is_empty());
+        }
+        lines.join("\n")
+    }
+
+    fn normalize_line(&self, line: &str) -> String {
+        let mut s = line.to_owned();
+        if self.ignore_all_space {
+            return s.chars().filter(|c| !c.is_whitespace()).collect();
+        }
+        if self.ignore_space_change {
+            let mut collapsed = String::with_capacity(s.len());
+            let mut in_space = false;
+            for c in s.chars() {
+                if c.is_whitespace() {
+                    if !in_space {
+                        collapsed.push(' ');
+                        in_space = true;
+                    }
+                } else {
+                    collapsed.push(c);
+                    in_space = false;
+                }
+            }
+            return collapsed.trim_end().to_owned();
+        }
+        if self.ignore_space_at_eol {
+            s = s.trim_end().to_owned();
+        }
+        s
+    }
+}
+
+fn apply_whitespace_filters_for_diff_entries(
+    entries: Vec<DiffEntry>,
+    repo: &Repository,
+    work_tree: &Path,
+    options: &Options,
+) -> Vec<DiffEntry> {
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: options.ignore_all_space,
+        ignore_space_change: options.ignore_space_change,
+        ignore_space_at_eol: options.ignore_space_at_eol,
+        ignore_blank_lines: options.ignore_blank_lines,
+    };
+    if !ws_mode.any() {
+        return entries;
+    }
+
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let (old_content, new_content) =
+                read_diff_entry_contents(repo, work_tree, entry).unwrap_or_default();
+            ws_mode.normalize(&old_content) != ws_mode.normalize(&new_content)
+        })
+        .collect()
+}
+
+fn read_diff_entry_contents(
+    repo: &Repository,
+    work_tree: &Path,
+    entry: &DiffEntry,
+) -> Result<(String, String)> {
+    let old_content = if entry.old_oid == zero_oid() {
+        String::new()
+    } else {
+        repo.odb
+            .read(&entry.old_oid)
+            .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
+            .unwrap_or_default()
+    };
+
+    let new_content = if entry.new_oid == zero_oid() {
+        if entry.status == DiffStatus::Deleted {
+            String::new()
+        } else {
+            let path = entry.new_path.as_deref().unwrap_or(entry.path());
+            match fs::read(work_tree.join(path)) {
+                Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(e.into()),
+            }
+        }
+    } else {
+        repo.odb
+            .read(&entry.new_oid)
+            .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
+            .unwrap_or_default()
     };
 
     Ok((old_content, new_content))

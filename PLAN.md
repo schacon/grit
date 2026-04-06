@@ -414,12 +414,12 @@ commit → check it off → move on.
 
 - [ ] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
 - [x] `t4039-diff-assume-unchanged` ████████████████████ 4/4 (0 left) — diff with assume-unchanged entries
-- [~] `t4049-diff-stat-count` ███████████████░░░░░ 3/4 (1 left) — diff --stat-count (remaining local mismatch is test helper `test_chmod` only toggling one path in this harness)
+- [~] `t4049-diff-stat-count` ██████████░░░░░░░░░░ 2/4 (2 left) — diff --stat-count (remaining local mismatches: mode-only summary file count and unmerged-summary count handling)
 - [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check
 - [~] `t4257-am-interactive` ██████████░░░░░░░░░░ 2/4 (2 left) — am --interactive tests (upstream harness 4/4; remaining local mismatches come from simplified test helper semantics around `test_commit`/`reset --hard base`)
 - [x] `t4258-am-quoted-cr` ████████████████████ 4/4 (0 left) — test am --quoted-cr=<action>
 - [x] `t4072-diff-max-depth` ████████████████████ 76/76 (0 left) — check that diff --max-depth will limit recursion
-- [ ] `t4040-whitespace-status` ████████████░░░░░░░░ 7/11 (4 left) — diff --exit-code with whitespace
+- [x] `t4040-whitespace-status` ████████████████████ 11/11 (0 left) — diff --exit-code with whitespace
 - [ ] `t4107-apply-ignore-whitespace` ████████████░░░░░░░░ 7/11 (4 left) — git-apply --ignore-whitespace.
 - [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename
 - [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.

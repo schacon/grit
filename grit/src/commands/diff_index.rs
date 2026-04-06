@@ -80,6 +80,12 @@ pub fn run(args: Args) -> Result<()> {
         diff_entries
     };
 
+    let diff_entries = if options.ignore_space_change {
+        filter_entries_ignore_space_change(&repo, diff_entries)
+    } else {
+        diff_entries
+    };
+
     // Compute cwd-relative prefix for --relative
     let rel_prefix = if options.relative {
         if let Some(wt) = &repo.work_tree {
@@ -187,6 +193,75 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn filter_entries_ignore_space_change(
+    repo: &Repository,
+    entries: Vec<DiffEntry>,
+) -> Vec<DiffEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| {
+            if entry.status == DiffStatus::Added
+                || entry.status == DiffStatus::Deleted
+                || entry.old_mode != entry.new_mode
+            {
+                return true;
+            }
+            let (old_raw, new_raw) = read_entry_raw_contents(repo, entry);
+            if is_binary_content(&old_raw) || is_binary_content(&new_raw) {
+                return true;
+            }
+            let old = String::from_utf8_lossy(&old_raw).into_owned();
+            let new = String::from_utf8_lossy(&new_raw).into_owned();
+            normalize_ignore_space_change(&old) != normalize_ignore_space_change(&new)
+        })
+        .collect()
+}
+
+fn read_entry_raw_contents(repo: &Repository, entry: &DiffEntry) -> (Vec<u8>, Vec<u8>) {
+    let old_raw = read_blob_raw(&repo.odb, &entry.old_oid);
+    let new_raw = if entry.new_oid == zero_oid() && entry.status != DiffStatus::Deleted {
+        if let Some(wt) = repo.work_tree.as_ref() {
+            let path = entry.new_path.as_deref().unwrap_or(entry.path());
+            fs::read(wt.join(path)).unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        read_blob_raw(&repo.odb, &entry.new_oid)
+    };
+    (old_raw, new_raw)
+}
+
+fn is_binary_content(data: &[u8]) -> bool {
+    let check_len = data.len().min(8192);
+    data[..check_len].contains(&0)
+}
+
+fn normalize_ignore_space_change(content: &str) -> String {
+    content
+        .lines()
+        .map(normalize_ignore_space_change_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalize_ignore_space_change_line(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut in_space = false;
+    for c in line.chars() {
+        if c.is_whitespace() {
+            if !in_space {
+                normalized.push(' ');
+                in_space = true;
+            }
+        } else {
+            normalized.push(c);
+            in_space = false;
+        }
+    }
+    normalized.trim_end().to_owned()
+}
+
 #[derive(Debug, Clone)]
 struct Options {
     tree_ish: String,
@@ -205,6 +280,7 @@ struct Options {
     stat: bool,
     numstat: bool,
     context_lines: usize,
+    ignore_space_change: bool,
     nul_terminated: bool,
     relative: bool,
 }
@@ -251,6 +327,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut stat = false;
     let mut numstat = false;
     let mut context_lines: usize = diff_context_from_env().unwrap_or(3);
+    let mut ignore_space_change = false;
     let mut nul_terminated = false;
     let mut relative = false;
 
@@ -327,6 +404,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("-U") && arg[2..].parse::<usize>().is_ok() => {
                     context_lines = arg[2..].parse::<usize>().unwrap();
                 }
+                "-b" | "--ignore-space-change" => {
+                    ignore_space_change = true;
+                }
                 _ if arg.starts_with("--unified=") => {
                     context_lines = arg["--unified=".len()..].parse::<usize>().unwrap_or(3);
                 }
@@ -400,6 +480,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         stat,
         numstat,
         context_lines,
+        ignore_space_change,
         nul_terminated,
         relative,
     })
