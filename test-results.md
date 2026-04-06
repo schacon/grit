@@ -2,6 +2,10 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6429-merge-sequence-rename-caching.sh`: 11/11 passing (direct validation after replacing replay passthrough with native sequencer-style replay and fixing upstream rename-cache refresh heuristics for directory-rename caching scenarios).
+- `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (targeted merge regression check after replay/merge rename handling updates).
+- `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh`: 2/2 passing (targeted merge regression check after replay/merge rename handling updates).
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6016-rev-list-graph-simplify-history.sh`: 12/12 passing (direct validation after final graph-history fixes: path-limited commit reordering around side branches, sparse path-limited first-parent graph edges, simplify-by-decoration merge-parent simplification guardrails, and boundary-aware parent-target stitching).

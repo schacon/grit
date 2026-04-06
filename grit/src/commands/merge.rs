@@ -2327,6 +2327,16 @@ struct MergeResult {
     conflict_descriptions: Vec<(String, String)>,
 }
 
+/// Tree-merge result exported for replay-style callers.
+pub(crate) struct ReplayTreeMergeResult {
+    /// Merged index entries, including conflict stages when unresolved.
+    pub index: Index,
+    /// Whether the merge produced conflicts.
+    pub has_conflicts: bool,
+    /// Human-readable conflict summaries.
+    pub conflict_descriptions: Vec<(String, String)>,
+}
+
 #[derive(Clone, Copy)]
 struct ConflictLabels<'a> {
     ours: &'a str,
@@ -2408,6 +2418,14 @@ fn detect_merge_renames(
         // Find base entries whose OID appears at a different path in the side
         let mut exact_renames: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for (base_path, base_entry) in base {
+            if let Some(side_entry) = side.get(base_path) {
+                // If the same blob is still present at the original path, this
+                // source was not renamed away; don't treat additional copies as
+                // exact renames from this path.
+                if side_entry.oid == base_entry.oid && side_entry.mode == base_entry.mode {
+                    continue;
+                }
+            }
             if let Some(side_paths) = side_oid_to_paths.get(&base_entry.oid) {
                 for sp in side_paths {
                     if sp != base_path && !base.contains_key(sp) {
@@ -3181,6 +3199,42 @@ fn merge_trees(
         has_conflicts,
         conflict_files,
         conflict_descriptions,
+    })
+}
+
+/// Perform a single three-way tree merge with merge-ort style rename handling.
+///
+/// This is a thin wrapper over the internal merge engine used by `merge` and
+/// is intended for sequencer-style commands (such as `replay`) that need to
+/// replay commits without touching refs/index/worktree directly.
+pub(crate) fn merge_trees_for_replay(
+    repo: &Repository,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+    their_name: &str,
+    base_label_prefix: &str,
+    favor: MergeFavor,
+    diff_algorithm: Option<&str>,
+    merge_renormalize: bool,
+) -> Result<ReplayTreeMergeResult> {
+    let head = HeadState::Invalid;
+    let result = merge_trees(
+        repo,
+        base,
+        ours,
+        theirs,
+        &head,
+        their_name,
+        base_label_prefix,
+        favor,
+        diff_algorithm,
+        merge_renormalize,
+    )?;
+    Ok(ReplayTreeMergeResult {
+        index: result.index,
+        has_conflicts: result.has_conflicts,
+        conflict_descriptions: result.conflict_descriptions,
     })
 }
 
