@@ -316,6 +316,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     if args.orphan && args.no_checkout {
         fatal_usage("options '--orphan' and '--no-checkout' cannot be used together");
     }
+    if args.orphan && args.track {
+        fatal_usage("options '--orphan' and '--track' cannot be used together");
+    }
     if args.orphan && args.branch.is_some() {
         fatal_usage("options '--orphan' and '<commit-ish>' cannot be used together");
     }
@@ -432,6 +435,21 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let head_state = resolve_head(&common)?;
     let head_oid = head_state.oid().copied();
 
+    // Infer --orphan when there is no usable source branch.
+    let inferred_orphan =
+        !args.detach && !args.orphan && args.branch.is_none() && head_oid.is_none();
+    if inferred_orphan {
+        if !args.quiet {
+            eprintln!("No possible source branch, inferring '--orphan'");
+        }
+        if args.no_checkout {
+            fatal_usage("options '--orphan' and '--no-checkout' cannot be used together");
+        }
+        if args.track {
+            fatal_usage("options '--orphan' and '--track' cannot be used together");
+        }
+    }
+
     // Determine branch mode and starting commit.
     // `worktree add <path> <branch>` — if <branch> exists as a ref, check it out;
     //   otherwise create a new branch from HEAD.
@@ -469,6 +487,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                 }
             }
         }
+    } else if inferred_orphan {
+        (Some(wt_name.clone()), ObjectId::from_bytes(&[0u8; 20])?, false)
     } else {
         let oid = head_oid.ok_or_else(|| {
             anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
@@ -507,7 +527,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Write HEAD — either branch or detached
     let detach_head = args.detach || implicit_detach;
-    if detach_head {
+    if inferred_orphan {
+        let branch_name = branch_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal error: missing branch name"))?;
+        fs::write(
+            wt_admin.join("HEAD"),
+            format!("ref: refs/heads/{}\n", branch_name),
+        )?;
+    } else if detach_head {
         fs::write(wt_admin.join("HEAD"), format!("{}\n", commit_oid.to_hex()))?;
     } else {
         let branch_name = branch_name
@@ -559,7 +587,16 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         fs::write(wt_admin.join("locked"), format!("{reason}\n"))?;
     }
 
-    if detach_head {
+    if inferred_orphan {
+        let branch_name = branch_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal error: missing branch name"))?;
+        println!(
+            "Preparing worktree (new branch '{}') at '{}'",
+            branch_name,
+            wt_path.display()
+        );
+    } else if detach_head {
         println!(
             "Preparing worktree (detached HEAD {}) at '{}'",
             &commit_oid.to_hex()[..7],
@@ -577,7 +614,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     // Populate the working tree by checking out the commit
-    if !args.no_checkout {
+    if !args.no_checkout && !inferred_orphan {
         populate_worktree(&repo.odb, &common, &commit_oid, &wt_path, &wt_admin)?;
     }
 

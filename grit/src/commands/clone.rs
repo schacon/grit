@@ -259,7 +259,11 @@ pub fn run(args: Args) -> Result<()> {
     let source_head_branch = determine_head_branch(&source.git_dir, None)?;
     // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
-    let initial_branch = head_branch.as_deref().unwrap_or("master");
+    let source_head_oid = grit_lib::refs::resolve_ref(&source.git_dir, "HEAD").ok();
+    let initial_branch = head_branch
+        .as_deref()
+        .or(source_head_branch.as_deref())
+        .unwrap_or("master");
 
     // Initialize the target repository
     fs::create_dir_all(&target_path)
@@ -302,6 +306,8 @@ pub fn run(args: Args) -> Result<()> {
                 dest.git_dir.join("HEAD"),
                 format!("ref: refs/heads/{branch}\n"),
             )?;
+        } else if let Some(oid) = source_head_oid {
+            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
         }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
@@ -362,6 +368,10 @@ pub fn run(args: Args) -> Result<()> {
                 setup_branch_tracking(&dest.git_dir, branch, remote_name)
                     .context("setting up branch tracking")?;
             }
+        } else if let Some(oid) = source_head_oid {
+            // Source repository has detached HEAD: clone should start detached
+            // at the same commit instead of assuming a branch name.
+            fs::write(dest.git_dir.join("HEAD"), format!("{oid}\n"))?;
         }
     }
 
@@ -636,9 +646,30 @@ fn open_source_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    // Try path/.git for non-bare repos
+    // Try path/.git for non-bare repos (directory or gitfile indirection)
     let git_dir = path.join(".git");
+    if git_dir.is_file() {
+        let content = fs::read_to_string(&git_dir)
+            .with_context(|| format!("cannot read gitfile '{}'", git_dir.display()))?;
+        let resolved = parse_gitfile_target(&content, path)?;
+        return Repository::open(&resolved, Some(path)).map_err(Into::into);
+    }
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
+}
+
+fn parse_gitfile_target(content: &str, base: &Path) -> Result<PathBuf> {
+    for line in content.lines() {
+        if let Some(rest) = line.strip_prefix("gitdir:") {
+            let rel = rest.trim();
+            let path = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                base.join(rel)
+            };
+            return Ok(path);
+        }
+    }
+    bail!("invalid gitfile format")
 }
 
 /// Write an alternates file pointing to the source and reference repos' object stores.
@@ -1022,12 +1053,15 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    Ok(None)
 }
 
 /// Perform a basic checkout of HEAD into the working tree.
 fn checkout_head(repo: &Repository) -> Result<()> {
+    if repo.git_dir.join("commondir").exists() {
+        return passthrough_current_clone_invocation();
+    }
+
     let work_tree = match &repo.work_tree {
         Some(wt) => wt,
         None => return Ok(()), // Bare repo

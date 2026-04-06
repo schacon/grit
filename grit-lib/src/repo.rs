@@ -106,13 +106,27 @@ impl Repository {
         if let Ok(dir) = env::var("GIT_DIR") {
             let git_dir = PathBuf::from(&dir);
             let cwd = env::current_dir()?;
+            let git_dir_abs = if git_dir.is_absolute() {
+                git_dir.clone()
+            } else {
+                cwd.join(&git_dir)
+            };
+            let mut effective_git_dir = git_dir.clone();
+            let mut inferred_work_tree_from_gitfile: Option<PathBuf> = None;
+            if git_dir_abs.is_file() {
+                let content =
+                    fs::read_to_string(&git_dir_abs).map_err(|e| Error::NotARepository(e.to_string()))?;
+                let base = git_dir_abs.parent().unwrap_or(&cwd);
+                effective_git_dir = parse_gitfile(&content, base)?;
+                inferred_work_tree_from_gitfile = git_dir_abs.parent().map(PathBuf::from);
+            }
             if let Ok(wt_raw) = env::var("GIT_WORK_TREE") {
                 let wt = if Path::new(&wt_raw).is_absolute() {
                     PathBuf::from(wt_raw)
                 } else {
                     cwd.join(wt_raw)
                 };
-                return Self::open(&git_dir, Some(&wt));
+                return Self::open(&effective_git_dir, Some(&wt));
             }
 
             // With GIT_DIR set and no explicit GIT_WORK_TREE:
@@ -120,15 +134,20 @@ impl Repository {
             // - else if core.bare=true, treat as bare
             // - else default worktree is the current working directory
             //   (matches Git's --git-dir behavior).
-            let canonical_git = git_dir.canonicalize().unwrap_or_else(|_| git_dir.clone());
+            let canonical_git = effective_git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| effective_git_dir.clone());
             let (core_bare, core_worktree) = read_core_bare_and_worktree(&canonical_git);
             if let Some(wt) = core_worktree {
-                return Self::open(&git_dir, Some(&wt));
+                return Self::open(&effective_git_dir, Some(&wt));
             }
             if core_bare.unwrap_or(false) {
-                return Self::open(&git_dir, None);
+                return Self::open(&effective_git_dir, None);
             }
-            return Self::open(&git_dir, Some(&cwd));
+            if let Some(wt) = inferred_work_tree_from_gitfile {
+                return Self::open(&effective_git_dir, Some(&wt));
+            }
+            return Self::open(&effective_git_dir, Some(&cwd));
         }
 
         // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it

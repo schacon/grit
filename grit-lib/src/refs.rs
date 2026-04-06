@@ -387,7 +387,7 @@ pub fn append_reflog(
 }
 
 fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
-    if refname == "HEAD" {
+    if refname == "HEAD" || refname.starts_with("refs/bisect/") {
         return git_dir.to_path_buf();
     }
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())

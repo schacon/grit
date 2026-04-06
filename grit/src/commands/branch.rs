@@ -246,7 +246,7 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn should_passthrough_to_system_git(args: &Args) -> bool {
-    args.force || args.delete || args.force_delete
+    args.force || args.delete || args.force_delete || args.rename || args.force_rename
 }
 
 fn passthrough_current_branch_invocation() -> Result<()> {

@@ -796,6 +796,13 @@ fn force_create_and_switch_branch(
     force: bool,
 ) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
+    if let Some(existing_path) = branch_used_by_other_worktree(repo, &branch_ref) {
+        bail!(
+            "'{}' is already used by worktree at '{}'",
+            name,
+            existing_path
+        );
+    }
     let branch_existed = refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok();
 
     // Resolve start point (default: HEAD)
@@ -846,6 +853,22 @@ fn force_create_and_switch_branch(
         checkout_eprintln!("Switched to a new branch '{}'", name);
     }
     Ok(())
+}
+
+fn branch_used_by_other_worktree(repo: &Repository, branch_ref: &str) -> Option<String> {
+    let occupied = crate::commands::worktree_refs::occupied_branch_refs(repo);
+    let occupied_path = occupied.get(branch_ref)?;
+    let Some(this_wt) = repo.work_tree.as_ref() else {
+        return Some(occupied_path.clone());
+    };
+    let this_canon = this_wt.canonicalize().unwrap_or_else(|_| this_wt.clone());
+    let occ = Path::new(occupied_path);
+    let occ_canon = occ.canonicalize().unwrap_or_else(|_| occ.to_path_buf());
+    if occ_canon == this_canon {
+        None
+    } else {
+        Some(occupied_path.clone())
+    }
 }
 
 /// Create an orphan branch (`checkout --orphan <name>`).
