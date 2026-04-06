@@ -86,7 +86,9 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("failed to discover repository")?;
-    let objects_dir = repo.git_dir.join("objects");
+    // In linked worktrees, object storage lives in the common gitdir, not
+    // under `.git/worktrees/<name>/objects`.
+    let objects_dir = repo.odb.objects_dir().to_path_buf();
     let odb = Odb::new(&objects_dir);
 
     let show_dangling = !args.no_dangling;

@@ -474,7 +474,7 @@ t2012-checkout-last	yes	22	22	0	ok	22	22	0
 t2013-checkout-submodule	yes	74	74	0	ok	74	74	0
 t2014-checkout-switch	yes	4	4	0	ok	4	4	0
 t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
-t2016-checkout-patch	yes	0	0	0	timeout	0	0	0
+t2016-checkout-patch	yes	19	19	0	ok	19	19	0
 t2017-checkout-orphan	yes	13	13	0	ok	13	13	0
 t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
@@ -482,7 +482,7 @@ t2020-checkout-detach	yes	26	26	0	ok	26	26	0
 t2021-checkout-overwrite	yes	9	9	0	ok	9	9	0
 t2022-checkout-paths	yes	5	5	0	ok	5	5	0
 t2023-checkout-m	yes	5	5	0	ok	5	5	0
-t2024-checkout-dwim	yes	23	22	1	ok	22	23	0
+t2024-checkout-dwim	yes	23	23	0	ok	23	23	0
 t2025-checkout-no-overlay	yes	6	6	0	ok	6	6	0
 t2026-checkout-pathspec-file	yes	11	11	0	ok	11	11	0
 t2027-checkout-track	yes	5	5	0	ok	5	5	0
@@ -521,7 +521,7 @@ t2206-add-submodule-ignored	yes	8	8	0	ok	8	8	0
 t2300-cd-to-toplevel	yes	5	5	0	ok	5	5	0
 t2400-worktree-add	yes	232	44	188	ok	44	232	0
 t2401-worktree-prune	yes	13	13	0	ok	13	13	0
-t2402-worktree-list	yes	0	0	0	timeout	0	0	0
+t2402-worktree-list	yes	27	27	0	ok	27	27	0
 t2403-worktree-move	yes	33	33	0	ok	33	33	0
 t2404-worktree-config	yes	12	12	0	ok	12	12	0
 t2405-worktree-submodule	yes	11	11	0	ok	10	10	1
