@@ -158,9 +158,9 @@ pub struct MoveArgs {
     /// New path for the worktree.
     pub destination: PathBuf,
 
-    /// Force move even if worktree is locked.
-    #[arg(short, long)]
-    pub force: bool,
+    /// Force move. Once: allow moving to existing path. Twice: also allow moving locked worktree.
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub force: u8,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -1231,7 +1231,13 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
     let admin = worktrees_dir.join(&wt_name);
 
     // Check for lock
-    if admin.join("locked").exists() && !args.force {
+    if admin.join("locked").exists() && args.force < 2 {
+        if args.force >= 1 {
+            bail!(
+                "worktree '{}' is locked; use 'git worktree move --force --force' to force",
+                src_path.display()
+            );
+        }
         bail!(
             "worktree '{}' is locked; use --force to move it anyway",
             src_path.display()
@@ -1254,6 +1260,32 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
     } else {
         dst_path
     };
+
+    // If destination is registered as a worktree (but possibly missing from disk), require --force
+    let dst_canonical = dst_path.canonicalize().unwrap_or(dst_path.clone());
+    let is_registered_wt = worktrees_dir.is_dir() && {
+        std::fs::read_dir(&worktrees_dir)
+            .ok()
+            .map(|entries| {
+                entries.flatten().any(|e| {
+                    let gitdir_file = e.path().join("gitdir");
+                    if let Ok(raw) = std::fs::read_to_string(&gitdir_file) {
+                        let p = std::path::Path::new(raw.trim());
+                        let wt = p.parent().unwrap_or(p);
+                        wt.canonicalize().unwrap_or(wt.to_path_buf()) == dst_canonical
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false)
+    };
+    if !dst_path.exists() && is_registered_wt && args.force < 1 {
+        bail!(
+            "'{}' is a missing but registered worktree; use --force to overwrite",
+            dst_path.display()
+        );
+    }
 
     if dst_path.exists() {
         bail!("target '{}' already exists", dst_path.display());
