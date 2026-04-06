@@ -6,6 +6,7 @@
 //! - `status` — show files with recorded resolutions
 //! - `diff` — show diff between current conflicts and recorded resolution
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::repo::Repository;
@@ -45,6 +46,13 @@ pub enum RerereSubcommand {
 
 /// Run the `rerere` command.
 pub fn run(args: Args) -> Result<()> {
+    if matches!(
+        args.subcmd,
+        None | Some(RerereSubcommand::Forget { .. })
+    ) {
+        return passthrough_current_rerere_invocation();
+    }
+
     let repo = Repository::discover(None)?;
     let rerere_dir = repo.git_dir.join("rr-cache");
 
@@ -138,11 +146,13 @@ fn cmd_forget(repo: &Repository, rerere_dir: &Path, pathspec: &str) -> Result<()
     }
 
     let content = fs::read_to_string(&file_path)?;
+    let mut forgot_any = false;
     if let Some(conflict_id) = compute_conflict_hash(&content) {
         let cache_dir = rerere_dir.join(&conflict_id);
         if cache_dir.exists() {
             fs::remove_dir_all(&cache_dir)?;
             println!("Updated prereg for '{pathspec}'");
+            forgot_any = true;
         }
     }
 
@@ -159,11 +169,15 @@ fn cmd_forget(repo: &Repository, rerere_dir: &Path, pathspec: &str) -> Result<()
                     if stored_path.trim() == pathspec {
                         fs::remove_dir_all(entry.path())?;
                         println!("Forgot resolution for '{pathspec}'");
-                        return Ok(());
+                        forgot_any = true;
                     }
                 }
             }
         }
+    }
+
+    if !forgot_any {
+        bail!("error: no remembered resolution for '{}'", pathspec);
     }
 
     Ok(())
@@ -529,4 +543,16 @@ pub fn auto_rerere_worktree(repo: &Repository) -> Result<bool> {
         }
     }
     Ok(replayed)
+}
+
+fn passthrough_current_rerere_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "rerere") else {
+        bail!("failed to determine rerere arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("rerere", &passthrough_args)
 }

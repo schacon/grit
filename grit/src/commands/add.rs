@@ -5,9 +5,9 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use crate::commands::git_passthrough;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
-use grit_lib::diff::stat_matches;
 use grit_lib::error::Error as GritError;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{entry_from_metadata, normalize_mode, Index, IndexEntry};
@@ -180,6 +180,12 @@ pub fn run(mut args: Args) -> Result<()> {
     // Git still treats pathspecs as repository-root relative.
     let cwd = std::env::current_dir().context("resolving cwd")?;
     let prefix = pathdiff(&cwd, work_tree, &repo);
+
+    // Delegate conflicted-path resolution to native git so index extensions
+    // like resolve-undo are recorded with full compatibility.
+    if should_passthrough_conflicted_add(&index, work_tree, &cwd, prefix.as_deref(), &args) {
+        return passthrough_current_add_invocation();
+    }
 
     // Validate empty string pathspecs
     for ps in &args.pathspec {
@@ -1148,15 +1154,6 @@ fn stage_file(
         mode
     };
 
-    // Skip if index already has this file with matching stat data and no chmod override
-    if args.chmod.is_none() {
-        if let Some(existing) = index.get(rel_path.as_bytes(), 0) {
-            if stat_matches(existing, &meta) && existing.mode == final_mode {
-                return Ok(());
-            }
-        }
-    }
-
     // Read file content and hash it
     let data = if is_symlink {
         let target = fs::read_link(abs_path)?;
@@ -1657,6 +1654,51 @@ fn normalize_repo_relpath(path: &str) -> String {
     } else {
         parts.join("/")
     }
+}
+
+fn should_passthrough_conflicted_add(
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    prefix: Option<&str>,
+    args: &Args,
+) -> bool {
+    if args.patch
+        || args.interactive
+        || args.edit
+        || args.renormalize
+        || args.refresh
+        || args.pathspec.is_empty()
+    {
+        return false;
+    }
+
+    args.pathspec.iter().any(|pathspec| {
+        let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
+        let rel = resolved.trim_end_matches('/');
+        if rel.is_empty() {
+            return false;
+        }
+        let rel_bytes = rel.as_bytes();
+        index.entries.iter().any(|e| {
+            e.stage() != 0
+                && (e.path == rel_bytes
+                    || (e.path.starts_with(rel_bytes)
+                        && e.path.get(rel_bytes.len()) == Some(&b'/')))
+        })
+    })
+}
+
+fn passthrough_current_add_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "add") else {
+        bail!("failed to determine add arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("add", &passthrough_args)
 }
 
 fn record_merge_restore_state(repo: &Repository, index: &Index, rel_path: &str) -> Result<()> {

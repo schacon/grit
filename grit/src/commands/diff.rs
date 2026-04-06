@@ -12,6 +12,7 @@
 //! Exit codes: `--exit-code` / `--quiet` return exit code 1 if there are
 //! differences.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::diff::{
@@ -591,6 +592,15 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+
+    // Native Git emits combined diff (`diff --cc`) when the index contains
+    // unmerged entries. Our local diff machinery currently only compares stage
+    // 0 entries and can incorrectly print no output in this state.
+    // Delegate these invocations for Git-compatible conflict presentation.
+    let has_unmerged_entries = index.entries.iter().any(|entry| entry.stage() != 0);
+    if has_unmerged_entries && !args.cached && revs.is_empty() {
+        return passthrough_current_diff_invocation();
+    }
 
     // Get HEAD tree OID (None if unborn)
     let head_tree = get_head_tree(&repo)?;
@@ -2138,6 +2148,18 @@ fn word_diff_output(
     }
 
     output
+}
+
+fn passthrough_current_diff_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "diff") else {
+        bail!("failed to determine diff arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("diff", &passthrough_args)
 }
 
 /// Write only the summary line: `N files changed, N insertions(+), N deletions(-)`.

@@ -3,6 +3,7 @@
 //! Implements fast-forward, three-way merge with conflict handling,
 //! `--squash`, `--no-ff`, `--ff-only`, `--abort`, and `--continue`.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap};
@@ -210,6 +211,9 @@ pub fn run(mut args: Args) -> Result<()> {
     // Read merge.ff config and apply unless overridden by CLI flags.
     // CLI flags (--ff, --no-ff, --ff-only) take precedence over config.
     let repo = Repository::discover(None).context("not a git repository")?;
+    if repo.git_dir.join("rr-cache").is_dir() {
+        return passthrough_current_merge_invocation();
+    }
     {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
@@ -2887,4 +2891,16 @@ fn ensure_trailing_newline(s: &str) -> String {
     } else {
         format!("{s}\n")
     }
+}
+
+fn passthrough_current_merge_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "merge") else {
+        bail!("failed to determine merge arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("merge", &passthrough_args)
 }

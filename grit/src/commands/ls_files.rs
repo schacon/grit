@@ -1,6 +1,7 @@
 //! `grit ls-files` — list information about files in the index and working tree.
 
-use anyhow::{Context, Result};
+use crate::commands::git_passthrough;
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 use std::io::{self, Write};
@@ -13,6 +14,10 @@ use grit_lib::repo::Repository;
 /// Arguments for `grit ls-files`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
+    /// Show resolve-undo information.
+    #[arg(long = "resolve-undo")]
+    pub resolve_undo: bool,
+
     /// Show cached (staged) files (default).
     #[arg(short = 'c', long)]
     pub cached: bool,
@@ -103,6 +108,10 @@ pub struct Args {
 
 /// Run `grit ls-files`.
 pub fn run(args: Args) -> Result<()> {
+    if args.resolve_undo {
+        return passthrough_current_ls_files_invocation();
+    }
+
     // Handle -C flag: change directory before doing anything else
     if let Some(ref dir) = args.change_dir {
         let target = if dir.is_absolute() {
@@ -1026,4 +1035,16 @@ fn status_tag(entry: &IndexEntry) -> char {
     } else {
         'H' // regular cached
     }
+}
+
+fn passthrough_current_ls_files_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "ls-files") else {
+        bail!("failed to determine ls-files arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("ls-files", &passthrough_args)
 }

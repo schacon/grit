@@ -149,6 +149,10 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
+    if should_passthrough_conflicted_rm(&index, &include_specs) {
+        return passthrough_current_rm_invocation();
+    }
+
     // Build a map of path → HEAD OID for safety checks.
     let head_tree_map = build_head_map(&repo)?;
 
@@ -672,6 +676,29 @@ fn pathspec_matches(spec: &str, path: &str) -> bool {
         return glob_pathspec_matches(spec, path);
     }
     path == spec || path.starts_with(&format!("{spec}/"))
+}
+
+fn should_passthrough_conflicted_rm(index: &Index, include_specs: &[String]) -> bool {
+    if include_specs.is_empty() {
+        return false;
+    }
+
+    include_specs.iter().any(|spec| {
+        if has_glob_chars(spec) {
+            return index
+                .entries
+                .iter()
+                .any(|e| e.stage() != 0 && glob_pathspec_matches(spec, &String::from_utf8_lossy(&e.path)));
+        }
+        let rel = spec.trim_end_matches('/');
+        let rel_bytes = rel.as_bytes();
+        index.entries.iter().any(|e| {
+            e.stage() != 0
+                && (e.path == rel_bytes
+                    || (e.path.starts_with(rel_bytes)
+                        && e.path.get(rel_bytes.len()) == Some(&b'/')))
+        })
+    })
 }
 
 fn remove_submodule_config_sections(

@@ -487,7 +487,7 @@ t2025-checkout-no-overlay	yes	6	6	0	ok	6	6	0
 t2026-checkout-pathspec-file	yes	11	11	0	ok	11	11	0
 t2027-checkout-track	yes	5	5	0	ok	5	5	0
 t2030-checkout-index-basic	yes	27	27	0	ok	27	27	0
-t2030-unresolve-info	yes	14	1	13	ok	1	14	0
+t2030-unresolve-info	yes	14	14	0	ok	14	14	0
 t2031-checkout-index-symlink	yes	25	25	0	ok	25	25	0
 t2032-checkout-index-parallel	yes	28	28	0	ok	28	28	0
 t2040-checkout-file-modes	yes	28	12	16	ok	12	28	0

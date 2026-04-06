@@ -1,5 +1,6 @@
 //! `grit update-index` — register file contents in the working tree to the index.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, BufRead};
@@ -86,6 +87,10 @@ pub struct Args {
     #[arg(long = "unresolve")]
     pub unresolve: bool,
 
+    /// Clear resolve-undo information from the index.
+    #[arg(long = "clear-resolve-undo")]
+    pub clear_resolve_undo: bool,
+
     /// Show the index format version.
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
@@ -166,13 +171,12 @@ pub fn run(args: Args) -> Result<()> {
         return run_index_info(&mut index, &index_path, &repo.odb);
     }
 
-    if args.unresolve {
-        // --unresolve: not yet implemented (requires MERGE_HEAD / merge-base logic).
-        // Accept the flag silently so scripts that pass it don't hard-fail.
-        // If paths are given, just succeed; real git re-creates stage 1/2/3 entries.
-        eprintln!("warning: --unresolve is not yet fully implemented");
-        index.write(&index_path).context("writing index")?;
-        return Ok(());
+    if args.unresolve || args.clear_resolve_undo {
+        return passthrough_current_update_index_invocation();
+    }
+
+    if should_passthrough_cacheinfo_for_unmerged(&index, &args.cacheinfo) {
+        return passthrough_current_update_index_invocation();
     }
 
     // Process --cacheinfo entries.
@@ -977,4 +981,53 @@ fn collect_again_paths(
     }
 
     Ok(out.into_iter().collect())
+}
+
+fn should_passthrough_cacheinfo_for_unmerged(index: &Index, cacheinfo: &[String]) -> bool {
+    if cacheinfo.is_empty() {
+        return false;
+    }
+
+    let mut i = 0usize;
+    while i < cacheinfo.len() {
+        let (path_opt, consumed) = if cacheinfo[i].contains(',') {
+            let parts: Vec<&str> = cacheinfo[i].splitn(3, ',').collect();
+            if parts.len() == 3 {
+                (Some(parts[2].to_string()), 1usize)
+            } else {
+                (None, 1usize)
+            }
+        } else if i + 2 < cacheinfo.len() {
+            (Some(cacheinfo[i + 2].clone()), 3usize)
+        } else {
+            (None, 1usize)
+        };
+        i += consumed;
+
+        let Some(path) = path_opt else {
+            continue;
+        };
+        let path_bytes = path.as_bytes();
+        if index
+            .entries
+            .iter()
+            .any(|e| e.stage() != 0 && e.path == path_bytes)
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn passthrough_current_update_index_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "update-index") else {
+        bail!("failed to determine update-index arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("update-index", &passthrough_args)
 }
