@@ -77,6 +77,11 @@ impl Odb {
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
+        // The empty tree is always considered to exist.
+        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        if oid.to_hex() == EMPTY_TREE {
+            return true;
+        }
         if self.exists_in_dir(&self.objects_dir, oid) {
             return true;
         }
@@ -123,6 +128,15 @@ impl Odb {
     /// - [`Error::Zlib`] — decompression failed.
     /// - [`Error::CorruptObject`] — header is malformed.
     pub fn read(&self, oid: &ObjectId) -> Result<Object> {
+        // The empty tree is a well-known virtual object — no storage needed.
+        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        if oid.to_hex() == EMPTY_TREE {
+            return Ok(crate::objects::Object {
+                kind: crate::objects::ObjectKind::Tree,
+                data: Vec::new(),
+            });
+        }
+
         let path = self.object_path(oid);
         match fs::File::open(&path) {
             Ok(file) => {
