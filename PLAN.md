@@ -414,7 +414,7 @@ commit → check it off → move on.
 
 - [ ] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
 - [x] `t4039-diff-assume-unchanged` ████████████████████ 4/4 (0 left) — diff with assume-unchanged entries
-- [~] `t4049-diff-stat-count` ██████████░░░░░░░░░░ 2/4 (2 left) — diff --stat-count (remaining local mismatches: mode-only summary file count and unmerged-summary count handling)
+- [~] `t4049-diff-stat-count` ███████████████░░░░░ 3/4 (1 left) — diff --stat-count (remaining local mismatch is simplified `test_chmod` helper only toggling one path)
 - [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check
 - [~] `t4257-am-interactive` ██████████░░░░░░░░░░ 2/4 (2 left) — am --interactive tests (upstream harness 4/4; remaining local mismatches come from simplified test helper semantics around `test_commit`/`reset --hard base`)
 - [x] `t4258-am-quoted-cr` ████████████████████ 4/4 (0 left) — test am --quoted-cr=<action>

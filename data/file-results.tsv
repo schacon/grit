@@ -406,7 +406,7 @@ t4045-diff-relative	yes	39	20	19	ok	19	38	1
 t4046-diff-unmerged	yes	8	3	5	ok	3	8	0
 t4047-diff-dirstat	yes	41	4	37	ok	4	41	0
 t4048-diff-combined-binary	yes	14	3	11	ok	3	14	0
-t4049-diff-stat-count	yes	4	2	2	ok	2	4	0
+t4049-diff-stat-count	yes	4	3	1	ok	3	4	0
 t4051-diff-function-context	yes	42	12	30	ok	12	42	0
 t4052-stat-output	yes	89	17	72	ok	17	89	0
 t4053-diff-no-index	yes	0	0	0	timeout	0	0	0

@@ -494,9 +494,24 @@ pub fn diff_index_to_worktree(
     let attrs = crlf::load_gitattributes(work_tree);
 
     let mut result = Vec::new();
+    let mut unmerged_base: std::collections::BTreeMap<String, (u8, &IndexEntry)> =
+        std::collections::BTreeMap::new();
 
     for ie in &index.entries {
         if ie.stage() != 0 {
+            let path = String::from_utf8_lossy(&ie.path).to_string();
+            let rank = match ie.stage() {
+                2 => 0u8,
+                3 => 1u8,
+                1 => 2u8,
+                _ => 3u8,
+            };
+            match unmerged_base.get(&path) {
+                Some((existing_rank, _)) if *existing_rank <= rank => {}
+                _ => {
+                    unmerged_base.insert(path, (rank, ie));
+                }
+            }
             continue;
         }
         // Use str slice directly to avoid allocation for path joining;
@@ -615,6 +630,53 @@ pub fn diff_index_to_worktree(
                 });
             }
             Err(e) => return Err(Error::Io(e)),
+        }
+    }
+
+    for (path, (_, base_entry)) in unmerged_base {
+        let file_path = work_tree.join(&path);
+        let wt_meta = match fs::symlink_metadata(&file_path) {
+            Ok(meta) => Some(meta),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    || e.raw_os_error() == Some(20) /* ENOTDIR */ =>
+            {
+                None
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        let new_mode = wt_meta.as_ref().map_or_else(
+            || "000000".to_owned(),
+            |meta| format_mode(mode_from_metadata(meta)),
+        );
+        result.push(DiffEntry {
+            status: DiffStatus::Unmerged,
+            old_path: Some(path.clone()),
+            new_path: Some(path.clone()),
+            old_mode: "000000".to_owned(),
+            new_mode,
+            old_oid: zero_oid(),
+            new_oid: zero_oid(),
+            score: None,
+        });
+
+        if let Some(meta) = wt_meta {
+            let file_attrs = crlf::get_file_attrs(&attrs, &path, &config);
+            let wt_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, &path)?;
+            let wt_mode = mode_from_metadata(&meta);
+            if wt_oid != base_entry.oid || wt_mode != base_entry.mode {
+                result.push(DiffEntry {
+                    status: DiffStatus::Modified,
+                    old_path: Some(path.clone()),
+                    new_path: Some(path),
+                    old_mode: format_mode(base_entry.mode),
+                    new_mode: format_mode(wt_mode),
+                    old_oid: base_entry.oid,
+                    new_oid: wt_oid,
+                    score: None,
+                });
+            }
         }
     }
 
