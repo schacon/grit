@@ -196,6 +196,12 @@ pub fn run(args: Args) -> Result<()> {
     let target = target.map(|t| resolve_at_minus(&repo, &t).unwrap_or(t));
 
     // Case: checkout -p (interactive patch mode)
+    // --patch and --overlay are incompatible
+    if args.patch && args.overlay {
+        eprintln!("fatal: options '-p' and '--overlay' cannot be used together");
+        std::process::exit(1);
+    }
+
     if args.patch {
         return checkout_patch(&repo, target.as_deref(), &paths);
     }
