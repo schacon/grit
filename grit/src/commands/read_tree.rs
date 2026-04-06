@@ -493,8 +493,172 @@ fn three_way_merge(
         }
     }
 
+    // D/F conflict detection: if one side adds a file at path P but another
+    // side has paths under P/ (treating P as a directory), we need to mark
+    // the file entry with a stage instead of stage 0.
+    detect_df_conflicts(&mut out, base, ours, theirs);
+
     out.sort();
     out
+}
+
+/// Post-process the merged index to detect directory/file (D/F) conflicts.
+///
+/// When a file `P` from one side conflicts with a directory `P/` used by
+/// another side, we need to:
+/// 1. Mark the file entry at its conflict stage (2 or 3) instead of stage 0.
+/// 2. Ensure all entries under `P/` in each side appear at the right stage.
+///    Entries from base → stage 1, ours → stage 2, theirs → stage 3.
+fn detect_df_conflicts(
+    out: &mut Index,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) {
+    // Collect all path prefixes used as directory components in each tree.
+    fn collect_dir_prefixes(entries: &HashMap<Vec<u8>, IndexEntry>) -> HashSet<Vec<u8>> {
+        let mut set = HashSet::new();
+        for path in entries.keys() {
+            let s = String::from_utf8_lossy(path);
+            let mut pos = 0usize;
+            while let Some(slash) = s[pos..].find('/') {
+                let prefix = &s[..pos + slash];
+                set.insert(prefix.as_bytes().to_vec());
+                pos += slash + 1;
+            }
+        }
+        set
+    }
+
+    let dir_ours = collect_dir_prefixes(ours);
+    let dir_base = collect_dir_prefixes(base);
+    let dir_theirs = collect_dir_prefixes(theirs);
+
+    // Find D/F conflict points: a path P that is a file in one side and a
+    // directory prefix in another side.
+    // "df_file_in_theirs" = paths that theirs has as a file but ours/base use as a dir
+    // "df_file_in_ours"   = paths that ours has as a file but theirs uses as a dir
+    let mut df_theirs: HashSet<Vec<u8>> = HashSet::new(); // theirs has file, ours/base have dir
+    let mut df_ours: HashSet<Vec<u8>> = HashSet::new(); // ours has file, theirs has dir
+
+    for path in theirs.keys() {
+        if dir_ours.contains(path) || dir_base.contains(path) {
+            df_theirs.insert(path.clone());
+        }
+    }
+    for path in ours.keys() {
+        if dir_theirs.contains(path) {
+            df_ours.insert(path.clone());
+        }
+    }
+
+    if df_theirs.is_empty() && df_ours.is_empty() {
+        return;
+    }
+
+    // For each D/F conflict point, collect which subdirectory prefix is affected.
+    // All entries under that prefix need conflict staging.
+    let mut conflict_prefixes_theirs: Vec<Vec<u8>> = df_theirs.iter().cloned().collect();
+    let mut conflict_prefixes_ours: Vec<Vec<u8>> = df_ours.iter().cloned().collect();
+
+    // Helper: does `path` live under `prefix/`?
+    let is_under = |path: &[u8], prefix: &[u8]| -> bool {
+        path.len() > prefix.len() + 1
+            && path[..prefix.len()] == *prefix
+            && path[prefix.len()] == b'/'
+    };
+
+    // Re-stage existing out entries:
+    // - Files that are the D/F conflict point in theirs: stage 0 → stage 3
+    // - Files that are the D/F conflict point in ours: stage 0 → stage 2
+    // - Files under a conflict prefix that were stage 0: re-stage appropriately
+    let mut to_restage: Vec<(usize, u8)> = Vec::new();
+
+    for (i, entry) in out.entries.iter().enumerate() {
+        let path = &entry.path;
+        let stage = entry.stage();
+
+        // D/F file from theirs at conflict point
+        if stage == 0 && df_theirs.contains(path) {
+            to_restage.push((i, 3));
+            continue;
+        }
+        // D/F file from ours at conflict point
+        if stage == 0 && df_ours.contains(path) {
+            to_restage.push((i, 2));
+            continue;
+        }
+
+        // Entries under a theirs-conflict prefix that are currently stage 0
+        // (they were added by ours only, but theirs conflicts with the dir)
+        if stage == 0 {
+            for prefix in &conflict_prefixes_theirs {
+                if is_under(path, prefix) {
+                    to_restage.push((i, 2));
+                    break;
+                }
+            }
+        }
+        // Entries under an ours-conflict prefix that are stage 0
+        // (added by theirs only, but ours conflicts with the dir)
+        if stage == 0 {
+            for prefix in &conflict_prefixes_ours {
+                if is_under(path, prefix) {
+                    to_restage.push((i, 3));
+                    break;
+                }
+            }
+        }
+    }
+
+    for (i, new_stage) in to_restage {
+        let flags = out.entries[i].flags;
+        out.entries[i].flags = (flags & 0x0FFF) | ((new_stage as u16) << 12);
+    }
+
+    // Add missing conflict entries:
+    // When base has entries under a conflict prefix that were skipped
+    // (deleted by both sides), they need to appear at stage 1.
+    let mut to_add: Vec<(IndexEntry, u8)> = Vec::new();
+
+    // Under theirs-conflict prefixes: base entries → stage 1
+    for (path, be) in base {
+        for prefix in &conflict_prefixes_theirs {
+            if is_under(path, prefix) {
+                // Check if stage 1 entry already exists in out
+                let has_stage1 = out
+                    .entries
+                    .iter()
+                    .any(|e| e.path == *path && e.stage() == 1);
+                if !has_stage1 {
+                    to_add.push(((*be).clone(), 1));
+                }
+                break;
+            }
+        }
+    }
+
+    // Under ours-conflict prefixes: base entries → stage 1
+    for (path, be) in base {
+        for prefix in &conflict_prefixes_ours {
+            if is_under(path, prefix) {
+                let has_stage1 = out
+                    .entries
+                    .iter()
+                    .any(|e| e.path == *path && e.stage() == 1);
+                if !has_stage1 {
+                    to_add.push(((*be).clone(), 1));
+                }
+                break;
+            }
+        }
+    }
+
+    for (entry, stage) in to_add {
+        let mut e = entry;
+        e.flags = (e.flags & 0x0FFF) | ((stage as u16) << 12);
+        out.entries.push(e);
+    }
 }
 
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {

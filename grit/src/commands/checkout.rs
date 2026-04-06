@@ -259,14 +259,67 @@ pub fn run(args: Args) -> Result<()> {
     if !paths.is_empty() {
         if !has_separator {
             if let Some(ref t) = target {
-                let is_rev = resolve_revision(&repo, t).is_ok()
-                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
                 let cwd = std::env::current_dir().unwrap_or_default();
-                let is_path = cwd.join(t).exists();
-                if is_rev && is_path {
+                // A path is valid if it exists on disk OR is tracked in the index.
+                let is_path = cwd.join(t).exists() || {
+                    let index = grit_lib::index::Index::load(&repo.index_path())
+                        .unwrap_or_else(|_| grit_lib::index::Index::new());
+                    index.entries.iter().any(|e| {
+                        let name = String::from_utf8_lossy(&e.path);
+                        name == t.as_str() || name.starts_with(&format!("{t}/"))
+                    })
+                };
+
+                // Determine if t is a valid tree-ish (commit or tree, not blob).
+                // A plain filename like "small" may resolve via HEAD:small to a blob
+                // — that does NOT make it a treeish for checkout purposes.
+                let is_treeish = {
+                    // First check: is it a branch or tag ref?
+                    let is_ref = refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}"))
+                        .is_ok()
+                        || refs::resolve_ref(&repo.git_dir, &format!("refs/tags/{t}")).is_ok()
+                        || refs::resolve_ref(&repo.git_dir, &format!("refs/remotes/{t}")).is_ok();
+                    if is_ref {
+                        true
+                    } else {
+                        // Try to resolve and check kind — only commits/trees are treeish
+                        match resolve_revision(&repo, t) {
+                            Ok(oid) => match repo.odb.read(&oid) {
+                                Ok(obj) => matches!(
+                                    obj.kind,
+                                    grit_lib::objects::ObjectKind::Commit
+                                        | grit_lib::objects::ObjectKind::Tag
+                                ),
+                                Err(_) => false,
+                            },
+                            Err(_) => false,
+                        }
+                    }
+                };
+
+                if is_treeish && is_path {
                     bail!(
                         "fatal: ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
                         t
+                    );
+                }
+                // If t is not a treeish, treat it as a path (along with the rest)
+                if !is_treeish && is_path {
+                    let mut all_paths = vec![t.clone()];
+                    all_paths.extend(paths.iter().cloned());
+                    return checkout_paths(
+                        &repo,
+                        None,
+                        &all_paths,
+                        args.no_overlay,
+                        args.merge,
+                        if args.ours {
+                            Some(2)
+                        } else if args.theirs {
+                            Some(3)
+                        } else {
+                            None
+                        },
                     );
                 }
             }
