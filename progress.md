@@ -6,14 +6,15 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    80 |
+| Completed   |    81 |
 | In progress |     0 |
-| Remaining   |   687 |
+| Remaining   |   686 |
 | **Total**   |   767 |
 
 ## Recently completed
 
 - `t6429-merge-sequence-rename-caching` — 11/11 tests pass (`replay` is now implemented natively in Rust and uses merge-ort style tree merges per replayed commit; added upstream/topic rename detection and caching across replay steps with directory-rename-aware cache application and refresh heuristics so trace2 `diffcore_rename` call counts match expected sequencer behavior in cache-sensitive scenarios)
+- `t6432-merge-recursive-space-options` — 11/11 tests pass (implemented native `merge-recursive` backend command with `git merge-recursive <base> -- <ours> <theirs>` argument shape, threaded whitespace strategy options (`--ignore-space-change`, `--ignore-all-space`, `--ignore-space-at-eol`, `--ignore-cr-at-eol`) through merge core + merge-file comparison logic, materialized conflict-marker files in merge-recursive worktree checkout for failed merges, fixed `update-index --refresh` to fail on unmerged entries, and aligned conflict-marker label/eol behavior with expected output)
 - `t6016-rev-list-graph-simplify-history` — 12/12 tests pass (`log --graph` now performs graph-specific parent rewriting and ordering for path-limited/sparse/boundary cases to match expected simplified-history layouts; fixes include path-limited commit ordering around side branches, sparse-history first-parent edge rendering, boundary-commit ordering along the first-parent chain, and boundary-aware parent target selection so boundary nodes stay connected in graph output)
 - `t6009-rev-list-parent` — 15/15 tests pass (`rev-list` CLI now supports `--not` polarity toggling and no-limit toggles `--no-min-parents`/`--no-max-parents`; `^!` single-commit range shorthand is expanded to `<rev>` + `^<rev>^@` before revset parsing, fixing ancestor-culling and same-commit-time edge cases while preserving existing parent-count filtering semantics)
 - `t6409-merge-subtree` — 12/12 tests pass (`tests/test-lib.sh` now keeps working-directory state between `test_expect_success` blocks like upstream, allowing the nested `git-gui`/`git` subtree scenario to preserve intended relative `cd` context; this unblocks later subtree update/explicit-subtree merge cases and validates the earlier subtree strategy, `read-tree --prefix -u`, and relative remote URL fixes end-to-end)

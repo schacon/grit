@@ -31,6 +31,14 @@ struct MergeResult {
     conflict_content: BTreeMap<Vec<u8>, ObjectId>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct WhitespaceStrategyOptions {
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
+}
+
 /// Arguments for `grit cherry-pick`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Apply the changes introduced by existing commits")]
@@ -361,9 +369,15 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     };
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
-    let favor = parse_merge_favor(&args.strategy_option);
-    let merge_result =
-        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries, favor)?;
+    let (favor, ws_opts) = parse_strategy_options(&args.strategy_option);
+    let merge_result = three_way_merge_with_content(
+        repo,
+        &base_entries,
+        &ours_entries,
+        &theirs_entries,
+        favor,
+        ws_opts,
+    )?;
 
     let has_conflicts = merge_result.index.entries.iter().any(|e| e.stage() != 0);
 
@@ -969,16 +983,22 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     index.entries.push(e);
 }
 
-/// Parse strategy options into a MergeFavor.
-fn parse_merge_favor(strategy_options: &[String]) -> MergeFavor {
+/// Parse strategy options into a merge favor and whitespace options.
+fn parse_strategy_options(strategy_options: &[String]) -> (MergeFavor, WhitespaceStrategyOptions) {
+    let mut favor = MergeFavor::None;
+    let mut ws = WhitespaceStrategyOptions::default();
     for opt in strategy_options {
         match opt.as_str() {
-            "theirs" => return MergeFavor::Theirs,
-            "ours" => return MergeFavor::Ours,
+            "theirs" => favor = MergeFavor::Theirs,
+            "ours" => favor = MergeFavor::Ours,
+            "ignore-all-space" => ws.ignore_all_space = true,
+            "ignore-space-change" => ws.ignore_space_change = true,
+            "ignore-space-at-eol" => ws.ignore_space_at_eol = true,
+            "ignore-cr-at-eol" => ws.ignore_cr_at_eol = true,
             _ => {}
         }
     }
-    MergeFavor::None
+    (favor, ws)
 }
 
 /// Three-way merge with content-level merging.
@@ -988,6 +1008,7 @@ fn three_way_merge_with_content(
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
     favor: MergeFavor,
+    ws_opts: WhitespaceStrategyOptions,
 ) -> Result<MergeResult> {
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
@@ -1032,6 +1053,7 @@ fn three_way_merge_with_content(
                     oe,
                     te,
                     favor,
+                    ws_opts,
                 )?;
             }
             (None, Some(oe), None) => {
@@ -1078,6 +1100,7 @@ fn content_merge_or_conflict(
     ours: &IndexEntry,
     theirs: &IndexEntry,
     favor: MergeFavor,
+    ws_opts: WhitespaceStrategyOptions,
 ) -> Result<()> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -1118,6 +1141,10 @@ fn content_merge_or_conflict(
         style: Default::default(),
         marker_size: 7,
         diff_algorithm: None,
+        ignore_all_space: ws_opts.ignore_all_space,
+        ignore_space_change: ws_opts.ignore_space_change,
+        ignore_space_at_eol: ws_opts.ignore_space_at_eol,
+        ignore_cr_at_eol: ws_opts.ignore_cr_at_eol,
     };
 
     let result = merge(&input)?;

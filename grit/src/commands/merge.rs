@@ -635,6 +635,10 @@ fn create_virtual_merge_base(
             favor,
             None,
             merge_renormalize,
+            false,
+            false,
+            false,
+            false,
         )?;
 
         // Build a tree from the merged index:
@@ -926,6 +930,10 @@ fn do_real_merge(
         favor,
         diff_algorithm,
         merge_renormalize,
+        false,
+        false,
+        false,
+        false,
     )?;
 
     // Refuse merges that would overwrite local changes or untracked files.
@@ -1618,6 +1626,10 @@ fn do_octopus_merge(
             favor,
             diff_algorithm,
             merge_renormalize,
+            false,
+            false,
+            false,
+            false,
         )?;
 
         if merge_result.has_conflicts {
@@ -2333,6 +2345,8 @@ pub(crate) struct ReplayTreeMergeResult {
     pub index: Index,
     /// Whether the merge produced conflicts.
     pub has_conflicts: bool,
+    /// Files with conflict marker content to materialize in worktree.
+    pub conflict_files: Vec<(String, Vec<u8>)>,
     /// Human-readable conflict summaries.
     pub conflict_descriptions: Vec<(String, String)>,
 }
@@ -2605,6 +2619,10 @@ fn merge_trees(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     merge_renormalize: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
@@ -2667,6 +2685,10 @@ fn merge_trees(
                         favor,
                         diff_algorithm,
                         merge_renormalize,
+                        ignore_all_space,
+                        ignore_space_change,
+                        ignore_space_at_eol,
+                        ignore_cr_at_eol,
                     )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
@@ -2724,6 +2746,10 @@ fn merge_trees(
                                 favor,
                                 diff_algorithm,
                                 merge_renormalize,
+                                ignore_all_space,
+                                ignore_space_change,
+                                ignore_space_at_eol,
+                                ignore_cr_at_eol,
                             )? {
                                 ContentMergeResult::Clean(merged_oid, mode) => {
                                     let mut entry = oe.clone();
@@ -2880,6 +2906,10 @@ fn merge_trees(
                         favor,
                         diff_algorithm,
                         merge_renormalize,
+                        ignore_all_space,
+                        ignore_space_change,
+                        ignore_space_at_eol,
+                        ignore_cr_at_eol,
                     )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
@@ -3027,6 +3057,10 @@ fn merge_trees(
                     favor,
                     diff_algorithm,
                     merge_renormalize,
+                    ignore_all_space,
+                    ignore_space_change,
+                    ignore_space_at_eol,
+                    ignore_cr_at_eol,
                 )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
@@ -3161,6 +3195,10 @@ fn merge_trees(
                     favor,
                     diff_algorithm,
                     merge_renormalize,
+                    ignore_all_space,
+                    ignore_space_change,
+                    ignore_space_at_eol,
+                    ignore_cr_at_eol,
                 )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
@@ -3217,6 +3255,10 @@ pub(crate) fn merge_trees_for_replay(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     merge_renormalize: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
 ) -> Result<ReplayTreeMergeResult> {
     let head = HeadState::Invalid;
     let result = merge_trees(
@@ -3230,10 +3272,15 @@ pub(crate) fn merge_trees_for_replay(
         favor,
         diff_algorithm,
         merge_renormalize,
+        ignore_all_space,
+        ignore_space_change,
+        ignore_space_at_eol,
+        ignore_cr_at_eol,
     )?;
     Ok(ReplayTreeMergeResult {
         index: result.index,
         has_conflicts: result.has_conflicts,
+        conflict_files: result.conflict_files,
         conflict_descriptions: result.conflict_descriptions,
     })
 }
@@ -3259,6 +3306,10 @@ fn try_content_merge(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     merge_renormalize: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -3331,6 +3382,10 @@ fn try_content_merge(
         style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
+        ignore_all_space,
+        ignore_space_change,
+        ignore_space_at_eol,
+        ignore_cr_at_eol,
     };
 
     let output = merge_file::merge(&input)?;
@@ -3373,6 +3428,10 @@ fn try_content_merge_add_add(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     merge_renormalize: bool,
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
@@ -3408,6 +3467,10 @@ fn try_content_merge_add_add(
         style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
+        ignore_all_space,
+        ignore_space_change,
+        ignore_space_at_eol,
+        ignore_cr_at_eol,
     };
 
     let output = merge_file::merge(&input)?;

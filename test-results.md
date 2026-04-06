@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6432-merge-recursive-space-options.sh`: 11/11 passing (direct validation after implementing native `merge-recursive` command wiring plus whitespace-ignore merge behavior for `--ignore-space-change`, `--ignore-all-space`, and `--ignore-space-at-eol`).
+- `./scripts/run-tests.sh t6432-merge-recursive-space-options.sh`: 11/11 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (targeted replay regression check after extending internal merge API to carry whitespace flags and conflict-marker worktree payloads; still fully passing).
+- `./scripts/run-tests.sh t6418-merge-text-auto.sh`: 11/11 passing (targeted merge whitespace/renormalize regression check after merge engine updates; still fully passing).
+- `cargo fmt`: passing.
+- `cargo clippy --fix --allow-dirty`: passing (unrelated clippy edits in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/reset.rs` were reverted).
+- `cargo test -p grit-lib --lib`: 97/97 passing.
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6429-merge-sequence-rename-caching.sh`: 11/11 passing (direct validation after replacing replay passthrough with native sequencer-style replay and fixing upstream rename-cache refresh heuristics for directory-rename caching scenarios).
 - `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (targeted merge regression check after replay/merge rename handling updates).

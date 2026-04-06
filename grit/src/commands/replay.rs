@@ -171,6 +171,10 @@ pub fn run(args: Args) -> Result<()> {
             MergeFavor::None,
             None,
             merge_renormalize,
+            false,
+            false,
+            false,
+            false,
         )?;
         if merge_result.has_conflicts {
             let reason = merge_result

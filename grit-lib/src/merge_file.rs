@@ -67,6 +67,14 @@ pub struct MergeInput<'a> {
     pub marker_size: usize,
     /// Diff algorithm.
     pub diff_algorithm: Option<String>,
+    /// Ignore all whitespace when comparing lines (`-w`).
+    pub ignore_all_space: bool,
+    /// Ignore changes in amount of whitespace (`-b`).
+    pub ignore_space_change: bool,
+    /// Ignore whitespace at end of line.
+    pub ignore_space_at_eol: bool,
+    /// Ignore CR at end of line.
+    pub ignore_cr_at_eol: bool,
 }
 
 /// Result of a three-way merge.
@@ -86,7 +94,15 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let base_lines = split_lines(input.base);
     let ours_lines = split_lines(input.ours);
     let theirs_lines = split_lines(input.theirs);
-    let marker_eol = conflict_marker_eol(&base_lines, &ours_lines, &theirs_lines);
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: input.ignore_all_space,
+        ignore_space_change: input.ignore_space_change,
+        ignore_space_at_eol: input.ignore_space_at_eol,
+        ignore_cr_at_eol: input.ignore_cr_at_eol,
+    };
+    let base_compare_lines = normalize_lines_for_compare(&base_lines, &ws_mode);
+    let ours_compare_lines = normalize_lines_for_compare(&ours_lines, &ws_mode);
+    let theirs_compare_lines = normalize_lines_for_compare(&theirs_lines, &ws_mode);
 
     let algo = input
         .diff_algorithm
@@ -96,8 +112,8 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
             _ => similar::Algorithm::Myers,
         })
         .unwrap_or(similar::Algorithm::Myers);
-    let ours_ops = similar::capture_diff_slices(algo, &base_lines, &ours_lines);
-    let theirs_ops = similar::capture_diff_slices(algo, &base_lines, &theirs_lines);
+    let ours_ops = similar::capture_diff_slices(algo, &base_compare_lines, &ours_compare_lines);
+    let theirs_ops = similar::capture_diff_slices(algo, &base_compare_lines, &theirs_compare_lines);
 
     let mut hunks = compute_hunks(
         &base_lines,
@@ -105,6 +121,7 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
         &theirs_lines,
         &ours_ops,
         &theirs_ops,
+        &ws_mode,
     );
     hunks = coalesce_nearby_conflicts(
         hunks,
@@ -189,7 +206,6 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
-                                marker_eol,
                             );
                             if suffix_len > 0 {
                                 append_lines(&mut content, &ours[ours.len() - suffix_len..]);
@@ -205,7 +221,6 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                                 input.label_theirs,
                                 input.style,
                                 marker,
-                                marker_eol,
                             );
                         }
                     }
@@ -280,16 +295,11 @@ fn emit_conflict(
     label_theirs: &str,
     style: ConflictStyle,
     marker: usize,
-    marker_eol: &[u8],
 ) {
     let open = "<".repeat(marker);
     let eq = "=".repeat(marker);
     let close = ">".repeat(marker);
-    let marker_terminator: &[u8] = if marker_eol == b"\r\n" {
-        b"\r\n"
-    } else {
-        b"\n"
-    };
+    let marker_terminator: &[u8] = b"\n";
 
     // Ensure ours section starts on a new line if the previous content didn't
     // end with one.
@@ -328,19 +338,6 @@ fn emit_conflict(
         out.extend_from_slice(marker_terminator);
     }
     write_conflict_marker_line(out, &close, Some(label_theirs), marker_terminator);
-}
-
-fn conflict_marker_eol(base: &[Vec<u8>], ours: &[Vec<u8>], theirs: &[Vec<u8>]) -> &'static [u8] {
-    if base
-        .iter()
-        .chain(ours.iter())
-        .chain(theirs.iter())
-        .any(|line| line.ends_with(b"\r\n"))
-    {
-        b"\r\n"
-    } else {
-        b"\n"
-    }
 }
 
 fn write_conflict_marker_line(out: &mut Vec<u8>, marker: &str, label: Option<&str>, eol: &[u8]) {
@@ -389,6 +386,7 @@ fn compute_hunks(
     theirs: &[Vec<u8>],
     ours_ops: &[DiffOp],
     theirs_ops: &[DiffOp],
+    ws_mode: &WhitespaceMode,
 ) -> Vec<Hunk> {
     let ours_changed = changed_mask(ours_ops, base.len());
     let theirs_changed = changed_mask(theirs_ops, base.len());
@@ -423,7 +421,16 @@ fn compute_hunks(
             while end < base.len() && !ours_changed[end] && !theirs_changed[end] {
                 end += 1;
             }
-            hunks.push(Hunk::Unchanged(base[pos..end].to_vec()));
+            let unchanged_lines = if ws_mode.ignore_all_space
+                || ws_mode.ignore_space_change
+                || ws_mode.ignore_space_at_eol
+                || ws_mode.ignore_cr_at_eol
+            {
+                &ours[pos..end]
+            } else {
+                &base[pos..end]
+            };
+            hunks.push(Hunk::Unchanged(unchanged_lines.to_vec()));
             pos = end;
             continue;
         }
@@ -462,7 +469,7 @@ fn compute_hunks(
             (true, true) => {
                 let o = collect_new_lines(ours_ops, ours, pos, end);
                 let t = collect_new_lines(theirs_ops, theirs, pos, end);
-                if o == t {
+                if lines_equal_for_compare(&o, &t, ws_mode) {
                     // Both sides produce the same content — not really a conflict.
                     hunks.push(Hunk::OnlyOurs {
                         base: base[pos..end].to_vec(),
@@ -818,6 +825,83 @@ fn split_lines(data: &[u8]) -> Vec<Vec<u8>> {
     lines
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct WhitespaceMode {
+    ignore_all_space: bool,
+    ignore_space_change: bool,
+    ignore_space_at_eol: bool,
+    ignore_cr_at_eol: bool,
+}
+
+fn normalize_lines_for_compare(lines: &[Vec<u8>], mode: &WhitespaceMode) -> Vec<Vec<u8>> {
+    lines
+        .iter()
+        .map(|line| normalize_line_for_compare(line, mode))
+        .collect()
+}
+
+fn normalize_line_for_compare(line: &[u8], mode: &WhitespaceMode) -> Vec<u8> {
+    let mut bytes = line.to_vec();
+
+    if mode.ignore_cr_at_eol && bytes.ends_with(b"\r\n") {
+        let len = bytes.len();
+        bytes.remove(len - 2);
+    }
+
+    if mode.ignore_all_space {
+        return bytes
+            .into_iter()
+            .filter(|b| !b.is_ascii_whitespace())
+            .collect();
+    }
+
+    if mode.ignore_space_change {
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut in_ws = false;
+        for ch in bytes {
+            if ch.is_ascii_whitespace() {
+                if !in_ws {
+                    out.push(b' ');
+                    in_ws = true;
+                }
+            } else {
+                out.push(ch);
+                in_ws = false;
+            }
+        }
+        while out.last().is_some_and(|b| b.is_ascii_whitespace()) {
+            out.pop();
+        }
+        return out;
+    }
+
+    if mode.ignore_space_at_eol {
+        if bytes.last().copied() == Some(b'\n') {
+            let mut body = bytes[..bytes.len() - 1].to_vec();
+            while body.last().is_some_and(|b| b.is_ascii_whitespace()) {
+                body.pop();
+            }
+            body.push(b'\n');
+            bytes = body;
+        } else {
+            while bytes.last().is_some_and(|b| b.is_ascii_whitespace()) {
+                bytes.pop();
+            }
+        }
+    }
+
+    bytes
+}
+
+fn lines_equal_for_compare(left: &[Vec<u8>], right: &[Vec<u8>], mode: &WhitespaceMode) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .all(|(a, b)| normalize_line_for_compare(a, mode) == normalize_line_for_compare(b, mode))
+}
+
 /// Returns `true` if the byte slice appears to be binary content.
 ///
 /// Uses the same heuristic as git: any NUL byte means binary.
@@ -842,6 +926,10 @@ mod tests {
             style: ConflictStyle::Merge,
             marker_size: 7,
             diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
         };
         let out = merge(&input).unwrap();
         (String::from_utf8(out.content).unwrap(), out.conflicts)
@@ -899,6 +987,10 @@ mod tests {
             style: ConflictStyle::Merge,
             marker_size: 7,
             diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
         };
         let out = merge(&input).unwrap();
         assert_eq!(out.content, b"a\nX\nc\n");
@@ -918,6 +1010,10 @@ mod tests {
             style: ConflictStyle::Merge,
             marker_size: 7,
             diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
         };
         let out = merge(&input).unwrap();
         // union: line3x\nline3y (newline inserted between no-LF lines)
@@ -937,6 +1033,10 @@ mod tests {
             style: ConflictStyle::ZealousDiff3,
             marker_size: 7,
             diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
         };
         let out = merge(&input).unwrap();
         let rendered = String::from_utf8(out.content).unwrap();

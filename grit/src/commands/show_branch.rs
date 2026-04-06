@@ -40,6 +40,7 @@ pub fn run(args: Args) -> Result<()> {
         }
         if !end_of_options && arg.starts_with('-') {
             match arg.as_str() {
+                "--all" => {}
                 "--merge-base" => mode = choose_mode(mode, Mode::MergeBase)?,
                 "--independent" => mode = choose_mode(mode, Mode::Independent)?,
                 _ => bail!("unsupported option: {arg}"),

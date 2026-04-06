@@ -185,6 +185,10 @@ pub fn run(args: Args) -> Result<()> {
         style: ConflictStyle::Merge,
         marker_size: 7,
         diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
     })?;
 
     let path_bytes = args.path.as_bytes();

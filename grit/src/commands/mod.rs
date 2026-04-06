@@ -79,6 +79,7 @@ pub mod merge_base;
 pub mod merge_file;
 pub mod merge_index;
 pub mod merge_one_file;
+pub mod merge_recursive;
 pub mod merge_tree;
 pub mod mergetool;
 pub mod mktag;

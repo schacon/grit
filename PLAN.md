@@ -736,7 +736,7 @@ commit → check it off → move on.
 - [x] `t6115-rev-list-du` ████████████████████ 17/17 (0 left) — basic tests of rev-list --disk-usage
 - [x] `t6001-rev-list-graft` ████████████████████ 14/14 (0 left) — Revision traversal vs grafts and path limiter
 - [ ] `t6406-merge-attr` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — per path merge controlled by merge attribute
-- [ ] `t6432-merge-recursive-space-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — merge-recursive space options
+- [x] `t6432-merge-recursive-space-options` ████████████████████ 11/11 (0 left) — merge-recursive space options
 
 - [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number
 - [ ] `t6426-merge-skip-unneeded-updates` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — merge cases

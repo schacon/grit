@@ -186,6 +186,10 @@ pub fn run_inner(args: Args) -> Result<i32> {
         style,
         marker_size: args.marker_size.unwrap_or(0),
         diff_algorithm: args.diff_algorithm.clone(),
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
     };
 
     let result = merge(&input).context("merge failed")?;
