@@ -416,9 +416,16 @@ fn compute_hunks(
         let t = theirs_changed[pos];
 
         if !o && !t {
-            // Unchanged run: extend while both sides are still equal.
+            // Unchanged run. Stop before a position that has pending insertions
+            // on either side so that insertions are emitted in-order at the
+            // correct base position.
             let mut end = pos + 1;
-            while end < base.len() && !ours_changed[end] && !theirs_changed[end] {
+            while end < base.len()
+                && !ours_changed[end]
+                && !theirs_changed[end]
+                && ours_inserts[end].is_empty()
+                && theirs_inserts[end].is_empty()
+            {
                 end += 1;
             }
             let unchanged_lines = if ws_mode.ignore_all_space
@@ -545,7 +552,9 @@ fn emit_inserts_at(
     let has_theirs = !t_ins.is_empty();
 
     if has_ours && has_theirs {
-        // Both sides insert at the same position — check if identical.
+        // Both sides insert at the same position. If they share a common
+        // prefix, emit that prefix as unchanged and only conflict on the
+        // diverging remainder. This preserves superset insertions.
         let o_lines: Vec<Vec<u8>> = o_ins
             .iter()
             .flat_map(|&(s, e)| ours[s..e].to_vec())
@@ -555,20 +564,40 @@ fn emit_inserts_at(
             .flat_map(|&(s, e)| theirs[s..e].to_vec())
             .collect();
 
-        if o_lines == t_lines {
-            // Identical insertions — treat as unchanged.
-            if !o_lines.is_empty() {
-                hunks.push(Hunk::Unchanged(o_lines));
-            }
-        } else {
-            // Different insertions at the same point — conflict.
-            if !o_lines.is_empty() || !t_lines.is_empty() {
-                hunks.push(Hunk::Conflict {
-                    base: Vec::new(),
-                    ours: o_lines,
-                    theirs: t_lines,
-                });
-            }
+        let mut common_len = 0usize;
+        while common_len < o_lines.len()
+            && common_len < t_lines.len()
+            && o_lines[common_len] == t_lines[common_len]
+        {
+            common_len += 1;
+        }
+
+        if common_len > 0 {
+            hunks.push(Hunk::Unchanged(o_lines[..common_len].to_vec()));
+        }
+
+        let ours_tail = o_lines[common_len..].to_vec();
+        let theirs_tail = t_lines[common_len..].to_vec();
+
+        let ours_has_extra = !ours_tail.is_empty();
+        let theirs_has_extra = !theirs_tail.is_empty();
+
+        if ours_has_extra && theirs_has_extra {
+            hunks.push(Hunk::Conflict {
+                base: Vec::new(),
+                ours: ours_tail,
+                theirs: theirs_tail,
+            });
+        } else if ours_has_extra {
+            hunks.push(Hunk::OnlyOurs {
+                base: Vec::new(),
+                ours: ours_tail,
+            });
+        } else if theirs_has_extra {
+            hunks.push(Hunk::OnlyTheirs {
+                base: Vec::new(),
+                theirs: theirs_tail,
+            });
         }
     } else if has_ours {
         for &(ns, ne) in o_ins {
@@ -1042,5 +1071,62 @@ mod tests {
         let rendered = String::from_utf8(out.content).unwrap();
         assert_eq!(out.conflicts, 1, "{rendered}");
         assert!(rendered.contains("<<<<<<< HEAD\nD\nE\nF\n"), "{rendered}");
+    }
+
+    #[test]
+    fn preserves_shared_and_superset_insertions() {
+        let input = MergeInput {
+            base: b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+            ours: b"1\n2\n3\n4\n5\n5.5\n6\n7\n8\n9\n10\n",
+            theirs: b"1\n2\n3\n4\n5\n5.5\n6\n7\n8\n9\n10\n10.5\n",
+            label_ours: "ours",
+            label_base: "base",
+            label_theirs: "theirs",
+            favor: MergeFavor::None,
+            style: ConflictStyle::Merge,
+            marker_size: 7,
+            diff_algorithm: None,
+            ignore_all_space: false,
+            ignore_space_change: false,
+            ignore_space_at_eol: false,
+            ignore_cr_at_eol: false,
+        };
+        let base_lines = split_lines(input.base);
+        let ours_lines = split_lines(input.ours);
+        let theirs_lines = split_lines(input.theirs);
+        let ws_mode = WhitespaceMode::default();
+        let base_compare_lines = normalize_lines_for_compare(&base_lines, &ws_mode);
+        let ours_compare_lines = normalize_lines_for_compare(&ours_lines, &ws_mode);
+        let theirs_compare_lines = normalize_lines_for_compare(&theirs_lines, &ws_mode);
+        let ours_ops = similar::capture_diff_slices(
+            Algorithm::Myers,
+            &base_compare_lines,
+            &ours_compare_lines,
+        );
+        let theirs_ops = similar::capture_diff_slices(
+            Algorithm::Myers,
+            &base_compare_lines,
+            &theirs_compare_lines,
+        );
+        let hunks = compute_hunks(
+            &base_lines,
+            &ours_lines,
+            &theirs_lines,
+            &ours_ops,
+            &theirs_ops,
+            &ws_mode,
+        );
+        assert_eq!(
+            hunks.len(),
+            4,
+            "expected unchanged shared insertion and theirs-only tail insertion"
+        );
+        let out = merge(&input).unwrap();
+        let rendered = String::from_utf8(out.content).unwrap();
+        assert_eq!(out.conflicts, 0, "{rendered}");
+        assert_eq!(
+            rendered, "1\n2\n3\n4\n5\n5.5\n6\n7\n8\n9\n10\n10.5\n",
+            "{rendered}"
+        );
     }
 }

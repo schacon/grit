@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    82 |
+| Completed   |    83 |
 | In progress |     0 |
-| Remaining   |   685 |
+| Remaining   |   684 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6426-merge-skip-unneeded-updates` — 13/13 tests pass (fixed merge output channels so successful merge-commit summaries no longer pollute stderr checks while keeping conflict diagnostics on stdout; expanded `tests/test-tool chmtime` compatibility so `--get` supports optional offset specs used by mtime assertions; merge tree orchestration now preserves pre-merge dirty worktree files by skipping checkout when index OIDs are unchanged and only refreshing paths whose index content changed; resolved rename/add handling to drop stale stage-0 entries, emit conflict-marker worktree content, and correctly keep the renamed-side blob as stage-3 in 1to1 rename+add-source cases)
 - `t6406-merge-attr` — 13/13 tests pass (merge core now honors gitattributes merge attributes: `-merge`/binary paths, `merge=union`, and custom `merge=<driver>` with `%O/%A/%B/%P/%S/%X/%Y` placeholder expansion and proper signal-failure handling; merge conflict marker size now respects `conflict-marker-size` with Git-compatible warning for invalid values; `checkout -m <path>` now reconstructs conflicted files from index stages and applies `conflict-marker-size`, enabling conflict re-materialization checks)
 - `t6429-merge-sequence-rename-caching` — 11/11 tests pass (`replay` is now implemented natively in Rust and uses merge-ort style tree merges per replayed commit; added upstream/topic rename detection and caching across replay steps with directory-rename-aware cache application and refresh heuristics so trace2 `diffcore_rename` call counts match expected sequencer behavior in cache-sensitive scenarios)
 - `t6432-merge-recursive-space-options` — 11/11 tests pass (implemented native `merge-recursive` backend command with `git merge-recursive <base> -- <ours> <theirs>` argument shape, threaded whitespace strategy options (`--ignore-space-change`, `--ignore-all-space`, `--ignore-space-at-eol`, `--ignore-cr-at-eol`) through merge core + merge-file comparison logic, materialized conflict-marker files in merge-recursive worktree checkout for failed merges, fixed `update-index --refresh` to fail on unmerged entries, and aligned conflict-marker label/eol behavior with expected output)

@@ -739,7 +739,7 @@ commit → check it off → move on.
 - [x] `t6432-merge-recursive-space-options` ████████████████████ 11/11 (0 left) — merge-recursive space options
 
 - [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number
-- [ ] `t6426-merge-skip-unneeded-updates` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — merge cases
+- [x] `t6426-merge-skip-unneeded-updates` ████████████████████ 13/13 (0 left) — merge cases
 - [ ] `t6113-rev-list-bitmap-filters` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — rev-list combining bitmaps and filters
 - [ ] `t6436-merge-overwrite` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git-merge
 

@@ -2,6 +2,12 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (direct validation after merge skip-update fixes for unchanged-path checkout suppression, stderr-clean merge success output, chmtime helper compatibility, and rename/add conflict staging/content behavior).
+- `./scripts/run-tests.sh t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (harness validation; file now fully passing and TSV updated).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6429-merge-sequence-rename-caching.sh`: 11/11 passing (direct regression validation after replay now forces directory-rename mode off in merge core, restoring expected replay rename-cache behavior).
+- `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (harness regression validation after replay directory-rename mode fix).
+- `./scripts/run-tests.sh t6406-merge-attr.sh`: 13/13 passing (merge regression check after t6426/t6429 updates).
+- `./scripts/run-tests.sh t6432-merge-recursive-space-options.sh`: 11/11 passing (merge-recursive regression check after t6426/t6429 updates).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6406-merge-attr.sh`: 13/13 passing (direct validation after implementing merge-attribute-aware behavior: `-merge` binary conflicts, `merge=union`, custom merge driver execution with `%O/%A/%B/%P/%S/%X/%Y`, internal-merge failure code path for signaled drivers, conflict-marker-size attribute parsing/warnings, and `checkout -m` conflicted-path recreation from index stages).
 - `./scripts/run-tests.sh t6406-merge-attr.sh`: 13/13 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (merge regression check after t6406 attribute/driver integration).

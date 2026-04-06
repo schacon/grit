@@ -13,7 +13,7 @@ use grit_lib::repo::Repository;
 use std::collections::HashMap;
 use std::path::Path;
 
-use super::merge::merge_trees_for_replay;
+use super::merge::{merge_trees_for_replay, MergeDirectoryRenamesMode};
 
 /// Arguments for `grit merge-recursive`.
 #[derive(Debug, ClapArgs)]
@@ -60,6 +60,7 @@ pub fn run(args: Args) -> Result<()> {
         ws.ignore_space_change,
         ws.ignore_space_at_eol,
         ws.ignore_cr_at_eol,
+        MergeDirectoryRenamesMode::FromConfig,
     )?;
 
     merge_result.index.write(&repo.index_path())?;
