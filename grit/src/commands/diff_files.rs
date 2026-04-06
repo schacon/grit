@@ -305,11 +305,17 @@ fn collect_changes(
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
                     {
+                        // Detect type changes (e.g., symlink ↔ regular, regular ↔ submodule)
+                        let status = if mode_type(idx_canonical) != mode_type(wt_mode) {
+                            'T'
+                        } else {
+                            'M'
+                        };
                         changes.insert(
                             path.clone(),
                             Change {
                                 path: path.clone(),
-                                status: 'M',
+                                status,
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
@@ -491,7 +497,31 @@ fn read_worktree_info_fast(
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
 
+    // If it's a directory, check if it's a submodule (has .git subdirectory)
+    if meta.file_type().is_dir() {
+        let dot_git = abs_path.join(".git");
+        if dot_git.exists() {
+            // Treat as a submodule (mode 160000)
+            let sub_oid = read_submodule_head(abs_path).unwrap_or(index_entry.oid);
+            return Ok(WorktreeStatus::Modified(0o160000, sub_oid));
+        }
+    }
+
     Ok(WorktreeStatus::Missing)
+}
+
+/// Read the current HEAD commit OID of a submodule at the given path.
+fn read_submodule_head(path: &Path) -> Result<ObjectId> {
+    let head_path = path.join(".git").join("HEAD");
+    let content = std::fs::read_to_string(&head_path)?;
+    let content = content.trim();
+    if let Some(refname) = content.strip_prefix("ref: ") {
+        let ref_file = path.join(".git").join(refname);
+        let ref_content = std::fs::read_to_string(&ref_file)?;
+        Ok(ref_content.trim().parse()?)
+    } else {
+        Ok(content.parse()?)
+    }
 }
 
 /// Read mode and OID for a working-tree file; returns `None` if missing.
@@ -715,6 +745,17 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
             path == spec || path.starts_with(&format!("{spec}/"))
         }
     })
+}
+
+/// Return the file type category for a mode: 0=regular, 1=executable, 2=symlink, 3=submodule, 4=other
+fn mode_type(mode: u32) -> u32 {
+    match mode {
+        0o100644 => 0,
+        0o100755 => 1,
+        0o120000 => 2,
+        0o160000 => 3,
+        _ => 4,
+    }
 }
 
 /// Resolve the index file path, honouring `GIT_INDEX_FILE`.
