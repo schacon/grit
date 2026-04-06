@@ -119,7 +119,7 @@ t1350-config-hooks-path	yes	4	4	0	ok	4	4	0
 t1400-update-ref	yes	0	0	0	timeout	0	0	0
 t1401-symbolic-ref	yes	25	25	0	ok	25	25	0
 t1402-check-ref-format	yes	99	99	0	ok	99	99	0
-t1403-show-ref	yes	12	2	10	ok	2	12	0
+t1403-show-ref	yes	12	10	2	ok	10	12	0
 t1404-update-ref-errors	yes	38	1	37	ok	1	38	0
 t1405-main-ref-store	yes	16	16	0	ok	16	16	0
 t1406-submodule-ref-store	yes	15	15	0	ok	15	15	0

@@ -701,6 +701,7 @@ test_commit () {
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
+		--annotate) shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
