@@ -60,6 +60,8 @@ pub fn run(args: Args) -> Result<()> {
     let mut disk_usage_format: Option<DiskUsageFormat> = None;
     let mut show_parents = false;
     let mut not_mode = false;
+    let mut use_bitmap_index = false;
+    let mut only_unpacked = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -95,8 +97,8 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
-                "--use-bitmap-index" => { /* accepted for compatibility */ }
-                "--unpacked" => { /* accepted for compatibility */ }
+                "--use-bitmap-index" => use_bitmap_index = true,
+                "--unpacked" => only_unpacked = true,
                 "--disk-usage" => disk_usage_format = Some(DiskUsageFormat::Bytes),
                 _ if arg.starts_with("--disk-usage=") => {
                     let value = arg.trim_start_matches("--disk-usage=");
@@ -317,6 +319,8 @@ pub fn run(args: Args) -> Result<()> {
                     options.ancestry_path_bottoms.push(oid);
                 }
                 "--filter-print-omitted" => options.filter_print_omitted = true,
+                "--filter-provided-objects" => options.filter_provided_objects = true,
+                "--no-filter" => options.filter = None,
                 "--no-commit-header" => no_commit_header = true,
                 "--commit-header" => no_commit_header = false,
                 "--color" => {
@@ -355,7 +359,7 @@ pub fn run(args: Args) -> Result<()> {
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    options.filter = Some(filter);
+                    options.filter = Some(combine_object_filters(options.filter.take(), filter));
                 }
                 _ if arg.starts_with("--default") => {
                     // --default REV: use REV as default if no revisions given
@@ -476,8 +480,31 @@ pub fn run(args: Args) -> Result<()> {
         options.symmetric_right = Some(rhs_oid);
     }
 
-    let result =
+    let mut result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
+
+    let bitmap_traversal = use_bitmap_index
+        && !only_unpacked
+        && options
+            .filter
+            .as_ref()
+            .is_none_or(|f| !f.requires_non_bitmap_fallback());
+
+    if only_unpacked {
+        result
+            .commits
+            .retain(|oid| repo.odb.object_path(oid).is_file());
+        result
+            .objects
+            .retain(|(oid, _)| repo.odb.object_path(oid).is_file());
+        result
+            .omitted_objects
+            .retain(|oid| repo.odb.object_path(oid).is_file());
+    }
+
+    if bitmap_traversal && options.objects {
+        result.commits.sort();
+    }
 
     if let Some(format) = disk_usage_format {
         let mut object_ids = Vec::with_capacity(result.commits.len() + result.objects.len());
@@ -536,7 +563,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let print_object = |oid: &grit_lib::objects::ObjectId, path: &str| {
-        if options.no_object_names {
+        if options.no_object_names || bitmap_traversal || only_unpacked {
             println!("{oid}");
         } else if path.is_empty() {
             println!("{oid} ");
@@ -857,6 +884,17 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn combine_object_filters(existing: Option<ObjectFilter>, next: ObjectFilter) -> ObjectFilter {
+    match existing {
+        None => next,
+        Some(ObjectFilter::Combine(mut filters)) => {
+            filters.push(next);
+            ObjectFilter::Combine(filters)
+        }
+        Some(prev) => ObjectFilter::Combine(vec![prev, next]),
+    }
 }
 
 fn expand_parent_shorthand(repo: &Repository, spec: &str) -> Result<Vec<String>> {

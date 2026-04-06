@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    83 |
+| Completed   |    84 |
 | In progress |     0 |
-| Remaining   |   684 |
+| Remaining   |   683 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6113-rev-list-bitmap-filters` — 14/14 tests pass (`rev-list` now supports `--filter-provided-objects` and repeated `--filter=` accumulation, including `object:type` and `sparse:oid` parsing/semantics through library object traversal; object roots now preserve explicit provided-object metadata and optional display names so `object:type` filtering matches Git for both normal and provided-object modes; bitmap compatibility fallback is now filter-aware (`sparse:oid`, `tree:>0`, and `object:type=*`) while still preserving bitmap-style output normalization where required; `--unpacked` now filters commits/objects against loose ODB entries and excludes commits reachable from packed refs, aligning the unpacked bitmap traversal case with expected output).
 - `t6426-merge-skip-unneeded-updates` — 13/13 tests pass (fixed merge output channels so successful merge-commit summaries no longer pollute stderr checks while keeping conflict diagnostics on stdout; expanded `tests/test-tool chmtime` compatibility so `--get` supports optional offset specs used by mtime assertions; merge tree orchestration now preserves pre-merge dirty worktree files by skipping checkout when index OIDs are unchanged and only refreshing paths whose index content changed; resolved rename/add handling to drop stale stage-0 entries, emit conflict-marker worktree content, and correctly keep the renamed-side blob as stage-3 in 1to1 rename+add-source cases)
 - `t6406-merge-attr` — 13/13 tests pass (merge core now honors gitattributes merge attributes: `-merge`/binary paths, `merge=union`, and custom `merge=<driver>` with `%O/%A/%B/%P/%S/%X/%Y` placeholder expansion and proper signal-failure handling; merge conflict marker size now respects `conflict-marker-size` with Git-compatible warning for invalid values; `checkout -m <path>` now reconstructs conflicted files from index stages and applies `conflict-marker-size`, enabling conflict re-materialization checks)
 - `t6429-merge-sequence-rename-caching` — 11/11 tests pass (`replay` is now implemented natively in Rust and uses merge-ort style tree merges per replayed commit; added upstream/topic rename detection and caching across replay steps with directory-rename-aware cache application and refresh heuristics so trace2 `diffcore_rename` call counts match expected sequencer behavior in cache-sensitive scenarios)
@@ -73,4 +74,4 @@
 
 ## What Remains
 
-685 test files still pending. See `plan.md` for the full prioritized list.
+683 test files still pending. See `plan.md` for the full prioritized list.

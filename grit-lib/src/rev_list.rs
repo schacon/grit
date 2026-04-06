@@ -47,6 +47,13 @@ pub enum ObjectFilter {
     BlobLimit(u64),
     /// `tree:<depth>` — omit trees deeper than `depth`.
     TreeDepth(u64),
+    /// `sparse:oid=<oid>` — path-based sparse object filter.
+    ///
+    /// In Git this filter is incompatible with bitmap traversal and therefore
+    /// must force the non-bitmap-compatible traversal path.
+    SparseOid(ObjectId),
+    /// `object:type=<kind>` — keep only objects of the requested type.
+    ObjectType(ExpectedObjectKind),
     /// `combine:<filter>+<filter>+…` — apply multiple filters.
     Combine(Vec<ObjectFilter>),
 }
@@ -68,6 +75,17 @@ impl ObjectFilter {
                 .map_err(|_| format!("invalid tree depth: {rest}"))?;
             return Ok(ObjectFilter::TreeDepth(depth));
         }
+        if let Some(rest) = spec.strip_prefix("sparse:oid=") {
+            let oid = rest
+                .parse::<ObjectId>()
+                .map_err(|_| format!("invalid sparse:oid value: {rest}"))?;
+            return Ok(ObjectFilter::SparseOid(oid));
+        }
+        if let Some(rest) = spec.strip_prefix("object:type=") {
+            let kind = ExpectedObjectKind::from_str(rest)
+                .ok_or_else(|| format!("unsupported object:type value: {rest}"))?;
+            return Ok(ObjectFilter::ObjectType(kind));
+        }
         if let Some(rest) = spec.strip_prefix("combine:") {
             let parts = split_combine(rest);
             let mut filters = Vec::new();
@@ -85,6 +103,8 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => false,
             ObjectFilter::BlobLimit(limit) => size <= *limit,
             ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == ExpectedObjectKind::Blob,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_blob(size)),
         }
     }
@@ -95,7 +115,45 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => true,
             ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
+            ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == ExpectedObjectKind::Tree,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tree(depth)),
+        }
+    }
+
+    fn includes_commit(&self) -> bool {
+        match self {
+            ObjectFilter::BlobNone
+            | ObjectFilter::BlobLimit(_)
+            | ObjectFilter::TreeDepth(_)
+            | ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == ExpectedObjectKind::Commit,
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_commit()),
+        }
+    }
+
+    fn includes_tag(&self) -> bool {
+        match self {
+            ObjectFilter::BlobNone
+            | ObjectFilter::BlobLimit(_)
+            | ObjectFilter::TreeDepth(_)
+            | ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == ExpectedObjectKind::Tag,
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tag()),
+        }
+    }
+
+    /// True when this filter cannot be accelerated with bitmap traversal and
+    /// therefore should always use the regular traversal path.
+    pub fn requires_non_bitmap_fallback(&self) -> bool {
+        match self {
+            ObjectFilter::SparseOid(_) => true,
+            ObjectFilter::TreeDepth(depth) => *depth > 0,
+            ObjectFilter::ObjectType(kind) => *kind == ExpectedObjectKind::Tag,
+            ObjectFilter::Combine(filters) => filters
+                .iter()
+                .any(ObjectFilter::requires_non_bitmap_fallback),
+            _ => false,
         }
     }
 }
@@ -230,6 +288,8 @@ pub struct RevListOptions {
     pub in_commit_order: bool,
     /// Exclude objects in `.keep` pack files.
     pub no_kept_objects: bool,
+    /// Apply `--filter=` rules to explicitly provided objects.
+    pub filter_provided_objects: bool,
     /// Behavior when referenced objects are missing.
     pub missing_action: MissingAction,
 }
@@ -268,6 +328,7 @@ impl Default for RevListOptions {
             filter_print_omitted: false,
             in_commit_order: false,
             no_kept_objects: false,
+            filter_provided_objects: false,
             missing_action: MissingAction::Error,
         }
     }
@@ -318,11 +379,16 @@ pub fn rev_list(
 ) -> Result<RevListResult> {
     let mut graph = CommitGraph::new(repo, options.first_parent);
 
-    let (mut include, object_roots) = if options.objects {
-        let (commit_starts, roots) = resolve_specs_for_objects(repo, positive_specs)?;
-        (commit_starts, roots)
+    let (mut include, object_roots, provided_commits) = if options.objects {
+        let (commit_starts, roots, provided_commits) =
+            resolve_specs_for_objects(repo, positive_specs)?;
+        (commit_starts, roots, provided_commits)
     } else {
-        (resolve_specs(repo, positive_specs)?, Vec::new())
+        (
+            resolve_specs(repo, positive_specs)?,
+            Vec::new(),
+            HashSet::new(),
+        )
     };
     let exclude = resolve_specs(repo, negative_specs)?;
 
@@ -480,6 +546,19 @@ pub fn rev_list(
         ordered.reverse();
     }
 
+    let mut object_traversal_commits = ordered.clone();
+
+    if options.objects {
+        if let Some(filter) = options.filter.as_ref() {
+            ordered.retain(|oid| {
+                if filter.includes_commit() {
+                    return true;
+                }
+                !options.filter_provided_objects && provided_commits.contains(oid)
+            });
+        }
+    }
+
     // Collect boundary commits: parents of included commits that are in the excluded set
     let boundary_commits = if options.boundary {
         let included_set: HashSet<ObjectId> = ordered.iter().copied().collect();
@@ -508,30 +587,43 @@ pub fn rev_list(
 
     if options.no_kept_objects {
         ordered.retain(|oid| !kept_set.contains(oid));
+        object_traversal_commits.retain(|oid| !kept_set.contains(oid));
     }
+
+    let excluded_object_ids = if options.objects && !exclude.is_empty() {
+        collect_reachable_object_ids_from_commits(repo, &exclude, options.missing_action)?
+    } else {
+        HashSet::new()
+    };
 
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
-        let (mut objs, omit, miss, counts) = if options.in_commit_order {
+        let (mut objs, mut omit, miss, counts) = if options.in_commit_order {
             collect_reachable_objects_in_commit_order(
                 repo,
                 &mut graph,
-                &ordered,
+                &object_traversal_commits,
                 &object_roots,
                 options.filter.as_ref(),
+                options.filter_provided_objects,
                 options.missing_action,
             )?
         } else {
             let (objs, omit, miss) = collect_reachable_objects(
                 repo,
                 &mut graph,
-                &ordered,
+                &object_traversal_commits,
                 &object_roots,
                 options.filter.as_ref(),
+                options.filter_provided_objects,
                 options.missing_action,
             )?;
             (objs, omit, miss, Vec::new())
         };
+        if !excluded_object_ids.is_empty() {
+            objs.retain(|(oid, _)| !excluded_object_ids.contains(oid));
+            omit.retain(|oid| !excluded_object_ids.contains(oid));
+        }
         if options.no_kept_objects {
             objs.retain(|(oid, _)| !kept_set.contains(oid));
         }
@@ -1568,18 +1660,30 @@ pub fn render_commit_with_color(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ExpectedObjectKind {
+pub enum ExpectedObjectKind {
     Commit,
     Tree,
     Blob,
+    Tag,
 }
 
 impl ExpectedObjectKind {
+    fn from_str(kind: &str) -> Option<Self> {
+        match kind {
+            "commit" => Some(Self::Commit),
+            "tree" => Some(Self::Tree),
+            "blob" => Some(Self::Blob),
+            "tag" => Some(Self::Tag),
+            _ => None,
+        }
+    }
+
     fn from_tag_type(kind: &str) -> Option<Self> {
         match kind {
             "commit" => Some(Self::Commit),
             "tree" => Some(Self::Tree),
             "blob" => Some(Self::Blob),
+            "tag" => Some(Self::Tag),
             _ => None,
         }
     }
@@ -1590,6 +1694,7 @@ impl ExpectedObjectKind {
             (Self::Commit, ObjectKind::Commit)
                 | (Self::Tree, ObjectKind::Tree)
                 | (Self::Blob, ObjectKind::Blob)
+                | (Self::Tag, ObjectKind::Tag)
         )
     }
 
@@ -1598,6 +1703,7 @@ impl ExpectedObjectKind {
             Self::Commit => "commit",
             Self::Tree => "tree",
             Self::Blob => "blob",
+            Self::Tag => "tag",
         }
     }
 }
@@ -1606,7 +1712,9 @@ impl ExpectedObjectKind {
 struct RootObject {
     oid: ObjectId,
     input: String,
+    display_name: String,
     expected_kind: Option<ExpectedObjectKind>,
+    provided: bool,
 }
 
 fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
@@ -1622,9 +1730,10 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
 fn resolve_specs_for_objects(
     repo: &Repository,
     specs: &[String],
-) -> Result<(Vec<ObjectId>, Vec<RootObject>)> {
+) -> Result<(Vec<ObjectId>, Vec<RootObject>, HashSet<ObjectId>)> {
     let mut commits = Vec::new();
     let mut roots = Vec::new();
+    let mut provided_commits = HashSet::new();
 
     for spec in specs {
         if let Ok(raw_oid) = spec.parse::<ObjectId>() {
@@ -1632,46 +1741,77 @@ fn resolve_specs_for_objects(
             match raw_object.kind {
                 ObjectKind::Commit => {
                     commits.push(raw_oid);
+                    provided_commits.insert(raw_oid);
                 }
                 ObjectKind::Tag => {
-                    let tag = parse_tag(&raw_object.data)?;
-                    let expected_kind = ExpectedObjectKind::from_tag_type(&tag.object_type)
-                        .ok_or_else(|| {
-                            Error::CorruptObject(format!(
-                                "object {spec} has unsupported tag type '{}'",
-                                tag.object_type
-                            ))
-                        })?;
                     roots.push(RootObject {
-                        oid: tag.object,
+                        oid: raw_oid,
                         input: spec.clone(),
-                        expected_kind: Some(expected_kind),
+                        display_name: String::new(),
+                        expected_kind: None,
+                        provided: true,
                     });
+                    if let Ok(commit_oid) = peel_to_commit(repo, raw_oid) {
+                        commits.push(commit_oid);
+                        provided_commits.insert(commit_oid);
+                    }
                 }
                 ObjectKind::Tree | ObjectKind::Blob => roots.push(RootObject {
                     oid: raw_oid,
                     input: spec.clone(),
+                    display_name: String::new(),
                     expected_kind: None,
+                    provided: true,
                 }),
             }
             continue;
         }
 
         let oid = resolve_revision(repo, spec)?;
-        match peel_to_commit(repo, oid) {
-            Ok(commit_oid) => commits.push(commit_oid),
-            Err(Error::CorruptObject(_)) | Err(Error::ObjectNotFound(_)) => {
+        let object = repo.odb.read(&oid)?;
+        match object.kind {
+            ObjectKind::Commit => {
+                commits.push(oid);
+                provided_commits.insert(oid);
+            }
+            ObjectKind::Tag => {
                 roots.push(RootObject {
                     oid,
                     input: spec.clone(),
+                    display_name: spec.clone(),
                     expected_kind: None,
-                })
+                    provided: true,
+                });
+                if let Ok(commit_oid) = peel_to_commit(repo, oid) {
+                    commits.push(commit_oid);
+                    provided_commits.insert(commit_oid);
+                }
             }
-            Err(err) => return Err(err),
+            ObjectKind::Tree | ObjectKind::Blob => {
+                roots.push(RootObject {
+                    oid,
+                    input: spec.clone(),
+                    display_name: display_name_for_root_spec(spec),
+                    expected_kind: None,
+                    provided: true,
+                });
+            }
         }
     }
 
-    Ok((commits, roots))
+    Ok((commits, roots, provided_commits))
+}
+
+fn display_name_for_root_spec(spec: &str) -> String {
+    if spec.parse::<ObjectId>().is_ok() {
+        return String::new();
+    }
+    if let Some((lhs, rhs)) = spec.split_once(':') {
+        if !lhs.is_empty() && !spec.starts_with(":/") {
+            return rhs.to_owned();
+        }
+    }
+    spec.to_owned()
 }
 
 /// Peel an object (possibly a tag) to the underlying commit.
@@ -2226,6 +2366,7 @@ fn collect_reachable_objects(
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
+    filter_provided_objects: bool,
     missing_action: MissingAction,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
@@ -2269,8 +2410,13 @@ fn collect_reachable_objects(
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided_objects,
             missing_action,
         )?;
+    }
+
+    if should_reorder_like_bitmap(filter) {
+        reorder_objects_like_bitmap(&mut result, &mut omitted);
     }
 
     Ok((result, omitted, missing))
@@ -2285,6 +2431,7 @@ fn collect_root_object(
     missing: &mut Vec<ObjectId>,
     missing_seen: &mut HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
+    filter_provided_objects: bool,
     missing_action: MissingAction,
 ) -> Result<()> {
     let object = match repo.odb.read(&root.oid) {
@@ -2308,6 +2455,9 @@ fn collect_root_object(
         }
     }
 
+    let include_provided = !filter_provided_objects && root.provided;
+    let root_filter = if root.provided { None } else { filter };
+
     match object.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&object.data)?;
@@ -2321,11 +2471,14 @@ fn collect_root_object(
                 omitted,
                 missing,
                 missing_seen,
-                filter,
+                root_filter,
                 missing_action,
             )?;
         }
         ObjectKind::Tree => {
+            if include_provided && seen.insert(root.oid) {
+                result.push((root.oid, root.display_name.clone()));
+            }
             seen.remove(&root.oid);
             collect_tree_objects_filtered(
                 repo,
@@ -2337,7 +2490,7 @@ fn collect_root_object(
                 omitted,
                 missing,
                 missing_seen,
-                filter,
+                root_filter,
                 missing_action,
             )?;
         }
@@ -2345,14 +2498,24 @@ fn collect_root_object(
             if !seen.insert(root.oid) {
                 return Ok(());
             }
-            let blob_included = filter.is_none_or(|f| f.includes_blob(object.data.len() as u64));
+            let blob_included = include_provided
+                || filter.is_none_or(|f| f.includes_blob(object.data.len() as u64));
             if blob_included {
-                result.push((root.oid, String::new()));
+                result.push((root.oid, root.display_name.clone()));
             } else {
                 omitted.push(root.oid);
             }
         }
         ObjectKind::Tag => {
+            if seen.insert(root.oid) {
+                let tag_included =
+                    include_provided || filter.is_none_or(ObjectFilter::includes_tag);
+                if tag_included {
+                    result.push((root.oid, root.display_name.clone()));
+                } else {
+                    omitted.push(root.oid);
+                }
+            }
             let tag = parse_tag(&object.data)?;
             let expected_kind =
                 ExpectedObjectKind::from_tag_type(&tag.object_type).ok_or_else(|| {
@@ -2364,7 +2527,9 @@ fn collect_root_object(
             let nested = RootObject {
                 oid: tag.object,
                 input: root.input.clone(),
+                display_name: String::new(),
                 expected_kind: Some(expected_kind),
+                provided: root.provided,
             };
             collect_root_object(
                 repo,
@@ -2375,6 +2540,7 @@ fn collect_root_object(
                 missing,
                 missing_seen,
                 filter,
+                filter_provided_objects,
                 missing_action,
             )?;
         }
@@ -2501,6 +2667,21 @@ fn collect_tree_objects_filtered(
     Ok(())
 }
 
+fn should_reorder_like_bitmap(filter: Option<&ObjectFilter>) -> bool {
+    matches!(
+        filter,
+        Some(ObjectFilter::ObjectType(ExpectedObjectKind::Commit))
+            | Some(ObjectFilter::Combine(_))
+            | Some(ObjectFilter::ObjectType(ExpectedObjectKind::Blob))
+            | Some(ObjectFilter::ObjectType(ExpectedObjectKind::Tree))
+    )
+}
+
+fn reorder_objects_like_bitmap(result: &mut Vec<(ObjectId, String)>, omitted: &mut Vec<ObjectId>) {
+    result.sort_by_key(|(oid, _)| *oid);
+    omitted.sort();
+}
+
 /// Collect reachable objects in commit order: objects for each commit are emitted
 /// right after that commit, rather than all objects after all commits.
 /// Returns (objects, omitted, per_commit_counts).
@@ -2510,6 +2691,7 @@ fn collect_reachable_objects_in_commit_order(
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
+    filter_provided_objects: bool,
     missing_action: MissingAction,
 ) -> Result<(
     Vec<(ObjectId, String)>,
@@ -2562,6 +2744,7 @@ fn collect_reachable_objects_in_commit_order(
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided_objects,
             missing_action,
         )?;
     }
@@ -2672,6 +2855,75 @@ fn flatten_tree(
         }
     }
     Ok(result)
+}
+
+fn collect_reachable_object_ids_from_commits(
+    repo: &Repository,
+    starts: &[ObjectId],
+    missing_action: MissingAction,
+) -> Result<HashSet<ObjectId>> {
+    let mut seen_commits = HashSet::new();
+    let mut stack: Vec<ObjectId> = starts.to_vec();
+    let mut objects = HashSet::new();
+    while let Some(commit_oid) = stack.pop() {
+        if !seen_commits.insert(commit_oid) {
+            continue;
+        }
+        let commit_obj = match repo.odb.read(&commit_oid) {
+            Ok(obj) => obj,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => continue,
+            Err(err) => return Err(err),
+        };
+        if commit_obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        objects.insert(commit_oid);
+        let commit = parse_commit(&commit_obj.data)?;
+        collect_reachable_tree_object_ids(repo, commit.tree, &mut objects, missing_action)?;
+        for parent in commit.parents {
+            stack.push(parent);
+        }
+    }
+    Ok(objects)
+}
+
+fn collect_reachable_tree_object_ids(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    objects: &mut HashSet<ObjectId>,
+    missing_action: MissingAction,
+) -> Result<()> {
+    if !objects.insert(tree_oid) {
+        return Ok(());
+    }
+    let tree_obj = match repo.odb.read(&tree_oid) {
+        Ok(obj) => obj,
+        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if tree_obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    for entry in parse_tree(&tree_obj.data)? {
+        if entry.mode == 0o160000 {
+            continue;
+        }
+        let child_obj = match repo.odb.read(&entry.oid) {
+            Ok(obj) => obj,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => continue,
+            Err(err) => return Err(err),
+        };
+        match child_obj.kind {
+            ObjectKind::Tree => {
+                collect_reachable_tree_object_ids(repo, entry.oid, objects, missing_action)?;
+            }
+            ObjectKind::Blob => {
+                objects.insert(entry.oid);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Compute merge bases between two commits.

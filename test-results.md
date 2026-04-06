@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6113-rev-list-bitmap-filters.sh`: 14/14 passing (direct validation after rev-list filter/bitmap compatibility fixes: added `--filter-provided-objects`, combined `--filter=` handling, `object:type=(tag|commit|tree|blob)` and `sparse:oid=` support, object-filter-aware bitmap fallback, and `--unpacked` object selection aligned with expected loose-object behavior under bitmap traversal cases).
+- `./scripts/run-tests.sh t6113-rev-list-bitmap-filters.sh`: 14/14 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6112-rev-list-filters-objects.sh`: 26/54 passing (targeted regression snapshot after rev-list filter updates; suite remains partially implemented overall, with no new pass claim beyond existing coverage).
+- `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (rev-list regression check after bitmap/filter option parsing and traversal updates).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after bitmap/filter option parsing and traversal updates).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (direct validation after merge skip-update fixes for unchanged-path checkout suppression, stderr-clean merge success output, chmtime helper compatibility, and rename/add conflict staging/content behavior).
 - `./scripts/run-tests.sh t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (harness validation; file now fully passing and TSV updated).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6429-merge-sequence-rename-caching.sh`: 11/11 passing (direct regression validation after replay now forces directory-rename mode off in merge core, restoring expected replay rename-cache behavior).
