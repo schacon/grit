@@ -8,6 +8,12 @@
 - `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
 - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
 - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check).
+- `cargo build --release -p grit-rs`: success (after adding `test-tool config read_early_config` and repo-discovery fallback behavior for incompatible repository format warnings).
+- `rm -rf /workspace/tests/trash.t1309-early-config && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1309-early-config.sh` (run from `/workspace/tests`): 10/10 passing (2 expected-failure TODO cases preserved).
+- `./scripts/run-tests.sh t1309-early-config.sh`: 10/10 passing.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing (regression check after repository-format parser change).
+- `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing (regression check after test-tool updates).
+- `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing (regression check after test-tool updates).
 - `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
 - `cargo check -p grit-rs`: success.
 - `cargo build --release -p grit-rs`: success (after `t1511-rev-parse-caret` peel/message-search compatibility updates in `grit-lib/src/rev_parse.rs`).

@@ -294,13 +294,20 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
     let mut extensions = BTreeSet::new();
 
     for raw_line in content.lines() {
-        let line = raw_line.trim();
+        let mut line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
             continue;
         }
 
-        if line.starts_with('[') && line.ends_with(']') {
-            let section = line[1..line.len() - 1].trim();
+        if line.starts_with('[') {
+            let Some(end_idx) = line.find(']') else {
+                return Err(Error::ConfigError(format!(
+                    "invalid config in {}",
+                    config_path.display()
+                )));
+            };
+
+            let section = line[1..end_idx].trim();
             let section_name = section
                 .split_whitespace()
                 .next()
@@ -308,7 +315,12 @@ fn validate_repository_format(git_dir: &Path) -> Result<()> {
                 .to_ascii_lowercase();
             in_core = section_name == "core";
             in_extensions = section_name == "extensions";
-            continue;
+
+            let remainder = line[end_idx + 1..].trim();
+            if remainder.is_empty() || remainder.starts_with('#') || remainder.starts_with(';') {
+                continue;
+            }
+            line = remainder;
         }
 
         if in_core {

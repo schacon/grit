@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    85 |
+| Completed   |    86 |
 | In progress |     0 |
-| Remaining   |   682 |
+| Remaining   |   681 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1309-early-config` — 10/10 tests pass (added `test-tool config read_early_config` compatibility in `grit` and aligned early-config behavior with upstream: repository-only parsing path with fallback to non-repo config on incompatible repository format, while preserving invalid-config handling for expected-failure cases)
 - `t1406-submodule-ref-store` — 15/15 tests pass (extended `test-tool ref-store` backend handling to support `submodule:<path>` read-only stores and implemented missing API helpers used by upstream coverage: `for-each-ref`, `resolve-ref` with flags, `verify-ref`, `for-each-reflog`, reflog entry iteration, and `reflog-exists`, while preserving submodule write-operation rejection semantics)
 - `t1405-main-ref-store` — 16/16 tests pass (implemented full main ref-store helper surface in `test-tool ref-store`: `delete-refs`, `rename-ref`, `for-each-ref--exclude`, `delete-ref`, `update-ref`, reflog create/delete/list/entry traversal, and conflict-aware `verify-ref`, matching upstream helper expectations and ref/reflog side-effects)
 - `t1511-rev-parse-caret` — 17/17 tests pass (implemented additional `rev-parse` peel operators and commit-message search forms used by `^{...}` syntax: added `^{tag}` peeling semantics for annotated tags, `ref^{/pattern}` commit-subject/message search anchored to the specified revision, support for escaped positive `^{/!!...}` patterns, and negative search `^{/!-...}` semantics that select the first reachable commit whose message does not match the given pattern)

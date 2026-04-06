@@ -1059,6 +1059,56 @@ fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_config(rest: &[String]) -> Result<()> {
+    if rest.len() == 3 && rest[1] == "read_early_config" {
+        let key = &rest[2];
+        let maybe_repo = match grit_lib::repo::Repository::discover(None) {
+            Ok(repo) => Some(repo),
+            Err(grit_lib::error::Error::NotARepository(_)) => None,
+            Err(grit_lib::error::Error::UnsupportedRepositoryFormatVersion(version)) => {
+                eprintln!("warning: Expected git repo version <= 1, found {version}");
+                None
+            }
+            Err(grit_lib::error::Error::UnsupportedRepositoryExtension(extension)) => {
+                eprintln!(
+                    "warning: ignoring repository config due to unsupported extension '{extension}'"
+                );
+                None
+            }
+            Err(other) => return Err(other.into()),
+        };
+
+        let set = if let Some(repo) = maybe_repo {
+            match grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
+                Ok(set) => set,
+                Err(grit_lib::error::Error::UnsupportedRepositoryFormatVersion(version)) => {
+                    eprintln!("warning: Expected git repo version <= 1, found {version}");
+                    grit_lib::config::ConfigSet::load(None, true)?
+                }
+                Err(grit_lib::error::Error::UnsupportedRepositoryExtension(extension)) => {
+                    eprintln!(
+                        "warning: ignoring repository config due to unsupported extension '{extension}'"
+                    );
+                    grit_lib::config::ConfigSet::load(None, true)?
+                }
+                Err(grit_lib::error::Error::ConfigError(_)) => {
+                    grit_lib::config::ConfigSet::load(None, true)?
+                }
+                Err(other) => return Err(other.into()),
+            }
+        } else {
+            grit_lib::config::ConfigSet::load(None, true)?
+        };
+
+        for value in set.get_all(key) {
+            println!("{value}");
+        }
+        return Ok(());
+    }
+
+    bail!("test-tool config: unknown or unsupported arguments")
+}
+
 enum TestPktLinePacket {
     Eof,
     Flush,
@@ -3040,6 +3090,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(rest),
                 "mktemp" => run_test_tool_mktemp(rest),
                 "regex" => run_test_tool_regex(rest),
+                "config" => run_test_tool_config(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
                 "zlib" => run_test_tool_zlib(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
