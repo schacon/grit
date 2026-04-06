@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after implementing `test-tool ref-store for-each-ref--exclude` compatibility for `t1419`: prefix normalization, literal exclude-region matching, ignore wildcard/empty excludes, and conditional jump/reseek metrics emission).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1419-exclude-refs.sh` (run from `/workspace/tests`): 13/13 passing (improved from 1/13).
+- `./scripts/run-tests.sh t1419-exclude-refs.sh`: 13/13 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+  - `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t0613-reftable-write-options.sh`: 11/11 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after completing reftable write-option compatibility work and fixing reftable `HEAD` symbolic resolution for transaction-hook payloads).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1416-ref-transaction-hooks.sh` (run from `/workspace/tests`): 10/10 passing (regression fixed; tests 5 and 6 now emit `refs/heads/main` in hook payloads as expected).
 - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.

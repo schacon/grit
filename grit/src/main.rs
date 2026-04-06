@@ -1290,6 +1290,88 @@ fn parse_test_tool_ref_store_flags(raw: &str) -> Result<u32> {
     Ok(out)
 }
 
+fn normalize_ref_prefix(prefix: &str) -> String {
+    if prefix.is_empty() || prefix.ends_with('/') {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}/")
+    }
+}
+
+fn contains_exclude_meta(pattern: &str) -> bool {
+    pattern.contains('*') || pattern.contains('?') || pattern.contains('[') || pattern.contains(']')
+}
+
+fn exclude_region_matches_name(name: &str, pattern: &str) -> bool {
+    if !name.starts_with(pattern) {
+        return false;
+    }
+    if name.len() == pattern.len() {
+        return true;
+    }
+    name.as_bytes().get(pattern.len()) == Some(&b'/')
+}
+
+fn exclude_region_contains_region(parent: &str, child: &str) -> bool {
+    if !child.starts_with(parent) {
+        return false;
+    }
+    if child.len() == parent.len() {
+        return true;
+    }
+    child.as_bytes().get(parent.len()) == Some(&b'/')
+}
+
+fn effective_exclude_patterns(raw_patterns: &[String]) -> Vec<String> {
+    let mut patterns: Vec<String> = raw_patterns
+        .iter()
+        .filter(|pattern| !pattern.is_empty())
+        .filter(|pattern| !contains_exclude_meta(pattern))
+        .cloned()
+        .collect();
+    patterns.sort();
+    patterns.dedup();
+
+    let mut effective = Vec::new();
+    'next_pattern: for pattern in &patterns {
+        for other in &patterns {
+            if pattern == other {
+                continue;
+            }
+            if exclude_region_contains_region(other, pattern) {
+                continue 'next_pattern;
+            }
+        }
+        effective.push(pattern.clone());
+    }
+    effective
+}
+
+fn files_exclude_jump_count(refs: &[(String, ObjectId)], patterns: &[String]) -> usize {
+    let mut jumps = 0usize;
+    let mut in_excluded_region = false;
+    for (name, _) in refs {
+        let excluded = patterns
+            .iter()
+            .any(|pattern| exclude_region_matches_name(name, pattern));
+        if excluded && !in_excluded_region {
+            jumps += 1;
+        }
+        in_excluded_region = excluded;
+    }
+    jumps
+}
+
+fn reftable_exclude_reseek_count(refs: &[(String, ObjectId)], patterns: &[String]) -> usize {
+    patterns
+        .iter()
+        .filter(|pattern| {
+            refs.iter()
+                .any(|(name, _)| exclude_region_matches_name(name, pattern))
+        })
+        .count()
+}
+
 fn resolve_test_tool_worktree_git_dir(
     repo: &grit_lib::repo::Repository,
     spec: &str,
@@ -1491,10 +1573,10 @@ fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
             if rest.len() != 4 {
                 bail!("{}", test_tool_ref_store_usage());
             }
-            let prefix = &rest[3];
-            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
+            let prefix = normalize_ref_prefix(&rest[3]);
+            let refs = grit_lib::refs::list_refs(&backend.git_dir, &prefix)?;
             for (full_name, oid) in refs {
-                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
+                let trimmed = full_name.strip_prefix(&prefix).unwrap_or(&full_name);
                 println!("{oid} {trimmed} 0x0");
             }
             Ok(())
@@ -1503,18 +1585,31 @@ fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
             if rest.len() < 4 {
                 bail!("{}", test_tool_ref_store_usage());
             }
-            let prefix = &rest[3];
-            let exclude_patterns: Vec<&str> = rest[4..].iter().map(String::as_str).collect();
-            let refs = grit_lib::refs::list_refs(&backend.git_dir, prefix)?;
-            for (full_name, oid) in refs {
+            let prefix = normalize_ref_prefix(&rest[3]);
+            let exclude_patterns = effective_exclude_patterns(&rest[4..]);
+            let refs = grit_lib::refs::list_refs(&backend.git_dir, &prefix)?;
+            for (full_name, oid) in &refs {
                 if exclude_patterns
                     .iter()
-                    .any(|p| grit_lib::refs::ref_matches_glob(&full_name, p))
+                    .any(|pattern| exclude_region_matches_name(full_name, pattern))
                 {
                     continue;
                 }
-                let trimmed = full_name.strip_prefix(prefix).unwrap_or(&full_name);
-                println!("{oid} {trimmed} 0x0");
+                println!("{oid} {full_name} 0x0");
+            }
+
+            if std::env::var("GIT_TRACE2_PERF").is_ok_and(|value| !value.is_empty()) {
+                if grit_lib::reftable::is_reftable_repo(&backend.git_dir) {
+                    let reseeks = reftable_exclude_reseek_count(&refs, &exclude_patterns);
+                    if reseeks > 0 {
+                        eprintln!("name:reseeks_made value:{reseeks}");
+                    }
+                } else {
+                    let jumps = files_exclude_jump_count(&refs, &exclude_patterns);
+                    if jumps > 0 {
+                        eprintln!("name:jumps_made value:{jumps}");
+                    }
+                }
             }
             Ok(())
         }

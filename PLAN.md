@@ -116,7 +116,7 @@ commit → check it off → move on.
 - [x] `t1411-reflog-show` ████████████████████ 17/17 (0 left) — Test reflog display routines
 - [x] `t0212-trace2-event` ████████████████████ 11/11 (0 left) — test trace2 facility
 - [x] `t0613-reftable-write-options` ████████████████████ 11/11 (0 left) — reftable write options
-- [ ] `t1419-exclude-refs` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — test exclude_patterns functionality in main ref store
+- [x] `t1419-exclude-refs` ████████████████████ 13/13 (0 left) — test exclude_patterns functionality in main ref store
 - [ ] `t0211-trace2-perf` ████░░░░░░░░░░░░░░░░ 4/17 (13 left) — test trace2 facility (perf target)
 - [ ] `t1508-at-combinations` ████████████░░░░░░░░ 21/35 (14 left) — test various @{X} syntax combinations together
 - [x] `t1405-main-ref-store` ████████████████████ 16/16 (0 left) — test main ref store api

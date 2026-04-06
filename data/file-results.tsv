@@ -135,7 +135,7 @@ t1415-worktree-refs	yes	10	8	2	ok	8	10	0
 t1416-ref-transaction-hooks	yes	10	10	0	ok	10	10	0
 t1417-reflog-updateref	yes	21	21	0	ok	21	21	0
 t1418-reflog-exists	yes	6	6	0	ok	6	6	0
-t1419-exclude-refs	yes	13	1	12	ok	1	13	0
+t1419-exclude-refs	yes	13	13	0	ok	13	13	0
 t1420-lost-found	yes	2	2	0	ok	2	2	0
 t1421-reflog-write	yes	10	10	0	ok	10	10	0
 t1423-ref-backend	yes	36	4	32	ok	4	36	0

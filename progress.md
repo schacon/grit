@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    98 |
+| Completed   |    99 |
 | In progress |     0 |
-| Remaining   |   669 |
+| Remaining   |   668 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1419-exclude-refs` — 13/13 tests pass (implemented `test-tool ref-store for-each-ref--exclude` compatibility semantics: normalized ref prefixes so `refs/heads` and `refs/heads/` behave identically, switched exclusions to literal prefix-region matching with overlap/adjacency compaction, ignored wildcard/meta and empty exclude patterns, emitted trace2-style jump/reseek counters only when effective excludes exist, and aligned test harness default ref-format export so `GIT_DEFAULT_REF_FORMAT`-guarded assertions execute without spurious `BUG` failures)
 - `t0613-reftable-write-options` — 11/11 tests pass (implemented reftable write-option compatibility across config/env and table emission paths: robust write option parsing/validation from config, object index block generation and footer metadata, ref/log block restart and size accounting fixes, normalized reflog message formatting for reftable writes, transaction-safe `update_index` handling for `update-ref --stdin` batches via explicit base index wiring, and `test-tool dump-reftable` block decoding output parity used by upstream assertions; plus fixed reftable `HEAD` symbolic resolution for hook payload normalization so `t1416-ref-transaction-hooks` remains 10/10)
 - `t0212-trace2-event` — 11/11 tests pass (implemented trace2 event-target JSON writer with per-process SID/hierarchy tracking, `start`/`cmd_name`/`exit`/`error`/`data`/`def_param`/`child_start`/`child_exit`/`exec` event emission for `test-tool trace2` verbs, config/env parameter emission for `GIT_TRACE2_CONFIG_PARAMS` and `GIT_TRACE2_ENV_VARS`, global `trace2.eventTarget` config fallback, credential redaction for URL-like values, and trace-directory discard behavior for `GIT_TRACE2_MAX_FILES`)
 - `t1411-reflog-show` — 17/17 tests pass (implemented `reflog` default/show argument preprocessing so `git reflog --format=short` maps to show mode, routed `reflog show` through `log -g` for full parity, taught reflog selectors to preserve index syntax for `@{N}` while rendering date selectors for `@{now}`/date queries and `--date=` output, normalized reflog identity header formatting in `Reflog:` lines, added reflog patch output in `log -g -p` against commit parents, and extended revision resolution to accept parent suffixes like `HEAD^` in update-ref flows used by reflog tests)
@@ -91,4 +92,4 @@
 
 ## What Remains
 
-670 test files still pending. See `plan.md` for the full prioritized list.
+668 test files still pending. See `plan.md` for the full prioritized list.

@@ -13,6 +13,7 @@
 //! When `extensions.refStorage = reftable`, the reftable backend is used
 //! instead.  The public API is the same; dispatch is handled internally.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -385,25 +386,76 @@ pub fn append_reflog(
 /// Returns [`Error::Io`] on directory traversal errors.
 pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
     if crate::reftable::is_reftable_repo(git_dir) {
-        return crate::reftable::reftable_list_refs(git_dir, prefix);
+        let normalized_prefix = normalize_ref_prefix(prefix);
+        return crate::reftable::reftable_list_refs(git_dir, &normalized_prefix);
     }
+    let normalized_prefix = normalize_ref_prefix(prefix);
     let mut results = Vec::new();
     let base = git_dir.join(prefix);
-    collect_refs(&base, prefix, git_dir, &mut results)?;
+    collect_refs(&base, &normalized_prefix, git_dir, &mut results)?;
 
     // For worktrees, also collect refs from the common dir
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
             let cbase = cdir.join(prefix);
-            collect_refs(&cbase, prefix, &cdir, &mut results)?;
+            collect_refs(&cbase, &normalized_prefix, &cdir, &mut results)?;
             // Deduplicate: worktree-local refs take priority
             results.sort_by(|a, b| a.0.cmp(&b.0));
             results.dedup_by(|b, a| a.0 == b.0);
         }
     }
 
+    let mut seen: BTreeSet<String> = results.iter().map(|(name, _)| name.clone()).collect();
+    let packed_sources: Vec<PathBuf> = match common_dir(git_dir) {
+        Some(cdir) if cdir != git_dir => vec![cdir, git_dir.to_path_buf()],
+        _ => vec![git_dir.to_path_buf()],
+    };
+    for packed_source in packed_sources {
+        for (name, oid) in list_packed_refs_with_prefix(&packed_source, &normalized_prefix)? {
+            if seen.insert(name.clone()) {
+                results.push((name, oid));
+            }
+        }
+    }
+
     results.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(results)
+}
+
+fn list_packed_refs_with_prefix(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>> {
+    let packed_path = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    let mut results = Vec::new();
+    for line in content.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with('^') {
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let hash = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("").trim();
+        if !name.starts_with(prefix) {
+            continue;
+        }
+        if hash.len() != 40 {
+            continue;
+        }
+        let oid: ObjectId = hash.parse()?;
+        results.push((name.to_owned(), oid));
+    }
+    Ok(results)
+}
+
+fn normalize_ref_prefix(prefix: &str) -> String {
+    if prefix.is_empty() || prefix.ends_with('/') {
+        prefix.to_owned()
+    } else {
+        format!("{prefix}/")
+    }
 }
 
 /// List refs matching a glob pattern (e.g. `refs/heads/topic/*`).

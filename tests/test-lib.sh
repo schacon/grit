@@ -188,6 +188,10 @@ TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
+# Keep ref format detection compatible with upstream tests.
+GIT_DEFAULT_REF_FORMAT="${GIT_DEFAULT_REF_FORMAT:-${GIT_TEST_DEFAULT_REF_FORMAT:-files}}"
+export GIT_DEFAULT_REF_FORMAT
+
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then
@@ -600,6 +604,12 @@ test_skip_or_die () {
 error () {
 	echo "error: $*" >&2
 	exit 1
+}
+
+# BUG MSG — report an internal test harness issue and fail the current test.
+BUG () {
+	echo "BUG: $*" >&2
+	return 1
 }
 
 # test_env — run command with additional env vars
