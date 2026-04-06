@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    70 |
-| In progress |     0 |
-| Remaining   |   697 |
+| In progress |     1 |
+| Remaining   |   696 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -60,4 +60,4 @@
 
 ## What Remains
 
-697 test files still pending. See `plan.md` for the full prioritized list.
+696 test files still pending (with `t6409-merge-subtree` currently in progress at 7/12). See `plan.md` for the full prioritized list.

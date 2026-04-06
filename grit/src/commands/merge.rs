@@ -152,6 +152,13 @@ pub struct Args {
     pub file: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SubtreeShift {
+    Disabled,
+    Auto,
+    Prefix(String),
+}
+
 /// Apply branch.<name>.mergeoptions to the args.
 /// Only applies settings that weren't explicitly set on the command line.
 fn apply_mergeoptions(args: &mut Args, opts: &str) {
@@ -306,9 +313,23 @@ pub fn run(mut args: Args) -> Result<()> {
     // Parse -X strategy options
     let mut favor = MergeFavor::None;
     let mut diff_algorithm: Option<String> = None;
+    let mut subtree_shift = if args.strategy.as_deref() == Some("subtree") {
+        SubtreeShift::Auto
+    } else {
+        SubtreeShift::Disabled
+    };
     for xopt in &args.strategy_option {
         if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
             diff_algorithm = Some(algo.to_string());
+        } else if xopt == "subtree" {
+            subtree_shift = SubtreeShift::Auto;
+        } else if let Some(path) = xopt.strip_prefix("subtree=") {
+            let normalized = path.trim_matches('/');
+            subtree_shift = if normalized.is_empty() {
+                SubtreeShift::Auto
+            } else {
+                SubtreeShift::Prefix(normalized.to_string())
+            };
         } else {
             match xopt.as_str() {
                 "ours" => favor = MergeFavor::Ours,
@@ -362,6 +383,7 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             favor,
             diff_algorithm.as_deref(),
+            &subtree_shift,
         );
     }
 
@@ -411,6 +433,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 &args,
                 favor,
                 diff_algorithm.as_deref(),
+                &subtree_shift,
             );
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
@@ -437,6 +460,7 @@ pub fn run(mut args: Args) -> Result<()> {
         &args,
         favor,
         diff_algorithm.as_deref(),
+        &subtree_shift,
     )
 }
 
@@ -667,6 +691,138 @@ fn short_oid(oid: ObjectId) -> String {
     hex[..7.min(hex.len())].to_string()
 }
 
+fn apply_subtree_shift(
+    subtree_shift: &SubtreeShift,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    base: &mut HashMap<Vec<u8>, IndexEntry>,
+    theirs: &mut HashMap<Vec<u8>, IndexEntry>,
+) {
+    let Some(prefix) = resolve_subtree_prefix(subtree_shift, ours, base, theirs) else {
+        return;
+    };
+    shift_entries_by_prefix(base, &prefix);
+    shift_entries_by_prefix(theirs, &prefix);
+}
+
+fn resolve_subtree_prefix(
+    subtree_shift: &SubtreeShift,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> Option<String> {
+    match subtree_shift {
+        SubtreeShift::Disabled => None,
+        SubtreeShift::Prefix(prefix) => Some(prefix.clone()),
+        SubtreeShift::Auto => detect_subtree_prefix(ours, base, theirs),
+    }
+}
+
+fn detect_subtree_prefix(
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> Option<String> {
+    let source_paths: Vec<&[u8]> = if base.is_empty() {
+        theirs.keys().map(Vec::as_slice).collect()
+    } else {
+        base.keys().map(Vec::as_slice).collect()
+    };
+
+    if source_paths.is_empty() {
+        return None;
+    }
+
+    let ours_paths: Vec<&[u8]> = ours.keys().map(Vec::as_slice).collect();
+    let mut candidates = BTreeSet::new();
+    candidates.insert(String::new());
+
+    for source in &source_paths {
+        for ours_path in &ours_paths {
+            if *ours_path == *source {
+                candidates.insert(String::new());
+                continue;
+            }
+            if ours_path.len() <= source.len() + 1
+                || !ours_path.ends_with(source)
+                || ours_path[ours_path.len() - source.len() - 1] != b'/'
+            {
+                continue;
+            }
+
+            let prefix_bytes = &ours_path[..ours_path.len() - source.len() - 1];
+            if let Ok(prefix) = std::str::from_utf8(prefix_bytes) {
+                candidates.insert(prefix.to_string());
+            }
+        }
+    }
+
+    let mut best_prefix: Option<String> = None;
+    let mut best_score = 0usize;
+    for prefix in candidates {
+        let score = source_paths
+            .iter()
+            .filter(|path| prefixed_path_exists(ours, path, &prefix))
+            .count();
+        if score > best_score {
+            best_score = score;
+            best_prefix = Some(prefix);
+            continue;
+        }
+        if score == best_score {
+            if let Some(current) = best_prefix.as_ref() {
+                let current_is_empty = current.is_empty();
+                let prefix_is_empty = prefix.is_empty();
+                let is_better = (!current_is_empty && prefix_is_empty)
+                    || (prefix_is_empty == current_is_empty
+                        && (prefix.len(), prefix.as_str()) < (current.len(), current.as_str()));
+                if is_better {
+                    best_prefix = Some(prefix);
+                }
+            } else {
+                best_prefix = Some(prefix);
+            }
+        }
+    }
+
+    if best_score == 0 {
+        return None;
+    }
+
+    best_prefix.filter(|prefix| !prefix.is_empty())
+}
+
+fn prefixed_path_exists(ours: &HashMap<Vec<u8>, IndexEntry>, path: &[u8], prefix: &str) -> bool {
+    let key = prefixed_path(path, prefix);
+    ours.contains_key(key.as_slice())
+}
+
+fn shift_entries_by_prefix(entries: &mut HashMap<Vec<u8>, IndexEntry>, prefix: &str) {
+    if prefix.is_empty() || entries.is_empty() {
+        return;
+    }
+    let shifted = entries
+        .values()
+        .map(|entry| {
+            let mut shifted_entry = entry.clone();
+            let path = prefixed_path(&entry.path, prefix);
+            shifted_entry.path = path.clone();
+            (path, shifted_entry)
+        })
+        .collect();
+    *entries = shifted;
+}
+
+fn prefixed_path(path: &[u8], prefix: &str) -> Vec<u8> {
+    if prefix.is_empty() {
+        return path.to_vec();
+    }
+    let mut out = Vec::with_capacity(prefix.len() + 1 + path.len());
+    out.extend_from_slice(prefix.as_bytes());
+    out.push(b'/');
+    out.extend_from_slice(path);
+    out
+}
+
 fn do_real_merge(
     repo: &Repository,
     head: &HeadState,
@@ -675,6 +831,7 @@ fn do_real_merge(
     args: &Args,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
+    subtree_shift: &SubtreeShift,
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -708,9 +865,15 @@ fn do_real_merge(
     let theirs_tree = commit_tree(repo, merge_oid)?;
 
     // Flatten trees to path→entry maps
-    let base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
+    let mut base_entries = tree_to_map(tree_to_index_entries(repo, &base_tree, "")?);
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &ours_tree, "")?);
-    let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    let mut theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
+    apply_subtree_shift(
+        subtree_shift,
+        &ours_entries,
+        &mut base_entries,
+        &mut theirs_entries,
+    );
 
     // Sparse checkout safety: if a SKIP_WORKTREE path is currently present in
     // the working tree and this merge would update that path, abort before
@@ -1294,6 +1457,7 @@ fn do_octopus_merge(
     args: &Args,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
+    subtree_shift: &SubtreeShift,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -1324,12 +1488,30 @@ fn do_octopus_merge(
     if merge_oids.len() == 1 {
         let merge_oid = merge_oids[0];
         if args.no_ff && !args.ff_only {
-            return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
+            return do_real_merge(
+                repo,
+                head,
+                head_oid,
+                merge_oid,
+                args,
+                favor,
+                diff_algorithm,
+                subtree_shift,
+            );
         }
         if is_ancestor(repo, head_oid, merge_oid)? {
             return do_fast_forward(repo, head, head_oid, merge_oid, args);
         }
-        return do_real_merge(repo, head, head_oid, merge_oid, args, favor, diff_algorithm);
+        return do_real_merge(
+            repo,
+            head,
+            head_oid,
+            merge_oid,
+            args,
+            favor,
+            diff_algorithm,
+            subtree_shift,
+        );
     }
 
     // Check if we can fast-forward: filter out merge targets that are ancestors

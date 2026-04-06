@@ -112,6 +112,11 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
 }
 
 /// Run `grit read-tree`.
+///
+/// # Errors
+///
+/// Returns an error when repository discovery fails, tree-ish resolution
+/// fails, index/worktree updates fail, or option combinations are invalid.
 pub fn run(args: Args) -> Result<()> {
     maybe_write_trace_packet_done();
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -150,7 +155,7 @@ pub fn run(args: Args) -> Result<()> {
         if !prefix.is_empty() && !prefix.ends_with('/') {
             bail!("--prefix requires a trailing '/'");
         }
-        if args.merge || args.update || args.reset || tree_oids.len() != 1 {
+        if args.merge || args.reset || tree_oids.len() != 1 {
             bail!("--prefix only supports a single non-merge tree read");
         }
     }

@@ -727,7 +727,7 @@ commit → check it off → move on.
 - [x] `t6102-rev-list-unexpected-objects` ████████████████████ 22/22 (0 left) — git rev-list should handle unexpected object types
 - [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
 - [ ] `t6433-merge-toplevel` ████████░░░░░░░░░░░░ 6/15 (9 left) — 
-- [ ] `t6409-merge-subtree` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — subtree merge strategy
+- [~] `t6409-merge-subtree` ████████████░░░░░░░░ 7/12 (5 left) — subtree merge strategy
 - [ ] `t6418-merge-text-auto` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — CRLF merge conflict across text=auto change
 
 - [ ] `t6403-merge-file` ██████████████░░░░░░ 29/39 (10 left) — RCS merge replacement: merge-file

@@ -100,3 +100,8 @@
 - `./scripts/run-tests.sh t6700-tree-depth.sh`: 10/10 passing (now fully passing).
 - `./scripts/run-tests.sh t6010-merge-base.sh`: 12/12 passing (regression check after tree-depth and diff-tree updates).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (regression check after rev-list object-depth filtering updates).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6409-merge-subtree.sh`: 7/12 passing (direct validation after `read-tree --prefix -u` allowance, subtree strategy alignment work, and configured relative remote URL resolution changes; remaining failures are in later subtree merge/update scenarios).
+- `./scripts/run-tests.sh t6409-merge-subtree.sh`: 7/12 passing (current harness status for in-progress `t6409`).
+- `./scripts/run-tests.sh t1003-read-tree-prefix.sh`: 3/3 passing (regression check after `read-tree --prefix` behavior change).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge subtree strategy/path-shift updates).
+- `cargo test -p grit-lib --lib`: 97/97 passing (unit regression check after fetch/read-tree/merge changes).
