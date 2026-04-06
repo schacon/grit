@@ -242,6 +242,8 @@ fn do_merge_or_rebase(
             strategy: args.strategy.clone(),
             strategy_option: args.strategy_option.clone(),
             quiet: args.quiet,
+            progress: false,
+            no_progress: false,
             no_edit: true,
             edit: false,
             signoff: false,
@@ -264,6 +266,7 @@ fn do_merge_or_rebase(
             no_squash: false,
             quit: false,
             autostash: false,
+            allow_unrelated_histories: false,
             cleanup: None,
             file: None,
         };

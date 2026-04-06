@@ -9,7 +9,6 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit mv`.
@@ -339,20 +338,6 @@ pub fn run(args: Args) -> Result<()> {
             // Preserve flags except path length bits (low 12 bits of flags).
             new_entry.flags = (new_entry.flags & !0x0FFF) | path_len as u16;
             new_entry.path = new_path;
-
-            // Refresh stat info from the destination file so git considers
-            // the index entry up-to-date after the rename.
-            if let Ok(meta) = fs::symlink_metadata(&dst_abs) {
-                new_entry.ctime_sec = meta.ctime() as u32;
-                new_entry.ctime_nsec = meta.ctime_nsec() as u32;
-                new_entry.mtime_sec = meta.mtime() as u32;
-                new_entry.mtime_nsec = meta.mtime_nsec() as u32;
-                new_entry.dev = meta.dev() as u32;
-                new_entry.ino = meta.ino() as u32;
-                new_entry.uid = meta.uid();
-                new_entry.gid = meta.gid();
-                new_entry.size = meta.size() as u32;
-            }
 
             index.remove(op.src.as_bytes());
             index.add_or_replace(new_entry);

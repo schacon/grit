@@ -421,7 +421,7 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.refresh || args.really_refresh || args.again {
         // Re-stat all entries
-        refresh_index(&mut index, work_tree, &repo.odb)?;
+        refresh_index(&mut index, work_tree, &repo.odb, args.unmerged)?;
     }
 
     index.write(&index_path).context("writing index")?;
@@ -511,7 +511,20 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
 }
 
 /// Re-stat all tracked files, updating mtime/ctime/size.
-fn refresh_index(index: &mut Index, work_tree: &std::path::Path, _odb: &Odb) -> Result<()> {
+fn refresh_index(
+    index: &mut Index,
+    work_tree: &std::path::Path,
+    _odb: &Odb,
+    allow_unmerged: bool,
+) -> Result<()> {
+    if !allow_unmerged {
+        if let Some(entry) = index.entries.iter().find(|entry| entry.stage() != 0) {
+            let rel = std::str::from_utf8(&entry.path)
+                .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+            bail!("{rel}: needs merge");
+        }
+    }
+
     for entry in &mut index.entries {
         let path = std::path::Path::new(
             std::str::from_utf8(&entry.path)

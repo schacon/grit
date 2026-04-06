@@ -263,7 +263,10 @@ pub fn run(mut args: Args) -> Result<()> {
                     }
                 }
                 let abs_path = work_tree.join(&rel);
-                if abs_path.is_dir() && !matches.is_empty() {
+                let is_real_dir = fs::symlink_metadata(&abs_path)
+                    .map(|m| m.file_type().is_dir())
+                    .unwrap_or(false);
+                if is_real_dir && !matches.is_empty() {
                     bail!("not removing '{}' recursively without -r", pathspec);
                 }
             }
@@ -339,7 +342,10 @@ pub fn run(mut args: Args) -> Result<()> {
         if !args.cached {
             let abs_path = work_tree.join(path_str);
             if abs_path.exists() || abs_path.symlink_metadata().is_ok() {
-                if abs_path.is_dir() {
+                let is_real_dir = fs::symlink_metadata(&abs_path)
+                    .map(|m| m.file_type().is_dir())
+                    .unwrap_or(false);
+                if is_real_dir {
                     if let Err(e) = fs::remove_dir_all(&abs_path) {
                         bail!("cannot remove '{path_str}': {e}");
                     }

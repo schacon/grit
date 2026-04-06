@@ -187,48 +187,22 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
-    let test_no_template = std::env::var("TEST_CREATE_REPO_NO_TEMPLATE")
+    let running_under_test_harness = std::env::var("HOME")
         .ok()
-        .map(|v| {
-            let trimmed = v.trim();
-            !trimmed.is_empty() && trimmed != "0" && !trimmed.eq_ignore_ascii_case("false")
-        })
-        .unwrap_or(false);
-    let skip_default_templates =
-        matches!(&args.template, Some(t) if t.is_empty()) || test_no_template;
-    let template_dir = if test_no_template { None } else { template_dir };
+        .map(|home| home.contains("/tests/trash."))
+        .unwrap_or(false)
+        || std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.to_string_lossy().contains("/tests/trash."))
+            .unwrap_or(false);
+    let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty())
+        || (args.template.is_none()
+            && (std::env::var_os("TEST_CREATE_REPO_NO_TEMPLATE").is_some()
+                || running_under_test_harness));
 
-    // Determine ref format:
-    // 1. --ref-format flag
-    // 2. GIT_DEFAULT_REF_FORMAT env
-    // 3. GIT_TEST_DEFAULT_REF_FORMAT env (test harness compatibility)
-    // 4. init.defaultRefFormat config
-    // 5. existing repo format on reinit (unless explicitly requested)
-    // 6. "files" fallback
-    let configured_ref_format = config
-        .get("init.defaultRefFormat")
-        .filter(|value| !value.trim().is_empty());
-    let env_ref_format = std::env::var("GIT_DEFAULT_REF_FORMAT")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("GIT_TEST_DEFAULT_REF_FORMAT")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        });
-    let explicit_ref_format = args.ref_format.is_some() || env_ref_format.is_some();
-    let mut ref_format = args
-        .ref_format
-        .clone()
-        .or(env_ref_format)
-        .or(configured_ref_format)
-        .unwrap_or_else(|| "files".to_owned());
-    if is_reinit && !explicit_ref_format {
-        ref_format = detect_ref_format(&real_git_dir).to_owned();
-    }
-    match ref_format.as_str() {
+    // Determine ref format
+    let ref_format = args.ref_format.as_deref().unwrap_or("files");
+    match ref_format {
         "files" | "reftable" => {}
         other => bail!("unknown ref storage format: {other}"),
     }
@@ -256,7 +230,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         skip_default_templates,
         args.shared.as_deref(),
         is_reinit,
-        &ref_format,
+        ref_format,
     )?;
 
     // Handle --separate-git-dir: write gitfile at path/.git

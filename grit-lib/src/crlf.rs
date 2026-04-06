@@ -64,6 +64,17 @@ pub enum EolAttr {
     Unspecified,
 }
 
+/// Per-file merge attribute from .gitattributes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeAttr {
+    /// No merge attribute specified.
+    Unspecified,
+    /// `-merge` — treat as binary/non-text merge.
+    Unset,
+    /// `merge=<driver>` — use named merge driver.
+    Driver(String),
+}
+
 /// Per-file attributes relevant to conversion.
 #[derive(Debug, Clone)]
 pub struct FileAttrs {
@@ -74,6 +85,8 @@ pub struct FileAttrs {
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     pub ident: bool,
+    pub merge: MergeAttr,
+    pub conflict_marker_size: Option<String>,
     /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
     pub working_tree_encoding: Option<String>,
 }
@@ -87,6 +100,8 @@ impl Default for FileAttrs {
             filter_clean: None,
             filter_smudge: None,
             ident: false,
+            merge: MergeAttr::Unspecified,
+            conflict_marker_size: None,
             working_tree_encoding: None,
         }
     }
@@ -271,6 +286,20 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                     }
                     "ident" => {
                         fa.ident = value == "set";
+                    }
+                    "merge" => {
+                        fa.merge = match value.as_str() {
+                            "unset" => MergeAttr::Unset,
+                            "set" => MergeAttr::Unspecified,
+                            other => MergeAttr::Driver(other.to_string()),
+                        };
+                    }
+                    "conflict-marker-size" => {
+                        if value == "unset" {
+                            fa.conflict_marker_size = None;
+                        } else {
+                            fa.conflict_marker_size = Some(value.clone());
+                        }
                     }
                     "working-tree-encoding" => {
                         if value != "unset" && !value.is_empty() {

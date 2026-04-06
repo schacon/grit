@@ -27,6 +27,17 @@ pub enum OutputMode {
     Format(String),
 }
 
+/// Behavior when reachable objects are missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingAction {
+    /// Fail traversal when a referenced object is missing.
+    Error,
+    /// Continue traversal and report each missing object.
+    Print,
+    /// Continue traversal and silently ignore missing objects.
+    Allow,
+}
+
 /// Object filter specification for `--filter=`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectFilter {
@@ -187,8 +198,6 @@ pub struct RevListOptions {
     pub no_object_names: bool,
     /// Show boundary commits with `-` prefix.
     pub boundary: bool,
-    /// Walk reflog instead of commit graph.
-    pub walk_reflogs: bool,
     /// Show left/right markers for symmetric diff.
     pub left_right: bool,
     /// Filter to left-only commits in symmetric diff.
@@ -217,12 +226,12 @@ pub struct RevListOptions {
     pub filter: Option<ObjectFilter>,
     /// Print omitted objects prefixed with `~`.
     pub filter_print_omitted: bool,
-    /// Print missing objects prefixed with `?` (`--missing=print`).
-    pub missing_print: bool,
     /// Emit objects interleaved with their introducing commit.
     pub in_commit_order: bool,
     /// Exclude objects in `.keep` pack files.
     pub no_kept_objects: bool,
+    /// Behavior when referenced objects are missing.
+    pub missing_action: MissingAction,
 }
 
 impl Default for RevListOptions {
@@ -243,7 +252,6 @@ impl Default for RevListOptions {
             objects: false,
             no_object_names: false,
             boundary: false,
-            walk_reflogs: false,
             left_right: false,
             left_only: false,
             right_only: false,
@@ -258,9 +266,9 @@ impl Default for RevListOptions {
             sparse: false,
             filter: None,
             filter_print_omitted: false,
-            missing_print: false,
             in_commit_order: false,
             no_kept_objects: false,
+            missing_action: MissingAction::Error,
         }
     }
 }
@@ -275,7 +283,7 @@ pub struct RevListResult {
     pub objects: Vec<(ObjectId, String)>,
     /// Objects omitted by `--filter` (for `--filter-print-omitted`).
     pub omitted_objects: Vec<ObjectId>,
-    /// Objects missing from the local ODB (`--missing=print`).
+    /// Referenced objects missing from the object database.
     pub missing_objects: Vec<ObjectId>,
     /// Boundary commits (excluded parents shown with `-` prefix).
     pub boundary_commits: Vec<ObjectId>,
@@ -310,19 +318,32 @@ pub fn rev_list(
 ) -> Result<RevListResult> {
     let mut graph = CommitGraph::new(repo, options.first_parent);
 
-    let mut include = resolve_specs(repo, positive_specs)?;
+    let (mut include, object_roots) = if options.objects {
+        let (commit_starts, roots) = resolve_specs_for_objects(repo, positive_specs)?;
+        (commit_starts, roots)
+    } else {
+        (resolve_specs(repo, positive_specs)?, Vec::new())
+    };
     let exclude = resolve_specs(repo, negative_specs)?;
 
     if options.all_refs {
         include.extend(all_ref_tips(repo)?);
     }
 
-    if include.is_empty() {
+    if include.is_empty() && object_roots.is_empty() {
         return Err(Error::InvalidRef("no revisions specified".to_owned()));
     }
 
-    let (mut included, discovery_order) = walk_closure_ordered(&mut graph, &include)?;
-    let excluded = walk_closure(&mut graph, &exclude)?;
+    let (mut included, discovery_order) = if include.is_empty() {
+        (HashSet::new(), Vec::new())
+    } else {
+        walk_closure_ordered(&mut graph, &include)?
+    };
+    let excluded = if exclude.is_empty() {
+        HashSet::new()
+    } else {
+        walk_closure(&mut graph, &exclude)?
+    };
     included.retain(|oid| !excluded.contains(oid));
 
     if options.simplify_by_decoration {
@@ -359,9 +380,19 @@ pub fn rev_list(
     };
 
     // Path filtering: keep only commits that modify given paths
-    if !options.paths.is_empty() && !options.sparse {
+    if !options.paths.is_empty() {
         let paths = &options.paths;
-        ordered.retain(|oid| commit_touches_paths(repo, &mut graph, *oid, paths).unwrap_or(false));
+        ordered.retain(|oid| {
+            commit_touches_paths(
+                repo,
+                &mut graph,
+                *oid,
+                paths,
+                options.full_history,
+                options.sparse,
+            )
+            .unwrap_or(false)
+        });
     }
 
     // Left-right classification for symmetric diffs
@@ -481,45 +512,39 @@ pub fn rev_list(
 
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
-        let (mut objs, omit, missing, counts) = if options.in_commit_order {
+        let (mut objs, omit, miss, counts) = if options.in_commit_order {
             collect_reachable_objects_in_commit_order(
                 repo,
                 &mut graph,
                 &ordered,
+                &object_roots,
                 options.filter.as_ref(),
-                options.missing_print,
+                options.missing_action,
             )?
         } else {
-            let (objs, omit, missing) = collect_reachable_objects(
+            let (objs, omit, miss) = collect_reachable_objects(
                 repo,
                 &mut graph,
                 &ordered,
+                &object_roots,
                 options.filter.as_ref(),
-                options.missing_print,
+                options.missing_action,
             )?;
-            (objs, omit, missing, Vec::new())
+            (objs, omit, miss, Vec::new())
         };
         if options.no_kept_objects {
             objs.retain(|(oid, _)| !kept_set.contains(oid));
         }
-        (objs, omit, missing, counts)
+        (objs, omit, miss, counts)
     } else {
         (Vec::new(), Vec::new(), Vec::new(), Vec::new())
     };
-
-    let mut seen_missing = HashSet::new();
-    let mut dedup_missing = Vec::new();
-    for oid in missing_objects {
-        if seen_missing.insert(oid) {
-            dedup_missing.push(oid);
-        }
-    }
 
     Ok(RevListResult {
         commits: ordered,
         objects,
         omitted_objects,
-        missing_objects: dedup_missing,
+        missing_objects,
         boundary_commits,
         left_right_map,
         cherry_equivalent,
@@ -1542,6 +1567,48 @@ pub fn render_commit_with_color(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExpectedObjectKind {
+    Commit,
+    Tree,
+    Blob,
+}
+
+impl ExpectedObjectKind {
+    fn from_tag_type(kind: &str) -> Option<Self> {
+        match kind {
+            "commit" => Some(Self::Commit),
+            "tree" => Some(Self::Tree),
+            "blob" => Some(Self::Blob),
+            _ => None,
+        }
+    }
+
+    fn matches(self, kind: ObjectKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::Commit, ObjectKind::Commit)
+                | (Self::Tree, ObjectKind::Tree)
+                | (Self::Blob, ObjectKind::Blob)
+        )
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Commit => "commit",
+            Self::Tree => "tree",
+            Self::Blob => "blob",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RootObject {
+    oid: ObjectId,
+    input: String,
+    expected_kind: Option<ExpectedObjectKind>,
+}
+
 fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
     let mut out = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -1550,6 +1617,61 @@ fn resolve_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
         out.push(commit_oid);
     }
     Ok(out)
+}
+
+fn resolve_specs_for_objects(
+    repo: &Repository,
+    specs: &[String],
+) -> Result<(Vec<ObjectId>, Vec<RootObject>)> {
+    let mut commits = Vec::new();
+    let mut roots = Vec::new();
+
+    for spec in specs {
+        if let Ok(raw_oid) = spec.parse::<ObjectId>() {
+            let raw_object = repo.odb.read(&raw_oid)?;
+            match raw_object.kind {
+                ObjectKind::Commit => {
+                    commits.push(raw_oid);
+                }
+                ObjectKind::Tag => {
+                    let tag = parse_tag(&raw_object.data)?;
+                    let expected_kind = ExpectedObjectKind::from_tag_type(&tag.object_type)
+                        .ok_or_else(|| {
+                            Error::CorruptObject(format!(
+                                "object {spec} has unsupported tag type '{}'",
+                                tag.object_type
+                            ))
+                        })?;
+                    roots.push(RootObject {
+                        oid: tag.object,
+                        input: spec.clone(),
+                        expected_kind: Some(expected_kind),
+                    });
+                }
+                ObjectKind::Tree | ObjectKind::Blob => roots.push(RootObject {
+                    oid: raw_oid,
+                    input: spec.clone(),
+                    expected_kind: None,
+                }),
+            }
+            continue;
+        }
+
+        let oid = resolve_revision(repo, spec)?;
+        match peel_to_commit(repo, oid) {
+            Ok(commit_oid) => commits.push(commit_oid),
+            Err(Error::CorruptObject(_)) | Err(Error::ObjectNotFound(_)) => {
+                roots.push(RootObject {
+                    oid,
+                    input: spec.clone(),
+                    expected_kind: None,
+                })
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok((commits, roots))
 }
 
 /// Peel an object (possibly a tag) to the underlying commit.
@@ -1583,14 +1705,15 @@ fn all_ref_tips(repo: &Repository) -> Result<Vec<ObjectId>> {
     );
     // Peel tags to commits; skip non-commit objects (e.g. tags of blobs/trees)
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for oid in raw {
         match peel_to_commit(repo, oid) {
-            Ok(commit_oid) => out.push(commit_oid),
+            Ok(commit_oid) if seen.insert(commit_oid) => out.push(commit_oid),
             Err(_) => {} // skip non-commit refs
+            _ => {}
         }
     }
     out.sort();
-    out.dedup();
     Ok(out)
 }
 
@@ -1731,29 +1854,106 @@ fn commit_touches_paths(
     graph: &mut CommitGraph<'_>,
     oid: ObjectId,
     paths: &[String],
+    full_history: bool,
+    sparse: bool,
 ) -> Result<bool> {
     let commit = load_commit(repo, oid)?;
     let parents = graph.parents_of(oid)?;
-    let parent_tree = if let Some(&parent) = parents.first() {
-        Some(load_commit(repo, parent)?.tree)
-    } else {
-        None
-    };
     let commit_entries = flatten_tree(repo, commit.tree, "")?;
     let commit_map: HashMap<String, ObjectId> = commit_entries.into_iter().collect();
-    let parent_map: HashMap<String, ObjectId> = if let Some(pt) = parent_tree {
-        flatten_tree(repo, pt, "")?.into_iter().collect()
-    } else {
-        HashMap::new()
-    };
-    for path in paths {
-        let c_oid = commit_map.get(path.as_str());
-        let p_oid = parent_map.get(path.as_str());
-        if c_oid != p_oid {
+
+    // Root commit: include only when any requested pathspec exists.
+    if parents.is_empty() {
+        if sparse {
             return Ok(true);
         }
+        return Ok(commit_map
+            .keys()
+            .any(|path| paths.iter().any(|spec| pathspec_matches(spec, path))));
     }
-    Ok(false)
+
+    // Single-parent commit: include only when requested paths changed.
+    if parents.len() == 1 {
+        let parent = load_commit(repo, parents[0])?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if differs {
+            return Ok(true);
+        }
+        if sparse {
+            return Ok(true);
+        }
+        return Ok(false);
+    }
+
+    // Merge commit simplification for default dense history:
+    // if exactly one parent is TREESAME for the requested paths, omit this
+    // merge commit and let traversal effectively follow that parent.
+    let mut treesame_parents = 0usize;
+    let mut differs_any = false;
+    for parent_oid in &parents {
+        let parent = load_commit(repo, *parent_oid)?;
+        let parent_map: HashMap<String, ObjectId> =
+            flatten_tree(repo, parent.tree, "")?.into_iter().collect();
+        let differs = path_differs_for_specs(&commit_map, &parent_map, paths);
+        if differs {
+            differs_any = true;
+        } else {
+            treesame_parents += 1;
+        }
+    }
+
+    if !full_history && treesame_parents == 1 {
+        return Ok(false);
+    }
+
+    if differs_any {
+        return Ok(true);
+    }
+
+    Ok(sparse)
+}
+
+fn path_differs_for_specs(
+    current: &HashMap<String, ObjectId>,
+    parent: &HashMap<String, ObjectId>,
+    specs: &[String],
+) -> bool {
+    let mut paths = std::collections::BTreeSet::new();
+    paths.extend(current.keys().cloned());
+    paths.extend(parent.keys().cloned());
+
+    for path in &paths {
+        if !specs.iter().any(|spec| pathspec_matches(spec, path)) {
+            continue;
+        }
+        if current.get(path) != parent.get(path) {
+            return true;
+        }
+    }
+    false
+}
+
+fn pathspec_matches(spec: &str, path: &str) -> bool {
+    let normalized = spec.strip_prefix("./").unwrap_or(spec);
+    if normalized == "." || normalized.is_empty() {
+        return true;
+    }
+
+    if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
+        return crate::wildmatch::wildmatch(
+            normalized.as_bytes(),
+            path.as_bytes(),
+            crate::wildmatch::WM_PATHNAME,
+        );
+    }
+
+    if let Some(prefix) = normalized.strip_suffix('/') {
+        return path == prefix || path.starts_with(&format!("{prefix}/"));
+    }
+
+    path == normalized || path.starts_with(&format!("{normalized}/"))
 }
 
 fn load_commit(repo: &Repository, oid: ObjectId) -> Result<crate::objects::CommitData> {
@@ -1865,17 +2065,20 @@ struct CommitGraph<'r> {
     parents: HashMap<ObjectId, Vec<ObjectId>>,
     committer_time: HashMap<ObjectId, i64>,
     shallow_boundaries: HashSet<ObjectId>,
+    graft_parents: HashMap<ObjectId, Vec<ObjectId>>,
 }
 
 impl<'r> CommitGraph<'r> {
     fn new(repo: &'r Repository, first_parent_only: bool) -> Self {
         let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+        let graft_parents = load_graft_parents(&repo.git_dir);
         Self {
             repo,
             first_parent_only,
             parents: HashMap::new(),
             committer_time: HashMap::new(),
             shallow_boundaries,
+            graft_parents,
         }
     }
 
@@ -1902,6 +2105,9 @@ impl<'r> CommitGraph<'r> {
         } else {
             commit.parents
         };
+        if let Some(graft_parents) = self.graft_parents.get(&oid) {
+            parents = graft_parents.clone();
+        }
         if self.first_parent_only && parents.len() > 1 {
             parents.truncate(1);
         }
@@ -1927,6 +2133,43 @@ fn load_shallow_boundaries(git_dir: &Path) -> HashSet<ObjectId> {
         }
     }
     set
+}
+
+/// Load commit parent overrides from `.git/info/grafts`.
+fn load_graft_parents(git_dir: &Path) -> HashMap<ObjectId, Vec<ObjectId>> {
+    let graft_path = git_dir.join("info/grafts");
+    let mut grafts = HashMap::new();
+    let Ok(contents) = fs::read_to_string(&graft_path) else {
+        return grafts;
+    };
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut fields = line.split_whitespace();
+        let Some(commit_hex) = fields.next() else {
+            continue;
+        };
+        let Ok(commit_oid) = commit_hex.parse::<ObjectId>() else {
+            continue;
+        };
+        let mut parents = Vec::new();
+        let mut valid = true;
+        for parent_hex in fields {
+            match parent_hex.parse::<ObjectId>() {
+                Ok(parent_oid) => parents.push(parent_oid),
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            grafts.insert(commit_oid, parents);
+        }
+    }
+    grafts
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1975,21 +2218,32 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
 }
 
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
-/// Returns (included, omitted, missing) object lists.
+/// Returns (included, omitted) object lists.
 #[allow(dead_code)]
 fn collect_reachable_objects(
     repo: &Repository,
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
+    object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
-    missing_print: bool,
+    missing_action: MissingAction,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
     let mut missing = Vec::new();
+    let mut missing_seen = HashSet::new();
     for &commit_oid in commits {
-        let commit = load_commit(repo, commit_oid)?;
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_seen.insert(commit_oid) && missing_action == MissingAction::Print {
+                    missing.push(commit_oid);
+                }
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         collect_tree_objects_filtered(
             repo,
             commit.tree,
@@ -1998,12 +2252,135 @@ fn collect_reachable_objects(
             &mut seen,
             &mut result,
             &mut omitted,
-            filter,
             &mut missing,
-            missing_print,
+            &mut missing_seen,
+            filter,
+            missing_action,
         )?;
     }
+
+    for root in object_roots {
+        collect_root_object(
+            repo,
+            root,
+            &mut seen,
+            &mut result,
+            &mut omitted,
+            &mut missing,
+            &mut missing_seen,
+            filter,
+            missing_action,
+        )?;
+    }
+
     Ok((result, omitted, missing))
+}
+
+fn collect_root_object(
+    repo: &Repository,
+    root: &RootObject,
+    seen: &mut HashSet<ObjectId>,
+    result: &mut Vec<(ObjectId, String)>,
+    omitted: &mut Vec<ObjectId>,
+    missing: &mut Vec<ObjectId>,
+    missing_seen: &mut HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    missing_action: MissingAction,
+) -> Result<()> {
+    let object = match repo.odb.read(&root.oid) {
+        Ok(object) => object,
+        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+            if missing_action == MissingAction::Print && missing_seen.insert(root.oid) {
+                missing.push(root.oid);
+            }
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+
+    if let Some(expected) = root.expected_kind {
+        if !expected.matches(object.kind) {
+            return Err(Error::CorruptObject(format!(
+                "object {} is not a {}",
+                root.input,
+                expected.as_str()
+            )));
+        }
+    }
+
+    match object.kind {
+        ObjectKind::Commit => {
+            let commit = parse_commit(&object.data)?;
+            collect_tree_objects_filtered(
+                repo,
+                commit.tree,
+                "",
+                0,
+                seen,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                missing_action,
+            )?;
+        }
+        ObjectKind::Tree => {
+            seen.remove(&root.oid);
+            collect_tree_objects_filtered(
+                repo,
+                root.oid,
+                "",
+                0,
+                seen,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                missing_action,
+            )?;
+        }
+        ObjectKind::Blob => {
+            if !seen.insert(root.oid) {
+                return Ok(());
+            }
+            let blob_included = filter.is_none_or(|f| f.includes_blob(object.data.len() as u64));
+            if blob_included {
+                result.push((root.oid, String::new()));
+            } else {
+                omitted.push(root.oid);
+            }
+        }
+        ObjectKind::Tag => {
+            let tag = parse_tag(&object.data)?;
+            let expected_kind =
+                ExpectedObjectKind::from_tag_type(&tag.object_type).ok_or_else(|| {
+                    Error::CorruptObject(format!(
+                        "object {} has unsupported tag type '{}'",
+                        root.input, tag.object_type
+                    ))
+                })?;
+            let nested = RootObject {
+                oid: tag.object,
+                input: root.input.clone(),
+                expected_kind: Some(expected_kind),
+            };
+            collect_root_object(
+                repo,
+                &nested,
+                seen,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                missing_action,
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -2015,13 +2392,28 @@ fn collect_tree_objects_filtered(
     seen: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
-    filter: Option<&ObjectFilter>,
     missing: &mut Vec<ObjectId>,
-    missing_print: bool,
+    missing_seen: &mut HashSet<ObjectId>,
+    filter: Option<&ObjectFilter>,
+    missing_action: MissingAction,
 ) -> Result<()> {
-    let empty_tree_oid = ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").ok();
     if !seen.insert(tree_oid) {
         return Ok(());
+    }
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(object) => object,
+        Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+            if missing_action == MissingAction::Print && missing_seen.insert(tree_oid) {
+                missing.push(tree_oid);
+            }
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
+    if object.kind != ObjectKind::Tree {
+        return Err(Error::CorruptObject(format!(
+            "object {tree_oid} is not a tree"
+        )));
     }
     // Check if this tree passes the filter
     let tree_included = filter.is_none_or(|f| f.includes_tree(depth));
@@ -2029,22 +2421,6 @@ fn collect_tree_objects_filtered(
         result.push((tree_oid, prefix.to_owned()));
     } else {
         omitted.push(tree_oid);
-    }
-    let object = match repo.odb.read(&tree_oid) {
-        Ok(obj) => obj,
-        Err(err) => {
-            if empty_tree_oid.is_some_and(|oid| oid == tree_oid) {
-                return Ok(());
-            }
-            if missing_print {
-                missing.push(tree_oid);
-                return Ok(());
-            }
-            return Err(err);
-        }
-    };
-    if object.kind != ObjectKind::Tree {
-        return Ok(());
     }
     let entries = parse_tree(&object.data)?;
     for entry in entries {
@@ -2059,38 +2435,54 @@ fn collect_tree_objects_filtered(
         } else {
             format!("{prefix}/{name}")
         };
-        if !seen.insert(entry.oid) {
-            continue;
-        }
+        let seen_before = seen.contains(&entry.oid);
         let child_obj = match repo.odb.read(&entry.oid) {
-            Ok(obj) => obj,
-            Err(err) => {
-                if missing_print {
+            Ok(object) => object,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(entry.oid) {
                     missing.push(entry.oid);
-                    continue;
                 }
-                return Err(err);
+                continue;
             }
+            Err(err) => return Err(err),
         };
-        match child_obj.kind {
-            ObjectKind::Tree => {
-                // Recurse into subtrees; the filter check happens at the recursive call
-                seen.remove(&entry.oid);
-                collect_tree_objects_filtered(
-                    repo,
-                    entry.oid,
-                    &path,
-                    depth + 1,
-                    seen,
-                    result,
-                    omitted,
-                    filter,
-                    missing,
-                    missing_print,
-                )?;
+        if entry.mode == 0o040000 {
+            if child_obj.kind != ObjectKind::Tree {
+                return Err(Error::CorruptObject(format!(
+                    "object {} is not a tree",
+                    entry.oid
+                )));
             }
-            _ => {
-                // Blob: check filter
+            if seen_before {
+                continue;
+            }
+            seen.remove(&entry.oid);
+            collect_tree_objects_filtered(
+                repo,
+                entry.oid,
+                &path,
+                depth + 1,
+                seen,
+                result,
+                omitted,
+                missing,
+                missing_seen,
+                filter,
+                missing_action,
+            )?;
+        } else {
+            if child_obj.kind != ObjectKind::Blob && seen_before {
+                return Err(Error::CorruptObject(format!(
+                    "object {} is not a blob",
+                    entry.oid
+                )));
+            }
+            if seen_before {
+                continue;
+            }
+            seen.insert(entry.oid);
+
+            if child_obj.kind == ObjectKind::Blob {
                 let blob_included =
                     filter.is_none_or(|f| f.includes_blob(child_obj.data.len() as u64));
                 if blob_included {
@@ -2098,6 +2490,11 @@ fn collect_tree_objects_filtered(
                 } else {
                     omitted.push(entry.oid);
                 }
+            } else {
+                // Git historically tolerates lone non-blob entries in blob slots.
+                // Keep traversing while still detecting seen-object kind mismatches
+                // through the `seen_before` check above.
+                result.push((entry.oid, path));
             }
         }
     }
@@ -2106,13 +2503,14 @@ fn collect_tree_objects_filtered(
 
 /// Collect reachable objects in commit order: objects for each commit are emitted
 /// right after that commit, rather than all objects after all commits.
-/// Returns (objects, omitted, missing, per_commit_counts).
+/// Returns (objects, omitted, per_commit_counts).
 fn collect_reachable_objects_in_commit_order(
     repo: &Repository,
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
+    object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
-    missing_print: bool,
+    missing_action: MissingAction,
 ) -> Result<(
     Vec<(ObjectId, String)>,
     Vec<ObjectId>,
@@ -2123,9 +2521,20 @@ fn collect_reachable_objects_in_commit_order(
     let mut result = Vec::new();
     let mut omitted = Vec::new();
     let mut missing = Vec::new();
+    let mut missing_seen = HashSet::new();
     let mut counts = Vec::with_capacity(commits.len());
     for &commit_oid in commits {
-        let commit = load_commit(repo, commit_oid)?;
+        let commit = match load_commit(repo, commit_oid) {
+            Ok(commit) => commit,
+            Err(Error::ObjectNotFound(_)) if missing_action != MissingAction::Error => {
+                if missing_action == MissingAction::Print && missing_seen.insert(commit_oid) {
+                    missing.push(commit_oid);
+                }
+                counts.push(0);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let before = result.len();
         collect_tree_objects_filtered(
             repo,
@@ -2135,12 +2544,28 @@ fn collect_reachable_objects_in_commit_order(
             &mut seen,
             &mut result,
             &mut omitted,
-            filter,
             &mut missing,
-            missing_print,
+            &mut missing_seen,
+            filter,
+            missing_action,
         )?;
         counts.push(result.len() - before);
     }
+
+    for root in object_roots {
+        collect_root_object(
+            repo,
+            root,
+            &mut seen,
+            &mut result,
+            &mut omitted,
+            &mut missing,
+            &mut missing_seen,
+            filter,
+            missing_action,
+        )?;
+    }
+
     Ok((result, omitted, missing, counts))
 }
 

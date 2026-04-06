@@ -263,6 +263,10 @@ fn run_show(args: ShowArgs) -> Result<()> {
         break_rewrites: None,
         show_trees: false,
         unified: None,
+        boundary: false,
+        full_history: false,
+        simplify_merges: false,
+        sparse: false,
     })
 }
 

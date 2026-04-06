@@ -531,6 +531,53 @@ fn run_test_tool_find_pack(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
+    if rest.len() < 5 {
+        bail!("usage: test-tool ref-store <backend> update-ref <msg> <ref> <new> <old> [flags...]");
+    }
+    let backend = &rest[1];
+    let sub = &rest[2];
+    if backend != "main" || sub != "update-ref" {
+        bail!("test-tool ref-store: unsupported invocation");
+    }
+
+    let msg = &rest[3];
+    let refname = &rest[4];
+    let new_oid = rest
+        .get(5)
+        .ok_or_else(|| anyhow::anyhow!("missing new oid"))?;
+    let old_oid = rest
+        .get(6)
+        .ok_or_else(|| anyhow::anyhow!("missing old oid"))?;
+    let flags = if rest.len() > 7 { &rest[7..] } else { &[] };
+    let skip_oid_verification = flags.iter().any(|f| f == "REF_SKIP_OID_VERIFICATION");
+
+    // Build equivalent `update-ref` invocation.
+    // REF_SKIP_OID_VERIFICATION is approximated by allowing arbitrary new object ids
+    // for tests that intentionally create dangling refs.
+    let mut args = vec![
+        "update-ref".to_owned(),
+        "-m".to_owned(),
+        msg.clone(),
+        refname.clone(),
+        new_oid.clone(),
+    ];
+    if old_oid != "0000000000000000000000000000000000000000" {
+        args.push(old_oid.clone());
+    }
+    if skip_oid_verification {
+        // Create the loose ref directly to avoid object existence checks.
+        let git_dir = std::path::PathBuf::from(".git");
+        let ref_path = git_dir.join(refname);
+        if let Some(parent) = ref_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(ref_path, format!("{new_oid}\n"))?;
+        return Ok(());
+    }
+    dispatch("update-ref", &args, &GlobalOpts::default())
+}
+
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
     match kind {
         std::io::ErrorKind::NotFound => "ENOENT",
@@ -1827,6 +1874,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "merge-file",
     "merge-index",
     "merge-one-file",
+    "merge-recursive",
     "merge-tree",
     "mergetool",
     "mktag",
@@ -2027,7 +2075,17 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
         "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
-        "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
+        "merge" => match commands::merge::run(parse_cmd_args(subcmd, rest)) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if commands::merge::is_internal_merge_execution_error(&err) {
+                    eprintln!("error: failed to execute internal merge");
+                    std::process::exit(2);
+                }
+                Err(err)
+            }
+        },
+        "merge-recursive" => commands::merge_recursive::run(parse_cmd_args(subcmd, rest)),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),
@@ -2170,6 +2228,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "hexdump" => run_test_tool_hexdump(rest),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "ref-store" => run_test_tool_ref_store(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }

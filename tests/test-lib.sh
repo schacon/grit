@@ -114,28 +114,20 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
-		if test -n "${TEST_CREATE_REPO_NO_TEMPLATE:-}"
-		then
-			export TEST_CREATE_REPO_NO_TEMPLATE
-		fi
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
+		"$GUST_BIN" config user.name "Test User" 2>/dev/null
+		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
 	fi
 }
 
 setup_trash
 
-# Some upstream tests rely on this marker to ask `git init` not to populate
-# default template files (notably `.git/info/exclude`).
-if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
-then
-	export TEST_CREATE_REPO_NO_TEMPLATE
-fi
-
 # Persist test_tick across subshell boundaries via a state file.
 # Store inside .git/ so the file is never tracked by git.
 _TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+TEST_OID_CACHE_FILE="$TRASH_DIRECTORY/.test_oid_cache"
 
 test_tick () {
 	if test -z "${test_tick+set}"
@@ -202,8 +194,6 @@ ZERO_OID=0000000000000000000000000000000000000000
 SQ="'"
 LF='
 '
-u200c=${u200c:-$(printf '\342\200\214')}
-export u200c
 export ZERO_OID SQ LF
 
 if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
@@ -245,7 +235,9 @@ test_create_repo () {
 	mkdir -p "$repo" &&
 	(
 		cd "$repo" &&
-		git init
+		git init &&
+		git config user.name "Test User" &&
+		git config user.email "test@example.com"
 	)
 }
 
@@ -254,28 +246,6 @@ test_write_lines () {
 		printf '%s\n' "$1"
 		shift
 	done
-}
-
-test_detect_hash () {
-	case "${GIT_TEST_DEFAULT_HASH:-${GIT_TEST_BUILTIN_HASH:-sha1}}" in
-	*:*)
-		test_hash_algo="${GIT_TEST_DEFAULT_HASH%%:*}"
-		;;
-	sha256)
-		test_hash_algo=sha256
-		;;
-	*)
-		test_hash_algo=sha1
-		;;
-	esac
-}
-
-test_oid_to_path () {
-	test -n "${test_hash_algo:-}" || test_detect_hash
-	oid="$1"
-	prefix="${oid%${oid#??}}"
-	suffix="${oid#??}"
-	echo "${prefix}/${suffix}"
 }
 
 test_set_editor () {
@@ -375,6 +345,19 @@ export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
 # test_oid helpers — support SHA-1 only for now
 test_oid () {
+	local hash_algo=
+	if test "${1#--hash=}" != "$1"
+	then
+		hash_algo="${1#--hash=}"
+		shift
+	fi
+	# We only implement SHA-1 in this test harness.
+	if test -n "$hash_algo" && test "$hash_algo" != "sha1" && test "$hash_algo" != "builtin"
+	then
+		echo "unknown-oid"
+		return
+	fi
+
 	case "$1" in
 	numeric) echo "1234567890123456789012345678901234567890" ;;
 	oid_version) echo "1" ;;
@@ -382,13 +365,36 @@ test_oid () {
 	hexsz) echo "40" ;;
 	algo) echo "sha1" ;;
 	zero) echo "$ZERO_OID" ;;
-	*) echo "unknown-oid" ;;
+	*)
+		if test -n "$TEST_OID_CACHE_FILE" && test -f "$TEST_OID_CACHE_FILE"
+		then
+			oid=$(awk -v key="$1" '$1 == key { print $2; exit }' "$TEST_OID_CACHE_FILE")
+			if test -n "$oid"
+			then
+				echo "$oid"
+				return
+			fi
+		fi
+		case "$1" in
+		''|*[!0-9]*) ;;
+		*) printf '%040d\n' "$1"; return ;;
+		esac
+		echo "unknown-oid"
+		;;
 	esac
 }
 
 test_oid_cache () {
-	# consume and ignore stdin
-	cat >/dev/null
+	: >"$TEST_OID_CACHE_FILE"
+	while read -r name value
+	do
+		test -z "$name" && continue
+		case "$value" in
+		sha1:*)
+			echo "$name ${value#sha1:}" >>"$TEST_OID_CACHE_FILE"
+			;;
+		esac
+	done
 }
 
 # CR/LF helpers
@@ -669,12 +675,7 @@ test_hook () {
 		hook_dir=".git/hooks"
 	fi
 	mkdir -p "$hook_dir" &&
-	hook_file="$hook_dir/$1" &&
-	if test -z "$setup"
-	then
-		test_when_finished "rm -f \"$hook_file\""
-	fi &&
-	write_script "$hook_file"
+	write_script "$hook_dir/$1"
 }
 
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
@@ -699,17 +700,16 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes annotate= message= file= contents= author= append=
+	local notick= signoff= indir= tag=yes message= file= contents= author=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
-		--annotate) annotate=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) append=yes; shift ;;
+		--append) shift ;; # accepted but ignored for compat
 		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
@@ -717,24 +717,16 @@ test_commit () {
 	message="${1:?test_commit}" && shift
 	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
+	if test -z "$notick"; then
+		test_tick
+	fi
 	(
 		test -n "$indir" && cd "$indir"
-		if test -n "$append"; then
-			printf '%s\n' "$contents" >>"$file"
-		else
-			printf '%s\n' "$contents" >"$file"
-		fi &&
+		printf '%s\n' "$contents" >"$file" &&
 		git add "$file" &&
-		if test -z "$notick"; then
-			test_tick
-		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
-			if test -n "$annotate"; then
-				git tag -a -m "$message" "$message"
-			else
-				git tag "$message"
-			fi
+			git tag "$message"
 		fi
 	)
 }
@@ -845,9 +837,10 @@ test_expect_success () {
 	fi
 
 	# Run test body in the current shell (like upstream) so that
-	# variable and working-directory changes persist to subsequent tests.
-	# We run with `set -e` inside a helper to keep top-level shell
-	# behavior predictable.
+	# variables and working-directory changes can intentionally persist
+	# across tests.
+	# We save and restore 'set -e' state since eval doesn't
+	# propagate exit-on-error the way a subshell does.
 	# Run with errexit but capture result.
 	# Wrap in a function to localize set -e.
 	_test_eval_result=0

@@ -1,60 +1,5 @@
 //! Pathspec matching utilities shared across commands.
 
-/// Parsed pathspec magic flags plus the underlying pattern.
-#[derive(Debug, Clone, Copy)]
-pub struct MagicPathspec<'a> {
-    /// Whether matching paths should be excluded.
-    pub exclude: bool,
-    /// Whether the pathspec is rooted at the repository top.
-    pub top: bool,
-    /// The pattern body after removing any supported magic prefix.
-    pub pattern: &'a str,
-}
-
-/// Parse the subset of pathspec magic currently shared across commands.
-#[must_use]
-pub fn parse_magic_pathspec(spec: &str) -> MagicPathspec<'_> {
-    if let Some(pattern) = spec.strip_prefix(":/") {
-        return MagicPathspec {
-            exclude: false,
-            top: true,
-            pattern,
-        };
-    }
-    if let Some(pattern) = spec.strip_prefix(":!") {
-        return MagicPathspec {
-            exclude: true,
-            top: false,
-            pattern,
-        };
-    }
-    if let Some(rest) = spec.strip_prefix(":(") {
-        if let Some(close) = rest.find(')') {
-            let (magic, suffix) = rest.split_at(close);
-            let pattern = &suffix[1..];
-            let mut exclude = false;
-            let mut top = false;
-            for word in magic.split(',') {
-                match word {
-                    "exclude" => exclude = true,
-                    "top" => top = true,
-                    _ => {}
-                }
-            }
-            return MagicPathspec {
-                exclude,
-                top,
-                pattern,
-            };
-        }
-    }
-    MagicPathspec {
-        exclude: false,
-        top: false,
-        pattern: spec,
-    }
-}
-
 /// Check if a string contains glob meta-characters.
 pub fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
@@ -154,11 +99,160 @@ fn match_char_class(pattern: &[u8], ch: u8) -> Option<(bool, usize)> {
 
 /// Check whether a path matches a pathspec (which may be literal or glob).
 pub fn pathspec_matches(spec: &str, path: &str) -> bool {
-    if has_glob_chars(spec) {
-        path == spec || path.starts_with(&format!("{spec}/")) || glob_match(spec, path)
-    } else if let Some(prefix) = spec.strip_suffix('/') {
+    let (magic, mut pattern) = parse_magic(spec);
+    if let Some(rest) = pattern.strip_prefix(":/") {
+        pattern = rest;
+    }
+
+    let path = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+
+    if pattern.is_empty() {
+        return true;
+    }
+
+    if magic.icase {
+        let pattern_folded = pattern.to_ascii_lowercase();
+        let path_folded = path.to_ascii_lowercase();
+        if has_glob_chars(pattern) {
+            glob_match(&pattern_folded, &path_folded)
+        } else if let Some(prefix) = pattern_folded.strip_suffix('/') {
+            path_folded == prefix || path_folded.starts_with(&format!("{prefix}/"))
+        } else {
+            path_folded == pattern_folded || path_folded.starts_with(&format!("{pattern_folded}/"))
+        }
+    } else if has_glob_chars(pattern) {
+        glob_match(pattern, path)
+    } else if let Some(prefix) = pattern.strip_suffix('/') {
         path == prefix || path.starts_with(&format!("{prefix}/"))
     } else {
-        path == spec || path.starts_with(&format!("{spec}/"))
+        path == pattern || path.starts_with(&format!("{pattern}/"))
     }
+}
+
+/// Resolve a magic pathspec relative to a current-directory prefix.
+///
+/// This keeps the `cwd` prefix case-sensitive (via an internal `prefix:` magic
+/// token) while still honoring magic options like `icase` for the tail.
+/// Returns `None` when `spec` is not a parseable magic pathspec.
+pub fn resolve_magic_pathspec(spec: &str, cwd_prefix: &str) -> Option<String> {
+    if !spec.starts_with(":(") {
+        return None;
+    }
+    let close_idx = spec.find(')')?;
+    let magic_prefix = &spec[..=close_idx];
+    let tail = &spec[close_idx + 1..];
+    Some(resolve_magic_pathspec_parts(magic_prefix, tail, cwd_prefix))
+}
+
+#[derive(Debug, Default)]
+struct PathspecMagic {
+    icase: bool,
+    prefix: Option<String>,
+}
+
+fn parse_magic(spec: &str) -> (PathspecMagic, &str) {
+    let Some(rest) = spec.strip_prefix(":(") else {
+        return (PathspecMagic::default(), spec);
+    };
+    let Some(close) = rest.find(')') else {
+        return (PathspecMagic::default(), spec);
+    };
+
+    let (magic_part, tail_with_paren) = rest.split_at(close);
+    let mut magic = PathspecMagic::default();
+    for token in magic_part
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    {
+        if token.eq_ignore_ascii_case("icase") {
+            magic.icase = true;
+        } else if let Some(prefix) = token.strip_prefix("prefix:") {
+            magic.prefix = Some(prefix.to_string());
+        }
+    }
+
+    (magic, &tail_with_paren[1..])
+}
+
+fn resolve_magic_pathspec_parts(magic_prefix: &str, tail: &str, cwd_prefix: &str) -> String {
+    if has_magic_prefix_token(magic_prefix) {
+        return format!("{magic_prefix}{tail}");
+    }
+
+    if let Some(rooted_tail) = tail.strip_prefix('/') {
+        return format!("{magic_prefix}{}", normalize_relative_path_str(rooted_tail));
+    }
+
+    let combined = if cwd_prefix.is_empty() {
+        normalize_relative_path_str(tail)
+    } else {
+        normalize_relative_path_str(&format!("{cwd_prefix}{tail}"))
+    };
+
+    let cwd_base = normalize_relative_path_str(cwd_prefix.trim_end_matches('/'));
+    if !cwd_base.is_empty()
+        && (combined == cwd_base || combined.starts_with(&format!("{cwd_base}/")))
+    {
+        let remainder = combined
+            .strip_prefix(&cwd_base)
+            .unwrap_or(combined.as_str())
+            .strip_prefix('/')
+            .unwrap_or(combined.as_str());
+        let magic_with_prefix = inject_magic_prefix_token(magic_prefix, &format!("{cwd_base}/"));
+        return format!("{magic_with_prefix}{remainder}");
+    }
+
+    format!("{magic_prefix}{combined}")
+}
+
+fn has_magic_prefix_token(magic_prefix: &str) -> bool {
+    let Some(inner) = magic_prefix
+        .strip_prefix(":(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return false;
+    };
+    inner
+        .split(',')
+        .map(str::trim)
+        .any(|token| token.starts_with("prefix:"))
+}
+
+fn inject_magic_prefix_token(magic_prefix: &str, prefix: &str) -> String {
+    let Some(inner) = magic_prefix
+        .strip_prefix(":(")
+        .and_then(|s| s.strip_suffix(')'))
+    else {
+        return magic_prefix.to_string();
+    };
+    if inner.trim().is_empty() {
+        format!(":(prefix:{prefix})")
+    } else {
+        format!(":({inner},prefix:{prefix})")
+    }
+}
+
+fn normalize_relative_path_str(path: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in std::path::Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(seg) => {
+                parts.push(seg.to_string_lossy().to_string());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
 }

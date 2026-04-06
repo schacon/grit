@@ -20,7 +20,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 
-use grit_lib::merge_file::{merge, MergeInput};
+use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
 };
@@ -29,6 +29,47 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
+
+#[derive(Clone, Copy)]
+enum RebaseBackend {
+    Merge,
+    Apply,
+}
+
+#[derive(Clone, Copy)]
+struct RebaseConflictContext<'a> {
+    backend: RebaseBackend,
+    picked_subject: &'a str,
+}
+
+impl<'a> RebaseConflictContext<'a> {
+    fn style(self, repo: &Repository) -> ConflictStyle {
+        let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+            return ConflictStyle::Merge;
+        };
+        match config
+            .get("merge.conflictstyle")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "diff3" => ConflictStyle::Diff3,
+            "zdiff3" => ConflictStyle::ZealousDiff3,
+            _ => ConflictStyle::Merge,
+        }
+    }
+
+    fn label_ours(self) -> &'static str {
+        "HEAD"
+    }
+
+    fn label_base(self) -> String {
+        match self.backend {
+            RebaseBackend::Merge => format!("parent of {}", self.picked_subject),
+            RebaseBackend::Apply => "constructed fake ancestor".to_string(),
+        }
+    }
+}
 
 /// Arguments for `grit rebase`.
 #[derive(Debug, ClapArgs)]
@@ -90,35 +131,17 @@ pub struct Args {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
+    /// Update stale tracking branches after rebase.
+    #[arg(long = "update-refs")]
+    pub update_refs: bool,
+
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
-
-    /// Update additional refs that point into the rewritten range.
-    #[arg(long = "update-refs")]
-    pub update_refs: bool,
 }
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
-    let repo_for_cwd_guard = Repository::discover(None).context("not a git repository")?;
-    if crate::commands::git_passthrough::should_passthrough_from_subdir(&repo_for_cwd_guard) {
-        return passthrough_current_rebase_invocation();
-    }
-
-    if args.update_refs || args.interactive {
-        return passthrough_current_rebase_invocation();
-    }
-
-    // Interactive rebase is delegated to system Git in this build. If we are
-    // asked to continue/skip/abort while that delegated state exists
-    // (`rebase-merge`), delegate those lifecycle operations as well.
-    if (args.abort || args.r#continue || args.skip)
-        && repo_for_cwd_guard.git_dir.join("rebase-merge").exists()
-    {
-        return passthrough_current_rebase_invocation();
-    }
-
     if args.abort {
         return do_abort();
     }
@@ -153,9 +176,13 @@ pub fn run(mut args: Args) -> Result<()> {
                         let upstream_name = args.upstream.as_deref().unwrap_or("HEAD");
                         let new_line = format!(
                             "{}\trebase (start): checkout {}",
-                            &last[..tab_idx], upstream_name
+                            &last[..tab_idx],
+                            upstream_name
                         );
-                        let mut new_lines: Vec<String> = lines[..lines.len()-1].iter().map(|s| s.to_string()).collect();
+                        let mut new_lines: Vec<String> = lines[..lines.len() - 1]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
                         new_lines.push(new_line);
                         let _ = std::fs::write(&reflog_path, new_lines.join("\n") + "\n");
                     }
@@ -202,11 +229,28 @@ pub fn run(mut args: Args) -> Result<()> {
 //   end         — total number of patches
 
 fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
-    git_dir.join("rebase-merge")
+    git_dir.join("rebase-apply")
 }
 
 fn is_rebase_in_progress(git_dir: &Path) -> bool {
     rebase_dir(git_dir).exists()
+}
+
+fn choose_rebase_backend(args: &Args) -> RebaseBackend {
+    if args.apply {
+        RebaseBackend::Apply
+    } else {
+        RebaseBackend::Merge
+    }
+}
+
+fn load_rebase_backend(rb_dir: &Path) -> RebaseBackend {
+    let marker = fs::read_to_string(rb_dir.join("backend")).unwrap_or_default();
+    if marker.trim().eq_ignore_ascii_case("apply") {
+        RebaseBackend::Apply
+    } else {
+        RebaseBackend::Merge
+    }
 }
 
 // ── Main rebase flow ────────────────────────────────────────────────
@@ -322,6 +366,8 @@ fn do_rebase(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    let backend = choose_rebase_backend(&args);
+
     // Save state
     let rb_dir = rebase_dir(git_dir);
     fs::create_dir_all(&rb_dir)?;
@@ -334,6 +380,13 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
+    fs::write(
+        rb_dir.join("backend"),
+        match backend {
+            RebaseBackend::Merge => "merge\n",
+            RebaseBackend::Apply => "apply\n",
+        },
+    )?;
     // Write the "rebasing" marker so git-prompt.sh detects this as a
     // rebase (not an "am" or ambiguous "AM/REBASE").
     fs::write(rb_dir.join("rebasing"), "")?;
@@ -426,7 +479,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
 
     let todo_content = fs::read_to_string(rb_dir.join("todo"))?;
     let todo: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
-    let total_for_prompt: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
+    let _total: usize = fs::read_to_string(rb_dir.join("end"))?.trim().parse()?;
     let msgnum: usize = fs::read_to_string(rb_dir.join("msgnum"))?.trim().parse()?;
 
     for i in (msgnum - 1)..todo.len() {
@@ -444,7 +497,8 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
             .cloned()
             .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
 
-        match cherry_pick_for_rebase(repo, &commit_oid) {
+        let backend = load_rebase_backend(&rb_dir);
+        match cherry_pick_for_rebase(repo, &commit_oid, backend) {
             Ok(()) => {
                 let head = resolve_head(git_dir)?;
                 let new_oid = *head
@@ -484,8 +538,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                             let remaining: Vec<&str> = todo[i + 1..].to_vec();
                             fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                             fs::write(rb_dir.join("msgnum"), "1")?;
-                            fs::write(rb_dir.join("end"), total_for_prompt.to_string())?;
-                            fs::write(rb_dir.join("last"), total_for_prompt.to_string())?;
+                            fs::write(rb_dir.join("end"), remaining.len().to_string())?;
                             std::process::exit(code);
                         }
                     }
@@ -496,8 +549,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                 let remaining: Vec<&str> = todo[i + 1..].to_vec();
                 fs::write(rb_dir.join("todo"), remaining.join("\n") + "\n")?;
                 fs::write(rb_dir.join("msgnum"), "1")?;
-                fs::write(rb_dir.join("end"), total_for_prompt.to_string())?;
-                fs::write(rb_dir.join("last"), total_for_prompt.to_string())?;
+                fs::write(rb_dir.join("end"), remaining.len().to_string())?;
 
                 let obj = repo.odb.read(&commit_oid)?;
                 let commit = parse_commit(&obj.data)?;
@@ -523,7 +575,11 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
 }
 
 /// Cherry-pick a single commit onto current HEAD for rebase purposes.
-fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()> {
+fn cherry_pick_for_rebase(
+    repo: &Repository,
+    commit_oid: &ObjectId,
+    backend: RebaseBackend,
+) -> Result<()> {
     let git_dir = &repo.git_dir;
 
     let commit_obj = repo.odb.read(commit_oid)?;
@@ -556,8 +612,18 @@ fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
-    let merged_index =
-        three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
+    let conflict_ctx = RebaseConflictContext {
+        backend,
+        picked_subject: commit.message.lines().next().unwrap_or("replayed commit"),
+    };
+    let merge_result = three_way_merge_with_content(
+        repo,
+        &base_entries,
+        &ours_entries,
+        &theirs_entries,
+        &conflict_ctx,
+    )?;
+    let merged_index = merge_result.index;
 
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
 
@@ -568,6 +634,9 @@ fn cherry_pick_for_rebase(repo: &Repository, commit_oid: &ObjectId) -> Result<()
     // Update worktree
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(repo, wt, &old_index, &merged_index)?;
+        if has_conflicts {
+            write_rebase_conflict_files(wt, &merge_result.conflict_files)?;
+        }
     }
 
     if has_conflicts {
@@ -814,8 +883,6 @@ fn do_abort() -> Result<()> {
 
 // ── Interactive stub ────────────────────────────────────────────────
 
-#[allow(dead_code)]
-#[allow(dead_code)]
 fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
     let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
     let upstream_oid = resolve_revision(repo, upstream_spec)
@@ -850,13 +917,7 @@ fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
 fn cleanup_rebase_state(git_dir: &Path) {
     let rb_dir = rebase_dir(git_dir);
     let _ = fs::remove_dir_all(&rb_dir);
-    // Legacy location used by older grit versions.
-    let _ = fs::remove_dir_all(git_dir.join("rebase-apply"));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
-}
-
-fn passthrough_current_rebase_invocation() -> Result<()> {
-    crate::commands::git_passthrough::run_current_invocation("rebase")
 }
 
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────
@@ -964,18 +1025,25 @@ fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     index.entries.push(e);
 }
 
+struct RebaseMergeResult {
+    index: Index,
+    conflict_files: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
 fn three_way_merge_with_content(
     repo: &Repository,
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
-) -> Result<Index> {
+    conflict_ctx: &RebaseConflictContext,
+) -> Result<RebaseMergeResult> {
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
     all_paths.extend(ours.keys().cloned());
     all_paths.extend(theirs.keys().cloned());
 
     let mut out = Index::new();
+    let mut conflict_files: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
 
     for path in all_paths {
         let b = base.get(&path);
@@ -993,7 +1061,16 @@ fn three_way_merge_with_content(
                 out.entries.push(oe.clone());
             }
             (Some(be), Some(oe), Some(te)) => {
-                content_merge_or_conflict(repo, &mut out, &path, be, oe, te)?;
+                content_merge_or_conflict(
+                    repo,
+                    &mut out,
+                    &mut conflict_files,
+                    &path,
+                    be,
+                    oe,
+                    te,
+                    conflict_ctx,
+                )?;
             }
             (None, Some(oe), None) => {
                 out.entries.push(oe.clone());
@@ -1024,16 +1101,21 @@ fn three_way_merge_with_content(
     }
 
     out.sort();
-    Ok(out)
+    Ok(RebaseMergeResult {
+        index: out,
+        conflict_files,
+    })
 }
 
 fn content_merge_or_conflict(
     repo: &Repository,
     index: &mut Index,
+    conflict_files: &mut Vec<(Vec<u8>, Vec<u8>)>,
     path: &[u8],
     base: &IndexEntry,
     ours: &IndexEntry,
     theirs: &IndexEntry,
+    ctx: &RebaseConflictContext<'_>,
 ) -> Result<()> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
@@ -1050,17 +1132,22 @@ fn content_merge_or_conflict(
     }
 
     let path_str = String::from_utf8_lossy(path);
+    let base_label = ctx.label_base();
     let input = MergeInput {
         base: &base_obj.data,
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
-        label_ours: "HEAD",
-        label_base: "parent of replayed commit",
+        label_ours: ctx.label_ours(),
+        label_base: &base_label,
         label_theirs: &path_str,
         favor: Default::default(),
-        style: Default::default(),
+        style: ctx.style(repo),
         marker_size: 7,
-            diff_algorithm: None,
+        diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
     };
 
     let result = merge(&input)?;
@@ -1069,6 +1156,7 @@ fn content_merge_or_conflict(
         stage_entry(index, base, 1);
         stage_entry(index, ours, 2);
         stage_entry(index, theirs, 3);
+        conflict_files.push((path.to_vec(), result.content));
     } else {
         let merged_oid = repo.odb.write(ObjectKind::Blob, &result.content)?;
         let mut entry = ours.clone();
@@ -1082,20 +1170,27 @@ fn content_merge_or_conflict(
     Ok(())
 }
 
+fn write_rebase_conflict_files(
+    work_tree: &Path,
+    conflict_files: &[(Vec<u8>, Vec<u8>)],
+) -> Result<()> {
+    for (path, content) in conflict_files {
+        let rel = String::from_utf8_lossy(path);
+        let abs = work_tree.join(rel.as_ref());
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(abs, content)?;
+    }
+    Ok(())
+}
+
 fn checkout_merged_index(
     repo: &Repository,
     work_tree: &Path,
     old_index: &Index,
     index: &Index,
 ) -> Result<()> {
-    if let Some((path, is_dir)) = find_untracked_obstruction(work_tree, old_index, index) {
-        if is_dir {
-            bail!("Updating '{}' would lose untracked files in it", path);
-        } else {
-            bail!("Updating '{}' would lose untracked files.", path);
-        }
-    }
-
     let new_paths: HashSet<Vec<u8>> = index.entries.iter().map(|e| e.path.clone()).collect();
 
     for entry in &old_index.entries {
@@ -1129,65 +1224,6 @@ fn checkout_merged_index(
     }
 
     Ok(())
-}
-
-fn find_untracked_obstruction(
-    work_tree: &Path,
-    old_index: &Index,
-    new_index: &Index,
-) -> Option<(String, bool)> {
-    let old_paths: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| e.path.clone())
-        .collect();
-
-    for entry in &new_index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        if old_paths.contains(&entry.path) {
-            continue;
-        }
-
-        let rel = String::from_utf8_lossy(&entry.path).into_owned();
-        let abs = work_tree.join(&rel);
-        if !abs.exists() && !abs.is_symlink() {
-            continue;
-        }
-
-        let has_tracked_prefix = rel.find('/').is_some_and(|_| {
-            let mut prefix = String::new();
-            for component in rel.split('/') {
-                if !prefix.is_empty() {
-                    prefix.push('/');
-                }
-                prefix.push_str(component);
-                if prefix.len() < rel.len() && old_paths.contains(prefix.as_bytes()) {
-                    return true;
-                }
-            }
-            false
-        });
-        if has_tracked_prefix {
-            continue;
-        }
-
-        let replaces_tracked_dir = old_paths.iter().any(|op| {
-            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
-        });
-        if replaces_tracked_dir {
-            continue;
-        }
-
-        let is_dir = fs::symlink_metadata(&abs)
-            .map(|m| m.file_type().is_dir())
-            .unwrap_or(false);
-        return Some((rel, is_dir));
-    }
-
-    None
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {

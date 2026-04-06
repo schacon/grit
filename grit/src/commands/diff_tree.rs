@@ -8,7 +8,6 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use encoding_rs::Encoding;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
     format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
@@ -16,15 +15,11 @@ use grit_lib::diff::{
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_list::{rev_list, RevListOptions};
 use grit_lib::rev_parse::resolve_revision;
-use std::collections::HashSet;
-use std::fs;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
 
-const EMPTY_TREE_OID_HEX: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-const EMPTY_TREE_OID_HEX_LEGACY: &str = "4b825dc642cb6eb9a060e54bf899d69f7c6948d4";
+/// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 
 /// Arguments for `grit diff-tree`.
 #[derive(Debug, ClapArgs)]
@@ -74,8 +69,6 @@ struct Options {
     suppress_diff: bool,
     /// Show diffs for merge commits in stdin mode (`-m`).
     show_merges: bool,
-    /// Show combined diff information for merge commits (`-c` / `--cc`).
-    combined_diff: bool,
     /// Output format.
     format: OutputFormat,
     /// Number of unified context lines for patch output.
@@ -90,8 +83,6 @@ struct Options {
     find_copies_harder: bool,
     /// Rename limit (max number of rename source candidates).
     rename_limit: Option<usize>,
-    /// Break rewrites into delete/create pairs (`-B`).
-    break_rewrites: bool,
     /// Show full object IDs in patch headers (--full-index).
     full_index: bool,
     /// Also show raw format with patch (--patch-with-raw).
@@ -102,24 +93,14 @@ struct Options {
     summary: bool,
     /// Pretty-print commit header (--pretty). None = off, Some("oneline"), Some("medium"), etc.
     pretty: Option<String>,
-    /// Resolve a target object and keep only changes that touch it.
-    find_object: Option<String>,
     /// Show combined stat+summary after diff.
     stat_too: bool,
     /// Limit recursion depth for --name-only etc.
     max_depth: Option<i32>,
-    /// Ignore changes in amount of whitespace (`-b`).
-    ignore_space_change: bool,
     /// Exit with 1 if there are differences.
     exit_code: bool,
     /// Suppress all output, implies exit_code.
     quiet: bool,
-    /// Reverse the diff direction (`-R` / `--reverse`).
-    reverse: bool,
-    /// Use NUL terminators for raw/name output (`-z`).
-    nul_terminated: bool,
-    /// Submodule diff format (`--submodule=<format>`).
-    submodule_format: Option<String>,
 }
 
 impl Default for Options {
@@ -135,7 +116,6 @@ impl Default for Options {
             verbose: false,
             suppress_diff: false,
             show_merges: false,
-            combined_diff: false,
             format: OutputFormat::Raw,
             context_lines: 3,
             abbrev: None,
@@ -143,21 +123,15 @@ impl Default for Options {
             find_copies: None,
             find_copies_harder: false,
             rename_limit: None,
-            break_rewrites: false,
             full_index: false,
             patch_with_raw: false,
             patch_with_stat: false,
             summary: false,
             pretty: None,
-            find_object: None,
             stat_too: false,
             max_depth: None,
-            ignore_space_change: false,
             exit_code: false,
             quiet: false,
-            reverse: false,
-            nul_terminated: false,
-            submodule_format: None,
         }
     }
 }
@@ -190,10 +164,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-v" => opts.verbose = true,
                 "-s" => opts.suppress_diff = true,
                 "-m" => opts.show_merges = true,
-                "-c" | "--cc" => {
-                    opts.combined_diff = true;
-                    opts.show_merges = true;
-                }
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
                 "--stat" => {
@@ -204,19 +174,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "--name-status" => opts.format = OutputFormat::NameStatus,
                 "--summary" => opts.summary = true,
                 "--exit-code" => opts.exit_code = true,
-                "-b" | "--ignore-space-change" => opts.ignore_space_change = true,
                 "-q" | "--quiet" => {
                     opts.quiet = true;
                     opts.exit_code = true;
                 }
-                "-R" | "--reverse" => opts.reverse = true,
-                "-z" => opts.nul_terminated = true,
                 "--full-index" => opts.full_index = true,
-                "--submodule" => opts.submodule_format = Some("short".to_owned()),
-                _ if arg.starts_with("--submodule=") => {
-                    let val = &arg["--submodule=".len()..];
-                    opts.submodule_format = Some(val.to_owned());
-                }
                 _ if arg.starts_with("--max-depth=") => {
                     let val = &arg["--max-depth=".len()..];
                     opts.max_depth = Some(
@@ -232,24 +194,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.format = OutputFormat::Patch;
                     opts.patch_with_raw = true;
                 }
-                "--binary" => {
-                    opts.format = OutputFormat::Patch;
-                }
                 "--pretty" | "--pretty=medium" => opts.pretty = Some("medium".to_string()),
                 _ if arg.starts_with("--pretty=") => {
                     let val = &arg["--pretty=".len()..];
                     opts.pretty = Some(val.to_string());
-                }
-                "--find-object" => {
-                    i += 1;
-                    let next = argv
-                        .get(i)
-                        .ok_or_else(|| anyhow::anyhow!("--find-object requires an argument"))?;
-                    opts.find_object = Some(next.to_string());
-                }
-                _ if arg.starts_with("--find-object=") => {
-                    let val = &arg["--find-object=".len()..];
-                    opts.find_object = Some(val.to_string());
                 }
                 "--abbrev" => opts.abbrev = Some(7),
                 _ if arg.starts_with("--abbrev=") => {
@@ -283,15 +231,8 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         opts.find_renames = Some(50);
                     }
                 }
-                "-B" | "--break-rewrites" => opts.break_rewrites = true,
                 "--find-copies-harder" => opts.find_copies_harder = true,
                 "--no-renames" => opts.find_renames = None,
-                _ if arg.starts_with("-B") => {
-                    opts.break_rewrites = true;
-                }
-                _ if arg.starts_with("--break-rewrites=") => {
-                    opts.break_rewrites = true;
-                }
                 _ if arg.starts_with("-M") => {
                     let val = &arg[2..];
                     let pct = if val.ends_with('%') {
@@ -318,21 +259,20 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     }
                 }
                 // Silently accept common diff options that we do not implement.
-                "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
+                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c" | "--cc"
+                | "--check" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
+                    || arg.starts_with("--format=")
                     || arg.starts_with("-S")
                     || arg.starts_with("-G")
                     || arg.starts_with("--pickaxe-all")
                     || arg.starts_with("--pickaxe-regex")
                     || arg.starts_with("-O")
+                    || arg.starts_with("-R")
                     || arg.starts_with("--relative") =>
                 {
                     // ignored
-                }
-                _ if arg.starts_with("--format=") => {
-                    let val = &arg["--format=".len()..];
-                    opts.pretty = Some(format!("format:{val}"));
                 }
                 _ => bail!("unknown option: {arg}"),
             }
@@ -349,18 +289,18 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         i += 1;
     }
 
-    // Patch and stat imply recursion.
+    // Patch, stat, summary, name-only, name-status all imply recursion.
     match opts.format {
-        OutputFormat::Patch | OutputFormat::Stat => {
+        OutputFormat::Patch
+        | OutputFormat::Stat
+        | OutputFormat::NameOnly
+        | OutputFormat::NameStatus => {
             opts.recursive = true;
         }
         _ => {}
     }
     if opts.summary {
         opts.recursive = true;
-    }
-    if opts.break_rewrites && opts.find_renames.is_some() && opts.find_copies.is_none() {
-        opts.find_copies = opts.find_renames;
     }
 
     Ok(opts)
@@ -371,14 +311,6 @@ fn parse_options(argv: &[String]) -> Result<Options> {
 /// Run `grit diff-tree`.
 pub fn run(args: Args) -> Result<()> {
     let opts = parse_options(&args.args)?;
-    if opts.max_depth.is_some()
-        && opts
-            .pathspecs
-            .iter()
-            .any(|spec| spec.contains('*') || spec.contains('?') || spec.contains('['))
-    {
-        bail!("--max-depth does not support wildcard pathspecs");
-    }
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let stdout = io::stdout();
@@ -408,156 +340,65 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let mut maybe_oid1 = normalize_empty_tree_oid(&oid1)?;
-    let mut maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
-    if opts.reverse {
-        std::mem::swap(&mut maybe_oid1, &mut maybe_oid2);
+    let max_tree_depth = resolve_max_tree_depth(repo)?;
+    let old_tree = if is_magic_empty_tree_oid(&oid1) {
+        None
+    } else {
+        Some(&oid1)
+    };
+    let new_tree = if is_magic_empty_tree_oid(&oid2) {
+        None
+    } else {
+        Some(&oid2)
+    };
+    if let Some(tree_oid) = old_tree {
+        validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
     }
-    let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
-    let filtered = filter_entries(entries, opts, &repo.odb);
-    let find_object = resolve_find_object(repo, opts)?;
-    let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+    if let Some(tree_oid) = new_tree {
+        validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
+    }
+    let entries = diff_with_opts(&repo.odb, old_tree, new_tree, opts)?;
+    let filtered = filter_entries(entries, opts);
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())?;
+        print_diff(out, &repo.odb, &filtered, opts, old_tree)?;
     }
     Ok(has_diff)
 }
 
 // ── Single-commit mode ───────────────────────────────────────────────
 
-fn resolve_find_object(repo: &Repository, opts: &Options) -> Result<Option<ObjectId>> {
-    match opts.find_object.as_deref() {
-        Some(spec) => {
-            let oid = resolve_revision(repo, spec)
-                .with_context(|| format!("unknown revision: '{spec}'"))?;
-            Ok(Some(oid))
-        }
-        None => Ok(None),
-    }
-}
-
-fn filter_entries_by_object(entries: Vec<DiffEntry>, target: Option<&ObjectId>) -> Vec<DiffEntry> {
-    match target {
-        Some(oid) => entries
-            .into_iter()
-            .filter(|entry| entry.old_oid == *oid || entry.new_oid == *oid)
-            .collect(),
-        None => entries,
-    }
-}
-
-fn combined_name_status_rows(
-    repo: &Repository,
-    commit: &grit_lib::objects::CommitData,
-    opts: &Options,
-    target: Option<&ObjectId>,
-) -> Result<Vec<(String, String)>> {
-    let mut per_parent_maps: Vec<std::collections::HashMap<String, DiffEntry>> = Vec::new();
-
-    for parent_oid in &commit.parents {
-        let parent_tree = commit_tree(&repo.odb, parent_oid)?;
-        let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
-        let filtered = filter_entries(entries, opts, &repo.odb);
-        let mut map = std::collections::HashMap::new();
-        for entry in filtered {
-            map.insert(entry.path().to_owned(), entry);
-        }
-        per_parent_maps.push(map);
-    }
-
-    let mut all_paths = std::collections::BTreeSet::new();
-    for map in &per_parent_maps {
-        all_paths.extend(map.keys().cloned());
-    }
-
-    let mut rows = Vec::new();
-    for path in all_paths {
-        if let Some(target_oid) = target {
-            let Some(first_parent_entry) = per_parent_maps.first().and_then(|map| map.get(&path))
-            else {
-                continue;
-            };
-            if first_parent_entry.old_oid != *target_oid
-                && first_parent_entry.new_oid != *target_oid
-            {
-                continue;
-            }
-        }
-
-        let mut status = String::with_capacity(per_parent_maps.len());
-        for map in &per_parent_maps {
-            if let Some(entry) = map.get(&path) {
-                status.push(entry.status.letter());
-            } else {
-                status.push('.');
-            }
-        }
-        rows.push((status, path));
-    }
-
-    Ok(rows)
-}
-
 fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let spec = &opts.objects[0];
     let oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     let obj = repo.odb.read(&oid).context("reading object")?;
-    let find_object = resolve_find_object(repo, opts)?;
 
     let mut has_diff = false;
     match obj.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&obj.data).context("parsing commit")?;
+            let max_tree_depth = resolve_max_tree_depth(repo)?;
+            validate_tree_depth_limit(&repo.odb, &commit.tree, 0, max_tree_depth)?;
             if commit.parents.is_empty() {
                 if opts.root {
-                    let mut old_tree = None;
-                    let mut new_tree = Some(commit.tree);
-                    if opts.reverse {
-                        std::mem::swap(&mut old_tree, &mut new_tree);
-                    }
-                    let entries =
-                        diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-                    let filtered = filter_entries(entries, opts, &repo.odb);
-                    let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+                    let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+                    let filtered = filter_entries(entries, opts);
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+                        print_diff(out, &repo.odb, &filtered, opts, None)?;
                     }
                 }
             } else {
-                if opts.combined_diff
-                    && commit.parents.len() > 1
-                    && opts.format == OutputFormat::NameStatus
-                {
-                    let rows =
-                        combined_name_status_rows(repo, &commit, opts, find_object.as_ref())?;
-                    has_diff = !rows.is_empty();
-                    if !opts.quiet && (has_diff || opts.pretty.is_some()) {
-                        write_commit_header(out, &oid, &obj.data, opts)?;
-                        for (status, path) in rows {
-                            writeln!(out, "{status}\t{path}")?;
-                        }
-                    }
-                    return Ok(has_diff);
-                }
-
                 let parent_tree = commit_tree(&repo.odb, &commit.parents[0])?;
-                let mut old_tree = Some(parent_tree);
-                let mut new_tree = Some(commit.tree);
-                if opts.reverse {
-                    std::mem::swap(&mut old_tree, &mut new_tree);
-                }
                 let entries =
-                    diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-                let filtered = filter_entries(entries, opts, &repo.odb);
-                let filtered = filter_entries_by_object(filtered, find_object.as_ref());
+                    diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+                let filtered = filter_entries(entries, opts);
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
-                    print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
                 }
             }
         }
@@ -669,30 +510,20 @@ fn process_stdin_commit(
 
     let has_diff = if parent_oids.is_empty() {
         if opts.root {
-            let mut old_tree = None;
-            let mut new_tree = Some(commit.tree);
-            if opts.reverse {
-                std::mem::swap(&mut old_tree, &mut new_tree);
-            }
-            let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-            let filtered = filter_entries(entries, opts, &repo.odb);
+            let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
+            let filtered = filter_entries(entries, opts);
             let hd = !filtered.is_empty();
-            print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+            print_diff(out, &repo.odb, &filtered, opts, None)?;
             hd
         } else {
             false
         }
     } else {
         let parent_tree = commit_tree(&repo.odb, &parent_oids[0])?;
-        let mut old_tree = Some(parent_tree);
-        let mut new_tree = Some(commit.tree);
-        if opts.reverse {
-            std::mem::swap(&mut old_tree, &mut new_tree);
-        }
-        let entries = diff_with_opts(&repo.odb, old_tree.as_ref(), new_tree.as_ref(), opts)?;
-        let filtered = filter_entries(entries, opts, &repo.odb);
+        let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
+        let filtered = filter_entries(entries, opts);
         let hd = !filtered.is_empty();
-        print_diff(out, repo, &filtered, opts, old_tree.as_ref())?;
+        print_diff(out, &repo.odb, &filtered, opts, None)?;
         hd
     };
 
@@ -718,14 +549,9 @@ fn process_stdin_two_trees(
     // Print both tree OIDs.
     writeln!(out, "{} {}", oid1.to_hex(), oid2.to_hex())?;
 
-    let mut maybe_oid1 = normalize_empty_tree_oid(oid1)?;
-    let mut maybe_oid2 = normalize_empty_tree_oid(&oid2)?;
-    if opts.reverse {
-        std::mem::swap(&mut maybe_oid1, &mut maybe_oid2);
-    }
-    let entries = diff_with_opts(&repo.odb, maybe_oid1.as_ref(), maybe_oid2.as_ref(), opts)?;
-    let filtered = filter_entries(entries, opts, &repo.odb);
-    print_diff(out, repo, &filtered, opts, maybe_oid1.as_ref())
+    let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
+    let filtered = filter_entries(entries, opts);
+    print_diff(out, &repo.odb, &filtered, opts, None)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -765,37 +591,39 @@ fn filter_max_depth(
     }
     let max_depth = max_depth as usize;
 
+    // For each entry, find the matching pathspec and compute relative depth.
+    // Depth 0 means the entry is directly in the pathspec root.
+    let prefix_depth = if pathspecs.is_empty() {
+        0usize
+    } else {
+        // Use the longest (most specific) matching prefix for each entry.
+        // For simplicity, use the minimum prefix depth across all pathspecs.
+        pathspecs
+            .iter()
+            .map(|p| {
+                let p = p.strip_suffix('/').unwrap_or(p);
+                if p.is_empty() {
+                    0
+                } else {
+                    p.split('/').count()
+                }
+            })
+            .min()
+            .unwrap_or(0)
+    };
+
+    // Maximum number of path components allowed in output.
+    let allowed_components = if prefix_depth > 0 {
+        prefix_depth + max_depth
+    } else {
+        max_depth + 1
+    };
+
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
     for entry in entries {
         let path = entry.path();
         let components: Vec<&str> = path.split('/').collect();
-        let match_prefix_depth = if pathspecs.is_empty() {
-            0usize
-        } else {
-            pathspecs
-                .iter()
-                .filter_map(|spec| {
-                    let prefix = spec.strip_suffix('/').unwrap_or(spec);
-                    if path == prefix || path.starts_with(&format!("{prefix}/")) {
-                        Some(if prefix.is_empty() {
-                            0
-                        } else {
-                            prefix.split('/').count()
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .max()
-                .unwrap_or(0)
-        };
-
-        let allowed_components = if match_prefix_depth > 0 {
-            match_prefix_depth + max_depth
-        } else {
-            max_depth + 1
-        };
 
         if components.len() <= allowed_components {
             result.push(entry);
@@ -1037,18 +865,11 @@ fn detect_copies(
 /// Print the diff entries according to `opts.format`.
 fn print_diff(
     out: &mut impl Write,
-    repo: &Repository,
+    odb: &Odb,
     entries: &[DiffEntry],
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
 ) -> Result<bool> {
-    let odb = &repo.odb;
-    let preprocessed = if opts.break_rewrites {
-        apply_break_rewrites(entries.to_vec())
-    } else {
-        entries.to_vec()
-    };
-
     // Apply rename detection if requested.
     let owned_entries;
     let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
@@ -1061,7 +882,7 @@ fn print_diff(
         Vec::new()
     };
     let entries = if let Some(threshold) = opts.find_renames {
-        let mut result = detect_renames(odb, preprocessed, threshold);
+        let mut result = detect_renames(odb, entries.to_vec(), threshold);
         if let Some(copy_threshold) = opts.find_copies {
             result = detect_copies(
                 odb,
@@ -1076,14 +897,14 @@ fn print_diff(
     } else if let Some(copy_threshold) = opts.find_copies {
         owned_entries = detect_copies(
             odb,
-            preprocessed,
+            entries.to_vec(),
             copy_threshold,
             opts.find_copies_harder,
             &old_blobs,
         );
         &owned_entries[..]
     } else {
-        &preprocessed
+        entries
     };
 
     match opts.format {
@@ -1093,7 +914,11 @@ fn print_diff(
             let suppress_raw = opts.pretty.is_some() && opts.summary;
             if !suppress_raw {
                 for entry in entries {
-                    write_raw_entry(out, entry, opts.abbrev, opts.nul_terminated)?;
+                    if let Some(abbrev_len) = opts.abbrev {
+                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(entry))?;
+                    }
                 }
             }
             if opts.summary {
@@ -1109,44 +934,22 @@ fn print_diff(
             // --patch-with-raw: show raw before patch
             if opts.patch_with_raw {
                 for entry in entries {
-                    write_raw_entry(out, entry, opts.abbrev, opts.nul_terminated)?;
+                    if let Some(abbrev_len) = opts.abbrev {
+                        writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
+                    } else {
+                        writeln!(out, "{}", format_raw(entry))?;
+                    }
                 }
                 writeln!(out)?;
             }
-            let submodule_log = opts.submodule_format.as_deref() == Some("log");
-            let moved_gitlink_oids: HashSet<ObjectId> = if submodule_log {
-                entries
-                    .iter()
-                    .filter(|entry| {
-                        is_gitlink_entry(entry)
-                            && entry.status == DiffStatus::Added
-                            && entry.old_oid == grit_lib::diff::zero_oid()
-                    })
-                    .map(|entry| entry.new_oid)
-                    .collect()
-            } else {
-                HashSet::new()
-            };
             for entry in entries {
-                if submodule_log && entry.path() == ".gitmodules" {
-                    continue;
-                }
-                if submodule_log
-                    && is_gitlink_entry(entry)
-                    && entry.status == DiffStatus::Deleted
-                    && moved_gitlink_oids.contains(&entry.old_oid)
-                {
-                    continue;
-                }
                 write_patch_entry(
                     out,
-                    repo,
                     odb,
                     entry,
                     opts.context_lines,
                     opts.abbrev,
                     opts.full_index,
-                    submodule_log,
                 )?;
             }
         }
@@ -1163,10 +966,6 @@ fn print_diff(
         }
         OutputFormat::NameStatus => {
             for entry in entries {
-                if entry.status == DiffStatus::TypeChanged && opts.break_rewrites {
-                    writeln!(out, "T100\t{}", entry.path())?;
-                    continue;
-                }
                 match (entry.status, entry.score) {
                     (DiffStatus::Renamed, Some(s)) => {
                         writeln!(
@@ -1194,108 +993,6 @@ fn print_diff(
         }
     }
     Ok(false)
-}
-
-fn raw_status(entry: &DiffEntry) -> String {
-    match (entry.status, entry.score) {
-        (DiffStatus::Renamed, Some(score)) => format!("R{score:03}"),
-        (DiffStatus::Copied, Some(score)) => format!("C{score:03}"),
-        _ => entry.status.letter().to_string(),
-    }
-}
-
-fn abbreviated_oid(oid: &ObjectId, abbrev_len: Option<usize>) -> String {
-    match abbrev_len {
-        Some(len) => {
-            let hex = oid.to_hex();
-            let capped = len.min(hex.len());
-            hex[..capped].to_string()
-        }
-        None => oid.to_hex(),
-    }
-}
-
-fn write_raw_entry(
-    out: &mut impl Write,
-    entry: &DiffEntry,
-    abbrev_len: Option<usize>,
-    nul_terminated: bool,
-) -> Result<()> {
-    if !nul_terminated {
-        if let Some(abbrev_len) = abbrev_len {
-            writeln!(out, "{}", format_raw_abbrev(entry, abbrev_len))?;
-        } else {
-            writeln!(out, "{}", format_raw(entry))?;
-        }
-        return Ok(());
-    }
-
-    let old_oid = abbreviated_oid(&entry.old_oid, abbrev_len);
-    let new_oid = abbreviated_oid(&entry.new_oid, abbrev_len);
-    let status = raw_status(entry);
-    write!(
-        out,
-        ":{} {} {} {} {}\0",
-        entry.old_mode, entry.new_mode, old_oid, new_oid, status
-    )?;
-    match entry.status {
-        DiffStatus::Renamed | DiffStatus::Copied => {
-            write!(
-                out,
-                "{}\0{}\0",
-                entry.old_path.as_deref().unwrap_or_default(),
-                entry.new_path.as_deref().unwrap_or_default()
-            )?;
-        }
-        _ => {
-            write!(out, "{}\0", entry.path())?;
-        }
-    }
-    Ok(())
-}
-
-fn apply_break_rewrites(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
-    let has_added_or_deleted = entries
-        .iter()
-        .any(|entry| matches!(entry.status, DiffStatus::Added | DiffStatus::Deleted));
-    if has_added_or_deleted {
-        return entries;
-    }
-
-    let mut rewritten = Vec::with_capacity(entries.len() * 2);
-    for entry in entries {
-        match entry.status {
-            DiffStatus::Modified | DiffStatus::TypeChanged => {
-                if let Some(old_path) = entry.old_path.clone() {
-                    rewritten.push(DiffEntry {
-                        status: DiffStatus::Deleted,
-                        old_path: Some(old_path),
-                        new_path: None,
-                        old_mode: entry.old_mode.clone(),
-                        new_mode: "000000".to_owned(),
-                        old_oid: entry.old_oid,
-                        new_oid: grit_lib::diff::zero_oid(),
-                        score: None,
-                    });
-                }
-                if let Some(new_path) = entry.new_path.clone() {
-                    rewritten.push(DiffEntry {
-                        status: DiffStatus::Added,
-                        old_path: None,
-                        new_path: Some(new_path),
-                        old_mode: "000000".to_owned(),
-                        new_mode: entry.new_mode.clone(),
-                        old_oid: grit_lib::diff::zero_oid(),
-                        new_oid: entry.new_oid,
-                        score: None,
-                    });
-                }
-            }
-            _ => rewritten.push(entry),
-        }
-    }
-
-    rewritten
 }
 
 /// Abbreviate an OID hex string to the given length.
@@ -1363,21 +1060,12 @@ fn write_summary(out: &mut impl Write, entries: &[DiffEntry]) -> Result<()> {
 /// Write a unified-diff block for one entry.
 fn write_patch_entry(
     out: &mut impl Write,
-    repo: &Repository,
     odb: &Odb,
     entry: &DiffEntry,
     context_lines: usize,
     abbrev: Option<usize>,
     full_index: bool,
-    submodule_log: bool,
 ) -> Result<bool> {
-    if submodule_log && is_gitlink_entry(entry) {
-        write_submodule_log_entry(out, repo, entry, abbrev)?;
-        return Ok(false);
-    }
-
-    validate_patch_entry_oids(entry)?;
-
     let old_path = entry
         .old_path
         .as_deref()
@@ -1462,215 +1150,6 @@ fn write_patch_entry(
     Ok(false)
 }
 
-fn is_gitlink_mode(mode: &str) -> bool {
-    mode == "160000"
-}
-
-fn is_gitlink_entry(entry: &DiffEntry) -> bool {
-    is_gitlink_mode(&entry.old_mode) || is_gitlink_mode(&entry.new_mode)
-}
-
-fn short_oid_for_submodule(oid: &ObjectId, abbrev: Option<usize>) -> String {
-    let hex = oid.to_hex();
-    let len = abbrev.unwrap_or(7).clamp(4, 40).min(hex.len());
-    hex[..len].to_owned()
-}
-
-fn decode_submodule_subject(commit: &grit_lib::objects::CommitData, data: &[u8]) -> String {
-    let Some(raw_message) = raw_commit_message_bytes(data) else {
-        return commit.message.lines().next().unwrap_or_default().to_owned();
-    };
-
-    if let Some(enc_name) = commit.encoding.as_deref() {
-        if !enc_name.eq_ignore_ascii_case("utf-8") && !enc_name.eq_ignore_ascii_case("utf8") {
-            if let Some(encoding) = Encoding::for_label(enc_name.as_bytes()) {
-                let (decoded, _, _) = encoding.decode(raw_message);
-                return decoded.lines().next().unwrap_or_default().to_owned();
-            }
-        }
-    }
-
-    String::from_utf8_lossy(raw_message)
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .to_owned()
-}
-
-fn raw_commit_message_bytes(data: &[u8]) -> Option<&[u8]> {
-    let marker = b"\n\n";
-    let mut idx = 0usize;
-    while idx + marker.len() <= data.len() {
-        if &data[idx..idx + marker.len()] == marker {
-            return Some(&data[idx + marker.len()..]);
-        }
-        idx += 1;
-    }
-    None
-}
-
-fn write_submodule_log_entry(
-    out: &mut impl Write,
-    repo: &Repository,
-    entry: &DiffEntry,
-    abbrev: Option<usize>,
-) -> Result<()> {
-    let path = entry.path();
-    let zero = grit_lib::diff::zero_oid();
-    let old_short = short_oid_for_submodule(&entry.old_oid, abbrev);
-    let new_short = short_oid_for_submodule(&entry.new_oid, abbrev);
-
-    let new_submodule = entry.status == DiffStatus::Added
-        || entry.old_oid == zero
-        || entry.old_mode == "000000"
-        || (entry.status == DiffStatus::Renamed && entry.old_oid == entry.new_oid);
-    if new_submodule {
-        writeln!(
-            out,
-            "Submodule {path} 0000000...{new_short} (new submodule)"
-        )?;
-        return Ok(());
-    }
-
-    if entry.status == DiffStatus::Deleted || entry.new_oid == zero || entry.new_mode == "000000" {
-        writeln!(
-            out,
-            "Submodule {path} {old_short}...0000000 (submodule deleted)"
-        )?;
-        return Ok(());
-    }
-
-    if let Some(subjects) = submodule_commit_subjects(repo, path, &entry.old_oid, &entry.new_oid) {
-        writeln!(out, "Submodule {path} {old_short}..{new_short}:")?;
-        for subject in subjects {
-            writeln!(out, "  > {subject}")?;
-        }
-    } else {
-        writeln!(
-            out,
-            "Submodule {path} {old_short}...{new_short} (commits not present)"
-        )?;
-    }
-
-    Ok(())
-}
-
-fn submodule_commit_subjects(
-    repo: &Repository,
-    path: &str,
-    old_oid: &ObjectId,
-    new_oid: &ObjectId,
-) -> Option<Vec<String>> {
-    let sub_repo = open_submodule_repo_with_commits(repo, path, old_oid, new_oid)?;
-    let options = RevListOptions::default();
-    let positive = vec![new_oid.to_hex()];
-    let negative = vec![old_oid.to_hex()];
-    let result = rev_list(&sub_repo, &positive, &negative, &options).ok()?;
-    let mut subjects = Vec::new();
-    for commit_oid in result.commits {
-        let obj = sub_repo.odb.read(&commit_oid).ok()?;
-        if obj.kind != ObjectKind::Commit {
-            continue;
-        }
-        let commit = parse_commit(&obj.data).ok()?;
-        let subject = decode_submodule_subject(&commit, &obj.data);
-        if !subject.is_empty() {
-            subjects.push(subject);
-        }
-    }
-    Some(subjects)
-}
-
-fn open_submodule_repo_with_commits(
-    repo: &Repository,
-    path: &str,
-    old_oid: &ObjectId,
-    new_oid: &ObjectId,
-) -> Option<Repository> {
-    for git_dir in submodule_git_dir_candidates(repo, path) {
-        let Ok(sub_repo) = Repository::open(&git_dir, None) else {
-            continue;
-        };
-        let old_ok = *old_oid == grit_lib::diff::zero_oid()
-            || sub_repo
-                .odb
-                .read(old_oid)
-                .ok()
-                .is_some_and(|obj| obj.kind == ObjectKind::Commit);
-        let new_ok = *new_oid == grit_lib::diff::zero_oid()
-            || sub_repo
-                .odb
-                .read(new_oid)
-                .ok()
-                .is_some_and(|obj| obj.kind == ObjectKind::Commit);
-        if old_ok && new_ok {
-            return Some(sub_repo);
-        }
-    }
-    None
-}
-
-fn submodule_git_dir_candidates(repo: &Repository, path: &str) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(work_tree) = repo.work_tree.as_ref() {
-        let sub_path = work_tree.join(path);
-        if let Some(git_dir) = resolve_submodule_git_dir(&sub_path) {
-            candidates.push(git_dir);
-        }
-    }
-
-    let modules_root = repo.git_dir.join("modules");
-    push_unique_path(&mut candidates, modules_root.join(path));
-    if let Some(name) = Path::new(path).file_name() {
-        push_unique_path(&mut candidates, modules_root.join(name));
-    }
-
-    collect_module_git_dirs(&modules_root, &mut candidates);
-    candidates
-}
-
-fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
-    if !path.exists() {
-        return;
-    }
-    if !paths.iter().any(|candidate| candidate == &path) {
-        paths.push(path);
-    }
-}
-
-fn collect_module_git_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
-    if !dir.exists() {
-        return;
-    }
-    if dir.join("HEAD").is_file() && dir.join("objects").is_dir() {
-        push_unique_path(out, dir.to_path_buf());
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_module_git_dirs(&path, out);
-        }
-    }
-}
-
-fn resolve_submodule_git_dir(submodule_path: &Path) -> Option<PathBuf> {
-    let dot_git = submodule_path.join(".git");
-    if dot_git.is_dir() {
-        return Some(dot_git);
-    }
-    let content = fs::read_to_string(dot_git).ok()?;
-    let rel = content.trim().strip_prefix("gitdir: ")?;
-    let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
-        Some(rel_path.to_path_buf())
-    } else {
-        Some(submodule_path.join(rel_path))
-    }
-}
-
 /// Write a `--stat` summary.
 fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) -> Result<bool> {
     use grit_lib::diff::format_stat_line_width;
@@ -1729,8 +1208,10 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
 
 /// Resolve a tree-ish (commit or tree) to a tree OID.
 fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
-    if is_empty_tree_hex(spec) {
-        return ObjectId::from_hex(EMPTY_TREE_OID_HEX).context("parsing empty tree OID");
+    if spec == "4b825dc642cb6eb9a060e54bf899d69f7c6948d4"
+        || spec == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    {
+        return ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").map_err(Into::into);
     }
     let mut oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
@@ -1747,18 +1228,47 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 }
 
-fn normalize_empty_tree_oid(oid: &ObjectId) -> Result<Option<ObjectId>> {
-    if is_empty_tree_hex(&oid.to_hex()) {
-        return Ok(None);
-    }
-    if oid.is_zero() {
-        return Ok(None);
-    }
-    Ok(Some(*oid))
+fn is_magic_empty_tree_oid(oid: &ObjectId) -> bool {
+    let hex = oid.to_hex();
+    hex == "4b825dc642cb6eb9a060e54bf899d69f7c6948d4"
+        || hex == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 }
 
-fn is_empty_tree_hex(hex: &str) -> bool {
-    hex == EMPTY_TREE_OID_HEX || hex == EMPTY_TREE_OID_HEX_LEGACY
+fn resolve_max_tree_depth(repo: &Repository) -> Result<usize> {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(depth)
+}
+
+fn validate_tree_depth_limit(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    depth: usize,
+    max_tree_depth: usize,
+) -> Result<()> {
+    if depth > max_tree_depth {
+        bail!(
+            "tree depth {} exceeds core.maxtreedepth {}",
+            depth,
+            max_tree_depth
+        );
+    }
+
+    let obj = odb
+        .read(tree_oid)
+        .context("reading tree for depth validation")?;
+    let entries = parse_tree(&obj.data).context("parsing tree for depth validation")?;
+    for entry in entries {
+        if entry.mode == 0o040000 {
+            validate_tree_depth_limit(odb, &entry.oid, depth + 1, max_tree_depth)?;
+        }
+    }
+    Ok(())
 }
 
 /// Retrieve the tree OID from a commit OID.
@@ -1772,22 +1282,6 @@ fn write_commit_header(
 ) -> Result<bool> {
     if let Some(ref pretty_fmt) = opts.pretty {
         let commit = parse_commit(commit_data).context("parsing commit for pretty")?;
-        if let Some(template) = pretty_fmt.strip_prefix("format:") {
-            match template {
-                "%s" => {
-                    let subject = commit.message.lines().next().unwrap_or("");
-                    writeln!(out, "{subject}")?;
-                }
-                _ => {
-                    // Fallback: best-effort subject output for unsupported
-                    // templates in this compatibility path.
-                    let subject = commit.message.lines().next().unwrap_or("");
-                    writeln!(out, "{subject}")?;
-                }
-            }
-            writeln!(out)?;
-            return Ok(false);
-        }
         if pretty_fmt == "oneline" {
             let first_line = commit.message.lines().next().unwrap_or("");
             writeln!(out, "{oid} {first_line}")?;
@@ -1960,82 +1454,14 @@ fn read_blob_pair(odb: &Odb, entry: &DiffEntry) -> Result<(String, String)> {
     Ok((old_content, new_content))
 }
 
-fn validate_patch_entry_oids(entry: &DiffEntry) -> Result<()> {
-    let zero = grit_lib::diff::zero_oid();
-    let old_bogus = entry.old_oid == zero && entry.old_mode != "000000";
-    let new_bogus = entry.new_oid == zero && entry.new_mode != "000000";
-    if old_bogus || new_bogus {
-        bail!("bogus object {}", zero.to_hex());
-    }
-    Ok(())
-}
-
-/// Apply all post-diff filters.
-fn filter_entries(entries: Vec<DiffEntry>, opts: &Options, odb: &Odb) -> Vec<DiffEntry> {
+/// Apply all post-diff filters: pathspecs and max-depth.
+fn filter_entries(entries: Vec<DiffEntry>, opts: &Options) -> Vec<DiffEntry> {
     let filtered = filter_pathspecs(entries, &opts.pathspecs);
-    let filtered = if let Some(depth) = opts.max_depth {
+    if let Some(depth) = opts.max_depth {
         filter_max_depth(filtered, depth, &opts.pathspecs)
     } else {
         filtered
-    };
-    if opts.ignore_space_change {
-        filter_ignore_space_change(filtered, odb)
-    } else {
-        filtered
     }
-}
-
-fn filter_ignore_space_change(entries: Vec<DiffEntry>, odb: &Odb) -> Vec<DiffEntry> {
-    entries
-        .into_iter()
-        .filter(|entry| {
-            if entry.status == DiffStatus::Added
-                || entry.status == DiffStatus::Deleted
-                || entry.old_mode != entry.new_mode
-            {
-                return true;
-            }
-            let old_content = read_blob_content(odb, &entry.old_oid);
-            let new_content = read_blob_content(odb, &entry.new_oid);
-            normalize_ignore_space_change(&old_content)
-                != normalize_ignore_space_change(&new_content)
-        })
-        .collect()
-}
-
-fn read_blob_content(odb: &Odb, oid: &ObjectId) -> String {
-    if *oid == grit_lib::diff::zero_oid() {
-        String::new()
-    } else {
-        odb.read(oid)
-            .map(|obj| String::from_utf8_lossy(&obj.data).into_owned())
-            .unwrap_or_default()
-    }
-}
-
-fn normalize_ignore_space_change(content: &str) -> String {
-    content
-        .lines()
-        .map(normalize_ignore_space_change_line)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn normalize_ignore_space_change_line(line: &str) -> String {
-    let mut normalized = String::with_capacity(line.len());
-    let mut in_space = false;
-    for c in line.chars() {
-        if c.is_whitespace() {
-            if !in_space {
-                normalized.push(' ');
-                in_space = true;
-            }
-        } else {
-            normalized.push(c);
-            in_space = false;
-        }
-    }
-    normalized.trim_end().to_owned()
 }
 
 fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEntry> {
@@ -2044,91 +1470,17 @@ fn filter_pathspecs(entries: Vec<DiffEntry>, pathspecs: &[String]) -> Vec<DiffEn
     }
     entries
         .into_iter()
-        .filter(|entry| {
-            pathspecs
-                .iter()
-                .any(|spec| matches_pathspec_entry(entry, spec))
+        .filter(|e| {
+            let path = e.path();
+            pathspecs.iter().any(|spec| {
+                if let Some(prefix) = spec.strip_suffix('/') {
+                    path == prefix || path.starts_with(&format!("{prefix}/"))
+                } else {
+                    path == spec || path.starts_with(&format!("{spec}/"))
+                }
+            })
         })
         .collect()
-}
-
-fn matches_pathspec_entry(entry: &DiffEntry, spec: &str) -> bool {
-    let path = entry.path();
-    if spec.contains('*') || spec.contains('?') || spec.contains('[') {
-        if glob_match_pathspec(spec, path) {
-            return true;
-        }
-        return is_tree_like_entry(entry) && wildcard_can_match_descendant(spec, path);
-    }
-    if let Some(prefix) = spec.strip_suffix('/') {
-        if path.starts_with(&format!("{prefix}/")) {
-            return true;
-        }
-        return path == prefix && is_tree_like_entry(entry);
-    }
-    if path == spec || path.starts_with(&format!("{spec}/")) {
-        return true;
-    }
-    is_tree_like_entry(entry) && spec.starts_with(&format!("{path}/"))
-}
-
-fn wildcard_can_match_descendant(spec: &str, path: &str) -> bool {
-    if spec.starts_with(&format!("{path}/")) {
-        return true;
-    }
-
-    let mut literal_prefix = spec;
-    for (idx, ch) in spec.char_indices() {
-        if matches!(ch, '*' | '?' | '[') {
-            literal_prefix = &spec[..idx];
-            break;
-        }
-    }
-
-    !literal_prefix.is_empty() && literal_prefix.starts_with(path)
-}
-
-fn is_tree_like_entry(entry: &DiffEntry) -> bool {
-    is_tree_like_mode(&entry.old_mode) || is_tree_like_mode(&entry.new_mode)
-}
-
-fn is_tree_like_mode(mode: &str) -> bool {
-    mode.starts_with("040") || mode.starts_with("160")
-}
-
-/// Simple glob matching for pathspecs.
-fn glob_match_pathspec(pattern: &str, text: &str) -> bool {
-    let pat = pattern.as_bytes();
-    let txt = text.as_bytes();
-    let mut pi = 0;
-    let mut ti = 0;
-    let mut star_pi = usize::MAX;
-    let mut star_ti = 0;
-
-    while ti < txt.len() {
-        if pi < pat.len() && pat[pi] == b'?' && txt[ti] != b'/' {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if pi < pat.len() && pat[pi] == txt[ti] {
-            pi += 1;
-            ti += 1;
-        } else if star_pi != usize::MAX {
-            star_ti += 1;
-            ti = star_ti;
-            pi = star_pi + 1;
-        } else {
-            return false;
-        }
-    }
-
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
 }
 
 /// Parse a whitespace-separated list of OID strings.

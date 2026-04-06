@@ -14,9 +14,7 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::diff::zero_oid;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
-use grit_lib::merge_base;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -160,6 +158,7 @@ macro_rules! checkout_eprintln {
 pub fn run(args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     let repo = Repository::discover(None).context("not a git repository")?;
+    let switch_force = args.force || args.merge;
 
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
@@ -186,36 +185,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Compatibility: support `git checkout <start> -b <name>` and
-    // `git checkout <start> -B <name>` argument order.
-    if args.new_branch.is_none() && args.force_branch.is_none() && !has_separator {
-        if let Some((is_force, start_token, branch_token)) =
-            extract_inline_branch_creation(&args.rest)
-        {
-            let start = resolve_at_minus(&repo, &start_token).unwrap_or(start_token);
-            let branch_name = resolve_at_minus(&repo, &branch_token).unwrap_or(branch_token);
-            let result = if is_force {
-                force_create_and_switch_branch(
-                    &repo,
-                    &branch_name,
-                    Some(start.as_str()),
-                    args.force,
-                )
-            } else {
-                create_and_switch_branch(&repo, &branch_name, Some(start.as_str()), args.force)
-            };
-            if result.is_ok() && !args.no_track {
-                maybe_setup_tracking(
-                    &repo,
-                    &branch_name,
-                    Some(start.as_str()),
-                    args.track.as_deref(),
-                )?;
-            }
-            return result;
-        }
-    }
-
     // Parse rest into (target, paths) handling `--` separator
     let (target, paths) = split_target_and_paths(&args.rest, has_separator, separator_at_end);
 
@@ -234,21 +203,16 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case: checkout -B <name> [<start_point>] (force create/reset)
     if let Some(ref force_branch_name) = args.force_branch {
-        let resolved_branch = resolve_at_minus(&repo, force_branch_name)
-            .unwrap_or_else(|_| force_branch_name.clone());
         // -B takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
-            bail!(
-                "Cannot update paths and switch to branch '{}'",
-                resolved_branch
-            );
+            bail!("too many arguments for -B");
         }
         let result =
-            force_create_and_switch_branch(&repo, &resolved_branch, target.as_deref(), args.force);
+            force_create_and_switch_branch(&repo, force_branch_name, target.as_deref(), args.force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
-                &resolved_branch,
+                force_branch_name,
                 target.as_deref(),
                 args.track.as_deref(),
             )?;
@@ -258,17 +222,12 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case 1: checkout -b <new_branch> [<start_point>]
     if let Some(ref new_branch_name) = args.new_branch {
-        let resolved_branch =
-            resolve_at_minus(&repo, new_branch_name).unwrap_or_else(|_| new_branch_name.clone());
         // -b takes at most one positional arg (start point)
         if !paths.is_empty() || args.rest.len() > 1 {
             if args.track.is_some() {
                 bail!("'--track' cannot be used with updating paths");
             }
-            bail!(
-                "Cannot update paths and switch to branch '{}'",
-                resolved_branch
-            );
+            bail!("too many arguments for -b");
         }
         // Capture the current HEAD branch before checkout (for tracking setup)
         let pre_head_branch = if target.is_none() && args.track.is_some() {
@@ -281,11 +240,11 @@ pub fn run(args: Args) -> Result<()> {
         };
         let effective_target = target.as_deref().or(pre_head_branch.as_deref());
         let result =
-            create_and_switch_branch(&repo, &resolved_branch, target.as_deref(), args.force);
+            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), switch_force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
-                &resolved_branch,
+                new_branch_name,
                 effective_target,
                 args.track.as_deref(),
             )?;
@@ -295,37 +254,26 @@ pub fn run(args: Args) -> Result<()> {
 
     // Case 2: checkout [<tree-ish>] -- <paths>  (path restore)
     if !paths.is_empty() {
-        if args.merge {
-            if target.is_some() {
-                bail!("'--merge' cannot be used with a tree-ish");
-            }
-            return checkout_paths_with_merge(&repo, &paths);
-        }
-        let mut source_spec = target.clone();
-        let mut checkout_pathspecs = paths.clone();
         if !has_separator {
             if let Some(ref t) = target {
-                let is_commitish = resolve_to_commit(&repo, t).is_ok();
-                let is_path = pathspec_exists_in_worktree_or_index(&repo, t);
-                if is_commitish && is_path {
+                let is_rev = resolve_revision(&repo, t).is_ok()
+                    || refs::resolve_ref(&repo.git_dir, &format!("refs/heads/{t}")).is_ok();
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let is_path = cwd.join(t).exists();
+                if is_rev && is_path {
                     bail!(
                         "fatal: ambiguous argument '{}': both revision and filename\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'",
                         t
                     );
                 }
-                // Without `--`, interpret all args as pathspecs when the first
-                // token is not a commit-ish.
-                if !is_commitish {
-                    source_spec = None;
-                    checkout_pathspecs.insert(0, t.clone());
-                }
             }
         }
         return checkout_paths(
             &repo,
-            source_spec.as_deref(),
-            &checkout_pathspecs,
+            target.as_deref(),
+            &paths,
             args.no_overlay,
+            args.merge,
         );
     }
 
@@ -346,7 +294,7 @@ pub fn run(args: Args) -> Result<()> {
                 // `checkout --detach` with no target: detach at current HEAD
                 match resolve_head(&repo.git_dir)? {
                     HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-                        return detach_head(&repo, &oid, args.force);
+                        return detach_head(&repo, &oid, switch_force);
                     }
                     _ => bail!("cannot detach HEAD on unborn branch"),
                 }
@@ -361,13 +309,10 @@ pub fn run(args: Args) -> Result<()> {
             let prev = resolve_nth_previous_branch(&repo, n)?;
             let branch_ref = format!("refs/heads/{prev}");
             if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-                if args.merge {
-                    return switch_branch_with_merge(&repo, &prev, &branch_ref, args.force);
-                }
-                return switch_branch(&repo, &prev, &branch_ref, args.force);
+                return switch_branch(&repo, &prev, &branch_ref, switch_force);
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-                return detach_head(&repo, &oid, args.force);
+                return detach_head(&repo, &oid, switch_force);
             }
             bail!("error: previous branch '{}' not found", prev);
         }
@@ -378,14 +323,11 @@ pub fn run(args: Args) -> Result<()> {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-            if args.merge {
-                return switch_branch_with_merge(&repo, &prev, &branch_ref, args.force);
-            }
-            return switch_branch(&repo, &prev, &branch_ref, args.force);
+            return switch_branch(&repo, &prev, &branch_ref, switch_force);
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-            return detach_head(&repo, &oid, args.force);
+            return detach_head(&repo, &oid, switch_force);
         }
         bail!("error: previous branch '{}' not found", prev);
     }
@@ -406,7 +348,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("--detach does not take a path argument");
         }
         match resolve_to_commit(&repo, &target) {
-            Ok(oid) => return detach_head(&repo, &oid, args.force),
+            Ok(oid) => return detach_head(&repo, &oid, switch_force),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
     }
@@ -414,30 +356,17 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        warn_if_ambiguous_branch_or_tag(&repo, &target);
-        if args.merge {
-            return switch_branch_with_merge(&repo, &target, &branch_ref, args.force);
-        }
-        return switch_branch(&repo, &target, &branch_ref, args.force);
+        return switch_branch(&repo, &target, &branch_ref, switch_force);
     }
 
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
-        Ok(oid) => detach_head(&repo, &oid, args.force),
+        Ok(oid) => detach_head(&repo, &oid, switch_force),
         Err(_) => {
-            let remote_matches = remote_tracking_matches(&repo, &target);
-            if remote_matches.len() > 1 {
-                emit_ambiguous_tracking_hint(&target, &remote_matches);
-                bail!(
-                    "error: '{}' matched multiple remote tracking branches",
-                    target
-                );
-            }
-
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false) {
+            match checkout_paths(&repo, None, &paths, false, args.merge) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -446,91 +375,6 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     }
-}
-
-/// Find remote-tracking refs whose branch name matches `target`.
-///
-/// For target `foo`, this returns short names like `origin/foo`,
-/// `upstream/foo`, etc.
-fn remote_tracking_matches(repo: &Repository, target: &str) -> Vec<String> {
-    let suffix = format!("/{target}");
-    let mut matches: Vec<String> = refs::list_refs(&repo.git_dir, "refs/remotes/")
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|(full_ref, _)| {
-            let short = full_ref.strip_prefix("refs/remotes/")?;
-            if short.ends_with("/HEAD") {
-                return None;
-            }
-            if short.ends_with(&suffix) {
-                Some(short.to_owned())
-            } else {
-                None
-            }
-        })
-        .collect();
-    matches.sort();
-    matches.dedup();
-    matches
-}
-
-/// Emit a warning when a short name resolves to both a local branch and a tag.
-fn warn_if_ambiguous_branch_or_tag(repo: &Repository, target: &str) {
-    let branch_ref = format!("refs/heads/{target}");
-    let tag_ref = format!("refs/tags/{target}");
-    if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok()
-        && refs::resolve_ref(&repo.git_dir, &tag_ref).is_ok()
-    {
-        checkout_eprintln!("warning: refname '{}' is ambiguous.", target);
-    }
-}
-
-/// Print checkout guidance when a short branch name matches multiple
-/// remote-tracking branches.
-fn emit_ambiguous_tracking_hint(target: &str, matches: &[String]) {
-    eprintln!(
-        "hint: '{}' could refer to more than one remote-tracking branch:",
-        target
-    );
-    for m in matches {
-        eprintln!("hint:   {}", m);
-    }
-    eprintln!("hint: If you meant to check out one of these branches, use:");
-    eprintln!("hint:   git checkout --track <remote>/{}", target);
-}
-
-/// Return whether a pathspec resolves to an existing worktree or index path.
-fn pathspec_exists_in_worktree_or_index(repo: &Repository, spec: &str) -> bool {
-    let Some(work_tree) = repo.work_tree.as_deref() else {
-        return false;
-    };
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(_) => return false,
-    };
-    let rel = resolve_pathspec(spec, work_tree, &cwd);
-    if rel.is_empty() {
-        return true;
-    }
-    let abs = work_tree.join(&rel);
-    if abs.exists() || abs.is_symlink() {
-        return true;
-    }
-
-    let Ok(index) = Index::load(&repo.index_path()) else {
-        return false;
-    };
-    if index.get(rel.as_bytes(), 0).is_some() {
-        return true;
-    }
-    let prefix = if rel.ends_with('/') {
-        rel
-    } else {
-        format!("{rel}/")
-    };
-    index.entries.iter().any(|entry| {
-        entry.stage() == 0 && String::from_utf8_lossy(&entry.path).starts_with(&prefix)
-    })
 }
 
 /// Split positional arguments into (target, paths) around `--`.
@@ -574,20 +418,6 @@ fn split_target_and_paths(
     }
 }
 
-fn extract_inline_branch_creation(rest: &[String]) -> Option<(bool, String, String)> {
-    if rest.len() != 3 {
-        return None;
-    }
-    let start = rest[0].clone();
-    let flag = rest[1].as_str();
-    let branch = rest[2].clone();
-    match flag {
-        "-b" => Some((false, start, branch)),
-        "-B" => Some((true, start, branch)),
-        _ => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Branch switching
 // ---------------------------------------------------------------------------
@@ -628,15 +458,18 @@ fn switch_branch(
     // without touching the working tree or index (preserves dirty state).
     // But with -f, always rebuild.
     let already_at_target = head.oid() == Some(&target_oid);
-    let target_tree = commit_to_tree(repo, &target_oid)?;
-    let sparse_enabled = sparse_checkout_enabled(repo);
-    if !already_at_target || force || sparse_enabled {
+    if !already_at_target || force {
+        let target_tree = commit_to_tree(repo, &target_oid)?;
+
         // Update working tree and index
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
     // Write reflog entries before updating HEAD
-    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -652,224 +485,6 @@ fn switch_branch(
     Ok(())
 }
 
-struct CheckoutMergeConflictPath {
-    rel_path: String,
-    rel_path_bytes: Vec<u8>,
-    base_entry: IndexEntry,
-    target_entry: IndexEntry,
-    local_entry: IndexEntry,
-    merged_content: Vec<u8>,
-}
-
-fn switch_branch_with_merge(
-    repo: &Repository,
-    branch_name: &str,
-    branch_ref: &str,
-    force: bool,
-) -> Result<()> {
-    if force {
-        return switch_branch(repo, branch_name, branch_ref, true);
-    }
-
-    let head = resolve_head(&repo.git_dir)?;
-    if matches!(head, HeadState::Invalid) {
-        bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
-    }
-
-    if let HeadState::Branch { ref refname, .. } = head {
-        if refname == branch_ref {
-            checkout_eprintln!("Already on '{}'", branch_name);
-            return Ok(());
-        }
-    }
-
-    let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
-        .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
-    let target_tree = commit_to_tree(repo, &target_oid)?;
-
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-    let index_path = repo.index_path();
-    let old_index = Index::load(&index_path).context("loading index")?;
-    let mut new_index = Index::new();
-    new_index.entries = tree_to_flat_entries(repo, &target_tree, "")?;
-    new_index.sort();
-
-    let conflicts = collect_checkout_merge_conflicts(repo, &old_index, &new_index, work_tree)?;
-    if conflicts.is_empty() {
-        // No merge conflicts required — use normal switch semantics.
-        return switch_branch(repo, branch_name, branch_ref, false);
-    }
-
-    for conflict in &conflicts {
-        // Replace stage-0 entry with conflict stages.
-        new_index.remove(&conflict.rel_path_bytes);
-        stage_entry(&mut new_index, &conflict.base_entry, 1);
-        stage_entry(&mut new_index, &conflict.target_entry, 2);
-        stage_entry(&mut new_index, &conflict.local_entry, 3);
-    }
-    new_index.sort();
-
-    checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, false)?;
-    for conflict in &conflicts {
-        write_to_worktree(
-            work_tree,
-            &conflict.rel_path,
-            &conflict.merged_content,
-            conflict.target_entry.mode,
-        )?;
-    }
-    new_index.write(&index_path).context("writing index")?;
-
-    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
-    let from_desc = match &head {
-        HeadState::Branch { short_name, .. } => short_name.clone(),
-        HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
-        HeadState::Invalid => "unknown".to_string(),
-    };
-    let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
-    write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
-    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
-
-    for conflict in &conflicts {
-        checkout_eprintln!("Auto-merging {}", conflict.rel_path);
-        checkout_eprintln!(
-            "CONFLICT (content): Merge conflict in {}",
-            conflict.rel_path
-        );
-    }
-    checkout_eprintln!("Switched to branch '{}'", branch_name);
-    checkout_eprintln!("Automatic merge failed; fix conflicts and then commit the result.");
-    Ok(())
-}
-
-fn collect_checkout_merge_conflicts(
-    repo: &Repository,
-    old_index: &Index,
-    new_index: &Index,
-    work_tree: &Path,
-) -> Result<Vec<CheckoutMergeConflictPath>> {
-    let new_map: HashMap<&[u8], &IndexEntry> = new_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() == 0)
-        .map(|e| (e.path.as_slice(), e))
-        .collect();
-
-    let mut conflicts = Vec::new();
-    for old_entry in &old_index.entries {
-        if old_entry.stage() != 0 {
-            continue;
-        }
-        let Some(target_entry) = new_map.get(old_entry.path.as_slice()) else {
-            continue;
-        };
-        if target_entry.oid == old_entry.oid {
-            continue;
-        }
-
-        let rel_path = String::from_utf8_lossy(&old_entry.path).into_owned();
-        let abs_path = work_tree.join(&rel_path);
-        if !abs_path.exists() && !abs_path.is_symlink() {
-            continue;
-        }
-        if !is_worktree_dirty(repo, old_entry, &abs_path)? {
-            continue;
-        }
-
-        let local_data = std::fs::read(&abs_path)
-            .with_context(|| format!("reading working tree file '{}'", rel_path))?;
-        let local_oid = repo.odb.write(ObjectKind::Blob, &local_data)?;
-        let local_mode = old_entry.mode;
-
-        let base_obj = repo.odb.read(&old_entry.oid)?;
-        let target_obj = repo.odb.read(&target_entry.oid)?;
-        let merge_input = MergeInput {
-            base: &base_obj.data,
-            ours: &target_obj.data,
-            theirs: &local_data,
-            label_ours: "ours",
-            label_base: "base",
-            label_theirs: "theirs",
-            favor: MergeFavor::None,
-            style: ConflictStyle::Merge,
-            marker_size: 7,
-            diff_algorithm: None,
-        };
-        let merge_output = merge_file::merge(&merge_input)?;
-        let merged_content = if merge_output.conflicts == 0 {
-            // Force marker conflict for checkout -m branch switches where both sides differ.
-            let ours = std::str::from_utf8(&target_obj.data).unwrap_or("");
-            let theirs = std::str::from_utf8(&local_data).unwrap_or("");
-            format!("<<<<<<< ours\n{ours}\n=======\n{theirs}\n>>>>>>> theirs\n").into_bytes()
-        } else {
-            merge_output.content
-        };
-
-        let path_len = old_entry.path.len().min(0xFFF) as u16;
-        let base_entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode: old_entry.mode,
-            uid: 0,
-            gid: 0,
-            size: base_obj.data.len() as u32,
-            oid: old_entry.oid,
-            flags: path_len,
-            flags_extended: None,
-            path: old_entry.path.clone(),
-        };
-        let target_entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode: target_entry.mode,
-            uid: 0,
-            gid: 0,
-            size: target_obj.data.len() as u32,
-            oid: target_entry.oid,
-            flags: path_len,
-            flags_extended: None,
-            path: old_entry.path.clone(),
-        };
-        let local_entry = IndexEntry {
-            ctime_sec: 0,
-            ctime_nsec: 0,
-            mtime_sec: 0,
-            mtime_nsec: 0,
-            dev: 0,
-            ino: 0,
-            mode: local_mode,
-            uid: 0,
-            gid: 0,
-            size: local_data.len() as u32,
-            oid: local_oid,
-            flags: path_len,
-            flags_extended: None,
-            path: old_entry.path.clone(),
-        };
-
-        conflicts.push(CheckoutMergeConflictPath {
-            rel_path,
-            rel_path_bytes: old_entry.path.clone(),
-            base_entry,
-            target_entry,
-            local_entry,
-            merged_content,
-        });
-    }
-    Ok(conflicts)
-}
-
 /// Create a new branch and switch to it.
 fn create_and_switch_branch(
     repo: &Repository,
@@ -880,8 +495,7 @@ fn create_and_switch_branch(
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        eprintln!("fatal: a branch named '{}' already exists", name);
-        std::process::exit(128);
+        bail!("a branch named '{}' already exists", name);
     }
 
     // Resolve start point (default: HEAD)
@@ -903,19 +517,19 @@ fn create_and_switch_branch(
 
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree when:
-    // - start point differs from current HEAD, or
-    // - force is requested, or
-    // - repository was cloned with --no-checkout (index/worktree not populated).
-    if head.oid() != Some(&start_oid)
-        || force
-        || should_populate_worktree_for_target(repo, &target_tree)?
-    {
+    // Update working tree if start point differs from current HEAD, or if force
+    if head.oid() != Some(&start_oid) || force {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
+    // Create the branch ref
+    refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
+
     // Write reflog entries
-    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -923,10 +537,6 @@ fn create_and_switch_branch(
     };
     let msg = format!("checkout: moving from {} to {}", from_desc, name);
     write_checkout_reflog(repo, &head, &old_oid, &start_oid, &msg);
-
-    // Create the branch ref
-    refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
-    write_branch_creation_reflog(repo, &branch_ref, &start_oid, start.unwrap_or("HEAD"));
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
@@ -952,20 +562,10 @@ fn force_create_and_switch_branch(
             let head = resolve_head(&repo.git_dir)?;
             match head.oid() {
                 Some(oid) => *oid,
-                None => {
-                    // Unborn HEAD: `checkout -B <name>` should still switch to the
-                    // named branch and leave it unborn.
-                    if branch_existed {
-                        refs::delete_ref(&repo.git_dir, &branch_ref)?;
-                    }
-                    std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
-                    if branch_existed {
-                        checkout_eprintln!("Switched to and reset branch '{}'", name);
-                    } else {
-                        checkout_eprintln!("Switched to a new branch '{}'", name);
-                    }
-                    return Ok(());
-                }
+                None => bail!(
+                    "cannot create branch '{}': HEAD does not point to a commit",
+                    name
+                ),
             }
         }
     };
@@ -973,19 +573,16 @@ fn force_create_and_switch_branch(
     let head = resolve_head(&repo.git_dir)?;
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree when:
-    // - start point differs from current HEAD, or
-    // - force is requested, or
-    // - repository was cloned with --no-checkout (index/worktree not populated).
-    if head.oid() != Some(&start_oid)
-        || force
-        || should_populate_worktree_for_target(repo, &target_tree)?
-    {
+    // Update working tree if start point differs from current HEAD, or if force
+    if head.oid() != Some(&start_oid) || force {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
     // Write reflog before updating refs
-    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -996,9 +593,6 @@ fn force_create_and_switch_branch(
 
     // Create or overwrite the branch ref
     refs::write_ref(&repo.git_dir, &branch_ref, &start_oid)?;
-    if !branch_existed {
-        write_branch_creation_reflog(repo, &branch_ref, &start_oid, start.unwrap_or("HEAD"));
-    }
 
     // Update HEAD to point to the new branch
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
@@ -1069,7 +663,30 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         None => bail!("HEAD does not point to a commit"),
     };
     let target_tree = commit_to_tree(repo, &head_oid)?;
-    force_reset_to_tree(repo, &target_tree)?;
+
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => bail!("this operation must be run in a work tree"),
+    };
+
+    // Build index from the target tree and force-write all entries
+    let new_entries = tree_to_flat_entries(repo, &target_tree, "")?;
+    let mut new_index = Index::new();
+    new_index.entries = new_entries;
+    new_index.sort();
+
+    // Write every entry to the worktree (force overwrite)
+    for entry in &new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
+    }
+
+    // Write the new index
+    let index_path = repo.index_path();
+    new_index.write(&index_path).context("writing index")?;
 
     // Print current branch/commit info
     match &head {
@@ -1095,7 +712,10 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     }
 
     // Write reflog entries
-    let old_oid = head.oid().copied().unwrap_or_else(zero_oid);
+    let old_oid = head
+        .oid()
+        .copied()
+        .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
     let from_desc = match &head {
         HeadState::Branch { short_name, .. } => short_name.clone(),
         HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
@@ -1201,8 +821,6 @@ fn switch_to_tree(
         new_index.sort();
     }
 
-    apply_sparse_checkout_bits(repo, &mut new_index)?;
-
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
@@ -1266,7 +884,7 @@ fn check_dirty_worktree(
 
     if !would_overwrite.is_empty() {
         let mut msg = String::from(
-            "error: Your local changes to the following files would be overwritten by checkout:\n",
+            "Your local changes to the following files would be overwritten by checkout:\n",
         );
         for path in &would_overwrite {
             msg.push_str(&format!("\t{}\n", path));
@@ -1339,21 +957,15 @@ fn check_dirty_worktree(
                     continue; // target doesn't touch this file, staged change is safe
                 }
 
-                // Both staged and target change the file from HEAD.
-                // If the target removes the file but we have staged changes,
-                // git allows this (file is preserved in index/worktree).
-                // Only block if target adds/changes to different content.
-                if new_entry.is_none() && head_oid.is_some() {
-                    continue; // target removes, but our staged version can be carried
-                }
-
                 // The index differs from both HEAD and the target, so
                 // switching would silently discard the staged change.
                 let rel_path = String::from_utf8_lossy(path_bytes);
                 staged_conflicts.push(rel_path.into_owned());
             }
             if !staged_conflicts.is_empty() {
-                let mut msg = String::from("error: Your local changes to the following files would be overwritten by checkout:\n");
+                let mut msg = String::from(
+                    "Your local changes to the following files would be overwritten by checkout:\n",
+                );
                 for path in &staged_conflicts {
                     msg.push_str(&format!("\t{}\n", path));
                 }
@@ -1373,6 +985,7 @@ fn check_dirty_worktree(
         .collect();
 
     let mut untracked_conflicts = Vec::new();
+    let mut dir_untracked_conflicts = Vec::new();
     for new_entry in &new_index.entries {
         if new_entry.stage() != 0 {
             continue;
@@ -1416,6 +1029,43 @@ fn check_dirty_worktree(
                         && op_str.as_bytes().get(rel_str.len()) == Some(&b'/')
                 });
 
+                if replaces_tracked_dir && abs_path.is_dir() {
+                    let mut has_untracked_in_dir = false;
+                    let mut stack = vec![abs_path.clone()];
+                    while let Some(dir) = stack.pop() {
+                        let Ok(children) = std::fs::read_dir(&dir) else {
+                            continue;
+                        };
+                        for child in children.flatten() {
+                            let child_path = child.path();
+                            let Ok(meta) = std::fs::symlink_metadata(&child_path) else {
+                                continue;
+                            };
+                            if meta.file_type().is_dir() {
+                                stack.push(child_path);
+                                continue;
+                            }
+
+                            let Ok(rel_child) = child_path.strip_prefix(work_tree) else {
+                                continue;
+                            };
+                            let rel_child_str = rel_child.to_string_lossy().replace('\\', "/");
+                            if !old_paths.contains(rel_child_str.as_bytes()) {
+                                has_untracked_in_dir = true;
+                                break;
+                            }
+                        }
+                        if has_untracked_in_dir {
+                            break;
+                        }
+                    }
+
+                    if has_untracked_in_dir {
+                        dir_untracked_conflicts.push(rel_path.into_owned());
+                    }
+                    continue;
+                }
+
                 if !has_tracked_prefix && !replaces_tracked_dir {
                     untracked_conflicts.push(rel_path.into_owned());
                 }
@@ -1423,9 +1073,22 @@ fn check_dirty_worktree(
         }
     }
 
+    dir_untracked_conflicts.sort();
+    dir_untracked_conflicts.dedup();
+    if !dir_untracked_conflicts.is_empty() {
+        let mut msg = String::from(
+            "Updating the following directories would lose untracked files in them:\n",
+        );
+        for path in &dir_untracked_conflicts {
+            msg.push_str(&format!("\t{}\n", path));
+        }
+        msg.push_str("\nAborting");
+        bail!("{msg}");
+    }
+
     if !untracked_conflicts.is_empty() {
         let mut msg = String::from(
-            "error: The following untracked working tree files would be overwritten by checkout:\n",
+            "The following untracked working tree files would be overwritten by checkout:\n",
         );
         for path in &untracked_conflicts {
             msg.push_str(&format!("\t{}\n", path));
@@ -1469,181 +1132,13 @@ fn is_worktree_dirty(
 // Path-based checkout (restore files)
 // ---------------------------------------------------------------------------
 
-fn checkout_paths_with_merge(repo: &Repository, paths: &[String]) -> Result<()> {
-    let work_tree = repo
-        .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-    let cwd = std::env::current_dir().context("resolving cwd")?;
-    let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
-
-    let head_oid = resolve_head(&repo.git_dir)?
-        .oid()
-        .copied()
-        .ok_or_else(|| anyhow::anyhow!("HEAD does not point to a commit"))?;
-    let merge_head_raw = std::fs::read_to_string(repo.git_dir.join("MERGE_HEAD"))
-        .context("cannot read MERGE_HEAD for checkout --merge")?;
-    let merge_head_hex = merge_head_raw
-        .lines()
-        .find(|line| !line.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("MERGE_HEAD is empty"))?
-        .trim();
-    let merge_head_oid: ObjectId = merge_head_hex.parse()?;
-    let base_oid = merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_head_oid])?
-        .into_iter()
-        .next();
-
-    for path_str in paths {
-        let rel = resolve_pathspec(path_str, work_tree, &cwd);
-        let path_bytes = rel.as_bytes().to_vec();
-
-        let base_blob = if let Some(base) = base_oid {
-            blob_in_commit(repo, base, &rel)?
-        } else {
-            None
-        };
-        let ours_blob = blob_in_commit(repo, head_oid, &rel)?;
-        let theirs_blob = blob_in_commit(repo, merge_head_oid, &rel)?;
-
-        if ours_blob.is_none() && theirs_blob.is_none() {
-            bail!(
-                "error: pathspec '{}' did not match any file(s) known to git",
-                path_str
-            );
-        }
-
-        let base_data = if let Some((oid, _)) = base_blob {
-            repo.odb.read(&oid)?.data
-        } else {
-            Vec::new()
-        };
-        let (ours_data, ours_mode) = if let Some((oid, mode)) = ours_blob {
-            (repo.odb.read(&oid)?.data, mode)
-        } else {
-            (Vec::new(), 0o100644)
-        };
-        let (theirs_data, theirs_mode) = if let Some((oid, mode)) = theirs_blob {
-            (repo.odb.read(&oid)?.data, mode)
-        } else {
-            (Vec::new(), 0o100644)
-        };
-        let output_mode = ours_mode.max(theirs_mode);
-
-        let input = MergeInput {
-            base: &base_data,
-            ours: &ours_data,
-            theirs: &theirs_data,
-            label_ours: "ours",
-            label_base: "base",
-            label_theirs: "theirs",
-            favor: MergeFavor::None,
-            style: ConflictStyle::Merge,
-            marker_size: 7,
-            diff_algorithm: None,
-        };
-        let output = merge_file::merge(&input)?;
-        write_to_worktree(work_tree, &rel, &output.content, output_mode)?;
-
-        index.remove(&path_bytes);
-        if output.conflicts == 0 {
-            let oid = repo.odb.write(ObjectKind::Blob, &output.content)?;
-            let entry = IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode: output_mode,
-                uid: 0,
-                gid: 0,
-                size: output.content.len() as u32,
-                oid,
-                flags: path_bytes.len().min(0xFFF) as u16,
-                flags_extended: None,
-                path: path_bytes.clone(),
-            };
-            index.add_or_replace(entry);
-        } else {
-            let path_len = path_bytes.len().min(0xFFF) as u16;
-            if let Some((oid, mode)) = base_blob {
-                index.entries.push(IndexEntry {
-                    ctime_sec: 0,
-                    ctime_nsec: 0,
-                    mtime_sec: 0,
-                    mtime_nsec: 0,
-                    dev: 0,
-                    ino: 0,
-                    mode,
-                    uid: 0,
-                    gid: 0,
-                    size: base_data.len() as u32,
-                    oid,
-                    flags: (path_len & 0x0FFF) | (1u16 << 12),
-                    flags_extended: None,
-                    path: path_bytes.clone(),
-                });
-            }
-            if let Some((oid, mode)) = ours_blob {
-                index.entries.push(IndexEntry {
-                    ctime_sec: 0,
-                    ctime_nsec: 0,
-                    mtime_sec: 0,
-                    mtime_nsec: 0,
-                    dev: 0,
-                    ino: 0,
-                    mode,
-                    uid: 0,
-                    gid: 0,
-                    size: ours_data.len() as u32,
-                    oid,
-                    flags: (path_len & 0x0FFF) | (2u16 << 12),
-                    flags_extended: None,
-                    path: path_bytes.clone(),
-                });
-            }
-            if let Some((oid, mode)) = theirs_blob {
-                index.entries.push(IndexEntry {
-                    ctime_sec: 0,
-                    ctime_nsec: 0,
-                    mtime_sec: 0,
-                    mtime_nsec: 0,
-                    dev: 0,
-                    ino: 0,
-                    mode,
-                    uid: 0,
-                    gid: 0,
-                    size: theirs_data.len() as u32,
-                    oid,
-                    flags: (path_len & 0x0FFF) | (3u16 << 12),
-                    flags_extended: None,
-                    path: path_bytes.clone(),
-                });
-            }
-        }
-    }
-
-    index.sort();
-    index.write(&index_path).context("writing index")?;
-    Ok(())
-}
-
-fn blob_in_commit(
-    repo: &Repository,
-    commit_oid: ObjectId,
-    path: &str,
-) -> Result<Option<(ObjectId, u32)>> {
-    let tree_oid = commit_to_tree(repo, &commit_oid)?;
-    find_in_tree(repo, tree_oid, path)
-}
-
 /// Checkout specific paths from the index or a tree-ish.
 fn checkout_paths(
     repo: &Repository,
     source: Option<&str>,
     paths: &[String],
     no_overlay: bool,
+    merge_mode: bool,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1698,6 +1193,21 @@ fn checkout_paths(
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
                     write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
+                } else if merge_mode {
+                    let stage1 = index.get(path_bytes, 1).cloned();
+                    let stage2 = index.get(path_bytes, 2).cloned();
+                    let stage3 = index.get(path_bytes, 3).cloned();
+                    if stage2.is_some() || stage3.is_some() {
+                        checkout_conflicted_path_with_merge(
+                            repo,
+                            work_tree,
+                            &rel,
+                            stage1.as_ref(),
+                            stage2.as_ref(),
+                            stage3.as_ref(),
+                        )?;
+                        continue;
+                    }
                 } else {
                     // Try as a directory prefix
                     let prefix = if rel.ends_with('/') {
@@ -2464,34 +1974,6 @@ fn commit_to_tree(repo: &Repository, commit_oid: &ObjectId) -> Result<ObjectId> 
     Ok(commit.tree)
 }
 
-/// Return `true` when the current checkout likely needs an initial population
-/// of index/worktree even if HEAD already points at the target commit.
-fn should_populate_worktree_for_target(repo: &Repository, target_tree: &ObjectId) -> Result<bool> {
-    let target_entries = tree_to_flat_entries(repo, target_tree, "")?;
-    if target_entries.is_empty() {
-        return Ok(false);
-    }
-
-    let index = Index::load(&repo.index_path()).unwrap_or_default();
-    let has_stage0_entries = index.entries.iter().any(|e| e.stage() == 0);
-    if !has_stage0_entries {
-        return Ok(true);
-    }
-
-    let Some(work_tree) = &repo.work_tree else {
-        return Ok(false);
-    };
-
-    // Detect clone --no-checkout style state: no tracked files materialized.
-    let any_materialized = target_entries.iter().any(|e| {
-        let rel = String::from_utf8_lossy(&e.path);
-        let abs = work_tree.join(rel.as_ref());
-        abs.exists() || abs.is_symlink()
-    });
-
-    Ok(!any_materialized)
-}
-
 /// Recursively flatten a tree object into a list of [`IndexEntry`] values.
 fn tree_to_flat_entries(
     repo: &Repository,
@@ -2591,12 +2073,16 @@ fn checkout_index_to_worktree(
     work_tree: &std::path::Path,
     force_write_all: bool,
 ) -> Result<()> {
-    let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
-    let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
-    let new_skip_paths: HashSet<Vec<u8>> = new_index
+    let old_stage0: HashSet<Vec<u8>> = old_index
         .entries
         .iter()
-        .filter(|e| e.stage() == 0 && e.skip_worktree())
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    let new_stage0: HashSet<Vec<u8>> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
         .map(|e| e.path.clone())
         .collect();
 
@@ -2609,18 +2095,8 @@ fn checkout_index_to_worktree(
         .collect();
 
     // Remove paths that are no longer present in the new index.
-    for old_path in old_paths.difference(&new_paths) {
+    for old_path in old_stage0.difference(&new_stage0) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
-        let abs = work_tree.join(&rel);
-        if abs.is_file() || abs.is_symlink() {
-            let _ = std::fs::remove_file(&abs);
-        } else if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
-        }
-        remove_empty_parent_dirs(work_tree, &abs);
-    }
-    for skip_path in &new_skip_paths {
-        let rel = String::from_utf8_lossy(skip_path).into_owned();
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
@@ -2633,9 +2109,6 @@ fn checkout_index_to_worktree(
     // Write new/modified entries
     for entry in &new_index.entries {
         if entry.stage() != 0 {
-            continue;
-        }
-        if entry.skip_worktree() {
             continue;
         }
 
@@ -2668,110 +2141,6 @@ fn checkout_index_to_worktree(
     }
 
     Ok(())
-}
-
-fn apply_sparse_checkout_bits(repo: &Repository, index: &mut Index) -> Result<()> {
-    let sparse_path = repo.git_dir.join("info").join("sparse-checkout");
-    let patterns = match std::fs::read_to_string(&sparse_path) {
-        Ok(content) => content
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .map(|l| l.to_owned())
-            .collect::<Vec<_>>(),
-        Err(_) => return Ok(()),
-    };
-    if patterns.is_empty() {
-        return Ok(());
-    }
-
-    let mut any_skip = false;
-    for entry in &mut index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let path = String::from_utf8_lossy(&entry.path);
-        let included = sparse_path_is_included(&patterns, &path);
-        entry.set_skip_worktree(!included);
-        if !included {
-            any_skip = true;
-        }
-    }
-    if any_skip && index.version < 3 {
-        index.version = 3;
-    }
-    Ok(())
-}
-
-fn sparse_path_is_included(patterns: &[String], path: &str) -> bool {
-    let mut include = false;
-    for raw in patterns {
-        let pattern = raw.trim();
-        if pattern.is_empty() || pattern.starts_with('#') {
-            continue;
-        }
-        let (exclude, pat) = if let Some(rest) = pattern.strip_prefix('!') {
-            (true, rest)
-        } else {
-            (false, pattern)
-        };
-        if sparse_pattern_matches(pat, path) {
-            include = !exclude;
-        }
-    }
-    include
-}
-
-fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
-    let pat = pattern.trim();
-    if pat.is_empty() {
-        return false;
-    }
-
-    if pat.ends_with('/') {
-        let dir = pat.trim_end_matches('/').trim_start_matches('/');
-        return path == dir || path.starts_with(&format!("{dir}/"));
-    }
-
-    let pat = pat.trim_start_matches('/');
-    if pat.contains('*') || pat.contains('?') {
-        sparse_glob_match(pat.as_bytes(), path.as_bytes())
-    } else {
-        path == pat
-    }
-}
-
-fn sparse_glob_match(pattern: &[u8], text: &[u8]) -> bool {
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star_p, mut star_t) = (usize::MAX, 0);
-    while ti < text.len() {
-        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pattern.len() && pattern[pi] == b'*' {
-            star_p = pi;
-            star_t = ti;
-            pi += 1;
-        } else if star_p != usize::MAX {
-            pi = star_p + 1;
-            star_t += 1;
-            ti = star_t;
-        } else {
-            return false;
-        }
-    }
-    while pi < pattern.len() && pattern[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pattern.len()
-}
-
-fn sparse_checkout_enabled(repo: &Repository) -> bool {
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    config
-        .get("core.sparsecheckout")
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
 }
 
 /// Write a blob object to the working tree.
@@ -2816,6 +2185,76 @@ fn write_blob_to_worktree(
     }
 
     write_to_worktree(work_tree, rel_path, &data, mode)
+}
+
+fn checkout_conflicted_path_with_merge(
+    repo: &Repository,
+    work_tree: &Path,
+    rel_path: &str,
+    base: Option<&IndexEntry>,
+    ours: Option<&IndexEntry>,
+    theirs: Option<&IndexEntry>,
+) -> Result<()> {
+    let ours_entry = ours
+        .or(theirs)
+        .ok_or_else(|| anyhow::anyhow!("path '{rel_path}' does not have unmerged entries"))?;
+    let theirs_entry = theirs
+        .or(ours)
+        .ok_or_else(|| anyhow::anyhow!("path '{rel_path}' does not have unmerged entries"))?;
+
+    let base_data = if let Some(entry) = base {
+        let obj = repo.odb.read(&entry.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            bail!("cannot checkout non-blob at '{rel_path}'");
+        }
+        obj.data
+    } else {
+        Vec::new()
+    };
+
+    let ours_obj = repo.odb.read(&ours_entry.oid)?;
+    let theirs_obj = repo.odb.read(&theirs_entry.oid)?;
+    if ours_obj.kind != ObjectKind::Blob || theirs_obj.kind != ObjectKind::Blob {
+        bail!("cannot checkout non-blob at '{rel_path}'");
+    }
+
+    if merge_file::is_binary(&ours_obj.data) || merge_file::is_binary(&theirs_obj.data) {
+        return write_to_worktree(work_tree, rel_path, &ours_obj.data, ours_entry.mode);
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let attrs = crlf::load_gitattributes(work_tree);
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+    let marker_size = if let Some(raw) = &file_attrs.conflict_marker_size {
+        match raw.parse::<usize>() {
+            Ok(size) => size,
+            Err(_) => {
+                eprintln!("warning: invalid marker-size '{raw}', expecting an integer");
+                7
+            }
+        }
+    } else {
+        7
+    };
+
+    let merge_out = merge_file::merge(&MergeInput {
+        base: &base_data,
+        ours: &ours_obj.data,
+        theirs: &theirs_obj.data,
+        label_ours: "ours",
+        label_base: "base",
+        label_theirs: "theirs",
+        favor: MergeFavor::None,
+        style: ConflictStyle::Merge,
+        marker_size,
+        diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
+    })?;
+
+    write_to_worktree(work_tree, rel_path, &merge_out.content, ours_entry.mode)
 }
 
 /// Write data to a working tree file, handling symlinks and executable bits.
@@ -3067,26 +2506,11 @@ fn write_checkout_reflog(
 
     // Write reflog for HEAD
     let _ = append_reflog(&repo.git_dir, "HEAD", old_oid, new_oid, &identity, message);
-    let _ = head;
-}
 
-fn write_branch_creation_reflog(
-    repo: &Repository,
-    branch_ref: &str,
-    new_oid: &ObjectId,
-    from_desc: &str,
-) {
-    let identity = resolve_checkout_identity(repo);
-    let old_oid = zero_oid();
-    let message = format!("branch: Created from {from_desc}");
-    let _ = append_reflog(
-        &repo.git_dir,
-        branch_ref,
-        &old_oid,
-        new_oid,
-        &identity,
-        &message,
-    );
+    // Write reflog for the branch ref if on a branch
+    if let HeadState::Branch { refname, .. } = head {
+        let _ = append_reflog(&repo.git_dir, refname, old_oid, new_oid, &identity, message);
+    }
 }
 
 /// Resolve the committer identity for reflog entries.
@@ -3102,22 +2526,10 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
         .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
         .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
         .unwrap_or_default();
-    let date = std::env::var("GIT_COMMITTER_DATE")
-        .ok()
-        .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok())
-        .unwrap_or_else(|| {
-            let now = time::OffsetDateTime::now_utc();
-            let epoch = now.unix_timestamp();
-            let offset = now.offset();
-            let hours = offset.whole_hours();
-            let minutes = offset.minutes_past_hour().unsigned_abs();
-            format!("{epoch} {hours:+03}{minutes:02}")
-        });
-    format!("{name} <{email}> {date}")
-}
-
-fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
-    let mut entry = src.clone();
-    entry.flags = (entry.flags & 0x0FFF) | ((stage as u16) << 12);
-    index.entries.push(entry);
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
 }

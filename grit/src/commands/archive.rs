@@ -13,10 +13,12 @@ use grit_lib::crlf::{
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
 use std::fs::File;
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
 
 /// Arguments for `grit archive`.
 #[derive(Debug, ClapArgs)]
@@ -72,6 +74,7 @@ pub fn run(args: Args) -> Result<()> {
     let conv = ConversionConfig::from_config(&config);
     let work_tree = repo.work_tree.clone().unwrap_or_default();
     let attrs = load_gitattributes(&work_tree);
+    let max_tree_depth = resolve_max_tree_depth(&config)?;
 
     // Collect all entries
     let mut entries: Vec<ArchiveEntry> = Vec::new();
@@ -79,6 +82,8 @@ pub fn run(args: Args) -> Result<()> {
         &repo,
         &tree_data,
         prefix,
+        0,
+        max_tree_depth,
         &args.paths,
         &conv,
         &attrs,
@@ -137,12 +142,22 @@ fn collect_entries(
     repo: &Repository,
     tree_data: &[u8],
     prefix: &str,
+    depth: usize,
+    max_tree_depth: usize,
     filter_paths: &[String],
     conv: &ConversionConfig,
     attrs: &GitAttributes,
     config: &ConfigSet,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<()> {
+    if depth > max_tree_depth {
+        bail!(
+            "tree depth {} exceeds core.maxtreedepth {}",
+            depth,
+            max_tree_depth
+        );
+    }
+
     let tree_entries = parse_tree(tree_data)?;
 
     for entry in &tree_entries {
@@ -178,6 +193,8 @@ fn collect_entries(
                 repo,
                 &sub_obj.data,
                 &dir_path,
+                depth + 1,
+                max_tree_depth,
                 filter_paths,
                 conv,
                 attrs,
@@ -199,6 +216,16 @@ fn collect_entries(
         }
     }
     Ok(())
+}
+
+fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(depth)
 }
 
 fn write_archive(
@@ -442,7 +469,10 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
-    if let Ok(oid) = resolve_revision(repo, s) {
+    if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
+        return Ok(oid);
+    }
+    if let Ok(oid) = s.parse::<ObjectId>() {
         return Ok(oid);
     }
     if let Ok(oid) = s.parse::<ObjectId>() {
@@ -453,6 +483,10 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
     }
     let as_branch = format!("refs/heads/{s}");
     if let Ok(oid) = resolve_ref(&repo.git_dir, &as_branch) {
+        return Ok(oid);
+    }
+    let as_tag = format!("refs/tags/{s}");
+    if let Ok(oid) = resolve_ref(&repo.git_dir, &as_tag) {
         return Ok(oid);
     }
     bail!("not a valid tree-ish: '{s}'")

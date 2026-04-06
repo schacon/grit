@@ -177,12 +177,32 @@ fn fetch_remote(
     // Check protocol.file.allow before local fetch
     crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
 
-    // Strip file:// prefix if present
-    let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
+    // Strip file:// prefix if present.
+    // For configured remotes, resolve relative paths from the repository root
+    // (not the process CWD), matching Git's behavior for remote.<name>.url.
+    let mut remote_path = if let Some(stripped) = url.strip_prefix("file://") {
         PathBuf::from(stripped)
     } else {
         PathBuf::from(&url)
     };
+    if url_override.is_none() && remote_path.is_relative() {
+        let base = configured_remote_base(git_dir);
+        remote_path = base.join(&remote_path);
+        if !remote_path.exists() {
+            let mut trimmed = url.as_str();
+            let mut stripped_any_parent = false;
+            while let Some(rest) = trimmed.strip_prefix("../") {
+                stripped_any_parent = true;
+                trimmed = rest;
+            }
+            if stripped_any_parent {
+                let fallback = base.join(trimmed);
+                if fallback.exists() {
+                    remote_path = fallback;
+                }
+            }
+        }
+    }
 
     // Open the remote repository
     let remote_repo = open_repo(&remote_path).with_context(|| {
@@ -1356,6 +1376,17 @@ fn open_repo(path: &Path) -> Result<Repository> {
     }
     let git_dir = path.join(".git");
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
+}
+
+fn configured_remote_base(git_dir: &Path) -> PathBuf {
+    if git_dir.file_name().is_some_and(|name| name == ".git") {
+        git_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| git_dir.to_path_buf())
+    } else {
+        git_dir.to_path_buf()
+    }
 }
 
 /// Resolve the git directory from CWD.

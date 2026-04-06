@@ -127,6 +127,11 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("bare repository cannot use sparse checkout"))?;
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let cone_mode = config
+        .get("core.sparseCheckoutCone")
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or(true);
 
     let index_path = repo.git_dir.join("index");
     let mut index = Index::load(&index_path).context("reading index")?;
@@ -138,7 +143,7 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
 
     for entry in &mut index.entries {
         let path_str = String::from_utf8_lossy(&entry.path).to_string();
-        let matches = path_matches_sparse_patterns(&path_str, patterns);
+        let matches = path_matches_sparse_patterns(&path_str, patterns, cone_mode);
 
         if matches {
             // File should be in the working tree
@@ -173,88 +178,58 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Check if a file path matches sparse-checkout patterns.
-///
-/// Patterns are evaluated in-order, like gitignore-style sparse-checkout:
-/// positive patterns include paths and `!` patterns exclude them again.
-fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
-    let mut included = false;
-    for raw in patterns {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
+/// Check if a file path matches any of the sparse checkout patterns.
+/// Patterns are treated as directory prefixes (like git's cone mode).
+fn path_matches_sparse_patterns(path: &str, patterns: &[String], cone_mode: bool) -> bool {
+    if cone_mode {
+        // Cone mode keeps top-level files and explicitly included directories.
+        if !path.contains('/') {
+            return true;
         }
-        let (negated, pat) = if let Some(rest) = trimmed.strip_prefix('!') {
-            (true, rest.trim())
-        } else {
-            (false, trimmed)
-        };
-        if pat.is_empty() {
-            continue;
-        }
-        if sparse_pattern_matches_path(pat, path) {
-            included = !negated;
-        }
-    }
-    included
-}
 
-/// Match one sparse-checkout pattern against a path.
-fn sparse_pattern_matches_path(pattern: &str, path: &str) -> bool {
-    let anchored = pattern.starts_with('/');
-    let pat = pattern.trim_start_matches('/');
-
-    if pat.is_empty() {
+        for pattern in patterns {
+            let prefix = pattern.trim_end_matches('/');
+            if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
+                return true;
+            }
+            if path == prefix {
+                return true;
+            }
+        }
         return false;
     }
 
-    if let Some(dir) = pat.strip_suffix('/') {
-        if anchored {
-            return path == dir || path.starts_with(&format!("{dir}/"));
+    // Non-cone mode interprets sparse-checkout patterns in order, where later
+    // patterns override earlier ones and negated patterns remove matches.
+    let mut included = false;
+    for raw_pattern in patterns {
+        let pattern = raw_pattern.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
         }
-        return path == dir
-            || path.starts_with(&format!("{dir}/"))
-            || path.split('/').any(|component| component == dir);
-    }
 
-    if anchored {
-        return sparse_glob_match(pat, path);
-    }
-
-    // Non-anchored patterns match against the full path and basename.
-    sparse_glob_match(pat, path)
-        || path
-            .rsplit('/')
-            .next()
-            .is_some_and(|base| sparse_glob_match(pat, base))
-}
-
-/// Minimal glob matcher supporting `*` and `?`.
-pub(crate) fn sparse_glob_match(pattern: &str, text: &str) -> bool {
-    let pat = pattern.as_bytes();
-    let txt = text.as_bytes();
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
-    while ti < txt.len() {
-        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if star_pi != usize::MAX {
-            pi = star_pi + 1;
-            star_ti += 1;
-            ti = star_ti;
+        let (negated, core_pattern) = if let Some(rest) = pattern.strip_prefix('!') {
+            (true, rest)
         } else {
-            return false;
+            (false, pattern)
+        };
+        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let matches = if let Some(prefix) = normalized.strip_suffix('/') {
+            path == prefix || path.starts_with(&format!("{prefix}/"))
+        } else {
+            crate::pathspec::pathspec_matches(normalized, path)
+        };
+
+        if matches {
+            included = !negated;
         }
     }
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
+
+    included
 }
 
 /// Remove empty directories walking up from `dir` to `stop` (exclusive).

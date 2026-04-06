@@ -6,6 +6,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::process::Command;
 
 use grit_lib::index::Index;
@@ -26,6 +27,14 @@ pub struct Args {
     #[arg(short = 'a', long = "all")]
     pub all: bool,
 
+    /// Continue with other files after a merge-program failure.
+    #[arg(short = 'o')]
+    pub one_shot: bool,
+
+    /// Suppress merge-program failure diagnostics from this command.
+    #[arg(short = 'q')]
+    pub quiet: bool,
+
     /// Specific files to merge (ignored if -a is given).
     pub files: Vec<String>,
 }
@@ -42,7 +51,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None)?;
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index_path = effective_index_path(&repo)?;
+    let index = Index::load(&index_path).context("loading index")?;
 
     // Collect unmerged entries by path
     let mut unmerged: BTreeMap<Vec<u8>, UnmergedEntry> = BTreeMap::new();
@@ -82,27 +92,43 @@ pub fn run(args: Args) -> Result<()> {
         let path_str = String::from_utf8_lossy(path);
 
         // Build arguments for the merge program:
-        // <merge-program> <base-oid> <stage1-mode> <ours-oid> <stage2-mode> <theirs-oid> <stage3-mode> <path>
-        // If a stage is missing, use empty SHA-1 (all zeros) and mode 0
-        let empty_oid = ObjectId::from_hex("0000000000000000000000000000000000000000")?;
+        // <merge-program> <base-oid> <ours-oid> <theirs-oid> <path> <base-mode> <ours-mode> <theirs-mode>
+        // If a stage is missing, pass empty argument for both oid and mode.
+        let (oid1, mode1) = ue.stages[0]
+            .map(|(oid, mode)| (oid.to_hex(), format!("{mode:o}")))
+            .unwrap_or_else(|| (String::new(), String::new()));
+        let (oid2, mode2) = ue.stages[1]
+            .map(|(oid, mode)| (oid.to_hex(), format!("{mode:o}")))
+            .unwrap_or_else(|| (String::new(), String::new()));
+        let (oid3, mode3) = ue.stages[2]
+            .map(|(oid, mode)| (oid.to_hex(), format!("{mode:o}")))
+            .unwrap_or_else(|| (String::new(), String::new()));
 
-        let (oid1, mode1) = ue.stages[0].unwrap_or((empty_oid, 0));
-        let (oid2, mode2) = ue.stages[1].unwrap_or((empty_oid, 0));
-        let (oid3, mode3) = ue.stages[2].unwrap_or((empty_oid, 0));
+        let mut cmd = if args.merge_program == "git-merge-one-file" {
+            let exe = std::env::current_exe().context("locating current executable")?;
+            let mut c = Command::new(exe);
+            c.arg("merge-one-file");
+            c
+        } else {
+            Command::new(&args.merge_program)
+        };
 
-        let status = Command::new(&args.merge_program)
-            .arg(oid1.to_hex())
-            .arg(format!("{:o}", mode1))
-            .arg(oid2.to_hex())
-            .arg(format!("{:o}", mode2))
-            .arg(oid3.to_hex())
-            .arg(format!("{:o}", mode3))
+        let status = cmd
+            .arg(&oid1)
+            .arg(&oid2)
+            .arg(&oid3)
             .arg(path_str.as_ref())
+            .arg(&mode1)
+            .arg(&mode2)
+            .arg(&mode3)
             .status()
             .with_context(|| format!("running merge program {:?}", args.merge_program))?;
 
         if !status.success() {
             had_error = true;
+            if !args.one_shot {
+                break;
+            }
         }
     }
 
@@ -111,4 +137,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let path = PathBuf::from(raw);
+        if path.is_absolute() {
+            return Ok(path);
+        }
+        let cwd = std::env::current_dir().context("resolving GIT_INDEX_FILE")?;
+        return Ok(cwd.join(path));
+    }
+    Ok(repo.index_path())
 }

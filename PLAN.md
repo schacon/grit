@@ -692,54 +692,54 @@ commit → check it off → move on.
 
 ## 7. Rev Machinery (80 files)
 
-- [ ] `t6100-rev-list-in-order` █████████████░░░░░░░ 2/3 (1 left) — rev-list testing in-commit-order
-- [ ] `t6414-merge-rename-nocruft` █████████████░░░░░░░ 2/3 (1 left) — Merge-recursive merging renames
-- [ ] `t6110-rev-list-sparse` ██████████░░░░░░░░░░ 1/2 (1 left) — operations that cull histories in unusual ways
-- [ ] `t6425-merge-rename-delete` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — Merge-recursive rename/delete conflict message
-- [ ] `t6408-merge-up-to-date` ██████████████░░░░░░ 5/7 (2 left) — merge fast-forward and up to date
-- [ ] `t6417-merge-ours-theirs` ██████████████░░░░░░ 5/7 (2 left) — Merge-recursive ours and theirs variants
-- [ ] `t6114-keep-packs` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — rev-list with .keep packs
-- [ ] `t6134-pathspec-in-submodule` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — test case exclude pathspec
-- [ ] `t6136-pathspec-in-bare` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — diagnosing out-of-scope pathspec
-- [ ] `t6413-merge-crlf` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — merge conflict in crlf repo
+- [x] `t6100-rev-list-in-order` ████████████████████ 3/3 (0 left) — rev-list testing in-commit-order
+- [x] `t6414-merge-rename-nocruft` ████████████████████ 3/3 (0 left) — Merge-recursive merging renames
+- [x] `t6110-rev-list-sparse` ████████████████████ 2/2 (0 left) — operations that cull histories in unusual ways
+- [x] `t6425-merge-rename-delete` ████████████████████ 1/1 (0 left) — Merge-recursive rename/delete conflict message
+- [x] `t6408-merge-up-to-date` ████████████████████ 7/7 (0 left) — merge fast-forward and up to date
+- [x] `t6417-merge-ours-theirs` ████████████████████ 7/7 (0 left) — Merge-recursive ours and theirs variants
+- [x] `t6114-keep-packs` ████████████████████ 3/3 (0 left) — rev-list with .keep packs
+- [x] `t6134-pathspec-in-submodule` ████████████████████ 3/3 (0 left) — test case exclude pathspec
+- [x] `t6136-pathspec-in-bare` ████████████████████ 3/3 (0 left) — diagnosing out-of-scope pathspec
+- [x] `t6413-merge-crlf` ████████████████████ 3/3 (0 left) — merge conflict in crlf repo
 
-- [ ] `t6428-merge-conflicts-sparse` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge cases
-- [ ] `t6431-merge-criscross` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — merge-recursive backend test
-- [ ] `t6412-merge-large-rename` ██████████████░░░░░░ 7/10 (3 left) — merging with large rename matrix
-- [ ] `t6400-merge-df` ███████████░░░░░░░░░ 4/7 (3 left) — Test merge with directory/file conflicts
-- [ ] `t6301-for-each-ref-errors` ██████████░░░░░░░░░░ 3/6 (3 left) — for-each-ref errors for broken refs
-- [ ] `t6435-merge-sparse` ██████████░░░░░░░░░░ 3/6 (3 left) — merge with sparse files
-- [ ] `t6401-merge-criss-cross` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test criss-cross merge
-- [ ] `t6421-merge-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — limiting blob downloads when merging with partial clones
-- [ ] `t6133-pathspec-rev-dwim` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test dwim of revs versus pathspecs in revision parser
-- [ ] `t6404-recursive-merge` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test merge without common ancestors
-- [ ] `t6415-merge-dir-to-symlink` ███████████████░░░░░ 19/24 (5 left) — merging when a directory was replaced with a symlink
-- [ ] `t6004-rev-list-path-optim` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git rev-list trivial path optimization test
+- [x] `t6428-merge-conflicts-sparse` ████████████████████ 2/2 (0 left) — merge cases
+- [x] `t6431-merge-criscross` ████████████████████ 2/2 (0 left) — merge-recursive backend test
+- [x] `t6412-merge-large-rename` ████████████████████ 10/10 (0 left) — merging with large rename matrix
+- [x] `t6400-merge-df` ████████████████████ 7/7 (0 left) — Test merge with directory/file conflicts
+- [x] `t6301-for-each-ref-errors` ████████████████████ 6/6 (0 left) — for-each-ref errors for broken refs
+- [x] `t6435-merge-sparse` ████████████████████ 6/6 (0 left) — merge with sparse files
+- [x] `t6401-merge-criss-cross` ████████████████████ 4/4 (0 left) — Test criss-cross merge
+- [x] `t6421-merge-partial-clone` ████████████████████ 3/3 (0 left) — limiting blob downloads when merging with partial clones
+- [x] `t6133-pathspec-rev-dwim` ████████████████████ 6/6 (0 left) — test dwim of revs versus pathspecs in revision parser
+- [x] `t6404-recursive-merge` ████████████████████ 6/6 (0 left) — Test merge without common ancestors
+- [x] `t6415-merge-dir-to-symlink` ████████████████████ 24/24 (0 left) — merging when a directory was replaced with a symlink
+- [x] `t6004-rev-list-path-optim` ████████████████████ 7/7 (0 left) — git rev-list trivial path optimization test
 
-- [ ] `t6005-rev-list-count` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git rev-list --max-count and --skip test
-- [ ] `t6439-merge-co-error-msgs` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — unpack-trees error messages
-- [ ] `t6010-merge-base` ██████████░░░░░░░░░░ 6/12 (6 left) — Merge base and parent list computation.
+- [x] `t6005-rev-list-count` ████████████████████ 6/6 (0 left) — git rev-list --max-count and --skip test
+- [x] `t6439-merge-co-error-msgs` ████████████████████ 6/6 (0 left) — unpack-trees error messages
+- [x] `t6010-merge-base` ████████████████████ 12/12 (0 left) — Merge base and parent list computation.
 
-- [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands
-- [ ] `t6427-diff3-conflict-markers` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — recursive merge diff3 style conflict markers
-- [ ] `t6060-merge-index` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic git merge-index / git-merge-one-file tests
-- [ ] `t6131-pathspec-icase` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — test case insensitive pathspec limiting
-- [ ] `t6102-rev-list-unexpected-objects` ████████████░░░░░░░░ 14/22 (8 left) — git rev-list should handle unexpected object types
-- [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
-- [ ] `t6433-merge-toplevel` ████████░░░░░░░░░░░░ 6/15 (9 left) — 
-- [ ] `t6409-merge-subtree` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — subtree merge strategy
-- [ ] `t6418-merge-text-auto` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — CRLF merge conflict across text=auto change
+- [x] `t6700-tree-depth` ████████████████████ 10/10 (0 left) — handling of deep trees in various commands
+- [x] `t6427-diff3-conflict-markers` ████████████████████ 9/9 (0 left) — recursive merge diff3 style conflict markers
+- [x] `t6060-merge-index` ████████████████████ 7/7 (0 left) — basic git merge-index / git-merge-one-file tests
+- [x] `t6131-pathspec-icase` ████████████████████ 9/9 (0 left) — test case insensitive pathspec limiting
+- [x] `t6102-rev-list-unexpected-objects` ████████████████████ 22/22 (0 left) — git rev-list should handle unexpected object types
+- [x] `t6501-freshen-objects` ████████████████████ 42/42 (0 left) — check pruning of dependent objects
+- [x] `t6433-merge-toplevel` ████████████████████ 15/15 (0 left) — 
+- [x] `t6409-merge-subtree` ████████████████████ 12/12 (0 left) — subtree merge strategy
+- [x] `t6418-merge-text-auto` ████████████████████ 11/11 (0 left) — CRLF merge conflict across text=auto change
 
-- [ ] `t6403-merge-file` ██████████████░░░░░░ 29/39 (10 left) — RCS merge replacement: merge-file
-- [ ] `t6016-rev-list-graph-simplify-history` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — --graph and simplified history
-- [ ] `t6429-merge-sequence-rename-caching` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — remember regular & dir renames in sequence of merges
-- [ ] `t6115-rev-list-du` ███████░░░░░░░░░░░░░ 6/17 (11 left) — basic tests of rev-list --disk-usage
-- [ ] `t6001-rev-list-graft` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — Revision traversal vs grafts and path limiter
-- [ ] `t6406-merge-attr` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — per path merge controlled by merge attribute
-- [ ] `t6432-merge-recursive-space-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — merge-recursive space options
+- [x] `t6403-merge-file` ████████████████████ 39/39 (0 left) — RCS merge replacement: merge-file
+- [x] `t6016-rev-list-graph-simplify-history` ████████████████████ 12/12 (0 left) — --graph and simplified history
+- [x] `t6429-merge-sequence-rename-caching` ████████████████████ 11/11 (0 left) — remember regular & dir renames in sequence of merges
+- [x] `t6115-rev-list-du` ████████████████████ 17/17 (0 left) — basic tests of rev-list --disk-usage
+- [x] `t6001-rev-list-graft` ████████████████████ 14/14 (0 left) — Revision traversal vs grafts and path limiter
+- [x] `t6406-merge-attr` ████████████████████ 13/13 (0 left) — per path merge controlled by merge attribute
+- [x] `t6432-merge-recursive-space-options` ████████████████████ 11/11 (0 left) — merge-recursive space options
 
-- [ ] `t6009-rev-list-parent` ████░░░░░░░░░░░░░░░░ 3/15 (12 left) — ancestor culling and limiting by parent number
-- [ ] `t6426-merge-skip-unneeded-updates` █░░░░░░░░░░░░░░░░░░░ 1/13 (12 left) — merge cases
+- [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number
+- [x] `t6426-merge-skip-unneeded-updates` ████████████████████ 13/13 (0 left) — merge cases
 - [ ] `t6113-rev-list-bitmap-filters` █░░░░░░░░░░░░░░░░░░░ 1/14 (13 left) — rev-list combining bitmaps and filters
 - [ ] `t6436-merge-overwrite` ████░░░░░░░░░░░░░░░░ 4/18 (14 left) — git-merge
 

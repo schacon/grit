@@ -8,15 +8,18 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId};
+use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{
+    collect_revision_specs_with_stdin, rev_list, OrderingMode, RevListOptions,
+};
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit log`.
 #[derive(Debug, ClapArgs)]
@@ -49,10 +52,6 @@ pub struct Args {
     #[arg(long = "root")]
     pub root: bool,
 
-    /// Show tree entries (accepted for compatibility with git-log).
-    #[arg(short = 't', hide = true)]
-    pub show_trees: bool,
-
     /// Show a graph of the commit history.
     #[arg(long = "graph")]
     pub graph: bool,
@@ -80,6 +79,22 @@ pub struct Args {
     /// Only show commits that are decorated (have refs).
     #[arg(long = "simplify-by-decoration")]
     pub simplify_by_decoration: bool,
+
+    /// Show full history (do not prune TREESAME merges).
+    #[arg(long = "full-history")]
+    pub full_history: bool,
+
+    /// Further simplify full history by pruning redundant merges.
+    #[arg(long = "simplify-merges")]
+    pub simplify_merges: bool,
+
+    /// Show all commits in simplified history mode.
+    #[arg(long = "sparse")]
+    pub sparse: bool,
+
+    /// Show boundary commits.
+    #[arg(long = "boundary")]
+    pub boundary: bool,
 
     /// Skip this many commits.
     #[arg(long = "skip")]
@@ -114,12 +129,8 @@ pub struct Args {
     pub walk_reflogs: bool,
 
     /// Show unified diff (patch) after each commit.
-    #[arg(short = 'p', long = "patch")]
+    #[arg(short = 'p', long = "patch", alias = "unified")]
     pub patch: bool,
-
-    /// Show patch with <N> lines of context (implies --patch).
-    #[arg(short = 'U', long = "unified", value_name = "N")]
-    pub unified: Option<usize>,
 
     /// Alias for --patch.
     #[arg(short = 'u', hide = true)]
@@ -184,10 +195,6 @@ pub struct Args {
     /// Detect copies.
     #[arg(short = 'C', long = "find-copies", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_copies: Option<String>,
-
-    /// Break complete rewrite changes into delete/create pairs.
-    #[arg(short = 'B', long = "break-rewrites", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
-    pub break_rewrites: Option<String>,
 
     /// Control merge commit diff display.
     #[arg(long = "diff-merges", default_missing_value = "on")]
@@ -336,6 +343,19 @@ pub struct Args {
     /// Pathspecs (after --).
     #[arg(last = true)]
     pub pathspecs: Vec<String>,
+
+    /// Break complete rewrites into pairs.
+    #[arg(short = 'B', long = "break-rewrites")]
+    pub break_rewrites: Option<String>,
+
+    /// Show tree objects in diff.
+    #[arg(long = "show-trees")]
+    pub show_trees: bool,
+
+    /// Generate diff with N lines of context.
+    #[arg(short = 'U', long = "unified", value_name = "N")]
+    pub unified: Option<usize>,
+
 }
 
 /// Extract epoch timestamp from a Git ident string.
@@ -343,23 +363,14 @@ fn extract_epoch_from_ident(ident: &str) -> i64 {
     if let Some(gt) = ident.rfind('>') {
         let after = ident[gt + 1..].trim();
         if let Some(epoch_str) = after.split_whitespace().next() {
-            if let Ok(epoch) = epoch_str.parse::<i64>() {
-                return epoch;
-            }
-        }
-        if let Some(epoch) = parse_date_to_epoch(after, false) {
-            return epoch;
+            return epoch_str.parse::<i64>().unwrap_or(0);
         }
     }
     0
 }
 
 /// Parse a date string into a Unix epoch timestamp.
-///
-/// Returns the start-of-day timestamp for inclusive lower-bound filters
-/// (e.g. `--since-as-filter`) and end-of-day timestamp for inclusive
-/// upper-bound filters (e.g. `--until`) when only a calendar date is given.
-fn parse_date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
+fn parse_date_to_epoch(s: &str) -> Option<i64> {
     let s = s.trim();
     if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
         let parts: Vec<&str> = s[..10].split('-').collect();
@@ -371,12 +382,7 @@ fn parse_date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
             ) {
                 if let Ok(month) = time::Month::try_from(m) {
                     if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                        let dt = if end_of_day {
-                            date.with_hms(23, 59, 59).ok()?
-                        } else {
-                            date.with_hms(0, 0, 0).ok()?
-                        }
-                        .assume_utc();
+                        let dt = date.with_hms(0, 0, 0).unwrap().assume_utc();
                         return Some(dt.unix_timestamp());
                     }
                 }
@@ -386,12 +392,1155 @@ fn parse_date_to_epoch(s: &str, end_of_day: bool) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
+fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
+    let mut implied_pathspecs: Vec<String> = Vec::new();
+    let mut revision_specs = Vec::new();
+    for rev in &args.revisions {
+        if rev == "--" {
+            break;
+        }
+        if rev.starts_with('-') && !rev.starts_with('^') {
+            continue;
+        }
+        if let Some(stripped) = rev.strip_prefix('^') {
+            match resolve_revision(repo, stripped) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(stripped) => {
+                    implied_pathspecs.push(stripped.to_owned())
+                }
+                Err(err) => return Err(err),
+            }
+        } else {
+            match resolve_revision(repo, rev) {
+                Ok(_) => revision_specs.push(rev.clone()),
+                Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
+                    implied_pathspecs.push(rev.clone())
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    if !implied_pathspecs.is_empty() {
+        validate_pathspec_scope(repo, &implied_pathspecs)?;
+    }
+
+    let mut combined_pathspecs = args.pathspecs.clone();
+    combined_pathspecs.extend(implied_pathspecs);
+    combined_pathspecs = resolve_effective_pathspecs(repo, &combined_pathspecs)?;
+
+    let mut options = RevListOptions {
+        all_refs: args.all,
+        first_parent: args.first_parent,
+        simplify_by_decoration: false,
+        skip: args.skip.unwrap_or(0),
+        max_count: args.max_count,
+        ordering: if args.date_order {
+            OrderingMode::Date
+        } else {
+            OrderingMode::Topo
+        },
+        reverse: false,
+        boundary: args.boundary,
+        full_history: args.full_history,
+        sparse: args.sparse,
+        paths: if args.follow {
+            Vec::new()
+        } else {
+            combined_pathspecs.clone()
+        },
+        ..RevListOptions::default()
+    };
+    if args.no_merges {
+        options.max_parents = Some(1);
+    }
+    if args.merges {
+        options.min_parents = Some(2);
+    }
+
+    let (mut positive_specs, negative_specs, stdin_all_refs) =
+        collect_revision_specs_with_stdin(&revision_specs, false)
+            .map_err(|e| anyhow::anyhow!("failed to parse revision arguments: {e}"))?;
+    if stdin_all_refs {
+        options.all_refs = true;
+    }
+
+    if positive_specs.is_empty() && !options.all_refs {
+        positive_specs.push("HEAD".to_owned());
+    }
+
+    let mut result = rev_list(repo, &positive_specs, &negative_specs, &options)
+        .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+
+    if args.simplify_by_decoration {
+        result.commits = simplify_by_decoration_for_graph(repo, &result.commits)?;
+    }
+
+    if args.simplify_merges && args.full_history {
+        let simplified = simplify_merges_for_graph(repo, &result.commits)?;
+        result.commits = simplified;
+    }
+
+    if !combined_pathspecs.is_empty() && !args.full_history {
+        if args.sparse {
+            let mut dense_options = options.clone();
+            dense_options.sparse = false;
+            let dense_result = rev_list(repo, &positive_specs, &negative_specs, &dense_options)
+                .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+            let dense_ordered =
+                reorder_path_limited_graph_commits(repo, &dense_result.commits, args.first_parent)?;
+            result.commits = expand_sparse_path_limited_graph_history(repo, &dense_ordered)?;
+        } else {
+            result.commits =
+                reorder_path_limited_graph_commits(repo, &result.commits, args.first_parent)?;
+        }
+    }
+
+    let included: HashSet<ObjectId> = result.commits.iter().copied().collect();
+    let ordered_boundaries = if args.boundary {
+        order_boundary_commits_for_graph(
+            repo,
+            &result.boundary_commits,
+            result.commits.first().copied(),
+        )?
+    } else {
+        Vec::new()
+    };
+    let mut graph_parent_targets = included.clone();
+    graph_parent_targets.extend(ordered_boundaries.iter().copied());
+    let simplify_graph_parents =
+        args.simplify_by_decoration && combined_pathspecs.is_empty() && !args.full_history;
+    let force_first_parent_for_graph =
+        args.sparse && !combined_pathspecs.is_empty() && !args.full_history;
+    let mut nodes = Vec::new();
+    let mut seen = HashSet::new();
+
+    for oid in &result.commits {
+        if !seen.insert(*oid) {
+            continue;
+        }
+        let parents = visible_parents_for_graph(
+            repo,
+            *oid,
+            &graph_parent_targets,
+            args.first_parent || force_first_parent_for_graph,
+            simplify_graph_parents,
+        )?;
+        nodes.push(GraphCommitNode {
+            oid: *oid,
+            parents,
+            is_boundary: false,
+        });
+    }
+
+    if args.boundary {
+        for oid in &ordered_boundaries {
+            if !seen.insert(*oid) {
+                continue;
+            }
+            let mut parents = load_raw_parents(repo, *oid)?;
+            if args.first_parent && parents.len() > 1 {
+                parents.truncate(1);
+            }
+            nodes.push(GraphCommitNode {
+                oid: *oid,
+                parents,
+                is_boundary: true,
+            });
+        }
+    }
+
+    let interesting: HashSet<ObjectId> = nodes.iter().map(|n| n.oid).collect();
+    for node in &mut nodes {
+        node.parents.retain(|p| interesting.contains(p));
+    }
+
+    let decorations = if args.simplify_by_decoration {
+        Some(collect_decorations(repo, false)?)
+    } else {
+        None
+    };
+
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let mut graph = AsciiGraph::new();
+    let line_prefix = args.line_prefix.as_deref().unwrap_or("");
+    let abbrev_len = parse_abbrev(&args.abbrev);
+
+    for node in nodes {
+        let info = load_commit_info(repo, node.oid)?;
+        graph.update(node.clone());
+
+        loop {
+            let (line, shown_commit_line) = graph.next_line();
+            if shown_commit_line {
+                let rendered =
+                    render_graph_commit_text(&node, &info, args, decorations.as_ref(), abbrev_len);
+                writeln!(out, "{line_prefix}{line}{rendered}")?;
+                break;
+            }
+            writeln!(out, "{line_prefix}{line}")?;
+        }
+
+        while !graph.is_commit_finished() {
+            let (line, _) = graph.next_line();
+            writeln!(out, "{line_prefix}{line}")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn simplify_merges_for_graph(repo: &Repository, commits: &[ObjectId]) -> Result<Vec<ObjectId>> {
+    let selected: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut out = Vec::new();
+    for oid in commits {
+        let raw_parents = load_raw_parents(repo, *oid)?;
+        let mut direct = load_raw_parents(repo, *oid)?;
+        direct.retain(|p| selected.contains(p));
+        if raw_parents.len() > 1 && direct.len() <= 1 {
+            continue;
+        }
+        if direct.len() <= 1 {
+            out.push(*oid);
+            continue;
+        }
+
+        let mut simplified = graph_simplify_parent_list(repo, &selected, &direct)?;
+        simplified.sort_unstable();
+        simplified.dedup();
+        if simplified.len() > 1 {
+            out.push(*oid);
+        }
+    }
+    Ok(out)
+}
+
+fn simplify_by_decoration_for_graph(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let decorations = collect_decorations(repo, false)?;
+    let decorated: HashSet<ObjectId> = decorations
+        .keys()
+        .filter_map(|hex| hex.parse::<ObjectId>().ok())
+        .collect();
+
+    let mut out = Vec::new();
+    for oid in commits {
+        if decorated.contains(oid) {
+            out.push(*oid);
+            continue;
+        }
+        let parents = load_raw_parents(repo, *oid)?;
+        if parents.len() > 1 {
+            out.push(*oid);
+        }
+    }
+    Ok(out)
+}
+
+fn graph_simplify_parent_list(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    parents: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    let mut out = Vec::new();
+    for parent in parents {
+        if parent_reachable_via_others(repo, selected, *parent, parents)? {
+            continue;
+        }
+        out.push(*parent);
+    }
+    Ok(out)
+}
+
+fn parent_reachable_via_others(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    target: ObjectId,
+    parents: &[ObjectId],
+) -> Result<bool> {
+    for parent in parents {
+        if *parent == target {
+            continue;
+        }
+        if graph_reaches(repo, selected, *parent, target)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn graph_reaches(
+    repo: &Repository,
+    selected: &HashSet<ObjectId>,
+    start: ObjectId,
+    target: ObjectId,
+) -> Result<bool> {
+    let mut stack = vec![start];
+    let mut seen = HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        if oid == target {
+            return Ok(true);
+        }
+        let mut parents = load_raw_parents(repo, oid)?;
+        parents.retain(|p| selected.contains(p));
+        stack.extend(parents);
+    }
+    Ok(false)
+}
+
+fn load_raw_parents(repo: &Repository, oid: ObjectId) -> Result<Vec<ObjectId>> {
+    let object = repo.odb.read(&oid)?;
+    let commit = parse_commit(&object.data)?;
+    Ok(commit.parents)
+}
+
+fn visible_parents_for_graph(
+    repo: &Repository,
+    oid: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+    simplify_merge_parents: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut direct = load_raw_parents(repo, oid)?;
+    if first_parent_only && direct.len() > 1 {
+        direct.truncate(1);
+    }
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for parent in direct {
+        collect_visible_parent_for_graph(
+            repo,
+            parent,
+            included,
+            first_parent_only,
+            &mut seen,
+            &mut out,
+        )?;
+    }
+    if simplify_merge_parents && out.len() > 1 {
+        let simplified = graph_simplify_parent_list(repo, included, &out)?;
+        let keep: HashSet<ObjectId> = simplified.into_iter().collect();
+        out.retain(|parent| keep.contains(parent));
+    }
+    let mut dedup = HashSet::new();
+    out.retain(|parent| dedup.insert(*parent));
+    Ok(out)
+}
+
+fn collect_visible_parent_for_graph(
+    repo: &Repository,
+    candidate: ObjectId,
+    included: &HashSet<ObjectId>,
+    first_parent_only: bool,
+    seen: &mut HashSet<ObjectId>,
+    out: &mut Vec<ObjectId>,
+) -> Result<()> {
+    if !seen.insert(candidate) {
+        return Ok(());
+    }
+    if included.contains(&candidate) {
+        out.push(candidate);
+        return Ok(());
+    }
+    let mut parents = load_raw_parents(repo, candidate)?;
+    if parents.is_empty() {
+        return Ok(());
+    }
+    if first_parent_only && parents.len() > 1 {
+        parents.truncate(1);
+    } else if !first_parent_only {
+        parents.truncate(1);
+    }
+    for parent in parents {
+        collect_visible_parent_for_graph(repo, parent, included, first_parent_only, seen, out)?;
+    }
+    Ok(())
+}
+
+fn first_parent_of_commit(repo: &Repository, oid: ObjectId) -> Result<Option<ObjectId>> {
+    let parents = load_raw_parents(repo, oid)?;
+    Ok(parents.first().copied())
+}
+
+fn first_parent_anchor_in_set(
+    repo: &Repository,
+    start: ObjectId,
+    anchors: &HashSet<ObjectId>,
+) -> Result<Option<ObjectId>> {
+    let mut seen = HashSet::new();
+    let mut cursor = Some(start);
+    while let Some(oid) = cursor {
+        if !seen.insert(oid) {
+            break;
+        }
+        if anchors.contains(&oid) {
+            return Ok(Some(oid));
+        }
+        cursor = first_parent_of_commit(repo, oid)?;
+    }
+    Ok(None)
+}
+
+fn reorder_path_limited_graph_commits(
+    repo: &Repository,
+    commits: &[ObjectId],
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let included: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut chain = Vec::new();
+    let mut chain_seen = HashSet::new();
+    let mut cursor = Some(commits[0]);
+    while let Some(oid) = cursor {
+        if !included.contains(&oid) || !chain_seen.insert(oid) {
+            break;
+        }
+        chain.push(oid);
+        let visible = visible_parents_for_graph(repo, oid, &included, first_parent_only, false)?;
+        cursor = visible.first().copied();
+    }
+
+    let chain_set: HashSet<ObjectId> = chain.iter().copied().collect();
+    let mut grouped: HashMap<Option<ObjectId>, Vec<ObjectId>> = HashMap::new();
+    for oid in commits {
+        if chain_set.contains(oid) {
+            continue;
+        }
+        let anchor = first_parent_anchor_in_set(repo, *oid, &chain_set)?;
+        grouped.entry(anchor).or_default().push(*oid);
+    }
+
+    let mut ordered = Vec::new();
+    for chain_oid in chain {
+        if let Some(group) = grouped.remove(&Some(chain_oid)) {
+            ordered.extend(group);
+        }
+        ordered.push(chain_oid);
+    }
+    if let Some(group) = grouped.remove(&None) {
+        ordered.extend(group);
+    }
+    for (_anchor, group) in grouped {
+        ordered.extend(group);
+    }
+    Ok(ordered)
+}
+
+fn expand_sparse_path_limited_graph_history(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push_unique = |oid: ObjectId, out: &mut Vec<ObjectId>| {
+        if seen.insert(oid) {
+            out.push(oid);
+        }
+    };
+
+    for window in commits.windows(2) {
+        let from = window[0];
+        let to = window[1];
+        push_unique(from, &mut expanded);
+
+        let mut cursor = first_parent_of_commit(repo, from)?;
+        let mut chain = Vec::new();
+        let mut found_target = false;
+        let mut local_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !local_seen.insert(oid) {
+                break;
+            }
+            if oid == to {
+                found_target = true;
+                break;
+            }
+            chain.push(oid);
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+        if found_target {
+            for oid in chain {
+                push_unique(oid, &mut expanded);
+            }
+        }
+    }
+
+    if let Some(&last) = commits.last() {
+        push_unique(last, &mut expanded);
+        let mut cursor = first_parent_of_commit(repo, last)?;
+        let mut tail_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !tail_seen.insert(oid) {
+                break;
+            }
+            push_unique(oid, &mut expanded);
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn order_boundary_commits_for_graph(
+    repo: &Repository,
+    boundaries: &[ObjectId],
+    first_included: Option<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    if boundaries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let boundary_set: HashSet<ObjectId> = boundaries.iter().copied().collect();
+    let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(start) = first_included {
+        let mut cursor = first_parent_of_commit(repo, start)?;
+        while let Some(oid) = cursor {
+            if !seen.insert(oid) {
+                break;
+            }
+            if boundary_set.contains(&oid) {
+                ordered.push(oid);
+            }
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+    }
+
+    for oid in boundaries {
+        if seen.insert(*oid) {
+            ordered.push(*oid);
+        }
+    }
+
+    Ok(ordered)
+}
+
+fn load_commit_info(repo: &Repository, oid: ObjectId) -> Result<CommitInfo> {
+    let obj = repo.odb.read(&oid)?;
+    let commit = parse_commit(&obj.data)?;
+    Ok(CommitInfo {
+        tree: commit.tree,
+        parents: commit.parents,
+        author: commit.author,
+        committer: commit.committer,
+        message: commit.message,
+    })
+}
+
+fn render_graph_commit_text(
+    node: &GraphCommitNode,
+    info: &CommitInfo,
+    args: &Args,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    abbrev_len: usize,
+) -> String {
+    let hex = node.oid.to_hex();
+    if args.oneline || args.format.as_deref() == Some("oneline") {
+        let first_line = info.message.lines().next().unwrap_or("");
+        return format!("{} {}", &hex[..abbrev_len.min(hex.len())], first_line);
+    }
+
+    if let Some(fmt) = args.format.as_deref() {
+        if fmt.starts_with("format:") || fmt.starts_with("tformat:") {
+            let template = if let Some(t) = fmt.strip_prefix("format:") {
+                t
+            } else if let Some(t) = fmt.strip_prefix("tformat:") {
+                t
+            } else {
+                fmt
+            };
+            return apply_format_string(
+                template,
+                &node.oid,
+                info,
+                decorations,
+                args.date.as_deref(),
+                abbrev_len,
+                false,
+            );
+        }
+        if fmt.contains('%') {
+            return apply_format_string(
+                fmt,
+                &node.oid,
+                info,
+                decorations,
+                args.date.as_deref(),
+                abbrev_len,
+                false,
+            );
+        }
+    }
+
+    info.message.lines().next().unwrap_or("").to_owned()
+}
+
+#[derive(Clone, Debug)]
+struct GraphCommitNode {
+    oid: ObjectId,
+    parents: Vec<ObjectId>,
+    is_boundary: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphState {
+    Padding,
+    Skip,
+    PreCommit,
+    Commit,
+    PostMerge,
+    Collapsing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GraphColumn {
+    oid: ObjectId,
+}
+
+#[derive(Debug)]
+struct AsciiGraph {
+    current: Option<GraphCommitNode>,
+    num_parents: usize,
+    width: usize,
+    expansion_row: usize,
+    state: GraphState,
+    prev_state: GraphState,
+    commit_index: usize,
+    prev_commit_index: usize,
+    merge_layout: isize,
+    edges_added: isize,
+    prev_edges_added: isize,
+    num_columns: usize,
+    num_new_columns: usize,
+    mapping_size: usize,
+    columns: Vec<GraphColumn>,
+    new_columns: Vec<GraphColumn>,
+    mapping: Vec<isize>,
+    old_mapping: Vec<isize>,
+}
+
+impl AsciiGraph {
+    fn new() -> Self {
+        Self {
+            current: None,
+            num_parents: 0,
+            width: 0,
+            expansion_row: 0,
+            state: GraphState::Padding,
+            prev_state: GraphState::Padding,
+            commit_index: 0,
+            prev_commit_index: 0,
+            merge_layout: 0,
+            edges_added: 0,
+            prev_edges_added: 0,
+            num_columns: 0,
+            num_new_columns: 0,
+            mapping_size: 0,
+            columns: Vec::new(),
+            new_columns: Vec::new(),
+            mapping: Vec::new(),
+            old_mapping: Vec::new(),
+        }
+    }
+
+    fn update(&mut self, commit: GraphCommitNode) {
+        self.current = Some(commit);
+        self.num_parents = self.current.as_ref().map_or(0, |c| c.parents.len());
+        self.prev_commit_index = self.commit_index;
+        self.update_columns();
+        self.expansion_row = 0;
+        if self.state != GraphState::Padding {
+            self.state = GraphState::Skip;
+        } else if self.needs_pre_commit_line() {
+            self.state = GraphState::PreCommit;
+        } else {
+            self.state = GraphState::Commit;
+        }
+    }
+
+    fn is_commit_finished(&self) -> bool {
+        self.state == GraphState::Padding
+    }
+
+    fn next_line(&mut self) -> (String, bool) {
+        if self.current.is_none() {
+            return (String::new(), false);
+        }
+        let mut line = String::new();
+        let shown_commit_line = match self.state {
+            GraphState::Padding => {
+                self.output_padding_line(&mut line);
+                false
+            }
+            GraphState::Skip => {
+                line.push_str("...");
+                if self.needs_pre_commit_line() {
+                    self.update_state(GraphState::PreCommit);
+                } else {
+                    self.update_state(GraphState::Commit);
+                }
+                false
+            }
+            GraphState::PreCommit => {
+                self.output_pre_commit_line(&mut line);
+                false
+            }
+            GraphState::Commit => {
+                self.output_commit_line(&mut line);
+                true
+            }
+            GraphState::PostMerge => {
+                self.output_post_merge_line(&mut line);
+                false
+            }
+            GraphState::Collapsing => {
+                self.output_collapsing_line(&mut line);
+                false
+            }
+        };
+
+        if line.len() < self.width {
+            line.push_str(&" ".repeat(self.width - line.len()));
+        }
+        (line, shown_commit_line)
+    }
+
+    fn update_state(&mut self, next: GraphState) {
+        self.prev_state = self.state;
+        self.state = next;
+    }
+
+    fn ensure_vec_sizes(&mut self, needed_columns: usize) {
+        let placeholder = match self.current.as_ref() {
+            Some(current) => current.oid,
+            None => return,
+        };
+        if self.columns.len() < needed_columns {
+            self.columns
+                .resize(needed_columns, GraphColumn { oid: placeholder });
+        }
+        if self.new_columns.len() < needed_columns {
+            self.new_columns
+                .resize(needed_columns, GraphColumn { oid: placeholder });
+        }
+        let map_len = needed_columns.saturating_mul(2);
+        if self.mapping.len() < map_len {
+            self.mapping.resize(map_len, -1);
+        }
+        if self.old_mapping.len() < map_len {
+            self.old_mapping.resize(map_len, -1);
+        }
+    }
+
+    fn find_new_column_by_commit(&self, oid: ObjectId) -> Option<usize> {
+        (0..self.num_new_columns).find(|&i| self.new_columns[i].oid == oid)
+    }
+
+    fn insert_into_new_columns(&mut self, oid: ObjectId, idx: isize) {
+        let mut i = self.find_new_column_by_commit(oid).unwrap_or_else(|| {
+            let pos = self.num_new_columns;
+            self.new_columns[pos] = GraphColumn { oid };
+            self.num_new_columns += 1;
+            pos
+        });
+
+        let mapping_idx: usize;
+        if self.num_parents > 1 && idx > -1 && self.merge_layout == -1 {
+            let dist = idx - i as isize;
+            let shift = if dist > 1 { (2 * dist) - 3 } else { 1 };
+            self.merge_layout = if dist > 0 { 0 } else { 1 };
+            self.edges_added = self.num_parents as isize + self.merge_layout - 2;
+            mapping_idx = (self.width as isize + (self.merge_layout - 1) * shift).max(0) as usize;
+            self.width = self
+                .width
+                .saturating_add((2 * self.merge_layout.max(0)) as usize);
+        } else if self.edges_added > 0
+            && self.width >= 2
+            && self.mapping.get(self.width - 2).copied() == Some(i as isize)
+        {
+            mapping_idx = self.width - 2;
+            self.edges_added = -1;
+        } else {
+            mapping_idx = self.width;
+            self.width = self.width.saturating_add(2);
+        }
+
+        if mapping_idx >= self.mapping.len() {
+            self.mapping.resize(mapping_idx + 1, -1);
+        }
+        self.mapping[mapping_idx] = i as isize;
+        // Keep i mutable use explicit to satisfy clippy about needless mut in closure capture.
+        i = i.saturating_add(0);
+        let _ = i;
+    }
+
+    fn update_columns(&mut self) {
+        std::mem::swap(&mut self.columns, &mut self.new_columns);
+        self.num_columns = self.num_new_columns;
+        self.num_new_columns = 0;
+
+        let max_new_columns = self.num_columns.saturating_add(self.num_parents.max(1));
+        self.ensure_vec_sizes(max_new_columns);
+        self.mapping_size = max_new_columns.saturating_mul(2);
+        for i in 0..self.mapping_size {
+            self.mapping[i] = -1;
+        }
+
+        self.width = 0;
+        self.prev_edges_added = self.edges_added;
+        self.edges_added = 0;
+
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        let mut seen_this = false;
+        let mut is_commit_in_columns = true;
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                is_commit_in_columns = false;
+                current_oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current_oid {
+                seen_this = true;
+                self.commit_index = i;
+                self.merge_layout = -1;
+                let parents = self
+                    .current
+                    .as_ref()
+                    .map(|c| c.parents.clone())
+                    .unwrap_or_default();
+                for parent in parents {
+                    let idx = i as isize;
+                    self.insert_into_new_columns(parent, idx);
+                }
+                if self.num_parents == 0 {
+                    self.width = self.width.saturating_add(2);
+                } else if !is_commit_in_columns && self.num_parents > 1 {
+                    // Keep width progression stable for detached columns.
+                    self.width = self.width.max((self.num_new_columns + 1) * 2);
+                }
+            } else {
+                self.insert_into_new_columns(col_oid, -1);
+            }
+        }
+
+        while self.mapping_size > 1 && self.mapping[self.mapping_size - 1] < 0 {
+            self.mapping_size -= 1;
+        }
+    }
+
+    fn num_dashed_parents(&self) -> isize {
+        self.num_parents as isize + self.merge_layout - 3
+    }
+
+    fn num_expansion_rows(&self) -> usize {
+        self.num_dashed_parents().max(0) as usize * 2
+    }
+
+    fn needs_pre_commit_line(&self) -> bool {
+        self.num_parents >= 3
+            && self.commit_index < self.num_columns.saturating_sub(1)
+            && self.expansion_row < self.num_expansion_rows()
+    }
+
+    fn is_mapping_correct(&self) -> bool {
+        for i in 0..self.mapping_size {
+            let target = self.mapping[i];
+            if target < 0 {
+                continue;
+            }
+            if target as usize == i / 2 {
+                continue;
+            }
+            return false;
+        }
+        true
+    }
+
+    fn output_padding_line(&self, line: &mut String) {
+        for i in 0..self.num_new_columns {
+            let _ = i;
+            line.push('|');
+            line.push(' ');
+        }
+    }
+
+    fn output_pre_commit_line(&mut self, line: &mut String) {
+        let mut seen_this = false;
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        for i in 0..self.num_columns {
+            let col_oid = self.columns[i].oid;
+            if col_oid == current_oid {
+                seen_this = true;
+                line.push('|');
+                line.push_str(&" ".repeat(self.expansion_row));
+            } else if seen_this && self.expansion_row == 0 {
+                if self.prev_state == GraphState::PostMerge && self.prev_commit_index < i {
+                    line.push('\\');
+                } else {
+                    line.push('|');
+                }
+            } else if seen_this && self.expansion_row > 0 {
+                line.push('\\');
+            } else {
+                line.push('|');
+            }
+            line.push(' ');
+        }
+
+        self.expansion_row += 1;
+        if !self.needs_pre_commit_line() {
+            self.update_state(GraphState::Commit);
+        }
+    }
+
+    fn output_commit_char(&self) -> char {
+        if self.current.as_ref().is_some_and(|c| c.is_boundary) {
+            'o'
+        } else {
+            '*'
+        }
+    }
+
+    fn draw_octopus_merge(&self, line: &mut String) {
+        let dashed = self.num_dashed_parents().max(0) as usize;
+        for i in 0..dashed {
+            let map_idx = (self.commit_index + i + 2) * 2;
+            let j = self.mapping.get(map_idx).copied().unwrap_or(-1);
+            if j < 0 || j as usize >= self.num_new_columns {
+                continue;
+            }
+            line.push('-');
+            line.push(if i == dashed - 1 { '.' } else { '-' });
+        }
+    }
+
+    fn output_commit_line(&mut self, line: &mut String) {
+        let mut seen_this = false;
+        let current_oid = match self.current.as_ref() {
+            Some(c) => c.oid,
+            None => return,
+        };
+
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                current_oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current_oid {
+                seen_this = true;
+                line.push(self.output_commit_char());
+                if self.num_parents > 2 {
+                    self.draw_octopus_merge(line);
+                }
+            } else if seen_this && self.edges_added > 1 {
+                line.push('\\');
+            } else if seen_this && self.edges_added == 1 {
+                if self.prev_state == GraphState::PostMerge
+                    && self.prev_edges_added > 0
+                    && self.prev_commit_index < i
+                {
+                    line.push('\\');
+                } else {
+                    line.push('|');
+                }
+            } else if self.prev_state == GraphState::Collapsing
+                && (2 * i + 1) < self.old_mapping.len()
+                && self.old_mapping[2 * i + 1] == i as isize
+                && (2 * i) < self.mapping.len()
+                && self.mapping[2 * i] < i as isize
+            {
+                line.push('/');
+            } else {
+                line.push('|');
+            }
+            line.push(' ');
+        }
+
+        if self.num_parents > 1 {
+            self.update_state(GraphState::PostMerge);
+        } else if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        } else {
+            self.update_state(GraphState::Collapsing);
+        }
+    }
+
+    fn output_post_merge_line(&mut self, line: &mut String) {
+        let merge_chars = ['/', '|', '\\'];
+        let current = match self.current.as_ref() {
+            Some(c) => c,
+            None => return,
+        };
+        let first_parent = current.parents.first().copied();
+        let mut parent_col_seen = false;
+        let mut seen_this = false;
+
+        for i in 0..=self.num_columns {
+            let col_oid = if i == self.num_columns {
+                if seen_this {
+                    break;
+                }
+                current.oid
+            } else {
+                self.columns[i].oid
+            };
+
+            if col_oid == current.oid {
+                seen_this = true;
+                let mut idx = self.merge_layout.clamp(0, 2) as usize;
+                for (j, parent) in current.parents.iter().enumerate() {
+                    if self.find_new_column_by_commit(*parent).is_none() {
+                        continue;
+                    }
+                    let c = merge_chars[idx.min(2)];
+                    line.push(c);
+                    if idx == 2 {
+                        if self.edges_added > 0 || j < current.parents.len().saturating_sub(1) {
+                            line.push(' ');
+                        }
+                    } else {
+                        idx += 1;
+                    }
+                }
+                if self.edges_added == 0 {
+                    line.push(' ');
+                }
+            } else if seen_this {
+                line.push(if self.edges_added > 0 { '\\' } else { '|' });
+                line.push(' ');
+            } else {
+                line.push('|');
+                if self.merge_layout != 0 || i != self.commit_index.saturating_sub(1) {
+                    line.push(if parent_col_seen { '_' } else { ' ' });
+                }
+            }
+
+            if first_parent.is_some_and(|p| p == col_oid) {
+                parent_col_seen = true;
+            }
+        }
+
+        if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        } else {
+            self.update_state(GraphState::Collapsing);
+        }
+    }
+
+    fn output_collapsing_line(&mut self, line: &mut String) {
+        std::mem::swap(&mut self.mapping, &mut self.old_mapping);
+        for i in 0..self.mapping_size {
+            self.mapping[i] = -1;
+        }
+
+        let mut used_horizontal = false;
+        let mut horizontal_edge: isize = -1;
+        let mut horizontal_target: isize = -1;
+
+        for i in 0..self.mapping_size {
+            let target = self.old_mapping[i];
+            if target < 0 {
+                continue;
+            }
+            if (target as usize) * 2 == i {
+                self.mapping[i] = target;
+            } else if i > 0 && self.mapping[i - 1] < 0 {
+                self.mapping[i - 1] = target;
+                if horizontal_edge == -1 {
+                    horizontal_edge = i as isize;
+                    horizontal_target = target;
+                    let mut j = (target as usize).saturating_mul(2).saturating_add(3);
+                    while j < i.saturating_sub(2) {
+                        self.mapping[j] = target;
+                        j += 2;
+                    }
+                }
+            } else if i > 0 && self.mapping[i - 1] == target {
+                continue;
+            } else if i > 1 && self.mapping[i - 2] < 0 {
+                self.mapping[i - 2] = target;
+                if horizontal_edge == -1 {
+                    horizontal_target = target;
+                    horizontal_edge = i as isize - 1;
+                    let mut j = (target as usize).saturating_mul(2).saturating_add(3);
+                    while j < i.saturating_sub(2) {
+                        self.mapping[j] = target;
+                        j += 2;
+                    }
+                }
+            }
+        }
+
+        for i in 0..self.mapping_size {
+            self.old_mapping[i] = self.mapping[i];
+        }
+        if self.mapping_size > 0 && self.mapping[self.mapping_size - 1] < 0 {
+            self.mapping_size -= 1;
+        }
+
+        for i in 0..self.mapping_size {
+            let target = self.mapping[i];
+            if target < 0 {
+                line.push(' ');
+            } else if (target as usize) * 2 == i {
+                line.push('|');
+            } else if target == horizontal_target && i as isize != horizontal_edge - 1 {
+                if i != (target as usize).saturating_mul(2).saturating_add(3) {
+                    self.mapping[i] = -1;
+                }
+                used_horizontal = true;
+                line.push('_');
+            } else {
+                if used_horizontal && (i as isize) < horizontal_edge {
+                    self.mapping[i] = -1;
+                }
+                line.push('/');
+            }
+        }
+
+        if self.is_mapping_correct() {
+            self.update_state(GraphState::Padding);
+        }
+    }
+}
+
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if args.unified.is_some() {
-        args.patch = true;
-    }
+    validate_pathspec_scope(&repo, &args.pathspecs)?;
+    let mut implied_pathspecs: Vec<String> = Vec::new();
 
     // Determine color mode
     let use_color = if args.no_color {
@@ -467,8 +1616,9 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_no_walk(&repo, &args);
     }
 
-    let explicit_pathspecs = !args.pathspecs.is_empty();
-    let mut pathspecs = args.pathspecs.clone();
+    if args.graph {
+        return run_graph_log(&repo, &args);
+    }
 
     // Determine starting points and excluded commits.
     // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
@@ -488,15 +1638,14 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut excludes = Vec::new();
         for rev in &args.revisions {
             if let Some(stripped) = rev.strip_prefix('^') {
-                match resolve_commitish_revision(&repo, stripped) {
-                    Ok(oid) => excludes.push(oid),
-                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
-                    Err(err) => return Err(err),
-                }
+                let oid = resolve_revision(&repo, stripped)?;
+                excludes.push(oid);
             } else {
-                match resolve_commitish_revision(&repo, rev) {
+                match resolve_revision(&repo, rev) {
                     Ok(oid) => oids.push(oid),
-                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
+                    Err(_err) if is_likely_pathspec_during_rev_parse(rev) => {
+                        implied_pathspecs.push(rev.clone());
+                    }
                     Err(err) => return Err(err),
                 }
             }
@@ -510,6 +1659,10 @@ pub fn run(mut args: Args) -> Result<()> {
         }
         (oids, excludes)
     };
+
+    if !implied_pathspecs.is_empty() {
+        validate_pathspec_scope(&repo, &implied_pathspecs)?;
+    }
 
     // Pre-compute the set of OIDs reachable from excluded refs.
     let excluded_set = if exclude_oids.is_empty() {
@@ -591,16 +1744,20 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         Some(collect_decorations(&repo, decorate_full)?)
     };
-    let decoration_colors = if use_color {
-        Some(load_decoration_colors(&repo))
-    } else {
-        None
-    };
 
     // Walk commits
-    let effective_pathspecs = if args.follow { &[][..] } else { &pathspecs[..] };
+    let mut combined_pathspecs = args.pathspecs.clone();
+    combined_pathspecs.extend(implied_pathspecs.iter().cloned());
+    combined_pathspecs = resolve_effective_pathspecs(&repo, &combined_pathspecs)?;
+
+    let effective_pathspecs = if args.follow {
+        &[][..]
+    } else {
+        &combined_pathspecs[..]
+    };
     let commits = walk_commits(
-        &repo,
+        &repo.odb,
+        &repo.git_dir,
         &start_oids,
         if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
         args.skip,
@@ -615,8 +1772,8 @@ pub fn run(mut args: Args) -> Result<()> {
     )?;
 
     // Apply --follow: filter commits and track renames
-    let commits = if args.follow && !pathspecs.is_empty() {
-        follow_filter(&repo.odb, commits, &pathspecs[0], args.max_count)?
+    let commits = if args.follow && !combined_pathspecs.is_empty() {
+        follow_filter(&repo.odb, commits, &combined_pathspecs[0], args.max_count)?
     } else {
         commits
     };
@@ -664,7 +1821,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let commits = {
         let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
         if let Some(s) = since_str {
-            if let Some(threshold) = parse_date_to_epoch(s, false) {
+            if let Some(threshold) = parse_date_to_epoch(s) {
                 commits
                     .into_iter()
                     .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) >= threshold)
@@ -678,7 +1835,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
     // Apply --until
     let commits = if let Some(ref s) = args.until {
-        if let Some(threshold) = parse_date_to_epoch(s, true) {
+        if let Some(threshold) = parse_date_to_epoch(s) {
             commits
                 .into_iter()
                 .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)
@@ -708,28 +1865,16 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
-        || args.unified.is_some()
         || args.stat
         || args.name_only
         || args.name_status
         || args.raw
         || args.cc;
-    let follow_name_status_mode = args.follow
-        && args.name_status
-        && !args.patch
-        && !args.patch_u
-        && !args.stat
-        && !args.name_only
-        && !args.raw
-        && !args.cc
-        && !pathspecs.is_empty();
-    let mut follow_tracked_path = pathspecs.first().cloned();
 
     let notes_map = load_notes_map(&repo);
-    let patch_context_lines = resolve_patch_context_lines(&repo, args.unified)?;
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
-        if is_format_separator && i > 0 && !show_diff {
+        if is_format_separator && i > 0 {
             if args.null_terminator {
                 write!(out, "\0")?;
             } else {
@@ -754,47 +1899,165 @@ pub fn run(mut args: Args) -> Result<()> {
             &args,
             decorations.as_ref(),
             use_color,
-            decoration_colors.as_ref(),
             &notes_map,
             &repo.odb,
         )?;
 
         if show_diff {
-            if follow_name_status_mode {
-                if args
-                    .format
-                    .as_deref()
-                    .is_some_and(|fmt| fmt.starts_with("format:"))
-                    && !args.null_terminator
-                {
-                    writeln!(out)?;
-                }
-                if let Some(tracked) = follow_tracked_path.clone() {
-                    if let Some((entry, next_tracked)) =
-                        select_follow_entry_for_commit(&repo.odb, commit_data, &tracked)?
-                    {
-                        write_follow_name_status_line(&mut out, &entry)?;
-                        follow_tracked_path = Some(next_tracked);
-                    }
-                }
-                if i + 1 < commits.len() {
-                    writeln!(out)?;
-                }
-                continue;
-            }
-            if args
-                .format
-                .as_deref()
-                .is_some_and(|fmt| fmt.starts_with("format:"))
-                && !args.null_terminator
-            {
-                writeln!(out)?;
-            }
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args, patch_context_lines)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
         }
     }
 
     Ok(())
+}
+
+/// Ensure pathspecs are within the repository worktree scope.
+///
+/// Git rejects pathspecs that escape the worktree (e.g. `..`) as
+/// "outside repository", and also rejects pathspecs provided while running in
+/// an unqualified `.git` context.
+fn validate_pathspec_scope(repo: &Repository, pathspecs: &[String]) -> Result<()> {
+    if pathspecs.is_empty() {
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        anyhow::bail!("pathspec '{}' is outside repository", pathspecs[0]);
+    };
+
+    let cwd_norm = normalize_path(&cwd);
+    let work_tree_norm = normalize_path(work_tree);
+    let git_dir_norm = normalize_path(&repo.git_dir);
+    if cwd_norm.starts_with(&git_dir_norm) {
+        anyhow::bail!("pathspec '{}' is outside repository", pathspecs[0]);
+    }
+
+    for pathspec in pathspecs {
+        if pathspec.starts_with(':') {
+            continue;
+        }
+        let as_path = Path::new(pathspec);
+        let candidate = if as_path.is_absolute() {
+            as_path.to_path_buf()
+        } else {
+            cwd_norm.join(as_path)
+        };
+        let candidate_norm = normalize_path(&candidate);
+        if !candidate_norm.starts_with(&work_tree_norm) {
+            anyhow::bail!("pathspec '{}' is outside repository", pathspec);
+        }
+    }
+
+    Ok(())
+}
+
+/// Resolve pathspecs relative to current working directory inside the worktree.
+///
+/// This aligns pathspec matching semantics for commands invoked from
+/// subdirectories, including magic forms like `:(icase)bar`.
+fn resolve_effective_pathspecs(repo: &Repository, pathspecs: &[String]) -> Result<Vec<String>> {
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(pathspecs.to_vec());
+    };
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let cwd_norm = normalize_path(&cwd);
+    let work_tree_norm = normalize_path(work_tree);
+    let cwd_rel = cwd_norm
+        .strip_prefix(&work_tree_norm)
+        .unwrap_or(Path::new(""));
+    let cwd_prefix = if cwd_rel.as_os_str().is_empty() {
+        String::new()
+    } else {
+        format!("{}/", cwd_rel.to_string_lossy())
+    };
+
+    let mut resolved = Vec::with_capacity(pathspecs.len());
+    for spec in pathspecs {
+        if spec.starts_with(":/") {
+            resolved.push(spec.clone());
+            continue;
+        }
+
+        if spec.starts_with(":(") {
+            if let Some(resolved_magic) = crate::pathspec::resolve_magic_pathspec(spec, &cwd_prefix)
+            {
+                resolved.push(resolved_magic);
+            } else {
+                resolved.push(spec.clone());
+            }
+            continue;
+        }
+
+        if spec.starts_with(':') {
+            resolved.push(spec.clone());
+            continue;
+        }
+
+        let as_path = Path::new(spec);
+        if as_path.is_absolute() {
+            let candidate = normalize_path(as_path);
+            if let Ok(rel) = candidate.strip_prefix(&work_tree_norm) {
+                resolved.push(normalize_relative_path_str(&rel.to_string_lossy()));
+            } else {
+                resolved.push(spec.clone());
+            }
+            continue;
+        }
+
+        resolved.push(resolve_pathspec_tail_with_prefix(spec, &cwd_prefix));
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_pathspec_tail_with_prefix(tail: &str, cwd_prefix: &str) -> String {
+    if tail.is_empty() {
+        return String::new();
+    }
+    if let Some(rooted) = tail.strip_prefix('/') {
+        return normalize_relative_path_str(rooted);
+    }
+    if cwd_prefix.is_empty() {
+        return normalize_relative_path_str(tail);
+    }
+    normalize_relative_path_str(&format!("{cwd_prefix}{tail}"))
+}
+
+fn normalize_relative_path_str(path: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(seg) => {
+                parts.push(seg.to_string_lossy().to_string());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
+}
+
+/// Normalize a path lexically by removing `.` and resolving `..`.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 /// Run `--no-walk` mode: show the given commits without walking their parents.
@@ -826,8 +2089,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut commits = Vec::new();
     for oid in oids {
-        let commit_oid = peel_to_commit_object(&repo.odb, oid)?;
-        let obj = repo.read_replaced(&commit_oid)?;
+        let obj = repo.read_replaced(&oid)?;
         let commit = parse_commit(&obj.data)?;
         let info = CommitInfo {
             tree: commit.tree,
@@ -861,22 +2123,15 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let show_diff = args.patch
         || args.patch_u
-        || args.unified.is_some()
         || args.stat
         || args.name_only
         || args.name_status
         || args.raw
         || args.cc;
 
-    let patch_context_lines = resolve_patch_context_lines(repo, args.unified)?;
-
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
-            if args.null_terminator {
-                write!(out, "\0")?;
-            } else {
-                writeln!(out)?;
-            }
+            writeln!(out)?;
         }
         let notes_map = load_notes_map(repo);
         format_commit(
@@ -886,20 +2141,11 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             args,
             decorations.as_ref(),
             false,
-            None,
             &notes_map,
             &repo.odb,
         )?;
         if show_diff {
-            if args
-                .format
-                .as_deref()
-                .is_some_and(|fmt| fmt.starts_with("format:"))
-                && !args.null_terminator
-            {
-                writeln!(out)?;
-            }
-            write_commit_diff(&mut out, &repo.odb, commit_data, args, patch_context_lines)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
     }
 
@@ -1317,7 +2563,8 @@ fn collect_reachable(odb: &Odb, starts: &[ObjectId]) -> Result<HashSet<ObjectId>
 }
 
 fn walk_commits(
-    repo: &Repository,
+    odb: &Odb,
+    git_dir: &Path,
     start: &[ObjectId],
     max_count: Option<usize>,
     skip: Option<usize>,
@@ -1335,30 +2582,27 @@ fn walk_commits(
         return Ok(Vec::new());
     }
 
-    let shallow_boundaries = load_shallow_boundaries(&repo.git_dir);
+    let shallow_boundaries = load_shallow_boundaries(git_dir);
 
     let mut visited: HashSet<ObjectId> = excluded.clone();
     // Use a priority queue sorted by commit date (descending) for correct traversal order.
-    // Each entry is (timestamp, insertion-order, oid) so BinaryHeap gives us highest
-    // timestamp first while preserving a deterministic order for timestamp ties.
-    let mut queue: std::collections::BinaryHeap<(i64, std::cmp::Reverse<usize>, ObjectId)> =
+    // Each entry is (timestamp, oid) so BinaryHeap gives us highest timestamp first.
+    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
         std::collections::BinaryHeap::new();
-    let mut seq = 0usize;
     for oid in start {
-        let ts = read_commit_timestamp(repo, oid);
-        queue.push((ts, std::cmp::Reverse(seq), *oid));
-        seq += 1;
+        let ts = read_commit_timestamp(odb, oid);
+        queue.push((ts, *oid));
     }
     let mut result = Vec::new();
     let mut skipped = 0;
     let skip_n = skip.unwrap_or(0);
 
-    while let Some((_ts, _ord, oid)) = queue.pop() {
+    while let Some((_ts, oid)) = queue.pop() {
         if !visited.insert(oid) {
             continue;
         }
 
-        let obj = repo.read_replaced(&oid)?;
+        let obj = odb.read(&oid)?;
         let commit = parse_commit(&obj.data)?;
 
         let info = CommitInfo {
@@ -1374,16 +2618,14 @@ fn walk_commits(
         if !shallow_boundaries.contains(&oid) {
             if first_parent {
                 if let Some(parent) = commit.parents.first() {
-                    let ts = read_commit_timestamp(repo, parent);
-                    queue.push((ts, std::cmp::Reverse(seq), *parent));
-                    seq += 1;
+                    let ts = read_commit_timestamp(odb, parent);
+                    queue.push((ts, *parent));
                 }
             } else {
                 for parent in &commit.parents {
                     if !visited.contains(parent) {
-                        let ts = read_commit_timestamp(repo, parent);
-                        queue.push((ts, std::cmp::Reverse(seq), *parent));
-                        seq += 1;
+                        let ts = read_commit_timestamp(odb, parent);
+                        queue.push((ts, *parent));
                     }
                 }
             }
@@ -1412,7 +2654,7 @@ fn walk_commits(
                 continue;
             }
         }
-        if !pathspecs.is_empty() && !commit_touches_paths(&repo.odb, &info, pathspecs)? {
+        if !pathspecs.is_empty() && !commit_touches_paths(odb, &info, pathspecs)? {
             continue;
         }
 
@@ -1459,21 +2701,6 @@ fn commit_touches_paths(odb: &Odb, info: &CommitInfo, pathspecs: &[String]) -> R
     Ok(false)
 }
 
-/// Peel an object (possibly a tag) to a commit object ID.
-fn peel_to_commit_object(odb: &Odb, mut oid: ObjectId) -> Result<ObjectId> {
-    loop {
-        let obj = odb.read(&oid)?;
-        match obj.kind {
-            grit_lib::objects::ObjectKind::Commit => return Ok(oid),
-            grit_lib::objects::ObjectKind::Tag => {
-                let tag = parse_tag(&obj.data)?;
-                oid = tag.object;
-            }
-            _ => anyhow::bail!("object {oid} is not a commit"),
-        }
-    }
-}
-
 /// Check if a file path matches a pathspec (prefix match or exact match).
 fn path_matches(path: &str, pathspec: &str) -> bool {
     crate::pathspec::pathspec_matches(pathspec, path)
@@ -1481,8 +2708,8 @@ fn path_matches(path: &str, pathspec: &str) -> bool {
 
 /// Extract unix timestamp from an author/committer line.
 /// Read the committer timestamp from a commit object for priority queue ordering.
-fn read_commit_timestamp(repo: &Repository, oid: &ObjectId) -> i64 {
-    match repo.read_replaced(oid) {
+fn read_commit_timestamp(odb: &Odb, oid: &ObjectId) -> i64 {
+    match odb.read(oid) {
         Ok(obj) => match parse_commit(&obj.data) {
             Ok(commit) => extract_timestamp(&commit.committer),
             Err(_) => 0,
@@ -1600,40 +2827,24 @@ fn format_commit(
     oid: &ObjectId,
     info: &CommitInfo,
     args: &Args,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     use_color: bool,
-    decoration_colors: Option<&DecorationColorSettings>,
     notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
     odb: &Odb,
 ) -> Result<()> {
     let hex = oid.to_hex();
-    let abbrev_len = if args.no_abbrev {
-        40
-    } else {
-        parse_abbrev(&args.abbrev)
-    };
+    let abbrev_len = parse_abbrev(&args.abbrev);
 
     if args.oneline || args.format.as_deref() == Some("oneline") {
         let first_line = info.message.lines().next().unwrap_or("");
-        let mut line = String::new();
-        let short_hex = &hex[..abbrev_len.min(hex.len())];
-        if use_color {
-            if let Some(colors) = decoration_colors {
-                line.push_str(&colors.commit);
-                line.push_str(short_hex);
-                line.push_str("\x1b[m");
-                line.push_str(&format_decoration_colored(&hex, decorations, colors));
-            } else {
-                line.push_str(short_hex);
-                line.push_str(&format_decoration(&hex, decorations));
-            }
-        } else {
-            line.push_str(short_hex);
-            line.push_str(&format_decoration(&hex, decorations));
-        }
-        line.push(' ');
-        line.push_str(first_line);
-        writeln!(out, "{line}")?;
+        let dec = format_decoration(&hex, decorations);
+        writeln!(
+            out,
+            "{}{} {}",
+            &hex[..abbrev_len.min(hex.len())],
+            dec,
+            first_line
+        )?;
         return Ok(());
     }
 
@@ -1656,7 +2867,6 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
-                decoration_colors,
             );
             if is_tformat {
                 if args.null_terminator {
@@ -1669,15 +2879,7 @@ fn format_commit(
             }
         }
         Some("short") => {
-            let dec = if use_color {
-                if let Some(colors) = decoration_colors {
-                    format_decoration_colored(&hex, decorations, colors)
-                } else {
-                    format_decoration(&hex, decorations)
-                }
-            } else {
-                format_decoration(&hex, decorations)
-            };
+            let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1699,21 +2901,9 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("medium") | None => {
-            let dec = if use_color {
-                if let Some(colors) = decoration_colors {
-                    format_decoration_colored(&hex, decorations, colors)
-                } else {
-                    format_decoration(&hex, decorations)
-                }
-            } else {
-                format_decoration(&hex, decorations)
-            };
+            let dec = format_decoration(&hex, decorations);
             if use_color {
-                if let Some(colors) = decoration_colors {
-                    writeln!(out, "{}commit {hex}\x1b[m{dec}", colors.commit)?;
-                } else {
-                    writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
-                }
+                writeln!(out, "\x1b[33mcommit {hex}\x1b[m{dec}")?;
             } else {
                 writeln!(out, "commit {hex}{dec}")?;
             }
@@ -1742,15 +2932,7 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("full") => {
-            let dec = if use_color {
-                if let Some(colors) = decoration_colors {
-                    format_decoration_colored(&hex, decorations, colors)
-                } else {
-                    format_decoration(&hex, decorations)
-                }
-            } else {
-                format_decoration(&hex, decorations)
-            };
+            let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1773,15 +2955,7 @@ fn format_commit(
             writeln!(out)?;
         }
         Some("fuller") => {
-            let dec = if use_color {
-                if let Some(colors) = decoration_colors {
-                    format_decoration_colored(&hex, decorations, colors)
-                } else {
-                    format_decoration(&hex, decorations)
-                }
-            } else {
-                format_decoration(&hex, decorations)
-            };
+            let dec = format_decoration(&hex, decorations);
             writeln!(out, "commit {hex}{dec}")?;
             if info.parents.len() > 1 {
                 let parent_abbrevs: Vec<String> = info
@@ -1823,7 +2997,6 @@ fn format_commit(
                 date_format,
                 abbrev_len,
                 use_color,
-                decoration_colors,
             );
             writeln!(out, "{formatted}")?;
         }
@@ -1837,11 +3010,10 @@ fn apply_format_string(
     template: &str,
     oid: &ObjectId,
     info: &CommitInfo,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     date_format: Option<&str>,
     abbrev_len: usize,
     use_color: bool,
-    decoration_colors: Option<&DecorationColorSettings>,
 ) -> String {
     let hex = oid.to_hex();
 
@@ -2200,29 +3372,13 @@ fn apply_format_string(
                 Some('d') => {
                     chars.next();
                     // Decorations
-                    let dec = if use_color {
-                        if let Some(colors) = decoration_colors {
-                            format_decoration_colored(&hex, decorations, colors)
-                        } else {
-                            format_decoration(&hex, decorations)
-                        }
-                    } else {
-                        format_decoration(&hex, decorations)
-                    };
+                    let dec = format_decoration(&hex, decorations);
                     result.push_str(&dec);
                 }
                 Some('D') => {
                     chars.next();
                     // Decorations without parens
-                    let dec = if use_color {
-                        if let Some(colors) = decoration_colors {
-                            format_decoration_no_parens_colored(&hex, decorations, colors)
-                        } else {
-                            format_decoration_no_parens(&hex, decorations)
-                        }
-                    } else {
-                        format_decoration_no_parens(&hex, decorations)
-                    };
+                    let dec = format_decoration_no_parens(&hex, decorations);
                     result.push_str(&dec);
                 }
                 Some('n') => {
@@ -2447,97 +3603,35 @@ fn format_ansi_color_spec(spec: &str) -> String {
             _ => None,
         }
     }
-    let mut bold = false;
-    let mut dim = false;
-    let mut italic = false;
-    let mut underline = false;
-    let mut blink = false;
-    let mut reverse = false;
-    let mut strike = false;
-    let mut nobold_dim = false;
-    let mut noitalic = false;
-    let mut nounderline = false;
-    let mut noblink = false;
-    let mut noreverse = false;
-    let mut nostrike = false;
-    let mut fg: Option<u8> = None;
-    let mut bg: Option<u8> = None;
-
+    let mut codes = Vec::new();
+    let mut fg_set = false;
     for part in spec.split_whitespace() {
         match part {
-            "normal" => return "\x1b[m".to_owned(),
-            "bold" => bold = true,
-            "dim" => dim = true,
-            "italic" => italic = true,
-            "ul" | "underline" => underline = true,
-            "blink" => blink = true,
-            "reverse" => reverse = true,
-            "strike" => strike = true,
-            "nobold" | "nodim" => nobold_dim = true,
-            "noitalic" => noitalic = true,
-            "noul" | "nounderline" => nounderline = true,
-            "noblink" => noblink = true,
-            "noreverse" => noreverse = true,
-            "nostrike" => nostrike = true,
+            "bold" => codes.push("1".to_owned()),
+            "dim" => codes.push("2".to_owned()),
+            "italic" => codes.push("3".to_owned()),
+            "ul" | "underline" => codes.push("4".to_owned()),
+            "blink" => codes.push("5".to_owned()),
+            "reverse" => codes.push("7".to_owned()),
+            "strike" => codes.push("9".to_owned()),
+            "nobold" | "nodim" => codes.push("22".to_owned()),
+            "noitalic" => codes.push("23".to_owned()),
+            "noul" | "nounderline" => codes.push("24".to_owned()),
+            "noblink" => codes.push("25".to_owned()),
+            "noreverse" => codes.push("27".to_owned()),
+            "nostrike" => codes.push("29".to_owned()),
             _ => {
                 if let Some(c) = color_code(part) {
-                    if fg.is_none() {
-                        fg = Some(c);
+                    if !fg_set {
+                        codes.push(format!("{}", 30 + c));
+                        fg_set = true;
                     } else {
-                        bg = Some(c);
+                        codes.push(format!("{}", 40 + c));
                     }
                 }
             }
         }
     }
-
-    let mut codes = Vec::new();
-    if bold {
-        codes.push("1".to_owned());
-    }
-    if dim {
-        codes.push("2".to_owned());
-    }
-    if italic {
-        codes.push("3".to_owned());
-    }
-    if underline {
-        codes.push("4".to_owned());
-    }
-    if blink {
-        codes.push("5".to_owned());
-    }
-    if reverse {
-        codes.push("7".to_owned());
-    }
-    if strike {
-        codes.push("9".to_owned());
-    }
-    if nobold_dim {
-        codes.push("22".to_owned());
-    }
-    if noitalic {
-        codes.push("23".to_owned());
-    }
-    if nounderline {
-        codes.push("24".to_owned());
-    }
-    if noblink {
-        codes.push("25".to_owned());
-    }
-    if noreverse {
-        codes.push("27".to_owned());
-    }
-    if nostrike {
-        codes.push("29".to_owned());
-    }
-    if let Some(fg_color) = fg {
-        codes.push(format!("{}", 30 + fg_color));
-    }
-    if let Some(bg_color) = bg {
-        codes.push(format!("{}", 40 + bg_color));
-    }
-
     if codes.is_empty() {
         String::new()
     } else {
@@ -2770,201 +3864,95 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
         .map_err(|e| anyhow::anyhow!("unknown revision '{}': {}", rev, e))
 }
 
-/// Resolve a revision and ensure it refers to a commit (peeling annotated tags).
-fn resolve_commitish_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
-    let mut oid = resolve_revision(repo, rev)?;
-    loop {
-        let obj = repo.odb.read(&oid)?;
-        match obj.kind {
-            grit_lib::objects::ObjectKind::Commit => return Ok(oid),
-            grit_lib::objects::ObjectKind::Tag => {
-                let tag = parse_tag(&obj.data)?;
-                oid = tag.object;
-            }
-            _ => anyhow::bail!("unknown revision '{}'", rev),
-        }
+/// Heuristic used for rev/pathspec DWIM when no `--` separator is present.
+fn is_likely_pathspec_during_rev_parse(token: &str) -> bool {
+    if token.contains("^{") || token.contains("@{") || token.contains("..") {
+        return false;
     }
-}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-enum DecorationKind {
-    Head,
-    Branch,
-    RemoteBranch,
-    Tag,
-    Stash,
-    Grafted,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct DecorationRef {
-    label: String,
-    kind: DecorationKind,
-}
-
-#[derive(Clone, Debug)]
-struct DecorationColorSettings {
-    commit: String,
-    branch: String,
-    remote_branch: String,
-    tag: String,
-    stash: String,
-    head: String,
-    grafted: String,
-}
-
-fn load_decoration_colors(repo: &Repository) -> DecorationColorSettings {
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let pick = |key: &str, default: &str| {
-        let spec = config.get(key).unwrap_or_else(|| default.to_owned());
-        format_ansi_color_spec(&spec)
-    };
-    DecorationColorSettings {
-        commit: pick("color.diff.commit", "yellow"),
-        branch: pick("color.decorate.branch", "green"),
-        remote_branch: pick("color.decorate.remoteBranch", "red"),
-        tag: pick("color.decorate.tag", "yellow"),
-        stash: pick("color.decorate.stash", "magenta"),
-        head: pick("color.decorate.HEAD", "cyan"),
-        grafted: pick("color.decorate.grafted", "blue"),
+    if let Some(rest) = token.strip_prefix(":/") {
+        return rest.contains('*') || rest.contains('?') || rest.contains('[');
     }
+
+    token.starts_with(":(")
+        || token.contains('*')
+        || token.contains('?')
+        || token.contains('[')
+        || token.contains(']')
 }
 
 /// Collect ref name → OID decorations from the repository.
 fn collect_decorations(
     repo: &Repository,
     full: bool,
-) -> Result<std::collections::HashMap<String, Vec<DecorationRef>>> {
-    let mut map: std::collections::HashMap<String, Vec<DecorationRef>> =
-        std::collections::HashMap::new();
-    let mut head_target: Option<(String, DecorationRef)> = None;
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut head_target: Option<(String, String)> = None;
 
+    // HEAD
     let head = resolve_head(&repo.git_dir)?;
     if let Some(oid) = head.oid() {
         let hex = oid.to_hex();
-        let head_ref = match &head {
+        let label = match &head {
             HeadState::Branch { short_name, .. } => {
                 let branch_label = if full {
                     format!("refs/heads/{short_name}")
                 } else {
                     short_name.to_owned()
                 };
-                head_target = Some((
-                    hex.clone(),
-                    DecorationRef {
-                        label: branch_label.clone(),
-                        kind: DecorationKind::Branch,
-                    },
-                ));
-                let head_label = if full {
+                head_target = Some((hex.clone(), branch_label));
+                if full {
                     format!("HEAD -> refs/heads/{short_name}")
                 } else {
                     format!("HEAD -> {short_name}")
-                };
-                DecorationRef {
-                    label: head_label,
-                    kind: DecorationKind::Head,
                 }
             }
-            _ => DecorationRef {
-                label: "HEAD".to_owned(),
-                kind: DecorationKind::Head,
-            },
+            _ => "HEAD".to_owned(),
         };
-        map.entry(hex).or_default().push(head_ref);
+        map.entry(hex).or_default().push(label);
     }
 
     if full {
         collect_refs_from_dir(
-            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "refs/heads/",
-            DecorationKind::Branch,
-            false,
             &mut map,
         )?;
         collect_refs_from_dir(
-            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: refs/tags/",
-            DecorationKind::Tag,
-            true,
-            &mut map,
-        )?;
-        collect_refs_from_dir(
-            &repo.git_dir,
-            &repo.odb,
-            &repo.git_dir.join("refs/remotes"),
-            "refs/remotes/",
-            "refs/remotes/",
-            DecorationKind::RemoteBranch,
-            false,
             &mut map,
         )?;
     } else {
         collect_refs_from_dir(
-            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/heads"),
             "refs/heads/",
             "",
-            DecorationKind::Branch,
-            false,
             &mut map,
         )?;
         collect_refs_from_dir(
-            &repo.git_dir,
             &repo.odb,
             &repo.git_dir.join("refs/tags"),
             "refs/tags/",
             "tag: ",
-            DecorationKind::Tag,
-            true,
-            &mut map,
-        )?;
-        collect_refs_from_dir(
-            &repo.git_dir,
-            &repo.odb,
-            &repo.git_dir.join("refs/remotes"),
-            "refs/remotes/",
-            "",
-            DecorationKind::RemoteBranch,
-            false,
             &mut map,
         )?;
     }
 
-    let stash_ref = repo.git_dir.join("refs/stash");
-    if let Ok(content) = std::fs::read_to_string(stash_ref) {
-        let raw = content.trim();
-        let oid = if let Some(target) = raw.strip_prefix("ref: ") {
-            grit_lib::refs::resolve_ref(&repo.git_dir, target)
-                .ok()
-                .map(|value| value.to_hex())
-        } else {
-            Some(raw.to_owned())
-        };
-        if let Some(hex) = oid {
-            map.entry(hex).or_default().push(DecorationRef {
-                label: "refs/stash".to_owned(),
-                kind: DecorationKind::Stash,
-            });
-        }
-    }
-
-    synthesize_remote_head_decorations(&mut map, full);
-    collect_replace_decorations(repo, &mut map)?;
-
-    if let Some((head_hex, branch_ref)) = head_target {
+    // Avoid duplicate current branch decoration when we already show
+    // "HEAD -> <branch>" for the same commit.
+    if let Some((head_hex, branch_label)) = head_target {
         if let Some(refs) = map.get_mut(&head_hex) {
-            refs.retain(|r| r != &branch_ref || r.label.starts_with("HEAD -> "));
+            refs.retain(|r| r != &branch_label || r.starts_with("HEAD -> "));
         }
     }
 
+    // De-duplicate while preserving order.
     for refs in map.values_mut() {
         let mut seen = std::collections::HashSet::new();
         refs.retain(|r| seen.insert(r.clone()));
@@ -2973,74 +3961,13 @@ fn collect_decorations(
     Ok(map)
 }
 
-fn synthesize_remote_head_decorations(
-    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
-    full: bool,
-) {
-    let mut remote_targets: std::collections::HashMap<String, Vec<(String, String)>> =
-        std::collections::HashMap::new();
-    let mut existing_heads = std::collections::HashSet::new();
-
-    for (oid, refs) in map.iter() {
-        for reference in refs {
-            if reference.kind != DecorationKind::RemoteBranch {
-                continue;
-            }
-            let trimmed = if full {
-                if let Some(rest) = reference.label.strip_prefix("refs/remotes/") {
-                    rest
-                } else {
-                    continue;
-                }
-            } else {
-                reference.label.as_str()
-            };
-            if let Some((remote, branch)) = trimmed.split_once('/') {
-                if branch == "HEAD" {
-                    existing_heads.insert(remote.to_owned());
-                } else {
-                    remote_targets
-                        .entry(remote.to_owned())
-                        .or_default()
-                        .push((branch.to_owned(), oid.clone()));
-                }
-            }
-        }
-    }
-
-    for (remote, targets) in remote_targets {
-        if existing_heads.contains(&remote) || targets.is_empty() {
-            continue;
-        }
-        let chosen = targets
-            .iter()
-            .find(|(branch, _)| branch == "main")
-            .or_else(|| targets.iter().find(|(branch, _)| branch == "master"))
-            .unwrap_or(&targets[0]);
-        let label = if full {
-            format!("refs/remotes/{remote}/HEAD")
-        } else {
-            format!("{remote}/HEAD")
-        };
-        map.entry(chosen.1.clone())
-            .or_default()
-            .push(DecorationRef {
-                label,
-                kind: DecorationKind::RemoteBranch,
-            });
-    }
-}
-
 /// Recursively collect refs from a directory.
 fn collect_refs_from_dir(
-    git_dir: &Path,
     odb: &Odb,
     dir: &std::path::Path,
     strip_prefix: &str,
     display_prefix: &str,
-    kind: DecorationKind,
-    peel_tag_target: bool,
-    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
+    map: &mut std::collections::HashMap<String, Vec<String>>,
 ) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -3051,90 +3978,24 @@ fn collect_refs_from_dir(
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_refs_from_dir(
-                git_dir,
-                odb,
-                &path,
-                strip_prefix,
-                display_prefix,
-                kind,
-                peel_tag_target,
-                map,
-            )?;
+            collect_refs_from_dir(odb, &path, strip_prefix, display_prefix, map)?;
         } else if let Ok(content) = std::fs::read_to_string(&path) {
-            let raw = content.trim();
-            let hex = if let Some(target) = raw.strip_prefix("ref: ") {
-                grit_lib::refs::resolve_ref(git_dir, target)
-                    .ok()
-                    .map(|oid| oid.to_hex())
-            } else {
-                Some(raw.to_owned())
-            };
+            let hex = content.trim();
             let full_ref = path.to_string_lossy();
-            if let (Some(hex), Some(idx)) = (hex, full_ref.find(strip_prefix)) {
+            if let Some(idx) = full_ref.find(strip_prefix) {
                 let name = &full_ref[idx + strip_prefix.len()..];
                 let label = format!("{display_prefix}{name}");
-                let resolved_hex = if peel_tag_target {
-                    peel_to_commit_hex(odb, &hex).unwrap_or(hex)
+                // Dereference annotated tags to the commit they point at
+                let resolved_hex = if display_prefix.contains("tag") {
+                    peel_to_commit_hex(odb, hex).unwrap_or_else(|| hex.to_owned())
                 } else {
-                    hex
+                    hex.to_owned()
                 };
-                map.entry(resolved_hex)
-                    .or_default()
-                    .push(DecorationRef { label, kind });
+                map.entry(resolved_hex).or_default().push(label);
             }
         }
     }
 
-    Ok(())
-}
-
-fn collect_replace_decorations(
-    repo: &Repository,
-    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
-) -> Result<()> {
-    let replace_base = std::env::var("GIT_REPLACE_REF_BASE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "refs/replace/".to_owned());
-    let replace_base = if replace_base.ends_with('/') {
-        replace_base
-    } else {
-        format!("{replace_base}/")
-    };
-    let replace_dir = repo.git_dir.join(replace_base.trim_end_matches('/'));
-    collect_replace_ref_dir(&replace_dir, &replace_dir, map)
-}
-
-fn collect_replace_ref_dir(
-    root: &Path,
-    dir: &Path,
-    map: &mut std::collections::HashMap<String, Vec<DecorationRef>>,
-) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return Ok(()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_replace_ref_dir(root, &path, map)?;
-            continue;
-        }
-        if !path.is_file() {
-            continue;
-        }
-        if let Ok(relative) = path.strip_prefix(root) {
-            let name = relative.to_string_lossy().replace('/', "");
-            if name.parse::<ObjectId>().is_ok() {
-                map.entry(name).or_default().push(DecorationRef {
-                    label: "replaced".to_owned(),
-                    kind: DecorationKind::Grafted,
-                });
-            }
-        }
-    }
     Ok(())
 }
 
@@ -3162,18 +4023,12 @@ fn peel_to_commit_hex(odb: &Odb, hex: &str) -> Option<String> {
 /// Format decoration string for a commit (with parentheses).
 fn format_decoration(
     hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
 ) -> String {
     match decorations {
         Some(map) => {
             if let Some(refs) = map.get(hex) {
-                format!(
-                    " ({})",
-                    refs.iter()
-                        .map(|entry| entry.label.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+                format!(" ({})", refs.join(", "))
             } else {
                 String::new()
             }
@@ -3185,15 +4040,12 @@ fn format_decoration(
 /// Format decoration string without parentheses (for %D).
 fn format_decoration_no_parens(
     hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
 ) -> String {
     match decorations {
         Some(map) => {
             if let Some(refs) = map.get(hex) {
-                refs.iter()
-                    .map(|entry| entry.label.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                refs.join(", ")
             } else {
                 String::new()
             }
@@ -3202,120 +4054,7 @@ fn format_decoration_no_parens(
     }
 }
 
-fn format_decoration_colored(
-    hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
-    colors: &DecorationColorSettings,
-) -> String {
-    match decorations {
-        Some(map) => {
-            if let Some(refs) = map.get(hex) {
-                let mut output = String::new();
-                output.push_str(&colors.commit);
-                output.push_str(" (");
-                output.push_str("\x1b[m");
-                for (index, entry) in refs.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(&colors.commit);
-                        output.push_str(", ");
-                        output.push_str("\x1b[m");
-                    }
-                    output.push_str(&format_single_decoration_colored(entry, colors));
-                }
-                output.push_str(&colors.commit);
-                output.push(')');
-                output.push_str("\x1b[m");
-                output
-            } else {
-                String::new()
-            }
-        }
-        None => String::new(),
-    }
-}
-
-fn format_decoration_no_parens_colored(
-    hex: &str,
-    decorations: Option<&std::collections::HashMap<String, Vec<DecorationRef>>>,
-    colors: &DecorationColorSettings,
-) -> String {
-    match decorations {
-        Some(map) => {
-            if let Some(refs) = map.get(hex) {
-                let mut output = String::new();
-                for (index, entry) in refs.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(&colors.commit);
-                        output.push_str(", ");
-                        output.push_str("\x1b[m");
-                    }
-                    output.push_str(&colors.commit);
-                    output.push_str(&format_single_decoration_colored(entry, colors));
-                    output.push_str("\x1b[m");
-                }
-                output
-            } else {
-                String::new()
-            }
-        }
-        None => String::new(),
-    }
-}
-
-fn format_single_decoration_colored(
-    decoration: &DecorationRef,
-    colors: &DecorationColorSettings,
-) -> String {
-    if let Some(target) = decoration.label.strip_prefix("HEAD -> ") {
-        let mut output = String::new();
-        output.push_str(&colors.head);
-        output.push_str("HEAD");
-        output.push_str("\x1b[m");
-        output.push_str(&colors.commit);
-        output.push_str(" -> ");
-        output.push_str("\x1b[m");
-        output.push_str(&colors.branch);
-        output.push_str(target);
-        output.push_str("\x1b[m");
-        return output;
-    }
-
-    if let Some(target) = decoration
-        .label
-        .strip_prefix("tag: refs/tags/")
-        .or_else(|| decoration.label.strip_prefix("tag: "))
-    {
-        let mut output = String::new();
-        output.push_str(&colors.tag);
-        output.push_str("tag: ");
-        output.push_str("\x1b[m");
-        output.push_str(&colors.tag);
-        output.push_str(target);
-        output.push_str("\x1b[m");
-        return output;
-    }
-
-    let style = match decoration.kind {
-        DecorationKind::Head => &colors.head,
-        DecorationKind::Branch => &colors.branch,
-        DecorationKind::RemoteBranch => &colors.remote_branch,
-        DecorationKind::Tag => &colors.tag,
-        DecorationKind::Stash => &colors.stash,
-        DecorationKind::Grafted => &colors.grafted,
-    };
-    if style.is_empty() {
-        let mut output = String::new();
-        output.push_str(decoration.label.as_str());
-        output.push_str("\x1b[m");
-        output
-    } else {
-        let mut output = String::new();
-        output.push_str(style);
-        output.push_str(decoration.label.as_str());
-        output.push_str("\x1b[m");
-        output
-    }
-}
+// ── Diff output for log ──────────────────────────────────────────────
 
 /// Compute combined diff entries: only files that differ from ALL parents.
 fn compute_combined_diff_entries(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
@@ -3373,7 +4112,6 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
-    patch_context_lines: usize,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
     let mut entries = compute_commit_diff(odb, info)?;
@@ -3395,7 +4133,7 @@ fn write_commit_diff(
     };
 
     // Determine if patch content will be shown (for --- separator logic)
-    let has_patch = (args.patch || args.patch_u || args.cc || args.unified.is_some()) && {
+    let has_patch = (args.patch || args.patch_u || args.cc) && {
         let show_entries = if args.cc && is_merge {
             &combined_entries
         } else {
@@ -3450,44 +4188,18 @@ fn write_commit_diff(
         writeln!(out)?;
     }
 
-    if args.patch || args.patch_u || args.cc || args.unified.is_some() {
+    if args.patch || args.patch_u || args.cc {
         let show_entries = if args.cc && is_merge {
             &combined_entries
         } else {
             &entries
         };
         for entry in show_entries {
-            log_write_patch_entry(out, odb, entry, patch_context_lines)?;
+            log_write_patch_entry(out, odb, entry, 3)?;
         }
     }
 
     Ok(())
-}
-
-/// Resolve effective patch context lines for `log -p`.
-fn resolve_patch_context_lines(repo: &Repository, cli_unified: Option<usize>) -> Result<usize> {
-    if let Some(value) = cli_unified {
-        return Ok(value);
-    }
-
-    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    if let Some(value) = config.get("diff.context") {
-        return parse_diff_context_config_value(&value);
-    }
-
-    Ok(3)
-}
-
-/// Parse `diff.context` config value with git-compatible failure classes.
-fn parse_diff_context_config_value(value: &str) -> Result<usize> {
-    match value.parse::<i64>() {
-        Ok(parsed) if parsed >= 0 => Ok(parsed as usize),
-        Ok(_) => anyhow::bail!("fatal: bad config variable 'diff.context'"),
-        Err(_) => anyhow::bail!(
-            "fatal: bad numeric config value '{}' for 'diff.context': invalid unit",
-            value
-        ),
-    }
 }
 
 /// Write a unified-diff block for one entry.
@@ -3713,9 +4425,8 @@ fn collect_oids_from_dir(
         Ok(e) => e,
         Err(_) => return Ok(()),
     };
-    let mut entries: Vec<std::fs::DirEntry> = entries.collect::<std::io::Result<Vec<_>>>()?;
-    entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        let entry = entry?;
         let ft = entry.file_type()?;
         if ft.is_dir() {
             collect_oids_from_dir(git_dir, &entry.path(), oids, seen)?;
@@ -3776,33 +4487,6 @@ fn commit_has_object(odb: &Odb, info: &CommitInfo, target: &ObjectId) -> Result<
             return Ok(true);
         }
     }
-
-    let old_contains = match parent_tree {
-        Some(tree) => tree_contains_object(odb, &tree, target)?,
-        None => false,
-    };
-    let new_contains = tree_contains_object(odb, &info.tree, target)?;
-    if old_contains != new_contains {
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-fn tree_contains_object(odb: &Odb, tree_oid: &ObjectId, target: &ObjectId) -> Result<bool> {
-    if tree_oid == target {
-        return Ok(true);
-    }
-    let tree_obj = odb.read(tree_oid)?;
-    let entries = parse_tree(&tree_obj.data)?;
-    for entry in entries {
-        if entry.oid == *target {
-            return Ok(true);
-        }
-        if entry.mode == 0o040000 && tree_contains_object(odb, &entry.oid, target)? {
-            return Ok(true);
-        }
-    }
     Ok(false)
 }
 
@@ -3815,7 +4499,7 @@ fn follow_filter(
     initial_path: &str,
     max_count: Option<usize>,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
-    use grit_lib::diff::detect_copies;
+    use grit_lib::diff::detect_renames;
 
     let mut tracked_path = initial_path.to_string();
     let mut result = Vec::new();
@@ -3830,18 +4514,12 @@ fn follow_filter(
         };
 
         let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
-
-        let source_tree_entries = if let Some(tree_oid) = parent_tree.as_ref() {
-            collect_tree_entries_for_copy_detection(odb, tree_oid)?
-        } else {
-            Vec::new()
-        };
-        let entries = detect_copies(odb, raw_entries, 50, true, &source_tree_entries);
+        let entries = detect_renames(odb, raw_entries, 50);
 
         let mut touches = false;
         for entry in &entries {
             match entry.status {
-                DiffStatus::Renamed | DiffStatus::Copied => {
+                DiffStatus::Renamed => {
                     // Check if the new path matches our tracked path
                     if let Some(new_path) = entry.new_path.as_deref() {
                         if new_path == tracked_path {
@@ -3879,106 +4557,6 @@ fn follow_filter(
     }
 
     Ok(result)
-}
-
-/// Collect `(path, mode, oid)` tuples from a tree for copy detection.
-fn collect_tree_entries_for_copy_detection(
-    odb: &Odb,
-    tree_oid: &ObjectId,
-) -> Result<Vec<(String, String, ObjectId)>> {
-    fn walk(
-        odb: &Odb,
-        tree_oid: &ObjectId,
-        prefix: &str,
-        out: &mut Vec<(String, String, ObjectId)>,
-    ) -> Result<()> {
-        let tree_obj = odb.read(tree_oid)?;
-        let entries = parse_tree(&tree_obj.data)?;
-        for entry in entries {
-            let name = String::from_utf8_lossy(&entry.name).to_string();
-            let path = if prefix.is_empty() {
-                name
-            } else {
-                format!("{prefix}/{name}")
-            };
-            if entry.mode == 0o040000 {
-                walk(odb, &entry.oid, &path, out)?;
-            } else {
-                out.push((path, format!("{:06o}", entry.mode), entry.oid));
-            }
-        }
-        Ok(())
-    }
-
-    let mut out = Vec::new();
-    walk(odb, tree_oid, "", &mut out)?;
-    Ok(out)
-}
-
-/// Select the best follow-aware name-status entry for a single commit.
-///
-/// Returns the entry to print and the next tracked path to use when walking
-/// older commits.
-fn select_follow_entry_for_commit(
-    odb: &Odb,
-    info: &CommitInfo,
-    tracked_path: &str,
-) -> Result<Option<(DiffEntry, String)>> {
-    use grit_lib::diff::detect_copies;
-
-    let parent_tree = if let Some(parent) = info.parents.first() {
-        let pobj = odb.read(parent)?;
-        let pc = parse_commit(&pobj.data)?;
-        Some(pc.tree)
-    } else {
-        None
-    };
-
-    let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
-    let source_tree_entries = if let Some(tree_oid) = parent_tree.as_ref() {
-        collect_tree_entries_for_copy_detection(odb, tree_oid)?
-    } else {
-        Vec::new()
-    };
-    let entries = detect_copies(odb, raw_entries, 50, true, &source_tree_entries);
-
-    for entry in &entries {
-        if matches!(entry.status, DiffStatus::Renamed | DiffStatus::Copied)
-            && entry.new_path.as_deref() == Some(tracked_path)
-        {
-            let next = entry
-                .old_path
-                .as_deref()
-                .unwrap_or(tracked_path)
-                .to_string();
-            return Ok(Some((entry.clone(), next)));
-        }
-    }
-
-    for entry in &entries {
-        if entry.path() == tracked_path {
-            return Ok(Some((entry.clone(), tracked_path.to_string())));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Write one follow-aware `--name-status` line.
-fn write_follow_name_status_line(out: &mut impl Write, entry: &DiffEntry) -> Result<()> {
-    match entry.status {
-        DiffStatus::Renamed | DiffStatus::Copied => {
-            let score = entry.score.unwrap_or(100).min(100);
-            let code = format!("{}{:03}", entry.status.letter(), score);
-            let old_path = entry.old_path.as_deref().unwrap_or(entry.path());
-            let new_path = entry.new_path.as_deref().unwrap_or(entry.path());
-            writeln!(out, "{code}\t{old_path}\t{new_path}")?;
-        }
-        _ => {
-            writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
-        }
-    }
-    Ok(())
 }
 
 /// Build a map from commit OID → source ref name for --source.

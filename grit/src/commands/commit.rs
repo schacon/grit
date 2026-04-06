@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{parse_bool, ConfigSet};
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::hooks::{run_hook, HookResult};
@@ -19,9 +19,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use sha1::{Digest, Sha1};
 use time::OffsetDateTime;
 
 /// Arguments for `grit commit`.
@@ -173,7 +171,7 @@ pub struct Args {
     pub reset_author: bool,
 
     /// Pathspec — files to include in the commit (stages them first).
-    #[arg(allow_hyphen_values = false)]
+    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
     pub pathspec: Vec<String>,
 }
 
@@ -234,12 +232,12 @@ pub fn run(args: Args) -> Result<()> {
     let tree_oid = match write_tree_from_index(&repo.odb, &index, "") {
         Ok(oid) => oid,
         Err(err) => {
-            if is_unwritable_odb_error(&err) {
+            if is_permission_denied_error(&err) {
                 eprintln!(
                     "error: insufficient permission for adding an object to repository database .git/objects"
                 );
                 eprintln!("error: Error building trees");
-                std::process::exit(1);
+                std::process::exit(128);
             }
             return Err(err.into());
         }
@@ -427,24 +425,7 @@ pub fn run(args: Args) -> Result<()> {
         raw_message,
     };
 
-    let mut commit_bytes = serialize_commit(&commit_data);
-    let should_sign = should_sign_commit(&args, &config);
-    if should_sign {
-        let sig_format = config
-            .get("gpg.format")
-            .unwrap_or_else(|| "openpgp".to_owned())
-            .to_lowercase();
-        let signing_key = args
-            .gpg_sign
-            .as_ref()
-            .filter(|s| !s.is_empty())
-            .cloned()
-            .or_else(|| config.get("user.signingkey"))
-            .unwrap_or_else(|| "-".to_owned());
-        let payload = pseudo_signature_payload(&sig_format, &signing_key, &commit_bytes);
-        commit_bytes =
-            serialize_commit_with_signatures(&commit_data, &[("gpgsig".to_owned(), payload)]);
-    }
+    let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
     // Update HEAD
@@ -456,7 +437,6 @@ pub fn run(args: Args) -> Result<()> {
 
     // Write reflog entries
     {
-        let is_merge_commit = commit_data.parents.len() > 1;
         let msg = if head.is_unborn() {
             format!(
                 "commit (initial): {}",
@@ -465,11 +445,6 @@ pub fn run(args: Args) -> Result<()> {
         } else if args.amend {
             format!(
                 "commit (amend): {}",
-                commit_data.message.lines().next().unwrap_or("")
-            )
-        } else if is_merge_commit {
-            format!(
-                "commit (merge): {}",
                 commit_data.message.lines().next().unwrap_or("")
             )
         } else {
@@ -597,13 +572,6 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn is_unwritable_odb_error(err: &grit_lib::error::Error) -> bool {
-    matches!(
-        err,
-        grit_lib::error::Error::Io(io_err) if io_err.kind() == std::io::ErrorKind::PermissionDenied
-    )
 }
 
 /// Print dry-run output (like `git commit --dry-run`).
@@ -784,41 +752,19 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
                     .unwrap_or(std::path::Path::new(spec))
             });
         let rel_str = rel_path.to_string_lossy().to_string();
-        if canon_path.exists() {
-            let meta = fs::symlink_metadata(&canon_path)?;
-            if meta.file_type().is_dir() {
-                if let Some(oid) = read_submodule_head_oid(&canon_path) {
-                    let entry = grit_lib::index::IndexEntry {
-                        ctime_sec: meta.ctime() as u32,
-                        ctime_nsec: meta.ctime_nsec() as u32,
-                        mtime_sec: meta.mtime() as u32,
-                        mtime_nsec: meta.mtime_nsec() as u32,
-                        dev: meta.dev() as u32,
-                        ino: meta.ino() as u32,
-                        mode: 0o160000,
-                        uid: meta.uid(),
-                        gid: meta.gid(),
-                        size: 0,
-                        oid,
-                        flags: rel_str.len().min(0xFFF) as u16,
-                        flags_extended: None,
-                        path: rel_str.as_bytes().to_vec(),
-                    };
-                    index.add_or_replace(entry);
-                }
+        if let Ok(meta) = fs::symlink_metadata(&canon_path) {
+            use std::os::unix::fs::MetadataExt;
+            let data = if meta.file_type().is_symlink() {
+                let target = fs::read_link(&canon_path)?;
+                target.to_string_lossy().into_owned().into_bytes()
             } else {
-                let data = if meta.file_type().is_symlink() {
-                    let target = fs::read_link(&canon_path)?;
-                    target.to_string_lossy().into_owned().into_bytes()
-                } else {
-                    fs::read(&canon_path)?
-                };
-                let oid = repo.odb.write(ObjectKind::Blob, &data)?;
-                let mode = grit_lib::index::normalize_mode(meta.mode());
-                let raw_path = rel_str.as_bytes().to_vec();
-                let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
-                index.add_or_replace(entry);
-            }
+                fs::read(&canon_path)?
+            };
+            let oid = repo.odb.write(ObjectKind::Blob, &data)?;
+            let mode = grit_lib::index::normalize_mode(meta.mode());
+            let raw_path = rel_str.as_bytes().to_vec();
+            let entry = grit_lib::index::entry_from_stat(&canon_path, &raw_path, oid, mode)?;
+            index.add_or_replace(entry);
         } else {
             // File deleted — remove from index
             index.remove(rel_str.as_bytes());
@@ -827,38 +773,6 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
 
     index.write(&repo.index_path())?;
     Ok(())
-}
-
-/// Resolve a submodule worktree path to its current HEAD OID.
-fn read_submodule_head_oid(submodule_path: &Path) -> Option<ObjectId> {
-    let git_dir = resolve_submodule_git_dir(submodule_path)?;
-    let head_content = fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    let trimmed = head_content.trim();
-    let oid_text = if let Some(reference) = trimmed.strip_prefix("ref: ") {
-        fs::read_to_string(git_dir.join(reference))
-            .ok()?
-            .trim()
-            .to_owned()
-    } else {
-        trimmed.to_owned()
-    };
-    oid_text.parse::<ObjectId>().ok()
-}
-
-/// Resolve the gitdir backing a submodule checkout.
-fn resolve_submodule_git_dir(submodule_path: &Path) -> Option<PathBuf> {
-    let dot_git = submodule_path.join(".git");
-    if dot_git.is_dir() {
-        return Some(dot_git);
-    }
-    let content = fs::read_to_string(dot_git).ok()?;
-    let rel = content.trim().strip_prefix("gitdir: ")?;
-    let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
-        Some(rel_path.to_path_buf())
-    } else {
-        Some(submodule_path.join(rel_path))
-    }
 }
 
 /// Auto-stage tracked files (for `commit -a`).
@@ -877,12 +791,11 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             (ie.path.clone(), path_str, ie.mode)
         })
         .collect();
-    let original_index = index.clone();
 
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
         let abs_path = work_tree.join(path_str);
-        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
+        if abs_path.exists() {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
             // get the current commit OID instead of trying to read the
             // directory as a file.
@@ -901,6 +814,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                     };
                     if let Ok(oid) = oid_hex.parse::<ObjectId>() {
                         use std::os::unix::fs::MetadataExt;
+                        let meta = fs::symlink_metadata(&abs_path)?;
                         let entry = grit_lib::index::IndexEntry {
                             ctime_sec: meta.ctime() as u32,
                             ctime_nsec: meta.ctime_nsec() as u32,
@@ -923,6 +837,8 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 }
                 continue;
             }
+            use std::os::unix::fs::MetadataExt;
+            let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {
                 let target = fs::read_link(&abs_path)?;
                 target.to_string_lossy().into_owned().into_bytes()
@@ -935,23 +851,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
             index.add_or_replace(entry);
             changed = true;
         } else {
-            if *idx_mode == 0o160000 {
-                // Keep existing gitlink entries when the submodule worktree is absent.
-                // This matches `git commit -a` behavior for non-checked-out submodules.
-                continue;
-            }
             index.remove(raw_path);
-            changed = true;
-        }
-    }
-
-    // Preserve gitlink entries that may have been dropped while staging non-submodule paths.
-    for original in &original_index.entries {
-        if original.mode != 0o160000 || original.stage() != 0 {
-            continue;
-        }
-        if index.get(&original.path, 0).is_none() {
-            index.add_or_replace(original.clone());
             changed = true;
         }
     }
@@ -1074,7 +974,19 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
 /// Check if an ident name is valid (not empty and not all special characters).
 fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
-    let cleaned: String = name.chars().filter(|&c| c != '.' && c != ',' && c != ';' && c != '<' && c != '>' && c != '\'' && c != '"' && c != ' ').collect();
+    let cleaned: String = name
+        .chars()
+        .filter(|&c| {
+            c != '.'
+                && c != ','
+                && c != ';'
+                && c != '<'
+                && c != '>'
+                && c != '\''
+                && c != '"'
+                && c != ' '
+        })
+        .collect();
     if cleaned.is_empty() {
         if name.is_empty() {
             bail!("empty ident name (for <{}>) not allowed", kind);
@@ -1274,66 +1186,6 @@ fn ensure_trailing_newline(s: &str) -> String {
     }
 }
 
-fn should_sign_commit(args: &Args, config: &ConfigSet) -> bool {
-    if args.no_gpg_sign {
-        return false;
-    }
-    if args.gpg_sign.is_some() {
-        return true;
-    }
-    config
-        .get("commit.gpgSign")
-        .or_else(|| config.get("commit.gpgsign"))
-        .and_then(|v| parse_bool(&v).ok())
-        .unwrap_or(false)
-}
-
-fn pseudo_signature_payload(format: &str, key: &str, unsigned_commit: &[u8]) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(unsigned_commit);
-    let digest = hasher.finalize();
-    format!(
-        "GRITSIGV1 {} {} {}",
-        format,
-        key,
-        hex::encode(digest.as_slice())
-    )
-}
-
-fn serialize_commit_with_signatures(
-    c: &CommitData,
-    signatures: &[(String, String)],
-) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(format!("tree {}\n", c.tree).as_bytes());
-    for p in &c.parents {
-        out.extend_from_slice(format!("parent {p}\n").as_bytes());
-    }
-    out.extend_from_slice(format!("author {}\n", c.author).as_bytes());
-    out.extend_from_slice(format!("committer {}\n", c.committer).as_bytes());
-    for (header, value) in signatures {
-        append_multiline_header(&mut out, header, value);
-    }
-    if let Some(enc) = &c.encoding {
-        out.extend_from_slice(format!("encoding {enc}\n").as_bytes());
-    }
-    out.push(b'\n');
-    if let Some(raw) = &c.raw_message {
-        out.extend_from_slice(raw);
-    } else {
-        out.extend_from_slice(c.message.as_bytes());
-    }
-    out
-}
-
-fn append_multiline_header(out: &mut Vec<u8>, header: &str, value: &str) {
-    let mut lines = value.split('\n');
-    if let Some(first) = lines.next() {
-        out.extend_from_slice(format!("{header} {first}\n").as_bytes());
-        for line in lines {
-            out.extend_from_slice(format!(" {line}\n").as_bytes());
-        }
-    } else {
-        out.extend_from_slice(format!("{header} \n").as_bytes());
-    }
+fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
+    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
 }

@@ -162,6 +162,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Resolve the current working directory relative to the worktree
     let cwd = std::env::current_dir()?;
     let prefix = pathdiff(&cwd, work_tree);
+    die_if_in_unpopulated_submodule(&index, prefix.as_deref());
 
     // Validate empty string pathspecs
     for ps in &args.pathspec {
@@ -1128,6 +1129,40 @@ fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
         .strip_prefix(&wt_canon)
         .ok()
         .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Exit when running inside an unpopulated submodule worktree path.
+///
+/// Git discovers the superproject when invoked from an unpopulated submodule
+/// directory. In that case, commands like `git -C sub add .` must fail with an
+/// "in unpopulated submodule" fatal message instead of silently operating on
+/// the superproject index.
+fn die_if_in_unpopulated_submodule(index: &Index, prefix: Option<&str>) {
+    let Some(prefix) = prefix else {
+        return;
+    };
+    if prefix.is_empty() {
+        return;
+    }
+
+    let prefix_bytes = prefix.as_bytes();
+    for entry in &index.entries {
+        if entry.mode != 0o160000 {
+            continue;
+        }
+        let ce = entry.path.as_slice();
+        let is_exact = prefix_bytes == ce;
+        let is_inside = prefix_bytes.len() > ce.len()
+            && prefix_bytes.starts_with(ce)
+            && prefix_bytes[ce.len()] == b'/';
+        if is_exact || is_inside {
+            eprintln!(
+                "fatal: in unpopulated submodule '{}'",
+                String::from_utf8_lossy(ce)
+            );
+            std::process::exit(128);
+        }
+    }
 }
 
 /// Walk the parent components of `rel_path` (relative to `work_tree`) and

@@ -104,6 +104,10 @@ pub fn run(args: Args) -> Result<()> {
                 style: ConflictStyle::Merge,
                 marker_size: 0,
                 diff_algorithm: None,
+                ignore_all_space: false,
+                ignore_space_change: false,
+                ignore_space_at_eol: false,
+                ignore_cr_at_eol: false,
             };
 
             let result = merge(&input).context("merge failed")?;
