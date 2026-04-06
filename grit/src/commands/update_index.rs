@@ -349,7 +349,9 @@ pub fn run(args: Args) -> Result<()> {
         };
 
         // Check for D/F conflicts in the index before adding.
-        if args.add {
+        // Skip for gitlinks (submodule directories) which can replace directory entries.
+        let is_gitlink = meta.file_type().is_dir() && abs_path.join(".git").exists();
+        if args.add && !is_gitlink {
             let rel_str = String::from_utf8_lossy(&rel_bytes);
             // Check if any ancestor path is already a file in the index
             let mut prefix = rel_str.as_ref();
