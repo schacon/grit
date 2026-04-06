@@ -1,6 +1,6 @@
 file	ported	total_tests	passing	failing	status	real_pass	real_total	expect_failure
 t0000-basic	yes	92	24	68	ok	16	84	8
-t0001-init	yes	102	57	45	ok	57	102	0
+t0001-init	yes	102	58	44	ok	58	102	0
 t0002-gitfile	yes	14	14	0	ok	14	14	0
 t0003-attributes	yes	55	17	38	ok	17	55	0
 t0004-unwritable	yes	9	9	0	ok	9	9	0
@@ -9,7 +9,7 @@ t0006-date	yes	0	0	0	ok	0	0	0
 t0007-git-var	yes	27	26	1	ok	26	27	0
 t0008-ignores	yes	0	0	0	timeout	0	0	0
 t0009-git-dir-validation	yes	6	6	0	ok	6	6	0
-t0010-racy-git	yes	10	2	8	ok	2	10	0
+t0010-racy-git	yes	10	6	4	ok	6	10	0
 t0012-help	yes	124	15	109	ok	15	124	0
 t0013-sha1dc	yes	0	0	0	ok	0	0	0
 t0014-alias	yes	21	2	19	ok	2	21	0
@@ -17,7 +17,7 @@ t0017-env-helper	yes	5	5	0	ok	5	5	0
 t0018-advice	yes	6	6	0	ok	6	6	0
 t0019-json-writer	yes	16	1	15	ok	1	16	0
 t0020-crlf	yes	36	18	18	ok	18	36	0
-t0021-conversion	yes	42	19	23	ok	19	42	0
+t0021-conversion	yes	42	18	24	ok	18	42	0
 t0022-crlf-rename	yes	2	2	0	ok	2	2	0
 t0023-crlf-am	yes	2	1	1	ok	1	2	0
 t0024-crlf-archive	yes	3	3	0	ok	3	3	0
@@ -105,7 +105,7 @@ t1092-sparse-checkout-compatibility	yes	106	3	103	ok	1	104	2
 t1100-commit-tree-options	yes	5	4	1	ok	4	5	0
 t1300-config	yes	0	0	0	timeout	0	0	0
 t1301-shared-repo	yes	22	2	20	ok	2	22	0
-t1302-repo-version	yes	18	18	0	ok	18	18	0
+t1302-repo-version	yes	18	17	1	ok	17	18	0
 t1303-wacky-config	yes	11	11	0	ok	11	11	0
 t1304-default-acl	yes	4	4	0	ok	4	4	0
 t1305-config-include	yes	37	13	24	ok	13	37	0
@@ -157,7 +157,7 @@ t1510-repo-setup	yes	109	13	96	ok	13	109	0
 t1511-rev-parse-caret	yes	17	10	7	ok	10	17	0
 t1512-rev-parse-disambiguation	yes	3	3	0	ok	0	0	3
 t1513-rev-parse-prefix	yes	11	11	0	ok	11	11	0
-t1514-rev-parse-push	yes	9	3	6	ok	3	9	0
+t1514-rev-parse-push	yes	9	9	0	ok	9	9	0
 t1515-rev-parse-outside-repo	yes	4	4	0	ok	4	4	0
 t1517-outside-repo	yes	195	97	98	ok	97	195	0
 t1600-index	yes	7	7	0	ok	7	7	0
@@ -362,14 +362,14 @@ t4011-diff-symlink	yes	8	4	4	ok	4	8	0
 t4012-diff-binary	yes	13	3	10	ok	3	13	0
 t4013-diff-various	yes	230	77	153	ok	77	230	0
 t4014-format-patch	yes	215	47	168	ok	47	215	0
-t4015-diff-whitespace	yes	136	70	66	ok	70	136	0
+t4015-diff-whitespace	yes	136	71	65	ok	71	136	0
 t4016-diff-quote	yes	5	5	0	ok	5	5	0
 t4017-diff-retval	yes	38	30	8	ok	30	38	0
 t4018-diff-funcname	yes	9	1	8	ok	1	9	0
 t4019-diff-wserror	yes	21	5	16	ok	5	21	0
-t4020-diff-external	yes	72	21	51	ok	21	72	0
+t4020-diff-external	yes	72	33	39	ok	33	72	0
 t4021-format-patch-numbered	yes	14	14	0	ok	14	14	0
-t4022-diff-rewrite	yes	11	6	5	ok	6	11	0
+t4022-diff-rewrite	yes	11	5	6	ok	5	11	0
 t4023-diff-rename-typechange	yes	4	0	4	ok	0	4	0
 t4024-diff-optimize-common	yes	2	1	1	ok	1	2	0
 t4025-hunk-header	yes	2	2	0	ok	2	2	0
@@ -410,7 +410,7 @@ t4061-diff-indent	yes	33	2	31	ok	2	33	0
 t4062-diff-pickaxe	yes	3	3	0	ok	3	3	0
 t4063-diff-blobs	yes	18	2	16	ok	2	18	0
 t4064-diff-oidfind	yes	10	5	5	ok	5	10	0
-t4065-diff-anchored	yes	7	7	0	ok	7	7	0
+t4065-diff-anchored	yes	7	6	1	ok	6	7	0
 t4066-diff-emit-delay	yes	2	2	0	ok	2	2	0
 t4067-diff-partial-clone	yes	9	2	7	ok	2	9	0
 t4068-diff-symmetric-merge-base	yes	36	1	35	ok	1	36	0
@@ -444,7 +444,7 @@ t4120-apply-popt	yes	12	3	9	ok	3	12	0
 t4121-apply-diffs	yes	2	2	0	ok	2	2	0
 t4122-apply-symlink-inside	yes	7	1	6	ok	1	7	0
 t4123-apply-shrink	yes	2	2	0	ok	2	2	0
-t4124-apply-ws-rule	yes	85	12	73	ok	12	85	0
+t4124-apply-ws-rule	yes	85	13	72	ok	13	85	0
 t4125-apply-ws-fuzz	yes	4	2	2	ok	2	4	0
 t4126-apply-empty	yes	8	3	5	ok	3	8	0
 t4127-apply-same-fn	yes	7	3	4	ok	3	7	0
@@ -662,7 +662,7 @@ t5900-repo-selection	yes	8	4	4	ok	4	8	0
 t6000-rev-list-misc	yes	23	7	16	ok	7	23	0
 t6001-rev-list-graft	yes	14	3	11	ok	3	14	0
 t6002-rev-list-bisect	yes	53	4	49	ok	4	53	0
-t6003-rev-list-topo-order	yes	36	21	15	ok	21	36	0
+t6003-rev-list-topo-order	yes	36	22	14	ok	22	36	0
 t6004-rev-list-path-optim	yes	7	2	5	ok	2	7	0
 t6005-rev-list-count	yes	6	3	3	ok	3	6	0
 t6006-rev-list-format	yes	80	63	17	ok	63	80	0
@@ -775,7 +775,7 @@ t7107-reset-pathspec-file	yes	11	0	11	ok	0	11	0
 t7110-reset-merge	yes	21	9	12	ok	9	21	0
 t7111-reset-table	yes	42	31	11	ok	31	42	0
 t7113-post-index-change-hook	yes	4	1	3	ok	1	4	0
-t7201-co	yes	46	15	31	ok	15	46	0
+t7201-co	yes	46	16	30	ok	16	46	0
 t7300-clean	yes	55	22	33	ok	20	53	2
 t7301-clean-interactive	yes	23	5	18	ok	5	23	0
 t7400-submodule-basic	yes	124	37	87	ok	37	124	0
@@ -843,7 +843,7 @@ t7610-mergetool	yes	0	0	0	timeout	0	0	0
 t7611-merge-abort	yes	19	10	9	ok	10	19	0
 t7612-merge-verify-signatures	yes	0	0	0	timeout	0	0	0
 t7614-merge-signoff	yes	4	4	0	ok	4	4	0
-t7615-diff-algo-with-mergy-operations	yes	7	2	5	ok	2	7	0
+t7615-diff-algo-with-mergy-operations	yes	7	5	2	ok	5	7	0
 t7700-repack	yes	47	24	23	ok	24	47	0
 t7701-repack-unpack-unreachable	yes	9	4	5	ok	4	9	0
 t7702-repack-cyclic-alternate	yes	2	2	0	ok	2	2	0

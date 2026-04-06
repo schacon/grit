@@ -845,7 +845,7 @@ fn push_to_url(
             }
         }
 
-        let result = apply_ref_update(repo, &remote_repo, update, args, url);
+        let result = apply_ref_update(repo, &remote_repo, remote_name, update, args, url);
 
         match result {
             Ok(()) => {
@@ -936,8 +936,9 @@ fn push_to_url(
 
 /// Apply a single ref update on the remote, printing output as appropriate.
 fn apply_ref_update(
-    _repo: &Repository,
+    repo: &Repository,
     remote_repo: &Repository,
+    remote_name: &str,
     update: &RefUpdate,
     args: &Args,
     _url: &str,
@@ -949,6 +950,7 @@ fn apply_ref_update(
             if !args.dry_run {
                 refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
                     .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
+                update_remote_tracking_ref(repo, remote_name, &update.remote_ref, Some(*new_oid))?;
             }
 
             let branch_short = update
@@ -1014,6 +1016,7 @@ fn apply_ref_update(
             if !args.dry_run {
                 refs::delete_ref(&remote_repo.git_dir, &update.remote_ref)
                     .with_context(|| format!("deleting remote ref {}", update.remote_ref))?;
+                update_remote_tracking_ref(repo, remote_name, &update.remote_ref, None)?;
             }
 
             let branch_short = update
@@ -1039,6 +1042,35 @@ fn apply_ref_update(
         _ => {}
     }
 
+    Ok(())
+}
+
+/// Update local remote-tracking refs after a successful push.
+///
+/// Git updates `refs/remotes/<remote>/...` when pushing to a named remote.
+/// For path-like remotes we skip tracking updates.
+fn update_remote_tracking_ref(
+    repo: &Repository,
+    remote_name: &str,
+    remote_ref: &str,
+    new_oid: Option<ObjectId>,
+) -> Result<()> {
+    if remote_name.contains('/') || remote_name.starts_with('.') {
+        return Ok(());
+    }
+
+    let Some(branch) = remote_ref.strip_prefix("refs/heads/") else {
+        return Ok(());
+    };
+    let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+
+    match new_oid {
+        Some(oid) => refs::write_ref(&repo.git_dir, &tracking_ref, &oid)
+            .with_context(|| format!("updating tracking ref {tracking_ref}"))?,
+        None => {
+            let _ = refs::delete_ref(&repo.git_dir, &tracking_ref);
+        }
+    }
     Ok(())
 }
 

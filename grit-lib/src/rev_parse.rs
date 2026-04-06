@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::read_reflog;
@@ -100,7 +101,7 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     {
         return resolve_upstream_ref(repo, base);
     }
-    if let Some(base) = spec.strip_suffix("@{push}") {
+    if let Some(base) = strip_suffix_case_insensitive(spec, "@{push}") {
         return resolve_push_ref(repo, base);
     }
 
@@ -200,9 +201,138 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 /// Resolve `@{push}` for a given branch.
 fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
-    // @{push} is typically the same as @{upstream} unless push remote differs
-    // For simplicity, treat it the same way
-    resolve_upstream_ref(repo, branch)
+    let branch_name = if branch.is_empty() {
+        match refs::read_head(&repo.git_dir) {
+            Ok(Some(target)) => target.strip_prefix("refs/heads/")?.to_owned(),
+            _ => return None,
+        }
+    } else if let Some(short) = branch.strip_prefix("refs/heads/") {
+        short.to_owned()
+    } else {
+        branch.to_owned()
+    };
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .unwrap_or_default();
+
+    let push_default = config
+        .get("push.default")
+        .unwrap_or_else(|| "simple".to_owned())
+        .to_ascii_lowercase();
+
+    let branch_remote = config.get(&format!("branch.{branch_name}.remote"));
+    let branch_merge = config.get(&format!("branch.{branch_name}.merge"));
+    let push_remote = config
+        .get(&format!("branch.{branch_name}.pushRemote"))
+        .or_else(|| config.get("remote.pushDefault"))
+        .or_else(|| branch_remote.clone())
+        .or_else(|| Some("origin".to_owned()))?;
+
+    // remote.<name>.push refspecs override push.default destination mapping.
+    let push_refspecs = config.get_all(&format!("remote.{push_remote}.push"));
+    let local_branch_ref = format!("refs/heads/{branch_name}");
+    if let Some(remote_dst) = map_push_destination_from_refspecs(&local_branch_ref, &push_refspecs)
+    {
+        return Some(remote_ref_to_tracking_ref(&push_remote, &remote_dst));
+    }
+
+    match push_default.as_str() {
+        "nothing" => None,
+        "simple" => {
+            let upstream_remote = branch_remote?;
+            let merge = branch_merge?;
+            let upstream_branch = merge.strip_prefix("refs/heads/")?;
+            if upstream_branch == branch_name && upstream_remote == push_remote {
+                Some(format!("refs/remotes/{push_remote}/{upstream_branch}"))
+            } else {
+                None
+            }
+        }
+        "upstream" | "tracking" => {
+            let upstream_remote = branch_remote?;
+            let merge = branch_merge?;
+            let upstream_branch = merge.strip_prefix("refs/heads/")?;
+            Some(format!("refs/remotes/{upstream_remote}/{upstream_branch}"))
+        }
+        "current" => Some(format!("refs/remotes/{push_remote}/{branch_name}")),
+        "matching" => {
+            let tracking = format!("refs/remotes/{push_remote}/{branch_name}");
+            if refs::resolve_ref(&repo.git_dir, &tracking).is_ok() {
+                Some(tracking)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Strip a suffix using ASCII case-insensitive matching.
+fn strip_suffix_case_insensitive<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    if text.len() < suffix.len() {
+        return None;
+    }
+    let split_at = text.len() - suffix.len();
+    let (head, tail) = text.split_at(split_at);
+    if tail.eq_ignore_ascii_case(suffix) {
+        Some(head)
+    } else {
+        None
+    }
+}
+
+/// Map a local source ref through `remote.<name>.push` refspecs.
+fn map_push_destination_from_refspecs(local_ref: &str, push_refspecs: &[String]) -> Option<String> {
+    for spec in push_refspecs {
+        let cleaned = spec.strip_prefix('+').unwrap_or(spec);
+        let (src, dst) = if let Some((src, dst)) = cleaned.split_once(':') {
+            (src, dst)
+        } else {
+            (cleaned, cleaned)
+        };
+
+        if src.is_empty() || dst.is_empty() {
+            continue;
+        }
+
+        if let Some(captured) = match_single_wildcard(src, local_ref) {
+            if dst.contains('*') {
+                return Some(dst.replacen('*', captured, 1));
+            }
+            continue;
+        }
+
+        if src == local_ref {
+            return Some(dst.to_owned());
+        }
+    }
+    None
+}
+
+/// Match a pattern containing at most one `*`.
+fn match_single_wildcard<'a>(pattern: &str, text: &'a str) -> Option<&'a str> {
+    let star = pattern.find('*')?;
+    let prefix = &pattern[..star];
+    let suffix = &pattern[star + 1..];
+    if text.starts_with(prefix)
+        && text.ends_with(suffix)
+        && text.len() >= prefix.len() + suffix.len()
+    {
+        let start = prefix.len();
+        let end = text.len() - suffix.len();
+        Some(&text[start..end])
+    } else {
+        None
+    }
+}
+
+/// Convert a remote branch ref into the corresponding local tracking ref.
+fn remote_ref_to_tracking_ref(remote: &str, remote_ref: &str) -> String {
+    if let Some(branch) = remote_ref.strip_prefix("refs/heads/") {
+        return format!("refs/remotes/{remote}/{branch}");
+    }
+    format!("refs/remotes/{remote}/{remote_ref}")
 }
 
 /// Parse branch tracking configuration from git config content.

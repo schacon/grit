@@ -1656,20 +1656,20 @@ t1016-compatObjectFormat::create-a-hash-tagged-blob	t1016-compatObjectFormat	cre
 t1016-compatObjectFormat::create-a-hash-tagged-tree	t1016-compatObjectFormat	create a $hash tagged tree	rev-parse	not_ported
 t1016-compatObjectFormat::create-a-hash-tagged-commit	t1016-compatObjectFormat	create a $hash tagged commit	rev-parse	not_ported
 t1016-compatObjectFormat::create-a-hash-branch	t1016-compatObjectFormat	create a $hash branch	checkout	not_ported
-t1020-subdirectory::update-index-and-ls-files	t1020-subdirectory	update-index and ls-files	ls-files	partial
-t1020-subdirectory::cat-file	t1020-subdirectory	cat-file	cat-file	partial
-t1020-subdirectory::diff-files	t1020-subdirectory	diff-files	diff-files	partial
-t1020-subdirectory::write-tree	t1020-subdirectory	write-tree	write-tree	partial
-t1020-subdirectory::checkout-index	t1020-subdirectory	checkout-index	checkout-index	partial
-t1020-subdirectory::read-tree	t1020-subdirectory	read-tree	write-tree	partial
-t1020-subdirectory::alias-expansion	t1020-subdirectory	alias expansion	config	partial
-t1020-subdirectory::alias-expansion-2	t1020-subdirectory	!alias expansion	config	partial
-t1020-subdirectory::git-prefix-for-alias	t1020-subdirectory	GIT_PREFIX for !alias	config	partial
-t1020-subdirectory::git-prefix-for-built-ins	t1020-subdirectory	GIT_PREFIX for built-ins	checkout	partial
-t1020-subdirectory::no-file-rev-ambiguity-check-inside-git	t1020-subdirectory	no file/rev ambiguity check inside .git	commit	partial
-t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo-explicit-git-dir	t1020-subdirectory	no file/rev ambiguity check inside a bare repo (explicit GIT_DIR)	clone	partial
-t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo	t1020-subdirectory	no file/rev ambiguity check inside a bare repo	clone	partial
-t1020-subdirectory::detection-should-not-be-fooled-by-a-symlink	t1020-subdirectory	detection should not be fooled by a symlink	clone	partial
+t1020-subdirectory::update-index-and-ls-files	t1020-subdirectory	update-index and ls-files	ls-files	pass
+t1020-subdirectory::cat-file	t1020-subdirectory	cat-file	cat-file	pass
+t1020-subdirectory::diff-files	t1020-subdirectory	diff-files	diff-files	pass
+t1020-subdirectory::write-tree	t1020-subdirectory	write-tree	write-tree	pass
+t1020-subdirectory::checkout-index	t1020-subdirectory	checkout-index	checkout-index	pass
+t1020-subdirectory::read-tree	t1020-subdirectory	read-tree	write-tree	pass
+t1020-subdirectory::alias-expansion	t1020-subdirectory	alias expansion	config	pass
+t1020-subdirectory::alias-expansion-2	t1020-subdirectory	!alias expansion	config	pass
+t1020-subdirectory::git-prefix-for-alias	t1020-subdirectory	GIT_PREFIX for !alias	config	pass
+t1020-subdirectory::git-prefix-for-built-ins	t1020-subdirectory	GIT_PREFIX for built-ins	checkout	pass
+t1020-subdirectory::no-file-rev-ambiguity-check-inside-git	t1020-subdirectory	no file/rev ambiguity check inside .git	commit	pass
+t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo-explicit-git-dir	t1020-subdirectory	no file/rev ambiguity check inside a bare repo (explicit GIT_DIR)	clone	pass
+t1020-subdirectory::no-file-rev-ambiguity-check-inside-a-bare-repo	t1020-subdirectory	no file/rev ambiguity check inside a bare repo	clone	pass
+t1020-subdirectory::detection-should-not-be-fooled-by-a-symlink	t1020-subdirectory	detection should not be fooled by a symlink	clone	pass
 t1022-read-tree-partial-clone::read-tree-in-partial-clone-prefetches-in-one-batch	t1022-read-tree-partial-clone	read-tree in partial clone prefetches in one batch	read-tree	pass
 t1050-large::core-bigfilethreshold-must-be-non-negative	t1050-large	core.bigFileThreshold must be non-negative	add	partial
 t1050-large::enter-large-codepath-with-small-core-bigfilethreshold	t1050-large	enter "large" codepath, with small core.bigFileThreshold	add	partial
@@ -1702,22 +1702,22 @@ t1051-large-conversion::autocrlf-true-converts-on-output	t1051-large-conversion	
 t1051-large-conversion::eol-crlf-converts-on-output	t1051-large-conversion	eol=crlf converts on output	add	pass
 t1051-large-conversion::user-defined-filters-convert-on-output	t1051-large-conversion	user-defined filters convert on output	add	pass
 t1051-large-conversion::ident-converts-on-output	t1051-large-conversion	ident converts on output	add	pass
-t1060-object-corruption::setup-corrupt-repo	t1060-object-corruption	setup corrupt repo	fsck	partial
-t1060-object-corruption::setup-repo-with-missing-object	t1060-object-corruption	setup repo with missing object	fsck	partial
-t1060-object-corruption::setup-repo-with-misnamed-object	t1060-object-corruption	setup repo with misnamed object	fsck	partial
-t1060-object-corruption::streaming-a-corrupt-blob-fails	t1060-object-corruption	streaming a corrupt blob fails	fsck	partial
-t1060-object-corruption::getting-type-of-a-corrupt-blob-fails	t1060-object-corruption	getting type of a corrupt blob fails	fsck	partial
-t1060-object-corruption::read-tree-u-detects-bit-errors-in-blobs	t1060-object-corruption	read-tree -u detects bit-errors in blobs	fsck	partial
-t1060-object-corruption::read-tree-u-detects-missing-objects	t1060-object-corruption	read-tree -u detects missing objects	fsck	partial
-t1060-object-corruption::clone-no-local-bare-detects-corruption	t1060-object-corruption	clone --no-local --bare detects corruption	fsck	partial
-t1060-object-corruption::clone-no-local-bare-detects-missing-object	t1060-object-corruption	clone --no-local --bare detects missing object	fsck	partial
-t1060-object-corruption::clone-no-local-bare-detects-misnamed-object	t1060-object-corruption	clone --no-local --bare detects misnamed object	fsck	partial
-t1060-object-corruption::clone-local-detects-corruption	t1060-object-corruption	clone --local detects corruption	fsck	partial
-t1060-object-corruption::error-detected-during-checkout-leaves-repo-intact	t1060-object-corruption	error detected during checkout leaves repo intact	fsck	partial
-t1060-object-corruption::clone-local-detects-missing-objects	t1060-object-corruption	clone --local detects missing objects	fsck	partial
-t1060-object-corruption::fetch-into-corrupted-repo-with-index-pack	t1060-object-corruption	fetch into corrupted repo with index-pack	fsck	partial
-t1060-object-corruption::internal-tree-objects-are-not-missing	t1060-object-corruption	internal tree objects are not "missing"	fsck	partial
-t1060-object-corruption::partial-clone-of-corrupted-repository	t1060-object-corruption	partial clone of corrupted repository	fsck	partial
+t1060-object-corruption::setup-corrupt-repo	t1060-object-corruption	setup corrupt repo	fsck	pass
+t1060-object-corruption::setup-repo-with-missing-object	t1060-object-corruption	setup repo with missing object	fsck	pass
+t1060-object-corruption::setup-repo-with-misnamed-object	t1060-object-corruption	setup repo with misnamed object	fsck	pass
+t1060-object-corruption::streaming-a-corrupt-blob-fails	t1060-object-corruption	streaming a corrupt blob fails	fsck	pass
+t1060-object-corruption::getting-type-of-a-corrupt-blob-fails	t1060-object-corruption	getting type of a corrupt blob fails	fsck	pass
+t1060-object-corruption::read-tree-u-detects-bit-errors-in-blobs	t1060-object-corruption	read-tree -u detects bit-errors in blobs	fsck	pass
+t1060-object-corruption::read-tree-u-detects-missing-objects	t1060-object-corruption	read-tree -u detects missing objects	fsck	pass
+t1060-object-corruption::clone-no-local-bare-detects-corruption	t1060-object-corruption	clone --no-local --bare detects corruption	fsck	pass
+t1060-object-corruption::clone-no-local-bare-detects-missing-object	t1060-object-corruption	clone --no-local --bare detects missing object	fsck	pass
+t1060-object-corruption::clone-no-local-bare-detects-misnamed-object	t1060-object-corruption	clone --no-local --bare detects misnamed object	fsck	pass
+t1060-object-corruption::clone-local-detects-corruption	t1060-object-corruption	clone --local detects corruption	fsck	pass
+t1060-object-corruption::error-detected-during-checkout-leaves-repo-intact	t1060-object-corruption	error detected during checkout leaves repo intact	fsck	pass
+t1060-object-corruption::clone-local-detects-missing-objects	t1060-object-corruption	clone --local detects missing objects	fsck	pass
+t1060-object-corruption::fetch-into-corrupted-repo-with-index-pack	t1060-object-corruption	fetch into corrupted repo with index-pack	fsck	pass
+t1060-object-corruption::internal-tree-objects-are-not-missing	t1060-object-corruption	internal tree objects are not "missing"	fsck	pass
+t1060-object-corruption::partial-clone-of-corrupted-repository	t1060-object-corruption	partial clone of corrupted repository	fsck	pass
 t1090-sparse-checkout-scope::setup	t1090-sparse-checkout-scope	setup	sparse-checkout	pass
 t1090-sparse-checkout-scope::create-feature-branch	t1090-sparse-checkout-scope	create feature branch	sparse-checkout	pass
 t1090-sparse-checkout-scope::perform-sparse-checkout-of-main	t1090-sparse-checkout-scope	perform sparse checkout of main	sparse-checkout	pass
@@ -7627,13 +7627,13 @@ t4064-diff-oidfind::set-up-merge-tests	t4064-diff-oidfind	set up merge tests	dif
 t4064-diff-oidfind::detect-merge-which-introduces-blob	t4064-diff-oidfind	detect merge which introduces blob	diff	partial
 t4064-diff-oidfind::detect-merge-which-removes-blob	t4064-diff-oidfind	detect merge which removes blob	diff	partial
 t4064-diff-oidfind::do-not-detect-merge-that-does-not-touch-blob	t4064-diff-oidfind	do not detect merge that does not touch blob	diff	partial
-t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	pass
-t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	pass
-t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	pass
-t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	pass
-t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	pass
-t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	pass
-t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	diff	pass
+t4065-diff-anchored::anchored	t4065-diff-anchored	--anchored	diff	partial
+t4065-diff-anchored::anchored-multiple	t4065-diff-anchored	--anchored multiple	diff	partial
+t4065-diff-anchored::anchored-with-nonexistent-line-has-no-effect	t4065-diff-anchored	--anchored with nonexistent line has no effect	diff	partial
+t4065-diff-anchored::anchored-with-non-unique-line-has-no-effect	t4065-diff-anchored	--anchored with non-unique line has no effect	diff	partial
+t4065-diff-anchored::diff-still-produced-with-impossible-multiple-anchored	t4065-diff-anchored	diff still produced with impossible multiple --anchored	diff	partial
+t4065-diff-anchored::later-algorithm-arguments-override-earlier-ones	t4065-diff-anchored	later algorithm arguments override earlier ones	diff	partial
+t4065-diff-anchored::anchored-works-with-other-commands-like-git-show	t4065-diff-anchored	--anchored works with other commands like "git show"	diff	partial
 t4066-diff-emit-delay::set-up-history-with-a-merge	t4066-diff-emit-delay	set up history with a merge	diff	pass
 t4066-diff-emit-delay::log-cc-p-stat-color-moved	t4066-diff-emit-delay	log --cc -p --stat --color-moved	diff	pass
 t4067-diff-partial-clone::git-show-batches-blobs	t4067-diff-partial-clone	git show batches blobs	diff	partial

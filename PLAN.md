@@ -98,7 +98,7 @@ commit → check it off → move on.
 - [x] `t1020-subdirectory` ████████████████████ 15/15 (0 left) — Try various core-level commands in subdirectory.
 
 - [x] `t1415-worktree-refs` ████████████████████ 10/10 (0 left) — per-worktree refs
-- [ ] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
+- [x] `t1514-rev-parse-push` ████████████████████ 9/9 (0 left) — test <branch>@{push} syntax
 - [ ] `t1005-read-tree-reset` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — read-tree -u --reset
 - [ ] `t0100-previous` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — previous branch syntax @{-n}
 - [ ] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}

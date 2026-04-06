@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    79 |
+| Completed   |    80 |
 | In progress |     0 |
-| Remaining   |   688 |
+| Remaining   |   687 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1514-rev-parse-push` — 9/9 tests pass (implemented push-target resolution for `@{push}` honoring `push.default`, `branch.*.pushRemote`, and `remote.pushDefault`; added per-worktree ref namespace support (`main-worktree/*`, `worktrees/<id>/*`) plus ambiguity warnings in revision parsing; wired reflog lookup for cross-worktree refs; and ensured `git push` updates local remote-tracking refs so upstream setup and push-resolution semantics match native Git)
 - `t1415-worktree-refs` — 10/10 tests pass (implemented per-worktree ref resolution for `worktree/*`, `main-worktree/*`, and `worktrees/<id>/*` in `rev-parse`; added cross-worktree reflog lookup support; and fixed `for-each-ref` to include shared refs from the common dir while keeping per-worktree namespaces local)
 - `t1020-subdirectory` — 15/15 tests pass (fixed subdirectory pathspec handling in `diff-files`, propagated `GIT_PREFIX` for built-ins and shell aliases, and enabled external diff execution so `GIT_EXTERNAL_DIFF` receives correct subdirectory context)
 - `t1060-object-corruption` — 17/17 tests pass (hardened local clone object-copy validation to fail on corrupt/missing/misnamed objects before bare clone completion, and taught `rev-list --objects` to tolerate the canonical empty tree object as implicitly present when missing from loose storage)
@@ -72,4 +73,4 @@
 
 ## What Remains
 
-688 test files still pending. See `plan.md` for the full prioritized list.
+687 test files still pending. See `plan.md` for the full prioritized list.

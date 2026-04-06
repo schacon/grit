@@ -2,6 +2,10 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after `t1514-rev-parse-push` updates).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1514-rev-parse-push && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1514-rev-parse-push.sh`: 9/9 passing.
+- `./scripts/run-tests.sh t1514-rev-parse-push.sh`: 9/9 passing.
 - `cargo fmt`: success (after `t1415-worktree-refs` compatibility fixes).
 - `cargo build --release -p grit-rs`: success.
 - `rm -rf /workspace/tests/trash.t1415-worktree-refs && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1415-worktree-refs.sh`: 10/10 passing.
