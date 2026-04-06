@@ -257,7 +257,8 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         if args.detach {
             exclusive.push("--detach");
         }
-        if args.orphan {
+        // Note: --orphan is compatible with -b (provides branch name) but not -B or --detach
+        if args.orphan && (args.force_new_branch.is_some() || args.detach) {
             exclusive.push("--orphan");
         }
         if exclusive.len() > 1 {
@@ -336,11 +337,13 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Handle --orphan: create worktree with unborn branch
     if args.orphan {
+        // Use -b branch name if provided, otherwise use path basename
+        let orphan_branch = args.new_branch.as_deref().unwrap_or(&wt_name);
         setup_unborn_worktree(
             &common,
             &wt_admin,
             &wt_path,
-            &wt_name,
+            orphan_branch,
             args.lock,
             args.reason.as_deref(),
         )?;
