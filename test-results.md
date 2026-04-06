@@ -4,15 +4,14 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
-- `GUST_BIN=/workspace/target/release/grit bash tests/t6016-rev-list-graph-simplify-history.sh`: 8/12 passing (direct validation after wiring rev-list-backed graph traversal and option parsing for `--full-history`/`--sparse`/`--boundary`; remaining failures are now concentrated in graph layout/state-machine fidelity for decoration-pruned and sparse/boundary shapes).
-- `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh`: 8/12 passing (harness status improved from 2/12 baseline; TSV updated).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6016-rev-list-graph-simplify-history.sh`: 12/12 passing (direct validation after final graph-history fixes: path-limited commit reordering around side branches, sparse path-limited first-parent graph edges, simplify-by-decoration merge-parent simplification guardrails, and boundary-aware parent-target stitching).
+- `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh`: 12/12 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after `t6016` traversal/sorting/simplification updates).
 - `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (path-limiter regression check after `t6016` traversal/simplification updates).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6009-rev-list-parent.sh`: 15/15 passing (direct validation after adding `--not` toggle handling, `--no-max-parents` / `--no-min-parents` overrides, and `rev^!` rewrite support in revision preprocessing for parent-limiter scenarios).
 - `./scripts/run-tests.sh t6009-rev-list-parent.sh`: 15/15 passing (now fully passing).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after `t6009` parser updates).
 - `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (rev-list/path limiter regression check after `t6009` parser updates).
-- `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh`: 8/12 passing (active graph-layout work remains in progress; unchanged from prior partial status after `t6009` completion).
 - `./scripts/run-tests.sh t4201-log-graph.sh`: 1/23 passing (snapshot run against broader graph suite while assessing `--graph` implementation scope; no pass claim, used to gauge current graph coverage).
 - `cargo check -p grit-rs`: passing (sanity compile after reverting an unsuccessful experimental `log --graph` implementation attempt during `t6016` debugging).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6001-rev-list-graft.sh`: 14/14 passing (direct validation after wiring `.git/info/grafts` parent rewrites into rev-list commit graph traversal, fixing mixed rev/path token parsing to treat non-revision args as pathspecs after the first path token, and emitting graft deprecation advice from `show` when grafts are present unless `advice.graftFileDeprecated=false`).

@@ -65,3 +65,18 @@
   - simplify-by-decoration branch-prune layout (extra continuation/collapse rows),
   - path-limited (`-- bar.txt`) column placement of side branch lines,
   - sparse and boundary collapse-row geometry/order.
+
+### 2026-04-06 completion update
+- Implemented final graph/history fixes in `grit/src/commands/log.rs`:
+  - path-limited graph output now reorders selected commits into Git-compatible side-branch placement (`reorder_path_limited_graph_commits`), fixing `--graph -- bar.txt`.
+  - sparse path-limited graph mode now expands dense-selected history along first-parent segments (`expand_sparse_path_limited_graph_history`) and forces first-parent graph edges for rendered nodes in this mode, fixing `--graph --sparse -- bar.txt`.
+  - boundary graph output now orders boundary commits along the main first-parent chain before appending remaining boundaries (`order_boundary_commits_for_graph`), and includes boundary commits in the parent-visibility target set so edges from included commits (e.g. `C4 -> C3`) remain connected.
+  - merge-parent simplification in graph parent visibility is now gated to simplify-by-decoration non-full-history cases only, preventing over-pruning in full-history and boundary scenarios.
+- Direct validation:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t6016-rev-list-graph-simplify-history.sh` → **12/12**.
+- Harness validation:
+  - `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh` → **12/12**.
+- Regressions:
+  - `./scripts/run-tests.sh t6004-rev-list-path-optim.sh` → 7/7.
+  - `./scripts/run-tests.sh t6005-rev-list-count.sh` → 6/6.
+  - `./scripts/run-tests.sh t6009-rev-list-parent.sh` → 15/15.

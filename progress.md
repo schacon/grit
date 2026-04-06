@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    78 |
-| In progress |     1 |
+| Completed   |    79 |
+| In progress |     0 |
 | Remaining   |   688 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6016-rev-list-graph-simplify-history` — 12/12 tests pass (`log --graph` now performs graph-specific parent rewriting and ordering for path-limited/sparse/boundary cases to match expected simplified-history layouts; fixes include path-limited commit ordering around side branches, sparse-history first-parent edge rendering, boundary-commit ordering along the first-parent chain, and boundary-aware parent target selection so boundary nodes stay connected in graph output)
 - `t6009-rev-list-parent` — 15/15 tests pass (`rev-list` CLI now supports `--not` polarity toggling and no-limit toggles `--no-min-parents`/`--no-max-parents`; `^!` single-commit range shorthand is expanded to `<rev>` + `^<rev>^@` before revset parsing, fixing ancestor-culling and same-commit-time edge cases while preserving existing parent-count filtering semantics)
 - `t6409-merge-subtree` — 12/12 tests pass (`tests/test-lib.sh` now keeps working-directory state between `test_expect_success` blocks like upstream, allowing the nested `git-gui`/`git` subtree scenario to preserve intended relative `cd` context; this unblocks later subtree update/explicit-subtree merge cases and validates the earlier subtree strategy, `read-tree --prefix -u`, and relative remote URL fixes end-to-end)
 - `t6403-merge-file` — 39/39 tests pass (`merge-file` now accepts the local harness `unknown-oid` placeholder as an empty blob in `--object-id` mode, reads default conflict style from `merge.conflictstyle` when no explicit `--diff3/--zdiff3` flag is set, and forwards `--diff-algorithm` into the merge engine; `worktree add` now infers unborn-orphan creation when source HEAD has no commit, matching expected linked-worktree setup semantics; merge-file conflict marker line endings now stay consistent across the full output based on merged input style, fixing CRLF conflict marker checks while preserving diff3 regression behavior)

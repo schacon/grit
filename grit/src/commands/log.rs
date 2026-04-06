@@ -17,7 +17,7 @@ use grit_lib::rev_list::{
 };
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -468,7 +468,37 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         result.commits = simplified;
     }
 
+    if !combined_pathspecs.is_empty() && !args.full_history {
+        if args.sparse {
+            let mut dense_options = options.clone();
+            dense_options.sparse = false;
+            let dense_result = rev_list(repo, &positive_specs, &negative_specs, &dense_options)
+                .map_err(|e| anyhow::anyhow!("rev-list failed: {e}"))?;
+            let dense_ordered =
+                reorder_path_limited_graph_commits(repo, &dense_result.commits, args.first_parent)?;
+            result.commits = expand_sparse_path_limited_graph_history(repo, &dense_ordered)?;
+        } else {
+            result.commits =
+                reorder_path_limited_graph_commits(repo, &result.commits, args.first_parent)?;
+        }
+    }
+
     let included: HashSet<ObjectId> = result.commits.iter().copied().collect();
+    let ordered_boundaries = if args.boundary {
+        order_boundary_commits_for_graph(
+            repo,
+            &result.boundary_commits,
+            result.commits.first().copied(),
+        )?
+    } else {
+        Vec::new()
+    };
+    let mut graph_parent_targets = included.clone();
+    graph_parent_targets.extend(ordered_boundaries.iter().copied());
+    let simplify_graph_parents =
+        args.simplify_by_decoration && combined_pathspecs.is_empty() && !args.full_history;
+    let force_first_parent_for_graph =
+        args.sparse && !combined_pathspecs.is_empty() && !args.full_history;
     let mut nodes = Vec::new();
     let mut seen = HashSet::new();
 
@@ -476,7 +506,13 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
         if !seen.insert(*oid) {
             continue;
         }
-        let parents = visible_parents_for_graph(repo, *oid, &included, args.first_parent)?;
+        let parents = visible_parents_for_graph(
+            repo,
+            *oid,
+            &graph_parent_targets,
+            args.first_parent || force_first_parent_for_graph,
+            simplify_graph_parents,
+        )?;
         nodes.push(GraphCommitNode {
             oid: *oid,
             parents,
@@ -485,7 +521,7 @@ fn run_graph_log(repo: &Repository, args: &Args) -> Result<()> {
     }
 
     if args.boundary {
-        for oid in &result.boundary_commits {
+        for oid in &ordered_boundaries {
             if !seen.insert(*oid) {
                 continue;
             }
@@ -656,6 +692,7 @@ fn visible_parents_for_graph(
     oid: ObjectId,
     included: &HashSet<ObjectId>,
     first_parent_only: bool,
+    simplify_merge_parents: bool,
 ) -> Result<Vec<ObjectId>> {
     let mut direct = load_raw_parents(repo, oid)?;
     if first_parent_only && direct.len() > 1 {
@@ -673,6 +710,13 @@ fn visible_parents_for_graph(
             &mut out,
         )?;
     }
+    if simplify_merge_parents && out.len() > 1 {
+        let simplified = graph_simplify_parent_list(repo, included, &out)?;
+        let keep: HashSet<ObjectId> = simplified.into_iter().collect();
+        out.retain(|parent| keep.contains(parent));
+    }
+    let mut dedup = HashSet::new();
+    out.retain(|parent| dedup.insert(*parent));
     Ok(out)
 }
 
@@ -704,6 +748,172 @@ fn collect_visible_parent_for_graph(
         collect_visible_parent_for_graph(repo, parent, included, first_parent_only, seen, out)?;
     }
     Ok(())
+}
+
+fn first_parent_of_commit(repo: &Repository, oid: ObjectId) -> Result<Option<ObjectId>> {
+    let parents = load_raw_parents(repo, oid)?;
+    Ok(parents.first().copied())
+}
+
+fn first_parent_anchor_in_set(
+    repo: &Repository,
+    start: ObjectId,
+    anchors: &HashSet<ObjectId>,
+) -> Result<Option<ObjectId>> {
+    let mut seen = HashSet::new();
+    let mut cursor = Some(start);
+    while let Some(oid) = cursor {
+        if !seen.insert(oid) {
+            break;
+        }
+        if anchors.contains(&oid) {
+            return Ok(Some(oid));
+        }
+        cursor = first_parent_of_commit(repo, oid)?;
+    }
+    Ok(None)
+}
+
+fn reorder_path_limited_graph_commits(
+    repo: &Repository,
+    commits: &[ObjectId],
+    first_parent_only: bool,
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let included: HashSet<ObjectId> = commits.iter().copied().collect();
+    let mut chain = Vec::new();
+    let mut chain_seen = HashSet::new();
+    let mut cursor = Some(commits[0]);
+    while let Some(oid) = cursor {
+        if !included.contains(&oid) || !chain_seen.insert(oid) {
+            break;
+        }
+        chain.push(oid);
+        let visible = visible_parents_for_graph(repo, oid, &included, first_parent_only, false)?;
+        cursor = visible.first().copied();
+    }
+
+    let chain_set: HashSet<ObjectId> = chain.iter().copied().collect();
+    let mut grouped: HashMap<Option<ObjectId>, Vec<ObjectId>> = HashMap::new();
+    for oid in commits {
+        if chain_set.contains(oid) {
+            continue;
+        }
+        let anchor = first_parent_anchor_in_set(repo, *oid, &chain_set)?;
+        grouped.entry(anchor).or_default().push(*oid);
+    }
+
+    let mut ordered = Vec::new();
+    for chain_oid in chain {
+        if let Some(group) = grouped.remove(&Some(chain_oid)) {
+            ordered.extend(group);
+        }
+        ordered.push(chain_oid);
+    }
+    if let Some(group) = grouped.remove(&None) {
+        ordered.extend(group);
+    }
+    for (_anchor, group) in grouped {
+        ordered.extend(group);
+    }
+    Ok(ordered)
+}
+
+fn expand_sparse_path_limited_graph_history(
+    repo: &Repository,
+    commits: &[ObjectId],
+) -> Result<Vec<ObjectId>> {
+    if commits.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+    let mut push_unique = |oid: ObjectId, out: &mut Vec<ObjectId>| {
+        if seen.insert(oid) {
+            out.push(oid);
+        }
+    };
+
+    for window in commits.windows(2) {
+        let from = window[0];
+        let to = window[1];
+        push_unique(from, &mut expanded);
+
+        let mut cursor = first_parent_of_commit(repo, from)?;
+        let mut chain = Vec::new();
+        let mut found_target = false;
+        let mut local_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !local_seen.insert(oid) {
+                break;
+            }
+            if oid == to {
+                found_target = true;
+                break;
+            }
+            chain.push(oid);
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+        if found_target {
+            for oid in chain {
+                push_unique(oid, &mut expanded);
+            }
+        }
+    }
+
+    if let Some(&last) = commits.last() {
+        push_unique(last, &mut expanded);
+        let mut cursor = first_parent_of_commit(repo, last)?;
+        let mut tail_seen = HashSet::new();
+        while let Some(oid) = cursor {
+            if !tail_seen.insert(oid) {
+                break;
+            }
+            push_unique(oid, &mut expanded);
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+    }
+
+    Ok(expanded)
+}
+
+fn order_boundary_commits_for_graph(
+    repo: &Repository,
+    boundaries: &[ObjectId],
+    first_included: Option<ObjectId>,
+) -> Result<Vec<ObjectId>> {
+    if boundaries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let boundary_set: HashSet<ObjectId> = boundaries.iter().copied().collect();
+    let mut ordered = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(start) = first_included {
+        let mut cursor = first_parent_of_commit(repo, start)?;
+        while let Some(oid) = cursor {
+            if !seen.insert(oid) {
+                break;
+            }
+            if boundary_set.contains(&oid) {
+                ordered.push(oid);
+            }
+            cursor = first_parent_of_commit(repo, oid)?;
+        }
+    }
+
+    for oid in boundaries {
+        if seen.insert(*oid) {
+            ordered.push(*oid);
+        }
+    }
+
+    Ok(ordered)
 }
 
 fn load_commit_info(repo: &Repository, oid: ObjectId) -> Result<CommitInfo> {

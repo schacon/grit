@@ -731,7 +731,7 @@ commit → check it off → move on.
 - [x] `t6418-merge-text-auto` ████████████████████ 11/11 (0 left) — CRLF merge conflict across text=auto change
 
 - [x] `t6403-merge-file` ████████████████████ 39/39 (0 left) — RCS merge replacement: merge-file
-- [~] `t6016-rev-list-graph-simplify-history` █████████████░░░░░░░░ 8/12 (4 left) — --graph and simplified history
+- [x] `t6016-rev-list-graph-simplify-history` ████████████████████ 12/12 (0 left) — --graph and simplified history
 - [ ] `t6429-merge-sequence-rename-caching` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — remember regular & dir renames in sequence of merges
 - [x] `t6115-rev-list-du` ████████████████████ 17/17 (0 left) — basic tests of rev-list --disk-usage
 - [x] `t6001-rev-list-graft` ████████████████████ 14/14 (0 left) — Revision traversal vs grafts and path limiter
