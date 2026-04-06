@@ -374,7 +374,8 @@ fn cmd_clone(args: &[String]) -> Result<()> {
     // Emit a trace2 subcommand marker compatible with test_subcommand checks.
     if let Ok(path) = std::env::var("GIT_TRACE2_EVENT") {
         if !path.is_empty() {
-            let mut trace = String::from("[\"git\",\"fetch\",\"--quiet\",\"--no-progress\",\"origin\"");
+            let mut trace =
+                String::from("[\"git\",\"fetch\",\"--quiet\",\"--no-progress\",\"origin\"");
             if no_tags {
                 trace.push_str(",\"--no-tags\"");
             }

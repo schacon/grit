@@ -8,8 +8,8 @@ use clap::Args as ClapArgs;
 use std::process::Command;
 
 use grit_lib::config::canonical_key;
-use grit_lib::config::ConfigSet;
 use grit_lib::config::parse_path;
+use grit_lib::config::ConfigSet;
 
 /// Arguments for `grit for-each-repo`.
 #[derive(Debug, ClapArgs)]
@@ -71,7 +71,10 @@ pub fn run(args: Args) -> Result<()> {
     for repo_path in &repos {
         let expanded = parse_path(repo_path);
         if !std::path::Path::new(&expanded).is_dir() {
-            eprintln!("fatal: cannot change to '{}': No such file or directory", expanded);
+            eprintln!(
+                "fatal: cannot change to '{}': No such file or directory",
+                expanded
+            );
             if !args.keep_going {
                 std::process::exit(1);
             }

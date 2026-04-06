@@ -244,7 +244,8 @@ fn create_annotated_tag(
         let signing_key = config
             .get("user.signingkey")
             .unwrap_or_else(|| "-".to_owned());
-        let sig_payload = pseudo_tag_signature_payload(&sig_format, &signing_key, &unsigned_tag_bytes);
+        let sig_payload =
+            pseudo_tag_signature_payload(&sig_format, &signing_key, &unsigned_tag_bytes);
         let sig_block = render_tag_signature_block(&sig_format, &sig_payload);
         if !tag_data.message.ends_with('\n') {
             tag_data.message.push('\n');
@@ -734,20 +735,21 @@ fn pseudo_tag_signature_payload(format: &str, key: &str, unsigned_tag: &[u8]) ->
     let mut hasher = Sha1::new();
     hasher.update(unsigned_tag);
     let digest = hasher.finalize();
-    format!("GRITTAGSIGV1 {} {} {}", format, key, hex::encode(digest.as_slice()))
+    format!(
+        "GRITTAGSIGV1 {} {} {}",
+        format,
+        key,
+        hex::encode(digest.as_slice())
+    )
 }
 
 fn render_tag_signature_block(format: &str, payload: &str) -> String {
     match format {
-        "ssh" => format!(
-            "-----BEGIN SSH SIGNATURE-----\n{payload}\n-----END SSH SIGNATURE-----\n"
-        ),
-        "x509" => format!(
-            "-----BEGIN SIGNED MESSAGE-----\n{payload}\n-----END SIGNED MESSAGE-----\n"
-        ),
-        _ => format!(
-            "-----BEGIN PGP SIGNATURE-----\n{payload}\n-----END PGP SIGNATURE-----\n"
-        ),
+        "ssh" => format!("-----BEGIN SSH SIGNATURE-----\n{payload}\n-----END SSH SIGNATURE-----\n"),
+        "x509" => {
+            format!("-----BEGIN SIGNED MESSAGE-----\n{payload}\n-----END SIGNED MESSAGE-----\n")
+        }
+        _ => format!("-----BEGIN PGP SIGNATURE-----\n{payload}\n-----END PGP SIGNATURE-----\n"),
     }
 }
 

@@ -235,7 +235,11 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let is_root_pathspec = args.pathspec.iter().any(|p| p == ":/");
     if args.all || args.pathspec.iter().any(|p| p == ".") || is_root_pathspec {
-        let effective_prefix = if is_root_pathspec { None } else { prefix.as_deref() };
+        let effective_prefix = if is_root_pathspec {
+            None
+        } else {
+            prefix.as_deref()
+        };
         add_all(
             odb,
             &mut index,
@@ -959,7 +963,9 @@ fn stage_file(
         }
     };
 
-    let oid = odb.write(ObjectKind::Blob, &data).map_err(anyhow::Error::from)?;
+    let oid = odb
+        .write(ObjectKind::Blob, &data)
+        .map_err(anyhow::Error::from)?;
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
                              // Use stage_file which also clears conflict stages (1, 2, 3) for the same

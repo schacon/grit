@@ -114,7 +114,7 @@ pub fn should_passthrough_from_subdir(repo: &Repository) -> bool {
 /// Returns true when a pathspec references a parent directory (`..`), which
 /// requires nuanced outside-prefix semantics that are best delegated to native Git.
 pub fn has_parent_pathspec_component(pathspec: &str) -> bool {
-    Path::new(pathspec).components().any(|component| {
-        matches!(component, std::path::Component::ParentDir)
-    })
+    Path::new(pathspec)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
 }

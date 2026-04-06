@@ -69,7 +69,7 @@ case "\$1" in
   revision-walking)
     exec "$GRIT_BIN" test-tool "\$@"
     ;;
-  chmtime) shift; touch "\$@" 2>/dev/null ;;
+  chmtime) shift; exec "$GRIT_BIN" test-tool chmtime "\$@" ;;
   *)
     exec "$GRIT_BIN" test-tool "\$@"
     ;;

@@ -749,10 +749,9 @@ fn should_passthrough_conflicted_rm(index: &Index, include_specs: &[String]) -> 
 
     include_specs.iter().any(|spec| {
         if has_glob_chars(spec) {
-            return index
-                .entries
-                .iter()
-                .any(|e| e.stage() != 0 && glob_pathspec_matches(spec, &String::from_utf8_lossy(&e.path)));
+            return index.entries.iter().any(|e| {
+                e.stage() != 0 && glob_pathspec_matches(spec, &String::from_utf8_lossy(&e.path))
+            });
         }
         let rel = spec.trim_end_matches('/');
         let rel_bytes = rel.as_bytes();
@@ -783,8 +782,8 @@ fn remove_submodule_config_sections(
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            skip_section =
-                parse_submodule_section_name(trimmed).is_some_and(|name| removed_paths.contains(&name));
+            skip_section = parse_submodule_section_name(trimmed)
+                .is_some_and(|name| removed_paths.contains(&name));
             if skip_section {
                 changed = true;
                 continue;
@@ -807,14 +806,10 @@ fn remove_submodule_config_sections(
 
 fn parse_submodule_section_name(header: &str) -> Option<String> {
     let trimmed = header.trim();
-    let name = trimmed
-        .strip_prefix("[submodule \"")?
-        .strip_suffix("\"]")?;
+    let name = trimmed.strip_prefix("[submodule \"")?.strip_suffix("\"]")?;
     Some(name.to_string())
 }
 
 fn passthrough_current_rm_invocation() -> Result<()> {
     git_passthrough::run_current_invocation("rm")
 }
-
-

@@ -62,9 +62,10 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     if git_passthrough::should_passthrough_from_subdir(&repo)
-        || args.pathspec.iter().any(|p| {
-            p == "." || git_passthrough::has_parent_pathspec_component(p)
-        })
+        || args
+            .pathspec
+            .iter()
+            .any(|p| p == "." || git_passthrough::has_parent_pathspec_component(p))
     {
         return passthrough_current_clean_invocation();
     }

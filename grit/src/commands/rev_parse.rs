@@ -2,12 +2,12 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
     is_inside_work_tree, list_loose_abbrev_matches, resolve_revision, show_prefix,
     symbolic_full_name,
 };
-use grit_lib::repo::Repository;
 use std::env;
 
 /// Arguments for `grit rev-parse`.
@@ -268,7 +268,7 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-        // Apply --default: if no Revision actions exist, inject the default
+    // Apply --default: if no Revision actions exist, inject the default
     if let Some(ref def) = default_rev {
         let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_)));
         if !has_revision {

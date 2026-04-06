@@ -4,9 +4,9 @@
 //! source (index, HEAD, or an explicit tree-ish).  Unlike `reset`, this
 //! command does **not** move `HEAD`.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use crate::commands::git_passthrough;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -382,7 +382,10 @@ fn do_restore_worktree_merge(
         .read(&theirs_oid)
         .with_context(|| format!("reading theirs blob for '{rel_path}'"))?;
     if ours_obj.kind != ObjectKind::Blob || theirs_obj.kind != ObjectKind::Blob {
-        bail!("cannot restore merge state for non-blob path '{}'", rel_path);
+        bail!(
+            "cannot restore merge state for non-blob path '{}'",
+            rel_path
+        );
     }
 
     let ours_text = ensure_trailing_newline(String::from_utf8_lossy(&ours_obj.data).into_owned());
@@ -446,8 +449,12 @@ fn read_saved_merge_state(
         if path != rel_path {
             continue;
         }
-        let Some(ours_oid_s) = parts.next() else { continue };
-        let Some(ours_mode_s) = parts.next() else { continue };
+        let Some(ours_oid_s) = parts.next() else {
+            continue;
+        };
+        let Some(ours_mode_s) = parts.next() else {
+            continue;
+        };
         let Some(theirs_oid_s) = parts.next() else {
             continue;
         };
@@ -921,10 +928,7 @@ fn passthrough_patch_restore_invocation() -> Result<()> {
         bail!("failed to determine restore arguments");
     };
 
-    let mut passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
+    let mut passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
 
     for arg in &mut passthrough_args {
         if arg == "@" {

@@ -254,10 +254,7 @@ fn passthrough_current_branch_invocation() -> Result<()> {
     let Some(idx) = argv.iter().position(|arg| arg == "branch") else {
         bail!("failed to determine branch arguments");
     };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
+    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
     crate::commands::git_passthrough::run("branch", &passthrough_args)
 }
 
@@ -1172,10 +1169,7 @@ fn update_worktree_heads(repo: &Repository, old_name: &str, new_name: &str) -> R
     Ok(())
 }
 
-fn branch_used_by_other_worktree(
-    repo: &Repository,
-    branch: &str,
-) -> Result<Option<String>> {
+fn branch_used_by_other_worktree(repo: &Repository, branch: &str) -> Result<Option<String>> {
     let occupied = crate::commands::worktree_refs::occupied_branch_refs(repo);
     let target = format!("refs/heads/{branch}");
     if let Some(wt_path) = occupied.get(&target) {
@@ -1185,9 +1179,7 @@ fn branch_used_by_other_worktree(
 }
 
 fn branch_checked_out_in_other_worktree(repo: &Repository, branch: &str) -> Option<String> {
-    branch_used_by_other_worktree(repo, branch)
-        .ok()
-        .flatten()
+    branch_used_by_other_worktree(repo, branch).ok().flatten()
 }
 
 /// Get reflog identity string.

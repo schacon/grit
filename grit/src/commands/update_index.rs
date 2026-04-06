@@ -369,10 +369,12 @@ pub fn run(args: Args) -> Result<()> {
         // On filesystems without symlink support (core.symlinks=false), keep
         // an existing symlink entry's mode even if the worktree stores it
         // as a plain file containing the link target.
-        if !symlinks_enabled && !meta.file_type().is_symlink()
-            && existing_mode == Some(grit_lib::index::MODE_SYMLINK) {
-                mode = grit_lib::index::MODE_SYMLINK;
-            }
+        if !symlinks_enabled
+            && !meta.file_type().is_symlink()
+            && existing_mode == Some(grit_lib::index::MODE_SYMLINK)
+        {
+            mode = grit_lib::index::MODE_SYMLINK;
+        }
 
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;

@@ -2226,6 +2226,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "hexdump" => run_test_tool_hexdump(rest),
+                "chmtime" => run_test_tool_chmtime(&rest[1..]),
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
@@ -2278,4 +2279,63 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             }
         }
     }
+}
+
+/// Handle `test-tool chmtime` — get or set file modification times.
+fn run_test_tool_chmtime(rest: &[String]) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if rest.is_empty() {
+        bail!("usage: test-tool chmtime [--get|=<ts>|+<n>|-<n>] <file>");
+    }
+    let flag = &rest[0];
+    if flag == "--get" {
+        for path in &rest[1..] {
+            let meta = std::fs::metadata(path)
+                .map_err(|e| anyhow::anyhow!("chmtime: cannot stat '{path}': {e}"))?;
+            println!("{}", meta.mtime());
+        }
+        return Ok(());
+    }
+    for path in &rest[1..] {
+        let meta = std::fs::metadata(path)
+            .map_err(|e| anyhow::anyhow!("chmtime: cannot stat '{path}': {e}"))?;
+        let current_mtime = meta.mtime();
+        let new_mtime: i64 = if let Some(ts_str) = flag.strip_prefix('=') {
+            ts_str
+                .parse::<i64>()
+                .map_err(|e| anyhow::anyhow!("chmtime: invalid timestamp: {e}"))?
+        } else if let Some(d) = flag.strip_prefix('+') {
+            current_mtime
+                + d.parse::<i64>()
+                    .map_err(|e| anyhow::anyhow!("chmtime: {e}"))?
+        } else if flag.starts_with('-') && !flag.starts_with("--") {
+            current_mtime
+                - flag[1..]
+                    .parse::<i64>()
+                    .map_err(|e| anyhow::anyhow!("chmtime: {e}"))?
+        } else {
+            bail!("chmtime: unknown flag '{flag}'");
+        };
+        // Use touch -t to set the mtime (format: [[CC]YY]MMDDhhmm[.ss])
+        // Convert epoch to touch -d format
+        let ts = time::OffsetDateTime::from_unix_timestamp(new_mtime)
+            .map_err(|e| anyhow::anyhow!("chmtime: invalid timestamp {new_mtime}: {e}"))?;
+        let touch_fmt = format!(
+            "{}{:02}{:02}{:02}{:02}.{:02}",
+            ts.year(),
+            ts.month() as u8,
+            ts.day(),
+            ts.hour(),
+            ts.minute(),
+            ts.second()
+        );
+        let status = std::process::Command::new("touch")
+            .args(["-t", &touch_fmt, path])
+            .status()
+            .map_err(|e| anyhow::anyhow!("chmtime: touch failed: {e}"))?;
+        if !status.success() {
+            bail!("chmtime: touch returned error for '{path}'");
+        }
+    }
+    Ok(())
 }

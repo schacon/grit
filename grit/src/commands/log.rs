@@ -355,7 +355,6 @@ pub struct Args {
     /// Generate diff with N lines of context.
     #[arg(short = 'U', long = "unified", value_name = "N")]
     pub unified: Option<usize>,
-
 }
 
 /// Extract epoch timestamp from a Git ident string.

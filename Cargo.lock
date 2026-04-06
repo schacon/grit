@@ -282,6 +282,7 @@ dependencies = [
  "flate2",
  "grit-lib",
  "hex",
+ "libc",
  "regex",
  "sha1",
  "similar",

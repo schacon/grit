@@ -168,5 +168,4 @@ fn collect_enabled_hooks(repo: &Repository) -> Vec<String> {
     }
     enabled.sort();
     enabled
-
 }

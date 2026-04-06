@@ -290,7 +290,10 @@ fn run_scheduler_output(cmdline: &str, extra_arg: Option<&str>) -> Result<(bool,
     let out = cmd
         .output()
         .with_context(|| format!("failed to spawn scheduler command '{}'", parts[0]))?;
-    Ok((out.status.success(), String::from_utf8_lossy(&out.stdout).to_string()))
+    Ok((
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).to_string(),
+    ))
 }
 
 fn run_scheduler_status(cmdline: &str, extra_arg: Option<&str>) -> Result<bool> {

@@ -590,9 +590,6 @@ fn passthrough_current_fsck_invocation() -> Result<()> {
     let Some(idx) = argv.iter().position(|arg| arg == "fsck") else {
         bail!("failed to determine fsck arguments");
     };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
+    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
     git_passthrough::run("fsck", &passthrough_args)
 }

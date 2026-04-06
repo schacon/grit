@@ -521,11 +521,7 @@ fn maybe_trace_implicit_bare_repository(dir: &Path) {
     };
 
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(
-            file,
-            "setup: implicit-bare-repository:{}",
-            dir.display()
-        );
+        let _ = writeln!(file, "setup: implicit-bare-repository:{}", dir.display());
     }
 }
 
@@ -661,7 +657,10 @@ impl Repository {
         if std::env::var("GRIT_DEBUG_SAFE_DIR").is_ok() {
             eprintln!("debug-safe-directory values={:?}", effective);
         }
-        if effective.iter().any(|v| safe_directory_matches(v, &checked_s)) {
+        if effective
+            .iter()
+            .any(|v| safe_directory_matches(v, &checked_s))
+        {
             return Ok(());
         }
 
@@ -757,9 +756,7 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
             return Ok(path);
         }
     }
-    Err(Error::NotARepository(
-        "invalid gitfile format".to_owned(),
-    ))
+    Err(Error::NotARepository("invalid gitfile format".to_owned()))
 }
 
 /// Initialise a new Git repository at the given path.
@@ -920,7 +917,9 @@ pub fn validate_repo_config(config_text: &str) -> std::result::Result<(), String
         }
         if in_core {
             if let Some(rest) = trimmed.strip_prefix("repositoryformatversion") {
-                let val = rest.trim_start_matches(|c: char| c == ' ' || c == '=').trim();
+                let val = rest
+                    .trim_start_matches(|c: char| c == ' ' || c == '=')
+                    .trim();
                 if let Ok(v) = val.parse::<u32>() {
                     version = v;
                 }

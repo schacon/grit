@@ -567,7 +567,11 @@ fn collect_refs(
     Ok(())
 }
 
-fn collect_packed_refs(git_dir: &Path, prefix: &str, out: &mut Vec<(String, ObjectId)>) -> Result<()> {
+fn collect_packed_refs(
+    git_dir: &Path,
+    prefix: &str,
+    out: &mut Vec<(String, ObjectId)>,
+) -> Result<()> {
     let packed_path = git_dir.join("packed-refs");
     let content = match fs::read_to_string(&packed_path) {
         Ok(c) => c,

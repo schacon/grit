@@ -19,6 +19,7 @@ path = "src/bin/test_httpd.rs"
 workspace = true
 
 [dependencies]
+libc = { workspace = true }
 grit-lib = { version = "0.1.0", path = "../grit-lib" }
 anyhow.workspace = true
 clap.workspace = true

@@ -46,10 +46,7 @@ pub enum RerereSubcommand {
 
 /// Run the `rerere` command.
 pub fn run(args: Args) -> Result<()> {
-    if matches!(
-        args.subcmd,
-        None | Some(RerereSubcommand::Forget { .. })
-    ) {
+    if matches!(args.subcmd, None | Some(RerereSubcommand::Forget { .. })) {
         return passthrough_current_rerere_invocation();
     }
 
@@ -550,9 +547,6 @@ fn passthrough_current_rerere_invocation() -> Result<()> {
     let Some(idx) = argv.iter().position(|arg| arg == "rerere") else {
         bail!("failed to determine rerere arguments");
     };
-    let passthrough_args = argv
-        .get(idx + 1..)
-        .map(|s| s.to_vec())
-        .unwrap_or_default();
+    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
     git_passthrough::run("rerere", &passthrough_args)
 }

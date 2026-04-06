@@ -166,10 +166,7 @@ fn resolve_gitdir_from_gitfile_path(gitfile_path: &Path) -> Result<PathBuf> {
             let candidate = if Path::new(rel).is_absolute() {
                 PathBuf::from(rel)
             } else {
-                gitfile_path
-                    .parent()
-                    .unwrap_or(Path::new("."))
-                    .join(rel)
+                gitfile_path.parent().unwrap_or(Path::new(".")).join(rel)
             };
             return Ok(candidate);
         }

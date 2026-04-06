@@ -1341,10 +1341,9 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 /// Returns true if the value should be skipped.
 fn is_optional_missing_path(args: &Args, val: &str) -> bool {
     let type_name = args.type_name.as_deref();
-    if (args.type_path || type_name == Some("path"))
-        && val.starts_with(":(optional)") {
-            return grit_lib::config::parse_path_optional(val).is_none();
-        }
+    if (args.type_path || type_name == Some("path")) && val.starts_with(":(optional)") {
+        return grit_lib::config::parse_path_optional(val).is_none();
+    }
     false
 }
 

@@ -305,9 +305,10 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
             .entries
             .iter()
             .any(|e| e.path == *path && e.stage() == 0)
-            && !staged_paths.contains(path) {
-                staged_paths.push(path.clone());
-            }
+            && !staged_paths.contains(path)
+        {
+            staged_paths.push(path.clone());
+        }
     }
 
     if staged_paths.is_empty() {
@@ -736,9 +737,9 @@ fn find_untracked_obstruction(
             continue;
         }
 
-        let replaces_tracked_dir = old_paths.iter().any(|op| {
-            op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/')
-        });
+        let replaces_tracked_dir = old_paths
+            .iter()
+            .any(|op| op.starts_with(rel.as_bytes()) && op.get(rel.len()) == Some(&b'/'));
         if replaces_tracked_dir {
             continue;
         }
