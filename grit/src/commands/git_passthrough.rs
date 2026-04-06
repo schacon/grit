@@ -91,10 +91,11 @@ pub fn should_passthrough_from_subdir(repo: &Repository) -> bool {
     let Some(work_tree) = repo.work_tree.as_ref() else {
         return false;
     };
-    let cwd = match std::env::current_dir() {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
+    let cwd = std::env::current_dir().ok();
+    let orig_cwd = std::env::var_os("GRIT_ORIG_CWD")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .and_then(|p| p.canonicalize().ok());
     let pwd = std::env::var_os("PWD")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -102,8 +103,11 @@ pub fn should_passthrough_from_subdir(repo: &Repository) -> bool {
     let wt_canon = work_tree
         .canonicalize()
         .unwrap_or_else(|_| work_tree.clone());
-    let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
-    let effective_cwd = pwd.unwrap_or(cwd_canon);
+    let cwd_canon = cwd.and_then(|c| c.canonicalize().ok());
+    let effective_cwd = orig_cwd
+        .or(pwd)
+        .or(cwd_canon)
+        .unwrap_or_else(|| wt_canon.clone());
     effective_cwd.starts_with(&wt_canon) && effective_cwd != wt_canon
 }
 

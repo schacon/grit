@@ -312,6 +312,9 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     } else {
         config_use_relative_paths(&common)
     };
+    if use_relative_paths {
+        ensure_relative_worktree_extensions(&common)?;
+    }
     let worktrees_dir = common.join("worktrees");
 
     // Determine the absolute path for the new worktree
@@ -1096,10 +1099,6 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
 
 #[allow(dead_code)]
 fn cmd_prune_local(args: PruneArgs) -> Result<()> {
-    if args.verbose {
-        return passthrough_current_worktree_invocation();
-    }
-
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
@@ -1160,8 +1159,8 @@ fn cmd_prune_local(args: PruneArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_prune(_args: PruneArgs) -> Result<()> {
-    passthrough_current_worktree_invocation()
+fn cmd_prune(args: PruneArgs) -> Result<()> {
+    cmd_prune_local(args)
 }
 
 fn classify_prune_reason(
@@ -1212,6 +1211,71 @@ fn parse_gitdir_target(admin: &Path, text: &str) -> Option<PathBuf> {
     } else {
         Some(admin.join(path))
     }
+}
+
+fn ensure_relative_worktree_extensions(common_git_dir: &Path) -> Result<()> {
+    let config_path = common_git_dir.join("config");
+    let mut content = fs::read_to_string(&config_path).unwrap_or_default();
+    content = set_config_key(&content, "core", "repositoryformatversion", "1");
+    content = set_config_key(&content, "extensions", "relativeworktrees", "true");
+    fs::write(&config_path, content)
+        .with_context(|| format!("writing {}", config_path.display()))?;
+    Ok(())
+}
+
+fn set_config_key(content: &str, section: &str, key: &str, value: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut current_section: Option<String> = None;
+    let mut saw_section = false;
+    let mut wrote_key = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if current_section.as_deref() == Some(section) && !wrote_key {
+                out.push(format!("\t{key} = {value}"));
+                wrote_key = true;
+            }
+
+            let header = trimmed.trim_start_matches('[').trim_end_matches(']');
+            let section_name = header.split_whitespace().next().unwrap_or("").to_string();
+            current_section = Some(section_name.clone());
+            if section_name == section {
+                saw_section = true;
+            }
+            out.push(line.to_string());
+            continue;
+        }
+
+        if current_section.as_deref() == Some(section) {
+            let maybe_key = trimmed
+                .split_once('=')
+                .map(|(k, _)| k.trim().to_string())
+                .unwrap_or_default();
+            if maybe_key == key {
+                out.push(format!("\t{key} = {value}"));
+                wrote_key = true;
+                continue;
+            }
+        }
+
+        out.push(line.to_string());
+    }
+
+    if saw_section && !wrote_key {
+        out.push(format!("\t{key} = {value}"));
+    }
+
+    if !saw_section {
+        out.push(format!("[{section}]"));
+        out.push(format!("\t{key} = {value}"));
+    }
+
+    let mut rendered = out.join("\n");
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    rendered
 }
 
 #[allow(dead_code)]

@@ -184,6 +184,16 @@ pub fn run(mut args: Args) -> Result<()> {
     // Delegate conflicted-path resolution to native git so index extensions
     // like resolve-undo are recorded with full compatibility.
     if should_passthrough_conflicted_add(&index, work_tree, &cwd, prefix.as_deref(), &args) {
+        if !args.dry_run {
+            record_merge_restore_state_for_pathspecs(
+                &repo,
+                &index,
+                work_tree,
+                &cwd,
+                prefix.as_deref(),
+                &args.pathspec,
+            );
+        }
         return passthrough_current_add_invocation();
     }
 
@@ -1703,6 +1713,41 @@ fn should_passthrough_conflicted_add(
                         && e.path.get(rel_bytes.len()) == Some(&b'/')))
         })
     })
+}
+
+fn record_merge_restore_state_for_pathspecs(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    prefix: Option<&str>,
+    pathspecs: &[String],
+) {
+    let mut conflicted_paths = std::collections::BTreeSet::new();
+
+    for pathspec in pathspecs {
+        let resolved = resolve_pathspec(pathspec, work_tree, cwd, prefix);
+        let rel = resolved.trim_end_matches('/');
+        if rel.is_empty() {
+            continue;
+        }
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 2) {
+            let path = String::from_utf8_lossy(&entry.path);
+            let matches = path == rel || path.starts_with(&format!("{rel}/"));
+            if !matches {
+                continue;
+            }
+            if index.get(&entry.path, 3).is_none() {
+                continue;
+            }
+            conflicted_paths.insert(path.to_string());
+        }
+    }
+
+    for path in conflicted_paths {
+        let _ = record_merge_restore_state(repo, index, &path);
+    }
 }
 
 fn passthrough_current_add_invocation() -> Result<()> {

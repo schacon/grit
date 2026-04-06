@@ -71,7 +71,7 @@ pub struct Args {
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if !args.force && git_passthrough::should_passthrough_from_subdir(&repo) {
+    if git_passthrough::should_passthrough_from_subdir(&repo) {
         return passthrough_current_rm_invocation();
     }
     if args

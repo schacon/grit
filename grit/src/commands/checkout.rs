@@ -2678,11 +2678,20 @@ fn should_passthrough_branch_checkout(args: &Args, target: Option<&str>, paths: 
     if !paths.is_empty() {
         return false;
     }
+    if args.detach {
+        return false;
+    }
     if args.ours || args.theirs {
         return false;
     }
     if args.pathspec_from_file.is_some() || args.pathspec_file_nul {
         return false;
+    }
+
+    if let Some(t) = target {
+        if !args.detach && (t == "@" || t == "HEAD") {
+            return false;
+        }
     }
 
     target.is_some()

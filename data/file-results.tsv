@@ -478,11 +478,11 @@ t2016-checkout-patch	yes	0	0	0	timeout	0	0	0
 t2017-checkout-orphan	yes	13	13	0	ok	13	13	0
 t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
-t2020-checkout-detach	yes	26	24	2	ok	24	26	0
+t2020-checkout-detach	yes	26	26	0	ok	26	26	0
 t2021-checkout-overwrite	yes	9	9	0	ok	9	9	0
 t2022-checkout-paths	yes	5	5	0	ok	5	5	0
 t2023-checkout-m	yes	5	5	0	ok	5	5	0
-t2024-checkout-dwim	yes	23	23	0	ok	23	23	0
+t2024-checkout-dwim	yes	23	22	1	ok	22	23	0
 t2025-checkout-no-overlay	yes	6	6	0	ok	6	6	0
 t2026-checkout-pathspec-file	yes	11	11	0	ok	11	11	0
 t2027-checkout-track	yes	5	5	0	ok	5	5	0
@@ -496,7 +496,7 @@ t2050-checkout	yes	80	80	0	ok	80	80	0
 t2050-git-dir-relative	yes	4	4	0	ok	4	4	0
 t2060-switch	yes	16	16	0	ok	16	16	0
 t2061-switch-orphan	yes	15	15	0	ok	15	15	0
-t2070-restore	yes	15	13	2	ok	13	15	0
+t2070-restore	yes	15	15	0	ok	15	15	0
 t2071-restore-patch	yes	15	15	0	ok	15	15	0
 t2072-restore-pathspec-file	yes	12	12	0	ok	12	12	0
 t2080-parallel-checkout-basics	yes	11	11	0	ok	11	11	0
@@ -519,8 +519,8 @@ t2204-add-ignored	yes	47	47	0	ok	47	47	0
 t2205-add-worktree-config	yes	13	13	0	ok	13	13	0
 t2206-add-submodule-ignored	yes	8	8	0	ok	8	8	0
 t2300-cd-to-toplevel	yes	5	5	0	ok	5	5	0
-t2400-worktree-add	yes	232	47	185	ok	47	232	0
-t2401-worktree-prune	yes	13	12	1	ok	12	13	0
+t2400-worktree-add	yes	232	44	188	ok	44	232	0
+t2401-worktree-prune	yes	13	13	0	ok	13	13	0
 t2402-worktree-list	yes	0	0	0	timeout	0	0	0
 t2403-worktree-move	yes	33	33	0	ok	33	33	0
 t2404-worktree-config	yes	12	12	0	ok	12	12	0
@@ -528,7 +528,7 @@ t2405-worktree-submodule	yes	11	11	0	ok	10	10	1
 t2406-worktree-repair	yes	24	24	0	ok	24	24	0
 t2407-worktree-heads	yes	12	12	0	ok	12	12	0
 t2500-untracked-overwriting	yes	10	10	0	ok	8	8	2
-t2501-cwd-empty	yes	24	23	1	ok	23	24	0
+t2501-cwd-empty	yes	24	24	0	ok	24	24	0
 t3000-ls-files-others	yes	15	4	11	ok	4	15	0
 t3001-ls-files-others-exclude	yes	27	11	16	ok	11	27	0
 t3002-ls-files-dashpath	yes	6	6	0	ok	6	6	0
