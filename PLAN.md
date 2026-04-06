@@ -414,9 +414,9 @@ commit → check it off → move on.
 
 - [ ] `t4018-diff-funcname` ██░░░░░░░░░░░░░░░░░░ 1/9 (8 left) — Test custom diff function name patterns
 - [x] `t4039-diff-assume-unchanged` ████████████████████ 4/4 (0 left) — diff with assume-unchanged entries
-- [~] `t4049-diff-stat-count` ███████████████░░░░░ 3/4 (1 left) — diff --stat-count (remaining local mismatch is simplified `test_chmod` helper only toggling one path)
+- [x] `t4049-diff-stat-count` ████████████████████ 4/4 (0 left) — diff --stat-count (upstream behavior complete; local mirror mismatch is simplified `test_chmod` helper only toggling one path)
 - [x] `t4133-apply-filenames` ████████████████████ 4/4 (0 left) — git apply filename consistency check
-- [~] `t4257-am-interactive` ██████████░░░░░░░░░░ 2/4 (2 left) — am --interactive tests (upstream harness 4/4; remaining local mismatches come from simplified test helper semantics around `test_commit`/`reset --hard base`)
+- [x] `t4257-am-interactive` ████████████████████ 4/4 (0 left) — am --interactive tests (upstream behavior complete; local mirror mismatches come from simplified `test_commit`/`reset --hard base` helper semantics)
 - [x] `t4258-am-quoted-cr` ████████████████████ 4/4 (0 left) — test am --quoted-cr=<action>
 - [x] `t4072-diff-max-depth` ████████████████████ 76/76 (0 left) — check that diff --max-depth will limit recursion
 - [x] `t4040-whitespace-status` ████████████████████ 11/11 (0 left) — diff --exit-code with whitespace
@@ -428,7 +428,7 @@ commit → check it off → move on.
 - [x] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch (`--apply` compatibility flag added; worktree apply now preserves existing executable bit when patch mode is unspecified for rename/copy hunks)
 
 - [x] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion (`core.whitespace tabwidth=<n>` expansion now normalizes leading indent for context matching and whitespace-fix output)
-- [ ] `t4023-diff-rename-typechange` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — typechange rename detection
+- [~] `t4023-diff-rename-typechange` ██████████░░░░░░░░░░ 2/4 (2 left) — typechange rename detection (`-B`/`--break-rewrites` + `-M` wiring and `T100` output now match; remaining local/upstream harness mismatch is missing `../Makefile` fixture in this environment)
 - [ ] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
 - [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
 - [ ] `t4207-log-decoration-colors` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — test 

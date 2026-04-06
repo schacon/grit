@@ -19,6 +19,7 @@ use grit_lib::write_tree::write_tree_from_index;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
@@ -796,7 +797,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     let mut changed = false;
     for (raw_path, path_str, idx_mode) in &tracked {
         let abs_path = work_tree.join(path_str);
-        if abs_path.exists() {
+        if let Ok(meta) = fs::symlink_metadata(&abs_path) {
             // Gitlink (submodule) entries: read the embedded repo's HEAD to
             // get the current commit OID instead of trying to read the
             // directory as a file.
@@ -815,7 +816,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                     };
                     if let Ok(oid) = oid_hex.parse::<ObjectId>() {
                         use std::os::unix::fs::MetadataExt;
-                        let meta = fs::symlink_metadata(&abs_path)?;
                         let entry = grit_lib::index::IndexEntry {
                             ctime_sec: meta.ctime() as u32,
                             ctime_nsec: meta.ctime_nsec() as u32,
@@ -838,8 +838,6 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
                 }
                 continue;
             }
-            use std::os::unix::fs::MetadataExt;
-            let meta = fs::symlink_metadata(&abs_path)?;
             let data = if meta.file_type().is_symlink() {
                 let target = fs::read_link(&abs_path)?;
                 target.to_string_lossy().into_owned().into_bytes()

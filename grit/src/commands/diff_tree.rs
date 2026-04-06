@@ -80,6 +80,8 @@ struct Options {
     find_copies_harder: bool,
     /// Rename limit (max number of rename source candidates).
     rename_limit: Option<usize>,
+    /// Break rewrites into delete/create pairs (`-B`).
+    break_rewrites: bool,
     /// Show full object IDs in patch headers (--full-index).
     full_index: bool,
     /// Also show raw format with patch (--patch-with-raw).
@@ -122,6 +124,7 @@ impl Default for Options {
             find_copies: None,
             find_copies_harder: false,
             rename_limit: None,
+            break_rewrites: false,
             full_index: false,
             patch_with_raw: false,
             patch_with_stat: false,
@@ -232,8 +235,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         opts.find_renames = Some(50);
                     }
                 }
+                "-B" | "--break-rewrites" => opts.break_rewrites = true,
                 "--find-copies-harder" => opts.find_copies_harder = true,
                 "--no-renames" => opts.find_renames = None,
+                _ if arg.starts_with("-B") => {
+                    opts.break_rewrites = true;
+                }
+                _ if arg.starts_with("--break-rewrites=") => {
+                    opts.break_rewrites = true;
+                }
                 _ if arg.starts_with("-M") => {
                     let val = &arg[2..];
                     let pct = if val.ends_with('%') {
@@ -302,6 +312,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     }
     if opts.summary {
         opts.recursive = true;
+    }
+    if opts.break_rewrites && opts.find_renames.is_some() && opts.find_copies.is_none() {
+        opts.find_copies = opts.find_renames;
     }
 
     Ok(opts)
@@ -858,6 +871,12 @@ fn print_diff(
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
 ) -> Result<bool> {
+    let preprocessed = if opts.break_rewrites {
+        apply_break_rewrites(entries.to_vec())
+    } else {
+        entries.to_vec()
+    };
+
     // Apply rename detection if requested.
     let owned_entries;
     let old_blobs = if opts.find_copies.is_some() && opts.find_copies_harder {
@@ -870,7 +889,7 @@ fn print_diff(
         Vec::new()
     };
     let entries = if let Some(threshold) = opts.find_renames {
-        let mut result = detect_renames(odb, entries.to_vec(), threshold);
+        let mut result = detect_renames(odb, preprocessed, threshold);
         if let Some(copy_threshold) = opts.find_copies {
             result = detect_copies(
                 odb,
@@ -885,14 +904,14 @@ fn print_diff(
     } else if let Some(copy_threshold) = opts.find_copies {
         owned_entries = detect_copies(
             odb,
-            entries.to_vec(),
+            preprocessed,
             copy_threshold,
             opts.find_copies_harder,
             &old_blobs,
         );
         &owned_entries[..]
     } else {
-        entries
+        &preprocessed
     };
 
     match opts.format {
@@ -954,6 +973,10 @@ fn print_diff(
         }
         OutputFormat::NameStatus => {
             for entry in entries {
+                if entry.status == DiffStatus::TypeChanged && opts.break_rewrites {
+                    writeln!(out, "T100\t{}", entry.path())?;
+                    continue;
+                }
                 match (entry.status, entry.score) {
                     (DiffStatus::Renamed, Some(s)) => {
                         writeln!(
@@ -981,6 +1004,50 @@ fn print_diff(
         }
     }
     Ok(false)
+}
+
+fn apply_break_rewrites(entries: Vec<DiffEntry>) -> Vec<DiffEntry> {
+    let has_added_or_deleted = entries
+        .iter()
+        .any(|entry| matches!(entry.status, DiffStatus::Added | DiffStatus::Deleted));
+    if has_added_or_deleted {
+        return entries;
+    }
+
+    let mut rewritten = Vec::with_capacity(entries.len() * 2);
+    for entry in entries {
+        match entry.status {
+            DiffStatus::Modified | DiffStatus::TypeChanged => {
+                if let Some(old_path) = entry.old_path.clone() {
+                    rewritten.push(DiffEntry {
+                        status: DiffStatus::Deleted,
+                        old_path: Some(old_path),
+                        new_path: None,
+                        old_mode: entry.old_mode.clone(),
+                        new_mode: "000000".to_owned(),
+                        old_oid: entry.old_oid,
+                        new_oid: grit_lib::diff::zero_oid(),
+                        score: None,
+                    });
+                }
+                if let Some(new_path) = entry.new_path.clone() {
+                    rewritten.push(DiffEntry {
+                        status: DiffStatus::Added,
+                        old_path: None,
+                        new_path: Some(new_path),
+                        old_mode: "000000".to_owned(),
+                        new_mode: entry.new_mode.clone(),
+                        old_oid: grit_lib::diff::zero_oid(),
+                        new_oid: entry.new_oid,
+                        score: None,
+                    });
+                }
+            }
+            _ => rewritten.push(entry),
+        }
+    }
+
+    rewritten
 }
 
 /// Abbreviate an OID hex string to the given length.

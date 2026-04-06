@@ -2,6 +2,18 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `commit -a` symlink staging fix and `diff-tree -B/-M` typechange/copy name-status updates for `t4023`).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4023-diff-rename-typechange.sh` (from `tests/`): 2/4 passing; remaining local failures are setup fixture mismatch (`tests/../Makefile` missing in this repo mirror) and dependent `five..six` assertion.
+- `./scripts/run-tests.sh t4023-diff-rename-typechange.sh`: 2/4 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4023-diff-rename-typechange`: 2/4 passing in isolated upstream harness due missing `/tmp/grit-upstream-workdir/Makefile` fixture copy in this runner.
+- Fixture-adjusted confirmation: copying `t/Makefile` to `/tmp/grit-upstream-workdir/Makefile` and rerunning `t4023` directly yields 4/4 passing, confirming command behavior is complete.
+- Regression checks:
+  - `./scripts/run-tests.sh t4206-log-follow-harder-copies.sh`: 7/7 passing.
+  - `./scripts/run-tests.sh t4072-diff-max-depth.sh`: 76/76 passing.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `git apply` tab-expansion matching for whitespace-fix mode in hunk context/remove comparison).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4138-apply-ws-expansion.sh` (from `tests/`): 5/5 passing.
 - `./scripts/run-tests.sh t4138-apply-ws-expansion.sh`: 5/5 passing; `data/file-results.tsv` refreshed.

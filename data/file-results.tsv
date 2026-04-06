@@ -381,7 +381,7 @@ t4019-diff-wserror	yes	21	5	16	ok	5	21	0
 t4020-diff-external	yes	72	20	52	ok	20	72	0
 t4021-format-patch-numbered	yes	14	14	0	ok	14	14	0
 t4022-diff-rewrite	yes	11	4	7	ok	4	11	0
-t4023-diff-rename-typechange	yes	4	0	4	ok	0	4	0
+t4023-diff-rename-typechange	yes	4	2	2	ok	2	4	0
 t4024-diff-optimize-common	yes	2	2	0	ok	2	2	0
 t4025-hunk-header	yes	2	2	0	ok	2	2	0
 t4026-color	yes	34	15	19	ok	15	34	0
