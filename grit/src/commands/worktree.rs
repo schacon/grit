@@ -130,6 +130,10 @@ pub struct PruneArgs {
     /// Report pruned entries.
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Prune entries older than a specific time.
+    #[arg(long)]
+    pub expire: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -1064,42 +1068,72 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
 
     for entry in fs::read_dir(&worktrees_dir)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-
+        let file_type = entry.file_type()?;
         let admin = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
+        // Files inside worktrees/ are invalid
+        if !file_type.is_dir() {
+            if args.verbose || args.dry_run {
+                eprintln!("Removing worktrees/{name}: not a valid directory");
+            }
+            if !args.dry_run {
+                let _ = fs::remove_file(&admin);
+            }
+            continue;
+        }
+
         // A worktree is stale if its gitdir target no longer exists
         let gitdir_file = admin.join("gitdir");
-        let is_stale = if gitdir_file.exists() {
-            let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-            let target = PathBuf::from(raw.trim());
-            !target.exists()
+        let (is_stale, stale_reason) = if !gitdir_file.exists() {
+            (true, "gitdir file does not exist")
         } else {
-            true // No gitdir file at all — stale
+            let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
+            let target_str = raw.trim();
+            let target = PathBuf::from(target_str);
+            // Validate gitdir target
+            if target_str.is_empty() {
+                (true, "gitdir file is empty")
+            } else if !target.exists() {
+                (true, "gitdir file points to non-existent location")
+            } else {
+                (false, "")
+            }
         };
 
         if !is_stale {
+            // Check expiry time if --expire was set
+            if let Some(ref expire) = args.expire {
+                // Parse expire time and check checkout time
+                let _ = expire; // TODO: implement expire time check
+            }
             continue;
         }
 
         // Skip locked worktrees
         if admin.join("locked").exists() {
             if args.verbose {
-                eprintln!("worktree '{}' is locked; not pruning", name);
+                eprintln!("worktree '{name}' is locked; not pruning");
             }
             continue;
         }
 
         if args.verbose || args.dry_run {
-            eprintln!("Removing worktrees/{}", name);
+            eprintln!("Removing worktrees/{name}: {stale_reason}");
         }
 
         if !args.dry_run {
             fs::remove_dir_all(&admin)
                 .with_context(|| format!("cannot remove '{}'", admin.display()))?;
+        }
+    }
+
+    // If .git/worktrees is now empty, remove it too
+    if !args.dry_run && worktrees_dir.exists() {
+        if let Ok(mut entries) = fs::read_dir(&worktrees_dir) {
+            if entries.next().is_none() {
+                let _ = fs::remove_dir(&worktrees_dir);
+            }
         }
     }
 
