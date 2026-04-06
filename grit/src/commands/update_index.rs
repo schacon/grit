@@ -471,7 +471,76 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if args.refresh || args.really_refresh || args.again {
+    // --again: re-add all tracked files that have changed (rehash, update index)
+    if args.again {
+        let mut needs_update = false;
+        let entries_snapshot: Vec<Vec<u8>> = index
+            .entries
+            .iter()
+            .filter(|e| e.stage() == 0)
+            .map(|e| e.path.clone())
+            .collect();
+        for path_bytes in entries_snapshot {
+            let rel_path = String::from_utf8_lossy(&path_bytes).into_owned();
+            let abs_path = work_tree.join(&rel_path);
+            match std::fs::symlink_metadata(&abs_path) {
+                Ok(meta) => {
+                    use std::os::unix::fs::MetadataExt as _;
+                    // Check if the file has changed vs the index entry
+                    if let Some(entry) = index.get(&path_bytes, 0) {
+                        let idx_mtime = entry.mtime_sec as i64;
+                        let file_mtime = meta.mtime();
+                        let idx_size = entry.size as u64;
+                        let file_size = meta.size();
+                        // If mtime or size changed, rehash and update
+                        if idx_mtime != file_mtime || idx_size != file_size {
+                            match std::fs::read(&abs_path) {
+                                Ok(data) => {
+                                    let mode = entry.mode;
+                                    match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data)
+                                    {
+                                        Ok(new_oid) => {
+                                            let new_entry = entry_from_stat(
+                                                &abs_path,
+                                                &path_bytes,
+                                                new_oid,
+                                                mode,
+                                            )
+                                            .with_context(|| format!("stat '{}'", rel_path))?;
+                                            index.add_or_replace(new_entry);
+                                        }
+                                        Err(_) => {
+                                            eprintln!("{rel_path}: needs update");
+                                            needs_update = true;
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    eprintln!("{rel_path}: needs update");
+                                    needs_update = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    if args.remove {
+                        index.entries.retain(|e| e.path != path_bytes);
+                    } else {
+                        eprintln!("{rel_path}: needs update");
+                        needs_update = true;
+                    }
+                }
+            }
+        }
+        index.write(&index_path).context("writing index")?;
+        if needs_update {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    if args.refresh || args.really_refresh {
         // Re-stat all entries; exit 1 if any files need updating.
         let (uptodate, _) = refresh_index(
             &mut index,
