@@ -863,10 +863,15 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             .unwrap_or(0)
             .max(40);
         for entry in &entries {
-            let sha = match &entry.head {
-                HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
-                HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
-                _ => "0000000".to_string(),
+            // Bare repos don't show a SHA in the non-porcelain output
+            let sha = if entry.is_bare {
+                String::new()
+            } else {
+                match &entry.head {
+                    HeadState::Branch { oid: Some(oid), .. } => oid.to_hex()[..7].to_string(),
+                    HeadState::Detached { oid } => oid.to_hex()[..7].to_string(),
+                    _ => "0000000".to_string(),
+                }
             };
 
             let branch_info = if entry.is_bare {
@@ -900,16 +905,28 @@ fn cmd_list(args: ListArgs) -> Result<()> {
                 ""
             };
             let path_str = entry.path.display().to_string();
-            writeln!(
-                out,
-                "{:<width$} {} {}{}{}",
-                path_str,
-                sha,
-                branch_info,
-                lock_marker,
-                prunable_marker,
-                width = max_path_len,
-            )?;
+            if entry.is_bare {
+                writeln!(
+                    out,
+                    "{:<width$} {}{}{}",
+                    path_str,
+                    branch_info,
+                    lock_marker,
+                    prunable_marker,
+                    width = max_path_len,
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "{:<width$} {} {}{}{}",
+                    path_str,
+                    sha,
+                    branch_info,
+                    lock_marker,
+                    prunable_marker,
+                    width = max_path_len,
+                )?;
+            }
             // In verbose mode, show lock reason and prunable details
             if args.verbose {
                 if entry.is_locked {
