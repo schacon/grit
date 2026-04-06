@@ -1234,17 +1234,10 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
 fn update_head(git_dir: &Path, head: &HeadState, commit_oid: &ObjectId) -> Result<()> {
     match head {
         HeadState::Branch { refname, .. } => {
-            // Update the ref that HEAD points to
-            if grit_lib::reftable::is_reftable_repo(git_dir) {
-                grit_lib::reftable::reftable_write_ref(git_dir, refname, commit_oid, None, None)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            } else {
-                let ref_path = git_dir.join(refname);
-                if let Some(parent) = ref_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
-            }
+            // Update the branch ref (shared refs live in the common dir for
+            // linked worktrees; refs::write_ref handles that routing).
+            grit_lib::refs::write_ref(git_dir, refname, commit_oid)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         HeadState::Detached { .. } | HeadState::Invalid => {
             // Write directly to HEAD

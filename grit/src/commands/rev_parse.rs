@@ -39,6 +39,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut no_revs = false;
     let mut no_flags = false;
     let mut sq_output = false;
+    let mut path_format: Option<String> = None;
 
     // Collect ordered actions for sequential output
     #[derive(Debug)]
@@ -125,6 +126,21 @@ pub fn run(args: Args) -> Result<()> {
                 prefix = Some(value.clone());
             } else if let Some(value) = arg.strip_prefix("--prefix=") {
                 prefix = Some(value.to_owned());
+            } else if let Some(value) = arg.strip_prefix("--path-format=") {
+                match value {
+                    "absolute" | "relative" => path_format = Some(value.to_owned()),
+                    _ => bail!("unknown argument to --path-format: {value}"),
+                }
+            } else if arg == "--path-format" {
+                i += 1;
+                let value = args
+                    .args
+                    .get(i)
+                    .ok_or_else(|| anyhow::anyhow!("--path-format requires an argument"))?;
+                match value.as_str() {
+                    "absolute" | "relative" => path_format = Some(value.clone()),
+                    _ => bail!("unknown argument to --path-format: {value}"),
+                }
             } else if let Some(value) = arg.strip_prefix("--short=") {
                 short_len = Some(parse_short_len(value)?);
             } else if arg == "--short" {
@@ -365,15 +381,19 @@ pub fn run(args: Args) -> Result<()> {
                 let Some(current) = repo.as_ref() else {
                     bail!("not a git repository (or any of the parent directories)");
                 };
-                if cwd == current.git_dir.as_path() {
-                    println!(".");
-                } else if current.git_dir == cwd.join(".git") {
-                    // At worktree root: git prints ".git"
-                    println!(".git");
-                } else {
-                    // From subdirectories or non-standard layouts,
-                    // git prints the absolute path
+                if path_format.as_deref() == Some("absolute") {
                     println!("{}", current.git_dir.display());
+                } else {
+                    if cwd == current.git_dir.as_path() {
+                        println!(".");
+                    } else if current.git_dir == cwd.join(".git") {
+                        // At worktree root: git prints ".git"
+                        println!(".git");
+                    } else {
+                        // From subdirectories or non-standard layouts,
+                        // git prints the absolute path
+                        println!("{}", current.git_dir.display());
+                    }
                 }
             }
             Action::ShowGitCommonDir => {
@@ -381,7 +401,11 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not a git repository (or any of the parent directories)");
                 };
                 let common = resolve_common_git_dir(&current.git_dir);
-                println!("{}", relative_path_from(&cwd, &common));
+                if path_format.as_deref() == Some("absolute") {
+                    println!("{}", common.display());
+                } else {
+                    println!("{}", relative_path_from(&cwd, &common));
+                }
             }
             Action::ShowAbsoluteGitDir => {
                 let Some(current) = repo.as_ref() else {
@@ -437,7 +461,13 @@ pub fn run(args: Args) -> Result<()> {
                     } else {
                         common.join(path_arg)
                     };
-                    println!("{}", resolved.display());
+                    if path_format.as_deref() == Some("absolute") {
+                        println!("{}", resolved.display());
+                    } else if path_format.as_deref() == Some("relative") {
+                        println!("{}", relative_path_from(&cwd, &resolved));
+                    } else {
+                        println!("{}", resolved.display());
+                    }
                 } else {
                     bail!("not a git repository");
                 }

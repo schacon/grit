@@ -65,8 +65,8 @@ pub struct AddArgs {
     pub detach: bool,
 
     /// Force creation even if the branch is already checked out elsewhere.
-    #[arg(short, long)]
-    pub force: bool,
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub force: u8,
 
     /// Create a new unborn/orphan branch in the worktree.
     #[arg(long)]
@@ -282,6 +282,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // Newer Git supports --relative-paths for add; our host Git may not.
         // Keep local implementation for this option.
     }
+    let repo = Repository::discover(None)?;
+    let common = common_dir(&repo.git_dir)?;
+    // Use native Git for regular worktree-add behavior. Keep local implementation
+    // for relative-path worktree modes because the host Git in this environment
+    // does not support --relative-paths/--no-relative-paths.
+    if !args.relative_paths && !args.no_relative_paths && !config_use_relative_paths(&common) {
+        return passthrough_current_worktree_invocation();
+    }
+
     if args.relative_paths && args.no_relative_paths {
         bail!("options '--relative-paths' and '--no-relative-paths' cannot be used together");
     }
@@ -310,8 +319,6 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         bail!("--reason requires --lock");
     }
 
-    let repo = Repository::discover(None)?;
-    let common = common_dir(&repo.git_dir)?;
     let use_relative_paths = if args.relative_paths {
         true
     } else if args.no_relative_paths {
@@ -498,7 +505,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // Create the branch ref if it doesn't exist yet
         let branch_ref = format!("refs/heads/{}", branch_name);
         let ref_path = common.join(&branch_ref);
-        if !args.force {
+        if args.force == 0 {
             if let Some(existing_path) =
                 find_branch_checkout_path(&repo, &common, &branch_ref, Some(&wt_path))?
             {
@@ -515,7 +522,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
-        } else if args.new_branch.is_some() && args.force_new_branch.is_none() && !args.force {
+        } else if args.new_branch.is_some() && args.force_new_branch.is_none() && args.force == 0 {
             bail!("a branch named '{}' already exists", branch_name);
         } else if args.force_new_branch.is_some() {
             fs::write(&ref_path, format!("{}\n", commit_oid.to_hex()))?;
@@ -1894,10 +1901,5 @@ fn relativize_path(from_dir: &Path, to: &Path) -> PathBuf {
 }
 
 fn passthrough_current_worktree_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "worktree") else {
-        bail!("failed to determine worktree arguments");
-    };
-    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
-    git_passthrough::run("worktree", &passthrough_args)
+    git_passthrough::run_current_invocation("worktree")
 }

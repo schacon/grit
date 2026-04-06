@@ -131,7 +131,19 @@ pub fn run(args: Args) -> Result<()> {
         }
         Ok(())
     } else {
-        let remote_name = args.remote.as_deref().unwrap_or("origin");
+        let remote_name_owned;
+        let remote_name = if let Some(explicit) = args.remote.as_deref() {
+            explicit
+        } else {
+            let remotes = collect_remote_names(&config);
+            let Some(default_remote) = select_default_remote(&remotes) else {
+                // Native git treats plain `git fetch` with no determinable default
+                // remote as a no-op.
+                return Ok(());
+            };
+            remote_name_owned = default_remote;
+            remote_name_owned.as_str()
+        };
         // Detect path-based remote: contains '/' or starts with '.'
         // Also check if it's a local directory path (for `git fetch <dir> ...`)
         if remote_name.contains('/') || remote_name.starts_with('.') {
@@ -149,6 +161,16 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     }
+}
+
+fn select_default_remote(remotes: &[String]) -> Option<String> {
+    if remotes.iter().any(|r| r == "origin") {
+        return Some("origin".to_owned());
+    }
+    if remotes.len() == 1 {
+        return Some(remotes[0].clone());
+    }
+    None
 }
 
 /// Fetch from a single remote.

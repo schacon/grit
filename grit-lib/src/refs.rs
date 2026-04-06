@@ -189,7 +189,8 @@ pub fn write_ref(git_dir: &Path, refname: &str, oid: &ObjectId) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_write_ref(git_dir, refname, oid, None, None);
     }
-    let path = git_dir.join(refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let path = storage_dir.join(refname);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -212,8 +213,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_delete_ref(git_dir, refname);
     }
+    let storage_dir = ref_storage_dir(git_dir, refname);
     // Remove the loose ref file
-    let path = git_dir.join(refname);
+    let path = storage_dir.join(refname);
     match fs::remove_file(&path) {
         Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -221,7 +223,7 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     }
 
     // Also remove the entry from packed-refs if present
-    remove_packed_ref(git_dir, refname)?;
+    remove_packed_ref(&storage_dir, refname)?;
 
     Ok(())
 }
@@ -318,7 +320,20 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     match read_ref_file(&path) {
         Ok(Ref::Symbolic(target)) => Ok(Some(target)),
         Ok(Ref::Direct(_)) => Ok(None),
-        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+            if let Some(common) = common_dir(git_dir) {
+                if common != git_dir {
+                    let cpath = common.join(refname);
+                    match read_ref_file(&cpath) {
+                        Ok(Ref::Symbolic(target)) => return Ok(Some(target)),
+                        Ok(Ref::Direct(_)) => return Ok(None),
+                        Err(Error::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            Ok(None)
+        }
         Err(e) => Err(e),
     }
 }
@@ -352,7 +367,8 @@ pub fn append_reflog(
             git_dir, refname, old_oid, new_oid, identity, message,
         );
     }
-    let log_path = git_dir.join("logs").join(refname);
+    let storage_dir = ref_storage_dir(git_dir, refname);
+    let log_path = storage_dir.join("logs").join(refname);
     let auto_create = refname == "HEAD" || reflog_auto_create_enabled(git_dir);
     if !auto_create && !log_path.exists() {
         return Ok(());
@@ -368,6 +384,13 @@ pub fn append_reflog(
     use io::Write;
     file.write_all(line.as_bytes())?;
     Ok(())
+}
+
+fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
+    if refname == "HEAD" {
+        return git_dir.to_path_buf();
+    }
+    common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
 }
 
 /// Determine whether missing reflog files should be auto-created.
