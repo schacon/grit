@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::{append_reflog, read_ref_file, Ref};
 use grit_lib::repo::Repository;
@@ -61,7 +62,16 @@ pub fn run(args: Args) -> Result<()> {
         if name == "HEAD" {
             bail!("deleting '{name}' is not allowed");
         }
+        let old_target = read_symbolic_ref_target_maybe_missing(&repo.git_dir, name, false)?
+            .ok_or_else(|| anyhow::anyhow!("ref {name} is not a symbolic ref"))?;
+        let hook_update = HookUpdate {
+            old_value: format!("ref:{old_target}"),
+            new_value: zero_oid_hex().to_owned(),
+            refname: name.to_owned(),
+        };
+        run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_loose_ref(&repo.git_dir, name)?;
+        run_ref_transaction_committed(&repo, &[hook_update]);
         return Ok(());
     }
 
@@ -95,7 +105,17 @@ pub fn run(args: Args) -> Result<()> {
                 check_ref_df_conflict(&repo, name)?;
             }
             let old_oid = resolve_for_reflog(&repo, name);
+            let old_value = read_symbolic_ref_target_maybe_missing(&repo.git_dir, name, false)?
+                .map(|target| format!("ref:{target}"))
+                .unwrap_or_else(|| zero_oid_hex().to_owned());
+            let hook_update = HookUpdate {
+                old_value,
+                new_value: format!("ref:{target}"),
+                refname: name.to_owned(),
+            };
+            run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
             write_symbolic_ref(&repo.git_dir, name, target)?;
+            run_ref_transaction_committed(&repo, &[hook_update]);
             if let Some(message) = args.message.as_deref() {
                 let new_oid = resolve_for_reflog(&repo, name);
                 write_symref_reflog(&repo, name, &old_oid, &new_oid, message)?;
@@ -107,6 +127,18 @@ pub fn run(args: Args) -> Result<()> {
 }
 
 fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result<Option<String>> {
+    let result = read_symbolic_ref_target_maybe_missing(git_dir, name, recurse)?;
+    match result {
+        Some(target) => Ok(Some(target)),
+        None => bail!("No such ref: {name}"),
+    }
+}
+
+fn read_symbolic_ref_target_maybe_missing(
+    git_dir: &Path,
+    name: &str,
+    recurse: bool,
+) -> Result<Option<String>> {
     // Reftable backend: check reftable stack for symrefs
     if grit_lib::reftable::is_reftable_repo(git_dir) {
         // HEAD is still a file even in reftable repos
@@ -119,7 +151,7 @@ fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result
                     // Check if it exists as a direct ref
                     match grit_lib::reftable::reftable_resolve_ref(git_dir, name) {
                         Ok(_) => return Ok(None), // exists but not symbolic
-                        Err(_) => bail!("No such ref: {name}"),
+                        Err(_) => return Ok(None),
                     }
                 }
             }
@@ -148,9 +180,7 @@ fn read_symbolic_ref_target(git_dir: &Path, name: &str, recurse: bool) -> Result
             }
             Ok(Some(target))
         }
-        Err(grit_lib::error::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => {
-            bail!("No such ref: {name}")
-        }
+        Err(grit_lib::error::Error::Io(err)) if err.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err.into()),
     }
 }
@@ -257,6 +287,54 @@ fn zero_oid() -> ObjectId {
         Ok(oid) => oid,
         Err(_) => unreachable!("20-byte zero OID is always valid"),
     }
+}
+
+#[derive(Clone)]
+struct HookUpdate {
+    old_value: String,
+    new_value: String,
+    refname: String,
+}
+
+fn run_ref_transaction_prepare(repo: &Repository, updates: &[HookUpdate]) -> Result<()> {
+    match run_ref_transaction_state(repo, "preparing", updates) {
+        HookResult::NotFound => return Ok(()),
+        HookResult::Success => {}
+        HookResult::Failed(_) => {
+            bail!("in 'preparing' phase, update aborted by the reference-transaction hook");
+        }
+    }
+
+    match run_ref_transaction_state(repo, "prepared", updates) {
+        HookResult::NotFound | HookResult::Success => Ok(()),
+        HookResult::Failed(_) => {
+            bail!("in 'prepared' phase, update aborted by the reference-transaction hook");
+        }
+    }
+}
+
+fn run_ref_transaction_committed(repo: &Repository, updates: &[HookUpdate]) {
+    let _ = run_ref_transaction_state(repo, "committed", updates);
+}
+
+fn run_ref_transaction_state(repo: &Repository, state: &str, updates: &[HookUpdate]) -> HookResult {
+    let mut stdin_data = String::new();
+    for update in updates {
+        stdin_data.push_str(&format!(
+            "{} {} {}\n",
+            update.old_value, update.new_value, update.refname
+        ));
+    }
+    run_hook(
+        repo,
+        "reference-transaction",
+        &[state],
+        Some(stdin_data.as_bytes()),
+    )
+}
+
+fn zero_oid_hex() -> &'static str {
+    "0000000000000000000000000000000000000000"
 }
 
 fn is_valid_refname(name: &str, allow_onelevel: bool) -> bool {

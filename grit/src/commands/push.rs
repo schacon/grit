@@ -422,10 +422,17 @@ fn push_to_url(
             } else {
                 dst.clone()
             };
-            let remote_ref = normalize_ref(&effective_dst);
-
             let (local_ref, local_oid) = resolve_push_src(&repo.git_dir, &resolved_src)
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
+            let remote_ref = if !spec_clean.contains(':') && !effective_dst.starts_with("refs/") {
+                if local_ref.starts_with("refs/tags/") {
+                    format!("refs/tags/{effective_dst}")
+                } else {
+                    normalize_ref(&effective_dst)
+                }
+            } else {
+                normalize_ref(&effective_dst)
+            };
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
@@ -897,6 +904,72 @@ fn push_to_url(
             );
         }
         bail!("failed to push some refs to '{url}'");
+    }
+
+    // Run reference-transaction hooks on the remote after update hooks have
+    // accepted all updates, matching receive-pack hook ordering.
+    if !args.dry_run && !applied_updates.is_empty() {
+        let mut txn_stdin = String::new();
+        for (update, _) in &applied_updates {
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            txn_stdin.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
+        }
+
+        let (prep_result, prep_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["preparing"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !prep_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&prep_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = prep_result {
+            bail!("remote reference-transaction hook declined the push in 'preparing' phase");
+        }
+
+        let (prepared_result, prepared_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["prepared"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !prepared_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&prepared_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = prepared_result {
+            bail!("remote reference-transaction hook declined the push in 'prepared' phase");
+        }
+
+        let (committed_result, committed_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["committed"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !committed_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&committed_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = committed_result {
+            // Keep compatibility with git: failures in committed state do not
+            // abort already-applied updates.
+        }
     }
 
     // Run post-receive hook on the remote (after successful ref updates)
