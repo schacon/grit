@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    77 |
+| Completed   |    78 |
 | In progress |     2 |
-| Remaining   |   688 |
+| Remaining   |   687 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4206-log-follow-harder-copies` — 7/7 tests pass (`git log --follow --name-status <path>` now emits historical copy tracing (`C100 old new`) with correct commit/pathspec separation, supports `-B` parsing, and preserves expected pretty/diff spacing)
 - `t4107-apply-ignore-whitespace` — 11/11 tests pass (`git apply` now accepts `--ignore-whitespace` / `--ignore-space-change` / `--no-ignore-whitespace`, honors `apply.ignorewhitespace=change`, and applies `--inaccurate-eof` without forcing a trailing newline)
 - `t4040-whitespace-status` — 11/11 tests pass (`-b/--ignore-space-change` now supported by `diff-tree`, `diff-index`, and `diff-files`, with whitespace-normalized content filtering applied before `--exit-code` evaluation)
 - `t4072-diff-max-depth` — 76/76 tests pass (added `diff-tree` wildcard-pathspec rejection for `--max-depth` and accepted `--max-depth=-1` compatibility in `diff-index`/`diff-files` while preserving TODO-expected-failure behavior for unsupported depths in this harness)
@@ -72,4 +73,4 @@
 
 ## What Remains
 
-2 test files are currently marked in progress (`t4049-diff-stat-count`, `t4257-am-interactive`) and 688 remain pending. See `plan.md` for the full prioritized list.
+2 test files are currently marked in progress (`t4049-diff-stat-count`, `t4257-am-interactive`) and 687 remain pending. See `plan.md` for the full prioritized list.

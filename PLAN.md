@@ -422,7 +422,7 @@ commit → check it off → move on.
 - [x] `t4040-whitespace-status` ████████████████████ 11/11 (0 left) — diff --exit-code with whitespace
 - [x] `t4107-apply-ignore-whitespace` ████████████████████ 11/11 (0 left) — git-apply --ignore-whitespace (`--ignore-whitespace`, `--ignore-space-change`, `--no-ignore-whitespace`, and `--inaccurate-eof` behavior now matches this test)
 - [x] `t4127-apply-same-fn` ████████████████████ 7/7 (0 left) — apply same filename
-- [ ] `t4206-log-follow-harder-copies` ████████░░░░░░░░░░░░ 3/7 (4 left) — Test --follow should always find copies hard in git log.
+- [x] `t4206-log-follow-harder-copies` ████████████████████ 7/7 (0 left) — Test --follow should always find copies hard in git log (`log --follow --name-status` now tracks copied history with `C100 old new`; `-B` accepted)
 
 - [x] `t4136-apply-check` ████████████████████ 6/6 (0 left) — git apply should exit non-zero with unrecognized input.
 - [ ] `t4102-apply-rename` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply handling copy/rename patch.

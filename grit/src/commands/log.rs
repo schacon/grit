@@ -8,7 +8,7 @@ use clap::Args as ClapArgs;
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId};
 use grit_lib::odb::Odb;
 use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
@@ -176,6 +176,10 @@ pub struct Args {
     /// Detect copies.
     #[arg(short = 'C', long = "find-copies", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
     pub find_copies: Option<String>,
+
+    /// Break complete rewrite changes into delete/create pairs.
+    #[arg(short = 'B', long = "break-rewrites", default_missing_value = "50", num_args = 0..=1, require_equals = true)]
+    pub break_rewrites: Option<String>,
 
     /// Control merge commit diff display.
     #[arg(long = "diff-merges", default_missing_value = "on")]
@@ -452,6 +456,9 @@ pub fn run(mut args: Args) -> Result<()> {
         return run_no_walk(&repo, &args);
     }
 
+    let explicit_pathspecs = !args.pathspecs.is_empty();
+    let mut pathspecs = args.pathspecs.clone();
+
     // Determine starting points and excluded commits.
     // Revisions prefixed with `^` (e.g. `^HEAD`) mean "exclude this and its
     // ancestors" — standard git revision range syntax.
@@ -470,11 +477,17 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut excludes = Vec::new();
         for rev in &args.revisions {
             if let Some(stripped) = rev.strip_prefix('^') {
-                let oid = resolve_revision(&repo, stripped)?;
-                excludes.push(oid);
+                match resolve_commitish_revision(&repo, stripped) {
+                    Ok(oid) => excludes.push(oid),
+                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
+                    Err(err) => return Err(err),
+                }
             } else {
-                let oid = resolve_revision(&repo, rev)?;
-                oids.push(oid);
+                match resolve_commitish_revision(&repo, rev) {
+                    Ok(oid) => oids.push(oid),
+                    Err(_) if !explicit_pathspecs => pathspecs.push(rev.clone()),
+                    Err(err) => return Err(err),
+                }
             }
         }
         // If only excludes are given with no positive refs, use HEAD
@@ -569,11 +582,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Walk commits
-    let effective_pathspecs = if args.follow {
-        &[][..]
-    } else {
-        &args.pathspecs[..]
-    };
+    let effective_pathspecs = if args.follow { &[][..] } else { &pathspecs[..] };
     let commits = walk_commits(
         &repo.odb,
         &repo.git_dir,
@@ -591,8 +600,8 @@ pub fn run(mut args: Args) -> Result<()> {
     )?;
 
     // Apply --follow: filter commits and track renames
-    let commits = if args.follow && !args.pathspecs.is_empty() {
-        follow_filter(&repo.odb, commits, &args.pathspecs[0], args.max_count)?
+    let commits = if args.follow && !pathspecs.is_empty() {
+        follow_filter(&repo.odb, commits, &pathspecs[0], args.max_count)?
     } else {
         commits
     };
@@ -689,11 +698,21 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc;
+    let follow_name_status_mode = args.follow
+        && args.name_status
+        && !args.patch
+        && !args.patch_u
+        && !args.stat
+        && !args.name_only
+        && !args.raw
+        && !args.cc
+        && !pathspecs.is_empty();
+    let mut follow_tracked_path = pathspecs.first().cloned();
 
     let notes_map = load_notes_map(&repo);
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
-        if is_format_separator && i > 0 {
+        if is_format_separator && i > 0 && !show_diff {
             if args.null_terminator {
                 write!(out, "\0")?;
             } else {
@@ -723,6 +742,36 @@ pub fn run(mut args: Args) -> Result<()> {
         )?;
 
         if show_diff {
+            if follow_name_status_mode {
+                if args
+                    .format
+                    .as_deref()
+                    .is_some_and(|fmt| fmt.starts_with("format:"))
+                    && !args.null_terminator
+                {
+                    writeln!(out)?;
+                }
+                if let Some(tracked) = follow_tracked_path.clone() {
+                    if let Some((entry, next_tracked)) =
+                        select_follow_entry_for_commit(&repo.odb, commit_data, &tracked)?
+                    {
+                        write_follow_name_status_line(&mut out, &entry)?;
+                        follow_tracked_path = Some(next_tracked);
+                    }
+                }
+                if i + 1 < commits.len() {
+                    writeln!(out)?;
+                }
+                continue;
+            }
+            if args
+                .format
+                .as_deref()
+                .is_some_and(|fmt| fmt.starts_with("format:"))
+                && !args.null_terminator
+            {
+                writeln!(out)?;
+            }
             write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
         }
     }
@@ -759,7 +808,8 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut commits = Vec::new();
     for oid in oids {
-        let obj = repo.read_replaced(&oid)?;
+        let commit_oid = peel_to_commit_object(&repo.odb, oid)?;
+        let obj = repo.read_replaced(&commit_oid)?;
         let commit = parse_commit(&obj.data)?;
         let info = CommitInfo {
             tree: commit.tree,
@@ -801,7 +851,11 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
-            writeln!(out)?;
+            if args.null_terminator {
+                write!(out, "\0")?;
+            } else {
+                writeln!(out)?;
+            }
         }
         let notes_map = load_notes_map(repo);
         format_commit(
@@ -815,6 +869,14 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
+            if args
+                .format
+                .as_deref()
+                .is_some_and(|fmt| fmt.starts_with("format:"))
+                && !args.null_terminator
+            {
+                writeln!(out)?;
+            }
             write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
         }
     }
@@ -1369,6 +1431,21 @@ fn commit_touches_paths(odb: &Odb, info: &CommitInfo, pathspecs: &[String]) -> R
     }
 
     Ok(false)
+}
+
+/// Peel an object (possibly a tag) to a commit object ID.
+fn peel_to_commit_object(odb: &Odb, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
+        let obj = odb.read(&oid)?;
+        match obj.kind {
+            grit_lib::objects::ObjectKind::Commit => return Ok(oid),
+            grit_lib::objects::ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => anyhow::bail!("object {oid} is not a commit"),
+        }
+    }
 }
 
 /// Check if a file path matches a pathspec (prefix match or exact match).
@@ -2534,6 +2611,22 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
         .map_err(|e| anyhow::anyhow!("unknown revision '{}': {}", rev, e))
 }
 
+/// Resolve a revision and ensure it refers to a commit (peeling annotated tags).
+fn resolve_commitish_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
+    let mut oid = resolve_revision(repo, rev)?;
+    loop {
+        let obj = repo.odb.read(&oid)?;
+        match obj.kind {
+            grit_lib::objects::ObjectKind::Commit => return Ok(oid),
+            grit_lib::objects::ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            _ => anyhow::bail!("unknown revision '{}'", rev),
+        }
+    }
+}
+
 /// Collect ref name → OID decorations from the repository.
 fn collect_decorations(
     repo: &Repository,
@@ -3152,7 +3245,7 @@ fn follow_filter(
     initial_path: &str,
     max_count: Option<usize>,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
-    use grit_lib::diff::detect_renames;
+    use grit_lib::diff::detect_copies;
 
     let mut tracked_path = initial_path.to_string();
     let mut result = Vec::new();
@@ -3167,12 +3260,18 @@ fn follow_filter(
         };
 
         let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
-        let entries = detect_renames(odb, raw_entries, 50);
+
+        let source_tree_entries = if let Some(tree_oid) = parent_tree.as_ref() {
+            collect_tree_entries_for_copy_detection(odb, tree_oid)?
+        } else {
+            Vec::new()
+        };
+        let entries = detect_copies(odb, raw_entries, 50, true, &source_tree_entries);
 
         let mut touches = false;
         for entry in &entries {
             match entry.status {
-                DiffStatus::Renamed => {
+                DiffStatus::Renamed | DiffStatus::Copied => {
                     // Check if the new path matches our tracked path
                     if let Some(new_path) = entry.new_path.as_deref() {
                         if new_path == tracked_path {
@@ -3210,6 +3309,106 @@ fn follow_filter(
     }
 
     Ok(result)
+}
+
+/// Collect `(path, mode, oid)` tuples from a tree for copy detection.
+fn collect_tree_entries_for_copy_detection(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+) -> Result<Vec<(String, String, ObjectId)>> {
+    fn walk(
+        odb: &Odb,
+        tree_oid: &ObjectId,
+        prefix: &str,
+        out: &mut Vec<(String, String, ObjectId)>,
+    ) -> Result<()> {
+        let tree_obj = odb.read(tree_oid)?;
+        let entries = parse_tree(&tree_obj.data)?;
+        for entry in entries {
+            let name = String::from_utf8_lossy(&entry.name).to_string();
+            let path = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if entry.mode == 0o040000 {
+                walk(odb, &entry.oid, &path, out)?;
+            } else {
+                out.push((path, format!("{:06o}", entry.mode), entry.oid));
+            }
+        }
+        Ok(())
+    }
+
+    let mut out = Vec::new();
+    walk(odb, tree_oid, "", &mut out)?;
+    Ok(out)
+}
+
+/// Select the best follow-aware name-status entry for a single commit.
+///
+/// Returns the entry to print and the next tracked path to use when walking
+/// older commits.
+fn select_follow_entry_for_commit(
+    odb: &Odb,
+    info: &CommitInfo,
+    tracked_path: &str,
+) -> Result<Option<(DiffEntry, String)>> {
+    use grit_lib::diff::detect_copies;
+
+    let parent_tree = if let Some(parent) = info.parents.first() {
+        let pobj = odb.read(parent)?;
+        let pc = parse_commit(&pobj.data)?;
+        Some(pc.tree)
+    } else {
+        None
+    };
+
+    let raw_entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    let source_tree_entries = if let Some(tree_oid) = parent_tree.as_ref() {
+        collect_tree_entries_for_copy_detection(odb, tree_oid)?
+    } else {
+        Vec::new()
+    };
+    let entries = detect_copies(odb, raw_entries, 50, true, &source_tree_entries);
+
+    for entry in &entries {
+        if matches!(entry.status, DiffStatus::Renamed | DiffStatus::Copied)
+            && entry.new_path.as_deref() == Some(tracked_path)
+        {
+            let next = entry
+                .old_path
+                .as_deref()
+                .unwrap_or(tracked_path)
+                .to_string();
+            return Ok(Some((entry.clone(), next)));
+        }
+    }
+
+    for entry in &entries {
+        if entry.path() == tracked_path {
+            return Ok(Some((entry.clone(), tracked_path.to_string())));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Write one follow-aware `--name-status` line.
+fn write_follow_name_status_line(out: &mut impl Write, entry: &DiffEntry) -> Result<()> {
+    match entry.status {
+        DiffStatus::Renamed | DiffStatus::Copied => {
+            let score = entry.score.unwrap_or(100).min(100);
+            let code = format!("{}{:03}", entry.status.letter(), score);
+            let old_path = entry.old_path.as_deref().unwrap_or(entry.path());
+            let new_path = entry.new_path.as_deref().unwrap_or(entry.path());
+            writeln!(out, "{code}\t{old_path}\t{new_path}")?;
+        }
+        _ => {
+            writeln!(out, "{}\t{}", entry.status.letter(), entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 /// Build a map from commit OID → source ref name for --source.
