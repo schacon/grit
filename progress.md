@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    78 |
+| Completed   |    79 |
 | In progress |     2 |
-| Remaining   |   687 |
+| Remaining   |   686 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4102-apply-rename` — 5/5 tests pass (`git apply` now accepts compatibility `--apply` and preserves executable mode for rename/copy patch targets by inheriting source file metadata when patch mode headers are omitted)
 - `t4206-log-follow-harder-copies` — 7/7 tests pass (`git log --follow --name-status <path>` now emits historical copy tracing (`C100 old new`) with correct commit/pathspec separation, supports `-B` parsing, and preserves expected pretty/diff spacing)
 - `t4107-apply-ignore-whitespace` — 11/11 tests pass (`git apply` now accepts `--ignore-whitespace` / `--ignore-space-change` / `--no-ignore-whitespace`, honors `apply.ignorewhitespace=change`, and applies `--inaccurate-eof` without forcing a trailing newline)
 - `t4040-whitespace-status` — 11/11 tests pass (`-b/--ignore-space-change` now supported by `diff-tree`, `diff-index`, and `diff-files`, with whitespace-normalized content filtering applied before `--exit-code` evaluation)
@@ -73,4 +74,4 @@
 
 ## What Remains
 
-2 test files are currently marked in progress (`t4049-diff-stat-count`, `t4257-am-interactive`) and 687 remain pending. See `plan.md` for the full prioritized list.
+2 test files are currently marked in progress (`t4049-diff-stat-count`, `t4257-am-interactive`) and 686 remain pending. See `plan.md` for the full prioritized list.

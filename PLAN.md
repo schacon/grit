@@ -425,7 +425,7 @@ commit → check it off → move on.
 - [x] `t4206-log-follow-harder-copies` ████████████████████ 7/7 (0 left) — Test --follow should always find copies hard in git log (`log --follow --name-status` now tracks copied history with `C100 old new`; `-B` accepted)
 
 - [x] `t4136-apply-check` ████████████████████ 6/6 (0 left) — git apply should exit non-zero with unrecognized input.
-- [ ] `t4102-apply-rename` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply handling copy/rename patch.
+- [x] `t4102-apply-rename` ████████████████████ 5/5 (0 left) — git apply handling copy/rename patch (`--apply` compatibility flag added; worktree apply now preserves existing executable bit when patch mode is unspecified for rename/copy hunks)
 
 - [ ] `t4138-apply-ws-expansion` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — git apply test patches with whitespace expansion.
 - [ ] `t4023-diff-rename-typechange` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — typechange rename detection

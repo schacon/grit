@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `git apply --apply` compatibility handling and rename/copy mode preservation updates for executable files).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4102-apply-rename.sh` (from `tests/`): 5/5 passing.
+- `./scripts/run-tests.sh t4102-apply-rename.sh`: 5/5 passing; `data/file-results.tsv` refreshed.
+- `bash scripts/run-upstream-tests.sh t4102-apply-rename`: 5/5 passing in isolated upstream harness.
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `git log` `--follow` copy-tracing/pathspec separation updates and `-B` option acceptance).
 - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4206-log-follow-harder-copies.sh` (from `tests/`): 7/7 passing.
 - `./scripts/run-tests.sh t4206-log-follow-harder-copies.sh`: 7/7 passing; `data/file-results.tsv` refreshed.

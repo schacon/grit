@@ -433,7 +433,7 @@ t4073-diff-stat-name-width	yes	6	6	0	ok	6	6	0
 t4074-diff-shifted-matched-group	yes	4	0	4	ok	0	4	0
 t4100-apply-stat	yes	25	10	15	ok	10	25	0
 t4101-apply-nonl	yes	12	12	0	ok	12	12	0
-t4102-apply-rename	yes	5	1	4	ok	1	5	0
+t4102-apply-rename	yes	5	5	0	ok	5	5	0
 t4103-apply-binary	yes	24	7	17	ok	7	24	0
 t4104-apply-boundary	yes	24	18	6	ok	18	24	0
 t4105-apply-fuzz	yes	9	2	7	ok	2	9	0

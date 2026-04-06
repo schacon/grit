@@ -43,6 +43,10 @@ pub struct Args {
     #[arg(long)]
     pub summary: bool,
 
+    /// Apply the patch even when combined with --stat/--summary output modes.
+    #[arg(long = "apply")]
+    pub apply: bool,
+
     /// Check if the patch applies cleanly without modifying anything.
     #[arg(long)]
     pub check: bool,
@@ -1247,8 +1251,8 @@ pub fn run(args: Args) -> Result<()> {
         reverse_patches(&mut patches);
     }
 
-    // Info-only modes
-    let info_only = args.stat || args.numstat || args.summary;
+    // Info-only modes unless explicitly overridden by --apply.
+    let info_only = (args.stat || args.numstat || args.summary) && !args.apply;
     if args.stat {
         show_stat(&patches, args.strip, args.directory.as_deref());
     }
@@ -1608,6 +1612,15 @@ fn apply_to_worktree(
             fs::read_to_string(&read_path)
                 .with_context(|| format!("failed to read {}", read_path.display()))?
         };
+        #[cfg(unix)]
+        let source_exec_bit = if source_adjusted != path_adjusted {
+            use std::os::unix::fs::PermissionsExt;
+            fs::metadata(&read_path)
+                .ok()
+                .map(|meta| meta.permissions().mode() & 0o111 != 0)
+        } else {
+            None
+        };
 
         if fp.hunks.is_empty() {
             // Mode-only change
@@ -1635,6 +1648,18 @@ fn apply_to_worktree(
         }
         fs::write(&path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Some(mode) = fp.new_mode.as_deref() {
+                let perm = if mode == "100755" { 0o755 } else { 0o644 };
+                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+            } else if let Some(executable) = source_exec_bit {
+                let perm = if executable { 0o755 } else { 0o644 };
+                fs::set_permissions(&path, fs::Permissions::from_mode(perm))?;
+            }
+        }
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
