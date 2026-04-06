@@ -4,8 +4,10 @@
 //! but shares the object database and refs with the main repository.
 //! Worktree metadata is stored under `.git/worktrees/<name>/`.
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
+use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
@@ -119,8 +121,8 @@ pub struct RemoveArgs {
     pub path: PathBuf,
 
     /// Force removal even if worktree has modifications.
-    #[arg(short, long)]
-    pub force: bool,
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub force: u8,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -159,8 +161,16 @@ pub struct MoveArgs {
     pub destination: PathBuf,
 
     /// Force move even if worktree is locked.
-    #[arg(short, long)]
-    pub force: bool,
+    #[arg(short, long, action = clap::ArgAction::Count)]
+    pub force: u8,
+
+    /// Write relative admin paths.
+    #[arg(long = "relative-paths")]
+    pub relative_paths: bool,
+
+    /// Write absolute admin paths.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -798,41 +808,33 @@ fn cmd_list(args: ListArgs) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn cmd_remove(args: RemoveArgs) -> Result<()> {
+    if args.force > 0 {
+        return passthrough_current_worktree_invocation();
+    }
+
     let repo = Repository::discover(None)?;
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
-
-    let wt_path = if args.path.is_absolute() {
-        args.path.clone()
-    } else {
-        std::env::current_dir()?.join(&args.path)
-    };
-    let wt_path = wt_path.canonicalize().unwrap_or(wt_path);
-
-    // Find the matching admin entry
+    let wt_path = absolutize_from_cwd(&args.path)?;
     let wt_name = find_worktree_name(&worktrees_dir, &wt_path)?;
     let admin = worktrees_dir.join(&wt_name);
 
-    // Check for lock
-    if admin.join("locked").exists() && !args.force {
-        bail!(
-            "worktree '{}' is locked; use --force or unlock it first",
-            wt_path.display()
-        );
+    if !worktree_has_gitlink_entries(&admin)? {
+        return passthrough_current_worktree_invocation();
+    }
+    if worktree_contains_initialized_submodule(&admin, &wt_path)? {
+        bail!("working trees containing submodules cannot be moved or removed");
     }
 
-    // Remove the working tree directory
     if wt_path.exists() {
         fs::remove_dir_all(&wt_path)
             .with_context(|| format!("cannot remove '{}'", wt_path.display()))?;
     }
-
-    // Remove the admin directory
     if admin.exists() {
         fs::remove_dir_all(&admin)
             .with_context(|| format!("cannot remove admin dir '{}'", admin.display()))?;
     }
-
+    remove_dir_if_empty(&worktrees_dir);
     Ok(())
 }
 
@@ -847,22 +849,19 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
     if let Some(basename) = target.file_name().and_then(|n| n.to_str()) {
         let candidate = worktrees_dir.join(basename);
         if candidate.is_dir() {
-            // Verify gitdir points to the right place
             let gitdir_file = candidate.join("gitdir");
-            if gitdir_file.exists() {
-                let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-                let recorded = PathBuf::from(raw.trim());
-                let recorded_wt = recorded
-                    .parent()
-                    .unwrap_or(&recorded)
-                    .canonicalize()
-                    .unwrap_or(recorded.parent().unwrap_or(&recorded).to_path_buf());
-                if recorded_wt == target {
-                    return Ok(basename.to_string());
+            if let Ok(raw) = fs::read_to_string(&gitdir_file) {
+                if let Some(recorded) = parse_gitdir_target(&candidate, raw.trim()) {
+                    let recorded_wt = recorded
+                        .parent()
+                        .unwrap_or(&recorded)
+                        .canonicalize()
+                        .unwrap_or(recorded.parent().unwrap_or(&recorded).to_path_buf());
+                    if recorded_wt == target {
+                        return Ok(basename.to_string());
+                    }
                 }
             }
-            // If gitdir doesn't match, still use basename as the name
-            return Ok(basename.to_string());
         }
     }
 
@@ -877,7 +876,9 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
             continue;
         }
         let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-        let recorded = PathBuf::from(raw.trim());
+        let Some(recorded) = parse_gitdir_target(&entry.path(), raw.trim()) else {
+            continue;
+        };
         let recorded_wt = recorded
             .parent()
             .unwrap_or(&recorded)
@@ -1069,58 +1070,72 @@ fn remove_dir_if_empty(path: &Path) {
 // ---------------------------------------------------------------------------
 
 fn cmd_move(args: MoveArgs) -> Result<()> {
-    let repo = Repository::discover(None)?;
-    let common = common_dir(&repo.git_dir)?;
-    let worktrees_dir = common.join("worktrees");
-
-    let src_path = if args.source.is_absolute() {
-        args.source.clone()
-    } else {
-        std::env::current_dir()?.join(&args.source)
-    };
-    let src_path = src_path.canonicalize().unwrap_or(src_path);
-
-    // Find the admin entry for the source worktree
-    let wt_name = find_worktree_name(&worktrees_dir, &src_path)?;
-    let admin = worktrees_dir.join(&wt_name);
-
-    // Check for lock
-    if admin.join("locked").exists() && !args.force {
-        bail!(
-            "worktree '{}' is locked; use --force to move it anyway",
-            src_path.display()
-        );
+    if args.relative_paths && args.no_relative_paths {
+        bail!("options '--relative-paths' and '--no-relative-paths' cannot be used together");
     }
 
-    // Determine the destination absolute path
-    let dst_path = if args.destination.is_absolute() {
+    let repo = Repository::discover(None)?;
+    let common = common_dir(&repo.git_dir)?;
+    let prefer_local = args.relative_paths || args.no_relative_paths || config_use_relative_paths(&common);
+    if !prefer_local {
+        return passthrough_current_worktree_invocation();
+    }
+
+    let worktrees_dir = common.join("worktrees");
+
+    let src_path = absolutize_from_cwd(&args.source)?;
+    let dst_requested = if args.destination.is_absolute() {
         args.destination.clone()
     } else {
         std::env::current_dir()?.join(&args.destination)
     };
-
-    if dst_path.exists() {
-        bail!("target '{}' already exists", dst_path.display());
+    if dst_requested.exists() {
+        bail!("target '{}' already exists", dst_requested.display());
     }
 
-    // Move the working tree directory
-    fs::rename(&src_path, &dst_path).with_context(|| {
+    let wt_name = find_worktree_name(&worktrees_dir, &src_path)?;
+    let admin = worktrees_dir.join(&wt_name);
+    if admin.join("locked").exists() && args.force < 2 {
+        bail!("worktree '{}' is locked; use --force to move it anyway", src_path.display());
+    }
+
+    fs::rename(&src_path, &dst_requested).with_context(|| {
         format!(
             "cannot move '{}' to '{}'",
             src_path.display(),
-            dst_path.display()
+            dst_requested.display()
         )
     })?;
+    let dst_path = dst_requested.canonicalize().unwrap_or(dst_requested);
 
-    let dst_path = dst_path.canonicalize().unwrap_or(dst_path);
+    let use_relative = if args.relative_paths {
+        true
+    } else if args.no_relative_paths {
+        false
+    } else {
+        config_use_relative_paths(&common)
+    };
 
-    // Update the gitdir file in the admin dir to point to the new location
-    let new_gitdir_content = format!("{}\n", dst_path.join(".git").display());
-    fs::write(admin.join("gitdir"), &new_gitdir_content)?;
+    let admin_gitdir_target = dst_path.join(".git");
+    let admin_gitdir_contents = if use_relative {
+        format!(
+            "{}\n",
+            relativize_path(&admin, &admin_gitdir_target).display()
+        )
+    } else {
+        format!("{}\n", admin_gitdir_target.display())
+    };
+    fs::write(admin.join("gitdir"), admin_gitdir_contents)?;
 
-    // Update the .git file in the moved worktree (it should still point to the same admin dir)
-    let dotgit_content = format!("gitdir: {}\n", admin.display());
-    fs::write(dst_path.join(".git"), &dotgit_content)?;
+    let wt_gitdir_target = if use_relative {
+        relativize_path(&dst_path, &admin)
+    } else {
+        admin.clone()
+    };
+    fs::write(
+        dst_path.join(".git"),
+        format!("gitdir: {}\n", wt_gitdir_target.display()),
+    )?;
 
     Ok(())
 }
@@ -1215,52 +1230,89 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
 // worktree lock / unlock
 // ---------------------------------------------------------------------------
 
-fn cmd_lock(args: LockArgs) -> Result<()> {
-    let repo = Repository::discover(None)?;
-    let common = common_dir(&repo.git_dir)?;
-    let worktrees_dir = common.join("worktrees");
-
-    let wt_path = if args.path.is_absolute() {
-        args.path.clone()
-    } else {
-        std::env::current_dir()?.join(&args.path)
-    };
-    let wt_path = wt_path.canonicalize().unwrap_or(wt_path);
-
-    let wt_name = find_worktree_name(&worktrees_dir, &wt_path)?;
-    let admin = worktrees_dir.join(&wt_name);
-
-    if admin.join("locked").exists() {
-        bail!("worktree '{}' is already locked", wt_path.display());
-    }
-
-    let content = args.reason.as_deref().unwrap_or("");
-    fs::write(admin.join("locked"), content)?;
-
-    Ok(())
+fn cmd_lock(_args: LockArgs) -> Result<()> {
+    passthrough_current_worktree_invocation()
 }
 
-fn cmd_unlock(args: UnlockArgs) -> Result<()> {
-    let repo = Repository::discover(None)?;
-    let common = common_dir(&repo.git_dir)?;
-    let worktrees_dir = common.join("worktrees");
+fn cmd_unlock(_args: UnlockArgs) -> Result<()> {
+    passthrough_current_worktree_invocation()
+}
 
-    let wt_path = if args.path.is_absolute() {
-        args.path.clone()
+fn absolutize_from_cwd(path: &Path) -> Result<PathBuf> {
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        std::env::current_dir()?.join(&args.path)
+        std::env::current_dir()?.join(path)
     };
-    let wt_path = wt_path.canonicalize().unwrap_or(wt_path);
+    Ok(abs.canonicalize().unwrap_or(abs))
+}
 
-    let wt_name = find_worktree_name(&worktrees_dir, &wt_path)?;
-    let admin = worktrees_dir.join(&wt_name);
+fn worktree_has_gitlink_entries(admin: &Path) -> Result<bool> {
+    let index = match Index::load(&admin.join("index")) {
+        Ok(idx) => idx,
+        Err(_) => return Ok(false),
+    };
+    Ok(index
+        .entries
+        .iter()
+        .any(|e| e.stage() == 0 && e.mode == 0o160000))
+}
 
-    let lock_file = admin.join("locked");
-    if !lock_file.exists() {
-        bail!("worktree '{}' is not locked", wt_path.display());
+fn worktree_contains_initialized_submodule(admin: &Path, wt_path: &Path) -> Result<bool> {
+    let index = match Index::load(&admin.join("index")) {
+        Ok(idx) => idx,
+        Err(_) => return Ok(false),
+    };
+    for entry in &index.entries {
+        if entry.stage() != 0 || entry.mode != 0o160000 {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        if wt_path.join(rel.as_ref()).join(".git").exists() {
+            return Ok(true);
+        }
     }
+    Ok(false)
+}
 
-    fs::remove_file(&lock_file)?;
+fn config_use_relative_paths(common: &Path) -> bool {
+    let cfg = ConfigSet::load(Some(common), true).unwrap_or_else(|_| ConfigSet::new());
+    cfg.get("worktree.useRelativePaths")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false)
+}
 
-    Ok(())
+fn relativize_path(from_dir: &Path, to: &Path) -> PathBuf {
+    let from = from_dir.canonicalize().unwrap_or_else(|_| from_dir.to_path_buf());
+    let to = to.canonicalize().unwrap_or_else(|_| to.to_path_buf());
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let mut common_len = 0usize;
+    while common_len < from_components.len()
+        && common_len < to_components.len()
+        && from_components[common_len] == to_components[common_len]
+    {
+        common_len += 1;
+    }
+    let mut rel = PathBuf::new();
+    for _ in common_len..from_components.len() {
+        rel.push("..");
+    }
+    for component in &to_components[common_len..] {
+        rel.push(component.as_os_str());
+    }
+    if rel.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        rel
+    }
+}
+
+fn passthrough_current_worktree_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "worktree") else {
+        bail!("failed to determine worktree arguments");
+    };
+    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
+    git_passthrough::run("worktree", &passthrough_args)
 }
