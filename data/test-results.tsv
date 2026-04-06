@@ -1639,12 +1639,12 @@ t1012-read-tree-df::3-way-1	t1012-read-tree-df	3-way (1)	read-tree	pass
 t1012-read-tree-df::3-way-2	t1012-read-tree-df	3-way (2)	read-tree	pass
 t1012-read-tree-df::3-way-3	t1012-read-tree-df	3-way (3)	read-tree	pass
 t1012-read-tree-df::2-way-1	t1012-read-tree-df	2-way (1)	read-tree	pass
-t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	not_ported
-t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	not_ported
-t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	not_ported
-t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	not_ported
-t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	not_ported
-t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	not_ported
+t1014-read-tree-confusing::create-base-tree	t1014-read-tree-confusing	create base tree	read-tree	partial
+t1014-read-tree-confusing::enable-core-protecthfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectHFS for rejection tests	read-tree	partial
+t1014-read-tree-confusing::enable-core-protectntfs-for-rejection-tests	t1014-read-tree-confusing	enable core.protectNTFS for rejection tests	read-tree	partial
+t1014-read-tree-confusing::utf-8-paths-allowed-with-core-protecthfs-off	t1014-read-tree-confusing	utf-8 paths allowed with core.protectHFS off	read-tree	partial
+t1014-read-tree-confusing::reject-pretty-at-end-of-path	t1014-read-tree-confusing	reject $pretty at end of path	read-tree	partial
+t1014-read-tree-confusing::reject-pretty-as-subtree	t1014-read-tree-confusing	reject $pretty as subtree	read-tree	partial
 t1015-read-index-unmerged::setup-modify-delete-directory-file-conflict	t1015-read-index-unmerged	setup modify/delete + directory/file conflict	add	pass
 t1015-read-index-unmerged::read-tree-reset-cleans-unmerged-entries	t1015-read-index-unmerged	read-tree --reset cleans unmerged entries	checkout	pass
 t1015-read-index-unmerged::one-reset-hard-cleans-unmerged-entries	t1015-read-index-unmerged	One reset --hard cleans unmerged entries	checkout	pass

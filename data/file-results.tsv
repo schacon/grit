@@ -82,7 +82,7 @@ t1000-read-tree-m-3way	yes	0	0	0	ok	0	0	0
 t1001-read-tree-m-2way	yes	0	0	0	ok	0	0	0
 t1002-read-tree-m-u-2way	yes	22	6	16	ok	6	22	0
 t1003-read-tree-prefix	yes	3	3	0	ok	3	3	0
-t1004-read-tree-m-u-wf	yes	17	7	10	ok	7	17	0
+t1004-read-tree-m-u-wf	yes	17	11	6	ok	11	17	0
 t1005-read-tree-reset	yes	7	7	0	ok	7	7	0
 t1006-cat-file	yes	0	0	0	ok	0	0	0
 t1007-hash-object	yes	0	0	0	ok	0	0	0
@@ -91,7 +91,7 @@ t1009-read-tree-new-index	yes	3	3	0	ok	3	3	0
 t1010-mktree	yes	8	8	0	ok	8	8	0
 t1011-read-tree-sparse-checkout	yes	23	10	13	ok	10	23	0
 t1012-read-tree-df	yes	5	5	0	ok	5	5	0
-t1014-read-tree-confusing	yes	0	0	0	ok	0	0	0
+t1014-read-tree-confusing	yes	28	27	1	ok	27	28	0
 t1015-read-index-unmerged	yes	6	6	0	ok	6	6	0
 t1016-compatObjectFormat	yes	0	0	0	ok	0	0	0
 t1020-subdirectory	yes	15	14	1	ok	14	15	0
@@ -133,7 +133,7 @@ t1413-reflog-detach	yes	7	7	0	ok	7	7	0
 t1414-reflog-walk	yes	0	0	0	ok	0	0	0
 t1415-worktree-refs	yes	10	4	6	ok	4	10	0
 t1416-ref-transaction-hooks	yes	10	4	6	ok	4	10	0
-t1417-reflog-updateref	yes	21	15	6	ok	15	21	0
+t1417-reflog-updateref	yes	21	19	2	ok	19	21	0
 t1418-reflog-exists	yes	6	6	0	ok	6	6	0
 t1419-exclude-refs	yes	13	1	12	ok	1	13	0
 t1420-lost-found	yes	2	2	0	ok	2	2	0
@@ -662,7 +662,7 @@ t5900-repo-selection	yes	8	0	8	ok	0	8	0
 t6000-rev-list-misc	yes	0	0	0	ok	0	0	0
 t6001-rev-list-graft	yes	14	3	11	ok	3	14	0
 t6002-rev-list-bisect	yes	53	4	49	ok	4	53	0
-t6003-rev-list-topo-order	yes	36	22	14	ok	22	36	0
+t6003-rev-list-topo-order	yes	36	21	15	ok	21	36	0
 t6004-rev-list-path-optim	yes	7	2	5	ok	2	7	0
 t6005-rev-list-count	yes	6	3	3	ok	3	6	0
 t6006-rev-list-format	yes	80	63	17	ok	63	80	0

@@ -59,7 +59,7 @@ mergetool	Ancillary Porcelain	yes	32	0	32	0.0
 p4	Ancillary Porcelain	no	390	0	390	0.0
 pack-refs	Ancillary Porcelain	yes	16	0	9	0.0
 prune	Ancillary Porcelain	yes	43	1	42	2.2
-reflog	Ancillary Porcelain	yes	94	19	51	20.7
+reflog	Ancillary Porcelain	yes	94	20	51	21.1
 remote	Ancillary Porcelain	yes	177	3	163	1.9
 repack	Ancillary Porcelain	yes	106	43	9	40.5
 replace	Ancillary Porcelain	yes	37	0	37	0.0
@@ -119,7 +119,7 @@ pack-objects	Plumbing	yes	264	27	136	10.1
 pack-redundant	Plumbing	yes	18	2	0	11.1
 patch-id	Plumbing	yes	25	25	0	100.0
 prune-packed	Plumbing	yes	0	0	0	0.0
-read-tree	Plumbing	yes	187	42	84	22.3
+read-tree	Plumbing	yes	187	52	78	27.6
 receive-pack	Plumbing	yes	23	1	20	2.6
 refs	Plumbing	yes	70	3	54	4.3
 replay	Plumbing	yes	31	0	31	0.0
