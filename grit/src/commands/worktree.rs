@@ -876,6 +876,24 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
         );
     }
 
+    // Check for dirty/untracked files unless --force
+    if !args.force && wt_path.exists() {
+        // Load the linked worktree's index (stored in the admin directory)
+        let index_path = admin.join("index");
+        if index_path.exists() {
+            if let Ok(index) = grit_lib::index::Index::load(&index_path) {
+                // Check for untracked files
+                if has_untracked_files(&wt_path, &index) {
+                    bail!("worktree '{}' contains modified or untracked files; use --force to delete it", wt_path.display());
+                }
+                // Check for dirty tracked files
+                if has_dirty_files(&wt_path, &index, &repo) {
+                    bail!("worktree '{}' contains modified or untracked files; use --force to delete it", wt_path.display());
+                }
+            }
+        }
+    }
+
     // Remove the working tree directory
     if wt_path.exists() {
         fs::remove_dir_all(&wt_path)
@@ -888,11 +906,89 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
             .with_context(|| format!("cannot remove admin dir '{}'", admin.display()))?;
     }
 
+    // If .git/worktrees is now empty, remove it too
+    if worktrees_dir.exists() {
+        if let Ok(mut entries) = fs::read_dir(&worktrees_dir) {
+            if entries.next().is_none() {
+                let _ = fs::remove_dir(&worktrees_dir);
+            }
+        }
+    }
+
     Ok(())
 }
 
 /// Find a worktree admin directory name by matching the path recorded in its
 /// `gitdir` file.
+/// Check if a worktree has untracked files.
+fn has_untracked_files(work_tree: &Path, index: &grit_lib::index::Index) -> bool {
+    let staged: std::collections::HashSet<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| e.path.clone())
+        .collect();
+    walk_for_untracked(work_tree, work_tree, &staged)
+}
+
+fn walk_for_untracked(
+    base: &Path,
+    dir: &Path,
+    staged: &std::collections::HashSet<Vec<u8>>,
+) -> bool {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == ".git" {
+            continue;
+        }
+        if path.is_dir() {
+            if walk_for_untracked(base, &path, staged) {
+                return true;
+            }
+        } else if path.is_file() {
+            if let Ok(rel) = path.strip_prefix(base) {
+                let rel_bytes = rel.to_string_lossy().as_bytes().to_vec();
+                if !staged.contains(&rel_bytes) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if a worktree has dirty tracked files.
+fn has_dirty_files(
+    work_tree: &Path,
+    index: &grit_lib::index::Index,
+    repo: &grit_lib::repo::Repository,
+) -> bool {
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(rel.as_ref());
+        match std::fs::read(&abs) {
+            Ok(data) => {
+                let oid = grit_lib::odb::Odb::hash_object_data(
+                    grit_lib::objects::ObjectKind::Blob,
+                    &data,
+                );
+                if oid != entry.oid {
+                    return true;
+                }
+            }
+            Err(_) => return true, // missing file = dirty
+        }
+    }
+    false
+}
+
 fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
     if !worktrees_dir.is_dir() {
         bail!("no linked worktrees found");
@@ -943,10 +1039,7 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
         }
     }
 
-    bail!(
-        "'{}' is not a linked worktree of this repository",
-        target.display()
-    );
+    bail!("'{}' is not a working tree", target.display());
 }
 
 // ---------------------------------------------------------------------------
@@ -1176,7 +1269,13 @@ fn cmd_lock(args: LockArgs) -> Result<()> {
         bail!("worktree '{}' is already locked", wt_path.display());
     }
 
-    let content = args.reason.as_deref().unwrap_or("");
+    let reason = args.reason.as_deref().unwrap_or("");
+    // Write reason with trailing newline (to match `echo reason > locked`)
+    let content = if reason.is_empty() {
+        String::new()
+    } else {
+        format!("{reason}\n")
+    };
     fs::write(admin.join("locked"), content)?;
 
     Ok(())
