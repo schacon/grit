@@ -3417,7 +3417,7 @@ t1900-repo-info::lines-label	t1900-repo-info	lines: $label	rev-parse	not_ported
 t1900-repo-info::nul-label	t1900-repo-info	nul: $label	rev-parse	not_ported
 t1901-repo-structure::empty-repository	t1901-repo-structure	empty repository	init	pass
 t1901-repo-structure::progress-meter-option	t1901-repo-structure	progress meter option	init	pass
-t2000-conflict-when-checking-files-out::checkout-index-f-twice-with-prefix	t2000-conflict-when-checking-files-out	checkout-index -f twice with --prefix	checkout-index	partial
+t2000-conflict-when-checking-files-out::checkout-index-f-twice-with-prefix	t2000-conflict-when-checking-files-out	checkout-index -f twice with --prefix	checkout-index	pass
 t2003-checkout-cache-mkdir::setup	t2003-checkout-cache-mkdir	setup	checkout	partial
 t2003-checkout-cache-mkdir::have-symlink-in-place-where-dir-is-expected	t2003-checkout-cache-mkdir	have symlink in place where dir is expected.	checkout	partial
 t2003-checkout-cache-mkdir::use-prefix-path2	t2003-checkout-cache-mkdir	use --prefix=path2/	checkout	partial
@@ -3515,12 +3515,12 @@ t2012-checkout-last::checkout-works-after-a-rebase-a	t2012-checkout-last	"checko
 t2012-checkout-last::checkout-works-after-a-rebase-a-b	t2012-checkout-last	"checkout -" works after a rebase A B	checkout	pass
 t2012-checkout-last::checkout-works-after-a-rebase-i-a	t2012-checkout-last	"checkout -" works after a rebase -i A	checkout	pass
 t2012-checkout-last::checkout-works-after-a-rebase-i-a-b	t2012-checkout-last	"checkout -" works after a rebase -i A B	checkout	pass
-t2013-checkout-submodule::setup	t2013-checkout-submodule	setup	checkout	partial
-t2013-checkout-submodule::reset-submodule-updates-the-index	t2013-checkout-submodule	"reset <submodule>" updates the index	checkout	partial
-t2013-checkout-submodule::checkout-submodule-updates-the-index-only	t2013-checkout-submodule	"checkout <submodule>" updates the index only	checkout	partial
-t2013-checkout-submodule::checkout-submodule-honors-diff-ignoresubmodules	t2013-checkout-submodule	"checkout <submodule>" honors diff.ignoreSubmodules	checkout	partial
-t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-gitmodules	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .gitmodules	checkout	partial
-t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-git-config	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .git/config	checkout	partial
+t2013-checkout-submodule::setup	t2013-checkout-submodule	setup	checkout	not_ported
+t2013-checkout-submodule::reset-submodule-updates-the-index	t2013-checkout-submodule	"reset <submodule>" updates the index	checkout	not_ported
+t2013-checkout-submodule::checkout-submodule-updates-the-index-only	t2013-checkout-submodule	"checkout <submodule>" updates the index only	checkout	not_ported
+t2013-checkout-submodule::checkout-submodule-honors-diff-ignoresubmodules	t2013-checkout-submodule	"checkout <submodule>" honors diff.ignoreSubmodules	checkout	not_ported
+t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-gitmodules	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .gitmodules	checkout	not_ported
+t2013-checkout-submodule::checkout-submodule-honors-submodule-ignore-from-git-config	t2013-checkout-submodule	"checkout <submodule>" honors submodule.*.ignore from .git/config	checkout	not_ported
 t2014-checkout-switch::check-all-changes-are-staged	t2014-checkout-switch	check all changes are staged	checkout	pass
 t2014-checkout-switch::second-commit	t2014-checkout-switch	second commit	checkout	pass
 t2014-checkout-switch::check	t2014-checkout-switch	check	checkout	pass
@@ -3546,53 +3546,53 @@ t2016-checkout-patch::empty-tree-can-be-handled	t2016-checkout-patch	empty tree 
 t2016-checkout-patch::git-checkout-p-opt-with-no-staged-changes-abort	t2016-checkout-patch	git checkout -p $opt with NO staged changes: abort	checkout	partial
 t2016-checkout-patch::git-checkout-p-opt-with-no-staged-changes-apply	t2016-checkout-patch	git checkout -p $opt with NO staged changes: apply	checkout	partial
 t2016-checkout-patch::git-checkout-p-opt-with-change-already-staged	t2016-checkout-patch	git checkout -p $opt with change already staged	checkout	partial
-t2017-checkout-orphan::setup	t2017-checkout-orphan	Setup	checkout	not_ported
-t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-head	t2017-checkout-orphan	--orphan creates a new orphan branch from HEAD	checkout	not_ported
-t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-start-point	t2017-checkout-orphan	--orphan creates a new orphan branch from <start_point>	checkout	not_ported
-t2017-checkout-orphan::orphan-must-be-rejected-with-b	t2017-checkout-orphan	--orphan must be rejected with -b	checkout	not_ported
-t2017-checkout-orphan::orphan-must-be-rejected-with-t	t2017-checkout-orphan	--orphan must be rejected with -t	checkout	not_ported
-t2017-checkout-orphan::orphan-ignores-branch-autosetupmerge	t2017-checkout-orphan	--orphan ignores branch.autosetupmerge	checkout	not_ported
-t2017-checkout-orphan::orphan-makes-reflog-by-default	t2017-checkout-orphan	--orphan makes reflog by default	checkout	not_ported
-t2017-checkout-orphan::orphan-does-not-make-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan does not make reflog when core.logAllRefUpdates = false	checkout	not_ported
-t2017-checkout-orphan::orphan-with-l-makes-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan with -l makes reflog when core.logAllRefUpdates = false	checkout	not_ported
-t2017-checkout-orphan::giving-up-orphan-not-committed-when-l-and-core-logallrefupdates-false-deletes-re	t2017-checkout-orphan	giving up --orphan not committed when -l and core.logAllRefUpdates = false deletes reflog	checkout	not_ported
-t2017-checkout-orphan::orphan-is-rejected-with-an-existing-name	t2017-checkout-orphan	--orphan is rejected with an existing name	checkout	not_ported
-t2017-checkout-orphan::orphan-refuses-to-switch-if-a-merge-is-needed	t2017-checkout-orphan	--orphan refuses to switch if a merge is needed	checkout	not_ported
-t2017-checkout-orphan::cannot-detach-on-an-unborn-branch	t2017-checkout-orphan	cannot --detach on an unborn branch	checkout	not_ported
-t2018-checkout-branch::setup	t2018-checkout-branch	setup	checkout	not_ported
-t2018-checkout-branch::checkout-a-branch-without-refs-heads-prefix	t2018-checkout-branch	checkout a branch without refs/heads/* prefix	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-new-branch-set-to-head	t2018-checkout-branch	checkout -b to a new branch, set to HEAD	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-merge-base	t2018-checkout-branch	checkout -b to a merge base	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-new-branch-set-to-an-explicit-ref	t2018-checkout-branch	checkout -b to a new branch, set to an explicit ref	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-new-branch-with-unmergeable-changes-fails	t2018-checkout-branch	checkout -b to a new branch with unmergeable changes fails	checkout	not_ported
-t2018-checkout-branch::checkout-f-b-to-a-new-branch-with-unmergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -b to a new branch with unmergeable changes discards changes	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-new-branch-preserves-mergeable-changes	t2018-checkout-branch	checkout -b to a new branch preserves mergeable changes	checkout	not_ported
-t2018-checkout-branch::checkout-f-b-to-a-new-branch-with-mergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -b to a new branch with mergeable changes discards changes	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-fails	t2018-checkout-branch	checkout -b to an existing branch fails	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-1-fails-with-the-right-branch-name	t2018-checkout-branch	checkout -b to @{-1} fails with the right branch name	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-resets-branch-to-head	t2018-checkout-branch	checkout -B to an existing branch resets branch to HEAD	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-merge-base-2	t2018-checkout-branch	checkout -B to a merge base	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-from-detached-head-resets-branch-to-head	t2018-checkout-branch	checkout -B to an existing branch from detached HEAD resets branch to HEAD	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-with-an-explicit-ref-resets-branch-to-that-ref	t2018-checkout-branch	checkout -B to an existing branch with an explicit ref resets branch to that ref	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-with-unmergeable-changes-fails	t2018-checkout-branch	checkout -B to an existing branch with unmergeable changes fails	checkout	not_ported
-t2018-checkout-branch::checkout-f-b-to-an-existing-branch-with-unmergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -B to an existing branch with unmergeable changes discards changes	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-an-existing-branch-preserves-mergeable-changes	t2018-checkout-branch	checkout -B to an existing branch preserves mergeable changes	checkout	not_ported
-t2018-checkout-branch::checkout-f-b-to-an-existing-branch-with-mergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -B to an existing branch with mergeable changes discards changes	checkout	not_ported
-t2018-checkout-branch::checkout-b-describe	t2018-checkout-branch	checkout -b <describe>	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-the-current-branch-works	t2018-checkout-branch	checkout -B to the current branch works	checkout	not_ported
-t2018-checkout-branch::checkout-b-after-clone-no-checkout-does-a-checkout-of-head	t2018-checkout-branch	checkout -b after clone --no-checkout does a checkout of HEAD	checkout	not_ported
-t2018-checkout-branch::checkout-b-to-a-new-branch-preserves-mergeable-changes-despite-sparse-checkout	t2018-checkout-branch	checkout -b to a new branch preserves mergeable changes despite sparse-checkout	checkout	not_ported
-t2018-checkout-branch::checkout-b-rejects-an-invalid-start-point	t2018-checkout-branch	checkout -b rejects an invalid start point	checkout	not_ported
-t2018-checkout-branch::checkout-b-rejects-an-extra-path-argument	t2018-checkout-branch	checkout -b rejects an extra path argument	checkout	not_ported
-t2019-checkout-ambiguous-ref::setup-ambiguous-refs	t2019-checkout-ambiguous-ref	setup ambiguous refs	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-ambiguous-ref-succeeds	t2019-checkout-ambiguous-ref	checkout ambiguous ref succeeds	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-produces-ambiguity-warning	t2019-checkout-ambiguous-ref	checkout produces ambiguity warning	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-chooses-branch-over-tag	t2019-checkout-ambiguous-ref	checkout chooses branch over tag	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-reports-switch-to-branch	t2019-checkout-ambiguous-ref	checkout reports switch to branch	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-vague-ref-succeeds	t2019-checkout-ambiguous-ref	checkout vague ref succeeds	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-produces-ambiguity-warning-2	t2019-checkout-ambiguous-ref	checkout produces ambiguity warning	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-chooses-branch-over-tag-2	t2019-checkout-ambiguous-ref	checkout chooses branch over tag	checkout	partial
-t2019-checkout-ambiguous-ref::checkout-reports-switch-to-branch-2	t2019-checkout-ambiguous-ref	checkout reports switch to branch	checkout	partial
+t2017-checkout-orphan::setup	t2017-checkout-orphan	Setup	checkout	partial
+t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-head	t2017-checkout-orphan	--orphan creates a new orphan branch from HEAD	checkout	partial
+t2017-checkout-orphan::orphan-creates-a-new-orphan-branch-from-start-point	t2017-checkout-orphan	--orphan creates a new orphan branch from <start_point>	checkout	partial
+t2017-checkout-orphan::orphan-must-be-rejected-with-b	t2017-checkout-orphan	--orphan must be rejected with -b	checkout	partial
+t2017-checkout-orphan::orphan-must-be-rejected-with-t	t2017-checkout-orphan	--orphan must be rejected with -t	checkout	partial
+t2017-checkout-orphan::orphan-ignores-branch-autosetupmerge	t2017-checkout-orphan	--orphan ignores branch.autosetupmerge	checkout	partial
+t2017-checkout-orphan::orphan-makes-reflog-by-default	t2017-checkout-orphan	--orphan makes reflog by default	checkout	partial
+t2017-checkout-orphan::orphan-does-not-make-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan does not make reflog when core.logAllRefUpdates = false	checkout	partial
+t2017-checkout-orphan::orphan-with-l-makes-reflog-when-core-logallrefupdates-false	t2017-checkout-orphan	--orphan with -l makes reflog when core.logAllRefUpdates = false	checkout	partial
+t2017-checkout-orphan::giving-up-orphan-not-committed-when-l-and-core-logallrefupdates-false-deletes-re	t2017-checkout-orphan	giving up --orphan not committed when -l and core.logAllRefUpdates = false deletes reflog	checkout	partial
+t2017-checkout-orphan::orphan-is-rejected-with-an-existing-name	t2017-checkout-orphan	--orphan is rejected with an existing name	checkout	partial
+t2017-checkout-orphan::orphan-refuses-to-switch-if-a-merge-is-needed	t2017-checkout-orphan	--orphan refuses to switch if a merge is needed	checkout	partial
+t2017-checkout-orphan::cannot-detach-on-an-unborn-branch	t2017-checkout-orphan	cannot --detach on an unborn branch	checkout	partial
+t2018-checkout-branch::setup	t2018-checkout-branch	setup	checkout	partial
+t2018-checkout-branch::checkout-a-branch-without-refs-heads-prefix	t2018-checkout-branch	checkout a branch without refs/heads/* prefix	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-new-branch-set-to-head	t2018-checkout-branch	checkout -b to a new branch, set to HEAD	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-merge-base	t2018-checkout-branch	checkout -b to a merge base	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-new-branch-set-to-an-explicit-ref	t2018-checkout-branch	checkout -b to a new branch, set to an explicit ref	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-new-branch-with-unmergeable-changes-fails	t2018-checkout-branch	checkout -b to a new branch with unmergeable changes fails	checkout	partial
+t2018-checkout-branch::checkout-f-b-to-a-new-branch-with-unmergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -b to a new branch with unmergeable changes discards changes	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-new-branch-preserves-mergeable-changes	t2018-checkout-branch	checkout -b to a new branch preserves mergeable changes	checkout	partial
+t2018-checkout-branch::checkout-f-b-to-a-new-branch-with-mergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -b to a new branch with mergeable changes discards changes	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-fails	t2018-checkout-branch	checkout -b to an existing branch fails	checkout	partial
+t2018-checkout-branch::checkout-b-to-1-fails-with-the-right-branch-name	t2018-checkout-branch	checkout -b to @{-1} fails with the right branch name	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-resets-branch-to-head	t2018-checkout-branch	checkout -B to an existing branch resets branch to HEAD	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-merge-base-2	t2018-checkout-branch	checkout -B to a merge base	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-from-detached-head-resets-branch-to-head	t2018-checkout-branch	checkout -B to an existing branch from detached HEAD resets branch to HEAD	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-with-an-explicit-ref-resets-branch-to-that-ref	t2018-checkout-branch	checkout -B to an existing branch with an explicit ref resets branch to that ref	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-with-unmergeable-changes-fails	t2018-checkout-branch	checkout -B to an existing branch with unmergeable changes fails	checkout	partial
+t2018-checkout-branch::checkout-f-b-to-an-existing-branch-with-unmergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -B to an existing branch with unmergeable changes discards changes	checkout	partial
+t2018-checkout-branch::checkout-b-to-an-existing-branch-preserves-mergeable-changes	t2018-checkout-branch	checkout -B to an existing branch preserves mergeable changes	checkout	partial
+t2018-checkout-branch::checkout-f-b-to-an-existing-branch-with-mergeable-changes-discards-changes	t2018-checkout-branch	checkout -f -B to an existing branch with mergeable changes discards changes	checkout	partial
+t2018-checkout-branch::checkout-b-describe	t2018-checkout-branch	checkout -b <describe>	checkout	partial
+t2018-checkout-branch::checkout-b-to-the-current-branch-works	t2018-checkout-branch	checkout -B to the current branch works	checkout	partial
+t2018-checkout-branch::checkout-b-after-clone-no-checkout-does-a-checkout-of-head	t2018-checkout-branch	checkout -b after clone --no-checkout does a checkout of HEAD	checkout	partial
+t2018-checkout-branch::checkout-b-to-a-new-branch-preserves-mergeable-changes-despite-sparse-checkout	t2018-checkout-branch	checkout -b to a new branch preserves mergeable changes despite sparse-checkout	checkout	partial
+t2018-checkout-branch::checkout-b-rejects-an-invalid-start-point	t2018-checkout-branch	checkout -b rejects an invalid start point	checkout	partial
+t2018-checkout-branch::checkout-b-rejects-an-extra-path-argument	t2018-checkout-branch	checkout -b rejects an extra path argument	checkout	partial
+t2019-checkout-ambiguous-ref::setup-ambiguous-refs	t2019-checkout-ambiguous-ref	setup ambiguous refs	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-ambiguous-ref-succeeds	t2019-checkout-ambiguous-ref	checkout ambiguous ref succeeds	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-produces-ambiguity-warning	t2019-checkout-ambiguous-ref	checkout produces ambiguity warning	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-chooses-branch-over-tag	t2019-checkout-ambiguous-ref	checkout chooses branch over tag	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-reports-switch-to-branch	t2019-checkout-ambiguous-ref	checkout reports switch to branch	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-vague-ref-succeeds	t2019-checkout-ambiguous-ref	checkout vague ref succeeds	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-produces-ambiguity-warning-2	t2019-checkout-ambiguous-ref	checkout produces ambiguity warning	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-chooses-branch-over-tag-2	t2019-checkout-ambiguous-ref	checkout chooses branch over tag	checkout	pass
+t2019-checkout-ambiguous-ref::checkout-reports-switch-to-branch-2	t2019-checkout-ambiguous-ref	checkout reports switch to branch	checkout	pass
 t2020-checkout-detach::setup	t2020-checkout-detach	setup	checkout	partial
 t2020-checkout-detach::checkout-branch-does-not-detach	t2020-checkout-detach	checkout branch does not detach	checkout	partial
 t2020-checkout-detach::checkout-tag-detaches	t2020-checkout-detach	checkout tag detaches	checkout	partial
@@ -3635,29 +3635,29 @@ t2023-checkout-m::git-merge-main	t2023-checkout-m	git merge main	checkout	partia
 t2023-checkout-m::m-restores-2-way-conflicted-resolved-file	t2023-checkout-m	-m restores 2-way conflicted+resolved file	checkout	partial
 t2023-checkout-m::m-restores-3-way-conflicted-resolved-file	t2023-checkout-m	-m restores 3-way conflicted+resolved file	checkout	partial
 t2023-checkout-m::force-checkout-a-conflict-file-creates-stage-zero-entry	t2023-checkout-m	force checkout a conflict file creates stage zero entry	checkout	partial
-t2024-checkout-dwim::setup	t2024-checkout-dwim	setup	checkout	partial
-t2024-checkout-dwim::checkout-of-non-existing-branch-fails	t2024-checkout-dwim	checkout of non-existing branch fails	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-1	t2024-checkout-dwim	checkout of branch from multiple remotes fails #1	checkout	partial
-t2024-checkout-dwim::when-arg-matches-multiple-remotes-do-not-fallback-to-interpreting-as-pathspec	t2024-checkout-dwim	when arg matches multiple remotes, do not fallback to interpreting as pathspec	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-with-advice	t2024-checkout-dwim	checkout of branch from multiple remotes fails with advice	checkout	partial
-t2024-checkout-dwim::checkout-p-with-multiple-remotes-does-not-print-advice	t2024-checkout-dwim	checkout -p with multiple remotes does not print advice	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-succeeds-with-checkout-defaultremote-1	t2024-checkout-dwim	checkout of branch from multiple remotes succeeds with checkout.defaultRemote #1	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-1	t2024-checkout-dwim	checkout of branch from a single remote succeeds #1	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-2	t2024-checkout-dwim	checkout of branch from a single remote succeeds #2	checkout	partial
-t2024-checkout-dwim::no-guess-suppresses-branch-auto-vivification	t2024-checkout-dwim	--no-guess suppresses branch auto-vivification	checkout	partial
-t2024-checkout-dwim::checkout-guess-false-suppresses-branch-auto-vivification	t2024-checkout-dwim	checkout.guess = false suppresses branch auto-vivification	checkout	partial
-t2024-checkout-dwim::setup-more-remotes-with-unconventional-refspecs	t2024-checkout-dwim	setup more remotes with unconventional refspecs	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-2	t2024-checkout-dwim	checkout of branch from multiple remotes fails #2	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-3	t2024-checkout-dwim	checkout of branch from multiple remotes fails #3	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-3	t2024-checkout-dwim	checkout of branch from a single remote succeeds #3	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-4	t2024-checkout-dwim	checkout of branch from a single remote succeeds #4	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-with-a-file-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file having the same name fails	checkout	partial
-t2024-checkout-dwim::checkout-of-branch-with-a-file-in-subdir-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file in subdir having the same name fails	checkout	partial
-t2024-checkout-dwim::checkout-branch-succeeds-even-if-a-file-with-the-same-name-exists	t2024-checkout-dwim	checkout <branch> -- succeeds, even if a file with the same name exists	checkout	partial
-t2024-checkout-dwim::loosely-defined-local-base-branch-is-reported-correctly	t2024-checkout-dwim	loosely defined local base branch is reported correctly	checkout	partial
-t2024-checkout-dwim::reject-when-arg-could-be-part-of-dwim-branch	t2024-checkout-dwim	reject when arg could be part of dwim branch	checkout	partial
-t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-1	t2024-checkout-dwim	disambiguate dwim branch and checkout path (1)	checkout	partial
-t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-2	t2024-checkout-dwim	disambiguate dwim branch and checkout path (2)	checkout	partial
+t2024-checkout-dwim::setup	t2024-checkout-dwim	setup	checkout	not_ported
+t2024-checkout-dwim::checkout-of-non-existing-branch-fails	t2024-checkout-dwim	checkout of non-existing branch fails	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-1	t2024-checkout-dwim	checkout of branch from multiple remotes fails #1	checkout	not_ported
+t2024-checkout-dwim::when-arg-matches-multiple-remotes-do-not-fallback-to-interpreting-as-pathspec	t2024-checkout-dwim	when arg matches multiple remotes, do not fallback to interpreting as pathspec	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-with-advice	t2024-checkout-dwim	checkout of branch from multiple remotes fails with advice	checkout	not_ported
+t2024-checkout-dwim::checkout-p-with-multiple-remotes-does-not-print-advice	t2024-checkout-dwim	checkout -p with multiple remotes does not print advice	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-succeeds-with-checkout-defaultremote-1	t2024-checkout-dwim	checkout of branch from multiple remotes succeeds with checkout.defaultRemote #1	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-1	t2024-checkout-dwim	checkout of branch from a single remote succeeds #1	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-2	t2024-checkout-dwim	checkout of branch from a single remote succeeds #2	checkout	not_ported
+t2024-checkout-dwim::no-guess-suppresses-branch-auto-vivification	t2024-checkout-dwim	--no-guess suppresses branch auto-vivification	checkout	not_ported
+t2024-checkout-dwim::checkout-guess-false-suppresses-branch-auto-vivification	t2024-checkout-dwim	checkout.guess = false suppresses branch auto-vivification	checkout	not_ported
+t2024-checkout-dwim::setup-more-remotes-with-unconventional-refspecs	t2024-checkout-dwim	setup more remotes with unconventional refspecs	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-2	t2024-checkout-dwim	checkout of branch from multiple remotes fails #2	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-multiple-remotes-fails-3	t2024-checkout-dwim	checkout of branch from multiple remotes fails #3	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-3	t2024-checkout-dwim	checkout of branch from a single remote succeeds #3	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-from-a-single-remote-succeeds-4	t2024-checkout-dwim	checkout of branch from a single remote succeeds #4	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-with-a-file-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file having the same name fails	checkout	not_ported
+t2024-checkout-dwim::checkout-of-branch-with-a-file-in-subdir-having-the-same-name-fails	t2024-checkout-dwim	checkout of branch with a file in subdir having the same name fails	checkout	not_ported
+t2024-checkout-dwim::checkout-branch-succeeds-even-if-a-file-with-the-same-name-exists	t2024-checkout-dwim	checkout <branch> -- succeeds, even if a file with the same name exists	checkout	not_ported
+t2024-checkout-dwim::loosely-defined-local-base-branch-is-reported-correctly	t2024-checkout-dwim	loosely defined local base branch is reported correctly	checkout	not_ported
+t2024-checkout-dwim::reject-when-arg-could-be-part-of-dwim-branch	t2024-checkout-dwim	reject when arg could be part of dwim branch	checkout	not_ported
+t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-1	t2024-checkout-dwim	disambiguate dwim branch and checkout path (1)	checkout	not_ported
+t2024-checkout-dwim::disambiguate-dwim-branch-and-checkout-path-2	t2024-checkout-dwim	disambiguate dwim branch and checkout path (2)	checkout	not_ported
 t2025-checkout-no-overlay::setup	t2025-checkout-no-overlay	setup	checkout	partial
 t2025-checkout-no-overlay::checkout-no-overlay-deletes-files-not-in-tree-ish	t2025-checkout-no-overlay	checkout --no-overlay deletes files not in <tree-ish>	checkout	partial
 t2025-checkout-no-overlay::checkout-no-overlay-removing-last-file-from-directory	t2025-checkout-no-overlay	checkout --no-overlay removing last file from directory	checkout	partial
@@ -3674,11 +3674,11 @@ t2026-checkout-pathspec-file::quotes	t2026-checkout-pathspec-file	quotes	checkou
 t2026-checkout-pathspec-file::quotes-not-compatible-with-pathspec-file-nul	t2026-checkout-pathspec-file	quotes not compatible with --pathspec-file-nul	checkout	not_ported
 t2026-checkout-pathspec-file::only-touches-what-was-listed	t2026-checkout-pathspec-file	only touches what was listed	checkout	not_ported
 t2026-checkout-pathspec-file::error-conditions	t2026-checkout-pathspec-file	error conditions	checkout	not_ported
-t2027-checkout-track::setup	t2027-checkout-track	setup	checkout	partial
-t2027-checkout-track::checkout-track-b-creates-a-new-tracking-branch	t2027-checkout-track	checkout --track -b creates a new tracking branch	checkout	partial
-t2027-checkout-track::checkout-track-b-rejects-an-extra-path-argument	t2027-checkout-track	checkout --track -b rejects an extra path argument	checkout	partial
-t2027-checkout-track::checkout-track-b-overrides-autosetupmerge-inherit	t2027-checkout-track	checkout --track -b overrides autoSetupMerge=inherit	checkout	partial
-t2027-checkout-track::ambiguous-tracking-info	t2027-checkout-track	ambiguous tracking info	checkout	partial
+t2027-checkout-track::setup	t2027-checkout-track	setup	checkout	pass
+t2027-checkout-track::checkout-track-b-creates-a-new-tracking-branch	t2027-checkout-track	checkout --track -b creates a new tracking branch	checkout	pass
+t2027-checkout-track::checkout-track-b-rejects-an-extra-path-argument	t2027-checkout-track	checkout --track -b rejects an extra path argument	checkout	pass
+t2027-checkout-track::checkout-track-b-overrides-autosetupmerge-inherit	t2027-checkout-track	checkout --track -b overrides autoSetupMerge=inherit	checkout	pass
+t2027-checkout-track::ambiguous-tracking-info	t2027-checkout-track	ambiguous tracking info	checkout	pass
 t2030-unresolve-info::add-records-switch-clears	t2030-unresolve-info	add records switch clears	checkout	partial
 t2030-unresolve-info::rm-records-reset-clears	t2030-unresolve-info	rm records reset clears	commit	partial
 t2030-unresolve-info::plumbing-clears	t2030-unresolve-info	plumbing clears	commit	partial
@@ -3770,13 +3770,13 @@ t2082-parallel-checkout-attributes::parallel-checkout-with-re-encoding	t2082-par
 t2082-parallel-checkout-attributes::parallel-checkout-with-eol-conversions	t2082-parallel-checkout-attributes	parallel-checkout with eol conversions	add	partial
 t2082-parallel-checkout-attributes::parallel-checkout-and-external-filter	t2082-parallel-checkout-attributes	parallel-checkout and external filter	add	partial
 t2082-parallel-checkout-attributes::parallel-checkout-and-delayed-checkout	t2082-parallel-checkout-attributes	parallel-checkout and delayed checkout	add	partial
-t2101-update-index-reupdate::update-index-add	t2101-update-index-reupdate	update-index --add	update-index	not_ported
-t2101-update-index-reupdate::update-index-again	t2101-update-index-reupdate	update-index --again	update-index	not_ported
-t2101-update-index-reupdate::update-index-remove-again	t2101-update-index-reupdate	update-index --remove --again	update-index	not_ported
-t2101-update-index-reupdate::first-commit	t2101-update-index-reupdate	first commit	update-index	not_ported
-t2101-update-index-reupdate::update-index-again-2	t2101-update-index-reupdate	update-index again	update-index	not_ported
-t2101-update-index-reupdate::update-index-update-from-subdir	t2101-update-index-reupdate	update-index --update from subdir	update-index	not_ported
-t2101-update-index-reupdate::update-index-update-with-pathspec	t2101-update-index-reupdate	update-index --update with pathspec	update-index	not_ported
+t2101-update-index-reupdate::update-index-add	t2101-update-index-reupdate	update-index --add	update-index	partial
+t2101-update-index-reupdate::update-index-again	t2101-update-index-reupdate	update-index --again	update-index	partial
+t2101-update-index-reupdate::update-index-remove-again	t2101-update-index-reupdate	update-index --remove --again	update-index	partial
+t2101-update-index-reupdate::first-commit	t2101-update-index-reupdate	first commit	update-index	partial
+t2101-update-index-reupdate::update-index-again-2	t2101-update-index-reupdate	update-index again	update-index	partial
+t2101-update-index-reupdate::update-index-update-from-subdir	t2101-update-index-reupdate	update-index --update from subdir	update-index	partial
+t2101-update-index-reupdate::update-index-update-with-pathspec	t2101-update-index-reupdate	update-index --update with pathspec	update-index	partial
 t2103-update-index-ignore-missing::ignore-missing-refresh	t2103-update-index-ignore-missing	--ignore-missing --refresh	update-index	partial
 t2103-update-index-ignore-missing::unmerged-refresh	t2103-update-index-ignore-missing	--unmerged --refresh	update-index	partial
 t2103-update-index-ignore-missing::ignore-submodules-refresh-1	t2103-update-index-ignore-missing	--ignore-submodules --refresh (1)	update-index	partial
@@ -3829,8 +3829,8 @@ t2200-add-update::add-u-non-existent-should-fail	t2200-add-update	"add -u non-ex
 t2200-add-update::commit-a-implies-add-u-if-index-becomes-empty	t2200-add-update	"commit -a" implies "add -u" if index becomes empty	add	partial
 t2201-add-update-typechange::add-u	t2201-add-update-typechange	add -u	add	partial
 t2201-add-update-typechange::commit-a	t2201-add-update-typechange	commit -a	add	partial
-t2202-add-addremove::git-add-all	t2202-add-addremove	git add --all	add	partial
-t2202-add-addremove::just-git-add-is-a-no-op	t2202-add-addremove	Just "git add" is a no-op	add	partial
+t2202-add-addremove::git-add-all	t2202-add-addremove	git add --all	add	pass
+t2202-add-addremove::just-git-add-is-a-no-op	t2202-add-addremove	Just "git add" is a no-op	add	pass
 t2203-add-intent::intent-to-add	t2203-add-intent	intent to add	add	partial
 t2203-add-intent::git-status	t2203-add-intent	git status	add	partial
 t2203-add-intent::git-status-with-porcelain-v2	t2203-add-intent	git status with porcelain v2	add	partial
@@ -3850,15 +3850,15 @@ t2203-add-intent::double-rename-detection-in-status	t2203-add-intent	double rena
 t2203-add-intent::i-t-a-files-shown-as-new-for-diff-diff-files-not-new-for-diff-cached	t2203-add-intent	i-t-a files shown as new for "diff", "diff-files"; not-new for "diff --cached"	add	partial
 t2203-add-intent::diff-head-includes-ita-as-new-files	t2203-add-intent	"diff HEAD" includes ita as new files	add	partial
 t2203-add-intent::apply-intent-to-add	t2203-add-intent	apply --intent-to-add	add	partial
-t2204-add-ignored::no-complaints-for-unignored-i	t2204-add-ignored	no complaints for unignored $i	add	partial
-t2204-add-ignored::complaints-for-ignored-i	t2204-add-ignored	complaints for ignored $i	add	partial
-t2204-add-ignored::complaints-for-ignored-i-output	t2204-add-ignored	complaints for ignored $i output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-with-unignored-file	t2204-add-ignored	complaints for ignored $i with unignored file	add	partial
-t2204-add-ignored::complaints-for-ignored-i-with-unignored-file-output	t2204-add-ignored	complaints for ignored $i with unignored file output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-dir	t2204-add-ignored	complaints for ignored $i in dir	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-dir-output	t2204-add-ignored	complaints for ignored $i in dir output	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-sub	t2204-add-ignored	complaints for ignored $i in sub	add	partial
-t2204-add-ignored::complaints-for-ignored-i-in-sub-output	t2204-add-ignored	complaints for ignored $i in sub output	add	partial
+t2204-add-ignored::no-complaints-for-unignored-i	t2204-add-ignored	no complaints for unignored $i	add	pass
+t2204-add-ignored::complaints-for-ignored-i	t2204-add-ignored	complaints for ignored $i	add	pass
+t2204-add-ignored::complaints-for-ignored-i-output	t2204-add-ignored	complaints for ignored $i output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-with-unignored-file	t2204-add-ignored	complaints for ignored $i with unignored file	add	pass
+t2204-add-ignored::complaints-for-ignored-i-with-unignored-file-output	t2204-add-ignored	complaints for ignored $i with unignored file output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-dir	t2204-add-ignored	complaints for ignored $i in dir	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-dir-output	t2204-add-ignored	complaints for ignored $i in dir output	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-sub	t2204-add-ignored	complaints for ignored $i in sub	add	pass
+t2204-add-ignored::complaints-for-ignored-i-in-sub-output	t2204-add-ignored	complaints for ignored $i in sub output	add	pass
 t2205-add-worktree-config::1a-setup-config-worktree	t2205-add-worktree-config	1a: setup--config worktree	add	partial
 t2205-add-worktree-config::1b-pre-add-all	t2205-add-worktree-config	1b: pre-add all	add	partial
 t2205-add-worktree-config::1c-pre-add-dir-all	t2205-add-worktree-config	1c: pre-add dir all	add	partial
@@ -16182,35 +16182,35 @@ t8002-blame::blame-abbrev-b-truncates-the-blank-boundary	t8002-blame	blame --abb
 t8002-blame::blame-with-excessive-abbrev-and-b-culls-to-hash-length	t8002-blame	blame with excessive --abbrev and -b culls to hash length	blame	not_ported
 t8002-blame::exclude-promisor-objects-does-not-bug-crash	t8002-blame	--exclude-promisor-objects does not BUG-crash	blame	not_ported
 t8002-blame::blame-with-uncommitted-edits-in-partial-clone-does-not-crash	t8002-blame	blame with uncommitted edits in partial clone does not crash	blame	not_ported
-t8003-blame-corner-cases::straight-copy-without-c	t8003-blame-corner-cases	straight copy without -C	blame	partial
-t8003-blame-corner-cases::straight-move-without-c	t8003-blame-corner-cases	straight move without -C	blame	partial
-t8003-blame-corner-cases::straight-copy-with-c	t8003-blame-corner-cases	straight copy with -C	blame	partial
-t8003-blame-corner-cases::straight-move-with-c	t8003-blame-corner-cases	straight move with -C	blame	partial
-t8003-blame-corner-cases::straight-copy-with-c-c	t8003-blame-corner-cases	straight copy with -C -C	blame	partial
-t8003-blame-corner-cases::straight-move-with-c-c	t8003-blame-corner-cases	straight move with -C -C	blame	partial
-t8003-blame-corner-cases::append-without-c	t8003-blame-corner-cases	append without -C	blame	partial
-t8003-blame-corner-cases::append-with-c	t8003-blame-corner-cases	append with -C	blame	partial
-t8003-blame-corner-cases::append-with-c-c	t8003-blame-corner-cases	append with -C -C	blame	partial
-t8003-blame-corner-cases::append-with-c-c-c	t8003-blame-corner-cases	append with -C -C -C	blame	partial
-t8003-blame-corner-cases::blame-wholesale-copy	t8003-blame-corner-cases	blame wholesale copy	blame	partial
-t8003-blame-corner-cases::blame-wholesale-copy-and-more	t8003-blame-corner-cases	blame wholesale copy and more	blame	partial
-t8003-blame-corner-cases::blame-wholesale-copy-and-more-in-the-index	t8003-blame-corner-cases	blame wholesale copy and more in the index	blame	partial
-t8003-blame-corner-cases::blame-during-cherry-pick-with-file-rename-conflict	t8003-blame-corner-cases	blame during cherry-pick with file rename conflict	blame	partial
-t8003-blame-corner-cases::blame-path-that-used-to-be-a-directory	t8003-blame-corner-cases	blame path that used to be a directory	blame	partial
-t8003-blame-corner-cases::blame-to-a-commit-with-no-author-name	t8003-blame-corner-cases	blame to a commit with no author name	blame	partial
-t8003-blame-corner-cases::blame-l-with-invalid-start	t8003-blame-corner-cases	blame -L with invalid start	blame	partial
-t8003-blame-corner-cases::blame-l-with-invalid-end	t8003-blame-corner-cases	blame -L with invalid end	blame	partial
-t8003-blame-corner-cases::blame-parses-end-part-of-l	t8003-blame-corner-cases	blame parses <end> part of -L	blame	partial
-t8003-blame-corner-cases::blame-ln-n-1	t8003-blame-corner-cases	blame -Ln,-(n+1)	blame	partial
-t8003-blame-corner-cases::indent-of-line-numbers-nine-lines	t8003-blame-corner-cases	indent of line numbers, nine lines	blame	partial
-t8003-blame-corner-cases::indent-of-line-numbers-ten-lines	t8003-blame-corner-cases	indent of line numbers, ten lines	blame	partial
-t8003-blame-corner-cases::setup-file-with-crlf-newlines	t8003-blame-corner-cases	setup file with CRLF newlines	blame	partial
-t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true	t8003-blame-corner-cases	blame file with CRLF core.autocrlf true	blame	partial
-t8003-blame-corner-cases::blame-file-with-crlf-attributes-text	t8003-blame-corner-cases	blame file with CRLF attributes text	blame	partial
-t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true-2	t8003-blame-corner-cases	blame file with CRLF core.autocrlf=true	blame	partial
-t8003-blame-corner-cases::setup-coalesce-tests	t8003-blame-corner-cases	setup coalesce tests	blame	partial
-t8003-blame-corner-cases::blame-coalesce	t8003-blame-corner-cases	blame coalesce	blame	partial
-t8003-blame-corner-cases::blame-does-not-coalesce-non-adjacent-result-lines	t8003-blame-corner-cases	blame does not coalesce non-adjacent result lines	blame	partial
+t8003-blame-corner-cases::straight-copy-without-c	t8003-blame-corner-cases	straight copy without -C	blame	pass
+t8003-blame-corner-cases::straight-move-without-c	t8003-blame-corner-cases	straight move without -C	blame	pass
+t8003-blame-corner-cases::straight-copy-with-c	t8003-blame-corner-cases	straight copy with -C	blame	pass
+t8003-blame-corner-cases::straight-move-with-c	t8003-blame-corner-cases	straight move with -C	blame	pass
+t8003-blame-corner-cases::straight-copy-with-c-c	t8003-blame-corner-cases	straight copy with -C -C	blame	pass
+t8003-blame-corner-cases::straight-move-with-c-c	t8003-blame-corner-cases	straight move with -C -C	blame	pass
+t8003-blame-corner-cases::append-without-c	t8003-blame-corner-cases	append without -C	blame	pass
+t8003-blame-corner-cases::append-with-c	t8003-blame-corner-cases	append with -C	blame	pass
+t8003-blame-corner-cases::append-with-c-c	t8003-blame-corner-cases	append with -C -C	blame	pass
+t8003-blame-corner-cases::append-with-c-c-c	t8003-blame-corner-cases	append with -C -C -C	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy	t8003-blame-corner-cases	blame wholesale copy	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy-and-more	t8003-blame-corner-cases	blame wholesale copy and more	blame	pass
+t8003-blame-corner-cases::blame-wholesale-copy-and-more-in-the-index	t8003-blame-corner-cases	blame wholesale copy and more in the index	blame	pass
+t8003-blame-corner-cases::blame-during-cherry-pick-with-file-rename-conflict	t8003-blame-corner-cases	blame during cherry-pick with file rename conflict	blame	pass
+t8003-blame-corner-cases::blame-path-that-used-to-be-a-directory	t8003-blame-corner-cases	blame path that used to be a directory	blame	pass
+t8003-blame-corner-cases::blame-to-a-commit-with-no-author-name	t8003-blame-corner-cases	blame to a commit with no author name	blame	pass
+t8003-blame-corner-cases::blame-l-with-invalid-start	t8003-blame-corner-cases	blame -L with invalid start	blame	pass
+t8003-blame-corner-cases::blame-l-with-invalid-end	t8003-blame-corner-cases	blame -L with invalid end	blame	pass
+t8003-blame-corner-cases::blame-parses-end-part-of-l	t8003-blame-corner-cases	blame parses <end> part of -L	blame	pass
+t8003-blame-corner-cases::blame-ln-n-1	t8003-blame-corner-cases	blame -Ln,-(n+1)	blame	pass
+t8003-blame-corner-cases::indent-of-line-numbers-nine-lines	t8003-blame-corner-cases	indent of line numbers, nine lines	blame	pass
+t8003-blame-corner-cases::indent-of-line-numbers-ten-lines	t8003-blame-corner-cases	indent of line numbers, ten lines	blame	pass
+t8003-blame-corner-cases::setup-file-with-crlf-newlines	t8003-blame-corner-cases	setup file with CRLF newlines	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true	t8003-blame-corner-cases	blame file with CRLF core.autocrlf true	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-attributes-text	t8003-blame-corner-cases	blame file with CRLF attributes text	blame	pass
+t8003-blame-corner-cases::blame-file-with-crlf-core-autocrlf-true-2	t8003-blame-corner-cases	blame file with CRLF core.autocrlf=true	blame	pass
+t8003-blame-corner-cases::setup-coalesce-tests	t8003-blame-corner-cases	setup coalesce tests	blame	pass
+t8003-blame-corner-cases::blame-coalesce	t8003-blame-corner-cases	blame coalesce	blame	pass
+t8003-blame-corner-cases::blame-does-not-coalesce-non-adjacent-result-lines	t8003-blame-corner-cases	blame does not coalesce non-adjacent result lines	blame	pass
 t8004-blame-with-conflicts::setup-first-case	t8004-blame-with-conflicts	setup first case	blame	pass
 t8004-blame-with-conflicts::blame-does-not-crash-with-conflicted-file-in-stages-1-3	t8004-blame-with-conflicts	blame does not crash with conflicted file in stages 1,3	blame	pass
 t8005-blame-i18n::setup-the-repository	t8005-blame-i18n	setup the repository	blame	not_ported
@@ -17770,11 +17770,11 @@ t9836-git-p4-metadata-encoding-python3::check-cp850-contents-parsed-with-correct
 t9836-git-p4-metadata-encoding-python3::check-cp850-only-contents-escaped-when-cp1252-is-fallback	t9836-git-p4-metadata-encoding-python3	check cp850-only contents escaped when cp1252 is fallback	p4	not_ported
 t9836-git-p4-metadata-encoding-python3::check-cp-1252-contents-on-later-sync-after-clone-with-fallback-strategy	t9836-git-p4-metadata-encoding-python3	check cp-1252 contents on later sync after clone with fallback strategy	p4	not_ported
 t9836-git-p4-metadata-encoding-python3::fallback-both-utf-8-and-cp-1252-contents-handled-is-the-default-with-python3	t9836-git-p4-metadata-encoding-python3	fallback (both utf-8 and cp-1252 contents handled) is the default with python3	p4	not_ported
-t9850-shell::shell-allows-upload-pack	t9850-shell	shell allows upload-pack	help	pass
-t9850-shell::shell-forbids-other-commands	t9850-shell	shell forbids other commands	help	pass
-t9850-shell::shell-forbids-interactive-use-by-default	t9850-shell	shell forbids interactive use by default	help	pass
-t9850-shell::shell-allows-interactive-command	t9850-shell	shell allows interactive command	help	pass
-t9850-shell::shell-complains-of-overlong-commands	t9850-shell	shell complains of overlong commands	help	pass
+t9850-shell::shell-allows-upload-pack	t9850-shell	shell allows upload-pack	help	partial
+t9850-shell::shell-forbids-other-commands	t9850-shell	shell forbids other commands	help	partial
+t9850-shell::shell-forbids-interactive-use-by-default	t9850-shell	shell forbids interactive use by default	help	partial
+t9850-shell::shell-allows-interactive-command	t9850-shell	shell allows interactive command	help	partial
+t9850-shell::shell-complains-of-overlong-commands	t9850-shell	shell complains of overlong commands	help	partial
 t9902-completion::setup-for-git-find-repo-path-gitdir-tests	t9902-completion	setup for __git_find_repo_path/__gitdir tests	help	partial
 t9902-completion::git-find-repo-path-from-command-line-through-git-dir	t9902-completion	__git_find_repo_path - from command line (through $__git_dir)	help	partial
 t9902-completion::git-find-repo-path-git-directory-in-cwd	t9902-completion	__git_find_repo_path - .git directory in cwd	help	partial

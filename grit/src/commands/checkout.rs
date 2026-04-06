@@ -528,6 +528,40 @@ fn switch_branch(
         bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
     }
 
+    // Check if branch is already checked out in another worktree
+    if !force {
+        let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
+        let worktrees_dir = common.join("worktrees");
+        if worktrees_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&worktrees_dir) {
+                for entry in entries.flatten() {
+                    let admin = entry.path();
+                    if !admin.is_dir() {
+                        continue;
+                    }
+                    let wt_head = admin.join("HEAD");
+                    if let Ok(content) = std::fs::read_to_string(&wt_head) {
+                        let content = content.trim();
+                        if let Some(refname) = content.strip_prefix("ref: ") {
+                            if refname.trim() == branch_ref {
+                                // Also get the worktree path
+                                let gitdir_file = admin.join("gitdir");
+                                let wt_path = if let Ok(raw) = std::fs::read_to_string(&gitdir_file)
+                                {
+                                    let p = std::path::Path::new(raw.trim());
+                                    p.parent().unwrap_or(p).to_string_lossy().to_string()
+                                } else {
+                                    entry.file_name().to_string_lossy().to_string()
+                                };
+                                bail!("fatal: '{branch_name}' is already used by worktree at '{wt_path}'");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Check if already on this branch
     if let HeadState::Branch { ref refname, .. } = head {
         if refname == branch_ref {

@@ -78,7 +78,7 @@ pub fn resolve_ref(git_dir: &Path, refname: &str) -> Result<ObjectId> {
 ///
 /// If `<git_dir>/commondir` exists, its contents point to the shared
 /// git directory. Returns `None` when git_dir is already the common dir.
-fn common_dir(git_dir: &Path) -> Option<PathBuf> {
+pub fn common_dir(git_dir: &Path) -> Option<PathBuf> {
     let commondir_file = git_dir.join("commondir");
     let raw = fs::read_to_string(commondir_file).ok()?;
     let rel = raw.trim();
