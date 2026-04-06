@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    72 |
+| Completed   |    73 |
 | In progress |     0 |
-| Remaining   |   695 |
+| Remaining   |   694 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6115-rev-list-du` — 17/17 tests pass (`rev-list` now accepts `--disk-usage`, `--disk-usage=human`, `--use-bitmap-index`, and `--unpacked`; `--disk-usage` computes byte totals from selected commit/object outputs using loose object file sizes plus pack slot sizes from local `.idx`/`.pack` offsets; invalid `--disk-usage=<format>` now emits the expected fatal diagnostic; `cat-file --batch-check` now supports `%(objectsize:disk)` formatting used by disk-usage validation pipeline)
 - `t6418-merge-text-auto` — 11/11 tests pass (`merge` now supports `merge.renormalize` and `-X renormalize`/`-X no-renormalize`; three-way merge content inputs now renormalize CRLF→LF when enabled and intentionally produce conflict markers for pure line-ending-only divergences when disabled; modify/delete resolution now treats normalization-only edits as unchanged under renormalize; merge checkout now loads `.gitattributes` from the post-merge index when present; `diff --no-index --ignore-cr-at-eol` now honors whitespace normalization; `checkout --merge` now maps to merge-style branch switching behavior for these CRLF transition scenarios)
 - `t6433-merge-toplevel` — 15/15 tests pass (`merge` now expands `FETCH_HEAD` into mergeable tips for octopus merges, rejects merging multiple heads into an unborn branch, omits redundant HEAD parent in octopus fast-forward ancestry cases, and restores tracked dirty worktree files for successful `--autostash` merges with `Applied autostash.` output)
 - `t6102-rev-list-unexpected-objects` — 22/22 tests pass (`rev-list --objects` now accepts non-commit positive tips as object roots while preserving commit walk semantics for standard tips; tree-walk validation now reports expected corruption diagnostics for wrong entry kinds and for tag-root type mismatches (e.g. `not a blob` / `not a tree` / `not a commit`), matching upstream object-type expectations in lone and seen-object traversal cases)

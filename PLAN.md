@@ -733,7 +733,7 @@ commit → check it off → move on.
 - [ ] `t6403-merge-file` ██████████████░░░░░░ 29/39 (10 left) — RCS merge replacement: merge-file
 - [ ] `t6016-rev-list-graph-simplify-history` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — --graph and simplified history
 - [ ] `t6429-merge-sequence-rename-caching` █░░░░░░░░░░░░░░░░░░░ 1/11 (10 left) — remember regular & dir renames in sequence of merges
-- [ ] `t6115-rev-list-du` ███████░░░░░░░░░░░░░ 6/17 (11 left) — basic tests of rev-list --disk-usage
+- [x] `t6115-rev-list-du` ████████████████████ 17/17 (0 left) — basic tests of rev-list --disk-usage
 - [ ] `t6001-rev-list-graft` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — Revision traversal vs grafts and path limiter
 - [ ] `t6406-merge-attr` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — per path merge controlled by merge attribute
 - [ ] `t6432-merge-recursive-space-options` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — merge-recursive space options

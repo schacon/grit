@@ -2,11 +2,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::pack;
 use std::io::{self, BufRead, Read as _, Write};
+use std::path::Path;
 
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
+use std::collections::HashMap;
 
 /// Arguments for `grit cat-file`.
 #[derive(Debug, ClapArgs)]
@@ -385,6 +388,11 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdout = io::stdout();
     let mut stdout_lock = stdout.lock();
     let format = args.batch_format().unwrap_or("");
+    let packed_sizes = if format.contains("%(objectsize:disk)") {
+        Some(collect_packed_object_sizes(repo.odb.objects_dir())?)
+    } else {
+        None
+    };
 
     let nul_input = args.nul_input || args.nul_both;
     let nul_output = args.nul_both;
@@ -423,7 +431,15 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         std::process::exit(128);
                     }
                     if use_app_buffer {
-                        print_batch_entry(repo, obj_str, true, format, nul_output, &mut app_buf)?;
+                        print_batch_entry(
+                            repo,
+                            obj_str,
+                            true,
+                            format,
+                            nul_output,
+                            packed_sizes.as_ref(),
+                            &mut app_buf,
+                        )?;
                     } else {
                         print_batch_entry(
                             repo,
@@ -431,6 +447,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             true,
                             format,
                             nul_output,
+                            packed_sizes.as_ref(),
                             &mut stdout_lock,
                         )?;
                     }
@@ -442,7 +459,15 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                         std::process::exit(128);
                     }
                     if use_app_buffer {
-                        print_batch_entry(repo, obj_str, false, format, nul_output, &mut app_buf)?;
+                        print_batch_entry(
+                            repo,
+                            obj_str,
+                            false,
+                            format,
+                            nul_output,
+                            packed_sizes.as_ref(),
+                            &mut app_buf,
+                        )?;
                     } else {
                         print_batch_entry(
                             repo,
@@ -450,6 +475,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             false,
                             format,
                             nul_output,
+                            packed_sizes.as_ref(),
                             &mut stdout_lock,
                         )?;
                     }
@@ -482,6 +508,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 include_content,
                 format,
                 nul_output,
+                packed_sizes.as_ref(),
                 &mut stdout_lock,
             )?;
         }
@@ -532,6 +559,7 @@ fn print_batch_entry(
     include_content: bool,
     format: &str,
     nul_output: bool,
+    packed_sizes: Option<&HashMap<ObjectId, u64>>,
     out: &mut impl Write,
 ) -> Result<()> {
     let (obj_str, rest) = parse_batch_input(input, format);
@@ -562,13 +590,14 @@ fn print_batch_entry(
                     Some(m) => format!("{:o}", m),
                     None => String::new(),
                 };
+                let disk_size = object_disk_size(repo, oid, packed_sizes)?;
                 if format.is_empty() {
                     write!(out, "{} {} {}", oid_str, kind_str, size)?;
                 } else {
                     write!(
                         out,
                         "{}",
-                        apply_format(format, &oid_str, &kind_str, size, rest, &mode_str)
+                        apply_format(format, &oid_str, &kind_str, size, disk_size, rest, &mode_str)
                     )?;
                 }
                 out.write_all(eol)?;
@@ -605,15 +634,61 @@ fn apply_format(
     object_name: &str,
     object_type: &str,
     object_size: usize,
+    object_size_disk: u64,
     rest: &str,
     object_mode: &str,
 ) -> String {
     format
         .replace("%(objecttype)", object_type)
         .replace("%(objectname)", object_name)
+        .replace("%(objectsize:disk)", &object_size_disk.to_string())
         .replace("%(objectsize)", &object_size.to_string())
         .replace("%(objectmode)", object_mode)
         .replace("%(rest)", rest)
+}
+
+fn collect_packed_object_sizes(objects_dir: &Path) -> Result<HashMap<ObjectId, u64>> {
+    let mut sizes = HashMap::new();
+    let indexes = pack::read_local_pack_indexes(objects_dir)?;
+
+    for idx in indexes {
+        let pack_size = match std::fs::metadata(&idx.pack_path) {
+            Ok(meta) => meta.len(),
+            Err(_) => continue,
+        };
+        let mut offsets: Vec<(u64, ObjectId)> = idx
+            .entries
+            .into_iter()
+            .map(|entry| (entry.offset, entry.oid))
+            .collect();
+        offsets.sort_by_key(|(offset, _)| *offset);
+        for (pos, (offset, oid)) in offsets.iter().enumerate() {
+            let next_offset = offsets
+                .get(pos + 1)
+                .map(|(next, _)| *next)
+                .unwrap_or_else(|| pack_size.saturating_sub(20));
+            if next_offset < *offset {
+                continue;
+            }
+            sizes.entry(*oid).or_insert(next_offset - *offset);
+        }
+    }
+
+    Ok(sizes)
+}
+
+fn object_disk_size(
+    repo: &Repository,
+    oid: ObjectId,
+    packed_sizes: Option<&HashMap<ObjectId, u64>>,
+) -> Result<u64> {
+    let loose = repo.odb.object_path(&oid);
+    if let Ok(meta) = std::fs::metadata(loose) {
+        return Ok(meta.len());
+    }
+    Ok(packed_sizes
+        .and_then(|sizes| sizes.get(&oid).copied())
+        .unwrap_or(0))
 }
 
 fn pretty_print(kind: &ObjectKind, data: &[u8]) -> Result<()> {

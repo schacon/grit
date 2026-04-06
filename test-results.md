@@ -4,6 +4,11 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6115-rev-list-du.sh`: 17/17 passing (direct validation after adding `rev-list --disk-usage`/`--disk-usage=human` parsing and byte aggregation logic plus `cat-file --batch-check` `%(objectsize:disk)` support).
+- `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (now fully passing).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after disk-usage option parsing additions).
+- `PATH="/tmp:$PATH" ./scripts/run-tests.sh t6102-rev-list-unexpected-objects.sh`: 22/22 passing (rev-list objects regression re-check in this simplified harness; `hex2oct` helper is provided via `/tmp` in this environment).
+- `printf '%s\n' "$oid" | grit -C <repo> cat-file --batch-check="%(objectname) %(objectsize) %(objectsize:disk)"`: emits numeric disk-size field (targeted validation that `%(objectsize:disk)` placeholder expansion now works and returns on-disk bytes, e.g. `... 220 166`).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6418-merge-text-auto.sh`: 11/11 passing (direct validation after implementing merge renormalize support plus checkout `-m` branch-switch semantics for detached-source restore; verified CRLF/LF conflict shape and checkout normalization behavior).
 - `./scripts/run-tests.sh t6418-merge-text-auto.sh`: 11/11 passing (now fully passing; note: transient 7/11 seen in one immediate rerun due to harness cwd/state sensitivity, stable rerun returned 11/11 and final TSV reflects full pass).
 - `./scripts/run-tests.sh t6433-merge-toplevel.sh`: 15/15 passing (regression check after merge-core renormalize plumbing and checkout updates).

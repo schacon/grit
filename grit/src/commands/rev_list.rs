@@ -4,14 +4,16 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
+use grit_lib::pack;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, MissingAction,
     ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::path::Path;
 
 /// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
@@ -34,6 +36,12 @@ pub struct Args {
     pub args: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiskUsageFormat {
+    Bytes,
+    Human,
+}
+
 /// Run `grit rev-list`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
@@ -49,6 +57,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut default_rev: Option<String> = None;
     let mut no_commit_header = false;
     let mut use_color = false;
+    let mut disk_usage_format: Option<DiskUsageFormat> = None;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -80,6 +89,22 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                "--use-bitmap-index" => { /* accepted for compatibility */ }
+                "--unpacked" => { /* accepted for compatibility */ }
+                "--disk-usage" => disk_usage_format = Some(DiskUsageFormat::Bytes),
+                _ if arg.starts_with("--disk-usage=") => {
+                    let value = arg.trim_start_matches("--disk-usage=");
+                    disk_usage_format = Some(match value {
+                        "human" => DiskUsageFormat::Human,
+                        _ => {
+                            eprintln!(
+                                "fatal: invalid value for '--disk-usage=<format>': '{}', the only allowed format is 'human'",
+                                value
+                            );
+                            std::process::exit(128);
+                        }
+                    });
+                }
                 _ if arg.starts_with("--missing=") => {
                     let value = arg.trim_start_matches("--missing=");
                     options.missing_action = match value {
@@ -426,6 +451,30 @@ pub fn run(args: Args) -> Result<()> {
     let result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
 
+    if let Some(format) = disk_usage_format {
+        let mut object_ids = Vec::with_capacity(result.commits.len() + result.objects.len());
+        object_ids.extend(result.commits.iter().copied());
+        if options.objects {
+            object_ids.extend(result.objects.iter().map(|(oid, _)| *oid));
+        }
+
+        let pack_sizes = collect_packed_object_sizes(repo.odb.objects_dir())?;
+        let mut total = 0u64;
+        let mut seen = HashSet::new();
+        for oid in object_ids {
+            if !seen.insert(oid) {
+                continue;
+            }
+            total = total.saturating_add(object_disk_usage(&repo, oid, &pack_sizes)?);
+        }
+
+        match format {
+            DiskUsageFormat::Bytes => println!("{total}"),
+            DiskUsageFormat::Human => println!("{total} bytes"),
+        }
+        return Ok(());
+    }
+
     if options.objects {
         let max_tree_depth = object_depth_limit.unwrap_or(resolve_max_tree_depth(&config)?);
         validate_rev_list_tree_depth(&repo, &result.commits, max_tree_depth)?;
@@ -625,6 +674,49 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn collect_packed_object_sizes(objects_dir: &Path) -> Result<HashMap<ObjectId, u64>> {
+    let mut sizes = HashMap::new();
+    let indexes = pack::read_local_pack_indexes(objects_dir)?;
+
+    for idx in indexes {
+        let pack_size = match std::fs::metadata(&idx.pack_path) {
+            Ok(meta) => meta.len(),
+            Err(_) => continue,
+        };
+        let mut offsets: Vec<(u64, ObjectId)> = idx
+            .entries
+            .into_iter()
+            .map(|entry| (entry.offset, entry.oid))
+            .collect();
+        offsets.sort_by_key(|(offset, _)| *offset);
+        for (pos, (offset, oid)) in offsets.iter().enumerate() {
+            let next_offset = offsets
+                .get(pos + 1)
+                .map(|(next, _)| *next)
+                .unwrap_or_else(|| pack_size.saturating_sub(20));
+            if next_offset < *offset {
+                continue;
+            }
+            sizes.entry(*oid).or_insert(next_offset - *offset);
+        }
+    }
+
+    Ok(sizes)
+}
+
+fn object_disk_usage(
+    repo: &Repository,
+    oid: ObjectId,
+    pack_sizes: &HashMap<ObjectId, u64>,
+) -> Result<u64> {
+    let loose = repo.odb.object_path(&oid);
+    if let Ok(meta) = std::fs::metadata(loose) {
+        return Ok(meta.len());
+    }
+
+    Ok(pack_sizes.get(&oid).copied().unwrap_or(0))
 }
 
 /// Read pseudo-missing object IDs from the internal promisor marker.

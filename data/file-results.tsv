@@ -704,7 +704,7 @@ t6110-rev-list-sparse	yes	2	2	0	ok	2	2	0
 t6112-rev-list-filters-objects	yes	54	18	36	ok	18	54	0
 t6113-rev-list-bitmap-filters	yes	14	1	13	ok	1	14	0
 t6114-keep-packs	yes	3	3	0	ok	3	3	0
-t6115-rev-list-du	yes	17	6	11	ok	6	17	0
+t6115-rev-list-du	yes	17	17	0	ok	17	17	0
 t6120-describe	yes	105	27	78	ok	27	105	0
 t6130-pathspec-noglob	yes	21	4	17	ok	4	21	0
 t6131-pathspec-icase	yes	9	9	0	ok	9	9	0
