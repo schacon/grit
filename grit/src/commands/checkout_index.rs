@@ -63,6 +63,10 @@ pub struct Args {
     #[arg(long = "stage")]
     pub stage: Option<u8>,
 
+    /// Ignore skip-worktree bits when checking out files.
+    #[arg(long = "ignore-skip-worktree-bits")]
+    pub ignore_skip_worktree_bits: bool,
+
     /// Files to check out (if not --all or --stdin).
     pub files: Vec<PathBuf>,
 }
@@ -130,6 +134,17 @@ pub fn run(args: Args) -> Result<()> {
         let entry = index.get(&path, target_stage).cloned().ok_or_else(|| {
             anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path))
         })?;
+        // Respect skip-worktree unless --ignore-skip-worktree-bits is set.
+        if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
+            continue;
+        }
+        // When --ignore-skip-worktree-bits is set, clear the bit after writing.
+        let mut entry = entry;
+        if args.ignore_skip_worktree_bits && entry.skip_worktree() {
+            entry.set_skip_worktree(false);
+            index.add_or_replace(entry.clone());
+            index_needs_write = true;
+        }
         match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
             Ok(outcome) => {
                 if let Some(updated) = outcome.updated_entry {
@@ -146,7 +161,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if args.update_stat && index_needs_write {
+    if (args.update_stat || args.ignore_skip_worktree_bits) && index_needs_write {
         index.write(&index_path).context("writing index")?;
     }
 
@@ -212,7 +227,9 @@ fn checkout_entry(
     }
 
     let existing_meta = std::fs::symlink_metadata(&abs_path).ok();
-    if existing_meta.is_some() && !args.force {
+    // --ignore-skip-worktree-bits implies we want all files written
+    // (don't warn/skip existing files in that mode).
+    if existing_meta.is_some() && !args.force && !args.ignore_skip_worktree_bits {
         if !args.quiet {
             eprintln!("warning: '{rel_path}' already exists, skipping (use --force to override)");
         }

@@ -485,6 +485,8 @@ fn do_fast_forward(
     new_index.sort();
 
     if let Some(ref wt) = repo.work_tree {
+        // Apply sparse-checkout patterns before writing to worktree.
+        apply_sparse_to_index(repo, &mut new_index);
         // Remove files that existed in old HEAD but not in new
         let old_tree = commit_tree(repo, head_oid)?;
         let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
@@ -2805,6 +2807,15 @@ fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Resul
         if entry.stage() != 0 {
             continue;
         }
+        // Respect skip-worktree (sparse checkout): don't write excluded files.
+        if entry.skip_worktree() {
+            // Remove file from disk if it somehow exists.
+            let abs = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            if abs.exists() || abs.is_symlink() {
+                let _ = fs::remove_file(&abs);
+            }
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
@@ -3002,5 +3013,81 @@ fn ensure_trailing_newline(s: &str) -> String {
         s.to_owned()
     } else {
         format!("{s}\n")
+    }
+}
+
+/// Apply sparse-checkout patterns to an index (set skip-worktree on excluded entries).
+fn apply_sparse_to_index(repo: &Repository, index: &mut Index) {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_enabled = config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !sparse_enabled {
+        return;
+    }
+    let sparse_path = repo.git_dir.join("info").join("sparse-checkout");
+    let patterns: Vec<String> = match std::fs::read_to_string(&sparse_path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        Err(_) => return,
+    };
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path);
+        let mut included = false;
+        for pat in &patterns {
+            let (negated, effective) = if pat.starts_with('!') {
+                (true, &pat[1..])
+            } else {
+                (false, pat.as_str())
+            };
+            if sparse_glob_match(effective, &path) {
+                included = !negated;
+            }
+        }
+        entry.set_skip_worktree(!included);
+    }
+}
+
+fn sparse_glob_match(pat: &str, path: &str) -> bool {
+    let unanchored = pat.strip_prefix('/').unwrap_or(pat);
+    if unanchored == "*" || unanchored == "**" {
+        return true;
+    }
+    if unanchored.ends_with('/') {
+        let dir = unanchored.trim_end_matches('/');
+        return path == dir || path.starts_with(&format!("{dir}/"));
+    }
+    // simple match: exact or prefix
+    path == unanchored
+        || path.starts_with(&format!("{unanchored}/"))
+        || path.ends_with(&format!("/{unanchored}"))
+        || {
+            // glob with *
+            let pat_bytes = unanchored.as_bytes();
+            let txt_bytes = path.as_bytes();
+            sparse_simple_glob(pat_bytes, txt_bytes)
+        }
+}
+
+fn sparse_simple_glob(pat: &[u8], txt: &[u8]) -> bool {
+    match (pat.first(), txt.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => {
+            for i in 0..=txt.len() {
+                if sparse_simple_glob(&pat[1..], &txt[i..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(p), Some(t)) if p == t => sparse_simple_glob(&pat[1..], &txt[1..]),
+        _ => false,
     }
 }

@@ -720,22 +720,34 @@ fn parse_sparse_patterns(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check if a path matches any sparse-checkout pattern.
-/// Patterns work like gitignore:
-/// - "sub/" matches any path starting with "sub/"
-/// - "*.c" matches any path ending in .c
-/// - "/foo" anchored to root
+/// Check if a path matches the sparse-checkout patterns.
+///
+/// Patterns work like gitignore, processed in order — last match wins.
+/// `!` prefix negates (excludes). A path is included if the last
+/// matching pattern is positive; excluded if the last is negative or
+/// if no pattern matched.
 fn sparse_matches(patterns: &[String], path: &str) -> bool {
     if patterns.is_empty() {
         return false;
     }
 
+    // Walk patterns in order; last match wins.
+    let mut result = false;
     for pattern in patterns {
-        if sparse_pattern_matches(pattern, path) {
-            return true;
+        let pat = pattern.trim();
+        if pat.is_empty() || pat.starts_with('#') {
+            continue;
+        }
+        let (negated, effective_pat) = if pat.starts_with('!') {
+            (true, &pat[1..])
+        } else {
+            (false, pat)
+        };
+        if sparse_pattern_matches(effective_pat, path) {
+            result = !negated;
         }
     }
-    false
+    result
 }
 
 /// Match a single sparse-checkout pattern against a path.

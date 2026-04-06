@@ -549,6 +549,12 @@ fn switch_branch(
                 let target_tree = commit_to_tree(repo, &target_oid)?;
                 return force_reset_to_tree(repo, &target_tree);
             }
+            // Even if already on this branch, re-apply sparse checkout
+            // in case the patterns changed since the last checkout.
+            let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+            let target_tree = commit_to_tree(repo, &target_oid)?;
+            switch_to_tree(repo, &head, &target_tree, false, false)?;
             return Ok(());
         }
     }
@@ -556,11 +562,20 @@ fn switch_branch(
     let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
         .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
 
-    // If target commit is the same as current HEAD, just re-attach
+    // If target commit is the same as current HEAD, we normally just re-attach
     // without touching the working tree or index (preserves dirty state).
-    // But with -f, always rebuild.
+    // But with -f, or when sparse checkout is active, always rebuild
+    // so sparse patterns are applied/re-applied.
     let already_at_target = head.oid() == Some(&target_oid);
-    if !already_at_target || force {
+    let sparse_active = {
+        use grit_lib::config::ConfigSet;
+        ConfigSet::load(Some(&repo.git_dir), false)
+            .ok()
+            .and_then(|c| c.get("core.sparsecheckout"))
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    };
+    if !already_at_target || force || sparse_active {
         let target_tree = commit_to_tree(repo, &target_oid)?;
 
         // Update working tree and index
@@ -920,6 +935,9 @@ fn switch_to_tree(
         }
         new_index.sort();
     }
+
+    // Apply sparse checkout patterns before writing to worktree.
+    apply_sparse_checkout_to_index(&repo.git_dir, &mut new_index);
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
@@ -2392,6 +2410,17 @@ fn checkout_index_to_worktree(
             continue;
         }
 
+        // Skip entries marked skip-worktree (sparse checkout)
+        if entry.skip_worktree() {
+            // Also remove the file if it exists on disk
+            let abs = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+                remove_empty_parent_dirs(work_tree, &abs);
+            }
+            continue;
+        }
+
         // Skip gitlink (submodule) entries — their OIDs reference commits
         // in the submodule's object store, not blobs in ours.
         if entry.mode == 0o160000 {
@@ -2761,4 +2790,118 @@ fn resolve_checkout_identity(repo: &Repository) -> String {
     let hours = offset.whole_hours();
     let minutes = offset.minutes_past_hour().unsigned_abs();
     format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+/// Apply sparse-checkout patterns to an index, setting skip-worktree bits.
+///
+/// Reads `core.sparsecheckout` config and `.git/info/sparse-checkout` patterns.
+/// Entries not matching any positive pattern (after negations) get skip-worktree set.
+fn apply_sparse_checkout_to_index(git_dir: &std::path::Path, index: &mut Index) {
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let sparse_enabled = config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !sparse_enabled {
+        return;
+    }
+
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let patterns: Vec<String> = match std::fs::read_to_string(&sparse_path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect(),
+        Err(_) => return,
+    };
+
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path);
+        // Last-match-wins logic with negation support
+        let mut included = false;
+        for pat in &patterns {
+            let (negated, effective) = if pat.starts_with('!') {
+                (true, &pat[1..])
+            } else {
+                (false, pat.as_str())
+            };
+            if sparse_pattern_matches_checkout(effective, &path) {
+                included = !negated;
+            }
+        }
+        entry.set_skip_worktree(!included);
+    }
+}
+
+/// Simple pattern matcher for sparse-checkout (anchored globs).
+fn sparse_pattern_matches_checkout(pat: &str, path: &str) -> bool {
+    if pat.is_empty() {
+        return false;
+    }
+    // "/*" or "*" — matches everything
+    let unanchored = pat.strip_prefix('/').unwrap_or(pat);
+    if unanchored == "*" || unanchored == "**" {
+        return true;
+    }
+    // Directory pattern: ends with '/'
+    if unanchored.ends_with('/') {
+        let dir = unanchored.trim_end_matches('/');
+        return path == dir || path.starts_with(&format!("{dir}/"));
+    }
+    // Anchored file pattern: "/foo" matches exactly "foo" or "foo/..."
+    let anchored = pat.starts_with('/');
+    if anchored {
+        // glob match against the full path
+        glob_matches_path(unanchored, path)
+    } else {
+        // Unanchored: match against any component
+        glob_matches_path(unanchored, path)
+            || path.split('/').any(|comp| simple_glob(unanchored, comp))
+    }
+}
+
+fn glob_matches_path(pattern: &str, path: &str) -> bool {
+    simple_glob(pattern, path) || path.starts_with(&format!("{pattern}/")) || {
+        // Pattern with no slash matches basename
+        if !pattern.contains('/') {
+            path.split('/')
+                .last()
+                .map(|b| simple_glob(pattern, b))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+}
+
+fn simple_glob(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    simple_glob_inner(pat, txt)
+}
+
+fn simple_glob_inner(pat: &[u8], txt: &[u8]) -> bool {
+    match (pat.first(), txt.first()) {
+        (None, None) => true,
+        (Some(b'*'), _) => {
+            // '*' matches zero or more characters (but not '/')
+            for i in 0..=txt.len() {
+                if txt[..i].iter().any(|&c| c == b'/') {
+                    break;
+                }
+                if simple_glob_inner(&pat[1..], &txt[i..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        (Some(b'?'), Some(c)) if *c != b'/' => simple_glob_inner(&pat[1..], &txt[1..]),
+        (Some(p), Some(t)) if p == t => simple_glob_inner(&pat[1..], &txt[1..]),
+        _ => false,
+    }
 }

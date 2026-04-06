@@ -129,6 +129,26 @@ pub fn run(args: Args) -> Result<()> {
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
 
+    // Load sparse config for -t tag display.
+    let sparse_expect_outside = {
+        use grit_lib::config::ConfigSet;
+        let cfg = ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_default();
+        cfg.get("sparse.expectFilesOutsideOfPatterns")
+            .map(|v| v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    };
+    let sparse_patterns: Vec<String> = if sparse_expect_outside {
+        let sp = repo.git_dir.join("info").join("sparse-checkout");
+        std::fs::read_to_string(&sp)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| l.trim().to_owned())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -251,10 +271,26 @@ pub fn run(args: Args) -> Result<()> {
                 } else if is_modified(entry, &full) {
                     (Some('C'), None)
                 } else {
-                    (Some(status_tag(entry)), None)
+                    (
+                        Some(effective_tag(
+                            entry,
+                            &entry_path,
+                            &sparse_patterns,
+                            sparse_expect_outside,
+                        )),
+                        None,
+                    )
                 }
             } else {
-                (Some(status_tag(entry)), None)
+                (
+                    Some(effective_tag(
+                        entry,
+                        &entry_path,
+                        &sparse_patterns,
+                        sparse_expect_outside,
+                    )),
+                    None,
+                )
             }
         } else {
             (None, None)
@@ -1024,6 +1060,79 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     } else {
         out
     }
+}
+
+/// Determine the display tag for -t, considering sparse patterns.
+fn effective_tag(
+    entry: &IndexEntry,
+    path: &[u8],
+    sparse_patterns: &[String],
+    sparse_expect_outside: bool,
+) -> char {
+    // If skip-worktree is already set, always 'S'.
+    if entry.skip_worktree() {
+        return 'S';
+    }
+    // If sparse.expectFilesOutsideOfPatterns, check if file is outside patterns.
+    if sparse_expect_outside && !sparse_patterns.is_empty() {
+        let path_str = String::from_utf8_lossy(path);
+        let mut included = false;
+        for pat in sparse_patterns {
+            let p = pat.trim();
+            if p.is_empty() || p.starts_with('#') {
+                continue;
+            }
+            let (negated, effective) = if p.starts_with('!') {
+                (true, &p[1..])
+            } else {
+                (false, p)
+            };
+            let unanchored = effective.strip_prefix('/').unwrap_or(effective);
+            let matches = if unanchored == "*" || unanchored == "**" {
+                true
+            } else if unanchored.ends_with('/') {
+                let dir = unanchored.trim_end_matches('/');
+                path_str == dir || path_str.starts_with(&format!("{dir}/"))
+            } else {
+                // Use glob matching for the pattern
+                let glob_matches = |pat: &str, text: &str| -> bool {
+                    fn g(p: &[u8], t: &[u8]) -> bool {
+                        match (p.first(), t.first()) {
+                            (None, None) => true,
+                            (Some(b'*'), _) => {
+                                for i in 0..=t.len() {
+                                    if g(&p[1..], &t[i..]) {
+                                        return true;
+                                    }
+                                }
+                                false
+                            }
+                            (Some(b'?'), Some(_)) => g(&p[1..], &t[1..]),
+                            (Some(a), Some(b)) if a == b => g(&p[1..], &t[1..]),
+                            _ => false,
+                        }
+                    }
+                    g(pat.as_bytes(), text.as_bytes())
+                };
+                let path_str_ref: &str = &path_str;
+                glob_matches(unanchored, path_str_ref)
+                    || path_str.starts_with(&format!("{unanchored}/"))
+                    || (!unanchored.contains('/')
+                        && path_str
+                            .split('/')
+                            .last()
+                            .map(|b| glob_matches(unanchored, b))
+                            .unwrap_or(false))
+            };
+            if matches {
+                included = !negated;
+            }
+        }
+        if !included {
+            return 'S';
+        }
+    }
+    status_tag(entry)
 }
 
 fn status_tag(entry: &IndexEntry) -> char {
