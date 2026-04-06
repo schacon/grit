@@ -1471,11 +1471,31 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
         }
 
         // Repair 2: Verify gitdir file in admin points to an existing location
-        if !wt_dotgit.exists() && wt_path.exists() {
-            // The worktree exists but .git file is missing — recreate it
-            let dotgit_content = format!("gitdir: {}\n", admin.display());
-            fs::write(wt_path.join(".git"), &dotgit_content)?;
-            eprintln!("repair: {}: recreated gitfile", wt_path.display());
+        let need_repair_reason = if !wt_dotgit.exists() {
+            Some(".git file broken")
+        } else {
+            let content = fs::read_to_string(wt_dotgit).unwrap_or_default();
+            let target = content.trim().strip_prefix("gitdir: ").unwrap_or("");
+            if target.is_empty() {
+                Some(".git file broken")
+            } else {
+                let target_path = PathBuf::from(target);
+                if !target_path.exists() {
+                    Some(".git file broken")
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(reason) = need_repair_reason {
+            if wt_path.exists() {
+                let dotgit_content = format!("gitdir: {}\n", admin.display());
+                fs::write(wt_path.join(".git"), &dotgit_content)?;
+                eprintln!(
+                    "repair: {wt_path}: {reason}; recreated gitfile",
+                    wt_path = wt_path.display()
+                );
+            }
         }
     }
 
