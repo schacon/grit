@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    87 |
-| In progress |     0 |
-| Remaining   |   680 |
+| In progress |     1 |
+| Remaining   |   679 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -77,4 +77,4 @@
 
 ## What Remains
 
-683 test files still pending. See `plan.md` for the full prioritized list.
+679 test files still pending, with `t6437-submodule-merge` currently in progress. See `plan.md` for the full prioritized list.
