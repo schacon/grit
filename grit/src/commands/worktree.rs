@@ -113,6 +113,10 @@ pub struct ListArgs {
     /// NUL-terminated output (for --porcelain).
     #[arg(short = 'z')]
     pub nul: bool,
+
+    /// Show verbose output including lock/prune info.
+    #[arg(short, long, conflicts_with = "porcelain")]
+    pub verbose: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -877,9 +881,20 @@ fn cmd_list(args: ListArgs) -> Result<()> {
                 }
             };
 
-            let lock_marker = if entry.is_locked { " locked" } else { "" };
+            // In verbose mode, locks with reasons are shown on separate lines (not as suffix)
+            let lock_marker = if entry.is_locked {
+                if args.verbose && entry.lock_reason.is_some() {
+                    ""
+                } else {
+                    " locked"
+                }
+            } else {
+                ""
+            };
             // "prunable" annotation for worktrees whose path no longer exists
-            let prunable_marker = if !entry.is_bare && !entry.path.exists() {
+            // In verbose mode, prunable info goes on a separate line
+            let is_prunable = !entry.is_bare && !entry.path.exists();
+            let prunable_marker = if is_prunable && !args.verbose {
                 " prunable"
             } else {
                 ""
@@ -895,6 +910,20 @@ fn cmd_list(args: ListArgs) -> Result<()> {
                 prunable_marker,
                 width = max_path_len,
             )?;
+            // In verbose mode, show lock reason and prunable details
+            if args.verbose {
+                if entry.is_locked {
+                    if let Some(ref reason) = entry.lock_reason {
+                        writeln!(out, "\tlocked: {reason}")?;
+                    }
+                }
+                if is_prunable {
+                    writeln!(
+                        out,
+                        "\tprunable: gitdir file points to non-existent location"
+                    )?;
+                }
+            }
         }
     }
 
