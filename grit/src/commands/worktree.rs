@@ -727,17 +727,27 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
 
     // Main worktree (or bare repo)
     let main_head = resolve_head(&common).unwrap_or(HeadState::Invalid);
-    // The main worktree path is common.parent() (e.g., /repo for /repo/.git)
-    // NOT repo.work_tree (which would be the current linked worktree when running from there)
-    let main_path = if repo.is_bare() {
+    // Determine if the repo is bare based on the common dir
+    let common_is_bare = !common.ends_with(".git") && common.join("config").exists() && {
+        // Check core.bare in config
+        if let Ok(content) = std::fs::read_to_string(common.join("config")) {
+            content.contains("bare = true")
+        } else {
+            false
+        }
+    };
+    // The main worktree path: for non-bare repos, it's common.parent() (i.e. /repo for /repo/.git)
+    // For bare repos, it's the common dir itself
+    let main_path = if common_is_bare {
         common.clone()
     } else {
         common.parent().unwrap_or(&common).to_path_buf()
     };
+    let is_bare = common_is_bare;
     entries.push(WorktreeInfo {
         path: main_path,
         head: main_head,
-        is_bare: repo.is_bare(),
+        is_bare,
         is_locked: false,
         lock_reason: None,
     });
