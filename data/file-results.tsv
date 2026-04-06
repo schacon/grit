@@ -234,7 +234,7 @@ t2403-worktree-move	yes	33	16	17	ok	16	33	0
 t2404-worktree-config	yes	12	12	0	ok	12	12	0
 t2405-worktree-submodule	yes	11	11	0	ok	10	10	1
 t2406-worktree-repair	yes	24	4	20	ok	4	24	0
-t2407-worktree-heads	yes	12	2	10	ok	2	12	0
+t2407-worktree-heads	yes	12	12	0	ok	12	12	0
 t2500-untracked-overwriting	yes	10	10	0	ok	8	8	2
 t2501-cwd-empty	yes	24	3	21	ok	3	24	0
 t3000-ls-files-others	yes	15	6	9	ok	6	15	0

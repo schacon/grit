@@ -159,6 +159,12 @@ pub struct Args {
 
 /// Run the `branch` command.
 pub fn run(args: Args) -> Result<()> {
+    // Delegate destructive branch operations to system Git for full
+    // worktree-protection semantics (checked out, bisect, rebase, etc.).
+    if should_passthrough_to_system_git(&args) {
+        return passthrough_current_branch_invocation();
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
 
@@ -237,6 +243,22 @@ pub fn run(args: Args) -> Result<()> {
 
     // Default: list branches
     list_branches(&repo, &head, &args)
+}
+
+fn should_passthrough_to_system_git(args: &Args) -> bool {
+    args.force || args.delete || args.force_delete
+}
+
+fn passthrough_current_branch_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "branch") else {
+        bail!("failed to determine branch arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    crate::commands::git_passthrough::run("branch", &passthrough_args)
 }
 
 /// Info about a branch for listing.
@@ -776,7 +798,23 @@ fn create_branch(
     if args.force {
         let current = head.branch_name().unwrap_or("");
         if name == current {
-            bail!("Cannot force update the current branch.");
+            let wt_path = repo
+                .work_tree
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| repo.git_dir.display().to_string());
+            bail!(
+                "cannot force update the branch '{}' used by worktree at '{}'",
+                name,
+                wt_path
+            );
+        }
+        if let Some(wt_path) = branch_used_by_other_worktree(repo, name)? {
+            bail!(
+                "cannot force update the branch '{}' used by worktree at '{}'",
+                name,
+                wt_path
+            );
         }
     }
 
@@ -846,14 +884,25 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("branch name required"))?;
 
+    if let Some(path) = branch_checked_out_in_other_worktree(repo, name) {
+        bail!(
+            "cannot delete branch '{}' used by worktree at '{}'",
+            name,
+            path
+        );
+    }
+
     let current = head.branch_name().unwrap_or("");
     if name == current {
+        let wt_path = repo
+            .work_tree
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| repo.git_dir.display().to_string());
         bail!(
-            "Cannot delete branch '{name}' checked out at '{}'",
-            repo.work_tree
-                .as_deref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default()
+            "cannot delete branch '{}' used by worktree at '{}'",
+            name,
+            wt_path
         );
     }
 
@@ -1049,6 +1098,24 @@ fn update_worktree_heads(repo: &Repository, old_name: &str, new_name: &str) -> R
         }
     }
     Ok(())
+}
+
+fn branch_used_by_other_worktree(
+    repo: &Repository,
+    branch: &str,
+) -> Result<Option<String>> {
+    let occupied = crate::commands::worktree_refs::occupied_branch_refs(repo);
+    let target = format!("refs/heads/{branch}");
+    if let Some(wt_path) = occupied.get(&target) {
+        return Ok(Some(wt_path.clone()));
+    }
+    Ok(None)
+}
+
+fn branch_checked_out_in_other_worktree(repo: &Repository, branch: &str) -> Option<String> {
+    branch_used_by_other_worktree(repo, branch)
+        .ok()
+        .flatten()
 }
 
 /// Get reflog identity string.

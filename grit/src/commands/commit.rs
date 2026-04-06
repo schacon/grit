@@ -1032,6 +1032,23 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
         }
     }
 
+    // --fixup / --squash derive the message from the target commit.
+    if let Some(target) = args.fixup.as_ref().or(args.squash.as_ref()) {
+        let target_oid = resolve_revision(repo, target)?;
+        let obj = repo.odb.read(&target_oid)?;
+        let commit = grit_lib::objects::parse_commit(&obj.data)?;
+        let subject = commit.message.lines().next().unwrap_or("").trim();
+        let prefix = if args.fixup.is_some() {
+            "fixup!"
+        } else {
+            "squash!"
+        };
+        return Ok(MessageResult {
+            message: format!("{prefix} {subject}\n"),
+            raw_bytes: None,
+        });
+    }
+
     // If --allow-empty-message, return empty message
     if args.allow_empty_message {
         return Ok(MessageResult {

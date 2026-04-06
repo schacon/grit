@@ -148,4 +148,5 @@ pub mod verify_tag;
 pub mod version;
 pub mod whatchanged;
 pub mod worktree;
+pub mod worktree_refs;
 pub mod write_tree;

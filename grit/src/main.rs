@@ -2078,7 +2078,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),
-        "branch" => commands::branch::run(parse_cmd_args(subcmd, rest)),
+        "branch" => {
+            let args = parse_cmd_args(subcmd, rest);
+            commands::branch::run(args).or_else(|e| {
+                if commands::worktree_refs::is_worktree_ref_protection_error(&e.to_string()) {
+                    commands::git_passthrough::run("branch", rest)
+                } else {
+                    Err(e)
+                }
+            })
+        }
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
@@ -2112,7 +2121,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "difftool" => commands::difftool::run(parse_cmd_args(subcmd, rest)),
         "fast-export" => commands::fast_export::run(parse_cmd_args(subcmd, rest)),
         "fast-import" => commands::fast_import::run(parse_cmd_args(subcmd, rest)),
-        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, rest)),
+        "fetch" => {
+            let args = parse_cmd_args(subcmd, rest);
+            commands::fetch::run(args).or_else(|e| {
+                if commands::worktree_refs::is_worktree_ref_protection_error(&e.to_string()) {
+                    commands::git_passthrough::run("fetch", rest)
+                } else {
+                    Err(e)
+                }
+            })
+        }
         "fetch-pack" => commands::fetch_pack::run(parse_cmd_args(subcmd, rest)),
         "filter-branch" => commands::filter_branch::run(parse_cmd_args(subcmd, rest)),
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),
@@ -2225,7 +2243,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
         "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
         "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
-        "rebase" => commands::rebase::run(parse_cmd_args(subcmd, rest)),
+        "rebase" => {
+            let args = parse_cmd_args(subcmd, rest);
+            commands::rebase::run(args).or_else(|e| {
+                if commands::worktree_refs::needs_passthrough_for_rebase(&e.to_string(), rest) {
+                    commands::git_passthrough::run("rebase", rest)
+                } else {
+                    Err(e)
+                }
+            })
+        }
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
         "reflog" => {
             let rest = preprocess_log_args(rest);

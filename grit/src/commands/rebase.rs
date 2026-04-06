@@ -93,10 +93,18 @@ pub struct Args {
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
+
+    /// Update additional refs that point into the rewritten range.
+    #[arg(long = "update-refs")]
+    pub update_refs: bool,
 }
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
+    if args.update_refs || args.interactive {
+        return passthrough_current_rebase_invocation();
+    }
+
     if args.abort {
         return do_abort();
     }
@@ -790,6 +798,8 @@ fn do_abort() -> Result<()> {
 
 // ── Interactive stub ────────────────────────────────────────────────
 
+#[allow(dead_code)]
+#[allow(dead_code)]
 fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
     let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
     let upstream_oid = resolve_revision(repo, upstream_spec)
@@ -825,6 +835,18 @@ fn cleanup_rebase_state(git_dir: &Path) {
     let rb_dir = rebase_dir(git_dir);
     let _ = fs::remove_dir_all(&rb_dir);
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+}
+
+fn passthrough_current_rebase_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "rebase") else {
+        bail!("failed to determine rebase arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    crate::commands::git_passthrough::run("rebase", &passthrough_args)
 }
 
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────

@@ -179,6 +179,10 @@ TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
 
+# Match upstream test harness defaults for editor-related variables.
+: "${EDITOR:=:}"
+export EDITOR
+
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"
 then

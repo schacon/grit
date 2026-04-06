@@ -177,6 +177,7 @@ pub fn run(args: Args) -> Result<()> {
         show_forced_updates: false,
         negotiate_only: false,
         update_head_ok: false,
+        update_refs: false,
     };
     super::fetch::run(fetch_args)?;
 
@@ -211,6 +212,7 @@ fn do_merge_or_rebase(
             fork_point: false,
             no_fork_point: false,
             verbose: false,
+            update_refs: false,
         };
         super::rebase::run(rebase_args)
     } else {
