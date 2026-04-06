@@ -33,6 +33,10 @@
 - `./scripts/run-tests.sh t6501-freshen-objects.sh`: 42/42 passing (now fully passing).
 - `./scripts/run-tests.sh t6403-merge-file.sh`: 39/39 passing (regression check after harness helper updates).
 - `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (regression check after harness helper updates; one transient 6/9 harness run was reproduced as a harness-state flake and immediately re-run clean at 9/9).
+- `./scripts/run-tests.sh t6409-merge-subtree.sh`: 12/12 passing (now fully passing after aligning local test harness test-body cwd persistence with upstream behavior).
+- `./scripts/run-tests.sh t6403-merge-file.sh`: 39/39 passing (regression check after test-lib cwd behavior alignment).
+- `./scripts/run-tests.sh t6501-freshen-objects.sh`: 42/42 passing (regression check after test-lib cwd behavior alignment).
+- `./scripts/run-tests.sh t6001-rev-list-graft.sh`: 14/14 passing (regression check after test-lib cwd behavior alignment; one transient 11/14 harness run was immediately re-run and returned full pass).
 - `./scripts/run-tests.sh t6001-rev-list-graft.sh`: 14/14 passing (regression check after harness helper updates).
 - `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (regression check after harness helper updates).
 - `PATH="/tmp:$PATH" GUST_BIN=/workspace/target/release/grit bash tests/t6102-rev-list-unexpected-objects.sh`: 22/22 passing (direct validation with temporary `hex2oct` helper available in `PATH`; confirms `rev-list --objects` now handles unexpected object types and tag type-mismatch diagnostics as expected).
@@ -131,8 +135,8 @@
 - `./scripts/run-tests.sh t6700-tree-depth.sh`: 10/10 passing (now fully passing).
 - `./scripts/run-tests.sh t6010-merge-base.sh`: 12/12 passing (regression check after tree-depth and diff-tree updates).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (regression check after rev-list object-depth filtering updates).
-- `GUST_BIN=/workspace/target/release/grit bash tests/t6409-merge-subtree.sh`: 7/12 passing (direct validation after `read-tree --prefix -u` allowance, subtree strategy alignment work, and configured relative remote URL resolution changes; remaining failures are in later subtree merge/update scenarios).
-- `./scripts/run-tests.sh t6409-merge-subtree.sh`: 7/12 passing (current harness status for in-progress `t6409`).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6409-merge-subtree.sh`: 7/12 passing (intermediate direct snapshot before final harness alignment fix).
+- `./scripts/run-tests.sh t6409-merge-subtree.sh`: 7/12 passing (intermediate harness snapshot before final harness alignment fix).
 - `./scripts/run-tests.sh t1003-read-tree-prefix.sh`: 3/3 passing (regression check after `read-tree --prefix` behavior change).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge subtree strategy/path-shift updates).
 - `cargo test -p grit-lib --lib`: 97/97 passing (unit regression check after fetch/read-tree/merge changes).

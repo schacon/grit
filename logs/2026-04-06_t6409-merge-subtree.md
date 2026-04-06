@@ -51,3 +51,21 @@
 - `cargo test -p grit-lib --lib` → 97/97 pass.
 - `./scripts/run-tests.sh t1003-read-tree-prefix.sh` → 3/3 pass.
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh` → 7/7 pass.
+
+### Final harness alignment fix
+- `tests/test-lib.sh`
+  - Updated `test_expect_success` execution model to keep test bodies in the current shell **without forcing `cd "$TRASH_DIRECTORY"` and restoring old cwd after each test**.
+  - This matches upstream test-lib behavior where tests may intentionally carry cwd changes (`cd ../repo`) into later blocks.
+  - Fixes late-block `t6409` failures where `setup` created sibling repos and subsequent tests expected to start from that modified cwd.
+
+### Final validation
+- Harness:
+  - `./scripts/run-tests.sh t6409-merge-subtree.sh` → **12/12 passing**.
+- Regressions:
+  - `./scripts/run-tests.sh t6403-merge-file.sh` → **39/39 passing**.
+  - `./scripts/run-tests.sh t6501-freshen-objects.sh` → **42/42 passing**.
+  - `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh` → **9/9 passing**.
+  - `./scripts/run-tests.sh t6001-rev-list-graft.sh` → **14/14 passing** (one transient 11/14 flake was immediately rerun clean at 14/14).
+
+### Outcome
+- `t6409-merge-subtree` is now fully passing and marked complete in the plan.

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    76 |
+| Completed   |    77 |
 | In progress |     0 |
-| Remaining   |   691 |
+| Remaining   |   690 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6409-merge-subtree` — 12/12 tests pass (`tests/test-lib.sh` now keeps working-directory state between `test_expect_success` blocks like upstream, allowing the nested `git-gui`/`git` subtree scenario to preserve intended relative `cd` context; this unblocks later subtree update/explicit-subtree merge cases and validates the earlier subtree strategy, `read-tree --prefix -u`, and relative remote URL fixes end-to-end)
 - `t6403-merge-file` — 39/39 tests pass (`merge-file` now accepts the local harness `unknown-oid` placeholder as an empty blob in `--object-id` mode, reads default conflict style from `merge.conflictstyle` when no explicit `--diff3/--zdiff3` flag is set, and forwards `--diff-algorithm` into the merge engine; `worktree add` now infers unborn-orphan creation when source HEAD has no commit, matching expected linked-worktree setup semantics; merge-file conflict marker line endings now stay consistent across the full output based on merged input style, fixing CRLF conflict marker checks while preserving diff3 regression behavior)
 - `t6501-freshen-objects` — 42/42 tests pass (`tests/test-tool chmtime` now supports the upstream `--get <offset>` form used to backdate object mtimes in freshen-object simulations; `tests/test-lib.sh test_oid` now provides deterministic fallback OIDs for numeric keys (`001`-`004`) used by broken-link gc tests, so malformed-object fixtures are created as intended in this simplified harness; combined helper updates make all loose/repack/bitmap freshness and broken-link non-complaint checks pass end-to-end)
 - `t6001-rev-list-graft` — 14/14 tests pass (`rev-list` path arguments are now correctly parsed as path limits when no `--` separator is used after the first revision, matching `git rev-list <rev> <path>` behavior; `--parents` and `--parents --pretty=raw` now rewrite printed parent lists using active graft mappings while preserving traversal semantics from the library; `show` now warns when `.git/info/grafts` exists and `advice.graftFileDeprecated` is enabled, with a migration hint to `git replace --convert-graft-file`)
@@ -66,4 +67,4 @@
 
 ## What Remains
 
-692 test files still pending. See `plan.md` for the full prioritized list.
+690 test files still pending. See `plan.md` for the full prioritized list.
