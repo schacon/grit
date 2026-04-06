@@ -735,7 +735,7 @@ commit → check it off → move on.
 - [x] `t6429-merge-sequence-rename-caching` ████████████████████ 11/11 (0 left) — remember regular & dir renames in sequence of merges
 - [x] `t6115-rev-list-du` ████████████████████ 17/17 (0 left) — basic tests of rev-list --disk-usage
 - [x] `t6001-rev-list-graft` ████████████████████ 14/14 (0 left) — Revision traversal vs grafts and path limiter
-- [ ] `t6406-merge-attr` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — per path merge controlled by merge attribute
+- [x] `t6406-merge-attr` ████████████████████ 13/13 (0 left) — per path merge controlled by merge attribute
 - [x] `t6432-merge-recursive-space-options` ████████████████████ 11/11 (0 left) — merge-recursive space options
 
 - [x] `t6009-rev-list-parent` ████████████████████ 15/15 (0 left) — ancestor culling and limiting by parent number

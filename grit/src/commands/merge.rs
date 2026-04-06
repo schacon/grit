@@ -7,9 +7,12 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use tempfile::NamedTempFile;
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_base::is_ancestor;
@@ -1001,6 +1004,7 @@ fn do_real_merge(
         // Print per-file conflict messages to stdout (git sends these to stdout)
         for (ctype, cpath) in &merge_result.conflict_descriptions {
             if ctype == "binary" {
+                println!("warning: Cannot merge binary files: {cpath}");
                 println!("Cannot merge binary files: {cpath}");
             } else if ctype == "rename/delete" || ctype == "modify/delete" {
                 println!("CONFLICT ({ctype}): {cpath}");
@@ -2351,6 +2355,17 @@ pub(crate) struct ReplayTreeMergeResult {
     pub conflict_descriptions: Vec<(String, String)>,
 }
 
+#[derive(Debug)]
+struct InternalMergeExecutionError;
+
+impl std::fmt::Display for InternalMergeExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "failed to execute internal merge")
+    }
+}
+
+impl std::error::Error for InternalMergeExecutionError {}
+
 #[derive(Clone, Copy)]
 struct ConflictLabels<'a> {
     ours: &'a str,
@@ -2384,6 +2399,180 @@ fn resolve_conflict_labels(
     ConflictLabels {
         ours: ours_static,
         base: base_static,
+    }
+}
+
+pub(crate) fn is_internal_merge_execution_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<InternalMergeExecutionError>()
+            .is_some()
+    })
+}
+
+#[derive(Debug, Clone)]
+enum PathMergeBehavior {
+    Default,
+    BinaryNoMerge,
+    Union,
+    CustomDriver { command: String },
+    CustomDriverMissing { name: String },
+}
+
+fn resolve_path_merge_behavior(repo: &Repository, path: &str) -> PathMergeBehavior {
+    let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+        return PathMergeBehavior::Default;
+    };
+
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(grit_lib::crlf::load_gitattributes)
+        .unwrap_or_default();
+    let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, &config);
+
+    match &file_attrs.merge {
+        MergeAttr::Unset => PathMergeBehavior::BinaryNoMerge,
+        MergeAttr::Driver(name) => {
+            if name == "union" {
+                PathMergeBehavior::Union
+            } else {
+                let key = format!("merge.{name}.driver");
+                if let Some(command) = config.get(&key) {
+                    PathMergeBehavior::CustomDriver { command }
+                } else {
+                    PathMergeBehavior::CustomDriverMissing { name: name.clone() }
+                }
+            }
+        }
+        MergeAttr::Unspecified => {
+            if let Some(command) = config.get("merge.default.driver") {
+                PathMergeBehavior::CustomDriver { command }
+            } else {
+                PathMergeBehavior::Default
+            }
+        }
+    }
+}
+
+fn resolve_marker_size_for_path(
+    repo: &Repository,
+    path: &str,
+    ours_label: &str,
+    theirs_label: &str,
+    marker_warnings: &mut Vec<String>,
+) -> usize {
+    let mut warning = String::new();
+    let size = if let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) {
+        let attrs = repo
+            .work_tree
+            .as_deref()
+            .map(grit_lib::crlf::load_gitattributes)
+            .unwrap_or_default();
+        let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, path, &config);
+        parse_conflict_marker_size(
+            Some(&file_attrs),
+            ours_label,
+            theirs_label,
+            Some(&mut warning),
+        )
+    } else {
+        parse_conflict_marker_size(None, ours_label, theirs_label, None)
+    };
+    if !warning.is_empty() {
+        marker_warnings.push(warning);
+    }
+    size
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_custom_merge_driver(
+    command_template: &str,
+    path: &str,
+    base_content: &[u8],
+    ours_content: &[u8],
+    theirs_content: &[u8],
+    base_name: &str,
+    ours_name: &str,
+    theirs_name: &str,
+) -> Result<(Vec<u8>, i32)> {
+    let mut base_tmp = NamedTempFile::new().context("creating merge driver base tempfile")?;
+    let mut ours_tmp = NamedTempFile::new().context("creating merge driver ours tempfile")?;
+    let mut theirs_tmp = NamedTempFile::new().context("creating merge driver theirs tempfile")?;
+
+    base_tmp
+        .write_all(base_content)
+        .context("writing base tempfile content")?;
+    ours_tmp
+        .write_all(ours_content)
+        .context("writing ours tempfile content")?;
+    theirs_tmp
+        .write_all(theirs_content)
+        .context("writing theirs tempfile content")?;
+    base_tmp.flush()?;
+    ours_tmp.flush()?;
+    theirs_tmp.flush()?;
+
+    let base_path = base_tmp.path().to_string_lossy().into_owned();
+    let ours_path = ours_tmp.path().to_string_lossy().into_owned();
+    let theirs_path = theirs_tmp.path().to_string_lossy().into_owned();
+
+    let command = command_template
+        .replace("%O", &shell_escape_single_quoted(&base_path))
+        .replace("%A", &shell_escape_single_quoted(&ours_path))
+        .replace("%B", &shell_escape_single_quoted(&theirs_path))
+        .replace("%P", &shell_escape_single_quoted(path))
+        .replace("%S", &shell_escape_single_quoted(base_name))
+        .replace("%X", &shell_escape_single_quoted(ours_name))
+        .replace("%Y", &shell_escape_single_quoted(theirs_name));
+
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .status()
+        .context("executing merge driver command")?;
+    let exit_code = match status.code() {
+        Some(code) if code >= 128 => {
+            return Err(InternalMergeExecutionError.into());
+        }
+        Some(code) => code,
+        None => {
+            return Err(InternalMergeExecutionError.into());
+        }
+    };
+    let merged = fs::read(ours_tmp.path()).context("reading merge driver output")?;
+    Ok((merged, exit_code))
+}
+
+fn shell_escape_single_quoted(value: &str) -> String {
+    let escaped = value.replace('\'', "'\"'\"'");
+    format!("'{escaped}'")
+}
+
+fn parse_conflict_marker_size(
+    file_attrs: Option<&grit_lib::crlf::FileAttrs>,
+    ours_label: &str,
+    theirs_label: &str,
+    warning_out: Option<&mut String>,
+) -> usize {
+    if let Some(attrs) = file_attrs {
+        if let Some(raw) = &attrs.conflict_marker_size {
+            if let Ok(parsed) = raw.parse::<usize>() {
+                return parsed;
+            }
+            if let Some(out) = warning_out {
+                *out = format!("warning: invalid marker-size '{raw}', expecting an integer");
+            }
+            return 7;
+        }
+    }
+
+    if ours_label.starts_with("Temporary merge branch")
+        || theirs_label.starts_with("Temporary merge branch")
+    {
+        9
+    } else {
+        7
     }
 }
 
@@ -2676,6 +2865,7 @@ fn merge_trees(
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
                     match try_content_merge(
                         repo,
+                        &path_str,
                         be,
                         oe,
                         te,
@@ -2737,6 +2927,7 @@ fn merge_trees(
                             let path_str = String::from_utf8_lossy(ours_new_path).to_string();
                             match try_content_merge(
                                 repo,
+                                &path_str,
                                 be,
                                 oe,
                                 te_at_new,
@@ -2897,6 +3088,7 @@ fn merge_trees(
                     let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
                     match try_content_merge(
                         repo,
+                        &path_str,
                         be,
                         oe,
                         te,
@@ -3048,6 +3240,7 @@ fn merge_trees(
                 let path_str = String::from_utf8_lossy(path).to_string();
                 match try_content_merge(
                     repo,
+                    &path_str,
                     be,
                     oe,
                     te,
@@ -3188,6 +3381,7 @@ fn merge_trees(
                 let path_str = String::from_utf8_lossy(path).to_string();
                 match try_content_merge_add_add(
                     repo,
+                    &path_str,
                     oe,
                     te,
                     ours_label,
@@ -3297,6 +3491,7 @@ enum ContentMergeResult {
 /// Try a content-level three-way merge for a single file.
 fn try_content_merge(
     repo: &Repository,
+    path_str: &str,
     base: &IndexEntry,
     ours: &IndexEntry,
     theirs: &IndexEntry,
@@ -3315,10 +3510,11 @@ fn try_content_merge(
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
 
-    let path_str = String::from_utf8_lossy(&ours.path).to_string();
     let mut base_data = base_obj.data.clone();
     let mut ours_data = ours_obj.data.clone();
     let mut theirs_data = theirs_obj.data.clone();
+
+    let merge_behavior = resolve_path_merge_behavior(repo, path_str);
 
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
     let file_attrs = config.as_ref().map(|cfg| {
@@ -3327,7 +3523,7 @@ fn try_content_merge(
             .as_deref()
             .map(grit_lib::crlf::load_gitattributes)
             .unwrap_or_default();
-        grit_lib::crlf::get_file_attrs(&attrs, &path_str, cfg)
+        grit_lib::crlf::get_file_attrs(&attrs, path_str, cfg)
     });
 
     let is_attr_binary = file_attrs
@@ -3340,13 +3536,49 @@ fn try_content_merge(
         theirs_data = renormalize_merge_blob(&theirs_data);
     }
 
+    let base_driver_label = base_label.strip_suffix(":content").unwrap_or(base_label);
+    match &merge_behavior {
+        PathMergeBehavior::CustomDriver { command } => {
+            let (merged, exit_code) = execute_custom_merge_driver(
+                command,
+                path_str,
+                &base_data,
+                &ours_data,
+                &theirs_data,
+                base_driver_label,
+                ours_label,
+                theirs_label,
+            )?;
+            if exit_code == 0 {
+                let oid = repo.odb.write(ObjectKind::Blob, &merged)?;
+                return Ok(ContentMergeResult::Clean(oid, ours.mode));
+            }
+            return Ok(ContentMergeResult::Conflict(merged));
+        }
+        PathMergeBehavior::CustomDriverMissing { name } => {
+            bail!("merge driver '{name}' not found");
+        }
+        PathMergeBehavior::Default
+        | PathMergeBehavior::BinaryNoMerge
+        | PathMergeBehavior::Union => {}
+    }
+
+    let effective_favor = if matches!(merge_behavior, PathMergeBehavior::Union)
+        && matches!(favor, MergeFavor::None)
+    {
+        MergeFavor::Union
+    } else {
+        favor
+    };
+
     // If any is binary (by content or attribute), conflict (unless -X ours/theirs resolves it)
-    if is_attr_binary
+    if matches!(merge_behavior, PathMergeBehavior::BinaryNoMerge)
+        || is_attr_binary
         || merge_file::is_binary(&base_data)
         || merge_file::is_binary(&ours_data)
         || merge_file::is_binary(&theirs_data)
     {
-        match favor {
+        match effective_favor {
             MergeFavor::Ours => {
                 let oid = repo.odb.write(ObjectKind::Blob, &ours_data)?;
                 return Ok(ContentMergeResult::Clean(oid, ours.mode));
@@ -3356,19 +3588,22 @@ fn try_content_merge(
                 return Ok(ContentMergeResult::Clean(oid, theirs.mode));
             }
             MergeFavor::None | MergeFavor::Union => {
-                // Binary conflict — keep ours in working tree
-                return Ok(ContentMergeResult::Conflict(ours_data));
+                return Ok(ContentMergeResult::BinaryConflict(ours_data));
             }
         }
     }
 
-    let marker_size = if ours_label.starts_with("Temporary merge branch")
-        || theirs_label.starts_with("Temporary merge branch")
-    {
-        9
-    } else {
-        7
-    };
+    let mut marker_warnings = Vec::new();
+    let marker_size = resolve_marker_size_for_path(
+        repo,
+        path_str,
+        ours_label,
+        theirs_label,
+        &mut marker_warnings,
+    );
+    for warning in marker_warnings {
+        eprintln!("{warning}");
+    }
 
     let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
@@ -3378,7 +3613,7 @@ fn try_content_merge(
         label_ours: ours_label,
         label_base: base_label,
         label_theirs: theirs_label,
-        favor,
+        favor: effective_favor,
         style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
@@ -3421,6 +3656,7 @@ fn try_content_merge(
 /// Try content merge for add/add conflicts (empty base).
 fn try_content_merge_add_add(
     repo: &Repository,
+    path_str: &str,
     ours: &IndexEntry,
     theirs: &IndexEntry,
     ours_label: &str,
@@ -3437,23 +3673,92 @@ fn try_content_merge_add_add(
     let theirs_obj = repo.odb.read(&theirs.oid)?;
     let mut ours_data = ours_obj.data.clone();
     let mut theirs_data = theirs_obj.data.clone();
+    let merge_behavior = resolve_path_merge_behavior(repo, path_str);
+
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let file_attrs = config.as_ref().map(|cfg| {
+        let attrs = repo
+            .work_tree
+            .as_deref()
+            .map(grit_lib::crlf::load_gitattributes)
+            .unwrap_or_default();
+        grit_lib::crlf::get_file_attrs(&attrs, path_str, cfg)
+    });
+
+    let is_attr_binary = file_attrs
+        .as_ref()
+        .is_some_and(|attrs| attrs.text == grit_lib::crlf::TextAttr::Unset);
 
     if merge_renormalize {
         ours_data = renormalize_merge_blob(&ours_data);
         theirs_data = renormalize_merge_blob(&theirs_data);
     }
 
-    if merge_file::is_binary(&ours_data) || merge_file::is_binary(&theirs_data) {
-        return Ok(ContentMergeResult::BinaryConflict(ours_data));
+    match &merge_behavior {
+        PathMergeBehavior::CustomDriver { command } => {
+            let (merged, exit_code) = execute_custom_merge_driver(
+                command,
+                path_str,
+                &[],
+                &ours_data,
+                &theirs_data,
+                "empty tree",
+                ours_label,
+                theirs_label,
+            )?;
+            if exit_code == 0 {
+                let oid = repo.odb.write(ObjectKind::Blob, &merged)?;
+                return Ok(ContentMergeResult::Clean(oid, ours.mode));
+            }
+            return Ok(ContentMergeResult::Conflict(merged));
+        }
+        PathMergeBehavior::CustomDriverMissing { name } => {
+            bail!("merge driver '{name}' not found");
+        }
+        PathMergeBehavior::Default
+        | PathMergeBehavior::BinaryNoMerge
+        | PathMergeBehavior::Union => {}
     }
 
-    let marker_size = if ours_label.starts_with("Temporary merge branch")
-        || theirs_label.starts_with("Temporary merge branch")
+    let effective_favor = if matches!(merge_behavior, PathMergeBehavior::Union)
+        && matches!(favor, MergeFavor::None)
     {
-        9
+        MergeFavor::Union
     } else {
-        7
+        favor
     };
+
+    if matches!(merge_behavior, PathMergeBehavior::BinaryNoMerge)
+        || is_attr_binary
+        || merge_file::is_binary(&ours_data)
+        || merge_file::is_binary(&theirs_data)
+    {
+        return match effective_favor {
+            MergeFavor::Ours => {
+                let oid = repo.odb.write(ObjectKind::Blob, &ours_data)?;
+                Ok(ContentMergeResult::Clean(oid, ours.mode))
+            }
+            MergeFavor::Theirs => {
+                let oid = repo.odb.write(ObjectKind::Blob, &theirs_data)?;
+                Ok(ContentMergeResult::Clean(oid, theirs.mode))
+            }
+            MergeFavor::None | MergeFavor::Union => {
+                Ok(ContentMergeResult::BinaryConflict(ours_data))
+            }
+        };
+    }
+
+    let mut marker_warnings = Vec::new();
+    let marker_size = resolve_marker_size_for_path(
+        repo,
+        path_str,
+        ours_label,
+        theirs_label,
+        &mut marker_warnings,
+    );
+    for warning in marker_warnings {
+        eprintln!("{warning}");
+    }
 
     let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
@@ -3463,7 +3768,7 @@ fn try_content_merge_add_add(
         label_ours: ours_label,
         label_base: "empty tree",
         label_theirs: theirs_label,
-        favor,
+        favor: effective_favor,
         style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),

@@ -15,6 +15,7 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
@@ -267,7 +268,13 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
-        return checkout_paths(&repo, target.as_deref(), &paths, args.no_overlay);
+        return checkout_paths(
+            &repo,
+            target.as_deref(),
+            &paths,
+            args.no_overlay,
+            args.merge,
+        );
     }
 
     // Case: checkout -f (no args) — force reset working tree to HEAD
@@ -359,7 +366,7 @@ pub fn run(args: Args) -> Result<()> {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.
             let paths = vec![target.clone()];
-            match checkout_paths(&repo, None, &paths, false) {
+            match checkout_paths(&repo, None, &paths, false, args.merge) {
                 Ok(()) => Ok(()),
                 Err(_) => bail!(
                     "pathspec '{}' did not match any file(s) known to git",
@@ -1131,6 +1138,7 @@ fn checkout_paths(
     source: Option<&str>,
     paths: &[String],
     no_overlay: bool,
+    merge_mode: bool,
 ) -> Result<()> {
     let work_tree = repo
         .work_tree
@@ -1185,6 +1193,21 @@ fn checkout_paths(
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
                     write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
+                } else if merge_mode {
+                    let stage1 = index.get(path_bytes, 1).cloned();
+                    let stage2 = index.get(path_bytes, 2).cloned();
+                    let stage3 = index.get(path_bytes, 3).cloned();
+                    if stage2.is_some() || stage3.is_some() {
+                        checkout_conflicted_path_with_merge(
+                            repo,
+                            work_tree,
+                            &rel,
+                            stage1.as_ref(),
+                            stage2.as_ref(),
+                            stage3.as_ref(),
+                        )?;
+                        continue;
+                    }
                 } else {
                     // Try as a directory prefix
                     let prefix = if rel.ends_with('/') {
@@ -2162,6 +2185,76 @@ fn write_blob_to_worktree(
     }
 
     write_to_worktree(work_tree, rel_path, &data, mode)
+}
+
+fn checkout_conflicted_path_with_merge(
+    repo: &Repository,
+    work_tree: &Path,
+    rel_path: &str,
+    base: Option<&IndexEntry>,
+    ours: Option<&IndexEntry>,
+    theirs: Option<&IndexEntry>,
+) -> Result<()> {
+    let ours_entry = ours
+        .or(theirs)
+        .ok_or_else(|| anyhow::anyhow!("path '{rel_path}' does not have unmerged entries"))?;
+    let theirs_entry = theirs
+        .or(ours)
+        .ok_or_else(|| anyhow::anyhow!("path '{rel_path}' does not have unmerged entries"))?;
+
+    let base_data = if let Some(entry) = base {
+        let obj = repo.odb.read(&entry.oid)?;
+        if obj.kind != ObjectKind::Blob {
+            bail!("cannot checkout non-blob at '{rel_path}'");
+        }
+        obj.data
+    } else {
+        Vec::new()
+    };
+
+    let ours_obj = repo.odb.read(&ours_entry.oid)?;
+    let theirs_obj = repo.odb.read(&theirs_entry.oid)?;
+    if ours_obj.kind != ObjectKind::Blob || theirs_obj.kind != ObjectKind::Blob {
+        bail!("cannot checkout non-blob at '{rel_path}'");
+    }
+
+    if merge_file::is_binary(&ours_obj.data) || merge_file::is_binary(&theirs_obj.data) {
+        return write_to_worktree(work_tree, rel_path, &ours_obj.data, ours_entry.mode);
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let attrs = crlf::load_gitattributes(work_tree);
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+    let marker_size = if let Some(raw) = &file_attrs.conflict_marker_size {
+        match raw.parse::<usize>() {
+            Ok(size) => size,
+            Err(_) => {
+                eprintln!("warning: invalid marker-size '{raw}', expecting an integer");
+                7
+            }
+        }
+    } else {
+        7
+    };
+
+    let merge_out = merge_file::merge(&MergeInput {
+        base: &base_data,
+        ours: &ours_obj.data,
+        theirs: &theirs_obj.data,
+        label_ours: "ours",
+        label_base: "base",
+        label_theirs: "theirs",
+        favor: MergeFavor::None,
+        style: ConflictStyle::Merge,
+        marker_size,
+        diff_algorithm: None,
+        ignore_all_space: false,
+        ignore_space_change: false,
+        ignore_space_at_eol: false,
+        ignore_cr_at_eol: false,
+    })?;
+
+    write_to_worktree(work_tree, rel_path, &merge_out.content, ours_entry.mode)
 }
 
 /// Write data to a working tree file, handling symlinks and executable bits.

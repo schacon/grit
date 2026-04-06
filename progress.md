@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    81 |
+| Completed   |    82 |
 | In progress |     0 |
-| Remaining   |   686 |
+| Remaining   |   685 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6406-merge-attr` — 13/13 tests pass (merge core now honors gitattributes merge attributes: `-merge`/binary paths, `merge=union`, and custom `merge=<driver>` with `%O/%A/%B/%P/%S/%X/%Y` placeholder expansion and proper signal-failure handling; merge conflict marker size now respects `conflict-marker-size` with Git-compatible warning for invalid values; `checkout -m <path>` now reconstructs conflicted files from index stages and applies `conflict-marker-size`, enabling conflict re-materialization checks)
 - `t6429-merge-sequence-rename-caching` — 11/11 tests pass (`replay` is now implemented natively in Rust and uses merge-ort style tree merges per replayed commit; added upstream/topic rename detection and caching across replay steps with directory-rename-aware cache application and refresh heuristics so trace2 `diffcore_rename` call counts match expected sequencer behavior in cache-sensitive scenarios)
 - `t6432-merge-recursive-space-options` — 11/11 tests pass (implemented native `merge-recursive` backend command with `git merge-recursive <base> -- <ours> <theirs>` argument shape, threaded whitespace strategy options (`--ignore-space-change`, `--ignore-all-space`, `--ignore-space-at-eol`, `--ignore-cr-at-eol`) through merge core + merge-file comparison logic, materialized conflict-marker files in merge-recursive worktree checkout for failed merges, fixed `update-index --refresh` to fail on unmerged entries, and aligned conflict-marker label/eol behavior with expected output)
 - `t6016-rev-list-graph-simplify-history` — 12/12 tests pass (`log --graph` now performs graph-specific parent rewriting and ordering for path-limited/sparse/boundary cases to match expected simplified-history layouts; fixes include path-limited commit ordering around side branches, sparse-history first-parent edge rendering, boundary-commit ordering along the first-parent chain, and boundary-aware parent target selection so boundary nodes stay connected in graph output)
@@ -71,4 +72,4 @@
 
 ## What Remains
 
-688 test files still pending. See `plan.md` for the full prioritized list.
+685 test files still pending. See `plan.md` for the full prioritized list.

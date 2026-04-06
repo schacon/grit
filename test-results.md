@@ -2,6 +2,12 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6406-merge-attr.sh`: 13/13 passing (direct validation after implementing merge-attribute-aware behavior: `-merge` binary conflicts, `merge=union`, custom merge driver execution with `%O/%A/%B/%P/%S/%X/%Y`, internal-merge failure code path for signaled drivers, conflict-marker-size attribute parsing/warnings, and `checkout -m` conflicted-path recreation from index stages).
+- `./scripts/run-tests.sh t6406-merge-attr.sh`: 13/13 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (merge regression check after t6406 attribute/driver integration).
+- `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (merge/replay regression check after t6406 changes).
+- `./scripts/run-tests.sh t6432-merge-recursive-space-options.sh`: 11/11 passing (merge-recursive regression check after t6406 changes).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (binary-conflict messaging regression check after adding warning+summary output for merge-attr binary conflicts).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6432-merge-recursive-space-options.sh`: 11/11 passing (direct validation after implementing native `merge-recursive` command wiring plus whitespace-ignore merge behavior for `--ignore-space-change`, `--ignore-all-space`, and `--ignore-space-at-eol`).
 - `./scripts/run-tests.sh t6432-merge-recursive-space-options.sh`: 11/11 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6429-merge-sequence-rename-caching.sh`: 11/11 passing (targeted replay regression check after extending internal merge API to carry whitespace flags and conflict-marker worktree payloads; still fully passing).

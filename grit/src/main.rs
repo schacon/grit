@@ -1955,7 +1955,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),
         "maintenance" => commands::maintenance::run(parse_cmd_args(subcmd, rest)),
-        "merge" => commands::merge::run(parse_cmd_args(subcmd, rest)),
+        "merge" => match commands::merge::run(parse_cmd_args(subcmd, rest)) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if commands::merge::is_internal_merge_execution_error(&err) {
+                    eprintln!("error: failed to execute internal merge");
+                    std::process::exit(2);
+                }
+                Err(err)
+            }
+        },
         "merge-recursive" => commands::merge_recursive::run(parse_cmd_args(subcmd, rest)),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
