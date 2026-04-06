@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    78 |
+| Completed   |    79 |
 | In progress |     0 |
-| Remaining   |   689 |
+| Remaining   |   688 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1415-worktree-refs` — 10/10 tests pass (implemented per-worktree ref resolution for `worktree/*`, `main-worktree/*`, and `worktrees/<id>/*` in `rev-parse`; added cross-worktree reflog lookup support; and fixed `for-each-ref` to include shared refs from the common dir while keeping per-worktree namespaces local)
 - `t1020-subdirectory` — 15/15 tests pass (fixed subdirectory pathspec handling in `diff-files`, propagated `GIT_PREFIX` for built-ins and shell aliases, and enabled external diff execution so `GIT_EXTERNAL_DIFF` receives correct subdirectory context)
 - `t1060-object-corruption` — 17/17 tests pass (hardened local clone object-copy validation to fail on corrupt/missing/misnamed objects before bare clone completion, and taught `rev-list --objects` to tolerate the canonical empty tree object as implicitly present when missing from loose storage)
 - `t1302-repo-version` — 18/18 tests pass (added repository format/extension validation for supported v0/v1 repos and expected extension semantics, enforced local config operations against unsupported repos, blocked `apply --check --index` on invalid repositories, and made `prune` refuse precious-objects repositories while preserving existing `repack -ad` protections)
@@ -71,4 +72,4 @@
 
 ## What Remains
 
-689 test files still pending. See `plan.md` for the full prioritized list.
+688 test files still pending. See `plan.md` for the full prioritized list.

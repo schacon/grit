@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after `t1415-worktree-refs` compatibility fixes).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1415-worktree-refs && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1415-worktree-refs.sh`: 10/10 passing.
+- `./scripts/run-tests.sh t1415-worktree-refs.sh`: 10/10 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
 - `cargo fmt`: success (after `t1020-subdirectory` compatibility fixes).
 - `cargo build --release -p grit-rs`: success.
 - `rm -rf /workspace/tests/trash.t1020-subdirectory && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1020-subdirectory.sh`: 15/15 passing.

@@ -173,8 +173,9 @@ fn run_show(args: ShowArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let refname = resolve_refname(&repo, &args.refname)?;
     let display_name = display_refname(&refname);
-
-    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let (reflog_git_dir, reflog_refname) = reflog_location_for_ref(&repo, &refname);
+    let entries =
+        read_reflog(&reflog_git_dir, &reflog_refname).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if entries.is_empty() {
         return Ok(());
@@ -316,8 +317,8 @@ fn run_delete(args: DeleteArgs) -> Result<()> {
 fn run_exists(args: ExistsArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let refname = resolve_refname(&repo, &args.refname)?;
-
-    if reflog_exists(&repo.git_dir, &refname) {
+    let (reflog_git_dir, reflog_refname) = reflog_location_for_ref(&repo, &refname);
+    if reflog_exists(&reflog_git_dir, &reflog_refname) {
         Ok(())
     } else {
         std::process::exit(1);
@@ -434,4 +435,62 @@ fn parse_ts_from_identity(identity: &str) -> Option<i64> {
     } else {
         None
     }
+}
+
+/// Resolve reflog storage location for cross-worktree ref paths.
+fn reflog_location_for_ref(repo: &Repository, refname: &str) -> (std::path::PathBuf, String) {
+    let common = common_git_dir(&repo.git_dir);
+
+    if let Some(bare_ref) = refname.strip_prefix("main-worktree/") {
+        if is_current_worktree_ref_name(bare_ref) {
+            return (common, bare_ref.to_owned());
+        }
+    }
+
+    if let Some(rest) = refname.strip_prefix("worktrees/") {
+        if let Some((worktree_id, bare_ref)) = rest.split_once('/') {
+            if is_current_worktree_ref_name(bare_ref) {
+                return (
+                    common.join("worktrees").join(worktree_id),
+                    bare_ref.to_owned(),
+                );
+            }
+        }
+    }
+
+    (repo.git_dir.clone(), refname.to_owned())
+}
+
+/// Return repository common dir, or `git_dir` when there is no `commondir`.
+fn common_git_dir(git_dir: &std::path::Path) -> std::path::PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    let Some(raw) = std::fs::read_to_string(commondir_file).ok() else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let path = if std::path::Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().unwrap_or(path)
+}
+
+/// Whether a ref belongs to a per-worktree namespace.
+fn is_current_worktree_ref_name(refname: &str) -> bool {
+    is_root_ref_syntax(refname)
+        || refname.starts_with("refs/worktree/")
+        || refname.starts_with("refs/bisect/")
+        || refname.starts_with("refs/rewritten/")
+}
+
+/// Root refs are direct files under `$GIT_DIR` (e.g. `HEAD`, `MERGE_HEAD`).
+fn is_root_ref_syntax(refname: &str) -> bool {
+    !refname.is_empty()
+        && refname
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch == '-' || ch == '_')
 }

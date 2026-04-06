@@ -355,15 +355,57 @@ fn collect_refs(git_dir: &Path) -> Result<Vec<RefEntry>> {
             .collect());
     }
 
+    let common = common_git_dir(git_dir);
     let mut refs = BTreeMap::new();
+
+    // Current worktree refs (includes per-worktree namespaces for linked worktrees).
     collect_loose_refs(git_dir, &git_dir.join("refs"), "refs", &mut refs)?;
-    for (name, oid) in parse_packed_refs(git_dir)? {
+
+    // Shared refs from common dir.
+    if common != git_dir {
+        let mut shared_loose = BTreeMap::new();
+        collect_loose_refs(&common, &common.join("refs"), "refs", &mut shared_loose)?;
+        for (name, oid) in shared_loose {
+            if is_per_worktree_ref(&name) {
+                continue;
+            }
+            refs.entry(name).or_insert(oid);
+        }
+    }
+
+    for (name, oid) in parse_packed_refs(&common)? {
         refs.entry(name).or_insert(oid);
     }
     Ok(refs
         .into_iter()
         .map(|(name, oid)| RefEntry { name, oid })
         .collect())
+}
+
+/// Resolve the common git directory for a linked worktree.
+fn common_git_dir(git_dir: &Path) -> std::path::PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    let Some(raw) = fs::read_to_string(commondir_file).ok() else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let path = if Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().unwrap_or(path)
+}
+
+/// Refs in these namespaces are per-worktree and must not be imported from the
+/// common dir when enumerating refs for a linked worktree.
+fn is_per_worktree_ref(refname: &str) -> bool {
+    refname.starts_with("refs/worktree/")
+        || refname.starts_with("refs/bisect/")
+        || refname.starts_with("refs/rewritten/")
 }
 
 fn collect_loose_refs(

@@ -514,6 +514,11 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
             .map_err(|_| Error::ObjectNotFound(spec.to_owned()));
     }
 
+    // Handle per-worktree ref aliases and cross-worktree access paths.
+    if let Some(oid) = try_resolve_worktree_ref(repo, spec)? {
+        return Ok(oid);
+    }
+
     // Handle @{-N} syntax: Nth previously checked out branch
     // Also handle @{-N}@{M} compound form: resolve branch, then reflog
     if spec.starts_with("@{-") {
@@ -617,6 +622,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     for candidate in &[
+        format!("refs/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),
@@ -636,6 +642,117 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+/// Try resolving per-worktree ref namespaces.
+///
+/// Supports:
+/// - current-worktree aliases like `worktree/foo` (maps to `refs/worktree/foo`)
+/// - `main-worktree/<ref>`
+/// - `worktrees/<id>/<ref>`
+fn try_resolve_worktree_ref(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    let common = common_git_dir(&repo.git_dir);
+
+    if let Some(bare_ref) = spec.strip_prefix("main-worktree/") {
+        if !is_current_worktree_ref_name(bare_ref) {
+            return Ok(None);
+        }
+        if let Ok(oid) = refs::resolve_ref(&common, bare_ref) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+        return Ok(None);
+    }
+
+    if let Some(rest) = spec.strip_prefix("worktrees/") {
+        if let Some((worktree_id, bare_ref)) = rest.split_once('/') {
+            if !is_current_worktree_ref_name(bare_ref) {
+                return Ok(None);
+            }
+            let worktree_git_dir = common.join("worktrees").join(worktree_id);
+            if let Ok(oid) = refs::resolve_ref(&worktree_git_dir, bare_ref) {
+                maybe_warn_worktree_ref_ambiguity(repo, spec);
+                return Ok(Some(oid));
+            }
+        }
+        return Ok(None);
+    }
+
+    // `worktree/<name>` is shorthand for `refs/worktree/<name>`.
+    if let Some(rest) = spec.strip_prefix("worktree/") {
+        let mapped = format!("refs/worktree/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if let Some(rest) = spec.strip_prefix("bisect/") {
+        let mapped = format!("refs/bisect/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if let Some(rest) = spec.strip_prefix("rewritten/") {
+        let mapped = format!("refs/rewritten/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if is_current_worktree_ref_name(spec) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Return the repository common directory, falling back to `git_dir`.
+fn common_git_dir(git_dir: &Path) -> std::path::PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    let Some(raw) = fs::read_to_string(commondir_file).ok() else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let path = if Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().unwrap_or(path)
+}
+
+/// Emit Git-like ambiguity warning when a worktree ref collides with a branch.
+fn maybe_warn_worktree_ref_ambiguity(repo: &Repository, spec: &str) {
+    let branch_candidate = format!("refs/heads/{spec}");
+    if refs::resolve_ref(&repo.git_dir, &branch_candidate).is_ok() {
+        eprintln!("warning: refname '{spec}' is ambiguous.");
+    }
+}
+
+/// Whether a ref belongs to the current worktree namespace.
+fn is_current_worktree_ref_name(refname: &str) -> bool {
+    is_root_ref_syntax(refname)
+        || refname.starts_with("refs/worktree/")
+        || refname.starts_with("refs/bisect/")
+        || refname.starts_with("refs/rewritten/")
+}
+
+/// Root refs are direct files under `$GIT_DIR` (e.g. `HEAD`, `MERGE_HEAD`).
+fn is_root_ref_syntax(refname: &str) -> bool {
+    !refname.is_empty()
+        && refname
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch == '-' || ch == '_')
 }
 
 /// Resolve `@{-N}` to the branch name (e.g. "side"), not to an OID.
