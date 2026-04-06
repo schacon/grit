@@ -742,7 +742,7 @@ t6423-merge-rename-directories	yes	82	11	71	ok	9	80	2
 t6424-merge-unrelated-index-changes	yes	19	2	17	ok	2	19	0
 t6425-merge-rename-delete	yes	1	1	0	ok	1	1	0
 t6426-merge-skip-unneeded-updates	yes	13	1	12	ok	1	13	0
-t6427-diff3-conflict-markers	yes	9	3	6	ok	3	9	0
+t6427-diff3-conflict-markers	yes	9	9	0	ok	9	9	0
 t6428-merge-conflicts-sparse	yes	2	2	0	ok	2	2	0
 t6429-merge-sequence-rename-caching	yes	11	1	10	ok	1	11	0
 t6430-merge-recursive	yes	36	10	26	ok	10	36	0

@@ -1,18 +1,19 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-05
+**Updated:** 2026-04-06
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    66 |
+| Completed   |    67 |
 | In progress |     0 |
-| Remaining   |   701 |
+| Remaining   |   700 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6427-diff3-conflict-markers` — 9/9 tests pass (merge conflict markers now use correct base/theirs labels and conflict styles across `diff3`/`zdiff3`; rebase now preserves diff3/zdiff3 conflict-marker files with backend-specific base labels; merge-file zealous diff3 handling now matches expected compact conflict shapes for shared prefix/suffix insertions)
 - `t6401-merge-criss-cross` — 4/4 tests pass (upstream re-verification on `main`; stale `PLAN.md` entry corrected after confirmed clean harness run)
 - `t6435-merge-sparse` — 6/6 tests pass (init now skips default template skeleton in test trash worktrees so `.git/info` can be created by tests; `status --porcelain -- <pathspec>` now filters untracked/ignored and diff entries by pathspec, matching Git behavior)
 - `t6301-for-each-ref-errors` — 6/6 tests pass (added `test-tool ref-store main update-ref ... REF_SKIP_OID_VERIFICATION` support; `for-each-ref` now preserves and reports non-hex direct ref payloads as missing objects for simplified test harness compatibility)
@@ -56,4 +57,4 @@
 
 ## What Remains
 
-701 test files still pending. See `plan.md` for the full prioritized list.
+700 test files still pending. See `plan.md` for the full prioritized list.

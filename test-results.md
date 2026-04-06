@@ -1,9 +1,13 @@
 # Test Results
 
-**Updated:** 2026-04-05
+**Updated:** 2026-04-06
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6427-diff3-conflict-markers.sh`: 9/9 passing (direct validation after conflict label/style fixes in merge + rebase and zealous diff3 conflict-shape adjustments in merge-file).
+- `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (now fully passing).
+- `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after merge conflict-label updates).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge conflict-label updates).
 - `./scripts/run-tests.sh t6414-merge-rename-nocruft.sh`: 3/3 passing (now fully passing).
 - `./scripts/run-tests.sh t6408-merge-up-to-date.sh`: 7/7 passing (fully passing).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (now fully passing).

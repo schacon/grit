@@ -589,6 +589,7 @@ fn create_virtual_merge_base(
             &theirs_entries,
             &head,
             "Temporary merge branch 2",
+            "merged common ancestors",
             favor,
             None,
         )?;
@@ -661,6 +662,11 @@ fn create_empty_base_commit(repo: &Repository) -> Result<ObjectId> {
     Ok(repo.odb.write(ObjectKind::Commit, &commit_bytes)?)
 }
 
+fn short_oid(oid: ObjectId) -> String {
+    let hex = oid.to_hex();
+    hex[..7.min(hex.len())].to_string()
+}
+
 fn do_real_merge(
     repo: &Repository,
     head: &HeadState,
@@ -687,6 +693,13 @@ fn do_real_merge(
         create_virtual_merge_base(repo, &bases, favor)?
     } else {
         bases[0]
+    };
+    let base_label_prefix = if bases.is_empty() {
+        "empty tree".to_string()
+    } else if bases.len() > 1 {
+        "merged common ancestors".to_string()
+    } else {
+        short_oid(bases[0])
     };
 
     // Get trees
@@ -720,6 +733,7 @@ fn do_real_merge(
         &theirs_entries,
         head,
         &args.commits[0],
+        &base_label_prefix,
         favor,
         diff_algorithm,
     )?;
@@ -1364,6 +1378,12 @@ fn do_octopus_merge(
         let ours_entries = tree_to_map(current_tree_entries);
         let theirs_entries = tree_to_map(tree_to_index_entries(repo, &theirs_tree, "")?);
 
+        let base_label_prefix = if bases.is_empty() {
+            "empty tree".to_string()
+        } else {
+            short_oid(bases[0])
+        };
+
         let merge_result = merge_trees(
             repo,
             &base_entries,
@@ -1371,6 +1391,7 @@ fn do_octopus_merge(
             &theirs_entries,
             head,
             &args.commits[i],
+            &base_label_prefix,
             favor,
             diff_algorithm,
         )?;
@@ -2078,6 +2099,42 @@ struct MergeResult {
     conflict_descriptions: Vec<(String, String)>,
 }
 
+#[derive(Clone, Copy)]
+struct ConflictLabels<'a> {
+    ours: &'a str,
+    base: &'a str,
+}
+
+fn resolve_conflict_labels(
+    repo: &Repository,
+    theirs_name: &str,
+    base_label_prefix: &str,
+) -> ConflictLabels<'static> {
+    let ours = if theirs_name == "Temporary merge branch 2" {
+        "Temporary merge branch 1"
+    } else {
+        "HEAD"
+    };
+
+    let base = if base_label_prefix == "empty tree" {
+        "empty tree".to_string()
+    } else if matches!(resolve_conflict_style(repo), ConflictStyle::ZealousDiff3)
+        && base_label_prefix.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        base_label_prefix.to_string()
+    } else {
+        format!("{base_label_prefix}:content")
+    };
+
+    let ours_static: &'static str = Box::leak(ours.to_string().into_boxed_str());
+    let base_static: &'static str = Box::leak(base.into_boxed_str());
+
+    ConflictLabels {
+        ours: ours_static,
+        base: base_static,
+    }
+}
+
 /// Build rename maps from base to each side.
 ///
 /// Detects renames by looking for base blobs that appear at different paths
@@ -2298,6 +2355,7 @@ fn merge_trees(
     theirs: &HashMap<Vec<u8>, IndexEntry>,
     _head: &HeadState,
     their_name: &str,
+    base_label_prefix: &str,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
 ) -> Result<MergeResult> {
@@ -2317,11 +2375,9 @@ fn merge_trees(
     let mut conflict_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut conflict_descriptions: Vec<(String, String)> = Vec::new();
 
-    let ours_label = if their_name == "Temporary merge branch 2" {
-        "Temporary merge branch 1"
-    } else {
-        "HEAD"
-    };
+    let labels = resolve_conflict_labels(repo, their_name, base_label_prefix);
+    let ours_label = labels.ours;
+    let base_label = labels.base;
     let has_descendant = |tree: &HashMap<Vec<u8>, IndexEntry>, path: &[u8]| -> bool {
         tree.keys().any(|candidate| {
             candidate.len() > path.len()
@@ -2359,6 +2415,7 @@ fn merge_trees(
                         oe,
                         te,
                         ours_label,
+                        base_label,
                         their_name,
                         favor,
                         diff_algorithm,
@@ -2414,6 +2471,7 @@ fn merge_trees(
                                 oe,
                                 te_at_new,
                                 ours_label,
+                                base_label,
                                 their_name,
                                 favor,
                                 diff_algorithm,
@@ -2568,6 +2626,7 @@ fn merge_trees(
                         oe,
                         te,
                         ours_label,
+                        base_label,
                         their_name,
                         favor,
                         diff_algorithm,
@@ -2713,6 +2772,7 @@ fn merge_trees(
                     oe,
                     te,
                     ours_label,
+                    base_label,
                     their_name,
                     favor,
                     diff_algorithm,
@@ -2900,6 +2960,7 @@ fn try_content_merge(
     ours: &IndexEntry,
     theirs: &IndexEntry,
     ours_label: &str,
+    base_label: &str,
     theirs_label: &str,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
@@ -2954,15 +3015,16 @@ fn try_content_merge(
         7
     };
 
+    let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
         base: &base_obj.data,
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
         label_ours: ours_label,
-        label_base: "base",
+        label_base: base_label,
         label_theirs: theirs_label,
         favor,
-        style: ConflictStyle::Merge,
+        style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
@@ -3003,15 +3065,16 @@ fn try_content_merge_add_add(
         7
     };
 
+    let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
         base: &[], // empty base for add/add
         ours: &ours_obj.data,
         theirs: &theirs_obj.data,
         label_ours: ours_label,
-        label_base: "base",
+        label_base: "empty tree",
         label_theirs: theirs_label,
         favor,
-        style: ConflictStyle::Merge,
+        style: conflict_style,
         marker_size,
         diff_algorithm: diff_algorithm.map(|s| s.to_string()),
     };
@@ -3024,6 +3087,22 @@ fn try_content_merge_add_add(
         Ok(ContentMergeResult::Clean(oid, mode))
     } else {
         Ok(ContentMergeResult::Conflict(output.content))
+    }
+}
+
+fn resolve_conflict_style(repo: &Repository) -> ConflictStyle {
+    let Ok(config) = ConfigSet::load(Some(&repo.git_dir), true) else {
+        return ConflictStyle::Merge;
+    };
+    match config
+        .get("merge.conflictstyle")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        "diff3" => ConflictStyle::Diff3,
+        "zdiff3" => ConflictStyle::ZealousDiff3,
+        _ => ConflictStyle::Merge,
     }
 }
 

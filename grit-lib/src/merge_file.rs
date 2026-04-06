@@ -98,13 +98,16 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let ours_ops = similar::capture_diff_slices(algo, &base_lines, &ours_lines);
     let theirs_ops = similar::capture_diff_slices(algo, &base_lines, &theirs_lines);
 
-    let hunks = compute_hunks(
+    let mut hunks = compute_hunks(
         &base_lines,
         &ours_lines,
         &theirs_lines,
         &ours_ops,
         &theirs_ops,
     );
+    if matches!(input.style, ConflictStyle::ZealousDiff3) {
+        hunks = adjust_zealous_hunks(hunks);
+    }
 
     let marker = if input.marker_size == 0 {
         7
@@ -115,35 +118,21 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     let mut content: Vec<u8> = Vec::new();
     let mut conflicts = 0usize;
 
-    for hunk in &hunks {
+    for (idx, hunk) in hunks.iter().enumerate() {
         match hunk {
-            Hunk::Unchanged(lines) | Hunk::OnlyOurs(lines) | Hunk::OnlyTheirs(lines) => {
-                // If previous content ended without a newline and this hunk
-                // adds more content, insert a newline separator to avoid
-                // merging lines together (handles missing-LF at EOF case).
-                if !content.is_empty() && !content.ends_with(b"\n") && !lines.is_empty() {
-                    content.push(b'\n');
-                }
-                for line in lines {
-                    content.extend_from_slice(line);
-                }
-            }
+            Hunk::Unchanged(lines) => append_lines(&mut content, lines),
+            Hunk::OnlyOurs { ours, .. } => append_lines(&mut content, ours),
+            Hunk::OnlyTheirs { theirs, .. } => append_lines(&mut content, theirs),
             Hunk::Conflict { base, ours, theirs } => {
                 match input.favor {
                     MergeFavor::Ours => {
-                        for line in ours {
-                            content.extend_from_slice(line);
-                        }
+                        append_lines(&mut content, ours);
                     }
                     MergeFavor::Theirs => {
-                        for line in theirs {
-                            content.extend_from_slice(line);
-                        }
+                        append_lines(&mut content, theirs);
                     }
                     MergeFavor::Union => {
-                        for line in ours {
-                            content.extend_from_slice(line);
-                        }
+                        append_lines(&mut content, ours);
                         // If the ours portion doesn't end with \n and theirs is
                         // non-empty, insert a newline so both sections appear as
                         // separate lines (matches git's missing-LF handling).
@@ -153,23 +142,64 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
                         {
                             content.push(b'\n');
                         }
-                        for line in theirs {
-                            content.extend_from_slice(line);
-                        }
+                        append_lines(&mut content, theirs);
                     }
                     MergeFavor::None => {
                         conflicts += 1;
-                        emit_conflict(
-                            &mut content,
-                            base,
-                            ours,
-                            theirs,
-                            input.label_ours,
-                            input.label_base,
-                            input.label_theirs,
-                            input.style,
-                            marker,
-                        );
+                        if matches!(input.style, ConflictStyle::ZealousDiff3) {
+                            let (mut prefix_len, mut suffix_len) =
+                                common_prefix_suffix(ours, theirs);
+
+                            if prefix_len > 0
+                                && idx > 0
+                                && hunk_output_lines(&hunks[idx - 1])
+                                    .map(|lines| lines_end_with(lines, &ours[..prefix_len]))
+                                    .unwrap_or(false)
+                            {
+                                prefix_len = 0;
+                            }
+
+                            if suffix_len > 0
+                                && idx + 1 < hunks.len()
+                                && hunk_output_lines(&hunks[idx + 1])
+                                    .map(|lines| {
+                                        lines_start_with(lines, &ours[ours.len() - suffix_len..])
+                                    })
+                                    .unwrap_or(false)
+                            {
+                                suffix_len = 0;
+                            }
+
+                            if prefix_len > 0 {
+                                append_lines(&mut content, &ours[..prefix_len]);
+                            }
+                            emit_conflict(
+                                &mut content,
+                                base,
+                                &ours[prefix_len..ours.len() - suffix_len],
+                                &theirs[prefix_len..theirs.len() - suffix_len],
+                                input.label_ours,
+                                input.label_base,
+                                input.label_theirs,
+                                input.style,
+                                marker,
+                            );
+                            if suffix_len > 0 {
+                                append_lines(&mut content, &ours[ours.len() - suffix_len..]);
+                            }
+                        } else {
+                            emit_conflict(
+                                &mut content,
+                                base,
+                                ours,
+                                theirs,
+                                input.label_ours,
+                                input.label_base,
+                                input.label_theirs,
+                                input.style,
+                                marker,
+                            );
+                        }
                     }
                 }
             }
@@ -177,6 +207,57 @@ pub fn merge(input: &MergeInput<'_>) -> Result<MergeOutput> {
     }
 
     Ok(MergeOutput { content, conflicts })
+}
+
+fn append_lines(out: &mut Vec<u8>, lines: &[Vec<u8>]) {
+    // If previous content ended without a newline and this hunk adds more
+    // content, insert a newline separator to avoid merging lines together.
+    if !out.is_empty() && !out.ends_with(b"\n") && !lines.is_empty() {
+        out.push(b'\n');
+    }
+    for line in lines {
+        out.extend_from_slice(line);
+    }
+}
+
+fn common_prefix_suffix(ours: &[Vec<u8>], theirs: &[Vec<u8>]) -> (usize, usize) {
+    let mut prefix = 0usize;
+    while prefix < ours.len() && prefix < theirs.len() && ours[prefix] == theirs[prefix] {
+        prefix += 1;
+    }
+
+    let mut suffix = 0usize;
+    while suffix < ours.len().saturating_sub(prefix)
+        && suffix < theirs.len().saturating_sub(prefix)
+        && ours[ours.len() - 1 - suffix] == theirs[theirs.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    (prefix, suffix)
+}
+
+fn hunk_output_lines(hunk: &Hunk) -> Option<&[Vec<u8>]> {
+    match hunk {
+        Hunk::Unchanged(lines) => Some(lines),
+        Hunk::OnlyOurs { ours, .. } => Some(ours),
+        Hunk::OnlyTheirs { theirs, .. } => Some(theirs),
+        Hunk::Conflict { .. } => None,
+    }
+}
+
+fn lines_end_with(lines: &[Vec<u8>], suffix: &[Vec<u8>]) -> bool {
+    if suffix.is_empty() || suffix.len() > lines.len() {
+        return false;
+    }
+    lines[lines.len() - suffix.len()..] == *suffix
+}
+
+fn lines_start_with(lines: &[Vec<u8>], prefix: &[Vec<u8>]) -> bool {
+    if prefix.is_empty() || prefix.len() > lines.len() {
+        return false;
+    }
+    lines[..prefix.len()] == *prefix
 }
 
 /// Emit conflict markers into `out`.
@@ -236,14 +317,24 @@ fn emit_conflict(
 }
 
 /// A classified merge region (owns its lines).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Hunk {
     /// Lines unchanged by both sides (base content).
     Unchanged(Vec<Vec<u8>>),
     /// Lines changed only by ours.
-    OnlyOurs(Vec<Vec<u8>>),
+    OnlyOurs {
+        /// Base lines for the changed region (empty for pure insertions).
+        base: Vec<Vec<u8>>,
+        /// Output lines from ours.
+        ours: Vec<Vec<u8>>,
+    },
     /// Lines changed only by theirs.
-    OnlyTheirs(Vec<Vec<u8>>),
+    OnlyTheirs {
+        /// Base lines for the changed region (empty for pure insertions).
+        base: Vec<Vec<u8>>,
+        /// Output lines from theirs.
+        theirs: Vec<Vec<u8>>,
+    },
     /// Lines changed by both sides — a conflict.
     Conflict {
         base: Vec<Vec<u8>>,
@@ -320,18 +411,27 @@ fn compute_hunks(
         match (any_ours, any_theirs) {
             (true, false) => {
                 let c = collect_new_lines(ours_ops, ours, pos, end);
-                hunks.push(Hunk::OnlyOurs(c));
+                hunks.push(Hunk::OnlyOurs {
+                    base: base[pos..end].to_vec(),
+                    ours: c,
+                });
             }
             (false, true) => {
                 let c = collect_new_lines(theirs_ops, theirs, pos, end);
-                hunks.push(Hunk::OnlyTheirs(c));
+                hunks.push(Hunk::OnlyTheirs {
+                    base: base[pos..end].to_vec(),
+                    theirs: c,
+                });
             }
             (true, true) => {
                 let o = collect_new_lines(ours_ops, ours, pos, end);
                 let t = collect_new_lines(theirs_ops, theirs, pos, end);
                 if o == t {
                     // Both sides produce the same content — not really a conflict.
-                    hunks.push(Hunk::OnlyOurs(o));
+                    hunks.push(Hunk::OnlyOurs {
+                        base: base[pos..end].to_vec(),
+                        ours: o,
+                    });
                 } else {
                     hunks.push(Hunk::Conflict {
                         base: base[pos..end].to_vec(),
@@ -431,16 +531,118 @@ fn emit_inserts_at(
         for &(ns, ne) in o_ins {
             let lines: Vec<Vec<u8>> = ours[ns..ne].to_vec();
             if !lines.is_empty() {
-                hunks.push(Hunk::OnlyOurs(lines));
+                hunks.push(Hunk::OnlyOurs {
+                    base: Vec::new(),
+                    ours: lines,
+                });
             }
         }
     } else if has_theirs {
         for &(ns, ne) in t_ins {
             let lines: Vec<Vec<u8>> = theirs[ns..ne].to_vec();
             if !lines.is_empty() {
-                hunks.push(Hunk::OnlyTheirs(lines));
+                hunks.push(Hunk::OnlyTheirs {
+                    base: Vec::new(),
+                    theirs: lines,
+                });
             }
         }
+    }
+}
+
+fn adjust_zealous_hunks(hunks: Vec<Hunk>) -> Vec<Hunk> {
+    let mut out: Vec<Hunk> = Vec::new();
+    let mut i = 0usize;
+
+    while i < hunks.len() {
+        let mut consumed = 1usize;
+        let mut transformed: Option<Vec<Hunk>> = None;
+
+        let (pre_insert, mid_idx) = match &hunks[i] {
+            Hunk::OnlyTheirs { base, theirs } if base.is_empty() => {
+                (Some(theirs.as_slice()), i + 1)
+            }
+            _ => (None, i),
+        };
+
+        if let Some(Hunk::OnlyOurs { base, ours }) = hunks.get(mid_idx) {
+            if !base.is_empty() {
+                let post_insert = match hunks.get(mid_idx + 1) {
+                    Some(Hunk::OnlyTheirs { base, theirs }) if base.is_empty() => {
+                        Some(theirs.as_slice())
+                    }
+                    _ => None,
+                };
+
+                let mut prefix_len = 0usize;
+                if let Some(pre) = pre_insert {
+                    if !pre.is_empty() && ours.starts_with(pre) {
+                        prefix_len = pre.len();
+                    }
+                }
+
+                let mut suffix_len = 0usize;
+                if let Some(post) = post_insert {
+                    if !post.is_empty() && ours[prefix_len..].ends_with(post) {
+                        suffix_len = post.len();
+                    }
+                }
+
+                if prefix_len > 0 || suffix_len > 0 {
+                    consumed = if pre_insert.is_some() {
+                        if post_insert.is_some() {
+                            3
+                        } else {
+                            2
+                        }
+                    } else if post_insert.is_some() {
+                        2
+                    } else {
+                        1
+                    };
+
+                    let mut replacement: Vec<Hunk> = Vec::new();
+                    if prefix_len > 0 {
+                        replacement.push(Hunk::Unchanged(ours[..prefix_len].to_vec()));
+                    }
+                    replacement.push(Hunk::Conflict {
+                        base: base.clone(),
+                        ours: ours[prefix_len..ours.len() - suffix_len].to_vec(),
+                        theirs: base.clone(),
+                    });
+                    if suffix_len > 0 {
+                        replacement.push(Hunk::Unchanged(ours[ours.len() - suffix_len..].to_vec()));
+                    }
+                    transformed = Some(replacement);
+                }
+            }
+        }
+
+        if let Some(replacement) = transformed {
+            for h in replacement {
+                push_hunk_with_unchanged_merge(&mut out, h);
+            }
+            i += consumed;
+            continue;
+        }
+
+        push_hunk_with_unchanged_merge(&mut out, hunks[i].clone());
+        i += 1;
+    }
+
+    out
+}
+
+fn push_hunk_with_unchanged_merge(out: &mut Vec<Hunk>, hunk: Hunk) {
+    match hunk {
+        Hunk::Unchanged(mut lines) => {
+            if let Some(Hunk::Unchanged(prev)) = out.last_mut() {
+                prev.append(&mut lines);
+            } else if !lines.is_empty() {
+                out.push(Hunk::Unchanged(lines));
+            }
+        }
+        other => out.push(other),
     }
 }
 
@@ -629,5 +831,25 @@ mod tests {
         let out = merge(&input).unwrap();
         // union: line3x\nline3y (newline inserted between no-LF lines)
         assert_eq!(out.content, b"line1\nline2\nline3x\nline3y");
+    }
+
+    #[test]
+    fn zdiff3_interesting_conflict_shape() {
+        let input = MergeInput {
+            base: b"1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+            ours: b"1\n2\n3\n4\nA\nB\nC\nD\nE\nF\nG\nH\nI\nJ\n7\n8\n9\n",
+            theirs: b"1\n2\n3\n4\nA\nB\nC\n5\n6\nG\nH\nI\nJ\n7\n8\n9\n",
+            label_ours: "HEAD",
+            label_base: "base",
+            label_theirs: "right^0",
+            favor: MergeFavor::None,
+            style: ConflictStyle::ZealousDiff3,
+            marker_size: 7,
+            diff_algorithm: None,
+        };
+        let out = merge(&input).unwrap();
+        let rendered = String::from_utf8(out.content).unwrap();
+        assert_eq!(out.conflicts, 1, "{rendered}");
+        assert!(rendered.contains("<<<<<<< HEAD\nD\nE\nF\n"), "{rendered}");
     }
 }
