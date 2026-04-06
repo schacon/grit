@@ -362,13 +362,20 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     let mut inferred_orphan = false;
     let (branch_name, commit_oid, implicit_detach) = if let Some(ref new_b) = args.force_new_branch
     {
-        // -B: create or reset branch
-        let oid =
-            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
+        // -B: create or reset branch (args.branch is the start point)
+        let oid = if let Some(ref start_spec) = args.branch {
+            resolve_commitish(&repo, start_spec)?
+        } else {
+            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
+        };
         (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref new_b) = args.new_branch {
-        let oid =
-            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?;
+        // -b: create branch (args.branch is the start point if given)
+        let oid = if let Some(ref start_spec) = args.branch {
+            resolve_commitish(&repo, start_spec)?
+        } else {
+            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
+        };
         (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref spec) = args.branch {
         // Handle "-" shorthand (previous branch)
@@ -574,6 +581,12 @@ fn setup_unborn_worktree(
     lock: bool,
     reason: Option<&str>,
 ) -> Result<()> {
+    // Check if the branch already exists
+    let branch_ref = format!("refs/heads/{branch_name}");
+    if refs::resolve_ref(common, &branch_ref).is_ok() {
+        bail!("fatal: a branch named '{}' already exists", branch_name);
+    }
+
     fs::create_dir_all(wt_path)
         .with_context(|| format!("cannot create directory '{}'", wt_path.display()))?;
     fs::create_dir_all(wt_admin)
