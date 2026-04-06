@@ -1,6 +1,6 @@
 # Test Results
 
-**Updated:** 2026-04-05
+**Updated:** 2026-04-06
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
@@ -91,3 +91,7 @@
 - `cargo fmt && cargo build --release -p grit-rs`: success (after implementing partial-clone/lazy-fetch behavior for clone and pack-objects paths used by promisor tests).
 - `GUST_BIN=/workspace/tests/grit bash tests/t0411-clone-from-partial.sh`: 7/7 passing.
 - `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 7/7 passing.
+- `cargo fmt`: success (after sparse-checkout scope compatibility changes).
+- `cargo build --release -p grit-rs`: success.
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).

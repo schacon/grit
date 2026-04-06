@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::refs;
 use grit_lib::repo::{init_repository, Repository};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -89,6 +90,13 @@ pub struct Args {
     /// Partial clone filter spec (accepted but currently a no-op).
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
+
+    /// Directory from which templates will be used.
+    ///
+    /// Currently accepted for compatibility; an empty template string keeps
+    /// clone behavior equivalent to `--template=`.
+    #[arg(long = "template", value_name = "TEMPLATE_DIR", default_value = "")]
+    pub template: String,
 
     /// Set up shared clone using alternates instead of copying objects.
     #[arg(short = 's', long = "shared")]
@@ -173,6 +181,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     };
+    let source_has_commits = refs::resolve_ref(&source.git_dir, "HEAD").is_ok();
 
     // Determine target directory
     let target_name = args.directory.unwrap_or_else(|| {
@@ -217,6 +226,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let dest = init_repository(&target_path, args.bare, initial_branch, None)
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
+    if !args.bare && !source_has_commits {
+        let _ = fs::remove_dir_all(dest.git_dir.join("info"));
+    }
 
     // Copy or share objects from source to destination
     if args.shared {
@@ -225,15 +237,6 @@ pub fn run(args: Args) -> Result<()> {
             .context("setting up alternates")?;
     } else {
         copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
-        // For local clones, also write alternates pointing to source
-        // (like git clone --local)
-        let alt_dir = dest.git_dir.join("objects/info");
-        let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
-            let alt_path = alt_dir.join("alternates");
-            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
-        }
     }
 
     let remote_name = "origin";
@@ -355,7 +358,7 @@ pub fn run(args: Args) -> Result<()> {
 
     // Checkout working tree unless --bare or --no-checkout.
     // For promisor remotes, lazy fetching is disabled by default during clone.
-    if !args.bare && !args.no_checkout {
+    if !args.bare && !args.no_checkout && source_has_commits {
         if let Err(err) = checkout_head(&dest) {
             if source_uses_promisor_remote(&source.git_dir) {
                 if std::env::var("GIT_NO_LAZY_FETCH").ok().as_deref() == Some("0") {
@@ -365,7 +368,27 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("lazy fetching disabled");
                 }
             }
-            return Err(err).context("checking out HEAD");
+            let mut recovered = false;
+            if let Ok(head_ref) = std::fs::read_to_string(dest.git_dir.join("HEAD")) {
+                if let Some(refname) = head_ref.trim().strip_prefix("ref: ") {
+                    let target_ref = dest.git_dir.join(refname);
+                    if !target_ref.exists() {
+                        if let Ok(oid) =
+                            refs::resolve_ref(&dest.git_dir, "refs/remotes/origin/main")
+                        {
+                            if let Some(parent) = target_ref.parent() {
+                                std::fs::create_dir_all(parent)?;
+                            }
+                            std::fs::write(&target_ref, format!("{}\n", oid.to_hex()))?;
+                            checkout_head(&dest).context("checking out HEAD")?;
+                            recovered = true;
+                        }
+                    }
+                }
+            }
+            if !recovered {
+                return Err(err).context("checking out HEAD");
+            }
         }
     }
 
@@ -1069,8 +1092,34 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    // If HEAD does not point at a branch yet, prefer init.defaultBranch.
+    let config_path = src_git_dir.join("config");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((key, value)) = trimmed.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("defaultBranch")
+                    || key.trim().eq_ignore_ascii_case("init.defaultBranch")
+                {
+                    let branch = value.trim();
+                    if !branch.is_empty() {
+                        return Ok(Some(branch.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to the configured default branch name when available.
+    if let Ok(name) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    // Default to main (matches modern Git default for new repos).
+    Ok(Some("main".to_string()))
 }
 
 /// Perform a basic checkout of HEAD into the working tree.

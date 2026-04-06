@@ -62,6 +62,10 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
+                _ if arg.starts_with("--missing=") => {
+                    let mode = arg.trim_start_matches("--missing=");
+                    options.missing_print = mode == "print";
+                }
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
                 "--boundary" => options.boundary = true,
@@ -402,11 +406,14 @@ pub fn run(args: Args) -> Result<()> {
         }
         return Ok(());
     }
-    if options.quiet {
+    if options.quiet && !options.missing_print {
         return Ok(());
     }
 
     let print_object = |oid: &grit_lib::objects::ObjectId, path: &str| {
+        if oid.is_zero() {
+            return;
+        }
         if options.no_object_names {
             println!("{oid}");
         } else if path.is_empty() {
@@ -419,6 +426,9 @@ pub fn run(args: Args) -> Result<()> {
     {
         let mut obj_offset = 0usize;
         for (ci, oid) in result.commits.iter().enumerate() {
+            if options.quiet {
+                continue;
+            }
             let mut prefix = String::new();
             if options.left_right {
                 if let Some(&is_left) = result.left_right_map.get(oid) {
@@ -485,7 +495,7 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Print remaining objects (non-in-commit-order mode, or leftovers)
-        if options.objects && result.per_commit_object_counts.is_empty() {
+        if options.objects && !options.quiet && result.per_commit_object_counts.is_empty() {
             for (oid, path) in &result.objects {
                 print_object(oid, path);
             }
@@ -496,6 +506,12 @@ pub fn run(args: Args) -> Result<()> {
     if options.filter_print_omitted {
         for oid in &result.omitted_objects {
             println!("~{oid}");
+        }
+    }
+
+    if options.missing_print {
+        for oid in &result.missing_objects {
+            println!("?{oid}");
         }
     }
 

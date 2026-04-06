@@ -582,6 +582,24 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
 
+    // Special pseudo-ref written by fetch/pull.
+    // FETCH_HEAD is not a regular ref under refs/, so resolve it directly.
+    if spec == "FETCH_HEAD" {
+        let fetch_head_path = repo.git_dir.join("FETCH_HEAD");
+        if let Ok(content) = std::fs::read_to_string(&fetch_head_path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let oid_hex = trimmed.split_whitespace().next().unwrap_or_default();
+                if let Ok(oid) = oid_hex.parse::<ObjectId>() {
+                    return Ok(oid);
+                }
+            }
+        }
+    }
+
     if is_hex_prefix(spec) {
         let matches = find_abbrev_matches(repo, spec)?;
         if matches.len() == 1 {

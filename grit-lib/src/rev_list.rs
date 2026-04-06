@@ -215,6 +215,8 @@ pub struct RevListOptions {
     pub filter: Option<ObjectFilter>,
     /// Print omitted objects prefixed with `~`.
     pub filter_print_omitted: bool,
+    /// Print missing objects prefixed with `?` (`--missing=print`).
+    pub missing_print: bool,
     /// Emit objects interleaved with their introducing commit.
     pub in_commit_order: bool,
     /// Exclude objects in `.keep` pack files.
@@ -253,6 +255,7 @@ impl Default for RevListOptions {
             sparse: false,
             filter: None,
             filter_print_omitted: false,
+            missing_print: false,
             in_commit_order: false,
             no_kept_objects: false,
         }
@@ -269,6 +272,8 @@ pub struct RevListResult {
     pub objects: Vec<(ObjectId, String)>,
     /// Objects omitted by `--filter` (for `--filter-print-omitted`).
     pub omitted_objects: Vec<ObjectId>,
+    /// Objects missing from the local ODB (`--missing=print`).
+    pub missing_objects: Vec<ObjectId>,
     /// Boundary commits (excluded parents shown with `-` prefix).
     pub boundary_commits: Vec<ObjectId>,
     /// For `--left-right`: mapping commit OID -> true=left, false=right.
@@ -472,31 +477,46 @@ pub fn rev_list(
     }
 
     // Collect reachable objects if --objects
-    let (objects, omitted_objects, per_commit_object_counts) = if options.objects {
-        let (mut objs, omit, counts) = if options.in_commit_order {
+    let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
+        let (mut objs, omit, missing, counts) = if options.in_commit_order {
             collect_reachable_objects_in_commit_order(
                 repo,
                 &mut graph,
                 &ordered,
                 options.filter.as_ref(),
+                options.missing_print,
             )?
         } else {
-            let (objs, omit) =
-                collect_reachable_objects(repo, &mut graph, &ordered, options.filter.as_ref())?;
-            (objs, omit, Vec::new())
+            let (objs, omit, missing) = collect_reachable_objects(
+                repo,
+                &mut graph,
+                &ordered,
+                options.filter.as_ref(),
+                options.missing_print,
+            )?;
+            (objs, omit, missing, Vec::new())
         };
         if options.no_kept_objects {
             objs.retain(|(oid, _)| !kept_set.contains(oid));
         }
-        (objs, omit, counts)
+        (objs, omit, missing, counts)
     } else {
-        (Vec::new(), Vec::new(), Vec::new())
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new())
     };
+
+    let mut seen_missing = HashSet::new();
+    let mut dedup_missing = Vec::new();
+    for oid in missing_objects {
+        if seen_missing.insert(oid) {
+            dedup_missing.push(oid);
+        }
+    }
 
     Ok(RevListResult {
         commits: ordered,
         objects,
         omitted_objects,
+        missing_objects: dedup_missing,
         boundary_commits,
         left_right_map,
         cherry_equivalent,
@@ -1952,17 +1972,19 @@ pub fn split_symmetric_diff(token: &str) -> Option<(String, String)> {
 }
 
 /// Collect all reachable non-commit objects (trees and blobs) from a set of commits.
-/// Returns (included, omitted) object lists.
+/// Returns (included, omitted, missing) object lists.
 #[allow(dead_code)]
 fn collect_reachable_objects(
     repo: &Repository,
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     filter: Option<&ObjectFilter>,
-) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>)> {
+    missing_print: bool,
+) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
+    let mut missing = Vec::new();
     for &commit_oid in commits {
         let commit = load_commit(repo, commit_oid)?;
         collect_tree_objects_filtered(
@@ -1974,9 +1996,11 @@ fn collect_reachable_objects(
             &mut result,
             &mut omitted,
             filter,
+            &mut missing,
+            missing_print,
         )?;
     }
-    Ok((result, omitted))
+    Ok((result, omitted, missing))
 }
 
 #[allow(dead_code)]
@@ -1989,6 +2013,8 @@ fn collect_tree_objects_filtered(
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
     filter: Option<&ObjectFilter>,
+    missing: &mut Vec<ObjectId>,
+    missing_print: bool,
 ) -> Result<()> {
     if !seen.insert(tree_oid) {
         return Ok(());
@@ -2000,7 +2026,16 @@ fn collect_tree_objects_filtered(
     } else {
         omitted.push(tree_oid);
     }
-    let object = repo.odb.read(&tree_oid)?;
+    let object = match repo.odb.read(&tree_oid) {
+        Ok(obj) => obj,
+        Err(err) => {
+            if missing_print {
+                missing.push(tree_oid);
+                return Ok(());
+            }
+            return Err(err);
+        }
+    };
     if object.kind != ObjectKind::Tree {
         return Ok(());
     }
@@ -2020,7 +2055,16 @@ fn collect_tree_objects_filtered(
         if !seen.insert(entry.oid) {
             continue;
         }
-        let child_obj = repo.odb.read(&entry.oid)?;
+        let child_obj = match repo.odb.read(&entry.oid) {
+            Ok(obj) => obj,
+            Err(err) => {
+                if missing_print {
+                    missing.push(entry.oid);
+                    continue;
+                }
+                return Err(err);
+            }
+        };
         match child_obj.kind {
             ObjectKind::Tree => {
                 // Recurse into subtrees; the filter check happens at the recursive call
@@ -2034,6 +2078,8 @@ fn collect_tree_objects_filtered(
                     result,
                     omitted,
                     filter,
+                    missing,
+                    missing_print,
                 )?;
             }
             _ => {
@@ -2053,16 +2099,23 @@ fn collect_tree_objects_filtered(
 
 /// Collect reachable objects in commit order: objects for each commit are emitted
 /// right after that commit, rather than all objects after all commits.
-/// Returns (objects, omitted, per_commit_counts).
+/// Returns (objects, omitted, missing, per_commit_counts).
 fn collect_reachable_objects_in_commit_order(
     repo: &Repository,
     _graph: &mut CommitGraph<'_>,
     commits: &[ObjectId],
     filter: Option<&ObjectFilter>,
-) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<usize>)> {
+    missing_print: bool,
+) -> Result<(
+    Vec<(ObjectId, String)>,
+    Vec<ObjectId>,
+    Vec<ObjectId>,
+    Vec<usize>,
+)> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     let mut omitted = Vec::new();
+    let mut missing = Vec::new();
     let mut counts = Vec::with_capacity(commits.len());
     for &commit_oid in commits {
         let commit = load_commit(repo, commit_oid)?;
@@ -2076,10 +2129,12 @@ fn collect_reachable_objects_in_commit_order(
             &mut result,
             &mut omitted,
             filter,
+            &mut missing,
+            missing_print,
         )?;
         counts.push(result.len() - before);
     }
-    Ok((result, omitted, counts))
+    Ok((result, omitted, missing, counts))
 }
 
 /// Collect OIDs of all objects in packs that have a `.keep` file.

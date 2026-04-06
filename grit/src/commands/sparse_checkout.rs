@@ -173,26 +173,88 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Check if a file path matches any of the sparse checkout patterns.
-/// Patterns are treated as directory prefixes (like git's cone mode).
+/// Check if a file path matches sparse-checkout patterns.
+///
+/// Patterns are evaluated in-order, like gitignore-style sparse-checkout:
+/// positive patterns include paths and `!` patterns exclude them again.
 fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
-    // Always include top-level files (not in subdirectories)
-    if !path.contains('/') {
-        return true;
+    let mut included = false;
+    for raw in patterns {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let (negated, pat) = if let Some(rest) = trimmed.strip_prefix('!') {
+            (true, rest.trim())
+        } else {
+            (false, trimmed)
+        };
+        if pat.is_empty() {
+            continue;
+        }
+        if sparse_pattern_matches_path(pat, path) {
+            included = !negated;
+        }
+    }
+    included
+}
+
+/// Match one sparse-checkout pattern against a path.
+fn sparse_pattern_matches_path(pattern: &str, path: &str) -> bool {
+    let anchored = pattern.starts_with('/');
+    let pat = pattern.trim_start_matches('/');
+
+    if pat.is_empty() {
+        return false;
     }
 
-    for pattern in patterns {
-        // Treat pattern as a directory prefix
-        let prefix = pattern.trim_end_matches('/');
-        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-            return true;
+    if let Some(dir) = pat.strip_suffix('/') {
+        if anchored {
+            return path == dir || path.starts_with(&format!("{dir}/"));
         }
-        // Also check if path IS the pattern (exact match)
-        if path == prefix {
-            return true;
+        return path == dir
+            || path.starts_with(&format!("{dir}/"))
+            || path.split('/').any(|component| component == dir);
+    }
+
+    if anchored {
+        return sparse_glob_match(pat, path);
+    }
+
+    // Non-anchored patterns match against the full path and basename.
+    sparse_glob_match(pat, path)
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|base| sparse_glob_match(pat, base))
+}
+
+/// Minimal glob matcher supporting `*` and `?`.
+pub(crate) fn sparse_glob_match(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_pi, mut star_ti) = (usize::MAX, 0);
+    while ti < txt.len() {
+        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
         }
     }
-    false
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 /// Remove empty directories walking up from `dir` to `stop` (exclusive).

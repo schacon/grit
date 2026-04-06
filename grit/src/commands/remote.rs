@@ -516,6 +516,7 @@ fn cmd_update(args: UpdateArgs) -> Result<()> {
         let fetch_args = super::fetch::Args {
             remote: Some(name.clone()),
             refspecs: Vec::new(),
+            filter: None,
             all: false,
             tags: false,
             no_tags: false,

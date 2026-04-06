@@ -124,6 +124,16 @@ pub fn run(args: Args) -> Result<()> {
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
+    let runtime_config =
+        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let sparse_enabled = runtime_config
+        .get("core.sparseCheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let sparse_expect_files_outside = runtime_config
+        .get("sparse.expectFilesOutsideOfPatterns")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -246,10 +256,26 @@ pub fn run(args: Args) -> Result<()> {
                 } else if is_modified(entry, &full) {
                     (Some('C'), None)
                 } else {
-                    (Some(status_tag(entry)), None)
+                    (
+                        Some(status_tag(
+                            entry,
+                            work_tree,
+                            sparse_enabled,
+                            sparse_expect_files_outside,
+                        )),
+                        None,
+                    )
                 }
             } else {
-                (Some(status_tag(entry)), None)
+                (
+                    Some(status_tag(
+                        entry,
+                        work_tree,
+                        sparse_enabled,
+                        sparse_expect_files_outside,
+                    )),
+                    None,
+                )
             }
         } else {
             (None, None)
@@ -886,10 +912,21 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     }
 }
 
-fn status_tag(entry: &IndexEntry) -> char {
+fn status_tag(
+    entry: &IndexEntry,
+    work_tree: &std::path::Path,
+    sparse_enabled: bool,
+    sparse_expect_files_outside: bool,
+) -> char {
     if entry.stage() != 0 {
         'C' // unmerged (conflict)
     } else if entry.skip_worktree() {
+        if sparse_enabled && !sparse_expect_files_outside {
+            let abs = work_tree.join(std::str::from_utf8(&entry.path).unwrap_or(""));
+            if abs.exists() || abs.is_symlink() {
+                return 'H';
+            }
+        }
         'S'
     } else if entry.assume_unchanged() {
         'h' // assume-unchanged uses lowercase

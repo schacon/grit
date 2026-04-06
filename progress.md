@@ -1,18 +1,19 @@
 # Progress — Grit Test Coverage
 
-**Updated:** 2026-04-05
+**Updated:** 2026-04-06
 
 ## Counts (derived from plan.md)
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    74 |
+| Completed   |    75 |
 | In progress |     0 |
-| Remaining   |   693 |
+| Remaining   |   692 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1090-sparse-checkout-scope` — 7/7 tests pass (implemented sparse-checkout scope compatibility across checkout/merge/fetch paths: added `checkout-index --ignore-skip-worktree-bits`, `clone --template` acceptance for sparse fixture setup, `config -C <path>` compatibility/no-op behavior, `fetch --filter=blob:none` sparse-aware blob retention, and `rev-list --missing=print` support used by partial sparse validation)
 - `t0411-clone-from-partial` — 7/7 tests pass (implemented blob:none partial-clone shaping for local clone fixtures, disabled clone-time lazy fetch by default with `lazy fetching disabled` diagnostics, and added promisor lazy-fetch attempt for `pack-objects --revs` via configured `remote.origin.uploadpack`)
 - `t1012-read-tree-df` — 5/5 tests pass (fixed `read-tree -m` 3-way merge to preserve and advance existing unmerged stages from the current index so D/F conflict cases maintain expected stage-1/2/3 entries without collapsing to stage-0)
 - `t1512-rev-parse-disambiguation` — 3/3 tests pass (implemented rev-parse ambiguous-short-id diagnostics with candidate hints/bad-object handling, added `test-tool` hash/zlib compatibility helpers, and restored missing test-lib helper functions used by loose-object fixtures)
@@ -67,4 +68,4 @@
 
 ## What Remains
 
-693 test files still pending. See `plan.md` for the full prioritized list.
+692 test files still pending. See `plan.md` for the full prioritized list.

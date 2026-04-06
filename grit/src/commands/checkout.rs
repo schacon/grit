@@ -628,9 +628,9 @@ fn switch_branch(
     // without touching the working tree or index (preserves dirty state).
     // But with -f, always rebuild.
     let already_at_target = head.oid() == Some(&target_oid);
-    if !already_at_target || force {
-        let target_tree = commit_to_tree(repo, &target_oid)?;
-
+    let target_tree = commit_to_tree(repo, &target_oid)?;
+    let sparse_enabled = sparse_checkout_enabled(repo);
+    if !already_at_target || force || sparse_enabled {
         // Update working tree and index
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
@@ -1213,6 +1213,8 @@ fn switch_to_tree(
         }
         new_index.sort();
     }
+
+    apply_sparse_checkout_bits(repo, &mut new_index)?;
 
     // Perform the actual working tree update.
     // When force, write all entries even if OID matches (to restore dirty files).
@@ -2614,6 +2616,12 @@ fn checkout_index_to_worktree(
         .filter(|e| e.stage() == 0)
         .map(|e| e.path.clone())
         .collect();
+    let new_skip_paths: HashSet<Vec<u8>> = new_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0 && e.skip_worktree())
+        .map(|e| e.path.clone())
+        .collect();
 
     // Build old index map for OID comparison
     let old_map: HashMap<&[u8], &IndexEntry> = old_index
@@ -2634,10 +2642,23 @@ fn checkout_index_to_worktree(
         }
         remove_empty_parent_dirs(work_tree, &abs);
     }
+    for skip_path in &new_skip_paths {
+        let rel = String::from_utf8_lossy(skip_path).into_owned();
+        let abs = work_tree.join(&rel);
+        if abs.is_file() || abs.is_symlink() {
+            let _ = std::fs::remove_file(&abs);
+        } else if abs.is_dir() {
+            let _ = std::fs::remove_dir_all(&abs);
+        }
+        remove_empty_parent_dirs(work_tree, &abs);
+    }
 
     // Write new/modified entries
     for entry in &new_index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        if entry.skip_worktree() {
             continue;
         }
 
@@ -2670,6 +2691,110 @@ fn checkout_index_to_worktree(
     }
 
     Ok(())
+}
+
+fn apply_sparse_checkout_bits(repo: &Repository, index: &mut Index) -> Result<()> {
+    let sparse_path = repo.git_dir.join("info").join("sparse-checkout");
+    let patterns = match std::fs::read_to_string(&sparse_path) {
+        Ok(content) => content
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(|l| l.to_owned())
+            .collect::<Vec<_>>(),
+        Err(_) => return Ok(()),
+    };
+    if patterns.is_empty() {
+        return Ok(());
+    }
+
+    let mut any_skip = false;
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path = String::from_utf8_lossy(&entry.path);
+        let included = sparse_path_is_included(&patterns, &path);
+        entry.set_skip_worktree(!included);
+        if !included {
+            any_skip = true;
+        }
+    }
+    if any_skip && index.version < 3 {
+        index.version = 3;
+    }
+    Ok(())
+}
+
+fn sparse_path_is_included(patterns: &[String], path: &str) -> bool {
+    let mut include = false;
+    for raw in patterns {
+        let pattern = raw.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+        let (exclude, pat) = if let Some(rest) = pattern.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, pattern)
+        };
+        if sparse_pattern_matches(pat, path) {
+            include = !exclude;
+        }
+    }
+    include
+}
+
+fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
+    let pat = pattern.trim();
+    if pat.is_empty() {
+        return false;
+    }
+
+    if pat.ends_with('/') {
+        let dir = pat.trim_end_matches('/').trim_start_matches('/');
+        return path == dir || path.starts_with(&format!("{dir}/"));
+    }
+
+    let pat = pat.trim_start_matches('/');
+    if pat.contains('*') || pat.contains('?') {
+        sparse_glob_match(pat.as_bytes(), path.as_bytes())
+    } else {
+        path == pat
+    }
+}
+
+fn sparse_glob_match(pattern: &[u8], text: &[u8]) -> bool {
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_p, mut star_t) = (usize::MAX, 0);
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_p = pi;
+            star_t = ti;
+            pi += 1;
+        } else if star_p != usize::MAX {
+            pi = star_p + 1;
+            star_t += 1;
+            ti = star_t;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
+}
+
+fn sparse_checkout_enabled(repo: &Repository) -> bool {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    config
+        .get("core.sparsecheckout")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 /// Write a blob object to the working tree.

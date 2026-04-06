@@ -9,9 +9,10 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::merge_base;
-use grit_lib::objects::ObjectId;
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,10 @@ pub struct Args {
     /// Limit fetching to the specified number of commits from the tip.
     #[arg(long, value_name = "N")]
     pub depth: Option<usize>,
+
+    /// Partial clone filter spec (accepted for compatibility).
+    #[arg(long = "filter", value_name = "FILTER-SPEC")]
+    pub filter: Option<String>,
 
     /// Deepen history of a shallow clone back to a date.
     #[arg(long, value_name = "DATE")]
@@ -687,6 +692,10 @@ fn fetch_remote(
         fs::write(&fetch_head_path, content).context("writing FETCH_HEAD")?;
     }
 
+    if args.filter.as_deref() == Some("blob:none") {
+        apply_blob_none_filter(git_dir, &remote_heads).context("applying blob:none filter")?;
+    }
+
     // Write machine-readable output if --output is given
     if let Some(ref output_path) = args.output {
         let mut lines = Vec::new();
@@ -711,6 +720,200 @@ fn fetch_remote(
     }
 
     Ok(())
+}
+
+fn apply_blob_none_filter(git_dir: &Path, remote_heads: &[(String, ObjectId)]) -> Result<()> {
+    let patterns = load_sparse_patterns(git_dir)?;
+    let odb = grit_lib::odb::Odb::new(&git_dir.join("objects"));
+    let mut seen_trees = HashSet::new();
+    let mut all_blobs = HashSet::new();
+    let mut keep_blobs = HashSet::new();
+
+    for (_, commit_oid) in remote_heads {
+        let commit_obj = match odb.read(commit_oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if commit_obj.kind != ObjectKind::Commit {
+            continue;
+        }
+        let commit = match parse_commit(&commit_obj.data) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        collect_blob_sets_for_tree(
+            &odb,
+            commit.tree,
+            "",
+            &patterns,
+            &mut seen_trees,
+            &mut all_blobs,
+            &mut keep_blobs,
+        )?;
+    }
+
+    for oid in all_blobs.drain() {
+        if keep_blobs.contains(&oid) {
+            continue;
+        }
+        let hex = oid.to_hex();
+        if hex.len() < 3 {
+            continue;
+        }
+        let loose_path = git_dir
+            .join("objects")
+            .join(&hex[..2])
+            .join(&hex[2..hex.len()]);
+        if loose_path.exists() {
+            let _ = fs::remove_file(loose_path);
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_blob_sets_for_tree(
+    odb: &grit_lib::odb::Odb,
+    tree_oid: ObjectId,
+    prefix: &str,
+    patterns: &[String],
+    seen_trees: &mut HashSet<ObjectId>,
+    all_blobs: &mut HashSet<ObjectId>,
+    keep_blobs: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    if !seen_trees.insert(tree_oid) {
+        return Ok(());
+    }
+
+    let tree_obj = match odb.read(&tree_oid) {
+        Ok(obj) => obj,
+        Err(_) => return Ok(()),
+    };
+    if tree_obj.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+
+    let entries = parse_tree(&tree_obj.data)?;
+    for entry in entries {
+        if entry.mode == 0o160000 {
+            continue;
+        }
+        let name = String::from_utf8_lossy(&entry.name);
+        let rel_path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if (entry.mode & 0o170000) == 0o040000 {
+            collect_blob_sets_for_tree(
+                odb, entry.oid, &rel_path, patterns, seen_trees, all_blobs, keep_blobs,
+            )?;
+            continue;
+        }
+        let blob_obj = match odb.read(&entry.oid) {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        if blob_obj.kind != ObjectKind::Blob {
+            continue;
+        }
+        all_blobs.insert(entry.oid);
+        if sparse_path_is_included(patterns, &rel_path) {
+            keep_blobs.insert(entry.oid);
+        }
+    }
+    Ok(())
+}
+
+fn load_sparse_patterns(git_dir: &Path) -> Result<Vec<String>> {
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let content = match fs::read_to_string(&sparse_path) {
+        Ok(content) => content,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let patterns = content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.to_owned())
+        .collect::<Vec<_>>();
+    Ok(patterns)
+}
+
+fn sparse_path_is_included(patterns: &[String], path: &str) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+
+    let mut include = false;
+    for raw in patterns {
+        let pattern = raw.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            continue;
+        }
+        let (exclude, pat) = if let Some(rest) = pattern.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, pattern)
+        };
+        if sparse_pattern_matches(pat, path) {
+            include = !exclude;
+        }
+    }
+    include
+}
+
+fn sparse_pattern_matches(pattern: &str, path: &str) -> bool {
+    let pat = pattern.trim();
+    if pat.is_empty() {
+        return false;
+    }
+
+    let anchored = pat.starts_with('/');
+    let pat = pat.trim_start_matches('/');
+
+    if let Some(dir) = pat.strip_suffix('/') {
+        if anchored {
+            return path == dir || path.starts_with(&format!("{dir}/"));
+        }
+        return path == dir
+            || path.starts_with(&format!("{dir}/"))
+            || path.split('/').any(|component| component == dir);
+    }
+
+    if anchored {
+        return sparse_glob_match(pat.as_bytes(), path.as_bytes());
+    }
+    sparse_glob_match(pat.as_bytes(), path.as_bytes())
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|base| sparse_glob_match(pat.as_bytes(), base.as_bytes()))
+}
+
+fn sparse_glob_match(pattern: &[u8], text: &[u8]) -> bool {
+    let (mut pi, mut ti) = (0, 0);
+    let (mut star_p, mut star_t) = (usize::MAX, 0);
+    while ti < text.len() {
+        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < pattern.len() && pattern[pi] == b'*' {
+            star_p = pi;
+            star_t = ti;
+            pi += 1;
+        } else if star_p != usize::MAX {
+            pi = star_p + 1;
+            star_t += 1;
+            ti = star_t;
+        } else {
+            return false;
+        }
+    }
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
 }
 
 /// Print a ref update line (to stderr, matching git).
