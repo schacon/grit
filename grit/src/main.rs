@@ -362,6 +362,357 @@ fn run_test_tool_revision_walking(rest: &[String]) -> Result<()> {
     }
 }
 
+fn run_test_tool_rot13_filter(rest: &[String]) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+    use std::io::{Read, Write};
+
+    #[derive(Clone, Debug)]
+    struct DelayEntry {
+        requested: u8, // 0=not requested, 1=requested, 2=already delayed
+        count: i32,
+        output: Option<Vec<u8>>,
+    }
+
+    fn pkt_read_line<R: Read>(r: &mut R) -> Result<Option<Vec<u8>>> {
+        let mut hdr = [0u8; 4];
+        match r.read_exact(&mut hdr) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
+        let hdr = std::str::from_utf8(&hdr).context("invalid packet header")?;
+        let len = usize::from_str_radix(hdr, 16).context("invalid packet length")?;
+        if len == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        if len < 4 {
+            bail!("invalid packet length {}", len);
+        }
+        let mut payload = vec![0u8; len - 4];
+        r.read_exact(&mut payload)?;
+        if payload.last() == Some(&b'\n') {
+            payload.pop();
+        }
+        Ok(Some(payload))
+    }
+
+    fn pkt_write_line<W: Write>(w: &mut W, payload: &[u8]) -> Result<()> {
+        let len = payload.len() + 5; // 4-byte header + payload + trailing newline
+        write!(w, "{len:04x}")?;
+        w.write_all(payload)?;
+        w.write_all(b"\n")?;
+        Ok(())
+    }
+
+    fn pkt_flush<W: Write>(w: &mut W) -> Result<()> {
+        w.write_all(b"0000")?;
+        Ok(())
+    }
+
+    fn rot13(input: &[u8]) -> Vec<u8> {
+        input
+            .iter()
+            .map(|b| match *b {
+                b'a'..=b'z' => {
+                    let o = b - b'a';
+                    b'a' + ((o + 13) % 26)
+                }
+                b'A'..=b'Z' => {
+                    let o = b - b'A';
+                    b'A' + ((o + 13) % 26)
+                }
+                _ => *b,
+            })
+            .collect()
+    }
+
+    // Usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities...>
+    let mut always_delay = false;
+    let mut log_path: Option<String> = None;
+    let mut caps: Vec<String> = Vec::new();
+    for arg in rest.iter().skip(1) {
+        if arg == "--always-delay" {
+            always_delay = true;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--log=") {
+            log_path = Some(v.to_owned());
+            continue;
+        }
+        if arg.starts_with("--") {
+            bail!("unknown option: {arg}");
+        }
+        caps.push(arg.clone());
+    }
+    let Some(log_path) = log_path else {
+        bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
+    };
+    if caps.is_empty() {
+        bail!("usage: test-tool rot13-filter [--always-delay] --log=<path> <capabilities>");
+    }
+
+    let has_clean = caps.iter().any(|c| c == "clean");
+    let has_smudge = caps.iter().any(|c| c == "smudge");
+    let has_delay = caps.iter().any(|c| c == "delay");
+
+    let mut delay: HashMap<String, DelayEntry> = HashMap::new();
+    for (name, count) in [
+        ("test-delay10.a", 1),
+        ("test-delay11.a", 1),
+        ("test-delay20.a", 2),
+        ("test-delay10.b", 1),
+        ("missing-delay.a", 1),
+        ("invalid-delay.a", 1),
+    ] {
+        delay.insert(
+            name.to_string(),
+            DelayEntry {
+                requested: 0,
+                count,
+                output: None,
+            },
+        );
+    }
+
+    let mut logfile = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .with_context(|| format!("opening log file '{log_path}'"))?;
+    writeln!(logfile, "START")?;
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut reader = stdin.lock();
+    let mut writer = stdout.lock();
+
+    // Protocol v2 handshake.
+    let init = pkt_read_line(&mut reader).context("reading filter init header")?;
+    if init.as_deref() != Some(b"git-filter-client".as_slice()) {
+        bail!("bad initialize");
+    }
+    let version = pkt_read_line(&mut reader).context("reading filter version")?;
+    if version.as_deref() != Some(b"version=2".as_slice()) {
+        bail!("bad version");
+    }
+    let init_flush = pkt_read_line(&mut reader).context("reading filter init flush")?;
+    if init_flush.is_none() || init_flush.is_some_and(|l| !l.is_empty()) {
+        bail!("bad version end");
+    }
+
+    pkt_write_line(&mut writer, b"git-filter-server")?;
+    pkt_write_line(&mut writer, b"version=2")?;
+    pkt_flush(&mut writer)?;
+    writer.flush()?;
+
+    // Read remote capabilities.
+    let mut remote_caps: HashSet<String> = HashSet::new();
+    loop {
+        match pkt_read_line(&mut reader).context("reading capabilities")? {
+            None => break,
+            Some(line) if line.is_empty() => break,
+            Some(line) => {
+                if let Some(v) = std::str::from_utf8(&line)
+                    .ok()
+                    .and_then(|s| s.strip_prefix("capability="))
+                {
+                    remote_caps.insert(v.to_string());
+                }
+            }
+        }
+    }
+
+    for cap in &caps {
+        if !remote_caps.contains(cap) {
+            bail!("our capability '{}' is not available from remote", cap);
+        }
+        pkt_write_line(&mut writer, format!("capability={cap}").as_bytes())?;
+    }
+    pkt_flush(&mut writer)?;
+    writer.flush()?;
+    writeln!(logfile, "init handshake complete")?;
+
+    loop {
+        let command_line = pkt_read_line(&mut reader).context("reading command")?;
+        let Some(command_line) = command_line else {
+            writeln!(logfile, "STOP")?;
+            break;
+        };
+        if command_line.is_empty() {
+            continue;
+        }
+        let command_text = String::from_utf8_lossy(&command_line);
+        let Some(command) = command_text.strip_prefix("command=") else {
+            bail!("expected command=...");
+        };
+        write!(logfile, "IN: {command}")?;
+
+        if command == "list_available_blobs" {
+            let done = pkt_read_line(&mut reader).context("reading list_available_blobs flush")?;
+            if done.is_none() || done.is_some_and(|l| !l.is_empty()) {
+                bail!("bad list_available_blobs end");
+            }
+
+            let mut ready = Vec::new();
+            for (name, entry) in delay.iter_mut() {
+                if entry.requested == 0 {
+                    continue;
+                }
+                entry.count -= 1;
+                if name == "invalid-delay.a" {
+                    pkt_write_line(&mut writer, b"pathname=unfiltered")?;
+                }
+                if name != "missing-delay.a" && entry.count == 0 {
+                    ready.push(name.clone());
+                    pkt_write_line(&mut writer, format!("pathname={name}").as_bytes())?;
+                }
+            }
+            ready.sort();
+            for path in &ready {
+                write!(logfile, " {path}")?;
+            }
+            pkt_flush(&mut writer)?;
+            writeln!(logfile, " [OK]")?;
+            pkt_write_line(&mut writer, b"status=success")?;
+            pkt_flush(&mut writer)?;
+            writer.flush()?;
+            continue;
+        }
+
+        let pathname_line = pkt_read_line(&mut reader).context("reading pathname")?;
+        let Some(pathname_line) = pathname_line else {
+            bail!("unexpected EOF while expecting pathname");
+        };
+        let pathname_text = String::from_utf8_lossy(&pathname_line);
+        let Some(pathname) = pathname_text.strip_prefix("pathname=") else {
+            bail!("expected pathname=...");
+        };
+        write!(logfile, " {pathname}")?;
+
+        // Read optional key-value metadata until flush.
+        loop {
+            match pkt_read_line(&mut reader).context("reading command metadata")? {
+                None => break,
+                Some(meta_line) if meta_line.is_empty() => break,
+                Some(meta_line) => {
+                    let meta = String::from_utf8_lossy(&meta_line).to_string();
+                    if meta == "can-delay=1" {
+                        if let Some(entry) = delay.get_mut(pathname) {
+                            if entry.requested == 0 {
+                                entry.requested = 1;
+                            }
+                        } else if always_delay {
+                            delay.insert(
+                                pathname.to_string(),
+                                DelayEntry {
+                                    requested: 1,
+                                    count: 1,
+                                    output: None,
+                                },
+                            );
+                        }
+                    } else if meta.starts_with("ref=")
+                        || meta.starts_with("treeish=")
+                        || meta.starts_with("blob=")
+                    {
+                        write!(logfile, " {meta}")?;
+                    } else {
+                        bail!("Unknown message '{meta}'");
+                    }
+                }
+            }
+        }
+
+        // Read command payload until flush.
+        let mut input = Vec::<u8>::new();
+        loop {
+            match pkt_read_line(&mut reader).context("reading command payload")? {
+                None => break,
+                Some(chunk) if chunk.is_empty() => break,
+                Some(chunk) => input.extend_from_slice(&chunk),
+            }
+        }
+
+        write!(logfile, " {} [OK] -- ", input.len())?;
+
+        let output: Vec<u8> = if let Some(entry) =
+            delay.get(pathname).and_then(|d| d.output.clone())
+        {
+            entry
+        } else if pathname == "error.r" || pathname == "abort.r" {
+            Vec::new()
+        } else if command == "clean" && has_clean {
+            rot13(&input)
+        } else if command == "smudge" && has_smudge {
+            rot13(&input)
+        } else {
+            bail!("bad command '{command}'");
+        };
+
+        if pathname == "error.r" {
+            writeln!(logfile, "[ERROR]")?;
+            pkt_write_line(&mut writer, b"status=error")?;
+            pkt_flush(&mut writer)?;
+            writer.flush()?;
+            continue;
+        }
+
+        if pathname == "abort.r" {
+            writeln!(logfile, "[ABORT]")?;
+            pkt_write_line(&mut writer, b"status=abort")?;
+            pkt_flush(&mut writer)?;
+            writer.flush()?;
+            continue;
+        }
+
+        let should_delay = command == "smudge"
+            && has_delay
+            && delay
+                .get(pathname)
+                .is_some_and(|entry| entry.requested == 1);
+        if should_delay {
+            writeln!(logfile, "[DELAYED]")?;
+            pkt_write_line(&mut writer, b"status=delayed")?;
+            pkt_flush(&mut writer)?;
+            if let Some(entry) = delay.get_mut(pathname) {
+                entry.requested = 2;
+                entry.output = Some(output.clone());
+            }
+            writer.flush()?;
+            continue;
+        }
+
+        pkt_write_line(&mut writer, b"status=success")?;
+        pkt_flush(&mut writer)?;
+
+        if (command == "clean" && pathname == "clean-write-fail.r")
+            || (command == "smudge" && pathname == "smudge-write-fail.r")
+        {
+            writeln!(logfile, "[WRITE FAIL]")?;
+            bail!("{command} write error");
+        }
+
+        write!(logfile, "OUT: {} ", output.len())?;
+        let mut packet_count = 0usize;
+        let mut offset = 0usize;
+        while offset < output.len() {
+            let end = (offset + 65515).min(output.len());
+            pkt_write_line(&mut writer, &output[offset..end])?;
+            packet_count += 1;
+            offset = end;
+        }
+        pkt_flush(&mut writer)?;
+        for _ in 0..packet_count {
+            write!(logfile, ".")?;
+        }
+        writeln!(logfile, " [OK]")?;
+        pkt_flush(&mut writer)?;
+        writer.flush()?;
+    }
+
+    Ok(())
+}
+
 fn run_test_tool_mergesort(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "test" => {
@@ -1330,7 +1681,7 @@ fn run() -> Result<()> {
 }
 
 fn maybe_emit_parallel_checkout_worker_trace2(subcmd: &str, rest: &[String]) {
-    if subcmd != "checkout" && subcmd != "reset" {
+    if subcmd != "reset" {
         return;
     }
     let Some(trace_path) = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty()) else {
@@ -2360,6 +2711,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "dir-iterator" => run_test_tool_dir_iterator(rest),
                 "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
+                "rot13-filter" => run_test_tool_rot13_filter(rest),
                 "mergesort" => run_test_tool_mergesort(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),

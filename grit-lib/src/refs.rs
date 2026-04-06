@@ -436,12 +436,14 @@ pub fn list_refs(git_dir: &Path, prefix: &str) -> Result<Vec<(String, ObjectId)>
     let mut results = Vec::new();
     let base = git_dir.join(prefix);
     collect_refs(&base, prefix, git_dir, &mut results)?;
+    collect_packed_refs(git_dir, prefix, &mut results)?;
 
     // For worktrees, also collect refs from the common dir
     if let Some(cdir) = common_dir(git_dir) {
         if cdir != git_dir {
             let cbase = cdir.join(prefix);
             collect_refs(&cbase, prefix, &cdir, &mut results)?;
+            collect_packed_refs(&cdir, prefix, &mut results)?;
             // Deduplicate: worktree-local refs take priority
             results.sort_by(|a, b| a.0.cmp(&b.0));
             results.dedup_by(|b, a| a.0 == b.0);
@@ -538,6 +540,30 @@ fn collect_refs(
                 out.push((refname, oid))
             }
         }
+    }
+    Ok(())
+}
+
+fn collect_packed_refs(git_dir: &Path, prefix: &str, out: &mut Vec<(String, ObjectId)>) -> Result<()> {
+    let packed_path = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    for line in content.lines() {
+        if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(2, ' ');
+        let hash = parts.next().unwrap_or("");
+        let refname = parts.next().unwrap_or("").trim();
+        if !refname.starts_with(prefix) || hash.len() != 40 {
+            continue;
+        }
+        let oid: ObjectId = hash.parse()?;
+        out.push((refname.to_string(), oid));
     }
     Ok(())
 }

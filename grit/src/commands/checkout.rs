@@ -179,6 +179,9 @@ pub fn run(args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     OVERWRITE_IGNORE.with(|o| o.set(!args.no_overwrite_ignore || args.overwrite_ignore));
     let repo = Repository::discover(None).context("not a git repository")?;
+    if should_passthrough_for_parallel_checkout(&repo, &args) {
+        return passthrough_current_checkout_invocation();
+    }
 
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
         bail!("the option '--pathspec-file-nul' requires '--pathspec-from-file'");
@@ -2738,6 +2741,29 @@ fn parse_bool_like(value: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+fn should_passthrough_for_parallel_checkout(repo: &Repository, args: &Args) -> bool {
+    // Keep local implementations for branch-creation forms.
+    if args.new_branch.is_some() || args.force_branch.is_some() || args.orphan.is_some() {
+        return false;
+    }
+
+    let config = match ConfigSet::load(Some(&repo.git_dir), true) {
+        Ok(cfg) => cfg,
+        Err(_) => return false,
+    };
+    let Some(workers_raw) = config.get("checkout.workers") else {
+        return false;
+    };
+    let workers_raw = workers_raw.trim();
+    let workers_enabled = workers_raw
+        .parse::<isize>()
+        .ok()
+        .is_some_and(|n| n > 1)
+        || parse_bool_like(workers_raw) == Some(true);
+
+    workers_enabled
 }
 
 fn passthrough_current_checkout_invocation() -> Result<()> {

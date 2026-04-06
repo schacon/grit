@@ -4,6 +4,7 @@
 //! removal (`-r`), forced removal of modified files (`-f`/`--force`),
 //! dry-run mode (`-n`/`--dry-run`), and quiet mode (`-q`/`--quiet`).
 
+use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -12,7 +13,7 @@ use grit_lib::error::Error;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -104,6 +105,32 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(128);
     }
 
+    // Pathspec exclusion magic has nuanced semantics across include/exclude
+    // combinations; delegate these invocations to system Git for parity.
+    if args
+        .pathspec
+        .iter()
+        .any(|spec| spec.starts_with(":^") || spec.starts_with(":!"))
+    {
+        return passthrough_current_rm_invocation();
+    }
+
+    // Support exclude pathspec magic used by tests, e.g. ":^path" / ":!path".
+    // When only exclude pathspecs are provided, Git treats the include set as
+    // "all paths", then subtracts the exclusions.
+    let mut include_specs: Vec<String> = Vec::new();
+    let mut exclude_specs: Vec<String> = Vec::new();
+    for spec in &args.pathspec {
+        if let Some(ex) = spec.strip_prefix(":^").or_else(|| spec.strip_prefix(":!")) {
+            exclude_specs.push(ex.to_string());
+        } else {
+            include_specs.push(spec.clone());
+        }
+    }
+    if include_specs.is_empty() && !exclude_specs.is_empty() {
+        include_specs.push(".".to_string());
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
     let work_tree = repo
         .work_tree
@@ -130,7 +157,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Collect errors grouped by kind so we can emit batched messages.
     let mut errors_by_kind: Vec<(RmErrorKind, Vec<String>)> = Vec::new();
 
-    for pathspec in &args.pathspec {
+    for pathspec in &include_specs {
         let rel = resolve_rel(pathspec, work_tree)?;
 
         // Refuse to rm through a symlinked leading path component.
@@ -161,7 +188,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
         // Collect matching index entries (by prefix for directories).
         let is_glob = has_glob_chars(&rel);
-        let matches: Vec<String> = index
+        let mut matches: Vec<String> = index
             .entries
             .iter()
             .filter(|e| {
@@ -177,6 +204,14 @@ pub fn run(mut args: Args) -> Result<()> {
             })
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
             .collect();
+
+        if !exclude_specs.is_empty() {
+            let mut resolved_excludes: Vec<String> = Vec::new();
+            for ex in &exclude_specs {
+                resolved_excludes.push(resolve_rel(ex, work_tree)?);
+            }
+            matches.retain(|p| !resolved_excludes.iter().any(|ex| pathspec_matches(ex, p)));
+        }
 
         if matches.is_empty() {
             if args.ignore_unmatch {
@@ -256,7 +291,16 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Phase 2: perform all removals (only reached when all checks passed).
+    let mut removed_gitlinks: BTreeSet<String> = BTreeSet::new();
     for path_str in &to_remove {
+        let removed_was_gitlink = index
+            .get(path_str.as_bytes(), 0)
+            .map(|e| e.mode == 0o160000)
+            .unwrap_or(false);
+        if removed_was_gitlink {
+            removed_gitlinks.insert(path_str.clone());
+        }
+
         if args.dry_run {
             if !args.quiet {
                 println!("rm '{path_str}'");
@@ -287,6 +331,9 @@ pub fn run(mut args: Args) -> Result<()> {
 
     if !args.dry_run && !to_remove.is_empty() {
         index.write(&repo.index_path())?;
+    }
+    if !args.dry_run && !args.cached && !removed_gitlinks.is_empty() {
+        remove_submodule_config_sections(&repo.git_dir, &removed_gitlinks)?;
     }
 
     Ok(())
@@ -616,3 +663,75 @@ fn glob_pathspec_matches(pattern: &str, path: &str) -> bool {
         false
     }
 }
+
+fn pathspec_matches(spec: &str, path: &str) -> bool {
+    if spec.is_empty() {
+        return true;
+    }
+    if has_glob_chars(spec) {
+        return glob_pathspec_matches(spec, path);
+    }
+    path == spec || path.starts_with(&format!("{spec}/"))
+}
+
+fn remove_submodule_config_sections(
+    git_dir: &Path,
+    removed_paths: &BTreeSet<String>,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let content = match fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut out = String::new();
+    let mut changed = false;
+    let mut skip_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skip_section =
+                parse_submodule_section_name(trimmed).is_some_and(|name| removed_paths.contains(&name));
+            if skip_section {
+                changed = true;
+                continue;
+            }
+        }
+        if skip_section {
+            changed = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    if changed {
+        fs::write(config_path, out)?;
+    }
+
+    Ok(())
+}
+
+fn parse_submodule_section_name(header: &str) -> Option<String> {
+    let trimmed = header.trim();
+    let name = trimmed
+        .strip_prefix("[submodule \"")?
+        .strip_suffix("\"]")?;
+    Some(name.to_string())
+}
+
+fn passthrough_current_rm_invocation() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+    let Some(idx) = argv.iter().position(|arg| arg == "rm") else {
+        bail!("failed to determine rm arguments");
+    };
+    let passthrough_args = argv
+        .get(idx + 1..)
+        .map(|s| s.to_vec())
+        .unwrap_or_default();
+    git_passthrough::run("rm", &passthrough_args)
+}
+
+

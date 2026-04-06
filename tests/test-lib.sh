@@ -44,6 +44,7 @@ fi
 
 # Resolve GUST_BIN to an absolute path so wrapper scripts work regardless of cwd.
 GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
+export GUST_BIN
 
 # Test environment
 TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
@@ -99,6 +100,13 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
+	# Native git sometimes executes `git test-tool ...` (dashed helper lookup),
+	# so provide git-test-tool in PATH to route to our test helper script.
+	cat >"$BIN_DIRECTORY/git-test-tool" <<EOF
+#!/bin/sh
+exec "$TEST_DIRECTORY/test-tool" "\$@"
+EOF
+	chmod +x "$BIN_DIRECTORY/git-test-tool"
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
@@ -125,8 +133,15 @@ PATH="$TEST_DIRECTORY:$PATH"
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store inside .git/ so the file is never tracked by git.
-_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+# Prefer storing inside .git/ so the file is never tracked by git; when the
+# harness is configured with TEST_NO_CREATE_REPO=1 there may be no top-level
+# .git directory, so fall back to the trash root.
+if test -d "$TRASH_DIRECTORY/.git"
+then
+	_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+else
+	_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
+fi
 
 test_tick () {
 	if test -z "${test_tick+set}"
@@ -210,6 +225,7 @@ test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 test_path_is_symlink () { test -h "$1"; }
+test_oid_to_path () { echo "$1" | sed 's#^\(..\)#\1/#'; }
 
 test_path_is_dir_not_symlink () {
 	test_path_is_dir "$1" &&

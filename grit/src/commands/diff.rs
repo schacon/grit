@@ -1162,6 +1162,8 @@ fn run_no_index(args: &Args) -> Result<()> {
 /// Diff two directories recursively with --no-index.
 fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     use std::collections::BTreeSet;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
 
     fn collect_files(dir: &Path, prefix: &str, out: &mut BTreeSet<String>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
@@ -1192,22 +1194,39 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     let mut out = stdout.lock();
     let context_lines = args.unified.unwrap_or(3);
 
+    fn read_no_index_entry(path: &Path) -> Option<(Vec<u8>, &'static str)> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            let target = std::fs::read_link(path).ok()?;
+            #[cfg(unix)]
+            {
+                return Some((target.as_os_str().as_bytes().to_vec(), "120000"));
+            }
+            #[cfg(not(unix))]
+            {
+                return Some((target.to_string_lossy().as_bytes().to_vec(), "120000"));
+            }
+        }
+        if ft.is_file() {
+            return std::fs::read(path).ok().map(|d| (d, "100644"));
+        }
+        None
+    }
+
     for rel in &all_files {
         let fa = dir_a.join(rel);
         let fb = dir_b.join(rel);
-        let data_a = if fa.is_file() {
-            std::fs::read(&fa).ok()
-        } else {
-            None
-        };
-        let data_b = if fb.is_file() {
-            std::fs::read(&fb).ok()
-        } else {
-            None
-        };
+        let entry_a = read_no_index_entry(&fa);
+        let entry_b = read_no_index_entry(&fb);
 
-        match (&data_a, &data_b) {
-            (Some(a), Some(b)) if a == b => continue,
+        match (&entry_a, &entry_b) {
+            (Some((data_a, mode_a)), Some((data_b, mode_b)))
+                if mode_a == mode_b && data_a == data_b =>
+            {
+                continue;
+            }
+            (None, None) => continue,
             _ => {}
         }
 
@@ -1220,7 +1239,7 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
         if args.name_status {
-            let status = match (&data_a, &data_b) {
+            let status = match (&entry_a, &entry_b) {
                 (None, Some(_)) => "A",
                 (Some(_), None) => "D",
                 _ => "M",
@@ -1229,30 +1248,32 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             continue;
         }
 
-        let text_a = data_a
+        let text_a = entry_a
             .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
+            .map(|(d, _)| String::from_utf8_lossy(d).to_string())
             .unwrap_or_default();
-        let text_b = data_b
+        let text_b = entry_b
             .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
+            .map(|(d, _)| String::from_utf8_lossy(d).to_string())
             .unwrap_or_default();
 
-        let old_label = if data_a.is_some() {
+        let old_label = if entry_a.is_some() {
             format!("a/{}", rel)
         } else {
             "/dev/null".to_string()
         };
-        let new_label = if data_b.is_some() {
+        let new_label = if entry_b.is_some() {
             format!("b/{}", rel)
         } else {
             "/dev/null".to_string()
         };
         writeln!(out, "diff --git a/{} b/{}", rel, rel)?;
-        if data_a.is_none() {
-            writeln!(out, "new file mode 100644")?;
-        } else if data_b.is_none() {
-            writeln!(out, "deleted file mode 100644")?;
+        if entry_a.is_none() {
+            let new_mode = entry_b.as_ref().map(|(_, mode)| *mode).unwrap_or("100644");
+            writeln!(out, "new file mode {}", new_mode)?;
+        } else if entry_b.is_none() {
+            let old_mode = entry_a.as_ref().map(|(_, mode)| *mode).unwrap_or("100644");
+            writeln!(out, "deleted file mode {}", old_mode)?;
         }
         let patch =
             grit_lib::diff::unified_diff(&text_a, &text_b, &old_label, &new_label, context_lines);

@@ -1,6 +1,16 @@
 #!/bin/sh
 # Minimal test-tool stub for grit tests
 # Implements the most-used subcommands from git's test-tool
+
+exec_grit_test_tool() {
+	if [ -n "$GUST_BIN" ]
+	then
+		exec "$GUST_BIN" test-tool "$@"
+	else
+		exec git test-tool "$@"
+	fi
+}
+
 case "$1" in
   chmtime)
     shift
@@ -122,7 +132,7 @@ case "$1" in
     esac ;;
   env-helper)
     shift
-    exec git test-tool env-helper "$@" ;;
+    exec_grit_test_tool env-helper "$@" ;;
   sigchain)
     # Minimal sigchain helper for t0005-signals.sh:
     # write expected trace then terminate via SIGTERM.
@@ -214,11 +224,11 @@ case "$1" in
     exec git serve-v2 "$@" ;;
   revision-walking)
     shift
-    exec git test-tool revision-walking "$@" ;;
+    exec_grit_test_tool revision-walking "$@" ;;
   wildmatch)
     shift
-    exec git test-tool wildmatch "$@" ;;
+    exec_grit_test_tool wildmatch "$@" ;;
   *)
     # Delegate unsupported helpers to grit's `git test-tool ...`
-    exec git test-tool "$@" ;;
+    exec_grit_test_tool "$@" ;;
 esac

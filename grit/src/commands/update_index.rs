@@ -517,6 +517,10 @@ pub fn run(args: Args) -> Result<()> {
             args.ignore_submodules,
             args.really_refresh,
             index_mtime_sec,
+            config
+                .get_bool("core.trustctime")
+                .and_then(Result::ok)
+                .unwrap_or(true),
             only_paths.as_ref(),
         )?;
         let quiet_refresh = args.quiet || matches!(std::env::var("GIT_QUIET"), Ok(v) if !v.is_empty());
@@ -648,6 +652,7 @@ fn refresh_index(
     ignore_submodules: bool,
     really_refresh: bool,
     index_mtime_sec: u32,
+    trust_ctime: bool,
     only_paths: Option<&std::collections::HashSet<Vec<u8>>>,
 ) -> Result<(Vec<String>, bool)> {
     use std::os::unix::fs::MetadataExt;
@@ -748,37 +753,49 @@ fn refresh_index(
             continue;
         }
 
-        if really_refresh {
-            let ctime_sec = meta.ctime() as u32;
-            let ctime_nsec = meta.ctime_nsec() as u32;
-            let mtime_sec = meta.mtime() as u32;
-            let mtime_nsec = meta.mtime_nsec() as u32;
-            let dev = meta.dev() as u32;
-            let ino = meta.ino() as u32;
-            let uid = meta.uid();
-            let gid = meta.gid();
-            let size = meta.size() as u32;
-            if entry.ctime_sec != ctime_sec
-                || entry.ctime_nsec != ctime_nsec
-                || entry.mtime_sec != mtime_sec
-                || entry.mtime_nsec != mtime_nsec
-                || entry.dev != dev
-                || entry.ino != ino
-                || entry.uid != uid
-                || entry.gid != gid
-                || entry.size != size
-            {
+        let ctime_sec = meta.ctime() as u32;
+        let ctime_nsec = meta.ctime_nsec() as u32;
+        let mtime_sec = meta.mtime() as u32;
+        let mtime_nsec = meta.mtime_nsec() as u32;
+        let dev = meta.dev() as u32;
+        let ino = meta.ino() as u32;
+        let uid = meta.uid();
+        let gid = meta.gid();
+        let size = meta.size() as u32;
+        let ctime_differs = entry.ctime_sec != ctime_sec || entry.ctime_nsec != ctime_nsec;
+        let basic_stat_differs = (trust_ctime && ctime_differs)
+            || entry.mtime_sec != mtime_sec
+            || entry.dev != dev
+            || entry.ino != ino
+            || entry.size != size;
+        let extended_stat_differs = basic_stat_differs
+            || entry.mtime_nsec != mtime_nsec
+            || entry.uid != uid
+            || entry.gid != gid;
+        let stat_differs = if really_refresh {
+            extended_stat_differs
+        } else {
+            basic_stat_differs
+        };
+
+        // `--refresh` needs to persist refreshed stat info so later commands
+        // (including recursive submodule checkouts) do not consider clean
+        // paths "not up-to-date" solely due to stale cache entries.
+        // `--really-refresh` shares this behavior and additionally ignores the
+        // assume-unchanged bit earlier in argument handling.
+        if stat_differs || really_refresh {
+            if stat_differs {
                 needs_write = true;
-                entry.ctime_sec = ctime_sec;
-                entry.ctime_nsec = ctime_nsec;
-                entry.mtime_sec = mtime_sec;
-                entry.mtime_nsec = mtime_nsec;
-                entry.dev = dev;
-                entry.ino = ino;
-                entry.uid = uid;
-                entry.gid = gid;
-                entry.size = size;
             }
+            entry.ctime_sec = ctime_sec;
+            entry.ctime_nsec = ctime_nsec;
+            entry.mtime_sec = mtime_sec;
+            entry.mtime_nsec = mtime_nsec;
+            entry.dev = dev;
+            entry.ino = ino;
+            entry.uid = uid;
+            entry.gid = gid;
+            entry.size = size;
         }
     }
     Ok((stale_paths, needs_write))
