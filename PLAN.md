@@ -746,7 +746,7 @@ commit → check it off → move on.
 - [x] `t6003-rev-list-topo-order` ████████████████████ 36/36 (0 left) — Tests git rev-list --topo-order functionality
 - [ ] `t6601-path-walk` ░░░░░░░░░░░░░░░░░░░░ 0/15 (15 left) — direct path-walk API tests
 - [ ] `t6437-submodule-merge` █████░░░░░░░░░░░░░░░ 6/22 (16 left) — merging with submodules
-- [ ] `t6006-rev-list-format` ███████████████░░░░░ 63/80 (17 left) — git rev-list --pretty=format test
+- [x] `t6006-rev-list-format` ████████████████████ 80/80 (0 left) — git rev-list --pretty=format test
 - [ ] `t6422-merge-rename-corner-cases` ██████░░░░░░░░░░░░░░ 9/26 (17 left) — recursive merge corner cases w/ renames but not criss-crosses
 - [ ] `t6000-rev-list-misc` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — miscellaneous rev-list tests
 - [ ] `t6130-pathspec-noglob` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — test globbing (and noglob) of pathspec limiting

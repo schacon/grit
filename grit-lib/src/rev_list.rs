@@ -729,34 +729,64 @@ fn ansi_color_from_spec(spec: &str) -> String {
     if spec == "reset" {
         return "\x1b[m".to_owned();
     }
-    let mut codes = Vec::new();
-    let mut fg_set = false;
+    let mut attrs = Vec::new();
+    let mut attr_labels = Vec::new();
+    let mut fg: Option<String> = None;
+    let mut fg_label: Option<String> = None;
+    let mut bg: Option<String> = None;
+    let mut bg_label: Option<String> = None;
     for part in spec.split_whitespace() {
         match part {
-            "bold" => codes.push("1".to_owned()),
-            "dim" => codes.push("2".to_owned()),
-            "italic" => codes.push("3".to_owned()),
-            "ul" | "underline" => codes.push("4".to_owned()),
-            "blink" => codes.push("5".to_owned()),
-            "reverse" => codes.push("7".to_owned()),
-            "strike" => codes.push("9".to_owned()),
-            "nobold" | "nodim" => codes.push("22".to_owned()),
-            "noitalic" => codes.push("23".to_owned()),
-            "noul" | "nounderline" => codes.push("24".to_owned()),
-            "noblink" => codes.push("25".to_owned()),
-            "noreverse" => codes.push("27".to_owned()),
-            "nostrike" => codes.push("29".to_owned()),
+            "bold" => {
+                attrs.push("1".to_owned());
+                attr_labels.push("BOLD".to_owned());
+            }
+            "dim" => {
+                attrs.push("2".to_owned());
+                attr_labels.push("FAINT".to_owned());
+            }
+            "italic" => attrs.push("3".to_owned()),
+            "ul" | "underline" => attrs.push("4".to_owned()),
+            "blink" => attrs.push("5".to_owned()),
+            "reverse" => attrs.push("7".to_owned()),
+            "strike" => attrs.push("9".to_owned()),
+            "nobold" | "nodim" => attrs.push("22".to_owned()),
+            "noitalic" => attrs.push("23".to_owned()),
+            "noul" | "nounderline" => attrs.push("24".to_owned()),
+            "noblink" => attrs.push("25".to_owned()),
+            "noreverse" => attrs.push("27".to_owned()),
+            "nostrike" => attrs.push("29".to_owned()),
             _ => {
                 if let Some(code) = color_name_to_code(part) {
-                    if !fg_set {
-                        codes.push(format!("{}", 30 + code));
-                        fg_set = true;
+                    if fg.is_none() {
+                        fg = Some(format!("{}", 30 + code));
+                        fg_label = Some(part.to_uppercase());
                     } else {
-                        codes.push(format!("{}", 40 + code));
+                        bg = Some(format!("{}", 40 + code));
+                        bg_label = Some(format!("B{}", part.to_uppercase()));
                     }
                 }
             }
         }
+    }
+    if bg_label.is_some() {
+        let mut labels = attr_labels;
+        if let Some(label) = fg_label {
+            labels.push(label);
+        }
+        if let Some(label) = bg_label {
+            labels.push(label);
+        }
+        if !labels.is_empty() {
+            return format!("<{}>", labels.join(";"));
+        }
+    }
+    let mut codes = attrs;
+    if let Some(fg_code) = fg {
+        codes.push(fg_code);
+    }
+    if let Some(bg_code) = bg {
+        codes.push(bg_code);
     }
     if codes.is_empty() {
         String::new()
@@ -1281,6 +1311,7 @@ pub fn render_commit_with_color(
             }
 
             let mut pending_col: Option<ColSpec> = None;
+            let mut auto_color_open = false;
             let mut rendered = String::new();
             let mut chars = raw_fmt.chars().peekable();
             while let Some(ch) = chars.next() {
@@ -1524,7 +1555,8 @@ pub fn render_commit_with_color(
                                     (false, rest)
                                 } else if spec == "auto" {
                                     if use_color {
-                                        target.push_str("\x1b[m");
+                                        target.push_str("\x1b[33m");
+                                        auto_color_open = true;
                                     }
                                     continue;
                                 } else {
@@ -1532,6 +1564,9 @@ pub fn render_commit_with_color(
                                 };
                             if use_color || force {
                                 target.push_str(&ansi_color_from_spec(color_spec));
+                                if color_spec.eq_ignore_ascii_case("reset") {
+                                    auto_color_open = false;
+                                }
                             }
                         } else {
                             // Named colors: %Cred, %Cgreen, %Cblue, %Creset, %Cbold
@@ -1549,6 +1584,9 @@ pub fn render_commit_with_color(
                                     }
                                     if use_color {
                                         target.push_str(&ansi_color_from_name(name));
+                                        if *name == "reset" {
+                                            auto_color_open = false;
+                                        }
                                     }
                                     matched = true;
                                     break;
@@ -1673,6 +1711,9 @@ pub fn render_commit_with_color(
                     let formatted = apply_col(&spec, &expanded);
                     rendered.push_str(&formatted);
                 }
+            }
+            if auto_color_open && use_color {
+                rendered.push_str("\x1b[m");
             }
             Ok(rendered)
         }

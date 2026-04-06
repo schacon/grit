@@ -252,6 +252,14 @@ pub struct Args {
     #[arg(long = "no-abbrev")]
     pub no_abbrev: bool,
 
+    /// Omit commit headers in pretty output.
+    #[arg(long = "no-commit-header")]
+    pub no_commit_header: bool,
+
+    /// Include commit headers in pretty output.
+    #[arg(long = "commit-header")]
+    pub commit_header: bool,
+
     /// Grep log messages.
     #[arg(long = "grep", value_name = "PATTERN")]
     pub grep_patterns: Vec<String>,
@@ -2172,11 +2180,12 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
 
     let max = args.max_count.unwrap_or(usize::MAX);
     let skip = args.skip.unwrap_or(0);
+    let abbrev_len = parse_abbrev(&args.abbrev);
+    let no_commit_header = args.no_commit_header && !args.commit_header;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    // Detect format
     let is_format_separator = args
         .format
         .as_deref()
@@ -2215,7 +2224,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         if let Some(ref fmt) = args.format {
             match fmt.as_str() {
                 "oneline" => {
-                    let abbrev = &entry.new_oid.to_hex()[..7];
+                    let abbrev = &entry.new_oid.to_hex()[..abbrev_len.min(40)];
                     let subject = commit_data.message.lines().next().unwrap_or("");
                     if args.null_terminator {
                         write!(out, "{} {}\0", abbrev, subject)?;
@@ -2224,7 +2233,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     }
                 }
                 "short" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    if !no_commit_header {
+                        writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    }
                     let author_name = extract_name(&commit_data.author);
                     writeln!(out, "Author: {author_name}")?;
                     writeln!(out)?;
@@ -2234,7 +2245,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 "medium" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    if !no_commit_header {
+                        writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    }
                     writeln!(
                         out,
                         "Author: {}",
@@ -2249,7 +2262,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 "full" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    if !no_commit_header {
+                        writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    }
                     writeln!(
                         out,
                         "Author: {}",
@@ -2267,7 +2282,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 "fuller" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    if !no_commit_header {
+                        writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    }
                     writeln!(
                         out,
                         "Author:     {}",
@@ -2316,7 +2333,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                     writeln!(out)?;
                 }
                 "raw" => {
-                    writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    if !no_commit_header {
+                        writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+                    }
                     // Write raw commit data
                     writeln!(out, "tree {}", commit_data.tree.to_hex())?;
                     for parent in &commit_data.parents {
@@ -2342,6 +2361,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                         fmt_str,
                         &entry.new_oid,
                         &commit_data,
+                        abbrev_len,
                         &selector,
                         &entry.message,
                         &entry.identity,
@@ -2350,7 +2370,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
             }
         } else if args.oneline {
-            let abbrev = &entry.new_oid.to_hex()[..7];
+            let abbrev = &entry.new_oid.to_hex()[..abbrev_len.min(40)];
             if args.null_terminator {
                 write!(
                     out,
@@ -2366,7 +2386,9 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             }
         } else {
             // Full format with Reflog headers
-            writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+            if !no_commit_header {
+                writeln!(out, "commit {}", entry.new_oid.to_hex())?;
+            }
             writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
             writeln!(out, "Reflog message: {}", entry.message)?;
             writeln!(
@@ -2394,12 +2416,13 @@ fn apply_reflog_format_string(
     fmt: &str,
     oid: &ObjectId,
     commit: &grit_lib::objects::CommitData,
+    abbrev_len: usize,
     selector: &str,
     reflog_msg: &str,
     reflog_identity: &str,
 ) -> String {
     let hex = oid.to_hex();
-    let short = &hex[..7.min(hex.len())];
+    let short = &hex[..abbrev_len.min(hex.len())];
     let subject = commit.message.lines().next().unwrap_or("");
     let body = extract_body(&commit.message);
 
@@ -2438,6 +2461,10 @@ fn apply_reflog_format_string(
                 Some('g') => {
                     chars.next();
                     match chars.peek() {
+                        Some('D') => {
+                            chars.next();
+                            result.push_str(selector);
+                        }
                         Some('d') => {
                             chars.next();
                             result.push_str(selector);
@@ -3155,6 +3182,7 @@ fn apply_format_string(
     }
 
     let mut pending_col: Option<ColSpec> = None;
+    let mut auto_color_open = false;
     let mut result = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
 
@@ -3393,7 +3421,8 @@ fn apply_format_string(
                             (false, rest)
                         } else if spec == "auto" {
                             if use_color {
-                                result.push_str("\x1b[m");
+                                result.push_str("\x1b[33m");
+                                auto_color_open = true;
                             }
                             continue;
                         } else {
@@ -3401,6 +3430,9 @@ fn apply_format_string(
                         };
                         if use_color || force {
                             result.push_str(&format_ansi_color_spec(color_spec));
+                            if color_spec.eq_ignore_ascii_case("reset") {
+                                auto_color_open = false;
+                            }
                         }
                     } else {
                         let remaining: String = chars.clone().collect();
@@ -3416,6 +3448,9 @@ fn apply_format_string(
                                 }
                                 if use_color {
                                     result.push_str(&format_ansi_color_name(name));
+                                    if *name == "reset" {
+                                        auto_color_open = false;
+                                    }
                                 }
                                 matched = true;
                                 break;
@@ -3506,6 +3541,9 @@ fn apply_format_string(
         }
     }
 
+    if auto_color_open && use_color {
+        result.push_str("\x1b[m");
+    }
     result
 }
 

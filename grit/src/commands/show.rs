@@ -255,7 +255,10 @@ fn show_commit(
                 &fmt[8..]
             };
             let formatted = apply_format_string(template, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write!(out, "{formatted}")?;
+            if !formatted.ends_with('\n') {
+                writeln!(out)?;
+            }
         }
         Some("short") => {
             writeln!(out, "commit {hex}")?;
@@ -344,7 +347,10 @@ fn show_commit(
         }
         Some(other) => {
             let formatted = apply_format_string(other, oid, &commit);
-            writeln!(out, "{formatted}")?;
+            write!(out, "{formatted}")?;
+            if !formatted.ends_with('\n') {
+                writeln!(out)?;
+            }
         }
     }
 
@@ -851,9 +857,61 @@ fn apply_format_string(
     let hex = oid.to_hex();
     let mut result = String::with_capacity(template.len());
     let mut chars = template.chars().peekable();
+    let subject = info.message.lines().next().unwrap_or("").to_string();
+    let body = info.message.lines().skip(2).collect::<Vec<_>>().join("\n");
+    let body_with_trailing = if body.is_empty() {
+        String::new()
+    } else {
+        format!("{body}\n")
+    };
 
     while let Some(ch) = chars.next() {
         if ch == '%' {
+            if let Some(&modifier) = chars.peek() {
+                if modifier == '+' || modifier == '-' || modifier == ' ' {
+                    chars.next();
+                    let Some(code) = chars.next() else {
+                        result.push('%');
+                        result.push(modifier);
+                        continue;
+                    };
+                    let expanded = match code {
+                        'b' => body_with_trailing.clone(),
+                        's' => subject.clone(),
+                        other => {
+                            result.push('%');
+                            result.push(modifier);
+                            result.push(other);
+                            continue;
+                        }
+                    };
+                    match modifier {
+                        '+' => {
+                            if !expanded.is_empty() {
+                                result.push('\n');
+                                result.push_str(&expanded);
+                            }
+                        }
+                        '-' => {
+                            if expanded.is_empty() {
+                                while result.ends_with('\n') {
+                                    result.pop();
+                                }
+                            } else {
+                                result.push_str(&expanded);
+                            }
+                        }
+                        ' ' => {
+                            if !expanded.is_empty() {
+                                result.push(' ');
+                                result.push_str(&expanded);
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+            }
             match chars.peek() {
                 Some('H') => {
                     chars.next();
@@ -939,12 +997,11 @@ fn apply_format_string(
                 }
                 Some('s') => {
                     chars.next();
-                    result.push_str(info.message.lines().next().unwrap_or(""));
+                    result.push_str(&subject);
                 }
                 Some('b') => {
                     chars.next();
-                    let body: String = info.message.lines().skip(2).collect::<Vec<_>>().join("\n");
-                    result.push_str(&body);
+                    result.push_str(&body_with_trailing);
                 }
                 Some('n') => {
                     chars.next();
@@ -1135,7 +1192,7 @@ fn format_date(ident: &str) -> String {
         time::Month::December => "Dec",
     };
     format!(
-        "{} {} {:>2} {:02}:{:02}:{:02} {} {}",
+        "{} {} {} {:02}:{:02}:{:02} {} {}",
         weekday,
         month,
         dt.day(),

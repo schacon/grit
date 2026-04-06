@@ -88,6 +88,8 @@ pub fn run(args: Args) -> Result<()> {
                 "--author-date-order" => options.ordering = OrderingMode::AuthorDate,
                 "--reverse" => options.reverse = true,
                 "--count" => options.count = true,
+                "--oneline" => options.output_mode = OutputMode::Format("oneline".to_owned()),
+                "--graph" => { /* accepted for compatibility */ }
                 "--parents" => {
                     options.output_mode = OutputMode::Parents;
                     show_parents = true;
@@ -610,7 +612,14 @@ pub fn run(args: Args) -> Result<()> {
                         fmt.as_str(),
                         "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
                     );
-                    if !no_commit_header && !is_oneline {
+                    let should_print_header = if is_oneline {
+                        false
+                    } else if is_named_format {
+                        true
+                    } else {
+                        !no_commit_header
+                    };
+                    if should_print_header {
                         let mut header = format!("commit {prefix}{oid}");
                         if show_parents {
                             let parents = visible_parents_for_output(
@@ -638,8 +647,9 @@ pub fn run(args: Args) -> Result<()> {
                         if !rendered.ends_with('\n') {
                             println!();
                         }
-                    } else {
-                        println!("{rendered}");
+                    } else if !rendered.is_empty() {
+                        print!("{rendered}");
+                        println!();
                     }
                 }
                 OutputMode::Parents => {

@@ -31,6 +31,14 @@ pub struct Args {
     /// Maximum number of entries to show (used when no subcommand is given).
     #[arg(short = 'n', long = "max-count")]
     pub max_count: Option<usize>,
+
+    /// Abbreviate commit hashes to N characters (default mode).
+    #[arg(long = "abbrev", value_name = "N")]
+    pub abbrev: Option<usize>,
+
+    /// Date display mode (default mode).
+    #[arg(long = "date")]
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -57,6 +65,10 @@ pub struct ShowArgs {
     /// Maximum number of entries to show.
     #[arg(short = 'n', long = "max-count")]
     pub max_count: Option<usize>,
+
+    /// Abbreviate commit hashes to N characters.
+    #[arg(long = "abbrev", value_name = "N")]
+    pub abbrev: Option<usize>,
 
     /// Don't abbreviate commit hashes.
     #[arg(long = "no-abbrev-commit")]
@@ -155,10 +167,11 @@ pub fn run(args: Args) -> Result<()> {
             run_show(ShowArgs {
                 refname,
                 max_count: args.max_count,
+                abbrev: args.abbrev,
                 no_abbrev_commit: false,
                 abbrev_commit: false,
                 format: None,
-                date: None,
+                date: args.date,
                 walk_reflogs: false,
             })
         }
@@ -186,6 +199,8 @@ fn run_show(args: ShowArgs) -> Result<()> {
         }
         let oid_str = if args.no_abbrev_commit {
             entry.new_oid.to_hex()
+        } else if let Some(n) = args.abbrev {
+            abbreviate_oid(&entry.new_oid, n.clamp(4, 40))
         } else {
             abbreviate_oid(&entry.new_oid, 7)
         };

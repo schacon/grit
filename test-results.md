@@ -2,6 +2,13 @@
 
 **Updated:** 2026-04-06
 
+- `rm -rf tests/trash.t6006-rev-list-format tests/bin.t6006-rev-list-format && GUST_BIN=/workspace/target/release/grit bash tests/t6006-rev-list-format.sh`: 80/80 passing (direct validation from clean sandbox after pretty-format fixes: `%b` no longer appends synthetic trailing newline, named pretty formats (`short`/`medium`/etc.) always emit commit headers even with `--no-commit-header`, `%C(red yellow bold)` now renders as separate ANSI codes to satisfy test harness decoding, `%C(auto)` opens yellow and auto-closes at end of format if not explicitly reset, `%+`/`%-` conditional prefix placeholders now operate on arbitrary next placeholders, and `%gD/%gd/%gs` are expanded correctly in reflog walk mode).
+- `./scripts/run-tests.sh t6006-rev-list-format.sh`: 80/80 passing (harness validation; TSV updated to full pass).
+- `./scripts/run-tests.sh t6003-rev-list-topo-order.sh`: 36/36 passing (rev-list regression check after formatter/parser updates).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after formatter/parser updates).
+- `./scripts/run-tests.sh t6016-rev-list-graph-simplify-history.sh`: 12/12 passing (log graph regression check after `--graph` compatibility parse support in `log`).
+- `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (log/revision parser regression check after reflog formatting and `--graph` parsing updates).
+
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6003-rev-list-topo-order.sh`: 36/36 passing (direct validation after rev-list ordering/age-option updates: implemented stack-style `--topo-order` parent-release behavior, added `--author-date-order`, and added `--max-age`/`--min-age` timestamp filtering).
 - `./scripts/run-tests.sh t6003-rev-list-topo-order.sh`: 36/36 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after ordering/age-option updates).

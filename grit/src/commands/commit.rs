@@ -310,7 +310,12 @@ pub fn run(args: Args) -> Result<()> {
     let msg_result = build_message(&args, &repo)?;
     let mut message = msg_result.message;
     let mut raw_message = msg_result.raw_bytes;
-    if message.trim().is_empty() && !args.allow_empty_message {
+    let allow_empty_message = args.allow_empty_message
+        || matches!(
+            args.cleanup.as_deref(),
+            Some("verbatim") | Some("whitespace")
+        );
+    if message.trim().is_empty() && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
 
