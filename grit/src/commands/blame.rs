@@ -4,8 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{
-    convert_to_git,
-    get_file_attrs, load_gitattributes, load_gitattributes_from_index,
+    convert_to_git, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
     ConversionConfig, GitAttributes,
 };
 use grit_lib::index::Index;
@@ -16,8 +15,8 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::resolve_head;
 use grit_lib::wildmatch::wildmatch;
 use similar::{Algorithm as SimilarAlgorithm, ChangeTag, TextDiff};
-use std::fs::OpenOptions;
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -189,7 +188,9 @@ fn format_time(timestamp: i64, tz: &str) -> String {
         .unwrap_or(OffsetDateTime::UNIX_EPOCH);
     let fmt = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]")
         .expect("valid blame timestamp format");
-    let rendered = dt.format(&fmt).unwrap_or_else(|_| "1970-01-01 00:00:00".to_owned());
+    let rendered = dt
+        .format(&fmt)
+        .unwrap_or_else(|_| "1970-01-01 00:00:00".to_owned());
     format!("{rendered} {tz}")
 }
 
@@ -906,10 +907,12 @@ fn compute_blame(
                     )? {
                         let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
                         for line in source_blame {
-                            by_content.entry(line.content.clone()).or_default().push(line);
+                            by_content
+                                .entry(line.content.clone())
+                                .or_default()
+                                .push(line);
                         }
-                        inserted_copy_source =
-                            Some((source_path, by_content, HashMap::new()));
+                        inserted_copy_source = Some((source_path, by_content, HashMap::new()));
                     }
                 }
 
@@ -950,7 +953,11 @@ fn compute_blame(
                                         .get(parent_idx)
                                         .zip(cur_lines.get(t.current_idx))
                                         .is_some_and(|(p, c)| p == c);
-                                if unchanged { t.ignored } else { true }
+                                if unchanged {
+                                    t.ignored
+                                } else {
+                                    true
+                                }
                             } else {
                                 t.ignored
                             };
@@ -1125,7 +1132,8 @@ fn find_copy_source_blame(
         if (!include_current_path && path == exclude_path) || !is_regular_mode(*mode) {
             continue;
         }
-        let content = read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
+        let content =
+            read_blob_content_for_blame(odb, oid, path, *mode, textconv_ctx, use_textconv)?;
         let lines = content_lines(&content);
         let score = current_lines
             .iter()
@@ -1306,9 +1314,17 @@ fn build_fuzzy_line_map(
         .copied()
         .chain(std::iter::once((new.len(), old.len())))
     {
-        let new_start = if prev_new == usize::MAX { 0 } else { prev_new + 1 };
+        let new_start = if prev_new == usize::MAX {
+            0
+        } else {
+            prev_new + 1
+        };
         let new_end = next_new;
-        let old_start = if prev_old == usize::MAX { 0 } else { prev_old + 1 };
+        let old_start = if prev_old == usize::MAX {
+            0
+        } else {
+            prev_old + 1
+        };
         let old_end = next_old;
 
         if new_start < new_end && old_start < old_end {
@@ -1830,8 +1846,11 @@ fn build_uncommitted_blame(
     let zero = grit_lib::diff::zero_oid();
     let final_lines = content_lines(content);
 
-    let mut by_content_source: Option<(String, HashMap<String, Vec<BlameLine>>, HashMap<String, usize>)> =
-        None;
+    let mut by_content_source: Option<(
+        String,
+        HashMap<String, Vec<BlameLine>>,
+        HashMap<String, usize>,
+    )> = None;
     if copy_depth >= 2 {
         let head_obj = odb.read(&start_oid)?;
         let head_commit = parse_commit(&head_obj.data)?;
@@ -1850,7 +1869,10 @@ fn build_uncommitted_blame(
         )? {
             let mut by_content: HashMap<String, Vec<BlameLine>> = HashMap::new();
             for line in source_blame {
-                by_content.entry(line.content.clone()).or_default().push(line);
+                by_content
+                    .entry(line.content.clone())
+                    .or_default()
+                    .push(line);
             }
             by_content_source = Some((source_path, by_content, HashMap::new()));
         }
@@ -1871,10 +1893,7 @@ fn build_uncommitted_blame(
                     final_lineno: idx + 1,
                     orig_lineno: pb.orig_lineno,
                     content: (*line).to_string(),
-                    source_file: pb
-                        .source_file
-                        .clone()
-                        .or_else(|| Some(source_path.clone())),
+                    source_file: pb.source_file.clone().or_else(|| Some(source_path.clone())),
                     ignored: pb.ignored,
                     unblamable: pb.unblamable,
                 });
@@ -1959,7 +1978,8 @@ fn read_commit_lines_for_blame(
     textconv_ctx: Option<&BlameTextconvContext>,
     use_textconv: bool,
 ) -> Result<Vec<String>> {
-    let Some((blob_oid, blob_mode)) = resolve_path_in_tree_entry(odb, &commit.tree, file_path)? else {
+    let Some((blob_oid, blob_mode)) = resolve_path_in_tree_entry(odb, &commit.tree, file_path)?
+    else {
         return Ok(Vec::new());
     };
     let content = read_blob_content_for_blame(
@@ -2005,13 +2025,8 @@ fn compute_reverse_blame(
     chain_rev.reverse();
 
     let start_commit = get_commit(odb, range_start, &mut commit_cache)?;
-    let mut prev_lines = read_commit_lines_for_blame(
-        odb,
-        &start_commit,
-        file_path,
-        textconv_ctx,
-        use_textconv,
-    )?;
+    let mut prev_lines =
+        read_commit_lines_for_blame(odb, &start_commit, file_path, textconv_ctx, use_textconv)?;
 
     if prev_lines.is_empty() {
         return Ok(Vec::new());
@@ -2026,13 +2041,8 @@ fn compute_reverse_blame(
 
     for oid in chain_rev.iter().skip(1) {
         let commit = get_commit(odb, *oid, &mut commit_cache)?;
-        let cur_lines = read_commit_lines_for_blame(
-            odb,
-            &commit,
-            file_path,
-            textconv_ctx,
-            use_textconv,
-        )?;
+        let cur_lines =
+            read_commit_lines_for_blame(odb, &commit, file_path, textconv_ctx, use_textconv)?;
 
         let old_refs: Vec<&str> = prev_lines.iter().map(|s| s.as_str()).collect();
         let new_refs: Vec<&str> = cur_lines.iter().map(|s| s.as_str()).collect();
@@ -2124,12 +2134,8 @@ fn apply_worktree_overlay(
         textconv_ctx,
         use_textconv,
     )?;
-    let worktree_content = read_worktree_content_for_blame(
-        &abs_path,
-        file_path,
-        textconv_ctx,
-        use_textconv,
-    )?;
+    let worktree_content =
+        read_worktree_content_for_blame(&abs_path, file_path, textconv_ctx, use_textconv)?;
     let has_textconv = use_textconv
         && textconv_ctx
             .and_then(|ctx| resolve_textconv_command(ctx, file_path))
@@ -2211,15 +2217,12 @@ fn read_worktree_content_for_blame(
         return Ok(String::from_utf8_lossy(&normalized).into_owned());
     };
 
-    let converted =
-        run_textconv_command(&command, &normalized).or_else(|_| run_textconv_command(&command, &bytes))?;
+    let converted = run_textconv_command(&command, &normalized)
+        .or_else(|_| run_textconv_command(&command, &bytes))?;
     Ok(String::from_utf8_lossy(&converted).into_owned())
 }
 
-fn parse_line_range(
-    range: &str,
-    blame_lines: &[BlameLine],
-) -> Result<(usize, usize)> {
+fn parse_line_range(range: &str, blame_lines: &[BlameLine]) -> Result<(usize, usize)> {
     let max_lineno = blame_lines
         .iter()
         .map(|b| b.final_lineno)
@@ -2327,11 +2330,7 @@ fn write_porcelain(
 
     for (idx, bl) in lines.iter().enumerate() {
         let hex = bl.oid.to_hex();
-        let source_name = bl
-            .source_file
-            .as_deref()
-            .unwrap_or(filename)
-            .to_string();
+        let source_name = bl.source_file.as_deref().unwrap_or(filename).to_string();
         let first = seen.insert((bl.oid, source_name.clone()));
 
         // Header line: hash orig_lineno final_lineno [group_count]
@@ -2435,20 +2434,21 @@ fn write_default(
     let mut prev_oid: Option<ObjectId> = None;
 
     // Check if any blame line is a boundary (root commit)
-    let has_boundary = !args.root && lines.iter().any(|l| {
-        commits
-            .get(&l.oid)
-            .map(|c| c.parents.is_empty())
-            .unwrap_or(false)
-    });
+    let has_boundary = !args.root
+        && lines.iter().any(|l| {
+            commits
+                .get(&l.oid)
+                .map(|c| c.parents.is_empty())
+                .unwrap_or(false)
+        });
 
     for bl in lines {
         let hex = bl.oid.to_hex();
         let is_boundary = !args.root
             && commits
-            .get(&bl.oid)
-            .map(|c| c.parents.is_empty())
-            .unwrap_or(false);
+                .get(&bl.oid)
+                .map(|c| c.parents.is_empty())
+                .unwrap_or(false);
         let short = if has_boundary {
             if is_boundary {
                 format!("^{}", &hex[..hash_len.min(hex.len())])

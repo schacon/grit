@@ -38,6 +38,16 @@ pub struct Args {
 /// Run `grit prune`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
+
+    // Refuse to prune when preciousObjects extension is set.
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), false).unwrap_or_default();
+    if config
+        .get_bool("extensions.preciousObjects")
+        .and_then(|r| r.ok())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("fatal: cannot prune in a repository with precious objects");
+    }
     let objects_dir = repo.git_dir.join("objects");
     let odb = Odb::new(&objects_dir);
 

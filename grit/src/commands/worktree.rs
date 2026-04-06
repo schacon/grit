@@ -130,6 +130,10 @@ pub struct PruneArgs {
     /// Report pruned entries.
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Expire worktrees older than this date (accepted for compat).
+    #[arg(long)]
+    pub expire: Option<String>,
 }
 
 #[derive(Debug, ClapArgs)]

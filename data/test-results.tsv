@@ -5432,9 +5432,9 @@ t3424-rebase-empty::rebase-exec-uses-default-of-empty-keep	t3424-rebase-empty	re
 t3424-rebase-empty::rebase-exec-empty-stop	t3424-rebase-empty	rebase --exec --empty=stop	rebase	not_ported
 t3425-rebase-topology-merges::setup-of-non-linear-history	t3425-rebase-topology-merges	setup of non-linear-history	rebase	not_ported
 t3426-rebase-submodule::rebase-interactive-ignores-modified-submodules	t3426-rebase-submodule	rebase interactive ignores modified submodules	rebase	partial
-t3427-rebase-subtree::setup	t3427-rebase-subtree	setup	rebase	partial
-t3427-rebase-subtree::rebase-xsubtree-empty-ask-onto-commit	t3427-rebase-subtree	Rebase -Xsubtree --empty=ask --onto commit	rebase	partial
-t3427-rebase-subtree::rebase-xsubtree-empty-ask-rebase-merges-onto-commit	t3427-rebase-subtree	Rebase -Xsubtree --empty=ask --rebase-merges --onto commit	rebase	partial
+t3427-rebase-subtree::setup	t3427-rebase-subtree	setup	rebase	pass
+t3427-rebase-subtree::rebase-xsubtree-empty-ask-onto-commit	t3427-rebase-subtree	Rebase -Xsubtree --empty=ask --onto commit	rebase	pass
+t3427-rebase-subtree::rebase-xsubtree-empty-ask-rebase-merges-onto-commit	t3427-rebase-subtree	Rebase -Xsubtree --empty=ask --rebase-merges --onto commit	rebase	pass
 t3428-rebase-signoff::setup	t3428-rebase-signoff	setup	rebase	partial
 t3428-rebase-signoff::rebase-apply-signoff-adds-a-sign-off-line	t3428-rebase-signoff	rebase --apply --signoff adds a sign-off line	rebase	partial
 t3428-rebase-signoff::rebase-no-signoff-does-not-add-a-sign-off-line	t3428-rebase-signoff	rebase --no-signoff does not add a sign-off line	rebase	partial
@@ -6503,19 +6503,19 @@ t4006-diff-mode::stat-output-after-text-chmod	t4006-diff-mode	--stat output afte
 t4006-diff-mode::shortstat-output-after-text-chmod	t4006-diff-mode	--shortstat output after text chmod	diff	partial
 t4006-diff-mode::stat-output-after-binary-chmod	t4006-diff-mode	--stat output after binary chmod	diff	partial
 t4006-diff-mode::shortstat-output-after-binary-chmod	t4006-diff-mode	--shortstat output after binary chmod	diff	partial
-t4007-rename-3::prepare-reference-tree	t4007-rename-3	prepare reference tree	diff	partial
-t4007-rename-3::prepare-work-tree	t4007-rename-3	prepare work tree	diff	partial
-t4007-rename-3::copy-detection	t4007-rename-3	copy detection	diff	partial
-t4007-rename-3::copy-detection-cached	t4007-rename-3	copy detection, cached	diff	partial
-t4007-rename-3::exit-code-of-quiet-copy-detection	t4007-rename-3	exit code of quiet copy detection	diff	partial
-t4007-rename-3::exit-code-of-quiet-copy-detection-with-no-ext-diff	t4007-rename-3	exit code of quiet copy detection with --no-ext-diff	diff	partial
-t4007-rename-3::copy-limited-to-a-subtree	t4007-rename-3	copy, limited to a subtree	diff	partial
-t4007-rename-3::tweak-work-tree	t4007-rename-3	tweak work tree	diff	partial
-t4007-rename-3::copy-detection-files-to-index	t4007-rename-3	copy detection, files to index	diff	partial
-t4007-rename-3::copy-detection-files-to-preloaded-index	t4007-rename-3	copy detection, files to preloaded index	diff	partial
-t4007-rename-3::tweak-index	t4007-rename-3	tweak index	diff	partial
-t4007-rename-3::rename-detection	t4007-rename-3	rename detection	diff	partial
-t4007-rename-3::rename-limited-to-a-subtree	t4007-rename-3	rename, limited to a subtree	diff	partial
+t4007-rename-3::prepare-reference-tree	t4007-rename-3	prepare reference tree	diff	pass
+t4007-rename-3::prepare-work-tree	t4007-rename-3	prepare work tree	diff	pass
+t4007-rename-3::copy-detection	t4007-rename-3	copy detection	diff	pass
+t4007-rename-3::copy-detection-cached	t4007-rename-3	copy detection, cached	diff	pass
+t4007-rename-3::exit-code-of-quiet-copy-detection	t4007-rename-3	exit code of quiet copy detection	diff	pass
+t4007-rename-3::exit-code-of-quiet-copy-detection-with-no-ext-diff	t4007-rename-3	exit code of quiet copy detection with --no-ext-diff	diff	pass
+t4007-rename-3::copy-limited-to-a-subtree	t4007-rename-3	copy, limited to a subtree	diff	pass
+t4007-rename-3::tweak-work-tree	t4007-rename-3	tweak work tree	diff	pass
+t4007-rename-3::copy-detection-files-to-index	t4007-rename-3	copy detection, files to index	diff	pass
+t4007-rename-3::copy-detection-files-to-preloaded-index	t4007-rename-3	copy detection, files to preloaded index	diff	pass
+t4007-rename-3::tweak-index	t4007-rename-3	tweak index	diff	pass
+t4007-rename-3::rename-detection	t4007-rename-3	rename detection	diff	pass
+t4007-rename-3::rename-limited-to-a-subtree	t4007-rename-3	rename, limited to a subtree	diff	pass
 t4008-diff-break-rewrite::change-file1-with-copy-edit-of-file0-and-remove-file0	t4008-diff-break-rewrite	change file1 with copy-edit of file0 and remove file0	diff	partial
 t4008-diff-break-rewrite::run-diff-with-b-1	t4008-diff-break-rewrite	run diff with -B (#1)	diff	partial
 t4008-diff-break-rewrite::run-diff-with-b-and-m-2	t4008-diff-break-rewrite	run diff with -B and -M (#2)	diff	partial
@@ -7695,12 +7695,12 @@ t4071-diff-minimal::minimal-diff-should-not-mark-changes-between-changed-lines	t
 t4072-diff-max-depth::setup	t4072-diff-max-depth	setup	diff	not_ported
 t4072-diff-max-depth::max-depth-is-disallowed-with-wildcard-pathspecs	t4072-diff-max-depth	--max-depth is disallowed with wildcard pathspecs	diff	not_ported
 t4072-diff-max-depth::find-shortest-path-within-embedded-pathspecs	t4072-diff-max-depth	find shortest path within embedded pathspecs	diff	not_ported
-t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	partial
-t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	partial
-t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	partial
-t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	partial
+t4073-diff-stat-name-width::setup	t4073-diff-stat-name-width	setup	diff	pass
+t4073-diff-stat-name-width::test-name-width-long-enough-for-filepath	t4073-diff-stat-name-width	test name-width long enough for filepath	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-dir-name	t4073-diff-stat-name-width	test name-width not long enough for dir name	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-slash	t4073-diff-stat-name-width	test name-width not long enough for slash	diff	pass
+t4073-diff-stat-name-width::test-name-width-not-long-enough-for-file-name	t4073-diff-stat-name-width	test name-width not long enough for file name	diff	pass
+t4073-diff-stat-name-width::test-name-width-minimum-length	t4073-diff-stat-name-width	test name-width minimum length	diff	pass
 t4074-diff-shifted-matched-group::shifted-merged-diff-group-should-re-diff-to-minimize-patch	t4074-diff-shifted-matched-group	shifted/merged diff group should re-diff to minimize patch	diff	not_ported
 t4074-diff-shifted-matched-group::merged-diff-group-with-no-shift	t4074-diff-shifted-matched-group	merged diff group with no shift	diff	not_ported
 t4074-diff-shifted-matched-group::re-diff-should-preserve-diff-flags	t4074-diff-shifted-matched-group	re-diff should preserve diff flags	diff	not_ported
@@ -7778,18 +7778,18 @@ t4109-apply-multifrag::git-apply-1	t4109-apply-multifrag	git apply (1)	apply	pas
 t4109-apply-multifrag::git-apply-2	t4109-apply-multifrag	git apply (2)	apply	pass
 t4109-apply-multifrag::git-apply-3	t4109-apply-multifrag	git apply (3)	apply	pass
 t4110-apply-scan::git-apply-scan	t4110-apply-scan	git apply scan	apply	pass
-t4111-apply-subdir::setup	t4111-apply-subdir	setup	apply	pass
-t4111-apply-subdir::setup-subdir	t4111-apply-subdir	setup: subdir	apply	pass
-t4111-apply-subdir::apply-from-subdir-of-toplevel	t4111-apply-subdir	apply from subdir of toplevel	apply	pass
-t4111-apply-subdir::apply-cached-from-subdir-of-toplevel	t4111-apply-subdir	apply --cached from subdir of toplevel	apply	pass
-t4111-apply-subdir::apply-index-from-subdir-of-toplevel	t4111-apply-subdir	apply --index from subdir of toplevel	apply	pass
-t4111-apply-subdir::apply-half-broken-patch-from-subdir-of-toplevel	t4111-apply-subdir	apply half-broken patch from subdir of toplevel	apply	pass
-t4111-apply-subdir::apply-from-git-dir	t4111-apply-subdir	apply from .git dir	apply	pass
-t4111-apply-subdir::apply-from-subdir-of-git-dir	t4111-apply-subdir	apply from subdir of .git dir	apply	pass
-t4111-apply-subdir::apply-cached-from-git-dir	t4111-apply-subdir	apply --cached from .git dir	apply	pass
-t4111-apply-subdir::apply-cached-from-subdir-of-git-dir	t4111-apply-subdir	apply --cached from subdir of .git dir	apply	pass
-t4112-apply-renames::check-rename-copy-patch	t4112-apply-renames	check rename/copy patch	apply	partial
-t4112-apply-renames::apply-rename-copy-patch	t4112-apply-renames	apply rename/copy patch	apply	partial
+t4111-apply-subdir::setup	t4111-apply-subdir	setup	apply	partial
+t4111-apply-subdir::setup-subdir	t4111-apply-subdir	setup: subdir	apply	partial
+t4111-apply-subdir::apply-from-subdir-of-toplevel	t4111-apply-subdir	apply from subdir of toplevel	apply	partial
+t4111-apply-subdir::apply-cached-from-subdir-of-toplevel	t4111-apply-subdir	apply --cached from subdir of toplevel	apply	partial
+t4111-apply-subdir::apply-index-from-subdir-of-toplevel	t4111-apply-subdir	apply --index from subdir of toplevel	apply	partial
+t4111-apply-subdir::apply-half-broken-patch-from-subdir-of-toplevel	t4111-apply-subdir	apply half-broken patch from subdir of toplevel	apply	partial
+t4111-apply-subdir::apply-from-git-dir	t4111-apply-subdir	apply from .git dir	apply	partial
+t4111-apply-subdir::apply-from-subdir-of-git-dir	t4111-apply-subdir	apply from subdir of .git dir	apply	partial
+t4111-apply-subdir::apply-cached-from-git-dir	t4111-apply-subdir	apply --cached from .git dir	apply	partial
+t4111-apply-subdir::apply-cached-from-subdir-of-git-dir	t4111-apply-subdir	apply --cached from subdir of .git dir	apply	partial
+t4112-apply-renames::check-rename-copy-patch	t4112-apply-renames	check rename/copy patch	apply	pass
+t4112-apply-renames::apply-rename-copy-patch	t4112-apply-renames	apply rename/copy patch	apply	pass
 t4113-apply-ending::apply-at-the-end	t4113-apply-ending	apply at the end	apply	pass
 t4113-apply-ending::apply-at-the-beginning	t4113-apply-ending	apply at the beginning	apply	pass
 t4114-apply-typechange::setup-repository-and-commits	t4114-apply-typechange	setup repository and commits	apply	partial
@@ -7894,8 +7894,8 @@ t4124-apply-ws-rule::rule-rule-tabwidth-16	t4124-apply-ws-rule	rule=$rule,tabwid
 t4124-apply-ws-rule::rule-rule-attributes	t4124-apply-ws-rule	rule=$rule (attributes)	apply	partial
 t4124-apply-ws-rule::rule-rule-tabwidth-16-attributes	t4124-apply-ws-rule	rule=$rule,tabwidth=16 (attributes)	apply	partial
 t4124-apply-ws-rule::incomplete-line-error-is-disabled-for-symlinks	t4124-apply-ws-rule	incomplete-line error is disabled for symlinks	apply	partial
-t4125-apply-ws-fuzz::withfix-forward	t4125-apply-ws-fuzz	withfix (forward)	apply	partial
-t4125-apply-ws-fuzz::withfix-backward	t4125-apply-ws-fuzz	withfix (backward)	apply	partial
+t4125-apply-ws-fuzz::withfix-forward	t4125-apply-ws-fuzz	withfix (forward)	apply	pass
+t4125-apply-ws-fuzz::withfix-backward	t4125-apply-ws-fuzz	withfix (backward)	apply	pass
 t4126-apply-empty::apply-empty	t4126-apply-empty	apply empty	apply	partial
 t4126-apply-empty::apply-empty-patch-fails	t4126-apply-empty	apply empty patch fails	apply	partial
 t4126-apply-empty::apply-with-allow-empty-succeeds	t4126-apply-empty	apply with --allow-empty succeeds	apply	partial
@@ -7950,9 +7950,9 @@ t4130-apply-criss-cross-rename::apply	t4130-apply-criss-cross-rename	apply	apply
 t4130-apply-criss-cross-rename::criss-cross-rename-2	t4130-apply-criss-cross-rename	criss-cross rename	apply	pass
 t4130-apply-criss-cross-rename::diff-m-b-2	t4130-apply-criss-cross-rename	diff -M -B	apply	pass
 t4130-apply-criss-cross-rename::apply-2	t4130-apply-criss-cross-rename	apply	apply	pass
-t4131-apply-fake-ancestor::setup	t4131-apply-fake-ancestor	setup	apply	partial
-t4131-apply-fake-ancestor::apply-build-fake-ancestor	t4131-apply-fake-ancestor	apply --build-fake-ancestor	apply	partial
-t4131-apply-fake-ancestor::apply-build-fake-ancestor-in-a-subdirectory	t4131-apply-fake-ancestor	apply --build-fake-ancestor in a subdirectory	apply	partial
+t4131-apply-fake-ancestor::setup	t4131-apply-fake-ancestor	setup	apply	pass
+t4131-apply-fake-ancestor::apply-build-fake-ancestor	t4131-apply-fake-ancestor	apply --build-fake-ancestor	apply	pass
+t4131-apply-fake-ancestor::apply-build-fake-ancestor-in-a-subdirectory	t4131-apply-fake-ancestor	apply --build-fake-ancestor in a subdirectory	apply	pass
 t4132-apply-removal::test-patch	t4132-apply-removal	test $patch	apply	partial
 t4133-apply-filenames::apply-diff-with-inconsistent-filenames-in-headers	t4133-apply-filenames	apply diff with inconsistent filenames in headers	apply	not_ported
 t4133-apply-filenames::apply-diff-with-new-filename-missing-from-headers	t4133-apply-filenames	apply diff with new filename missing from headers	apply	not_ported
@@ -8091,17 +8091,17 @@ t4151-am-abort::git-am-abort-cleans-relevant-files	t4151-am-abort	git am --abort
 t4151-am-abort::am-with3-stops-at-a-patch-that-does-not-apply	t4151-am-abort	am$with3 stops at a patch that does not apply	am	not_ported
 t4151-am-abort::am-with3-skip-continue-after-failed-am-with3	t4151-am-abort	am$with3 --skip continue after failed am$with3	am	not_ported
 t4151-am-abort::am-abort-goes-back-after-failed-am-with3	t4151-am-abort	am --abort goes back after failed am$with3	am	not_ported
-t4152-am-subjects::setup-baseline-commit	t4152-am-subjects	setup baseline commit	am	partial
-t4152-am-subjects::short-subject-preserved-format-patch-am	t4152-am-subjects	short subject preserved (format-patch | am)	am	partial
-t4152-am-subjects::short-subject-preserved-format-patch-k-am	t4152-am-subjects	short subject preserved (format-patch -k | am)	am	partial
-t4152-am-subjects::short-subject-preserved-format-patch-k-am-k	t4152-am-subjects	short subject preserved (format-patch -k | am -k)	am	partial
-t4152-am-subjects::long-subject-preserved-format-patch-am	t4152-am-subjects	long subject preserved (format-patch | am)	am	partial
-t4152-am-subjects::long-subject-preserved-format-patch-k-am	t4152-am-subjects	long subject preserved (format-patch -k | am)	am	partial
-t4152-am-subjects::long-subject-preserved-format-patch-k-am-k	t4152-am-subjects	long subject preserved (format-patch -k | am -k)	am	partial
-t4152-am-subjects::multiline-subject-unwrapped-format-patch-am	t4152-am-subjects	multiline subject unwrapped (format-patch | am)	am	partial
-t4152-am-subjects::multiline-subject-unwrapped-format-patch-k-am	t4152-am-subjects	multiline subject unwrapped (format-patch -k | am)	am	partial
-t4152-am-subjects::multiline-subject-preserved-format-patch-k-am-k	t4152-am-subjects	multiline subject preserved (format-patch -k | am -k)	am	partial
-t4152-am-subjects::create-patches-with-type-subject	t4152-am-subjects	create patches with $type subject	am	partial
+t4152-am-subjects::setup-baseline-commit	t4152-am-subjects	setup baseline commit	am	pass
+t4152-am-subjects::short-subject-preserved-format-patch-am	t4152-am-subjects	short subject preserved (format-patch | am)	am	pass
+t4152-am-subjects::short-subject-preserved-format-patch-k-am	t4152-am-subjects	short subject preserved (format-patch -k | am)	am	pass
+t4152-am-subjects::short-subject-preserved-format-patch-k-am-k	t4152-am-subjects	short subject preserved (format-patch -k | am -k)	am	pass
+t4152-am-subjects::long-subject-preserved-format-patch-am	t4152-am-subjects	long subject preserved (format-patch | am)	am	pass
+t4152-am-subjects::long-subject-preserved-format-patch-k-am	t4152-am-subjects	long subject preserved (format-patch -k | am)	am	pass
+t4152-am-subjects::long-subject-preserved-format-patch-k-am-k	t4152-am-subjects	long subject preserved (format-patch -k | am -k)	am	pass
+t4152-am-subjects::multiline-subject-unwrapped-format-patch-am	t4152-am-subjects	multiline subject unwrapped (format-patch | am)	am	pass
+t4152-am-subjects::multiline-subject-unwrapped-format-patch-k-am	t4152-am-subjects	multiline subject unwrapped (format-patch -k | am)	am	pass
+t4152-am-subjects::multiline-subject-preserved-format-patch-k-am-k	t4152-am-subjects	multiline subject preserved (format-patch -k | am -k)	am	pass
+t4152-am-subjects::create-patches-with-type-subject	t4152-am-subjects	create patches with $type subject	am	pass
 t4153-am-resume-override-opts::setup	t4153-am-resume-override-opts	setup	am	not_ported
 t4153-am-resume-override-opts::retry-fails-without-in-progress-operation	t4153-am-resume-override-opts	--retry fails without in-progress operation	am	not_ported
 t4153-am-resume-override-opts::3way-overrides-no-3way	t4153-am-resume-override-opts	--3way overrides --no-3way	am	not_ported
@@ -8701,9 +8701,9 @@ t4216-log-bloom::bloom-reader-notices-out-of-bounds-filter-offsets	t4216-log-blo
 t4216-log-bloom::bloom-reader-notices-too-small-index-chunk	t4216-log-bloom	Bloom reader notices too-small index chunk	log	partial
 t4216-log-bloom::bloom-reader-notices-out-of-order-index-offsets	t4216-log-bloom	Bloom reader notices out-of-order index offsets	log	partial
 t4216-log-bloom::git-log-option-option-for-path-path	t4216-log-bloom	git log option: $option for path: $path	log	partial
-t4217-log-limit::setup-test	t4217-log-limit	setup test	log	partial
-t4217-log-limit::git-log-since-as-filter	t4217-log-limit	git log --since-as-filter=...	log	partial
-t4217-log-limit::git-log-children-since-as-filter	t4217-log-limit	git log --children --since-as-filter=...	log	partial
+t4217-log-limit::setup-test	t4217-log-limit	setup test	log	pass
+t4217-log-limit::git-log-since-as-filter	t4217-log-limit	git log --since-as-filter=...	log	pass
+t4217-log-limit::git-log-children-since-as-filter	t4217-log-limit	git log --children --since-as-filter=...	log	pass
 t4252-am-options::interrupted-am-whitespace-fix	t4252-am-options	interrupted am --whitespace=fix	am	partial
 t4252-am-options::interrupted-am-c1	t4252-am-options	interrupted am -C1	am	partial
 t4252-am-options::interrupted-am-p2	t4252-am-options	interrupted am -p2	am	partial

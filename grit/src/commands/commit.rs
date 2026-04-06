@@ -975,7 +975,19 @@ fn build_message(args: &Args, repo: &Repository) -> Result<MessageResult> {
 
 /// Check if an ident name is valid (not empty and not all special characters).
 fn validate_ident_name(name: &str, kind: &str) -> Result<()> {
-    let cleaned: String = name.chars().filter(|&c| c != '.' && c != ',' && c != ';' && c != '<' && c != '>' && c != '\'' && c != '"' && c != ' ').collect();
+    let cleaned: String = name
+        .chars()
+        .filter(|&c| {
+            c != '.'
+                && c != ','
+                && c != ';'
+                && c != '<'
+                && c != '>'
+                && c != '\''
+                && c != '"'
+                && c != ' '
+        })
+        .collect();
     if cleaned.is_empty() {
         if name.is_empty() {
             bail!("empty ident name (for <{}>) not allowed", kind);
@@ -1187,6 +1199,5 @@ fn ensure_trailing_newline(s: &str) -> String {
 }
 
 fn is_permission_denied_error(err: &grit_lib::error::Error) -> bool {
-    err.to_string().contains("Permission denied")
-        || err.to_string().contains("permission denied")
+    err.to_string().contains("Permission denied") || err.to_string().contains("permission denied")
 }

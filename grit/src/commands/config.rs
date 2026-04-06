@@ -299,6 +299,22 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
+
+    // Validate repository format version when operating on a local repo.
+    // Git refuses to operate on repos with an unsupported format version.
+    if git_dir.is_some() && !args.system && !args.global {
+        if let Some(ref gd) = git_dir {
+            let config_path = gd.join("config");
+            if config_path.exists() {
+                if let Ok(text) = std::fs::read_to_string(&config_path) {
+                    if let Err(e) = grit_lib::repo::validate_repo_config(&text) {
+                        anyhow::bail!("{}", e);
+                    }
+                }
+            }
+        }
+    }
+
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
 
     // Handle subcommands first

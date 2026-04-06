@@ -1052,6 +1052,10 @@ pub fn run(args: Args) -> Result<()> {
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
         apply_to_index(&patches, &args, whitespace_mode)?;
+    } else if args.check && args.index {
+        // --check --index requires a valid repository (to access the index)
+        let _repo = Repository::discover(None).context("not a git repository")?;
+        check_patches(&patches, &args, whitespace_mode)?;
     } else if args.check {
         check_patches(&patches, &args, whitespace_mode)?;
     } else if args.index {

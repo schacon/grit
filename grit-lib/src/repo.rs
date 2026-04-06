@@ -49,6 +49,14 @@ impl Repository {
             return Err(Error::NotARepository(git_dir.display().to_string()));
         }
 
+        // Validate repositoryformatversion and extensions.
+        let config_path = git_dir.join("config");
+        if config_path.exists() {
+            if let Ok(config_text) = fs::read_to_string(&config_path) {
+                validate_repo_format(&config_text).map_err(|e| Error::UnsupportedFormat(e))?;
+            }
+        }
+
         // For git worktrees the `objects/` directory lives in the common git
         // directory pointed to by the `commondir` file.
         let objects_dir = if git_dir.join("objects").exists() {
@@ -335,6 +343,14 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                 }
                 return Ok(Some(repo));
             }
+            // Unsupported format version or unknown extension: stop discovery
+            // immediately and propagate the error (do not walk up to parent).
+            Err(Error::UnsupportedFormat(_)) => {
+                return Err(Error::UnsupportedFormat(format!(
+                    "repo at '{}' has unsupported format",
+                    dir.display()
+                )))
+            }
             Err(Error::NotARepository(_)) => return Ok(None),
             Err(e) => return Err(e),
         }
@@ -518,4 +534,105 @@ fn is_ceiling_blocked(dir: &Path, ceilings: &[PathBuf]) -> bool {
         }
     }
     false
+}
+
+/// Validate the repository format version and extensions from a config file text.
+///
+/// Called by commands that need to refuse to operate on unsupported repos.
+pub fn validate_repo_config(config_text: &str) -> std::result::Result<(), String> {
+    validate_repo_format(config_text)
+}
+
+fn validate_repo_format_inner(config_text: &str) -> std::result::Result<(), String> {
+    validate_repo_format(config_text)
+}
+
+/// Internal implementation of repository format validation.
+///
+/// Git's rules:
+/// - version 0: any extensions are ignored
+/// - version 1: only known extensions are allowed; unknown extensions abort
+/// - version >= 2: currently unsupported (abort)
+///
+/// Known extensions (case-insensitive): `noop`, `noop-v1`, `preciousobjects`,
+/// `worktreeconfig`, `refformat`, `objectformat`, `refstorage`.
+fn validate_repo_format(config_text: &str) -> std::result::Result<(), String> {
+    let mut version: u32 = 0;
+    let mut in_core = false;
+    let mut in_extensions = false;
+    let mut extensions: Vec<String> = Vec::new();
+
+    for line in config_text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            let section = trimmed.trim_start_matches('[').to_lowercase();
+            in_core = section.starts_with("core]") || section.starts_with("core ");
+            in_extensions =
+                section.starts_with("extensions]") || section.starts_with("extensions ");
+            continue;
+        }
+        if in_core {
+            if let Some(rest) = trimmed.strip_prefix("repositoryformatversion") {
+                let rest = rest
+                    .trim_start_matches(|c: char| c == ' ' || c == '=')
+                    .trim();
+                if let Ok(v) = rest.parse::<u32>() {
+                    version = v;
+                }
+            }
+        }
+        if in_extensions {
+            if let Some((key, _)) = trimmed.split_once('=') {
+                let key = key.trim().to_lowercase();
+                if !key.is_empty() {
+                    extensions.push(key);
+                }
+            } else if !trimmed.is_empty() && !trimmed.starts_with('#') && !trimmed.starts_with(';')
+            {
+                extensions.push(trimmed.to_lowercase());
+            }
+        }
+    }
+
+    // Version 0: most extensions ignored, but some v1-only extensions abort
+    if version == 0 {
+        // noop-v1 aborts on version 0 — it signals "this repo requires v1"
+        const V0_ABORT: &[&str] = &["noop-v1"];
+        for ext in &extensions {
+            if V0_ABORT.contains(&ext.as_str()) {
+                return Err(format!(
+                    "error: extension '{ext}' is not supported with repositoryformatversion 0"
+                ));
+            }
+        }
+        return Ok(());
+    }
+
+    // Version >= 2: unsupported
+    if version >= 2 {
+        return Err(format!(
+            "error: unknown repository format version: {version}"
+        ));
+    }
+
+    // Version 1: unknown extensions abort
+    // Known extensions (case-insensitive) for version 1
+    const KNOWN_V1: &[&str] = &[
+        "noop",
+        "noop-v1",
+        "preciousobjects",
+        "worktreeconfig",
+        "refformat",
+        "objectformat",
+        "refstorage",
+        "partialclone",
+        "fetchpromisor",
+    ];
+    for ext in &extensions {
+        if !KNOWN_V1.contains(&ext.as_str()) {
+            return Err(format!("error: unknown repository format extension: {ext}"));
+        }
+    }
+
+    Ok(())
 }

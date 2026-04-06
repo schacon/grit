@@ -45,6 +45,117 @@ pub struct Args {
     /// Hash algorithm (accepted for compat).
     #[arg(long = "object-format")]
     pub object_format: Option<String>,
+
+    /// Keep true parents (accepted for compat, no-op in grit).
+    #[arg(long = "keep-true-parents")]
+    pub keep_true_parents: bool,
+
+    /// Suppress progress output (accepted for compat).
+    #[arg(short = 'q', long = "quiet")]
+    pub quiet: bool,
+
+    /// Keep unreachable objects (accepted for compat).
+    #[arg(long = "keep-unreachable")]
+    pub keep_unreachable: bool,
+
+    /// Unpack unreachable objects (accepted for compat).
+    #[arg(long = "unpack-unreachable")]
+    pub unpack_unreachable: Option<String>,
+
+    /// Window size for delta compression (accepted for compat).
+    #[arg(long = "window")]
+    pub window: Option<u32>,
+
+    /// Depth for delta compression (accepted for compat).
+    #[arg(long = "depth")]
+    pub depth: Option<u32>,
+
+    /// Honor pack-keep files (accepted for compat).
+    #[arg(long = "honor-pack-keep")]
+    pub honor_pack_keep: bool,
+
+    /// Only use local objects (accepted for compat).
+    #[arg(long = "local")]
+    pub local: bool,
+
+    /// Write bitmap index (accepted for compat).
+    #[arg(long = "write-bitmap-index")]
+    pub write_bitmap_index: bool,
+
+    /// Do not write bitmap index (accepted for compat).
+    #[arg(long = "no-write-bitmap-index")]
+    pub no_write_bitmap_index: bool,
+
+    /// Filter specification (accepted for compat).
+    #[arg(long = "filter")]
+    pub filter: Option<String>,
+
+    /// Missing objects are ok (accepted for compat).
+    #[arg(long = "missing")]
+    pub missing: Option<String>,
+
+    /// Exclude pack (accepted for compat).
+    #[arg(long = "exclude-promisor-objects")]
+    pub exclude_promisor_objects: bool,
+
+    /// Include redundant objects (accepted for compat).
+    #[arg(long = "include-redundant")]
+    pub include_redundant: bool,
+
+    /// Incremental pack (accepted for compat).
+    #[arg(long = "incremental")]
+    pub incremental: bool,
+
+    /// Do not create empty pack (accepted for compat).
+    #[arg(long = "non-empty")]
+    pub non_empty: bool,
+
+    /// Pack reachable loose objects (accepted for compat).
+    #[arg(long = "loosen-unreachable")]
+    pub loosen_unreachable: bool,
+
+    /// Keep unreachable objects in pack (accepted for compat).
+    #[arg(long = "pack-loose-unreachable")]
+    pub pack_loose_unreachable: bool,
+
+    /// Include objects reachable from reflog (accepted for compat).
+    #[arg(long = "reflog")]
+    pub reflog: bool,
+
+    /// Index version (accepted for compat).
+    #[arg(long = "index-version")]
+    pub index_version: Option<String>,
+
+    /// Number of threads (accepted for compat).
+    #[arg(long = "threads")]
+    pub threads: Option<u32>,
+
+    /// Maximum output size (accepted for compat).
+    #[arg(long = "max-pack-size")]
+    pub max_pack_size: Option<String>,
+
+    /// Sparse reachability traversal (accepted for compat).
+    #[arg(long = "sparse")]
+    pub sparse: bool,
+
+    /// Progress output (accepted for compat).
+    #[arg(long = "progress")]
+    pub progress: bool,
+
+    /// Include indexed objects (accepted for compat).
+    #[arg(long = "indexed-objects")]
+    pub indexed_objects: bool,
+
+    /// Cruft pack options (accepted for compat).
+    #[arg(long = "cruft")]
+    pub cruft: bool,
+
+    #[arg(long = "cruft-expiration")]
+    pub cruft_expiration: Option<String>,
+
+    /// Extra args passed through (for forward compat with unknown flags).
+    #[arg(value_name = "EXTRA", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true, hide = true)]
+    pub extra: Vec<String>,
 }
 
 /// A pack entry to be written.

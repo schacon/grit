@@ -1,6 +1,6 @@
 command	category	started	total_tests	passing_tests	not_ported	pct_passing
 add	Main Porcelain	yes	541	117	239	21.7
-am	Main Porcelain	yes	160	17	120	10.4
+am	Main Porcelain	yes	160	19	120	12.0
 archive	Main Porcelain	yes	114	36	39	31.5
 bisect	Main Porcelain	yes	96	0	96	0.0
 branch	Main Porcelain	yes	351	27	270	7.6
@@ -10,20 +10,20 @@ clean	Main Porcelain	yes	87	28	0	32.6
 clone	Main Porcelain	yes	425	80	207	18.8
 commit	Main Porcelain	yes	377	28	304	7.3
 describe	Main Porcelain	yes	59	1	58	1.7
-diff	Main Porcelain	yes	1002	205	370	20.5
+diff	Main Porcelain	yes	1002	211	370	21.1
 fetch	Main Porcelain	yes	699	74	485	10.6
 format-patch	Main Porcelain	yes	229	20	209	8.7
 gc	Main Porcelain	yes	50	27	2	53.7
 grep	Main Porcelain	yes	260	39	200	15.0
 init	Main Porcelain	yes	893	114	592	12.7
-log	Main Porcelain	yes	539	84	328	15.6
+log	Main Porcelain	yes	539	86	328	16.0
 merge	Main Porcelain	yes	657	125	348	19.0
 mv	Main Porcelain	yes	77	38	23	49.4
 notes	Main Porcelain	yes	308	51	174	16.6
 pull	Main Porcelain	yes	142	13	95	9.2
 push	Main Porcelain	yes	233	70	110	29.9
 range-diff	Main Porcelain	yes	47	0	47	0.0
-rebase	Main Porcelain	yes	558	48	330	8.6
+rebase	Main Porcelain	yes	558	50	330	8.9
 reset	Main Porcelain	yes	119	49	43	41.4
 restore	Main Porcelain	yes	40	9	0	21.8
 revert	Main Porcelain	yes	20	0	20	0.0
@@ -37,7 +37,7 @@ switch	Main Porcelain	yes	16	16	0	100.0
 tag	Main Porcelain	yes	213	0	212	0.2
 worktree	Main Porcelain	yes	232	23	157	10.1
 annotate	Ancillary Porcelain	yes	1	0	1	0.0
-blame	Ancillary Porcelain	yes	98	18	53	18.8
+blame	Ancillary Porcelain	yes	98	19	53	19.9
 bundle	Ancillary Porcelain	yes	43	7	13	17.0
 cherry	Ancillary Porcelain	yes	4	4	0	100.0
 config	Ancillary Porcelain	yes	663	105	471	15.8
@@ -74,7 +74,7 @@ verify-commit	Ancillary Porcelain	yes	16	0	16	0.0
 verify-tag	Ancillary Porcelain	yes	30	0	30	0.0
 version	Ancillary Porcelain	yes	0	0	0	0.0
 whatchanged	Ancillary Porcelain	yes	0	0	0	0.0
-apply	Plumbing	yes	286	86	86	30.0
+apply	Plumbing	yes	286	85	86	29.8
 backfill	Plumbing	yes	10	0	10	0.0
 cat-file	Plumbing	yes	174	10	153	5.6
 check-attr	Plumbing	yes	55	15	0	27.3

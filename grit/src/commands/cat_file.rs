@@ -721,14 +721,19 @@ fn run_transform_single(
         Ok(obj) => obj,
         Err(_) => fatal(&format!("Not a valid object name {obj_str}")),
     };
-    let transformed = transform_content(repo, transform_ctx, &oid, &path, mode, &obj, args.filters)?;
+    let transformed =
+        transform_content(repo, transform_ctx, &oid, &path, mode, &obj, args.filters)?;
     let stdout = io::stdout();
     let mut out = stdout.lock();
     out.write_all(&transformed)?;
     Ok(())
 }
 
-fn resolve_transform_target(repo: &Repository, args: &Args, obj_str: &str) -> Result<(ObjectId, u32, String)> {
+fn resolve_transform_target(
+    repo: &Repository,
+    args: &Args,
+    obj_str: &str,
+) -> Result<(ObjectId, u32, String)> {
     if let Some(path) = args.path.as_deref() {
         let oid = match resolve_object(repo, obj_str) {
             Ok(oid) => oid,
@@ -889,7 +894,9 @@ fn resolve_textconv_command(transform_ctx: &TransformContext, path: &str) -> Opt
     }
 
     match selected {
-        Some(DiffAttrValue::Driver(driver)) => transform_ctx.config.get(&format!("diff.{driver}.textconv")),
+        Some(DiffAttrValue::Driver(driver)) => {
+            transform_ctx.config.get(&format!("diff.{driver}.textconv"))
+        }
         _ => None,
     }
 }
@@ -998,7 +1005,11 @@ fn peel_to_tree_oid(repo: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
     }
 }
 
-fn resolve_path_in_tree(repo: &Repository, tree_oid: ObjectId, path: &str) -> Result<(ObjectId, u32)> {
+fn resolve_path_in_tree(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    path: &str,
+) -> Result<(ObjectId, u32)> {
     let parts: Vec<&str> = path
         .split('/')
         .filter(|segment| !segment.is_empty() && *segment != ".")

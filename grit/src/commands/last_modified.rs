@@ -58,14 +58,19 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut heads = Vec::new();
     for spec in &positive_specs {
-        let oid = resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
+        let oid =
+            resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
         let commit_oid = peel_to_commit(&repo, spec, oid)?;
         heads.push(commit_oid);
     }
     let head_oid = heads
         .first()
         .copied()
-        .or_else(|| resolve_head(&repo.git_dir).ok().and_then(|h| h.oid().copied()))
+        .or_else(|| {
+            resolve_head(&repo.git_dir)
+                .ok()
+                .and_then(|h| h.oid().copied())
+        })
         .ok_or_else(|| anyhow!("cannot resolve revision"))?;
 
     let mut commit_cache: HashMap<ObjectId, CommitData> = HashMap::new();
@@ -73,7 +78,8 @@ pub fn run(args: Args) -> Result<()> {
 
     let mut negative = HashSet::new();
     for spec in &negative_specs {
-        let oid = resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
+        let oid =
+            resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
         let commit_oid = peel_to_commit(&repo, spec, oid)?;
         collect_reachable_commits(&repo, &mut commit_cache, commit_oid, &mut negative)?;
     }
@@ -102,7 +108,14 @@ pub fn run(args: Args) -> Result<()> {
             &negative,
             options.max_count,
         )?;
-        results.push((idx, ResultRow { path: ent.path, commit, boundary }));
+        results.push((
+            idx,
+            ResultRow {
+                path: ent.path,
+                commit,
+                boundary,
+            },
+        ));
     }
 
     results.sort_by(|(idx_a, a), (idx_b, b)| {
@@ -248,14 +261,11 @@ fn token_is_revision(repo: &Repository, token: &str) -> bool {
         if pos.is_empty() && neg.is_empty() {
             return false;
         }
-        return pos
-            .into_iter()
-            .chain(neg)
-            .all(|spec| {
-                resolve_revision(repo, &spec)
-                    .ok()
-                    .is_some_and(|oid| is_commitish(repo, oid))
-            });
+        return pos.into_iter().chain(neg).all(|spec| {
+            resolve_revision(repo, &spec)
+                .ok()
+                .is_some_and(|oid| is_commitish(repo, oid))
+        });
     }
 
     resolve_revision(repo, token)
@@ -421,9 +431,7 @@ fn collect_recursive_files(
             format!("{prefix}/{name}")
         };
         if path_matches_any(pathspecs, &path) {
-            out.push(Entry {
-                path,
-            });
+            out.push(Entry { path });
         }
     }
 
@@ -475,9 +483,7 @@ fn collect_recursive_with_trees(
             format!("{prefix}/{name}")
         };
         if path_matches_any(pathspecs, &path) {
-            out.push(Entry {
-                path,
-            });
+            out.push(Entry { path });
         }
     }
 
@@ -513,8 +519,7 @@ fn collapse_entries(
             continue;
         }
 
-        if resolve_path_in_tree_cached(repo, path_cache, root_tree_oid, &collapsed_path)?
-            .is_some()
+        if resolve_path_in_tree_cached(repo, path_cache, root_tree_oid, &collapsed_path)?.is_some()
         {
             result.push(Entry {
                 path: collapsed_path,
