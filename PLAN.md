@@ -409,7 +409,7 @@ commit → check it off → move on.
 
 - [ ] `t4003-diff-rename-1` ███████████░░░░░░░░░ 4/7 (3 left) — More rename detection
 
-- [ ] `t4016-diff-quote` ████████░░░░░░░░░░░░ 2/5 (3 left) — Quoting paths in diff output.
+- [x] `t4016-diff-quote` ████████████████████ 5/5 (0 left) — Quoting paths in diff output.
 
 - [ ] `t4018-diff-funcname` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — Test custom diff function name patterns
 - [ ] `t4039-diff-assume-unchanged` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — diff with assume-unchanged entries
