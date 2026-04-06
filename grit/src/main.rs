@@ -2298,6 +2298,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "sha1" => run_test_tool_sha1(),
                 "zlib" => run_test_tool_zlib(rest),
                 "ref-store" => commands::test_tool_ref_store::run(&rest[1..]),
+                "config" => run_test_tool_config(rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
@@ -2346,5 +2347,26 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 }
             }
         }
+    }
+}
+
+/// Handle `test-tool config <subcommand> [args...]`
+fn run_test_tool_config(rest: &[String]) -> Result<()> {
+    let subcmd = rest.get(1).map(String::as_str).unwrap_or("");
+    match subcmd {
+        "read_early_config" => {
+            let key = rest.get(2).ok_or_else(|| anyhow::anyhow!("usage: test-tool config read_early_config <key>"))?;
+            // "Early config" in git means config read before full repo discovery:
+            // walk up from cwd finding .git/config files, then global config.
+            let config = grit_lib::config::ConfigSet::load(
+                grit_lib::repo::Repository::discover(None).ok().as_ref().map(|r| r.git_dir.as_path()),
+                true,
+            ).unwrap_or_default();
+            if let Some(val) = config.get(key) {
+                println!("{val}");
+            }
+            Ok(())
+        }
+        other => bail!("test-tool config: unknown subcommand '{other}'"),
     }
 }
