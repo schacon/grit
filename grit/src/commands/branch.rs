@@ -159,11 +159,7 @@ pub struct Args {
 
 /// Run the `branch` command.
 pub fn run(args: Args) -> Result<()> {
-    // Delegate destructive branch operations to system Git for full
-    // worktree-protection semantics (checked out, bisect, rebase, etc.).
-    if should_passthrough_to_system_git(&args) {
-        return passthrough_current_branch_invocation();
-    }
+    // Note: previously delegated to system git, now handled natively.
 
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;

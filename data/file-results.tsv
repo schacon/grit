@@ -167,7 +167,7 @@ t1701-racy-split-index	yes	31	1	30	ok	1	31	0
 t1800-hook	yes	0	0	0	ok	0	0	0
 t1900-repo-info	yes	0	0	0	ok	0	0	0
 t1901-repo-structure	yes	4	4	0	ok	4	4	0
-t2000-conflict-when-checking-files-out	yes	14	14	0	ok	14	14	0
+t2000-conflict-when-checking-files-out	yes	14	13	1	ok	13	14	0
 t2003-checkout-cache-mkdir	yes	10	6	4	ok	6	10	0
 t2004-checkout-cache-temp	yes	0	0	0	ok	0	0	0
 t2005-checkout-index-symlinks	yes	3	3	0	ok	3	3	0
@@ -185,7 +185,7 @@ t2016-checkout-patch	yes	19	7	12	ok	7	19	0
 t2017-checkout-orphan	yes	13	9	4	ok	9	13	0
 t2018-checkout-branch	yes	25	24	1	ok	24	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
-t2020-checkout-detach	yes	26	17	9	ok	17	26	0
+t2020-checkout-detach	yes	26	18	8	ok	18	26	0
 t2021-checkout-overwrite	yes	9	7	2	ok	7	9	0
 t2022-checkout-paths	yes	5	4	1	ok	4	5	0
 t2023-checkout-m	yes	5	2	3	ok	2	5	0
@@ -217,8 +217,8 @@ t2204-add-ignored	yes	47	47	0	ok	47	47	0
 t2205-add-worktree-config	yes	13	5	8	ok	5	13	0
 t2206-add-submodule-ignored	yes	8	4	4	ok	4	8	0
 t2400-worktree-add	yes	0	0	0	ok	0	0	0
-t2401-worktree-prune	yes	13	5	8	ok	5	13	0
-t2402-worktree-list	yes	27	10	17	ok	10	27	0
+t2401-worktree-prune	yes	13	11	2	ok	11	13	0
+t2402-worktree-list	yes	27	11	16	ok	11	27	0
 t2403-worktree-move	yes	0	0	0	ok	0	0	0
 t2404-worktree-config	yes	0	0	0	ok	0	0	0
 t2405-worktree-submodule	yes	11	2	9	ok	1	10	1
@@ -272,7 +272,7 @@ t3310-notes-merge-manual-resolve	yes	22	4	18	ok	4	22	0
 t3311-notes-merge-fanout	yes	24	1	23	ok	1	24	0
 t3320-notes-merge-worktrees	yes	9	4	5	ok	4	9	0
 t3321-notes-stripspace	yes	27	1	26	ok	1	27	0
-t3400-rebase	yes	39	9	30	ok	9	39	0
+t3400-rebase	yes	39	10	29	ok	10	39	0
 t3401-rebase-and-am-rename	yes	10	6	4	ok	4	8	2
 t3402-rebase-merge	yes	0	0	0	ok	0	0	0
 t3403-rebase-skip	yes	0	0	0	ok	0	0	0
@@ -300,7 +300,7 @@ t3428-rebase-signoff	yes	7	1	6	ok	1	7	0
 t3429-rebase-edit-todo	yes	7	4	3	ok	4	7	0
 t3430-rebase-merges	yes	34	1	33	ok	1	34	0
 t3431-rebase-fork-point	yes	0	0	0	ok	0	0	0
-t3432-rebase-fast-forward	yes	225	218	7	ok	218	225	0
+t3432-rebase-fast-forward	yes	225	219	6	ok	219	225	0
 t3433-rebase-across-mode-change	yes	4	4	0	ok	4	4	0
 t3434-rebase-i18n	yes	0	0	0	ok	0	0	0
 t3435-rebase-gpg-sign	yes	0	0	0	ok	0	0	0
@@ -662,7 +662,7 @@ t5900-repo-selection	yes	8	0	8	ok	0	8	0
 t6000-rev-list-misc	yes	0	0	0	ok	0	0	0
 t6001-rev-list-graft	yes	14	14	0	ok	14	14	0
 t6002-rev-list-bisect	yes	53	4	49	ok	4	53	0
-t6003-rev-list-topo-order	yes	36	22	14	ok	22	36	0
+t6003-rev-list-topo-order	yes	36	21	15	ok	21	36	0
 t6004-rev-list-path-optim	yes	7	7	0	ok	7	7	0
 t6005-rev-list-count	yes	6	6	0	ok	6	6	0
 t6006-rev-list-format	yes	80	63	17	ok	63	80	0
@@ -676,7 +676,7 @@ t6013-rev-list-reverse-parents	yes	3	2	1	ok	2	3	0
 t6014-rev-list-all	yes	4	4	0	ok	4	4	0
 t6016-rev-list-graph-simplify-history	yes	12	12	0	ok	12	12	0
 t6017-rev-list-stdin	yes	0	0	0	ok	0	0	0
-t6018-rev-list-glob	yes	95	30	65	ok	30	95	0
+t6018-rev-list-glob	yes	95	26	69	ok	26	95	0
 t6019-rev-list-ancestry-path	yes	18	1	17	ok	1	18	0
 t6020-bundle-misc	yes	37	9	28	ok	9	37	0
 t6021-rev-list-exclude-hidden	yes	0	0	0	ok	0	0	0
@@ -757,7 +757,7 @@ t7007-show	yes	0	0	0	ok	0	0	0
 t7008-filter-branch-null-sha1	yes	6	5	1	ok	5	6	0
 t7010-setup	yes	16	9	7	ok	9	16	0
 t7011-skip-worktree-reading	yes	0	0	0	ok	0	0	0
-t7012-skip-worktree-writing	yes	11	9	2	ok	9	11	0
+t7012-skip-worktree-writing	yes	11	10	1	ok	10	11	0
 t7030-verify-tag	yes	0	0	0	ok	0	0	0
 t7031-verify-tag-signed-ssh	yes	0	0	0	ok	0	0	0
 t7060-wtstatus	yes	0	0	0	ok	0	0	0
@@ -848,7 +848,7 @@ t7700-repack	yes	47	23	24	ok	23	47	0
 t7701-repack-unpack-unreachable	yes	0	0	0	ok	0	0	0
 t7702-repack-cyclic-alternate	yes	2	2	0	ok	2	2	0
 t7703-repack-geometric	yes	18	6	12	ok	6	18	0
-t7704-repack-cruft	yes	25	0	25	ok	0	25	0
+t7704-repack-cruft	yes	25	5	20	ok	5	25	0
 t7800-difftool	yes	0	0	0	ok	0	0	0
 t7810-grep	yes	0	0	0	ok	0	0	0
 t7811-grep-open	yes	0	0	0	ok	0	0	0
@@ -951,14 +951,14 @@ t9200-git-cvsexportcommit	yes	0	0	0	ok	0	0	0
 t9210-scalar	yes	22	16	6	ok	16	22	0
 t9211-scalar-clone	yes	14	10	4	ok	10	14	0
 t9300-fast-import	yes	0	0	0	ok	0	0	0
-t9301-fast-import-notes	yes	17	9	8	ok	9	17	0
+t9301-fast-import-notes	yes	17	14	3	ok	14	17	0
 t9302-fast-import-unpack-limit	yes	3	3	0	ok	3	3	0
 t9303-fast-import-compression	yes	16	0	16	ok	0	16	0
-t9304-fast-import-marks	yes	8	0	8	ok	0	8	0
+t9304-fast-import-marks	yes	8	7	1	ok	7	8	0
 t9305-fast-import-signatures	yes	0	0	0	ok	0	0	0
 t9306-fast-import-signed-tags	yes	0	0	0	ok	0	0	0
 t9350-fast-export	yes	0	0	0	ok	0	0	1
-t9351-fast-export-anonymize	yes	17	5	12	ok	5	17	0
+t9351-fast-export-anonymize	yes	17	14	3	ok	14	17	0
 t9400-git-cvsserver-server	yes	0	0	0	ok	0	0	1
 t9401-git-cvsserver-crlf	yes	0	0	0	ok	0	0	0
 t9402-git-cvsserver-refs	yes	0	0	0	ok	0	0	0
@@ -969,7 +969,7 @@ t9600-cvsimport	yes	0	0	0	ok	0	0	0
 t9601-cvsimport-vendor-branch	yes	0	0	0	ok	0	0	1
 t9602-cvsimport-branches-tags	yes	0	0	0	ok	0	0	6
 t9604-cvsimport-timestamps	yes	0	0	0	ok	0	0	0
-t9700-perl-git	yes	3	0	3	ok	0	3	0
+t9700-perl-git	yes	3	2	1	ok	2	3	0
 t9800-git-p4-basic	yes	0	0	0	ok	0	0	0
 t9801-git-p4-branch	yes	0	0	0	ok	0	0	1
 t9802-git-p4-filetype	yes	0	0	0	ok	0	0	0
@@ -1007,6 +1007,6 @@ t9833-errors	yes	0	0	0	ok	0	0	0
 t9834-git-p4-file-dir-bug	yes	0	0	0	ok	0	0	0
 t9835-git-p4-metadata-encoding-python2	yes	0	0	0	ok	0	0	0
 t9836-git-p4-metadata-encoding-python3	yes	0	0	0	ok	0	0	0
-t9850-shell	yes	5	2	3	ok	2	5	0
-t9902-completion	yes	263	10	253	ok	8	261	2
-t9903-bash-prompt	yes	67	0	67	ok	0	67	0
+t9850-shell	yes	5	5	0	ok	5	5	0
+t9902-completion	yes	263	22	241	ok	20	261	2
+t9903-bash-prompt	yes	67	1	66	ok	1	67	0

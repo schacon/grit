@@ -3417,7 +3417,7 @@ t1900-repo-info::lines-label	t1900-repo-info	lines: $label	rev-parse	not_ported
 t1900-repo-info::nul-label	t1900-repo-info	nul: $label	rev-parse	not_ported
 t1901-repo-structure::empty-repository	t1901-repo-structure	empty repository	init	pass
 t1901-repo-structure::progress-meter-option	t1901-repo-structure	progress meter option	init	pass
-t2000-conflict-when-checking-files-out::checkout-index-f-twice-with-prefix	t2000-conflict-when-checking-files-out	checkout-index -f twice with --prefix	checkout-index	pass
+t2000-conflict-when-checking-files-out::checkout-index-f-twice-with-prefix	t2000-conflict-when-checking-files-out	checkout-index -f twice with --prefix	checkout-index	partial
 t2003-checkout-cache-mkdir::setup	t2003-checkout-cache-mkdir	setup	checkout	partial
 t2003-checkout-cache-mkdir::have-symlink-in-place-where-dir-is-expected	t2003-checkout-cache-mkdir	have symlink in place where dir is expected.	checkout	partial
 t2003-checkout-cache-mkdir::use-prefix-path2	t2003-checkout-cache-mkdir	use --prefix=path2/	checkout	partial
@@ -17770,11 +17770,11 @@ t9836-git-p4-metadata-encoding-python3::check-cp850-contents-parsed-with-correct
 t9836-git-p4-metadata-encoding-python3::check-cp850-only-contents-escaped-when-cp1252-is-fallback	t9836-git-p4-metadata-encoding-python3	check cp850-only contents escaped when cp1252 is fallback	p4	not_ported
 t9836-git-p4-metadata-encoding-python3::check-cp-1252-contents-on-later-sync-after-clone-with-fallback-strategy	t9836-git-p4-metadata-encoding-python3	check cp-1252 contents on later sync after clone with fallback strategy	p4	not_ported
 t9836-git-p4-metadata-encoding-python3::fallback-both-utf-8-and-cp-1252-contents-handled-is-the-default-with-python3	t9836-git-p4-metadata-encoding-python3	fallback (both utf-8 and cp-1252 contents handled) is the default with python3	p4	not_ported
-t9850-shell::shell-allows-upload-pack	t9850-shell	shell allows upload-pack	help	partial
-t9850-shell::shell-forbids-other-commands	t9850-shell	shell forbids other commands	help	partial
-t9850-shell::shell-forbids-interactive-use-by-default	t9850-shell	shell forbids interactive use by default	help	partial
-t9850-shell::shell-allows-interactive-command	t9850-shell	shell allows interactive command	help	partial
-t9850-shell::shell-complains-of-overlong-commands	t9850-shell	shell complains of overlong commands	help	partial
+t9850-shell::shell-allows-upload-pack	t9850-shell	shell allows upload-pack	help	pass
+t9850-shell::shell-forbids-other-commands	t9850-shell	shell forbids other commands	help	pass
+t9850-shell::shell-forbids-interactive-use-by-default	t9850-shell	shell forbids interactive use by default	help	pass
+t9850-shell::shell-allows-interactive-command	t9850-shell	shell allows interactive command	help	pass
+t9850-shell::shell-complains-of-overlong-commands	t9850-shell	shell complains of overlong commands	help	pass
 t9902-completion::setup-for-git-find-repo-path-gitdir-tests	t9902-completion	setup for __git_find_repo_path/__gitdir tests	help	partial
 t9902-completion::git-find-repo-path-from-command-line-through-git-dir	t9902-completion	__git_find_repo_path - from command line (through $__git_dir)	help	partial
 t9902-completion::git-find-repo-path-git-directory-in-cwd	t9902-completion	__git_find_repo_path - .git directory in cwd	help	partial
