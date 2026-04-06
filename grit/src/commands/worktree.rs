@@ -10,6 +10,7 @@ use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectId;
+use grit_lib::rev_parse::resolve_revision;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::{resolve_head, HeadState};
@@ -260,6 +261,9 @@ fn resolve_commitish(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     if let Ok(oid) = refs::resolve_ref(&common, spec) {
+        return Ok(oid);
+    }
+    if let Ok(oid) = resolve_revision(repo, spec) {
         return Ok(oid);
     }
     // Try as raw hex OID
