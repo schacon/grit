@@ -250,14 +250,22 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Collect file paths (from args or stdin)
-    let paths: Vec<PathBuf> = if args.null_terminated {
+    let mut paths: Vec<PathBuf> = if args.null_terminated {
         read_paths_nul()?
     } else {
         args.files.clone()
     };
+    if args.again {
+        paths = collect_again_paths(&index, work_tree, &cwd, &paths, args.ignore_missing)?;
+    }
 
     for input_path in &paths {
-        let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
+        let (rel_path, abs_path) = if args.again {
+            let rel = normalize_path(input_path);
+            (rel.clone(), work_tree.join(&rel))
+        } else {
+            resolve_repo_path(work_tree, &cwd, &input_path)?
+        };
         let rel_bytes = path_to_bytes(&rel_path)?;
 
         if args.add && has_df_conflict(&index, &rel_bytes) {
@@ -919,4 +927,54 @@ fn is_tree_prefix(prefix: &[u8], full: &[u8]) -> bool {
     full.len() > prefix.len()
         && full.starts_with(prefix)
         && full.get(prefix.len()) == Some(&b'/')
+}
+
+fn collect_again_paths(
+    index: &Index,
+    work_tree: &Path,
+    cwd: &Path,
+    requested: &[PathBuf],
+    ignore_missing: bool,
+) -> Result<Vec<PathBuf>> {
+    use std::collections::BTreeSet;
+
+    let mut out = BTreeSet::<PathBuf>::new();
+    let rel_cwd = cwd.strip_prefix(work_tree).unwrap_or_else(|_| Path::new(""));
+
+    if requested.is_empty() {
+        let rel_cwd_bytes = path_to_bytes(rel_cwd)?;
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 0) {
+            if rel_cwd_bytes.is_empty()
+                || entry.path == rel_cwd_bytes
+                || is_tree_prefix(&rel_cwd_bytes, &entry.path)
+            {
+                let s = std::str::from_utf8(&entry.path)
+                    .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+                out.insert(PathBuf::from(s));
+            }
+        }
+        return Ok(out.into_iter().collect());
+    }
+
+    for input_path in requested {
+        let (rel_path, _) = resolve_repo_path(work_tree, cwd, input_path)?;
+        let rel_bytes = path_to_bytes(&rel_path)?;
+        let mut matched = false;
+
+        for entry in index.entries.iter().filter(|e| e.stage() == 0) {
+            if entry.path == rel_bytes || is_tree_prefix(&rel_bytes, &entry.path) {
+                let s = std::str::from_utf8(&entry.path)
+                    .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?;
+                out.insert(PathBuf::from(s));
+                matched = true;
+            }
+        }
+
+        if !matched && !ignore_missing {
+            bail!("'{}' is not in the index", input_path.display());
+        }
+    }
+
+    Ok(out.into_iter().collect())
 }

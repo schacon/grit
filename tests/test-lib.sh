@@ -171,9 +171,12 @@ test_debug () {
 # Default diff program
 DIFF="${DIFF:-diff}"
 
-# Allow tests to use $HOME — isolate from real user config
-HOME="$TRASH_DIRECTORY"
-XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
+# Allow tests to use $HOME — isolate from real user config.
+# Keep HOME outside the repo worktree root so `git add -A` doesn't stage
+# global config files (e.g. $HOME/.gitconfig) as test content.
+HOME="$BIN_DIRECTORY/home"
+XDG_CONFIG_HOME="$HOME/.config"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME"
 export HOME XDG_CONFIG_HOME
 
 # Prevent tests from discovering enclosing repositories
