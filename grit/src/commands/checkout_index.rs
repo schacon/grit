@@ -137,12 +137,16 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let mut has_errors = false;
+    let mut has_conflicts = false;
     for path in selected_paths {
         let entry = index.get(&path, target_stage).cloned().ok_or_else(|| {
             anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path))
         })?;
         match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
             Ok(outcome) => {
+                if outcome.had_conflict {
+                    has_conflicts = true;
+                }
                 if let Some(updated) = outcome.updated_entry {
                     index.add_or_replace(updated);
                     index_needs_write = true;
@@ -161,7 +165,7 @@ pub fn run(args: Args) -> Result<()> {
         index.write(&index_path).context("writing index")?;
     }
 
-    if has_errors {
+    if has_errors || has_conflicts {
         std::process::exit(1);
     }
 
@@ -172,6 +176,7 @@ pub fn run(args: Args) -> Result<()> {
 struct CheckoutOutcome {
     updated_entry: Option<grit_lib::index::IndexEntry>,
     temp_output: Option<String>,
+    had_conflict: bool,
 }
 
 fn checkout_entry(
@@ -229,10 +234,23 @@ fn checkout_entry(
         if !args.quiet {
             eprintln!("warning: '{rel_path}' already exists, skipping (use --force to override)");
         }
+        outcome.had_conflict = true;
         return Ok(outcome);
     }
 
     if let Some(parent) = abs_path.parent() {
+        // If a path component exists as a file, remove it so we can create a directory.
+        let mut check = std::path::PathBuf::new();
+        if let Ok(stripped) = parent.strip_prefix("/") {
+            check.push("/");
+            for component in stripped.components() {
+                check.push(component);
+                if check.is_file() || check.is_symlink() && !check.is_dir() {
+                    let _ = std::fs::remove_file(&check);
+                    break;
+                }
+            }
+        }
         if !parent.exists() {
             std::fs::create_dir_all(parent)?;
         }
