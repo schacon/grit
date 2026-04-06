@@ -90,15 +90,15 @@ commit → check it off → move on.
 
 - [x] `t1051-large-conversion` ████████████████████ 12/12 (0 left) — test conversion filters on large files
 - [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
-- [ ] `t0411-clone-from-partial` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — check that local clone does not fetch from promisor remotes
-- [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
+- [ ] `t0411-clone-from-partial` █████████████████░░░ 6/7 (0 fully, 6 passing) — check that local clone does not fetch from promisor remotes
+- [x] `t1090-sparse-checkout-scope` █████████████████░░░ 6/7 (0 fully, 6 passing) — sparse checkout scope tests
 - [x] `t1302-repo-version` ████████████████████ 18/18 (0 left) — Test repository version check
 - [ ] `t1060-object-corruption` ████████████░░░░░░░░ 11/17 (6 left) — see how we handle various forms of corruption
-- [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.
+- [x] `t1020-subdirectory` ████████████████████ 15/15 (0 left) — Try various core-level commands in subdirectory.
 
 - [ ] `t1415-worktree-refs` ████████░░░░░░░░░░░░ 4/10 (6 left) — per-worktree refs
 - [ ] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
-- [ ] `t1005-read-tree-reset` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — read-tree -u --reset
+- [x] `t1005-read-tree-reset` ████████████████████ 7/7 (0 left) — read-tree -u --reset
 - [ ] `t0100-previous` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — previous branch syntax @{-n}
 - [ ] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
 - [ ] `t1406-submodule-ref-store` ██████████░░░░░░░░░░ 8/15 (7 left) — test submodule ref store api
@@ -287,7 +287,7 @@ commit → check it off → move on.
 - [ ] `t3509-cherry-pick-merge-df` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — Test cherry-pick with directory/file conflicts
 - [ ] `t3060-ls-files-with-tree` █████░░░░░░░░░░░░░░░ 2/8 (6 left) — git ls-files test (--with-tree).
 
-- [ ] `t3428-rebase-signoff` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git rebase --signoff
+- [ ] `t3428-rebase-signoff` ████████████████████ 7/7 (0 left) — git rebase --signoff
 
 - [ ] `t3505-cherry-pick-empty` ██████████░░░░░░░░░░ 9/17 (8 left) — test cherry-picking an empty commit
 - [ ] `t3902-quoted` ███████░░░░░░░░░░░░░ 5/13 (8 left) — quoted output
@@ -435,16 +435,16 @@ commit → check it off → move on.
 - [ ] `t4064-diff-oidfind` ██████████░░░░░░░░░░ 5/10 (5 left) — test finding specific blobs in the revision walking
 - [ ] `t4031-diff-rewrite-binary` ███████░░░░░░░░░░░░░ 3/8 (5 left) — rewrite diff on binary file
 - [ ] `t4126-apply-empty` ███████░░░░░░░░░░░░░ 3/8 (5 left) — apply empty
-- [ ] `t4116-apply-reverse` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git apply in reverse
+- [ ] `t4116-apply-reverse` █████████████████░░░ 6/7 (0 fully, 6 passing) — git apply in reverse
 
-- [ ] `t4140-apply-ita` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git apply of i-t-a file
+- [ ] `t4140-apply-ita` █████████████████░░░ 6/7 (0 fully, 6 passing) — git apply of i-t-a file
 - [ ] `t4153-am-resume-override-opts` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git-am command-line options override saved options
 - [ ] `t4104-apply-boundary` ███████████████░░░░░ 18/24 (6 left) — git apply boundary tests
 - [ ] `t4001-diff-rename` ██████████████░░░░░░ 17/23 (6 left) — Test rename detection in diff engine.
 - [ ] `t4010-diff-pathspec` ████████████░░░░░░░░ 11/17 (6 left) — Pathspec restrictions
 
-- [ ] `t4122-apply-symlink-inside` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — apply to deeper directory without getting fooled with symlink
-- [ ] `t4253-am-keep-cr-dos` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — git-am mbox with dos line ending.
+- [ ] `t4122-apply-symlink-inside` ████████████████████ 7/7 (0 left) — apply to deeper directory without getting fooled with symlink
+- [ ] `t4253-am-keep-cr-dos` ████████████████████ 7/7 (0 left) — git-am mbox with dos line ending.
 
 - [ ] `t4054-diff-bogus-tree` ██████████░░░░░░░░░░ 7/14 (7 left) — test diff with a bogus tree containing the null sha1
 - [ ] `t4114-apply-typechange` ████████░░░░░░░░░░░░ 5/12 (7 left) — git apply should not get confused with type changes.
@@ -581,9 +581,9 @@ commit → check it off → move on.
 - [ ] `t5614-clone-submodules-shallow` ████████░░░░░░░░░░░░ 4/9 (5 left) — Test shallow cloning of repos with submodules
 - [ ] `t5200-update-server-info` ███████░░░░░░░░░░░░░ 3/8 (5 left) — Test git update-server-info
 - [ ] `t5564-http-proxy` ███████░░░░░░░░░░░░░ 3/8 (5 left) — test fetching through http proxy
-- [ ] `t5402-post-merge-hook` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — Test the post-merge hook.
-- [ ] `t5502-quickfetch` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test quickfetch from local
-- [ ] `t5544-pack-objects-hook` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — test custom script in place of pack-objects
+- [ ] `t5402-post-merge-hook` █████████████████░░░ 6/7 (0 fully, 6 passing) — Test the post-merge hook.
+- [ ] `t5502-quickfetch` █████████████████░░░ 6/7 (0 fully, 6 passing) — test quickfetch from local
+- [ ] `t5544-pack-objects-hook` █████████████████░░░ 6/7 (0 fully, 6 passing) — test custom script in place of pack-objects
 - [ ] `t5316-pack-delta-depth` ░░░░░░░░░░░░░░░░░░░░ 0/5 (5 left) — pack-objects breaks long cross-pack delta chains
 - [ ] `t5546-receive-limits` ████████████░░░░░░░░ 11/17 (6 left) — check receive input limits
 - [ ] `t5534-push-signed` ██████████░░░░░░░░░░ 7/13 (6 left) — signed push
@@ -713,7 +713,7 @@ commit → check it off → move on.
 - [ ] `t6133-pathspec-rev-dwim` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — test dwim of revs versus pathspecs in revision parser
 - [ ] `t6404-recursive-merge` ██████░░░░░░░░░░░░░░ 2/6 (4 left) — Test merge without common ancestors
 - [ ] `t6415-merge-dir-to-symlink` ███████████████░░░░░ 19/24 (5 left) — merging when a directory was replaced with a symlink
-- [ ] `t6004-rev-list-path-optim` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git rev-list trivial path optimization test
+- [ ] `t6004-rev-list-path-optim` █████████████████░░░ 6/7 (0 fully, 6 passing) — git rev-list trivial path optimization test
 
 - [ ] `t6005-rev-list-count` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — git rev-list --max-count and --skip test
 - [ ] `t6439-merge-co-error-msgs` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — unpack-trees error messages
@@ -721,7 +721,7 @@ commit → check it off → move on.
 
 - [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands
 - [ ] `t6427-diff3-conflict-markers` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — recursive merge diff3 style conflict markers
-- [ ] `t6060-merge-index` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic git merge-index / git-merge-one-file tests
+- [ ] `t6060-merge-index` ████████████████████ 7/7 (0 left) — basic git merge-index / git-merge-one-file tests
 - [ ] `t6131-pathspec-icase` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — test case insensitive pathspec limiting
 - [ ] `t6102-rev-list-unexpected-objects` ████████████░░░░░░░░ 14/22 (8 left) — git rev-list should handle unexpected object types
 - [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
@@ -913,8 +913,8 @@ commit → check it off → move on.
 - [ ] `t8004-blame-with-conflicts` █████████████░░░░░░░ 2/3 (1 left) — git blame on conflicted files
 - [ ] `t8009-blame-vs-topicbranches` ██████████░░░░░░░░░░ 1/2 (1 left) — blaming through history with topic branches
 - [ ] `t8010-cat-file-filters` ████████░░░░░░░░░░░░ 4/9 (5 left) — git cat-file filters support
-- [ ] `t8015-blame-diff-algorithm` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — git blame with specific diff algorithm
-- [ ] `t8007-cat-file-textconv` ████████████░░░░░░░░ 9/15 (6 left) — git cat-file textconv support
+- [ ] `t8015-blame-diff-algorithm` █████████████████░░░ 6/7 (0 fully, 6 passing) — git blame with specific diff algorithm
+- [ ] `t8007-cat-file-textconv` ████████████████████ 15/15 (0 left) — git cat-file textconv support
 - [ ] `t8011-blame-split-file` ████░░░░░░░░░░░░░░░░ 2/10 (8 left) — 
 
 - [ ] `t8006-blame-textconv` ███████░░░░░░░░░░░░░ 6/16 (10 left) — git blame textconv support
