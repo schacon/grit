@@ -873,6 +873,15 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             Err(_) => continue,
         };
 
+        // Apply --no-merges filter
+        if args.no_merges && commit_data.parents.len() > 1 {
+            continue;
+        }
+        // Apply --merges filter
+        if args.merges && commit_data.parents.len() <= 1 {
+            continue;
+        }
+
         let selector = format!("{}@{{{}}}", display_name, i);
 
         // NUL separator between entries for multi-line formats
