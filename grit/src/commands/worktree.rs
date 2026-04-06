@@ -417,6 +417,26 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                     if matching.len() == 1 {
                         // DWIM: create tracking branch from remote
                         let oid = matching[0].1;
+                        // Get remote name for tracking setup
+                        let remote_name = matching[0]
+                            .0
+                            .trim_start_matches("refs/remotes/")
+                            .splitn(2, '/')
+                            .next()
+                            .unwrap_or("origin")
+                            .to_owned();
+                        // Write tracking config
+                        let cfg_path = common.join("config");
+                        if let Ok(mut cfg_content) = std::fs::read_to_string(&cfg_path) {
+                            let section = format!(
+                                "\n[branch \"{}\"]\
+\n\tremote = {}\
+\n\tmerge = refs/heads/{}\n",
+                                spec, remote_name, spec
+                            );
+                            cfg_content.push_str(&section);
+                            let _ = std::fs::write(&cfg_path, cfg_content);
+                        }
                         (Some(spec.clone()), Some(oid), false)
                     } else {
                         bail!("fatal: invalid reference: '{}'", spec);
