@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use crate::config::{parse_path, ConfigSet};
 use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::repo::Repository;
@@ -153,54 +154,36 @@ impl IgnoreMatcher {
 }
 
 fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
-    // Check local repo config, then global config, for core.excludesFile.
-    // Also fall back to XDG default: $HOME/.config/git/ignore
-    let local_config = repo.git_dir.join("config");
-    let local_text = read_optional_text(&local_config)?.unwrap_or_default();
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let Some(raw_path) = config
+        .get("core.excludesfile")
+        .or_else(default_global_ignore_path)
+    else {
+        return Ok(Vec::new());
+    };
 
-    // Try global config files for core.excludesFile
-    let mut raw_path: Option<String> = parse_core_excludesfile(&local_text);
-    if raw_path.is_none() {
-        for global_path in crate::config::global_config_paths_pub() {
-            if let Ok(Some(text)) = std::fs::read_to_string(&global_path)
-                .map(Some)
-                .or_else(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        Ok(None)
-                    } else {
-                        Err(e)
-                    }
-                })
-            {
-                raw_path = parse_core_excludesfile(&text);
-                if raw_path.is_some() {
-                    break;
-                }
-            }
+    let expanded = parse_path(&raw_path);
+    let resolved = if Path::new(&expanded).is_absolute() {
+        PathBuf::from(&expanded)
+    } else if let Some(work_tree) = &repo.work_tree {
+        work_tree.join(&expanded)
+    } else {
+        repo.git_dir.join(&expanded)
+    };
+
+    load_rules_from_file(&resolved, raw_path, String::new())
+}
+
+fn default_global_ignore_path() -> Option<String> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(format!("{xdg}/git/ignore"));
         }
     }
 
-    if let Some(ref rp) = raw_path {
-        let expanded = expand_home(rp);
-        let resolved = if Path::new(&expanded).is_absolute() {
-            PathBuf::from(&expanded)
-        } else if let Some(work_tree) = &repo.work_tree {
-            work_tree.join(&expanded)
-        } else {
-            repo.git_dir.join(&expanded)
-        };
-        return load_rules_from_file(&resolved, rp.clone(), String::new());
-    }
-
-    // XDG default: $XDG_CONFIG_HOME/git/ignore or $HOME/.config/git/ignore
-    let xdg_ignore = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        PathBuf::from(xdg).join("git/ignore")
-    } else if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home).join(".config/git/ignore")
-    } else {
-        return Ok(Vec::new());
-    };
-    load_rules_from_file(&xdg_ignore, ".config/git/ignore".to_owned(), String::new())
+    std::env::var("HOME")
+        .ok()
+        .map(|home| format!("{home}/.config/git/ignore"))
 }
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
@@ -341,53 +324,12 @@ fn is_tracked(index: Option<&Index>, repo_rel_path: &str) -> bool {
     })
 }
 
-fn parse_core_excludesfile(config_text: &str) -> Option<String> {
-    let mut in_core = false;
-    for line in config_text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            continue;
-        }
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            let section = trimmed
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim()
-                .to_ascii_lowercase();
-            in_core = section == "core";
-            continue;
-        }
-        if !in_core {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim().eq_ignore_ascii_case("excludesfile") {
-            return Some(value.trim().to_owned());
-        }
-    }
-    None
-}
-
 fn read_optional_text(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(Error::Io(err)),
     }
-}
-
-fn expand_home(path: &str) -> String {
-    if path == "~" {
-        return std::env::var("HOME").unwrap_or_else(|_| "~".to_owned());
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
-    }
-    path.to_owned()
 }
 
 fn strip_base<'a>(base: &str, path: &'a str) -> Option<&'a str> {

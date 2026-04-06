@@ -6,9 +6,7 @@
 //!
 //! # Format version
 //!
-//! This implementation supports index versions 2 and 3. Requests for version 4
-//! currently fall back to a non-compressed index on write because path
-//! compression is not yet implemented.
+//! This implementation supports index versions 2, 3, and 4.
 //!
 //! # References
 //!
@@ -21,6 +19,7 @@ use std::path::Path;
 
 use sha1::{Digest, Sha1};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::ObjectId;
 
@@ -136,7 +135,7 @@ impl IndexEntry {
 /// The in-memory representation of the Git index file.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
-    /// Index format version (2 or 3).
+    /// Index format version (2, 3, or 4).
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
@@ -266,7 +265,8 @@ impl Index {
         let mut hasher = Sha1::new();
         hasher.update(body);
         let computed = hasher.finalize();
-        if computed.as_slice() != checksum {
+        let checksum_is_zero = checksum.iter().all(|b| *b == 0);
+        if !checksum_is_zero && computed.as_slice() != checksum {
             return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
         }
 
@@ -314,29 +314,78 @@ impl Index {
         let mut body = Vec::new();
         self.serialize_into(&mut body)?;
 
-        let mut hasher = Sha1::new();
-        hasher.update(&body);
-        let checksum = hasher.finalize();
+        let skip_hash = index_skip_hash(path);
+        let checksum = if skip_hash {
+            [0u8; 20].to_vec()
+        } else {
+            let mut hasher = Sha1::new();
+            hasher.update(&body);
+            hasher.finalize().to_vec()
+        };
 
         let tmp_path = path.with_extension("lock");
+        let pid_path = pid_path_for_lock(&tmp_path);
+        let lockfile_pid_enabled = lockfile_pid_enabled(path);
+
+        let mut lock_file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
         {
-            let mut f = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&tmp_path)?;
-            f.write_all(&body)?;
-            f.write_all(&checksum)?;
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let message = build_lock_exists_message(&tmp_path, &pid_path, &e);
+                return Err(Error::Io(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    message,
+                )));
+            }
+            Err(e) => return Err(Error::Io(e)),
+        };
+
+        let mut wrote_pid_file = false;
+        if lockfile_pid_enabled {
+            if let Err(e) = write_lock_pid_file(&pid_path) {
+                let _ = fs::remove_file(&tmp_path);
+                return Err(Error::Io(e));
+            }
+            wrote_pid_file = true;
         }
-        fs::rename(&tmp_path, path)?;
+
+        if let Err(e) = (|| -> io::Result<()> {
+            lock_file.write_all(&body)?;
+            lock_file.write_all(&checksum)?;
+            Ok(())
+        })() {
+            let _ = fs::remove_file(&tmp_path);
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+            return Err(Error::Io(e));
+        }
+        drop(lock_file);
+
+        if let Err(e) = fs::rename(&tmp_path, path) {
+            let _ = fs::remove_file(&tmp_path);
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+            return Err(Error::Io(e));
+        }
+        {
+            if wrote_pid_file {
+                let _ = fs::remove_file(&pid_path);
+            }
+        }
         Ok(())
     }
 
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         // Determine which version to write.
-        // Version 4 requires path compression, which we do not implement yet.
-        // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
+        let write_version = if self.version >= 4 {
+            4
+        } else if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
@@ -350,8 +399,10 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
+        let mut prev_path: Vec<u8> = Vec::new();
         for entry in &self.entries {
-            serialize_entry(entry, write_version, out);
+            serialize_entry(entry, write_version, &prev_path, out);
+            prev_path = entry.path.clone();
         }
         Ok(())
     }
@@ -384,8 +435,11 @@ impl Index {
     /// conflicted file during merge/cherry-pick resolution.
     pub fn stage_file(&mut self, entry: IndexEntry) {
         let path = entry.path.clone();
-        // Remove conflict stages first
-        self.entries.retain(|e| e.path != path || e.stage() == 0);
+        // Remove all entries that conflict by path:
+        // - exact path (all stages),
+        // - parent/child D/F conflicts (e.g. "a" vs "a/b").
+        self.entries
+            .retain(|e| !paths_conflict_for_df(&e.path, &path));
         // Then add/replace stage-0 entry
         self.add_or_replace(entry);
     }
@@ -418,6 +472,123 @@ impl Index {
         self.entries
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
+    }
+}
+
+fn paths_conflict_for_df(a: &[u8], b: &[u8]) -> bool {
+    a == b || path_is_parent_of(a, b) || path_is_parent_of(b, a)
+}
+
+fn path_is_parent_of(parent: &[u8], child: &[u8]) -> bool {
+    if parent.len() >= child.len() {
+        return false;
+    }
+    child.starts_with(parent) && child[parent.len()] == b'/'
+}
+
+fn lockfile_pid_enabled(index_path: &Path) -> bool {
+    let git_dir = match index_path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    ConfigSet::load(Some(git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get_bool("core.lockfilepid"))
+        .and_then(|res| res.ok())
+        .unwrap_or(false)
+}
+
+fn index_skip_hash(index_path: &Path) -> bool {
+    let git_dir = match index_path.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+
+    let config = match ConfigSet::load(Some(git_dir), true) {
+        Ok(cfg) => cfg,
+        Err(_) => return false,
+    };
+
+    if let Some(skip_hash) = config.get_bool("index.skipHash").and_then(|res| res.ok()) {
+        return skip_hash;
+    }
+
+    config
+        .get_bool("feature.manyFiles")
+        .and_then(|res| res.ok())
+        .unwrap_or(false)
+}
+
+fn pid_path_for_lock(lock_path: &Path) -> std::path::PathBuf {
+    let file_name = lock_path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "index.lock".to_owned());
+    let pid_name = if let Some(base) = file_name.strip_suffix(".lock") {
+        format!("{base}~pid.lock")
+    } else {
+        format!("{file_name}~pid.lock")
+    };
+    lock_path.with_file_name(pid_name)
+}
+
+fn write_lock_pid_file(pid_path: &Path) -> io::Result<()> {
+    use std::io::Write as _;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(pid_path)?;
+    writeln!(file, "pid {}", std::process::id())?;
+    Ok(())
+}
+
+fn build_lock_exists_message(lock_path: &Path, pid_path: &Path, err: &io::Error) -> String {
+    let mut msg = format!("Unable to create '{}': {}.\n\n", lock_path.display(), err);
+
+    if let Some(pid) = read_lock_pid(pid_path) {
+        if is_process_running(pid) {
+            msg.push_str(&format!(
+                "Lock is held by process {pid}; if no git process is running, the lock file may be stale (PIDs can be reused)"
+            ));
+        } else {
+            msg.push_str(&format!(
+                "Lock was held by process {pid}, which is no longer running; the lock file appears to be stale"
+            ));
+        }
+    } else {
+        msg.push_str(
+            "Another git process seems to be running in this repository, or the lock file may be stale",
+        );
+    }
+
+    msg
+}
+
+fn read_lock_pid(pid_path: &Path) -> Option<u64> {
+    let raw = fs::read_to_string(pid_path).ok()?;
+    let trimmed = raw.trim();
+    if let Some(v) = trimmed.strip_prefix("pid ") {
+        return v.trim().parse::<u64>().ok();
+    }
+    trimmed.parse::<u64>().ok()
+}
+
+fn is_process_running(pid: u64) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_path = std::path::PathBuf::from(format!("/proc/{pid}"));
+        proc_path.exists()
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let status = std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status();
+        status.map(|s| s.success()).unwrap_or(false)
     }
 }
 
@@ -551,7 +722,7 @@ fn read_varint(data: &[u8]) -> (usize, usize) {
     (value, pos)
 }
 
-fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
+fn serialize_entry(entry: &IndexEntry, version: u32, prev_path: &[u8], out: &mut Vec<u8>) {
     let start = out.len();
 
     let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
@@ -586,16 +757,42 @@ fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
         }
     }
 
-    out.extend_from_slice(&entry.path);
-    out.push(0);
-
-    // Pad to 8-byte boundary
-    let entry_len = out.len() - start;
-    let padded = (entry_len + 7) & !7;
-    let padding = padded - entry_len;
-    for _ in 0..padding {
+    if version == 4 {
+        let common_prefix = shared_prefix_len(prev_path, &entry.path);
+        let strip_len = prev_path.len().saturating_sub(common_prefix);
+        write_varint(strip_len, out);
+        out.extend_from_slice(&entry.path[common_prefix..]);
         out.push(0);
+    } else {
+        out.extend_from_slice(&entry.path);
+        out.push(0);
+
+        // Pad to 8-byte boundary
+        let entry_len = out.len() - start;
+        let padded = (entry_len + 7) & !7;
+        let padding = padded - entry_len;
+        for _ in 0..padding {
+            out.push(0);
+        }
     }
+}
+
+fn write_varint(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn shared_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
 }
 
 /// Build an [`IndexEntry`] by stat-ing a file on disk.
@@ -739,7 +936,35 @@ mod tests {
     }
 
     #[test]
-    fn requested_v4_writes_a_compatible_index_format() {
+    fn stage_file_removes_same_path_conflict_stages() {
+        let mut idx = Index::new();
+        let mut stage1 = make_entry("foo");
+        stage1.flags = (stage1.flags & 0x0FFF) | (1 << 12);
+        let mut stage3 = make_entry("foo");
+        stage3.flags = (stage3.flags & 0x0FFF) | (3 << 12);
+        idx.entries.push(stage1);
+        idx.entries.push(stage3);
+
+        idx.stage_file(make_entry("foo"));
+
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].path, b"foo");
+        assert_eq!(idx.entries[0].stage(), 0);
+    }
+
+    #[test]
+    fn stage_file_removes_df_conflicting_entries() {
+        let mut idx = Index::new();
+        idx.add_or_replace(make_entry("df/file"));
+        idx.stage_file(make_entry("df"));
+
+        assert_eq!(idx.entries.len(), 1);
+        assert_eq!(idx.entries[0].path, b"df");
+        assert_eq!(idx.entries[0].stage(), 0);
+    }
+
+    #[test]
+    fn requested_v4_writes_v4_index_format() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("index");
 
@@ -752,7 +977,7 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+        assert_eq!(&data[4..8], &4u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
         assert_eq!(loaded.entries[0].path, b"one");

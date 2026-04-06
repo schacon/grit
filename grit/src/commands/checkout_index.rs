@@ -63,6 +63,10 @@ pub struct Args {
     #[arg(long = "stage")]
     pub stage: Option<u8>,
 
+    /// Ignore skip-worktree bits and checkout all entries.
+    #[arg(long = "ignore-skip-worktree-bits")]
+    pub ignore_skip_worktree_bits: bool,
+
     /// Files to check out (if not --all or --stdin).
     pub files: Vec<PathBuf>,
 }
@@ -96,6 +100,9 @@ pub fn run(args: Args) -> Result<()> {
             if entry.stage() != target_stage {
                 continue;
             }
+            if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
+                continue;
+            }
             selected_paths.push(entry.path.clone());
         }
     } else if args.stdin {
@@ -115,7 +122,11 @@ pub fn run(args: Args) -> Result<()> {
         for input_path in &args.files {
             let repo_path = resolve_repo_path(&work_tree, &cwd, input_path)?;
             let path_bytes = path_to_bytes(&repo_path);
-            if index.get(&path_bytes, target_stage).is_none() {
+            let maybe_entry = index.get(&path_bytes, target_stage);
+            if maybe_entry.is_none()
+                || (maybe_entry
+                    .is_some_and(|e| e.skip_worktree() && !args.ignore_skip_worktree_bits))
+            {
                 if args.quiet {
                     continue;
                 }
@@ -147,7 +158,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    if args.update_stat && index_needs_write {
+    if index_needs_write {
         index.write(&index_path).context("writing index")?;
     }
 
@@ -208,7 +219,9 @@ fn checkout_entry(
     }
 
     let existing_meta = std::fs::symlink_metadata(&abs_path).ok();
-    if existing_meta.is_some() && !args.force {
+    let should_skip_existing =
+        existing_meta.is_some() && !args.force && !args.ignore_skip_worktree_bits;
+    if should_skip_existing {
         if !args.quiet {
             eprintln!("warning: '{rel_path}' already exists, skipping (use --force to override)");
         }

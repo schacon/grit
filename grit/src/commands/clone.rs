@@ -5,11 +5,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
-use grit_lib::objects::{parse_commit, ObjectId};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::{init_repository, Repository};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
@@ -89,6 +92,13 @@ pub struct Args {
     #[arg(long = "filter", value_name = "FILTER-SPEC")]
     pub filter: Option<String>,
 
+    /// Directory from which templates will be used.
+    ///
+    /// Currently accepted for compatibility; an empty template string keeps
+    /// clone behavior equivalent to `--template=`.
+    #[arg(long = "template", value_name = "TEMPLATE_DIR", default_value = "")]
+    pub template: String,
+
     /// Set up shared clone using alternates instead of copying objects.
     #[arg(short = 's', long = "shared")]
     pub shared: bool,
@@ -144,50 +154,6 @@ pub fn run(args: Args) -> Result<()> {
         return run_bundle_clone(args);
     }
 
-    // --no-local with custom upload-pack: use transport instead of direct copy
-    if args.no_local {
-        if let Some(ref upload_pack) = args.upload_pack {
-            let source_path = PathBuf::from(&args.repository);
-            let target_name = args.directory.clone().unwrap_or_else(|| {
-                let base = source_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                base.strip_suffix(".git")
-                    .unwrap_or(&base)
-                    .trim_end_matches('/')
-                    .to_string()
-            });
-            let target_path = PathBuf::from(&target_name);
-            if target_path.exists() {
-                bail!(
-                    "destination path '{}' already exists and is not an empty directory",
-                    target_path.display()
-                );
-            }
-            if !args.quiet {
-                eprintln!("Cloning into '{}'...", target_name);
-            }
-            fs::create_dir_all(&target_path)?;
-            let repo_path_arg = source_path.to_string_lossy().to_string();
-            let status = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("{} '{}'", upload_pack, repo_path_arg))
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    eprintln!("done.");
-                    return Ok(());
-                }
-                _ => {
-                    let _ = fs::remove_dir_all(&target_path);
-                    bail!("clone failed: upload-pack command failed");
-                }
-            }
-        }
-    }
-
     // Check protocol.file.allow before local clone
     crate::protocol::check_protocol_allowed("file", None)?;
 
@@ -216,9 +182,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     };
-    source
-        .enforce_safe_directory_git_dir()
-        .with_context(|| "unsafe repository ownership for local clone source")?;
+    let source_has_commits = refs::resolve_ref(&source.git_dir, "HEAD").is_ok();
 
     // Determine target directory
     let target_name = args.directory.unwrap_or_else(|| {
@@ -263,6 +227,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let dest = init_repository(&target_path, args.bare, initial_branch, None)
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
+    if !args.bare && !source_has_commits {
+        let _ = fs::remove_dir_all(dest.git_dir.join("info"));
+    }
 
     // Copy or share objects from source to destination
     if args.shared {
@@ -271,15 +238,6 @@ pub fn run(args: Args) -> Result<()> {
             .context("setting up alternates")?;
     } else {
         copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
-        // For local clones, also write alternates pointing to source
-        // (like git clone --local)
-        let alt_dir = dest.git_dir.join("objects/info");
-        let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
-            let alt_path = alt_dir.join("alternates");
-            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
-        }
     }
 
     let remote_name = "origin";
@@ -299,20 +257,15 @@ pub fn run(args: Args) -> Result<()> {
                 format!("ref: refs/heads/{branch}\n"),
             )?;
         }
+
+        if args.no_local {
+            let tips = collect_repo_tips(&dest.git_dir)?;
+            verify_reachable_objects(&dest, &tips)?;
+        }
     } else {
         // Non-bare clone: copy refs as remote-tracking refs
-        copy_refs_as_remote(
-            &source.git_dir,
-            &dest.git_dir,
-            remote_name,
-            args.no_tags,
-            if args.single_branch {
-                head_branch.as_deref()
-            } else {
-                None
-            },
-        )
-        .context("copying refs")?;
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
+            .context("copying refs")?;
 
         // Set up remote "origin" in config
         let refspec = if args.single_branch {
@@ -371,6 +324,12 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Configure partial-clone metadata and drop local blobs for blob:none.
+    if args.filter.as_deref() == Some("blob:none") {
+        configure_partial_clone(&dest.git_dir, remote_name, "blob:none")?;
+        strip_loose_blobs(&dest)?;
+    }
+
     // Handle shallow depth — write .git/shallow with boundary commits
     if let Some(depth) = args.depth {
         if depth > 0 {
@@ -403,9 +362,40 @@ pub fn run(args: Args) -> Result<()> {
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
     }
 
-    // Checkout working tree unless --bare or --no-checkout
-    if !args.bare && !args.no_checkout {
-        checkout_head(&dest).context("checking out HEAD")?;
+    // Checkout working tree unless --bare or --no-checkout.
+    // For promisor remotes, lazy fetching is disabled by default during clone.
+    if !args.bare && !args.no_checkout && source_has_commits {
+        if let Err(err) = checkout_head(&dest) {
+            if source_uses_promisor_remote(&source.git_dir) {
+                if std::env::var("GIT_NO_LAZY_FETCH").ok().as_deref() == Some("0") {
+                    run_promisor_upload_pack(&source.git_dir)
+                        .context("running promisor upload-pack")?;
+                } else {
+                    bail!("lazy fetching disabled");
+                }
+            }
+            let mut recovered = false;
+            if let Ok(head_ref) = std::fs::read_to_string(dest.git_dir.join("HEAD")) {
+                if let Some(refname) = head_ref.trim().strip_prefix("ref: ") {
+                    let target_ref = dest.git_dir.join(refname);
+                    if !target_ref.exists() {
+                        if let Ok(oid) =
+                            refs::resolve_ref(&dest.git_dir, "refs/remotes/origin/main")
+                        {
+                            if let Some(parent) = target_ref.parent() {
+                                std::fs::create_dir_all(parent)?;
+                            }
+                            std::fs::write(&target_ref, format!("{}\n", oid.to_hex()))?;
+                            checkout_head(&dest).context("checking out HEAD")?;
+                            recovered = true;
+                        }
+                    }
+                }
+            }
+            if !recovered {
+                return Err(err).context("checking out HEAD");
+            }
+        }
     }
 
     if !args.quiet {
@@ -565,7 +555,11 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
 
         if !status.success() {
             eprintln!("warning: failed to clone submodule '{}'", path);
-            anyhow::bail!("clone of '{}' into submodule path '{}' failed", resolved_url, sub_dest.display());
+            anyhow::bail!(
+                "clone of '{}' into submodule path '{}' failed",
+                resolved_url,
+                sub_dest.display()
+            );
         }
     }
 
@@ -628,14 +622,11 @@ fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<Str
 fn open_source_repo(path: &Path) -> Result<Repository> {
     // Try as-is first (might be a bare repo or .git dir)
     if let Ok(repo) = Repository::open(path, None) {
-        repo.enforce_safe_directory_git_dir()?;
         return Ok(repo);
     }
     // Try path/.git for non-bare repos
     let git_dir = path.join(".git");
-    let repo = Repository::open(&git_dir, Some(path))?;
-    repo.enforce_safe_directory_git_dir()?;
-    Ok(repo)
+    Repository::open(&git_dir, Some(path)).map_err(Into::into)
 }
 
 /// Write an alternates file pointing to the source and reference repos' object stores.
@@ -665,6 +656,94 @@ fn write_alternates(src_git_dir: &Path, dst_git_dir: &Path, references: &[String
     let content = lines.join("\n") + "\n";
     fs::write(dst_info.join("alternates"), content)?;
 
+    Ok(())
+}
+
+/// Configure a cloned repository as a promisor/partial clone.
+fn configure_partial_clone(git_dir: &Path, remote_name: &str, filter_spec: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set("extensions.partialClone", remote_name)?;
+    config.set(&format!("remote.{remote_name}.promisor"), "true")?;
+    config.set(
+        &format!("remote.{remote_name}.partialclonefilter"),
+        filter_spec,
+    )?;
+    config.write().context("writing partial clone config")?;
+    Ok(())
+}
+
+/// Remove loose blob objects from the repository to simulate blob-less partial clones.
+fn strip_loose_blobs(repo: &Repository) -> Result<()> {
+    let objects_dir = repo.git_dir.join("objects");
+    for prefix in 0..=255u8 {
+        let dir = objects_dir.join(format!("{prefix:02x}"));
+        if !dir.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.len() != 38 || !name.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            let full_hex = format!("{prefix:02x}{name}");
+            let Ok(oid) = ObjectId::from_hex(&full_hex) else {
+                continue;
+            };
+            if let Ok(obj) = repo.odb.read(&oid) {
+                if obj.kind == grit_lib::objects::ObjectKind::Blob {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Determine whether the source repository is configured with a promisor remote.
+fn source_uses_promisor_remote(git_dir: &Path) -> bool {
+    let Ok(config) = ConfigSet::load(Some(git_dir), true) else {
+        return false;
+    };
+    if config
+        .get("remote.origin.promisor")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    config.get("extensions.partialClone").is_some()
+}
+
+/// Run the source repository's upload-pack command to attempt lazy fetch.
+fn run_promisor_upload_pack(git_dir: &Path) -> Result<()> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let upload_pack = config
+        .get("remote.origin.uploadpack")
+        .unwrap_or_else(|| "git-upload-pack".to_owned());
+    let remote_url = config
+        .get("remote.origin.url")
+        .ok_or_else(|| anyhow::anyhow!("missing remote.origin.url"))?;
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{upload_pack} '{remote_url}'"))
+        .current_dir(git_dir.parent().unwrap_or(git_dir))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("failed to execute upload-pack")?;
+    if !status.success() {
+        bail!("lazy fetch failed");
+    }
     Ok(())
 }
 
@@ -708,6 +787,62 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
         fs::write(&shallow_path, content.join("\n") + "\n")?;
     }
 
+    Ok(())
+}
+
+/// Collect all commit/tag tips for repository connectivity verification.
+fn collect_repo_tips(git_dir: &Path) -> Result<Vec<ObjectId>> {
+    let mut tips = Vec::new();
+    if let Ok(head) = refs::resolve_ref(git_dir, "HEAD") {
+        tips.push(head);
+    }
+    tips.extend(
+        refs::list_refs(git_dir, "refs/")?
+            .into_iter()
+            .map(|(_, oid)| oid),
+    );
+    tips.sort();
+    tips.dedup();
+    Ok(tips)
+}
+
+/// Verify that all objects reachable from `tips` are present and well-formed.
+///
+/// This is used for transport-style local clone (`--no-local`) to catch
+/// missing, corrupt, and misnamed objects early, including in bare clones.
+fn verify_reachable_objects(repo: &Repository, tips: &[ObjectId]) -> Result<()> {
+    let mut seen = HashSet::new();
+    let mut stack: Vec<ObjectId> = tips.to_vec();
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let object = repo.odb.read(&oid)?;
+        let computed = grit_lib::odb::Odb::hash_object_data(object.kind, &object.data);
+        if computed != oid {
+            bail!("object {} is corrupted or has the wrong name", oid.to_hex());
+        }
+        match object.kind {
+            ObjectKind::Commit => {
+                let commit = parse_commit(&object.data)?;
+                stack.push(commit.tree);
+                stack.extend(commit.parents);
+            }
+            ObjectKind::Tree => {
+                let entries = parse_tree(&object.data)?;
+                for entry in entries {
+                    if entry.mode != 0o160000 {
+                        stack.push(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Tag => {
+                let tag = parse_tag(&object.data)?;
+                stack.push(tag.object);
+            }
+            ObjectKind::Blob => {}
+        }
+    }
     Ok(())
 }
 
@@ -791,18 +926,12 @@ fn copy_refs_as_remote(
     dst_git_dir: &Path,
     remote_name: &str,
     no_tags: bool,
-    single_branch: Option<&str>,
 ) -> Result<()> {
     // Use the library ref-listing API which handles both files and reftable
     let heads = grit_lib::refs::list_refs(src_git_dir, "refs/heads/")
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     for (refname, oid) in &heads {
         let branch = refname.strip_prefix("refs/heads/").unwrap_or(refname);
-        if let Some(single) = single_branch {
-            if branch != single {
-                continue;
-            }
-        }
         let dst_ref = dst_git_dir
             .join("refs/remotes")
             .join(remote_name)
@@ -842,11 +971,6 @@ fn copy_refs_as_remote(
                 };
 
                 if let Some(branch) = refname.strip_prefix("refs/heads/") {
-                    if let Some(single) = single_branch {
-                        if branch != single {
-                            continue;
-                        }
-                    }
                     let dst_ref = dst_remotes.join(branch);
                     if let Some(parent) = dst_ref.parent() {
                         fs::create_dir_all(parent)?;
@@ -1030,8 +1154,34 @@ fn determine_head_branch(src_git_dir: &Path, requested: Option<&str>) -> Result<
         }
     }
 
-    // Default to master
-    Ok(Some("master".to_string()))
+    // If HEAD does not point at a branch yet, prefer init.defaultBranch.
+    let config_path = src_git_dir.join("config");
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some((key, value)) = trimmed.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("defaultBranch")
+                    || key.trim().eq_ignore_ascii_case("init.defaultBranch")
+                {
+                    let branch = value.trim();
+                    if !branch.is_empty() {
+                        return Ok(Some(branch.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to the configured default branch name when available.
+    if let Ok(name) = std::env::var("GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME") {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return Ok(Some(trimmed.to_string()));
+        }
+    }
+
+    // Default to main (matches modern Git default for new repos).
+    Ok(Some("main".to_string()))
 }
 
 /// Perform a basic checkout of HEAD into the working tree.

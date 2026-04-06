@@ -6,11 +6,10 @@
 //! out in another worktree (a check that older system `git` versions omit
 //! for `-C`/`-c`).
 
-use anyhow::{Context, Result};
+use crate::commands::system_git;
+use anyhow::Result;
 use clap::Args as ClapArgs;
-use std::ffi::OsString;
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::collections::BTreeSet;
 
 /// Arguments for `grit switch`.
 #[derive(Debug, ClapArgs)]
@@ -23,47 +22,33 @@ pub struct Args {
 
 /// Run `grit switch` by delegating to the system Git binary.
 pub fn run(args: Args) -> Result<()> {
+    if let Some(ambiguous) =
+        detect_ambiguous_remote_tracking(&args.args).map_err(|e| anyhow::anyhow!(e))?
+    {
+        eprintln!(
+            "hint: '{}' could refer to more than one remote-tracking branch:",
+            ambiguous.branch
+        );
+        for candidate in &ambiguous.candidates {
+            eprintln!("hint:   {candidate}");
+        }
+        eprintln!("hint: If you meant to check out one of these branches, use:");
+        eprintln!("hint:   git switch --track <remote>/{}", ambiguous.branch);
+        eprintln!(
+            "fatal: '{}' matched multiple ({}) remote tracking branches",
+            ambiguous.branch,
+            ambiguous.candidates.len()
+        );
+        std::process::exit(128);
+    }
+
     // Pre-check: refuse to switch to a branch already checked out in another
     // worktree unless --ignore-other-worktrees is given.
     if let Err(msg) = check_worktree_conflict(&args.args) {
         eprintln!("fatal: {msg}");
         std::process::exit(128);
     }
-    run_switch_passthrough(&args.args)
-}
-
-fn run_switch_passthrough(args: &[String]) -> Result<()> {
-    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
-
-    let mut child = Command::new(&git_bin)
-        .arg("switch")
-        .args(args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
-
-    let mut stderr = Vec::new();
-    if let Some(mut pipe) = child.stderr.take() {
-        pipe.read_to_end(&mut stderr)?;
-    }
-
-    let status = child.wait()?;
-
-    if !stderr.is_empty() {
-        let rendered = String::from_utf8_lossy(&stderr).replace(
-            "git checkout --track",
-            "git switch --track",
-        );
-        eprint!("{rendered}");
-    }
-
-    if status.success() {
-        Ok(())
-    } else {
-        std::process::exit(status.code().unwrap_or(1));
-    }
+    system_git::run("switch", &args.args)
 }
 
 /// Parse the raw switch arguments to extract the target branch name and check
@@ -79,84 +64,7 @@ fn check_worktree_conflict(args: &[String]) -> std::result::Result<(), String> {
         return Ok(());
     }
 
-    // Extract the target branch name.  Possibilities:
-    //   git switch <branch>
-    //   git switch -c <branch> [<start>]
-    //   git switch -C <branch> [<start>]
-    //   git switch --create <branch> [<start>]
-    //   git switch --force-create <branch> [<start>]
-    let mut branch: Option<String> = None;
-    let mut i = 0;
-    let mut past_double_dash = false;
-    while i < args.len() {
-        let a = &args[i];
-        if a == "--" {
-            past_double_dash = true;
-            i += 1;
-            continue;
-        }
-        if past_double_dash {
-            if branch.is_none() {
-                branch = Some(a.clone());
-            }
-            i += 1;
-            continue;
-        }
-        // Flags that consume the next argument (skip it)
-        if (a == "-c" || a == "-C" || a == "--create" || a == "--force-create")
-            && i + 1 < args.len()
-        {
-            branch = Some(args[i + 1].clone());
-            i += 2;
-            continue;
-        }
-        // Combined form: -c<branch>, -C<branch>
-        if let Some(rest) = a.strip_prefix("-c").or_else(|| a.strip_prefix("-C")) {
-            if !rest.is_empty() && !rest.starts_with('-') {
-                branch = Some(rest.to_string());
-                i += 1;
-                continue;
-            }
-        }
-        // Skip known flags
-        if a.starts_with('-') {
-            // Some flags take a value
-            if a == "-d"
-                || a == "--detach"
-                || a == "-f"
-                || a == "--force"
-                || a == "--no-guess"
-                || a == "--guess"
-                || a == "-q"
-                || a == "--quiet"
-                || a == "--progress"
-                || a == "--no-progress"
-                || a == "--no-track"
-                || a == "-t"
-                || a == "--track"
-                || a == "--recurse-submodules"
-                || a == "--no-recurse-submodules"
-                || a == "--ignore-other-worktrees"
-                || a == "--discard-changes"
-                || a == "-m"
-                || a == "--merge"
-                || a == "--conflict"
-            {
-                i += 1;
-                continue;
-            }
-            // Unknown flag, skip
-            i += 1;
-            continue;
-        }
-        // Positional argument: branch name
-        if branch.is_none() {
-            branch = Some(a.clone());
-        }
-        i += 1;
-    }
-
-    let branch = match branch {
+    let branch = match extract_switch_target(args) {
         Some(b) => b,
         None => return Ok(()), // no branch to check
     };
@@ -254,4 +162,117 @@ fn check_branch_in_worktrees(branch: &str) -> std::result::Result<(), String> {
     }
 
     Ok(())
+}
+
+struct AmbiguousRemoteBranch {
+    branch: String,
+    candidates: Vec<String>,
+}
+
+fn detect_ambiguous_remote_tracking(
+    args: &[String],
+) -> std::result::Result<Option<AmbiguousRemoteBranch>, String> {
+    let branch = match extract_switch_target(args) {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+
+    if branch.contains('/') {
+        return Ok(None);
+    }
+
+    if branch == "-" || branch == "HEAD" {
+        return Ok(None);
+    }
+
+    let repo = grit_lib::repo::Repository::discover(None).map_err(|e| e.to_string())?;
+
+    // Existing local branch is never ambiguous remote DWIM.
+    let local_ref = format!("refs/heads/{branch}");
+    if grit_lib::refs::resolve_ref(&repo.git_dir, &local_ref).is_ok() {
+        return Ok(None);
+    }
+
+    let refs =
+        grit_lib::refs::list_refs(&repo.git_dir, "refs/remotes/").map_err(|e| e.to_string())?;
+    let mut candidates = BTreeSet::new();
+    for (refname, _oid) in refs {
+        if let Some(rest) = refname.strip_prefix("refs/remotes/") {
+            if let Some((remote, remote_branch)) = rest.split_once('/') {
+                if remote_branch == branch {
+                    candidates.insert(format!("{remote}/{remote_branch}"));
+                }
+            }
+        }
+    }
+
+    if candidates.len() <= 1 {
+        return Ok(None);
+    }
+
+    // checkout.defaultRemote disambiguates if it points to one of the candidates.
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    if let Some(default_remote) = config.get("checkout.defaultRemote") {
+        let preferred = format!("{default_remote}/{branch}");
+        if candidates.contains(&preferred) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(AmbiguousRemoteBranch {
+        branch,
+        candidates: candidates.into_iter().collect(),
+    }))
+}
+
+/// Extract the target branch name from `git switch` raw args.
+///
+/// Handles:
+/// - `switch <branch>`
+/// - `switch -c <branch> [<start>]`
+/// - `switch -C <branch> [<start>]`
+/// - `switch --create <branch> [<start>]`
+/// - `switch --force-create <branch> [<start>]`
+fn extract_switch_target(args: &[String]) -> Option<String> {
+    let mut branch: Option<String> = None;
+    let mut i = 0;
+    let mut past_double_dash = false;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--" {
+            past_double_dash = true;
+            i += 1;
+            continue;
+        }
+        if past_double_dash {
+            if branch.is_none() {
+                branch = Some(a.clone());
+            }
+            i += 1;
+            continue;
+        }
+        if (a == "-c" || a == "-C" || a == "--create" || a == "--force-create")
+            && i + 1 < args.len()
+        {
+            branch = Some(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("-c").or_else(|| a.strip_prefix("-C")) {
+            if !rest.is_empty() && !rest.starts_with('-') {
+                branch = Some(rest.to_string());
+                i += 1;
+                continue;
+            }
+        }
+        if a.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        if branch.is_none() {
+            branch = Some(a.clone());
+        }
+        i += 1;
+    }
+    branch
 }

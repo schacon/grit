@@ -9,11 +9,13 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
+use regex::Regex;
 
 /// Return `Some(repo)` when a repository can be discovered at `start`.
 ///
@@ -103,7 +105,7 @@ pub fn symbolic_full_name(repo: &Repository, spec: &str) -> Option<String> {
     {
         return resolve_upstream_ref(repo, base);
     }
-    if let Some(base) = spec.strip_suffix("@{push}") {
+    if let Some(base) = strip_suffix_case_insensitive(spec, "@{push}") {
         return resolve_push_ref(repo, base);
     }
 
@@ -203,9 +205,138 @@ fn resolve_upstream_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 /// Resolve `@{push}` for a given branch.
 fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
-    // @{push} is typically the same as @{upstream} unless push remote differs
-    // For simplicity, treat it the same way
-    resolve_upstream_ref(repo, branch)
+    let branch_name = if branch.is_empty() {
+        match refs::read_head(&repo.git_dir) {
+            Ok(Some(target)) => target.strip_prefix("refs/heads/")?.to_owned(),
+            _ => return None,
+        }
+    } else if let Some(short) = branch.strip_prefix("refs/heads/") {
+        short.to_owned()
+    } else {
+        branch.to_owned()
+    };
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .unwrap_or_default();
+
+    let push_default = config
+        .get("push.default")
+        .unwrap_or_else(|| "simple".to_owned())
+        .to_ascii_lowercase();
+
+    let branch_remote = config.get(&format!("branch.{branch_name}.remote"));
+    let branch_merge = config.get(&format!("branch.{branch_name}.merge"));
+    let push_remote = config
+        .get(&format!("branch.{branch_name}.pushRemote"))
+        .or_else(|| config.get("remote.pushDefault"))
+        .or_else(|| branch_remote.clone())
+        .or_else(|| Some("origin".to_owned()))?;
+
+    // remote.<name>.push refspecs override push.default destination mapping.
+    let push_refspecs = config.get_all(&format!("remote.{push_remote}.push"));
+    let local_branch_ref = format!("refs/heads/{branch_name}");
+    if let Some(remote_dst) = map_push_destination_from_refspecs(&local_branch_ref, &push_refspecs)
+    {
+        return Some(remote_ref_to_tracking_ref(&push_remote, &remote_dst));
+    }
+
+    match push_default.as_str() {
+        "nothing" => None,
+        "simple" => {
+            let upstream_remote = branch_remote?;
+            let merge = branch_merge?;
+            let upstream_branch = merge.strip_prefix("refs/heads/")?;
+            if upstream_branch == branch_name && upstream_remote == push_remote {
+                Some(format!("refs/remotes/{push_remote}/{upstream_branch}"))
+            } else {
+                None
+            }
+        }
+        "upstream" | "tracking" => {
+            let upstream_remote = branch_remote?;
+            let merge = branch_merge?;
+            let upstream_branch = merge.strip_prefix("refs/heads/")?;
+            Some(format!("refs/remotes/{upstream_remote}/{upstream_branch}"))
+        }
+        "current" => Some(format!("refs/remotes/{push_remote}/{branch_name}")),
+        "matching" => {
+            let tracking = format!("refs/remotes/{push_remote}/{branch_name}");
+            if refs::resolve_ref(&repo.git_dir, &tracking).is_ok() {
+                Some(tracking)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Strip a suffix using ASCII case-insensitive matching.
+fn strip_suffix_case_insensitive<'a>(text: &'a str, suffix: &str) -> Option<&'a str> {
+    if text.len() < suffix.len() {
+        return None;
+    }
+    let split_at = text.len() - suffix.len();
+    let (head, tail) = text.split_at(split_at);
+    if tail.eq_ignore_ascii_case(suffix) {
+        Some(head)
+    } else {
+        None
+    }
+}
+
+/// Map a local source ref through `remote.<name>.push` refspecs.
+fn map_push_destination_from_refspecs(local_ref: &str, push_refspecs: &[String]) -> Option<String> {
+    for spec in push_refspecs {
+        let cleaned = spec.strip_prefix('+').unwrap_or(spec);
+        let (src, dst) = if let Some((src, dst)) = cleaned.split_once(':') {
+            (src, dst)
+        } else {
+            (cleaned, cleaned)
+        };
+
+        if src.is_empty() || dst.is_empty() {
+            continue;
+        }
+
+        if let Some(captured) = match_single_wildcard(src, local_ref) {
+            if dst.contains('*') {
+                return Some(dst.replacen('*', captured, 1));
+            }
+            continue;
+        }
+
+        if src == local_ref {
+            return Some(dst.to_owned());
+        }
+    }
+    None
+}
+
+/// Match a pattern containing at most one `*`.
+fn match_single_wildcard<'a>(pattern: &str, text: &'a str) -> Option<&'a str> {
+    let star = pattern.find('*')?;
+    let prefix = &pattern[..star];
+    let suffix = &pattern[star + 1..];
+    if text.starts_with(prefix)
+        && text.ends_with(suffix)
+        && text.len() >= prefix.len() + suffix.len()
+    {
+        let start = prefix.len();
+        let end = text.len() - suffix.len();
+        Some(&text[start..end])
+    } else {
+        None
+    }
+}
+
+/// Convert a remote branch ref into the corresponding local tracking ref.
+fn remote_ref_to_tracking_ref(remote: &str, remote_ref: &str) -> String {
+    if let Some(branch) = remote_ref.strip_prefix("refs/heads/") {
+        return format!("refs/remotes/{remote}/{branch}");
+    }
+    format!("refs/remotes/{remote}/{remote_ref}")
 }
 
 /// Parse branch tracking configuration from git config content.
@@ -517,6 +648,11 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
             .map_err(|_| Error::ObjectNotFound(spec.to_owned()));
     }
 
+    // Handle per-worktree ref aliases and cross-worktree access paths.
+    if let Some(oid) = try_resolve_worktree_ref(repo, spec)? {
+        return Ok(oid);
+    }
+
     // Handle @{-N} syntax: Nth previously checked out branch
     // Also handle @{-N}@{M} compound form: resolve branch, then reflog
     if spec.starts_with("@{-") {
@@ -585,6 +721,24 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
 
+    // Special pseudo-ref written by fetch/pull.
+    // FETCH_HEAD is not a regular ref under refs/, so resolve it directly.
+    if spec == "FETCH_HEAD" {
+        let fetch_head_path = repo.git_dir.join("FETCH_HEAD");
+        if let Ok(content) = std::fs::read_to_string(&fetch_head_path) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let oid_hex = trimmed.split_whitespace().next().unwrap_or_default();
+                if let Ok(oid) = oid_hex.parse::<ObjectId>() {
+                    return Ok(oid);
+                }
+            }
+        }
+    }
+
     if is_hex_prefix(spec) {
         let matches = find_abbrev_matches(repo, spec)?;
         if matches.len() == 1 {
@@ -602,6 +756,7 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     for candidate in &[
+        format!("refs/{spec}"),
         format!("refs/heads/{spec}"),
         format!("refs/tags/{spec}"),
         format!("refs/remotes/{spec}"),
@@ -621,6 +776,117 @@ fn resolve_base(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     Err(Error::ObjectNotFound(spec.to_owned()))
+}
+
+/// Try resolving per-worktree ref namespaces.
+///
+/// Supports:
+/// - current-worktree aliases like `worktree/foo` (maps to `refs/worktree/foo`)
+/// - `main-worktree/<ref>`
+/// - `worktrees/<id>/<ref>`
+fn try_resolve_worktree_ref(repo: &Repository, spec: &str) -> Result<Option<ObjectId>> {
+    let common = common_git_dir(&repo.git_dir);
+
+    if let Some(bare_ref) = spec.strip_prefix("main-worktree/") {
+        if !is_current_worktree_ref_name(bare_ref) {
+            return Ok(None);
+        }
+        if let Ok(oid) = refs::resolve_ref(&common, bare_ref) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+        return Ok(None);
+    }
+
+    if let Some(rest) = spec.strip_prefix("worktrees/") {
+        if let Some((worktree_id, bare_ref)) = rest.split_once('/') {
+            if !is_current_worktree_ref_name(bare_ref) {
+                return Ok(None);
+            }
+            let worktree_git_dir = common.join("worktrees").join(worktree_id);
+            if let Ok(oid) = refs::resolve_ref(&worktree_git_dir, bare_ref) {
+                maybe_warn_worktree_ref_ambiguity(repo, spec);
+                return Ok(Some(oid));
+            }
+        }
+        return Ok(None);
+    }
+
+    // `worktree/<name>` is shorthand for `refs/worktree/<name>`.
+    if let Some(rest) = spec.strip_prefix("worktree/") {
+        let mapped = format!("refs/worktree/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if let Some(rest) = spec.strip_prefix("bisect/") {
+        let mapped = format!("refs/bisect/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if let Some(rest) = spec.strip_prefix("rewritten/") {
+        let mapped = format!("refs/rewritten/{rest}");
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, &mapped) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    if is_current_worktree_ref_name(spec) {
+        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, spec) {
+            maybe_warn_worktree_ref_ambiguity(repo, spec);
+            return Ok(Some(oid));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Return the repository common directory, falling back to `git_dir`.
+fn common_git_dir(git_dir: &Path) -> std::path::PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    let Some(raw) = fs::read_to_string(commondir_file).ok() else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let path = if Path::new(rel).is_absolute() {
+        std::path::PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().unwrap_or(path)
+}
+
+/// Emit Git-like ambiguity warning when a worktree ref collides with a branch.
+fn maybe_warn_worktree_ref_ambiguity(repo: &Repository, spec: &str) {
+    let branch_candidate = format!("refs/heads/{spec}");
+    if refs::resolve_ref(&repo.git_dir, &branch_candidate).is_ok() {
+        eprintln!("warning: refname '{spec}' is ambiguous.");
+    }
+}
+
+/// Whether a ref belongs to the current worktree namespace.
+fn is_current_worktree_ref_name(refname: &str) -> bool {
+    is_root_ref_syntax(refname)
+        || refname.starts_with("refs/worktree/")
+        || refname.starts_with("refs/bisect/")
+        || refname.starts_with("refs/rewritten/")
+}
+
+/// Root refs are direct files under `$GIT_DIR` (e.g. `HEAD`, `MERGE_HEAD`).
+fn is_root_ref_syntax(refname: &str) -> bool {
+    !refname.is_empty()
+        && refname
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch == '-' || ch == '_')
 }
 
 /// Resolve `@{-N}` to the branch name (e.g. "side"), not to an OID.
@@ -783,6 +1049,45 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+    let parse_relative_ago = |input: &str| -> Option<i64> {
+        let normalized = input.trim().to_ascii_lowercase().replace(['.', '_'], " ");
+        let parts: Vec<&str> = normalized.split_whitespace().collect();
+        if parts.len() != 3 || parts[2] != "ago" {
+            return None;
+        }
+
+        let amount: i64 = parts[0].parse().ok()?;
+        if amount < 0 {
+            return None;
+        }
+
+        let unit_seconds: i64 = match parts[1] {
+            "second" | "seconds" | "sec" | "secs" => 1,
+            "minute" | "minutes" | "min" | "mins" => 60,
+            "hour" | "hours" | "hr" | "hrs" => 60 * 60,
+            "day" | "days" => 60 * 60 * 24,
+            "week" | "weeks" => 60 * 60 * 24 * 7,
+            // Git's approxidate handles calendar-aware months/years; for this
+            // focused parser we use fixed-length approximations.
+            "month" | "months" => 60 * 60 * 24 * 30,
+            "year" | "years" => 60 * 60 * 24 * 365,
+            _ => return None,
+        };
+
+        let delta = amount.checked_mul(unit_seconds)?;
+        now.checked_sub(delta)
+    };
+
+    if s.trim().eq_ignore_ascii_case("now") {
+        return Some(now);
+    }
+
+    if let Some(ts) = parse_relative_ago(s) {
+        return Some(ts);
+    }
+
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
         // Scan for 4-digit year followed by -MM-DD
@@ -930,6 +1235,17 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
             }
         }
+        Some("tag") => {
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Tag {
+                Ok(oid)
+            } else {
+                Err(Error::InvalidRef("expected tag".to_owned()))
+            }
+        }
+        Some(search) if search.starts_with('/') => {
+            resolve_commit_message_search_from_oid(repo, oid, search)
+        }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
         ))),
@@ -979,6 +1295,30 @@ fn find_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>>
             matches.push(candidate.parse::<ObjectId>()?);
         }
     }
+    Ok(matches)
+}
+
+/// Enumerate loose object IDs that match a hexadecimal prefix.
+///
+/// The returned list is sorted and deduplicated. This scans only loose
+/// objects (not pack indexes), matching the scope currently used by
+/// abbreviated-hex lookup in this module.
+///
+/// # Errors
+///
+/// Returns an I/O error when the loose object directory cannot be read.
+pub fn list_loose_abbrev_matches(repo: &Repository, prefix: &str) -> Result<Vec<ObjectId>> {
+    if !is_hex_prefix(prefix) || !(4..=40).contains(&prefix.len()) {
+        return Ok(Vec::new());
+    }
+    let mut matches = Vec::new();
+    for candidate in collect_loose_object_ids(repo)? {
+        if candidate.starts_with(prefix) {
+            matches.push(candidate.parse::<ObjectId>()?);
+        }
+    }
+    matches.sort();
+    matches.dedup();
     Ok(matches)
 }
 
@@ -1072,10 +1412,35 @@ fn resolve_commit_message_search(
         None => return Err(Error::ObjectNotFound(format!(":/{pattern}"))),
     };
 
+    resolve_commit_message_search_from_oid(repo, start_oid, &format!("/{pattern}"))
+}
+
+fn resolve_commit_message_search_from_oid(
+    repo: &crate::repo::Repository,
+    start_oid: ObjectId,
+    selector: &str,
+) -> Result<ObjectId> {
+    let mut current = start_oid;
+    loop {
+        let obj = repo.odb.read(&current)?;
+        match obj.kind {
+            ObjectKind::Commit => break,
+            ObjectKind::Tag => {
+                current = parse_tag_target(&obj.data)?;
+            }
+            _ => {
+                return Err(Error::InvalidRef(
+                    "commit message search requires a commit-ish".to_owned(),
+                ))
+            }
+        }
+    }
+
+    let (matcher, negate) = parse_commit_message_selector(selector)?;
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
-    queue.push_back(start_oid);
-    visited.insert(start_oid);
+    queue.push_back(current);
+    visited.insert(current);
 
     while let Some(oid) = queue.pop_front() {
         let obj = match repo.odb.read(&oid) {
@@ -1091,8 +1456,8 @@ fn resolve_commit_message_search(
             Err(_) => continue,
         };
 
-        // Check if message contains pattern
-        if commit.message.contains(pattern) {
+        let matches = matcher.is_match(&commit.message);
+        if (matches && !negate) || (!matches && negate) {
             return Ok(oid);
         }
 
@@ -1104,5 +1469,41 @@ fn resolve_commit_message_search(
         }
     }
 
-    Err(Error::ObjectNotFound(format!(":/{pattern}")))
+    Err(Error::ObjectNotFound(format!(":/{selector}")))
+}
+
+fn parse_commit_message_selector(selector: &str) -> Result<(Regex, bool)> {
+    let expr = selector.strip_prefix('/').unwrap_or(selector);
+    if expr.is_empty() {
+        return Err(Error::InvalidRef(
+            "empty commit message selector".to_owned(),
+        ));
+    }
+
+    if expr == "!" {
+        return Err(Error::InvalidRef(
+            "invalid commit message selector".to_owned(),
+        ));
+    }
+
+    let (pattern, negate) = if let Some(rest) = expr.strip_prefix("!!") {
+        (format!("!{rest}"), false)
+    } else if let Some(rest) = expr.strip_prefix("!-") {
+        if rest.is_empty() {
+            return Err(Error::InvalidRef(
+                "invalid commit message selector".to_owned(),
+            ));
+        }
+        (rest.to_owned(), true)
+    } else if expr.starts_with('!') {
+        return Err(Error::InvalidRef(
+            "invalid commit message selector".to_owned(),
+        ));
+    } else {
+        (expr.to_owned(), false)
+    };
+
+    let regex = Regex::new(&pattern)
+        .map_err(|err| Error::InvalidRef(format!("invalid commit message selector: {err}")))?;
+    Ok((regex, negate))
 }

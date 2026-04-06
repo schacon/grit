@@ -114,6 +114,10 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
+		if test -n "${TEST_CREATE_REPO_NO_TEMPLATE:-}"
+		then
+			export TEST_CREATE_REPO_NO_TEMPLATE
+		fi
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
 
@@ -122,9 +126,16 @@ PATH="$TEST_DIRECTORY:$PATH"
 
 setup_trash
 
+# Some upstream tests rely on this marker to ask `git init` not to populate
+# default template files (notably `.git/info/exclude`).
+if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+then
+	export TEST_CREATE_REPO_NO_TEMPLATE
+fi
+
 # Persist test_tick across subshell boundaries via a state file.
-# Use the trash root so tests can temporarily replace .git with a gitfile.
-_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
+# Store inside .git/ so the file is never tracked by git.
+_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
 
 test_tick () {
 	if test -z "${test_tick+set}"
@@ -140,7 +151,6 @@ test_tick () {
 	else
 		test_tick=$(($test_tick + 60))
 	fi
-	mkdir -p "$(dirname "$_TICK_FILE")"
 	echo "$test_tick" >"$_TICK_FILE"
 	GIT_COMMITTER_DATE="$test_tick -0700"
 	GIT_AUTHOR_DATE="$test_tick -0700"
@@ -154,11 +164,6 @@ test_debug () {
 
 # Default diff program
 DIFF="${DIFF:-diff}"
-EDITOR=:
-export EDITOR
-LANG=C
-LC_ALL=C
-export LANG LC_ALL
 
 # Allow tests to use $HOME — isolate from real user config
 HOME="$TRASH_DIRECTORY"
@@ -197,6 +202,8 @@ ZERO_OID=0000000000000000000000000000000000000000
 SQ="'"
 LF='
 '
+u200c=${u200c:-$(printf '\342\200\214')}
+export u200c
 export ZERO_OID SQ LF
 
 if test -n "$GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME"
@@ -209,19 +216,17 @@ fi
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
-test_path_is_executable () { test -x "$1"; }
 
 test_grep () {
 	local negate=""
 	local invert=""
-	local grep_opts=""
 	while test $# -gt 0; do
 		case "$1" in
 		-e) shift; break ;;
 		!) negate=1; shift ;;
 		-v) invert="-v"; shift ;;
 		--) shift; break ;;
-		-*) grep_opts="$grep_opts $1"; shift ;;
+		-*) shift ;;
 		*) break ;;
 		esac
 	done
@@ -229,75 +234,9 @@ test_grep () {
 	shift
 	if test -n "$negate"
 	then
-		! grep $invert $grep_opts "$pattern" "$@"
+		! grep "$pattern" "$@"
 	else
-		grep $invert $grep_opts "$pattern" "$@"
-	fi
-}
-
-# Check that the given command was invoked as part of the
-# trace2-format trace on stdin.
-#
-#	test_subcommand [!] <command> <args>... < <trace>
-#
-# If the first parameter passed is !, this instead checks that
-# the given command was not called.
-test_subcommand () {
-	local negate=
-	if test "$1" = "!"
-	then
-		negate=t
-		shift
-	fi
-
-	local expr="$(printf '"%s",' "$@")"
-	expr="${expr%,}"
-	local trace
-	trace="$(cat)"
-	local found=1
-
-	# Primary upstream-style match: JSON argv arrays.
-	if printf '%s\n' "$trace" | grep "\[$expr\]" >/dev/null
-	then
-		found=0
-	fi
-
-	# Fallback for simplified grit trace lines, e.g.
-	#   "data":"/path/to/grit fetch --quiet --no-progress origin --no-tags"
-	if test $found -ne 0
-	then
-		local cmdline="$*"
-		case "$cmdline" in
-		git\ *) cmdline="${cmdline#git }" ;;
-		esac
-		local cmd_re
-		cmd_re=$(printf '%s\n' "$cmdline" | sed 's/[][^$.*/+?(){}|\\]/\\&/g; s/ /.* /g')
-		if test -n "$cmdline" &&
-		   printf '%s\n' "$trace" |
-				grep -F '"event":"start"' |
-				grep -E "$cmd_re" >/dev/null
-		then
-			found=0
-		elif printf '%s\n' "$cmdline" | grep -F -- '--no-progress' >/dev/null
-		then
-			local alt_cmd
-			alt_cmd=$(printf '%s\n' "$cmdline" | sed 's/--no-progress //g; s/ --no-progress//g')
-			local alt_re
-			alt_re=$(printf '%s\n' "$alt_cmd" | sed 's/[][^$.*/+?(){}|\\]/\\&/g; s/ /.* /g')
-			if printf '%s\n' "$trace" |
-					grep -F '"event":"start"' |
-					grep -E "$alt_re" >/dev/null
-			then
-				found=0
-			fi
-		fi
-	fi
-
-	if test -n "$negate"
-	then
-		test $found -ne 0
-	else
-		test $found -eq 0
+		grep $invert "$pattern" "$@"
 	fi
 }
 
@@ -306,9 +245,7 @@ test_create_repo () {
 	mkdir -p "$repo" &&
 	(
 		cd "$repo" &&
-		git init &&
-		git config user.name "Test User" &&
-		git config user.email "test@example.com"
+		git init
 	)
 }
 
@@ -317,6 +254,28 @@ test_write_lines () {
 		printf '%s\n' "$1"
 		shift
 	done
+}
+
+test_detect_hash () {
+	case "${GIT_TEST_DEFAULT_HASH:-${GIT_TEST_BUILTIN_HASH:-sha1}}" in
+	*:*)
+		test_hash_algo="${GIT_TEST_DEFAULT_HASH%%:*}"
+		;;
+	sha256)
+		test_hash_algo=sha256
+		;;
+	*)
+		test_hash_algo=sha1
+		;;
+	esac
+}
+
+test_oid_to_path () {
+	test -n "${test_hash_algo:-}" || test_detect_hash
+	oid="$1"
+	prefix="${oid%${oid#??}}"
+	suffix="${oid#??}"
+	echo "${prefix}/${suffix}"
 }
 
 test_set_editor () {
@@ -334,33 +293,9 @@ test_set_sequence_editor () {
 }
 
 test_config () {
-	local cdir=""
-	local scope=""
-	while test $# -gt 2
-	do
-		case "$1" in
-		-C)
-			cdir="$2"
-			shift 2
-			;;
-		--global|--local|--worktree)
-			scope="$1"
-			shift
-			;;
-		*)
-			break
-			;;
-		esac
-	done
 	local key="$1" val="$2"
-	if test -n "$cdir"
-	then
-		git -C "$cdir" config $scope "$key" "$val" &&
-		test_when_finished "git -C '$cdir' config $scope --unset '$key'"
-	else
-		git config $scope "$key" "$val" &&
-		test_when_finished "git config $scope --unset '$key'"
-	fi
+	git config "$key" "$val" &&
+	test_when_finished "git config --unset '$key'"
 }
 
 test_config_global () {
@@ -436,12 +371,6 @@ _x40="$_x35$_x05"
 OID_REGEX="$_x40"
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
 EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
-
-# Upstream tests key off GIT_DEFAULT_HASH in a few places. Our harness is
-# SHA-1 only today, so provide a stable default when the environment does not.
-: "${GIT_DEFAULT_HASH:=sha1}"
-export GIT_DEFAULT_HASH
-
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
 # test_oid helpers — support SHA-1 only for now
@@ -618,18 +547,6 @@ test_have_prereq () {
 	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; return 1 ;;
 	CGIPASSAUTH) return 1 ;; # Not supported by test-httpd
 	*)
-			# Run lazily-declared prerequisite checks on first use.
-			local _lazy_var="test_prereq_lazily_${_p}"
-			eval "local _lazy_script=\${${_lazy_var}:-}"
-			if test -n "$_lazy_script"
-			then
-				if test_run_lazy_prereq_ "$_p" "$_lazy_script"
-				then
-					test_set_prereq "$_p"
-				fi
-				# Consume the lazy script so we only probe once.
-				eval "${_lazy_var}=''"
-			fi
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"
 		eval "test \"\${${_var}:-}\" = set"
@@ -703,28 +620,11 @@ test_env () {
 }
 
 # test_lazy_prereq NAME SCRIPT — define a prereq checked lazily
-#
-# Many upstream prereq probes expect stdin to be closed and to run from an
-# isolated scratch directory. Mirror that behavior to avoid hangs (e.g.
-# commands waiting on stdin) and side effects in the active test repo.
-test_run_lazy_prereq_ () {
-	local _name="$1"
-	local _script="$2"
-	local _dir="$TRASH_DIRECTORY/prereq-test-dir-$_name"
-	mkdir -p "$_dir" || return 1
-	(
-		cd "$_dir" &&
-		eval "$_script"
-	) </dev/null >/dev/null 2>&1
-	local _ret=$?
-	rm -rf "$_dir"
-	return $_ret
-}
-
 test_lazy_prereq () {
-	local _name="$1"
-	local _script="$2"
-	eval "test_prereq_lazily_${_name}=\$_script"
+	if eval "$2" >/dev/null 2>&1
+	then
+		test_set_prereq "$1"
+	fi
 }
 
 # write_script FILE [INTERPRETER] — write a script from stdin
@@ -769,7 +669,12 @@ test_hook () {
 		hook_dir=".git/hooks"
 	fi
 	mkdir -p "$hook_dir" &&
-	write_script "$hook_dir/$1"
+	hook_file="$hook_dir/$1" &&
+	if test -z "$setup"
+	then
+		test_when_finished "rm -f \"$hook_file\""
+	fi &&
+	write_script "$hook_file"
 }
 
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
@@ -794,16 +699,17 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= signoff= indir= tag=yes annotate= message= file= contents= author= append=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
+		--annotate) annotate=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
 		--printf) shift ;; # accepted but ignored for compat
 		*) break ;;
 		esac
@@ -813,14 +719,22 @@ test_commit () {
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
+		if test -n "$append"; then
+			printf '%s\n' "$contents" >>"$file"
+		else
+			printf '%s\n' "$contents" >"$file"
+		fi &&
 		git add "$file" &&
 		if test -z "$notick"; then
 			test_tick
 		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
-			git tag "$message"
+			if test -n "$annotate"; then
+				git tag -a -m "$message" "$message"
+			else
+				git tag "$message"
+			fi
 		fi
 	)
 }
@@ -897,7 +811,7 @@ test_expect_success () {
 	fi
 	if test "$commands" = "-"
 	then
-		commands=$(cat)
+		commands="$(cat)"
 	fi
 	test_count=$(($test_count + 1))
 
@@ -931,9 +845,9 @@ test_expect_success () {
 	fi
 
 	# Run test body in the current shell (like upstream) so that
-	# variables and cwd changes persist to subsequent tests.
-	# We save and restore 'set -e' state since eval doesn't
-	# propagate exit-on-error the way a subshell does.
+	# variable and working-directory changes persist to subsequent tests.
+	# We run with `set -e` inside a helper to keep top-level shell
+	# behavior predictable.
 	# Run with errexit but capture result.
 	# Wrap in a function to localize set -e.
 	_test_eval_result=0
@@ -990,7 +904,7 @@ test_expect_failure () {
 	fi
 	if test "$commands" = "-"
 	then
-		commands=$(cat)
+		commands="$(cat)"
 	fi
 	test_count=$(($test_count + 1))
 
@@ -1026,6 +940,7 @@ test_expect_failure () {
 	local _exports_file="$TRASH_DIRECTORY/.test-exports"
 	(
 		set -e
+		cd "$TRASH_DIRECTORY" || exit 1
 		test -f "$_exports_file" && . "$_exports_file"
 		eval "$commands"
 	)
@@ -1133,17 +1048,11 @@ test_expect_code () {
 	fi
 }
 
-# Returns true if numeric exit code in "$2" matches signal "$1".
-# Accepts POSIX shell convention (128 + signal) and ksh convention (256 + signal).
 test_match_signal () {
-	if test "$2" = "$((128 + $1))"
-	then
-		return 0
-	elif test "$2" = "$((256 + $1))"
-	then
-		return 0
-	fi
-	return 1
+	local sig="$1"
+	local code="$2"
+	local expected=$((128 + sig))
+	test "$code" = "$expected"
 }
 
 test_must_be_empty () {
@@ -1172,37 +1081,29 @@ test_line_count () {
 	fi
 }
 
-# test_stdout_line_count OP N CMD [ARGS...]
-# Run command, capture stdout, and assert line count.
+# test_stdout_line_count OP N CMD...
+# Run CMD and assert wc -l on its stdout.
 test_stdout_line_count () {
-	if test "$#" -le 3
-	then
-		echo >&2 "test_stdout_line_count: expected at least 4 arguments"
-		return 1
-	fi
-
 	local op="$1"
 	local count="$2"
 	shift 2
-
-	local trashdir
-	trashdir="$(git rev-parse --git-dir)/trash" || {
-		echo >&2 "test_stdout_line_count: expected to run in a repository"
-		return 1
-	}
-	mkdir -p "$trashdir" || return 1
-
-	"$@" >"$trashdir/output" &&
-	test_line_count "$op" "$count" "$trashdir/output"
+	local tmp="${TRASH_DIRECTORY}/.stdout.$$"
+	"$@" >"$tmp" &&
+	test_line_count "$op" "$count" "$tmp"
+	local rc=$?
+	rm -f "$tmp"
+	return $rc
 }
 
-test_file_size () {
-	if test "$#" -ne 1
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
 	then
-		echo >&2 "test_file_size: expected 1 argument"
-		return 1
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
 	fi
-	wc -c <"$1" | tr -d '[:space:]'
+	return 1
 }
 
 # Read up to "$1" bytes (or to EOF) from stdin and write them to stdout.

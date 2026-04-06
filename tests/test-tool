@@ -1138,8 +1138,7 @@ PY
         ' "$chomp_newline" "$reader_use_sideband"
         ;;
       *)
-        echo "test-tool pkt-line: unknown subcommand '$1'" >&2
-        exit 1 ;;
+        exec git test-tool pkt-line "$@" ;;
     esac ;;
   serve-v2)
     shift

@@ -54,7 +54,6 @@ pub mod format_patch;
 pub mod fsck;
 pub mod gc;
 pub mod get_tar_commit_id;
-pub mod git_passthrough;
 pub mod grep;
 pub mod hash_object;
 pub mod help;
@@ -133,6 +132,8 @@ pub mod stripspace;
 pub mod submodule;
 pub mod switch;
 pub mod symbolic_ref;
+pub mod system_git;
+pub mod git_passthrough; // compat shim -> system_git
 pub mod tag;
 pub mod test_tool_ref_store;
 pub mod unpack_file;

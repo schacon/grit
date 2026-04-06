@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::error::Error as GustError;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
+use grit_lib::ignore::IgnoreMatcher;
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -34,7 +35,7 @@ pub struct Args {
     #[arg(long)]
     pub reset: bool,
 
-    /// Stage a tree into the index under the given prefix.
+    /// Stage a tree into the index under the given prefix (must end with /).
     #[arg(long)]
     pub prefix: Option<String>,
 
@@ -46,13 +47,13 @@ pub struct Args {
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
 
+    /// Per-directory ignore file name used to allow clobbering ignored files.
+    #[arg(long = "exclude-per-directory")]
+    pub exclude_per_directory: Option<String>,
+
     /// Empty the index.
     #[arg(long = "empty")]
     pub empty: bool,
-
-    /// Per-directory ignore file name (e.g. .gitignore) for worktree safety checks.
-    #[arg(long = "exclude-per-directory", value_name = "GITIGNORE")]
-    pub exclude_per_directory: Option<String>,
 
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
@@ -99,66 +100,15 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         bail!("invalid path '.git'");
     }
 
-    // HFS / NTFS case-insensitive ".git" check (including Unicode tricks)
-    if prot.protect_hfs || prot.protect_ntfs {
-        // For HFS+: strip Unicode zero-width / ignorable characters before comparing.
-        // These are chars that HFS+ ignores in filenames.
-        let normalized = if prot.protect_hfs {
-            let s = String::from_utf8_lossy(name);
-            // Remove HFS-ignorable Unicode characters (zero-width, soft hyphen, etc.)
-            let stripped: String = s
-                .chars()
-                .filter(|&c| {
-                    !matches!(c as u32,
-                        // Zero-width non-joiner, non-joiner, joiner
-                        0x200B | 0x200C | 0x200D |
-                        // Zero-width no-break space (BOM)
-                        0xFEFF |
-                        // Soft hyphen
-                        0x00AD |
-                        // Various format chars
-                        0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069
-                    )
-                })
-                .collect();
-            stripped
-        } else {
-            String::from_utf8_lossy(name).into_owned()
-        };
-        // Check if normalized name is .git (case-insensitive)
-        if normalized.eq_ignore_ascii_case(".git") {
+    // HFS / NTFS case-insensitive ".git" checks.
+    if (prot.protect_hfs || prot.protect_ntfs) && name.len() == 4 && name[0] == b'.' {
+        let rest = &name[1..];
+        if rest.eq_ignore_ascii_case(b"git") {
             bail!("invalid path '{}'", String::from_utf8_lossy(name));
         }
-        // NTFS: also check for .git followed by spaces, dots, or colon streams
-        if prot.protect_ntfs {
-            let lower = normalized.to_lowercase();
-            // .git. or .git<space> etc — NTFS treats trailing dots/spaces as ignored
-            let trimmed = lower.trim_end_matches(|c: char| c == '.' || c == ' ');
-            if trimmed == ".git" {
-                bail!("invalid path '{}'", String::from_utf8_lossy(name));
-            }
-            // Backslash in name on NTFS acts as directory separator
-            if normalized.contains('\\') {
-                // Check if any component after splitting on \\ is .git-like
-                for part in normalized.split('\\') {
-                    let p = part
-                        .trim_end_matches(|c: char| c == '.' || c == ' ')
-                        .to_lowercase();
-                    if p == ".git" || p.eq_ignore_ascii_case("git~1") {
-                        bail!("invalid path '{}'", String::from_utf8_lossy(name));
-                    }
-                }
-            }
-            // :alternate-stream notation
-            if let Some(base) = normalized.split(':').next() {
-                let b = base
-                    .trim_end_matches(|c: char| c == '.' || c == ' ')
-                    .to_lowercase();
-                if b == ".git" {
-                    bail!("invalid path '{}'", String::from_utf8_lossy(name));
-                }
-            }
-        }
+    }
+    if prot.protect_hfs && hfs_equivalent_to_dotgit(name) {
+        bail!("invalid path '{}'", String::from_utf8_lossy(name));
     }
 
     // NTFS short-name check: "git~1" (case-insensitive)
@@ -166,7 +116,53 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         bail!("invalid path '{}'", String::from_utf8_lossy(name));
     }
 
+    if prot.protect_ntfs {
+        // Backslashes are treated as path separators on NTFS, so reject
+        // confusing names that rely on '\' being a regular byte.
+        if name.contains(&b'\\') {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+
+        // Reject NTFS-equivalent ".git" names such as ".git ", ".git...",
+        // and alternate stream forms like ".git...:stream".
+        if ntfs_equivalent_to_dotgit(name) {
+            bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+    }
+
     Ok(())
+}
+
+fn ntfs_equivalent_to_dotgit(name: &[u8]) -> bool {
+    if name.len() < 4 || !name[..4].eq_ignore_ascii_case(b".git") {
+        return false;
+    }
+
+    let rest = &name[4..];
+    if rest.is_empty() {
+        return true;
+    }
+
+    let head = rest.split(|b| *b == b':').next().unwrap_or(rest);
+    let mut trimmed_len = head.len();
+    while trimmed_len > 0 && matches!(head[trimmed_len - 1], b'.' | b' ') {
+        trimmed_len -= 1;
+    }
+
+    trimmed_len == 0
+}
+
+fn hfs_equivalent_to_dotgit(name: &[u8]) -> bool {
+    let Ok(path) = std::str::from_utf8(name) else {
+        return false;
+    };
+
+    let folded: String = path
+        .chars()
+        .filter(|ch| !matches!(*ch, '\u{200c}' | '\u{200d}'))
+        .flat_map(char::to_lowercase)
+        .collect();
+    folded == ".git"
 }
 
 /// Run `grit read-tree`.
@@ -188,11 +184,6 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // --exclude-per-directory requires -u
-    if args.exclude_per_directory.is_some() && !args.update {
-        bail!("--exclude-per-directory requires -u");
-    }
-
     let tree_oids: Vec<ObjectId> = args
         .trees
         .iter()
@@ -206,22 +197,30 @@ pub fn run(args: Args) -> Result<()> {
         bail!("too many trees (max 3)");
     }
 
-    let normalized_prefix = args.prefix.as_ref().map(|prefix| {
-        if prefix.is_empty() || prefix.ends_with('/') {
-            prefix.clone()
-        } else {
-            format!("{prefix}/")
-        }
-    });
-
-    if let Some(prefix) = &normalized_prefix {
+    if let Some(prefix) = &args.prefix {
         if prefix.starts_with('/') {
             bail!("--prefix must be relative to repository root");
         }
-        if args.merge || args.reset || tree_oids.len() != 1 {
+        if !prefix.is_empty() && !prefix.ends_with('/') {
+            bail!("--prefix requires a trailing '/'");
+        }
+        if args.merge || args.update || args.reset || tree_oids.len() != 1 {
             bail!("--prefix only supports a single non-merge tree read");
         }
     }
+
+    let allow_ignored_overwrite = match args.exclude_per_directory.as_deref() {
+        None => false,
+        Some(".gitignore") => {
+            if !args.update {
+                bail!("--exclude-per-directory requires -u");
+            }
+            true
+        }
+        Some(other) => {
+            bail!("unsupported --exclude-per-directory value '{other}'");
+        }
+    };
 
     if args.reset {
         // Reset mode is a hard replacement by the final tree argument.
@@ -231,8 +230,7 @@ pub fn run(args: Args) -> Result<()> {
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
         if !dry_run && args.update {
-            // Reset mode: no clobber check needed
-            checkout_index_entries(&repo, &old_index, &new_index, false)?;
+            checkout_index_entries(&repo, &old_index, &new_index)?;
         }
         if !dry_run {
             new_index.write(&index_path).context("writing index")?;
@@ -243,7 +241,7 @@ pub fn run(args: Args) -> Result<()> {
     let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
     let mut new_index = old_index.clone();
 
-    if let Some(prefix) = &normalized_prefix {
+    if let Some(prefix) = &args.prefix {
         read_tree_into_index_prefixed(&repo, &tree_oids[0], prefix, &mut new_index, prot)?;
     } else if !args.merge {
         if tree_oids.len() == 1 {
@@ -286,9 +284,11 @@ pub fn run(args: Args) -> Result<()> {
     // Apply sparse checkout: set skip-worktree on entries not matching patterns
     apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
 
+    if args.update {
+        validate_worktree_updates(&repo, &old_index, &new_index, allow_ignored_overwrite)?;
+    }
     if !dry_run && args.update {
-        let skip_ignored = args.exclude_per_directory.is_some();
-        checkout_index_entries(&repo, &old_index, &new_index, skip_ignored)?;
+        checkout_index_entries(&repo, &old_index, &new_index)?;
     }
     if !dry_run {
         new_index.write(&index_path).context("writing index")?;
@@ -503,11 +503,30 @@ fn three_way_merge(
             out.entries.push(e.clone());
         }
     }
+    let df_roots = detect_df_conflict_roots(&all_paths);
 
     for path in all_paths {
         let b = base.get(&path);
         let o = ours.get(&path);
         let t = theirs.get(&path);
+
+        // Directory/file conflicts are represented as unmerged stages.
+        // For the conflicting root path we keep stage entries for whichever
+        // side(s) have the file. For descendants under the conflicting root,
+        // we also keep their side-specific stages, even when one side deleted
+        // the path, to match Git's read-tree conflict shape.
+        if is_df_conflict_path(&df_roots, &path) {
+            if let Some(be) = b {
+                stage_entry(&mut out, be, 1);
+            }
+            if let Some(oe) = o {
+                stage_entry(&mut out, oe, 2);
+            }
+            if let Some(te) = t {
+                stage_entry(&mut out, te, 3);
+            }
+            continue;
+        }
 
         match (b, o, t) {
             (_, Some(oe), Some(te)) if oe.oid == te.oid => {
@@ -530,11 +549,8 @@ fn three_way_merge(
                 // Added by them only
                 out.entries.push((*te).clone());
             }
-            (Some(be), None, None) => {
-                // `git read-tree -m <base> <ours> <theirs>` keeps a stage-1-only
-                // unmerged entry when both sides deleted a path that existed in base.
-                // This is relied upon by checkout-index --stage=all workflows.
-                stage_entry(&mut out, be, 1);
+            (Some(_), None, None) => {
+                // Deleted by both: skip
             }
             (Some(be), None, Some(te)) => {
                 // Deleted by us, modified by them: conflict
@@ -561,172 +577,32 @@ fn three_way_merge(
         }
     }
 
-    // D/F conflict detection: if one side adds a file at path P but another
-    // side has paths under P/ (treating P as a directory), we need to mark
-    // the file entry with a stage instead of stage 0.
-    detect_df_conflicts(&mut out, base, ours, theirs);
-
     out.sort();
     out
 }
 
-/// Post-process the merged index to detect directory/file (D/F) conflicts.
-///
-/// When a file `P` from one side conflicts with a directory `P/` used by
-/// another side, we need to:
-/// 1. Mark the file entry at its conflict stage (2 or 3) instead of stage 0.
-/// 2. Ensure all entries under `P/` in each side appear at the right stage.
-///    Entries from base → stage 1, ours → stage 2, theirs → stage 3.
-fn detect_df_conflicts(
-    out: &mut Index,
-    base: &HashMap<Vec<u8>, IndexEntry>,
-    ours: &HashMap<Vec<u8>, IndexEntry>,
-    theirs: &HashMap<Vec<u8>, IndexEntry>,
-) {
-    // Collect all path prefixes used as directory components in each tree.
-    fn collect_dir_prefixes(entries: &HashMap<Vec<u8>, IndexEntry>) -> HashSet<Vec<u8>> {
-        let mut set = HashSet::new();
-        for path in entries.keys() {
-            let s = String::from_utf8_lossy(path);
-            let mut pos = 0usize;
-            while let Some(slash) = s[pos..].find('/') {
-                let prefix = &s[..pos + slash];
-                set.insert(prefix.as_bytes().to_vec());
-                pos += slash + 1;
-            }
-        }
-        set
-    }
-
-    let dir_ours = collect_dir_prefixes(ours);
-    let dir_base = collect_dir_prefixes(base);
-    let dir_theirs = collect_dir_prefixes(theirs);
-
-    // Find D/F conflict points: a path P that is a file in one side and a
-    // directory prefix in another side.
-    // "df_file_in_theirs" = paths that theirs has as a file but ours/base use as a dir
-    // "df_file_in_ours"   = paths that ours has as a file but theirs uses as a dir
-    let mut df_theirs: HashSet<Vec<u8>> = HashSet::new(); // theirs has file, ours/base have dir
-    let mut df_ours: HashSet<Vec<u8>> = HashSet::new(); // ours has file, theirs has dir
-
-    for path in theirs.keys() {
-        if dir_ours.contains(path) || dir_base.contains(path) {
-            df_theirs.insert(path.clone());
+fn detect_df_conflict_roots(all_paths: &BTreeSet<Vec<u8>>) -> HashSet<Vec<u8>> {
+    let mut roots = HashSet::new();
+    let paths: Vec<&Vec<u8>> = all_paths.iter().collect();
+    for path in &paths {
+        if paths
+            .iter()
+            .any(|other| is_descendant_path(other.as_slice(), path.as_slice()))
+        {
+            roots.insert((**path).clone());
         }
     }
-    for path in ours.keys() {
-        if dir_theirs.contains(path) {
-            df_ours.insert(path.clone());
-        }
-    }
+    roots
+}
 
-    if df_theirs.is_empty() && df_ours.is_empty() {
-        return;
-    }
+fn is_df_conflict_path(df_roots: &HashSet<Vec<u8>>, path: &[u8]) -> bool {
+    df_roots
+        .iter()
+        .any(|root| path == root.as_slice() || is_descendant_path(path, root.as_slice()))
+}
 
-    // For each D/F conflict point, collect which subdirectory prefix is affected.
-    // All entries under that prefix need conflict staging.
-    let mut conflict_prefixes_theirs: Vec<Vec<u8>> = df_theirs.iter().cloned().collect();
-    let mut conflict_prefixes_ours: Vec<Vec<u8>> = df_ours.iter().cloned().collect();
-
-    // Helper: does `path` live under `prefix/`?
-    let is_under = |path: &[u8], prefix: &[u8]| -> bool {
-        path.len() > prefix.len() + 1
-            && path[..prefix.len()] == *prefix
-            && path[prefix.len()] == b'/'
-    };
-
-    // Re-stage existing out entries:
-    // - Files that are the D/F conflict point in theirs: stage 0 → stage 3
-    // - Files that are the D/F conflict point in ours: stage 0 → stage 2
-    // - Files under a conflict prefix that were stage 0: re-stage appropriately
-    let mut to_restage: Vec<(usize, u8)> = Vec::new();
-
-    for (i, entry) in out.entries.iter().enumerate() {
-        let path = &entry.path;
-        let stage = entry.stage();
-
-        // D/F file from theirs at conflict point
-        if stage == 0 && df_theirs.contains(path) {
-            to_restage.push((i, 3));
-            continue;
-        }
-        // D/F file from ours at conflict point
-        if stage == 0 && df_ours.contains(path) {
-            to_restage.push((i, 2));
-            continue;
-        }
-
-        // Entries under a theirs-conflict prefix that are currently stage 0
-        // (they were added by ours only, but theirs conflicts with the dir)
-        if stage == 0 {
-            for prefix in &conflict_prefixes_theirs {
-                if is_under(path, prefix) {
-                    to_restage.push((i, 2));
-                    break;
-                }
-            }
-        }
-        // Entries under an ours-conflict prefix that are stage 0
-        // (added by theirs only, but ours conflicts with the dir)
-        if stage == 0 {
-            for prefix in &conflict_prefixes_ours {
-                if is_under(path, prefix) {
-                    to_restage.push((i, 3));
-                    break;
-                }
-            }
-        }
-    }
-
-    for (i, new_stage) in to_restage {
-        let flags = out.entries[i].flags;
-        out.entries[i].flags = (flags & 0x0FFF) | ((new_stage as u16) << 12);
-    }
-
-    // Add missing conflict entries:
-    // When base has entries under a conflict prefix that were skipped
-    // (deleted by both sides), they need to appear at stage 1.
-    let mut to_add: Vec<(IndexEntry, u8)> = Vec::new();
-
-    // Under theirs-conflict prefixes: base entries → stage 1
-    for (path, be) in base {
-        for prefix in &conflict_prefixes_theirs {
-            if is_under(path, prefix) {
-                // Check if stage 1 entry already exists in out
-                let has_stage1 = out
-                    .entries
-                    .iter()
-                    .any(|e| e.path == *path && e.stage() == 1);
-                if !has_stage1 {
-                    to_add.push(((*be).clone(), 1));
-                }
-                break;
-            }
-        }
-    }
-
-    // Under ours-conflict prefixes: base entries → stage 1
-    for (path, be) in base {
-        for prefix in &conflict_prefixes_ours {
-            if is_under(path, prefix) {
-                let has_stage1 = out
-                    .entries
-                    .iter()
-                    .any(|e| e.path == *path && e.stage() == 1);
-                if !has_stage1 {
-                    to_add.push(((*be).clone(), 1));
-                }
-                break;
-            }
-        }
-    }
-
-    for (entry, stage) in to_add {
-        let mut e = entry;
-        e.flags = (e.flags & 0x0FFF) | ((stage as u16) << 12);
-        out.entries.push(e);
-    }
+fn is_descendant_path(path: &[u8], parent: &[u8]) -> bool {
+    path.len() > parent.len() && path.starts_with(parent) && path[parent.len()] == b'/'
 }
 
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
@@ -788,34 +664,22 @@ fn parse_sparse_patterns(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check if a path matches the sparse-checkout patterns.
-///
-/// Patterns work like gitignore, processed in order — last match wins.
-/// `!` prefix negates (excludes). A path is included if the last
-/// matching pattern is positive; excluded if the last is negative or
-/// if no pattern matched.
+/// Check if a path matches any sparse-checkout pattern.
+/// Patterns work like gitignore:
+/// - "sub/" matches any path starting with "sub/"
+/// - "*.c" matches any path ending in .c
+/// - "/foo" anchored to root
 fn sparse_matches(patterns: &[String], path: &str) -> bool {
     if patterns.is_empty() {
         return false;
     }
 
-    // Walk patterns in order; last match wins.
-    let mut result = false;
     for pattern in patterns {
-        let pat = pattern.trim();
-        if pat.is_empty() || pat.starts_with('#') {
-            continue;
-        }
-        let (negated, effective_pat) = if pat.starts_with('!') {
-            (true, &pat[1..])
-        } else {
-            (false, pat)
-        };
-        if sparse_pattern_matches(effective_pat, path) {
-            result = !negated;
+        if sparse_pattern_matches(pattern, path) {
+            return true;
         }
     }
-    result
+    false
 }
 
 /// Match a single sparse-checkout pattern against a path.
@@ -870,32 +734,25 @@ fn sparse_glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Update working tree to match stage-0 entries in `new_index`.
-///
-/// `skip_ignored`: when true, ignored files are exempt from the clobber check.
-/// Returns an error if untracked (non-ignored) working tree files would be clobbered.
-fn checkout_index_entries(
-    repo: &Repository,
-    old_index: &Index,
-    new_index: &Index,
-    skip_ignored: bool,
-) -> Result<()> {
+fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Index) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
         None => return Ok(()),
     };
 
-    let old_stage0: HashSet<Vec<u8>> = old_index
+    let old_paths: HashSet<Vec<u8>> = old_index
         .entries
         .iter()
         .filter(|e| e.stage() == 0)
         .map(|e| e.path.clone())
         .collect();
-    let new_stage0: HashSet<Vec<u8>> = new_index
+    let new_paths: HashSet<Vec<u8>> = new_index
         .entries
         .iter()
         .filter(|e| e.stage() == 0)
         .map(|e| e.path.clone())
         .collect();
+    let old_stage0 = stage0_index_map(old_index);
 
     // Collect paths that have skip-worktree in the new index
     let new_skip_worktree: HashSet<Vec<u8>> = new_index
@@ -905,56 +762,7 @@ fn checkout_index_entries(
         .map(|e| e.path.clone())
         .collect();
 
-    // Safety check: refuse to overwrite untracked files.
-    // A path is "untracked" if it: exists on disk, is NOT in old index at ANY stage, and
-    // the new index wants to write something there.
-    // When skip_ignored=true, files matching .gitignore are exempt.
-    let mut ignore_matcher: Option<grit_lib::ignore::IgnoreMatcher> = if skip_ignored {
-        grit_lib::ignore::IgnoreMatcher::from_repository(repo).ok()
-    } else {
-        None
-    };
-
-    let mut clobber_errors: Vec<String> = Vec::new();
-    for entry in &new_index.entries {
-        if entry.stage() != 0 || entry.skip_worktree() {
-            continue;
-        }
-        let path = &entry.path;
-        // Only check paths that are newly added (not in old index at any stage).
-        // Files with conflict stages in old index are NOT untracked.
-        // Also skip if old index had entries UNDER this path (D/F: path was a dir).
-        let path_str = String::from_utf8_lossy(path);
-        let dir_prefix = format!("{path_str}/");
-        let in_old = old_index
-            .entries
-            .iter()
-            .any(|e| e.path == *path || String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
-        if in_old {
-            continue;
-        }
-        let rel = String::from_utf8_lossy(path).into_owned();
-        let abs = work_tree.join(&rel);
-        if abs.exists() || abs.is_symlink() {
-            // If skip_ignored and this file is ignored, allow clobbering it.
-            if let Some(ref mut matcher) = ignore_matcher {
-                if let Ok((ignored, _)) = matcher.check_path(repo, Some(old_index), &rel, false) {
-                    if ignored {
-                        continue;
-                    }
-                }
-            }
-            clobber_errors.push(rel);
-        }
-    }
-    if !clobber_errors.is_empty() {
-        bail!(
-            "error: Untracked working tree file(s) would be overwritten by merge: {}",
-            clobber_errors.join(", ")
-        );
-    }
-
-    for old_path in old_stage0.difference(&new_stage0) {
+    for old_path in old_paths.difference(&new_paths) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
         let abs = work_tree.join(&rel);
         if abs.is_file() || abs.is_symlink() {
@@ -963,26 +771,6 @@ fn checkout_index_entries(
             let _ = std::fs::remove_dir_all(&abs);
         }
         remove_empty_parent_dirs(&work_tree, &abs);
-    }
-
-    // Also remove worktree files for paths that exist only as unmerged
-    // entries (stage 1/2/3) in the old index but have no entry in new index.
-    // This handles "ghost" conflict files left by a failed merge.
-    let old_unmerged: HashSet<Vec<u8>> = old_index
-        .entries
-        .iter()
-        .filter(|e| e.stage() != 0)
-        .map(|e| e.path.clone())
-        .collect();
-    for unmerged_path in &old_unmerged {
-        if !new_stage0.contains(unmerged_path) {
-            let rel = String::from_utf8_lossy(unmerged_path).into_owned();
-            let abs = work_tree.join(&rel);
-            if abs.is_file() || abs.is_symlink() {
-                let _ = std::fs::remove_file(&abs);
-                remove_empty_parent_dirs(&work_tree, &abs);
-            }
-        }
     }
 
     // Remove files that now have skip-worktree set
@@ -1003,30 +791,16 @@ fn checkout_index_entries(
         if entry.skip_worktree() {
             continue;
         }
+        if old_stage0
+            .get(&entry.path)
+            .is_some_and(|old_entry| same_blob(old_entry, entry))
+        {
+            continue;
+        }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         let abs_path = work_tree.join(&path_str);
 
-        if entry.mode == MODE_GITLINK {
-            let _ = std::fs::create_dir_all(&abs_path);
-            continue;
-        }
-
         if let Some(parent) = abs_path.parent() {
-            // Remove any file/symlink blocking directory creation along the path.
-            // This happens e.g. when resetting from a commit where "df" is a file
-            // to one where "df" is a directory containing "df/file".
-            let mut check = work_tree.to_path_buf();
-            for component in parent
-                .strip_prefix(&work_tree)
-                .unwrap_or(parent)
-                .components()
-            {
-                check.push(component);
-                if check.is_file() || check.is_symlink() {
-                    let _ = std::fs::remove_file(&check);
-                    break;
-                }
-            }
             std::fs::create_dir_all(parent)?;
         }
 
@@ -1072,6 +846,110 @@ fn checkout_index_entries(
         }
     }
     Ok(())
+}
+
+fn validate_worktree_updates(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+    allow_ignored_overwrite: bool,
+) -> Result<()> {
+    let work_tree = match &repo.work_tree {
+        Some(p) => p.clone(),
+        None => return Ok(()),
+    };
+
+    let old_stage0 = stage0_index_map(old_index);
+    let new_stage0 = stage0_index_map(new_index);
+
+    let mut all_paths: BTreeSet<Vec<u8>> = BTreeSet::new();
+    all_paths.extend(old_stage0.keys().cloned());
+    all_paths.extend(new_stage0.keys().cloned());
+
+    let mut ignore_matcher = if allow_ignored_overwrite {
+        Some(IgnoreMatcher::from_repository(repo)?)
+    } else {
+        None
+    };
+
+    for path in all_paths {
+        let old = old_stage0.get(&path);
+        let new = new_stage0.get(&path);
+
+        if let (Some(old_entry), Some(new_entry)) = (old, new) {
+            if same_blob(old_entry, new_entry) {
+                continue;
+            }
+        }
+
+        let rel_path = String::from_utf8_lossy(&path).into_owned();
+        let abs_path = work_tree.join(&rel_path);
+        let exists = std::fs::symlink_metadata(&abs_path)
+            .map(|_| true)
+            .unwrap_or(false);
+
+        if !exists {
+            continue;
+        }
+
+        match (old, new) {
+            (None, Some(_)) => {
+                if allow_ignored_overwrite {
+                    if let Some(ref mut matcher) = ignore_matcher {
+                        let (ignored, _) = matcher
+                            .check_path(repo, Some(old_index), &rel_path, false)
+                            .map_err(anyhow::Error::from)?;
+                        if ignored {
+                            continue;
+                        }
+                    }
+                }
+                bail!(
+                    "untracked working tree file '{}' would be overwritten by merge",
+                    rel_path
+                );
+            }
+            (Some(old_entry), Some(_)) | (Some(old_entry), None) => {
+                if !worktree_matches_entry(repo, old_entry, &abs_path)? {
+                    bail!(
+                        "local changes to '{}' would be overwritten by merge",
+                        rel_path
+                    );
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn worktree_matches_entry(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {
+    let obj = repo.odb.read(&entry.oid)?;
+    if obj.kind != ObjectKind::Blob {
+        return Ok(false);
+    }
+
+    let metadata = match std::fs::symlink_metadata(abs_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+
+    if entry.mode == MODE_SYMLINK {
+        if !metadata.file_type().is_symlink() {
+            return Ok(false);
+        }
+        let target = std::fs::read_link(abs_path)?;
+        return Ok(target.to_string_lossy().as_bytes() == obj.data.as_slice());
+    }
+
+    if !metadata.is_file() {
+        return Ok(false);
+    }
+
+    let data = std::fs::read(abs_path)?;
+    Ok(data == obj.data)
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {

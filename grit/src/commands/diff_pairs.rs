@@ -5,7 +5,7 @@
 //!
 //!     echo "<oid1> <oid2>" | grit diff-pairs
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -20,5 +20,5 @@ pub struct Args {
 
 /// Run `grit diff-pairs` by delegating to the system Git binary.
 pub fn run(args: Args) -> Result<()> {
-    git_passthrough::run("diff-pairs", &args.args)
+    system_git::run("diff-pairs", &args.args)
 }

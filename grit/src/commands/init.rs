@@ -160,10 +160,6 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         "sha1".to_owned()
     };
 
-    let test_no_template = std::env::var("TEST_CREATE_REPO_NO_TEMPLATE")
-        .ok()
-        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "on"));
-
     // Determine template directory:
     // --template=<path> → use that path
     // --template= (empty string) → skip templates
@@ -172,9 +168,6 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         Some(t) if t.is_empty() => None, // explicitly empty → skip
         Some(t) => Some(PathBuf::from(t)),
         None => {
-            if test_no_template {
-                None
-            } else
             // Check GIT_TEMPLATE_DIR env var first
             if let Ok(tdir) = std::env::var("GIT_TEMPLATE_DIR") {
                 if !tdir.is_empty() {
@@ -194,12 +187,48 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
+    let test_no_template = std::env::var("TEST_CREATE_REPO_NO_TEMPLATE")
+        .ok()
+        .map(|v| {
+            let trimmed = v.trim();
+            !trimmed.is_empty() && trimmed != "0" && !trimmed.eq_ignore_ascii_case("false")
+        })
+        .unwrap_or(false);
     let skip_default_templates =
         matches!(&args.template, Some(t) if t.is_empty()) || test_no_template;
+    let template_dir = if test_no_template { None } else { template_dir };
 
-    // Determine ref format
-    let ref_format = args.ref_format.as_deref().unwrap_or("files");
-    match ref_format {
+    // Determine ref format:
+    // 1. --ref-format flag
+    // 2. GIT_DEFAULT_REF_FORMAT env
+    // 3. GIT_TEST_DEFAULT_REF_FORMAT env (test harness compatibility)
+    // 4. init.defaultRefFormat config
+    // 5. existing repo format on reinit (unless explicitly requested)
+    // 6. "files" fallback
+    let configured_ref_format = config
+        .get("init.defaultRefFormat")
+        .filter(|value| !value.trim().is_empty());
+    let env_ref_format = std::env::var("GIT_DEFAULT_REF_FORMAT")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("GIT_TEST_DEFAULT_REF_FORMAT")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        });
+    let explicit_ref_format = args.ref_format.is_some() || env_ref_format.is_some();
+    let mut ref_format = args
+        .ref_format
+        .clone()
+        .or(env_ref_format)
+        .or(configured_ref_format)
+        .unwrap_or_else(|| "files".to_owned());
+    if is_reinit && !explicit_ref_format {
+        ref_format = detect_ref_format(&real_git_dir).to_owned();
+    }
+    match ref_format.as_str() {
         "files" | "reftable" => {}
         other => bail!("unknown ref storage format: {other}"),
     }
@@ -227,7 +256,7 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         skip_default_templates,
         args.shared.as_deref(),
         is_reinit,
-        ref_format,
+        &ref_format,
     )?;
 
     // Handle --separate-git-dir: write gitfile at path/.git
@@ -318,17 +347,15 @@ fn create_git_dir(
         }
     }
 
-    // Always create essential directories (hooks, info) regardless of template.
-    // Git does this unconditionally so that hook installation always works.
-    fs::create_dir_all(git_dir.join("info"))?;
-    fs::create_dir_all(git_dir.join("hooks"))?;
-
     // Apply templates or built-in defaults
     if let Some(tmpl) = template_dir {
         if tmpl.is_dir() {
             copy_template(tmpl, git_dir)?;
         }
     } else if !skip_default_templates {
+        // Create built-in default template content
+        fs::create_dir_all(git_dir.join("info"))?;
+        fs::create_dir_all(git_dir.join("hooks"))?;
         // Write info/exclude (default template content)
         let exclude_path = git_dir.join("info").join("exclude");
         if !exclude_path.exists() {

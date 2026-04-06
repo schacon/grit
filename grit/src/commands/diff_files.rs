@@ -5,8 +5,6 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
-use grit_lib::crlf;
 use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -33,12 +31,13 @@ pub struct Args {
 
 /// Run `grit diff-files`.
 pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
+    let mut options = parse_options(&args.args)?;
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
     };
+    options.pathspecs = normalize_pathspecs(&options.pathspecs, &work_tree)?;
 
     let index_path = effective_index_path(&repo)?;
     let index = Index::load(&index_path).context("loading index")?;
@@ -289,7 +288,8 @@ fn collect_changes(
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
+                    {
                         changes.insert(
                             path.clone(),
                             Change {
@@ -373,6 +373,17 @@ fn collect_changes(
     Ok(changes.into_values().collect())
 }
 
+/// `read-tree`-style entries carry zeroed stat data and are considered dirty
+/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
+fn is_stat_smudged(entry: &IndexEntry) -> bool {
+    entry.ctime_sec == 0
+        && entry.ctime_nsec == 0
+        && entry.mtime_sec == 0
+        && entry.mtime_nsec == 0
+        && entry.dev == 0
+        && entry.ino == 0
+}
+
 // ── Worktree probing ─────────────────────────────────────────────────
 
 /// Result of probing a working-tree file against its index entry.
@@ -399,14 +410,7 @@ fn read_worktree_info_fast(
         Err(e) => return Err(e.into()),
     };
 
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let conv = crlf::ConversionConfig::from_config(&config);
-    let attrs = repo
-        .work_tree
-        .as_deref()
-        .map(crlf::load_gitattributes)
-        .unwrap_or_default();
-    let rel_path = index_entry_path(index_entry);
+    let _ = repo;
 
     // Fast path: if stat info matches the index, file is unchanged.
     // But also check if the index mode differs from the worktree mode
@@ -437,11 +441,7 @@ fn read_worktree_info_fast(
         } else {
             MODE_REGULAR
         };
-        let raw = fs::read(abs_path)?;
-        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
-        let mut conv_for_hash = conv.clone();
-        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
-        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
+        let data = fs::read(abs_path)?;
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
@@ -460,13 +460,7 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         Err(e) => return Err(e.into()),
     };
 
-    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-    let conv = crlf::ConversionConfig::from_config(&config);
-    let attrs = repo
-        .work_tree
-        .as_deref()
-        .map(crlf::load_gitattributes)
-        .unwrap_or_default();
+    let _ = repo;
 
     if meta.file_type().is_symlink() {
         let target = fs::read_link(abs_path)?;
@@ -480,17 +474,7 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         } else {
             MODE_REGULAR
         };
-        let raw = fs::read(abs_path)?;
-        let rel_path = repo
-            .work_tree
-            .as_deref()
-            .and_then(|wt| abs_path.strip_prefix(wt).ok())
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
-        let mut conv_for_hash = conv.clone();
-        conv_for_hash.safecrlf = crlf::SafeCrlf::False;
-        let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
+        let data = fs::read(abs_path)?;
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(Some((mode, oid)));
     }
@@ -680,11 +664,10 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
         return true;
     }
     pathspecs.iter().any(|spec| {
-        if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == spec || path.starts_with(&format!("{spec}/"))
+        if spec.is_empty() {
+            return true;
         }
+        crate::pathspec::pathspec_matches(spec, path)
     })
 }
 
@@ -701,6 +684,58 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
     Ok(repo.index_path())
 }
 
-fn index_entry_path(entry: &IndexEntry) -> String {
-    String::from_utf8_lossy(&entry.path).into_owned()
+/// Convert command-line pathspecs to worktree-relative patterns.
+///
+/// `git diff-files` interprets pathspecs relative to the current directory.
+/// When invoked from a subdirectory, `.` therefore means "this subdirectory"
+/// (not the repository root).
+fn normalize_pathspecs(pathspecs: &[String], work_tree: &Path) -> Result<Vec<String>> {
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let cwd_prefix = cwd_prefix(work_tree, &cwd);
+    let cwd_prefix_with_slash = cwd_prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/"))
+        .unwrap_or_default();
+
+    let mut out = Vec::with_capacity(pathspecs.len());
+    for spec in pathspecs {
+        if spec == "." {
+            out.push(cwd_prefix.clone().unwrap_or_default());
+            continue;
+        }
+
+        let spec_path = Path::new(spec);
+        if spec_path.is_absolute() {
+            if let Ok(rel) = spec_path.strip_prefix(work_tree) {
+                out.push(rel.to_string_lossy().into_owned());
+            } else {
+                out.push(spec.clone());
+            }
+            continue;
+        }
+
+        if cwd_prefix_with_slash.is_empty() {
+            out.push(spec.clone());
+        } else {
+            out.push(format!("{cwd_prefix_with_slash}{spec}"));
+        }
+    }
+    Ok(out)
+}
+
+/// Return the current directory prefix relative to the worktree, if any.
+fn cwd_prefix(work_tree: &Path, cwd: &Path) -> Option<String> {
+    let work_tree = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let rel = cwd.strip_prefix(&work_tree).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    Some(rel.to_string_lossy().into_owned())
 }

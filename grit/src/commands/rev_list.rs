@@ -2,18 +2,14 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
-use grit_lib::pack::{read_local_pack_indexes, verify_pack_and_collect};
-use grit_lib::refs;
+use grit_lib::objects::parse_commit;
+use grit_lib::reflog::read_reflog;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
     render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, ObjectFilter,
     OrderingMode, OutputMode, RevListOptions,
 };
-use std::collections::{BTreeMap, HashSet};
-use std::fs;
-use std::io::Write;
 
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
@@ -28,8 +24,6 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
 
     let mut options = RevListOptions::default();
-    let mut disk_usage = None;
-    let mut object_type_filter = None;
     let mut abbrev_len = 7usize;
     let mut revision_specs = Vec::new();
     let mut read_stdin = false;
@@ -38,6 +32,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut default_rev: Option<String> = None;
     let mut no_commit_header = false;
     let mut use_color = false;
+    let mut walk_reflogs = false;
 
     let mut i = 0usize;
     while i < args.args.len() {
@@ -69,10 +64,12 @@ pub fn run(args: Args) -> Result<()> {
                 "--end-of-options" => end_of_options = true,
                 "--objects" => options.objects = true,
                 "--objects-edge" => options.objects = true,
-                "--disk-usage" => disk_usage = Some(false),
+                _ if arg.starts_with("--missing=") => {
+                    let mode = arg.trim_start_matches("--missing=");
+                    options.missing_print = mode == "print";
+                }
                 "--no-object-names" => options.no_object_names = true,
                 "--object-names" => options.no_object_names = false,
-                "--filter-provided-objects" => { /* accepted for disk-usage helper mode */ }
                 "--boundary" => options.boundary = true,
                 "--in-commit-order" => options.in_commit_order = true,
                 "--no-kept-objects" => options.no_kept_objects = true,
@@ -266,25 +263,11 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 "--abbrev-commit" | "--no-abbrev-commit" => { /* silently accept */ }
                 "--abbrev" => abbrev_len = 7,
-                "--reflog" | "--walk-reflogs" | "-g" => {
-                    options.walk_reflogs = true;
-                }
+                "--reflog" | "--walk-reflogs" | "-g" => walk_reflogs = true,
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
-                    if let Some(kind) = spec.strip_prefix("object:type=") {
-                        object_type_filter = Some(parse_object_type_filter(kind)?);
-                    } else {
-                        let filter =
-                            ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
-                        options.filter = Some(filter);
-                    }
-                }
-                _ if arg.starts_with("--disk-usage=") => {
-                    let value = arg.trim_start_matches("--disk-usage=");
-                    if value != "human" {
-                        bail!("unsupported --disk-usage mode: {value}");
-                    }
-                    disk_usage = Some(true);
+                    let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
+                    options.filter = Some(filter);
                 }
                 _ if arg.starts_with("--default") => {
                     // --default REV: use REV as default if no revisions given
@@ -332,62 +315,17 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Handle --walk-reflogs / -g mode
-    if options.walk_reflogs {
-        if revision_specs.is_empty() {
-            bail!("error: no revisions passed to rev-list -g");
-        }
-        let refname = {
-            let r = &revision_specs[0];
-            if r == "HEAD" || r.starts_with("refs/") {
-                r.clone()
-            } else {
-                format!("refs/heads/{r}")
-            }
-        };
-        let entries = grit_lib::reflog::read_reflog(&repo.git_dir, &refname)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let stdout = std::io::stdout();
-        let mut out = stdout.lock();
-        let show_parents = options.output_mode == OutputMode::Parents;
-        let max_count: usize = options.max_count.unwrap_or(usize::MAX);
-        for (count, entry) in entries.iter().rev().enumerate() {
-            if count >= max_count {
-                break;
-            }
-            if show_parents {
-                if let Ok(obj) = repo.odb.read(&entry.new_oid) {
-                    if let Ok(commit) = grit_lib::objects::parse_commit(&obj.data) {
-                        let mut line = entry.new_oid.to_hex();
-                        for parent in &commit.parents {
-                            line.push(' ');
-                            line.push_str(&parent.to_hex());
-                        }
-                        writeln!(out, "{line}")?;
-                        continue;
-                    }
-                }
-            }
-            writeln!(out, "{}", entry.new_oid.to_hex())?;
-        }
-        return Ok(());
-    }
-
     // Apply --default when no revision specs given
     if revision_specs.is_empty() {
         if let Some(def) = default_rev {
             revision_specs.push(def);
         }
     }
-
-    if let Some(human) = disk_usage {
-        return print_disk_usage(
-            &repo,
-            options.all_refs,
-            &revision_specs,
-            object_type_filter,
-            human,
-        );
+    if walk_reflogs {
+        if revision_specs.is_empty() {
+            bail!("--walk-reflogs requires at least one revision");
+        }
+        return run_reflog_walk(&repo, &options, &revision_specs);
     }
 
     // Handle symmetric diff (A...B) tokens
@@ -456,11 +394,14 @@ pub fn run(args: Args) -> Result<()> {
         }
         return Ok(());
     }
-    if options.quiet {
+    if options.quiet && !options.missing_print {
         return Ok(());
     }
 
     let print_object = |oid: &grit_lib::objects::ObjectId, path: &str| {
+        if oid.is_zero() {
+            return;
+        }
         if options.no_object_names {
             println!("{oid}");
         } else if path.is_empty() {
@@ -473,6 +414,9 @@ pub fn run(args: Args) -> Result<()> {
     {
         let mut obj_offset = 0usize;
         for (ci, oid) in result.commits.iter().enumerate() {
+            if options.quiet {
+                continue;
+            }
             let mut prefix = String::new();
             if options.left_right {
                 if let Some(&is_left) = result.left_right_map.get(oid) {
@@ -539,7 +483,7 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Print remaining objects (non-in-commit-order mode, or leftovers)
-        if options.objects && result.per_commit_object_counts.is_empty() {
+        if options.objects && !options.quiet && result.per_commit_object_counts.is_empty() {
             for (oid, path) in &result.objects {
                 print_object(oid, path);
             }
@@ -550,6 +494,12 @@ pub fn run(args: Args) -> Result<()> {
     if options.filter_print_omitted {
         for oid in &result.omitted_objects {
             println!("~{oid}");
+        }
+    }
+
+    if options.missing_print {
+        for oid in &result.missing_objects {
+            println!("?{oid}");
         }
     }
 
@@ -573,190 +523,64 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
     Ok(value as usize)
 }
 
-fn parse_object_type_filter(value: &str) -> Result<ObjectKind> {
-    match value {
-        "commit" => Ok(ObjectKind::Commit),
-        "tree" => Ok(ObjectKind::Tree),
-        "blob" => Ok(ObjectKind::Blob),
-        "tag" => Ok(ObjectKind::Tag),
-        _ => bail!("unsupported object:type filter: {value}"),
-    }
-}
-
-fn print_disk_usage(
+fn run_reflog_walk(
     repo: &Repository,
-    all_refs: bool,
+    options: &RevListOptions,
     revision_specs: &[String],
-    object_type_filter: Option<ObjectKind>,
-    human: bool,
 ) -> Result<()> {
-    let mut starts = Vec::new();
-    if all_refs {
-        if let Ok(oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
-            starts.push(oid);
-        }
-        starts.extend(
-            refs::list_refs(&repo.git_dir, "refs/")?
-                .into_iter()
-                .map(|(_, oid)| oid),
-        );
-    }
-    for spec in revision_specs {
-        starts.push(grit_lib::rev_parse::resolve_revision(repo, spec)?);
-    }
-
-    let pack_disk_sizes = collect_pack_disk_sizes(repo)?;
-    let mut seen = HashSet::new();
-    let mut total = 0u64;
-    for oid in starts {
-        accumulate_disk_usage(
-            repo,
-            oid,
-            object_type_filter,
-            &pack_disk_sizes,
-            &mut seen,
-            &mut total,
-        )?;
-    }
-
-    if human {
-        let (value, unit) = humanize_bytes(total as usize);
-        println!("{} {}", value.unwrap_or_default(), unit.unwrap_or_default());
+    let r = &revision_specs[0];
+    let refname = if let Some(full) = grit_lib::rev_parse::symbolic_full_name(repo, r) {
+        full
+    } else if r == "HEAD" || r.starts_with("refs/") {
+        r.clone()
     } else {
-        println!("{total}");
-    }
-    Ok(())
-}
-
-fn collect_pack_disk_sizes(repo: &Repository) -> Result<BTreeMap<ObjectId, u64>> {
-    let mut out = BTreeMap::new();
-    for idx in read_local_pack_indexes(repo.odb.objects_dir()).context("reading pack indexes")? {
-        for record in verify_pack_and_collect(&idx.idx_path)
-            .with_context(|| format!("verifying {:?}", idx.idx_path))?
-        {
-            out.insert(record.oid, record.size_in_pack);
+        let candidate = format!("refs/heads/{r}");
+        if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
+            candidate
+        } else {
+            r.clone()
         }
-    }
-    Ok(out)
-}
+    };
 
-fn accumulate_disk_usage(
-    repo: &Repository,
-    oid: ObjectId,
-    object_type_filter: Option<ObjectKind>,
-    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
-    seen: &mut HashSet<ObjectId>,
-    total: &mut u64,
-) -> Result<()> {
-    if !seen.insert(oid) {
-        return Ok(());
-    }
+    let entries = read_reflog(&repo.git_dir, &refname).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut emitted = 0usize;
+    let mut skipped = 0usize;
 
-    let object = repo.odb.read(&oid)?;
-    if object_type_filter.is_none_or(|kind| kind == object.kind) {
-        *total += object_disk_size(repo, oid, pack_disk_sizes)?;
-    }
-
-    match object.kind {
-        ObjectKind::Commit => {
-            let commit = parse_commit(&object.data)?;
-            accumulate_disk_usage(
-                repo,
-                commit.tree,
-                object_type_filter,
-                pack_disk_sizes,
-                seen,
-                total,
-            )?;
-            for parent in commit.parents {
-                accumulate_disk_usage(
-                    repo,
-                    parent,
-                    object_type_filter,
-                    pack_disk_sizes,
-                    seen,
-                    total,
-                )?;
+    for entry in entries.iter().rev() {
+        if skipped < options.skip {
+            skipped += 1;
+            continue;
+        }
+        if let Some(max) = options.max_count {
+            if emitted >= max {
+                break;
             }
         }
-        ObjectKind::Tree => {
-            for entry in parse_tree(&object.data)? {
-                if entry.mode == 0o160000 {
-                    continue;
+
+        if !options.quiet {
+            match options.output_mode {
+                OutputMode::Parents => {
+                    if let Ok(obj) = repo.odb.read(&entry.new_oid) {
+                        if let Ok(commit) = parse_commit(&obj.data) {
+                            let mut line = entry.new_oid.to_hex();
+                            for parent in commit.parents {
+                                line.push(' ');
+                                line.push_str(&parent.to_hex());
+                            }
+                            println!("{line}");
+                        } else {
+                            println!("{}", entry.new_oid.to_hex());
+                        }
+                    } else {
+                        println!("{}", entry.new_oid.to_hex());
+                    }
                 }
-                accumulate_disk_usage(
-                    repo,
-                    entry.oid,
-                    object_type_filter,
-                    pack_disk_sizes,
-                    seen,
-                    total,
-                )?;
+                _ => println!("{}", entry.new_oid.to_hex()),
             }
         }
-        ObjectKind::Tag => {
-            let tag = parse_tag(&object.data)?;
-            accumulate_disk_usage(
-                repo,
-                tag.object,
-                object_type_filter,
-                pack_disk_sizes,
-                seen,
-                total,
-            )?;
-        }
-        ObjectKind::Blob => {}
+
+        emitted += 1;
     }
 
     Ok(())
-}
-
-fn object_disk_size(
-    repo: &Repository,
-    oid: ObjectId,
-    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
-) -> Result<u64> {
-    if let Some(size) = pack_disk_sizes.get(&oid) {
-        return Ok(*size);
-    }
-    Ok(fs::metadata(repo.odb.object_path(&oid))?.len())
-}
-
-fn humanize_bytes(value: usize) -> (Option<String>, Option<String>) {
-    if value > (1 << 30) {
-        return (
-            Some(format!(
-                "{}.{:02}",
-                value >> 30,
-                (value & ((1 << 30) - 1)) / 10_737_419
-            )),
-            Some("GiB".to_owned()),
-        );
-    }
-    if value > (1 << 20) {
-        let x = value + 5_243;
-        return (
-            Some(format!(
-                "{}.{:02}",
-                x >> 20,
-                ((x & ((1 << 20) - 1)) * 100) >> 20
-            )),
-            Some("MiB".to_owned()),
-        );
-    }
-    if value > (1 << 10) {
-        let x = value + 5;
-        return (
-            Some(format!(
-                "{}.{:02}",
-                x >> 10,
-                ((x & ((1 << 10) - 1)) * 100) >> 10
-            )),
-            Some("KiB".to_owned()),
-        );
-    }
-    if value <= 1024 {
-        return (Some(value.to_string()), Some("B".to_owned()));
-    }
-    (Some(value.to_string()), Some("B".to_owned()))
 }

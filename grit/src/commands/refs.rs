@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::repo::Repository;
@@ -49,7 +49,6 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Verify that all refs in the repository point to valid objects.
 fn verify_refs(repo: &Repository) -> Result<()> {
-    let refs_dir = repo.git_dir.join("refs");
     let mut errors = 0;
 
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
@@ -58,45 +57,52 @@ fn verify_refs(repo: &Repository) -> Result<()> {
         .unwrap_or_default()
         .to_lowercase();
 
-    // Check HEAD
-    let head_path = repo.git_dir.join("HEAD");
-    if head_path.exists() {
-        let content = fs::read_to_string(&head_path).context("reading HEAD")?;
-        let trimmed = content.trim();
-        if let Some(target) = trimmed.strip_prefix("ref: ") {
-            let ref_path = repo.git_dir.join(target);
-            if !ref_path.exists() {
-                // Symbolic ref to nonexistent ref is OK (empty repo, detached, etc.)
-            }
-        } else if trimmed.len() >= 40 {
-            // Direct OID — verify it exists
-            if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
-                if !repo.odb.exists(&oid) {
-                    eprintln!("error: HEAD points to missing object {trimmed}");
-                    errors += 1;
+    if grit_lib::reftable::is_reftable_repo(&repo.git_dir) {
+        verify_reftable_stacks(repo)?;
+        errors += verify_reftable_refs(repo, &bad_ref_name_level)?;
+    } else {
+        let refs_dir = repo.git_dir.join("refs");
+
+        // Check HEAD
+        let head_path = repo.git_dir.join("HEAD");
+        if head_path.exists() {
+            let content = fs::read_to_string(&head_path).context("reading HEAD")?;
+            let trimmed = content.trim();
+            if let Some(target) = trimmed.strip_prefix("ref: ") {
+                let ref_path = repo.git_dir.join(target);
+                if !ref_path.exists() {
+                    // Symbolic ref to nonexistent ref is OK (empty repo, detached, etc.)
+                }
+            } else if trimmed.len() >= 40 {
+                // Direct OID — verify it exists
+                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(trimmed) {
+                    if !repo.odb.exists(&oid) {
+                        eprintln!("error: HEAD points to missing object {trimmed}");
+                        errors += 1;
+                    }
                 }
             }
         }
-    }
 
-    // Walk refs directory
-    if refs_dir.is_dir() {
-        errors += verify_refs_dir(repo, &refs_dir, &bad_ref_name_level)?;
-    }
+        // Walk refs directory
+        if refs_dir.is_dir() {
+            errors += verify_refs_dir(repo, &refs_dir, &bad_ref_name_level)?;
+        }
 
-    // Check packed-refs
-    let packed_refs = repo.git_dir.join("packed-refs");
-    if packed_refs.exists() {
-        let content = fs::read_to_string(&packed_refs).context("reading packed-refs")?;
-        for line in content.lines() {
-            if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
-                continue;
-            }
-            if let Some((hex, name)) = line.split_once(' ') {
-                if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(hex) {
-                    if !repo.odb.exists(&oid) {
-                        eprintln!("error: {name} points to missing object {hex}");
-                        errors += 1;
+        // Check packed-refs
+        let packed_refs = repo.git_dir.join("packed-refs");
+        if packed_refs.exists() {
+            let content = fs::read_to_string(&packed_refs).context("reading packed-refs")?;
+            for line in content.lines() {
+                if line.starts_with('#') || line.starts_with('^') || line.is_empty() {
+                    continue;
+                }
+                if let Some((hex, name)) = line.split_once(' ') {
+                    if let Ok(oid) = grit_lib::objects::ObjectId::from_hex(hex) {
+                        if !repo.odb.exists(&oid) {
+                            eprintln!("error: {name} points to missing object {hex}");
+                            errors += 1;
+                        }
                     }
                 }
             }
@@ -104,11 +110,195 @@ fn verify_refs(repo: &Repository) -> Result<()> {
     }
 
     if errors > 0 {
-        eprintln!("{errors} ref(s) with issues");
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ReftableStackLocation {
+    git_dir: PathBuf,
+    worktree_id: Option<String>,
+}
+
+fn common_git_dir(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    let Some(raw) = fs::read_to_string(commondir_file).ok() else {
+        return git_dir.to_path_buf();
+    };
+    let rel = raw.trim();
+    if rel.is_empty() {
+        return git_dir.to_path_buf();
+    }
+    let path = if Path::new(rel).is_absolute() {
+        PathBuf::from(rel)
+    } else {
+        git_dir.join(rel)
+    };
+    path.canonicalize().unwrap_or(path)
+}
+
+fn reftable_stack_locations(repo: &Repository) -> Vec<ReftableStackLocation> {
+    let common = common_git_dir(&repo.git_dir);
+    let mut locations = vec![ReftableStackLocation {
+        git_dir: common.clone(),
+        worktree_id: None,
+    }];
+
+    let worktrees_dir = common.join("worktrees");
+    if let Ok(entries) = fs::read_dir(&worktrees_dir) {
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let worktree_id = entry.file_name().to_string_lossy().to_string();
+            locations.push(ReftableStackLocation {
+                git_dir: entry.path(),
+                worktree_id: Some(worktree_id),
+            });
+        }
+    }
+
+    locations
+}
+
+fn is_valid_reftable_table_name(name: &str) -> bool {
+    let Some((first, rest)) = name.split_once('-') else {
+        return false;
+    };
+    let Some((second, rest)) = rest.split_once('-') else {
+        return false;
+    };
+    let Some((third, suffix)) = rest.rsplit_once('.') else {
+        return false;
+    };
+
+    let is_hex_component =
+        |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_hexdigit());
+    if !is_hex_component(first) || !is_hex_component(second) || !is_hex_component(third) {
+        return false;
+    }
+
+    matches!(suffix, "ref" | "log")
+}
+
+fn reftable_stack_broken(worktree_id: Option<&str>) -> ! {
+    if let Some(id) = worktree_id {
+        eprintln!("error: reftable stack for worktree '{id}' is broken");
+    } else {
+        eprintln!("error: reftable stack is broken");
+    }
+    std::process::exit(1);
+}
+
+fn verify_reftable_stacks(repo: &Repository) -> Result<()> {
+    for location in reftable_stack_locations(repo) {
+        let reftable_dir = location.git_dir.join("reftable");
+        let tables_list_path = reftable_dir.join("tables.list");
+        let list_content = match fs::read_to_string(&tables_list_path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                continue;
+            }
+            Err(_) => reftable_stack_broken(location.worktree_id.as_deref()),
+        };
+
+        for table_name in list_content.lines().filter(|line| !line.trim().is_empty()) {
+            let table_path = reftable_dir.join(table_name);
+            let table_data = match fs::read(&table_path) {
+                Ok(data) => data,
+                Err(_) => reftable_stack_broken(location.worktree_id.as_deref()),
+            };
+            if grit_lib::reftable::ReftableReader::new(table_data).is_err() {
+                reftable_stack_broken(location.worktree_id.as_deref());
+            }
+            if !is_valid_reftable_table_name(table_name) {
+                eprintln!(
+                    "warning: {table_name}: badReftableTableName: invalid reftable table name"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_reftable_refs(repo: &Repository, bad_ref_name_level: &str) -> Result<usize> {
+    let mut errors = 0;
+
+    for location in reftable_stack_locations(repo) {
+        let stack = match grit_lib::reftable::ReftableStack::open(&location.git_dir) {
+            Ok(stack) => stack,
+            Err(_) => continue,
+        };
+        let refs = stack.read_refs()?;
+
+        for record in refs {
+            let display_name = if let Some(worktree_id) = &location.worktree_id {
+                format!("worktrees/{worktree_id}/{}", record.name)
+            } else {
+                record.name.clone()
+            };
+
+            if grit_lib::check_ref_format::check_refname_format(
+                &record.name,
+                &grit_lib::check_ref_format::RefNameOptions {
+                    allow_onelevel: false,
+                    refspec_pattern: false,
+                    normalize: false,
+                },
+            )
+            .is_err()
+            {
+                if bad_ref_name_level == "warn" {
+                    eprintln!("warning: {display_name}: badRefName: invalid refname format");
+                } else if bad_ref_name_level != "ignore" {
+                    eprintln!("error: {display_name}: badRefName: invalid refname format");
+                    errors += 1;
+                }
+            }
+
+            match record.value {
+                grit_lib::reftable::RefValue::Val1(oid)
+                | grit_lib::reftable::RefValue::Val2(oid, _) => {
+                    if !repo.odb.exists(&oid) {
+                        eprintln!("error: {display_name} points to missing object {oid}");
+                        errors += 1;
+                    }
+                }
+                grit_lib::reftable::RefValue::Symref(target) => {
+                    if grit_lib::check_ref_format::check_refname_format(
+                        &target,
+                        &grit_lib::check_ref_format::RefNameOptions {
+                            allow_onelevel: false,
+                            refspec_pattern: false,
+                            normalize: false,
+                        },
+                    )
+                    .is_err()
+                    {
+                        if bad_ref_name_level == "warn" {
+                            eprintln!(
+                                "warning: {display_name}: badReferentName: points to invalid refname '{target}'"
+                            );
+                        } else if bad_ref_name_level != "ignore" {
+                            eprintln!(
+                                "error: {display_name}: badReferentName: points to invalid refname '{target}'"
+                            );
+                            errors += 1;
+                        }
+                    }
+                }
+                grit_lib::reftable::RefValue::Deletion => {}
+            }
+        }
+    }
+
+    Ok(errors)
 }
 
 fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> Result<usize> {
@@ -162,7 +352,7 @@ fn verify_refs_dir(repo: &Repository, dir: &Path, bad_ref_name_level: &str) -> R
                 {
                     let name = path.strip_prefix(&repo.git_dir).unwrap_or(&path);
                     eprintln!(
-                        "error: {} points to invalid ref target '{}'",
+                        "error: {}: badReferentName: points to invalid refname '{}'",
                         name.display(),
                         target
                     );

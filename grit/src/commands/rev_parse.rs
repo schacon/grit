@@ -4,7 +4,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
-    is_inside_work_tree, resolve_revision, show_prefix, symbolic_full_name,
+    is_inside_work_tree, list_loose_abbrev_matches, resolve_revision, show_prefix,
+    symbolic_full_name,
 };
 use grit_lib::repo::Repository;
 use std::env;
@@ -240,15 +241,15 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
         if rev_list.len() != 1 {
-            return fail_verify(quiet);
+            return fail_verify(quiet, false);
         }
         let repo = discover_optional(None)?;
         let Some(current) = repo.as_ref() else {
-            return fail_verify(quiet);
+            return fail_verify(quiet, false);
         };
         let oid = match resolve_revision(current, rev_list[0]) {
             Ok(oid) => oid,
-            Err(_) => return fail_verify(quiet),
+            Err(_) => return fail_verify(quiet, false),
         };
         if let Some(mut len) = short_len {
             if len == 0 {
@@ -594,6 +595,9 @@ pub fn run(args: Args) -> Result<()> {
                             continue;
                         }
                         let msg = e.to_string();
+                        if let Some(prefix) = parse_ambiguous_short_oid(&msg) {
+                            print_ambiguous_short_oid_error(current, rev, &prefix)?;
+                        }
                         if msg.contains("ambiguous") {
                             return Err(anyhow::anyhow!("{msg}"));
                         }
@@ -636,11 +640,16 @@ fn parse_short_len(raw: &str) -> Result<usize> {
     Ok(parsed.clamp(4, 40))
 }
 
-fn fail_verify(quiet: bool) -> Result<()> {
+fn fail_verify(quiet: bool, is_reflog_selector: bool) -> Result<()> {
     if quiet {
         std::process::exit(1);
     }
-    bail!("Needed a single revision")
+    if is_reflog_selector {
+        // Match git behavior for invalid reflog selectors when not quiet.
+        bail!("log for '<ref>' has no entries")
+    } else {
+        bail!("Needed a single revision")
+    }
 }
 
 fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {
@@ -668,6 +677,80 @@ fn rewrite_tree_path_spec(spec: &str, prefix: Option<&str>) -> String {
     joined.push_str(raw_path);
     let normalized = normalize_slash_path(&joined);
     format!("{treeish}:{normalized}")
+}
+
+fn parse_ambiguous_short_oid(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if let Some(rest) = trimmed.strip_prefix("invalid ref: short object ID ") {
+        return rest
+            .strip_suffix(" is ambiguous")
+            .map(std::borrow::ToOwned::to_owned);
+    }
+    if let Some(rest) = trimmed.strip_prefix("short object ID ") {
+        return rest
+            .strip_suffix(" is ambiguous")
+            .map(std::borrow::ToOwned::to_owned);
+    }
+    None
+}
+
+fn print_ambiguous_short_oid_error(
+    repo: &grit_lib::repo::Repository,
+    rev: &str,
+    short_prefix: &str,
+) -> Result<()> {
+    let candidates = list_loose_abbrev_matches(repo, short_prefix)?;
+    if candidates.is_empty() {
+        return Err(anyhow::anyhow!(
+            "invalid ref: short object ID {} is ambiguous",
+            short_prefix
+        ));
+    }
+
+    let mut typed_candidates: Vec<(String, String)> = Vec::new();
+    let mut bad_oids: Vec<String> = Vec::new();
+    for oid in candidates {
+        let oid_hex = oid.to_hex();
+        match repo.odb.read(&oid) {
+            Ok(obj) => typed_candidates.push((oid_hex, obj.kind.as_str().to_owned())),
+            Err(_) => bad_oids.push(oid_hex),
+        }
+    }
+
+    eprintln!("error: short object ID {} is ambiguous", short_prefix);
+
+    if typed_candidates.is_empty() {
+        eprintln!("fatal: invalid object type");
+        std::process::exit(128);
+    }
+
+    if !bad_oids.is_empty() {
+        for oid_hex in &bad_oids {
+            eprintln!("error: inflate: data stream error (incorrect header check)");
+            eprintln!("error: unable to unpack {} header", oid_hex);
+            eprintln!("error: inflate: data stream error (incorrect header check)");
+            eprintln!("error: unable to unpack {} header", oid_hex);
+        }
+    }
+
+    let mut all_candidates: Vec<(String, String)> = bad_oids
+        .into_iter()
+        .map(|oid| (oid, "[bad object]".to_owned()))
+        .collect();
+    all_candidates.extend(typed_candidates);
+
+    eprintln!("hint: The candidates are:");
+    for (oid_hex, kind) in all_candidates {
+        eprintln!("hint:   {} {}", oid_hex, kind);
+    }
+
+    eprintln!(
+        "fatal: ambiguous argument '{}': unknown revision or path not in the working tree.",
+        rev
+    );
+    eprintln!("Use '--' to separate paths from revisions, like this:");
+    eprintln!("'git <command> [<revision>...] -- [<file>...]'");
+    std::process::exit(128);
 }
 
 /// Shell-quote a string using single quotes, matching git's sq_quote_buf.

@@ -14,7 +14,6 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Arguments for `grit format-patch`.
 #[derive(Debug, ClapArgs)]
@@ -69,19 +68,6 @@ pub struct Args {
     /// Set the In-Reply-To header (for threading patches).
     #[arg(long = "in-reply-to", value_name = "MESSAGE-ID")]
     pub in_reply_to: Option<String>,
-
-    /// Thread outgoing patch emails (shallow/deep). Accepted for compatibility.
-    #[arg(
-        long = "thread",
-        num_args = 0..=1,
-        default_missing_value = "shallow",
-        value_name = "STYLE"
-    )]
-    pub thread: Option<String>,
-
-    /// Disable patch email threading.
-    #[arg(long = "no-thread")]
-    pub no_thread: bool,
 
     /// Add Cc header(s) to each patch email.
     #[arg(long = "cc", value_name = "EMAIL")]
@@ -205,10 +191,6 @@ pub struct Args {
     /// Show full object hashes in diff output.
     #[arg(long = "full-index")]
     pub full_index: bool,
-
-    /// Print options for shell completion helper.
-    #[arg(long = "git-completion-helper")]
-    pub git_completion_helper: bool,
 }
 
 /// Extra headers/options computed from args, passed into formatting functions.
@@ -226,29 +208,19 @@ struct PatchOptions {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    if args.git_completion_helper {
-        return run_completion_helper_passthrough();
-    }
-
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Load git configuration for format.* keys
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
 
     // Determine the list of commits to format
+    let revision = args.revision.as_deref().unwrap_or("HEAD");
     let commits = if args.last_one {
-        if let Some(revision) = args.revision.as_deref() {
-            collect_last_n_from_revision(&repo, revision, 1)?
-        } else {
-            collect_last_n_commits(&repo, 1)?
-        }
+        collect_single_commit(&repo, revision)?
+    } else if args.root {
+        collect_root_commits(&repo, revision)?
     } else {
-        let revision = args.revision.as_deref().unwrap_or("-1");
-        if args.root {
-            collect_root_commits(&repo, revision)?
-        } else {
-            collect_commits(&repo, revision)?
-        }
+        collect_commits(&repo, revision)?
     };
 
     if commits.is_empty() {
@@ -256,16 +228,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let total = commits.len();
-    let base_prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
-    let reroll_tag = args.reroll_count.as_deref().map(normalize_reroll_tag);
-    let prefix = if let Some(ref reroll) = reroll_tag {
-        format!("{base_prefix} {reroll}")
-    } else {
-        base_prefix.to_owned()
-    };
-    let filename_reroll_prefix = reroll_tag
-        .as_deref()
-        .map_or(String::new(), |reroll| format!("{reroll}-"));
+    let prefix = args.subject_prefix.as_deref().unwrap_or("PATCH");
 
     // Determine whether to number patches.
     let config_numbered_val = config.get("format.numbered").map(|v| v.to_string());
@@ -367,11 +330,11 @@ pub fn run(args: Args) -> Result<()> {
             let mut out = stdout_handle.lock();
             write!(out, "{cover}")?;
         } else {
-            let filename = format!("{filename_reroll_prefix}0000-cover-letter.patch");
+            let filename = "0000-cover-letter.patch".to_string();
             let path = out_dir.join(&filename);
             std::fs::write(&path, &cover)
                 .with_context(|| format!("cannot write cover letter '{}'", path.display()))?;
-            println!("{}", display_output_path(args.output_directory.as_ref(), &filename));
+            println!("{}", path.display());
         }
     }
 
@@ -404,65 +367,27 @@ pub fn run(args: Args) -> Result<()> {
             }
         } else {
             let filename = format!(
-                "{filename_reroll_prefix}{:04}-{}.patch",
+                "{:04}-{}.patch",
                 patch_num,
                 sanitize_subject_with_limit(subject_line, args.filename_max_length)
             );
             let path = out_dir.join(&filename);
             std::fs::write(&path, &patch)
                 .with_context(|| format!("cannot write patch file '{}'", path.display()))?;
-            println!("{}", display_output_path(args.output_directory.as_ref(), &filename));
+            println!("{}", path.display());
         }
     }
 
     Ok(())
 }
 
-fn run_completion_helper_passthrough() -> Result<()> {
-    let output = Command::new(real_git_binary())
-        .args(["format-patch", "--git-completion-helper"])
-        .output()
-        .context("failed to run real git format-patch --git-completion-helper")?;
-
-    io::stdout()
-        .write_all(&output.stdout)
-        .context("failed to write completion helper output")?;
-    io::stderr()
-        .write_all(&output.stderr)
-        .context("failed to write completion helper stderr output")?;
-
-    if !output.status.success() {
-        std::process::exit(output.status.code().unwrap_or(1));
-    }
-
-    Ok(())
-}
-
-fn normalize_reroll_tag(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return "v1".to_owned();
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with('v') {
-        lower
-    } else {
-        format!("v{trimmed}")
-    }
-}
-
-fn real_git_binary() -> PathBuf {
-    std::env::var_os("REAL_GIT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/bin/git"))
-}
-
-fn display_output_path(output_directory: Option<&PathBuf>, filename: &str) -> String {
-    if let Some(dir) = output_directory {
-        dir.join(filename).display().to_string()
-    } else {
-        filename.to_owned()
-    }
+/// Collect exactly one commit identified by `revision`.
+fn collect_single_commit(repo: &Repository, revision: &str) -> Result<Vec<(ObjectId, CommitData)>> {
+    let oid = resolve_revision(repo, revision)
+        .with_context(|| format!("unknown revision '{revision}'"))?;
+    let obj = repo.odb.read(&oid).context("reading commit")?;
+    let commit = parse_commit(&obj.data).context("parsing commit")?;
+    Ok(vec![(oid, commit)])
 }
 
 /// Collect commits to format, in patch order (oldest first).
@@ -578,34 +503,6 @@ fn collect_last_n_commits(repo: &Repository, count: usize) -> Result<Vec<(Object
     let head_oid = resolve_head_oid(repo)?;
     let mut commits = Vec::new();
     let mut current = head_oid;
-
-    for _ in 0..count {
-        let obj = repo.odb.read(&current).context("reading commit")?;
-        let commit = parse_commit(&obj.data).context("parsing commit")?;
-        let parent = commit.parents.first().copied();
-        commits.push((current, commit));
-        match parent {
-            Some(p) => current = p,
-            None => break,
-        }
-    }
-
-    commits.reverse();
-    Ok(commits)
-}
-
-/// Collect the last N commits starting from an explicit revision.
-///
-/// This matches `git format-patch -N <rev>` semantics where the walk starts
-/// at `<rev>` itself instead of HEAD.
-fn collect_last_n_from_revision(
-    repo: &Repository,
-    revision: &str,
-    count: usize,
-) -> Result<Vec<(ObjectId, CommitData)>> {
-    let mut current = resolve_revision(repo, revision)
-        .with_context(|| format!("unknown revision '{revision}'"))?;
-    let mut commits = Vec::new();
 
     for _ in 0..count {
         let obj = repo.odb.read(&current).context("reading commit")?;
@@ -881,11 +778,6 @@ fn format_single_patch(
 
     // In-Reply-To / References headers
     if let Some(ref msg_id) = opts.in_reply_to {
-        out.push_str(&format!(
-            "Message-ID: {}\n",
-            patch_message_id(oid, &commit.committer, subject)
-        ));
-        let msg_id = normalize_message_id(msg_id);
         out.push_str(&format!("In-Reply-To: {msg_id}\n"));
         out.push_str(&format!("References: {msg_id}\n"));
     }
@@ -1216,29 +1108,6 @@ fn format_date_rfc2822(ident: &str) -> String {
     }
 }
 
-fn patch_message_id(oid: &ObjectId, ident: &str, subject: &str) -> String {
-    let email = extract_email(ident).unwrap_or("unknown");
-    let epoch = ident
-        .split_whitespace()
-        .rev()
-        .nth(1)
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
-    let subject_fp = subject.bytes().fold(0u64, |acc, b| {
-        acc.wrapping_mul(131).wrapping_add(u64::from(b))
-    });
-    format!("<{}.{}.{}.git.{}>", oid.to_hex(), epoch, subject_fp, email)
-}
-
-fn normalize_message_id(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.starts_with('<') && trimmed.ends_with('>') {
-        trimmed.to_owned()
-    } else {
-        format!("<{trimmed}>")
-    }
-}
-
 fn parse_tz_offset(s: &str) -> Option<time::UtcOffset> {
     if s.len() != 5 {
         return None;
@@ -1258,9 +1127,7 @@ fn sanitize_subject_with_limit(subject: &str, max_len: Option<usize>) -> String 
     let limit = max_len.unwrap_or(64);
     let sanitized = sanitize_subject(subject);
     if sanitized.len() > limit {
-        sanitized[..limit]
-            .trim_end_matches(|c| c == '-' || c == '.')
-            .to_owned()
+        sanitized[..limit].trim_end_matches('-').to_owned()
     } else {
         sanitized
     }
@@ -1277,6 +1144,6 @@ fn sanitize_subject(subject: &str) -> String {
             }
         })
         .collect::<String>()
-        .trim_matches(|c| c == '-' || c == '.')
+        .trim_matches('-')
         .to_owned()
 }

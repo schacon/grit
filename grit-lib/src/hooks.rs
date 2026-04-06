@@ -7,7 +7,7 @@ use crate::config::ConfigSet;
 use crate::repo::Repository;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Result of running a hook.
@@ -52,6 +52,21 @@ pub fn resolve_hooks_dir(repo: &Repository) -> PathBuf {
     }
 
     repo.git_dir.join("hooks")
+}
+
+fn hook_command_path(repo: &Repository, hooks_dir: &Path, hook_name: &str, cwd: &Path) -> PathBuf {
+    let default_hooks_dir = repo.git_dir.join("hooks");
+    if hooks_dir == default_hooks_dir {
+        if cwd == repo.git_dir {
+            return PathBuf::from("hooks").join(hook_name);
+        }
+        if let Some(work_tree) = repo.work_tree.as_deref() {
+            if cwd == work_tree {
+                return PathBuf::from(".git").join("hooks").join(hook_name);
+            }
+        }
+    }
+    hooks_dir.join(hook_name)
 }
 
 /// Run a hook by name with the given arguments.
@@ -100,8 +115,9 @@ pub fn run_hook(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
 
-    let mut cmd = Command::new(&hook_path);
+    let mut cmd = Command::new(&command_path);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir);
@@ -160,7 +176,8 @@ pub fn run_hook_in_git_dir(
         return (HookResult::NotFound, Vec::new());
     }
 
-    let mut cmd = Command::new(&hook_path);
+    let command_path = hook_command_path(repo, &hooks_dir, hook_name, &repo.git_dir);
+    let mut cmd = Command::new(&command_path);
     cmd.args(args)
         .current_dir(&repo.git_dir) // receive-side hooks run from GIT_DIR
         .env("GIT_DIR", &repo.git_dir)
@@ -227,8 +244,9 @@ pub fn run_hook_with_env(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
 
-    let mut cmd = Command::new(&hook_path);
+    let mut cmd = Command::new(&command_path);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir)
@@ -293,8 +311,9 @@ pub fn run_hook_capture(
     }
 
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let command_path = hook_command_path(repo, &hooks_dir, hook_name, work_dir);
 
-    let mut cmd = Command::new(&hook_path);
+    let mut cmd = Command::new(&command_path);
     cmd.args(args)
         .current_dir(work_dir)
         .env("GIT_DIR", &repo.git_dir)

@@ -151,7 +151,7 @@ pub fn run(args: Args) -> Result<()> {
     // use it directly as the URL instead of looking it up in config.
     let remote_name_owned: String;
     let urls: Vec<String>;
-    let is_path_remote: bool;
+    let _is_path_remote: bool;
 
     if let Some(ref r) = args.remote {
         if r.is_empty() {
@@ -160,11 +160,11 @@ pub fn run(args: Args) -> Result<()> {
         }
         if r.contains('/') || r.starts_with('.') || std::path::Path::new(r).exists() {
             // Path-based remote: use directly as URL
-            is_path_remote = true;
+            _is_path_remote = true;
             remote_name_owned = r.clone();
             urls = vec![r.clone()];
         } else {
-            is_path_remote = false;
+            _is_path_remote = false;
             remote_name_owned = r.clone();
             // Check pushurl first (may be multi-valued), then url
             let pushurls = config.get_all(&format!("remote.{}.pushurl", remote_name_owned));
@@ -179,7 +179,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     } else {
-        is_path_remote = false;
+        _is_path_remote = false;
         remote_name_owned = if let Some(ref branch) = current_branch {
             config
                 .get(&format!("branch.{branch}.remote"))
@@ -216,7 +216,6 @@ pub fn run(args: Args) -> Result<()> {
             &args,
             url,
             remote_name,
-            is_path_remote,
             current_branch.as_deref(),
             push_all,
             &push_refspecs_from_config,
@@ -232,7 +231,6 @@ fn push_to_url(
     args: &Args,
     url: &str,
     remote_name: &str,
-    is_path_remote: bool,
     current_branch: Option<&str>,
     push_all: bool,
     push_refspecs_from_config: &[String],
@@ -424,10 +422,17 @@ fn push_to_url(
             } else {
                 dst.clone()
             };
-            let remote_ref = normalize_ref(&effective_dst);
-
             let (local_ref, local_oid) = resolve_push_src(&repo.git_dir, &resolved_src)
                 .with_context(|| format!("src refspec '{}' does not match any", src))?;
+            let remote_ref = if !spec_clean.contains(':') && !effective_dst.starts_with("refs/") {
+                if local_ref.starts_with("refs/tags/") {
+                    format!("refs/tags/{effective_dst}")
+                } else {
+                    normalize_ref(&effective_dst)
+                }
+            } else {
+                normalize_ref(&effective_dst)
+            };
             let old_oid = refs::resolve_ref(&remote_repo.git_dir, &remote_ref).ok();
 
             let expected_oid = resolve_force_with_lease_expect(
@@ -847,7 +852,7 @@ fn push_to_url(
             }
         }
 
-        let result = apply_ref_update(repo, &remote_repo, update, args, url);
+        let result = apply_ref_update(repo, &remote_repo, remote_name, update, args, url);
 
         match result {
             Ok(()) => {
@@ -901,10 +906,70 @@ fn push_to_url(
         bail!("failed to push some refs to '{url}'");
     }
 
-    // Mirror native Git behavior: successful pushes through a named remote
-    // update the corresponding local remote-tracking refs.
-    if !args.dry_run && !is_path_remote {
-        update_local_remote_tracking_refs(repo, remote_name, &applied_updates)?;
+    // Run reference-transaction hooks on the remote after update hooks have
+    // accepted all updates, matching receive-pack hook ordering.
+    if !args.dry_run && !applied_updates.is_empty() {
+        let mut txn_stdin = String::new();
+        for (update, _) in &applied_updates {
+            let old_hex = update
+                .old_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            let new_hex = update
+                .new_oid
+                .map(|o| o.to_hex())
+                .unwrap_or_else(|| zero_oid_str.clone());
+            txn_stdin.push_str(&format!("{old_hex} {new_hex} {}\n", update.remote_ref));
+        }
+
+        let (prep_result, prep_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["preparing"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !prep_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&prep_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = prep_result {
+            bail!("remote reference-transaction hook declined the push in 'preparing' phase");
+        }
+
+        let (prepared_result, prepared_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["prepared"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !prepared_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&prepared_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = prepared_result {
+            bail!("remote reference-transaction hook declined the push in 'prepared' phase");
+        }
+
+        let (committed_result, committed_output) = grit_lib::hooks::run_hook_in_git_dir(
+            &remote_repo,
+            "reference-transaction",
+            &["committed"],
+            Some(txn_stdin.as_bytes()),
+            &push_option_env_refs,
+        );
+        if !committed_output.is_empty() {
+            let output_str = String::from_utf8_lossy(&committed_output);
+            let color_remote = resolve_color_remote(repo, args);
+            colorize_remote_output(&output_str, color_remote);
+        }
+        if let HookResult::Failed(_) = committed_result {
+            // Keep compatibility with git: failures in committed state do not
+            // abort already-applied updates.
+        }
     }
 
     // Run post-receive hook on the remote (after successful ref updates)
@@ -920,24 +985,6 @@ fn push_to_url(
             let output_str = String::from_utf8_lossy(&hook_output);
             let color_remote = resolve_color_remote(repo, args);
             colorize_remote_output(&output_str, color_remote);
-        }
-    }
-
-    // Update local remote-tracking refs for successfully pushed branches.
-    // e.g. after pushing refs/heads/main to origin, update refs/remotes/origin/main.
-    if !args.dry_run {
-        for (update, _) in &applied_updates {
-            let remote_branch = update
-                .remote_ref
-                .strip_prefix("refs/heads/")
-                .or_else(|| update.remote_ref.strip_prefix("refs/tags/"));
-            if let Some(branch) = remote_branch {
-                let tracking = format!("refs/remotes/{remote_name}/{branch}");
-                // Get the OID we pushed to the remote.
-                if let Ok(new_oid) = refs::resolve_ref(&remote_repo.git_dir, &update.remote_ref) {
-                    let _ = refs::write_ref(&repo.git_dir, &tracking, &new_oid);
-                }
-            }
         }
     }
 
@@ -960,34 +1007,11 @@ fn push_to_url(
     Ok(())
 }
 
-fn update_local_remote_tracking_refs(
-    repo: &Repository,
-    remote_name: &str,
-    applied_updates: &[(&RefUpdate, Option<ObjectId>)],
-) -> Result<()> {
-    for (update, _) in applied_updates {
-        let Some(branch_name) = update.remote_ref.strip_prefix("refs/heads/") else {
-            continue;
-        };
-        let tracking_ref = format!("refs/remotes/{remote_name}/{branch_name}");
-        match update.new_oid {
-            Some(new_oid) => {
-                refs::write_ref(&repo.git_dir, &tracking_ref, &new_oid).with_context(|| {
-                    format!("updating local remote-tracking ref {tracking_ref}")
-                })?;
-            }
-            None => {
-                let _ = refs::delete_ref(&repo.git_dir, &tracking_ref);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Apply a single ref update on the remote, printing output as appropriate.
 fn apply_ref_update(
-    _repo: &Repository,
+    repo: &Repository,
     remote_repo: &Repository,
+    remote_name: &str,
     update: &RefUpdate,
     args: &Args,
     _url: &str,
@@ -999,6 +1023,7 @@ fn apply_ref_update(
             if !args.dry_run {
                 refs::write_ref(&remote_repo.git_dir, &update.remote_ref, new_oid)
                     .with_context(|| format!("updating remote ref {}", update.remote_ref))?;
+                update_remote_tracking_ref(repo, remote_name, &update.remote_ref, Some(*new_oid))?;
             }
 
             let branch_short = update
@@ -1064,6 +1089,7 @@ fn apply_ref_update(
             if !args.dry_run {
                 refs::delete_ref(&remote_repo.git_dir, &update.remote_ref)
                     .with_context(|| format!("deleting remote ref {}", update.remote_ref))?;
+                update_remote_tracking_ref(repo, remote_name, &update.remote_ref, None)?;
             }
 
             let branch_short = update
@@ -1089,6 +1115,35 @@ fn apply_ref_update(
         _ => {}
     }
 
+    Ok(())
+}
+
+/// Update local remote-tracking refs after a successful push.
+///
+/// Git updates `refs/remotes/<remote>/...` when pushing to a named remote.
+/// For path-like remotes we skip tracking updates.
+fn update_remote_tracking_ref(
+    repo: &Repository,
+    remote_name: &str,
+    remote_ref: &str,
+    new_oid: Option<ObjectId>,
+) -> Result<()> {
+    if remote_name.contains('/') || remote_name.starts_with('.') {
+        return Ok(());
+    }
+
+    let Some(branch) = remote_ref.strip_prefix("refs/heads/") else {
+        return Ok(());
+    };
+    let tracking_ref = format!("refs/remotes/{remote_name}/{branch}");
+
+    match new_oid {
+        Some(oid) => refs::write_ref(&repo.git_dir, &tracking_ref, &oid)
+            .with_context(|| format!("updating tracking ref {tracking_ref}"))?,
+        None => {
+            let _ = refs::delete_ref(&repo.git_dir, &tracking_ref);
+        }
+    }
     Ok(())
 }
 

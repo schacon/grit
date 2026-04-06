@@ -1,285 +1,250 @@
 # Test Results
 
-**Updated:** 2026-04-05
+**Updated:** 2026-04-06
 
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4112 cargo build --release -p grit-rs`: completed to rebuild `target/release/grit` after fixing `git apply` rename/copy handling to read source preimages and write destination paths correctly.
-- `cargo test -p grit-rs apply -- --nocapture`: 2/2 passing.
-- `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4112 bash scripts/run-upstream-tests.sh t4112-apply-renames 2>&1 | tail -40`: initial reproduction reported 0/2 passing; after fixing `git apply` rename/copy source-vs-destination path handling and preimage snapshotting for later copy sections, the rerun completed with 2/2 passing against refreshed `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4112 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 cargo build --release -p grit-rs`: completed to rebuild `grit` after fixing multiline subject handling in `format-patch` and RFC 2047 subject decoding in `am`.
-- `mv target/release/grit target/release/grit.bin && ln -s /tmp/grit-build-t4152/release/grit target/release/grit`: completed because the copied `target/release/grit` binary was being killed on startup in this sandbox while the `/tmp` build artifact executed correctly.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 bash scripts/run-upstream-tests.sh t4152-am-subjects 2>&1 | tail -40`: initial reproduction reported 10/13 passing; after fixing subject paragraph splitting, header folding/encoding, and `am` subject decoding, the final rerun completed with 13/13 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4152 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 cargo build --release -p grit-rs`: completed to rebuild `grit` after teaching patch `index <old>..<new>` headers to use repository-aware unique blob abbreviations.
-- `cp /tmp/grit-build-t4044/release/grit target/release/grit`: completed because `scripts/run-upstream-tests.sh` executes `target/release/grit`.
-- `cd /tmp/grit-upstream-workdir/t && GIT_BUILD_DIR=/tmp/grit-upstream-workdir TEST_NO_MALLOC_CHECK=1 TAR="${TAR:-tar}" bash ./t4044-diff-index-unique-abbrev.sh`: direct isolated upstream rerun completed with 2/2 passing after the formatter change.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 bash scripts/run-upstream-tests.sh t4044-diff-index-unique-abbrev 2>&1 | tail -40`: completed with 2/2 passing against refreshed `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4044 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after adding `git apply --build-fake-ancestor=<file>` support and aligning a few existing compile blockers in this worktree with the current toolchain.
-- `find /tmp/grit-upstream-workdir -depth -mindepth 1 -delete` and `find /tmp/grit-upstream-results -depth -mindepth 1 -delete`: completed to clear a stale upstream scratch tree after the harness cleanup left `/tmp/grit-upstream-workdir` partially populated in this sandbox.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 bash scripts/run-upstream-tests.sh t4131-apply-fake-ancestor 2>&1 | tail -40`: initial reproduction showed 1/3 passing; after implementing fake-ancestor index writing, repository-root path handling, and build-only semantics for `--build-fake-ancestor`, the rerun completed with 3/3 passing against refreshed `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo fmt --all 2>/dev/null; true`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo test -p grit-lib --lib`: 97/97 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4131 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 cargo build --release -p grit-rs`: completed to rebuild `grit` after teaching `git commit` to canonicalize `GIT_COMMITTER_DATE` values like `YYYY-MM-DD HH:MM`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 bash scripts/run-upstream-tests.sh t4217-log-limit 2>&1 | tail -40`: initial reproduction reported 1/3 passing; after canonicalizing committer dates, the rerun completed with 3/3 passing against refreshed `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4217 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after fixing `git diff` trailing `--stat*` option reparsing and UTF-8 diffstat name truncation.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4073 bash scripts/run-upstream-tests.sh t4073-diff-stat-name-width 2>&1 | tail -40`: initial reproduction reported 4/6 passing; after fixing `--stat-name-width` reparsing and Git-compatible UTF-8 suffix truncation, the rerun completed with 6/6 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4073 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release`: completed after wiring `git apply --whitespace=fix` into old-side hunk matching and fixed-line output.
-- `cargo test -p grit-rs --bin grit whitespace_fix -- --nocapture`: 2/2 passing.
-- `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t4125 bash scripts/run-upstream-tests.sh t4125-apply-ws-fuzz 2>&1 | tail -40`: initial reruns showed 2/4 and then 3/4 passing; after fixing `--whitespace=fix` context rewriting, the final rerun completed with 4/4 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4125 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4006 bash scripts/run-upstream-tests.sh t4006-diff-mode 2>&1 | tail -40`: initial reproduction was 6/7 passing; after fixing `git diff --stat` binary classification and mixed `Bin`/`0` column alignment for mode-only changes, the rerun completed with 7/7 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4006 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4028 bash scripts/run-upstream-tests.sh t4028-format-patch-mime-headers 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against rebuilt `target/release/grit`; the remaining `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4028 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4256 bash scripts/run-upstream-tests.sh t4256-am-format-flowed 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4062 bash scripts/run-upstream-tests.sh t4062-diff-pickaxe 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4062 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4256 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3427 bash scripts/run-upstream-tests.sh t3427-rebase-subtree 2>&1 | tail -40`: initial requested verification reported 0/3 passing; after fixing subtree setup and rebase handling, the rerun completed with 3/3 passing against `target/release/grit`.
-- `cargo build --release`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes in this repo.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3427 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` after normalizing `ls-files` relative-path handling and aligning existing `pull`/`rebase` initializers with argument additions already present in this worktree.
-- `rm -rf /tmp/grit-upstream-workdir /tmp/grit-upstream-results && CARGO_TARGET_DIR=/tmp/grit-build-t3005 bash scripts/run-upstream-tests.sh t3005-ls-files-relative 2>&1 | tail -40`: initial reproduction was 1/4 passing; after fixing `ls-files` path normalization, relative output, and `--error-unmatch` accounting, the rerun completed with 4/4 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3005 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2027 bash scripts/run-upstream-tests.sh t2027-checkout-track 2>&1 | tail -40`: initial reproduction showed 4/5 passing with the ambiguous remote-tracking case still failing; after teaching `checkout` to emit the `git checkout --track` ambiguity hint and `switch` to emit `git switch --track` before passthrough, the rerun completed with 5/5 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2027 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan bash scripts/run-upstream-tests.sh t4110-apply-scan 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 1/1 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4110-apply-scan cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4123-apply-shrink bash scripts/run-upstream-tests.sh t4123-apply-shrink 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4123-apply-shrink cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4029-diff-trailing-space bash scripts/run-upstream-tests.sh t4029-diff-trailing-space 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 1/1 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4029-diff-trailing-space cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay bash scripts/run-upstream-tests.sh t4066-diff-emit-delay 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4134-apply-submodule bash scripts/run-upstream-tests.sh t4134-apply-submodule 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4134-apply-submodule cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4066-diff-emit-delay cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout bash scripts/run-upstream-tests.sh t3305-notes-fanout 2>&1 | tail -40`: initial run reported 6/7 passing with notes fanout never switching to `2/38`; after teaching `git notes` to flatten and rewrite nested note trees with automatic fanout and making `git log` read fanout notes recursively, the rerun completed with 7/7 passing against `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo fmt --all 2>/dev/null; true`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo test -p grit-lib --lib`: 97/97 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3305-notes-fanout cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored bash scripts/run-upstream-tests.sh t4065-diff-anchored 2>&1 | tail -40`: 7/7 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4065-diff-anchored cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4204-patch-id bash scripts/run-upstream-tests.sh t4204-patch-id 2>&1 | tail -40`: 26/26 passing against `target/release/grit`; the remaining `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4204-patch-id cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4025-hunk-header bash scripts/run-upstream-tests.sh t4025-hunk-header 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4025-hunk-header cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4043 bash scripts/run-upstream-tests.sh t4043-diff-rename-binary 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after fixing `grit show` so `--numstat` suppresses raw diff-tree lines while `--binary` still keeps patch output.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4021-format-patch-numbered bash scripts/run-upstream-tests.sh t4021-format-patch-numbered 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 14/14 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4021-format-patch-numbered cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4043 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
+- `cargo build --release -p grit-rs`: success (after implementing trace2 event-target compatibility for `test-tool trace2` verbs, including event JSON emission, child-process hierarchy/SID propagation, parameter/data events, credential redaction, and event-target file/discard handling).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0212-trace2-event.sh` (run from `/workspace/tests`): 11/11 passing (improved from 0/11).
+- `./scripts/run-tests.sh t0212-trace2-event.sh`: 11/11 passing.
+- regressions:
+  - `./scripts/run-tests.sh t0213-trace2-ancestry.sh`: 5/5 passing.
+  - `./scripts/run-tests.sh t1411-reflog-show.sh`: 17/17 passing.
+  - `./scripts/run-tests.sh t0211-trace2-perf.sh`: 4/17 passing (unchanged baseline).
+  - `./scripts/run-tests.sh t0210-trace2-normal.sh`: 0/14 passing (unchanged baseline).
 
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 bash scripts/run-upstream-tests.sh t4113-apply-ending 2>&1 | tail -40`: initial run reported 2/3 passing with `apply at the beginning` failing; after tightening `grit apply` hunk anchoring for start-of-file insertions, the rerun completed with 3/3 passing against `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo fmt --all 2>/dev/null; true`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo test -p grit-lib --lib`: 97/97 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4113 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4005 cargo build --release -p grit-rs`: completed to produce the fresh binary for this task.
-- `rm -f target/release/grit && ln -s /tmp/grit-build-t4005/release/grit target/release/grit && CARGO_TARGET_DIR=/tmp/grit-build-t4005 bash scripts/run-upstream-tests.sh t4005-diff-rename-2 2>&1 | tail -40`: 4/4 passing; the runner hardcodes `target/release/grit`, so repointing it at the fresh `/tmp/grit-build-t4005` binary confirmed the remaining `plan.md` entry was stale and no Rust code changes were required.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4005 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo build --release -p grit-rs`: success (after aligning reflog/log argument preprocessing, reflog-show delegation to log reflog-walk mode, reflog selector/date rendering, and reflog patch output behavior for `t1411`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1411-reflog-show.sh` (run from `/workspace/tests`): 17/17 passing (improved from 7/17).
+- `./scripts/run-tests.sh t1411-reflog-show.sh`: 17/17 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing (fixed temporary selector-date regression by restricting date selector rendering to refs with explicit reflog selectors).
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+
+- `cargo build --release -p grit-rs`: success (after implementing XDG/global config precedence fixes in `config`, global ignore resolution via layered config + XDG defaults in `ignore`, and global attributes loading in `check-attr`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1306-xdg-files.sh` (run from `/workspace/tests`): 21/21 passing (improved from 10/21).
+- `./scripts/run-tests.sh t1306-xdg-files.sh`: 21/21 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 28/28 passing.
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1004-read-tree-m-u-wf.sh`: 17/17 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs -p grit-lib && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after `read-tree -m -u` worktree-overwrite safety checks, `--exclude-per-directory=.gitignore` compatibility support, and legacy `merge-resolve` / `merge-recursive` command aliases).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1004-read-tree-m-u-wf.sh` (run from `/workspace/tests`): 17/17 passing (improved from 6/17).
+- `./scripts/run-tests.sh t1004-read-tree-m-u-wf.sh`: 17/17 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1306-xdg-files.sh`: 12/21 passing (unchanged known pending file).
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after Unicode confusing-path normalization fixes in `read-tree` and locale-independent test harness `u200c` setup).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 28/28 passing (improved from 27/28).
+- `u200c=$'\u200c' GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 28/28 passing (explicit Unicode-variable regression check).
+- `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 28/28 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1416-ref-transaction-hooks.sh` (run from `/workspace/tests`): 10/10 passing (improved from 9/10).
+- `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 10/10 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after `show-ref -d` peeled-tag behavior updates and test-helper compatibility for `test_commit --annotate`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1403-show-ref.sh` (run from `/workspace/tests`): 12/12 passing (improved from 2/12).
+- `./scripts/run-tests.sh t1403-show-ref.sh`: 12/12 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after `reflog write` compatibility fixes and `test-tool -C` parsing support in `test-tool` dispatch).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1421-reflog-write.sh` (run from `/workspace/tests`): 10/10 passing (improved from 1/10).
+- `./scripts/run-tests.sh t1421-reflog-write.sh`: 10/10 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after reflog/rev-list compatibility fixes and reflog identity timestamp handling).
+- `rm -rf /workspace/tests/trash.t1414-reflog-walk && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1414-reflog-walk.sh` (run from `/workspace/tests`): 12/12 passing (improved from 3/12).
+- `./scripts/run-tests.sh t1414-reflog-walk.sh`: 12/12 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+  - `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 27/28 passing.
+  - `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+  - `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing.
+  - `./scripts/run-tests.sh t1400-update-ref.sh`: 0/0 (timeout in harness, existing behavior).
+- `cargo fmt && cargo clippy --fix --allow-dirty -p grit-rs && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo build --release -p grit-rs`: success (after aligning reflog `--updateref` semantics and refspec validation in `reflog delete`/`reflog expire` paths).
+- `rm -rf /workspace/tests/trash.t1417-reflog-updateref && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1417-reflog-updateref.sh` (run from `/workspace/tests`): 21/21 passing (improved from 15/21).
+- `./scripts/run-tests.sh t1417-reflog-updateref.sh`: 21/21 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+  - `./scripts/run-tests.sh t1414-reflog-walk.sh`: 3/12 passing.
+- `cargo build --release -p grit-rs`: success (after improving read-tree confusing-path validation for NTFS edge cases and preserving UTF-8 non-dotgit paths).
+- `rm -rf /workspace/tests/trash.t1014-read-tree-confusing && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1014-read-tree-confusing.sh` (run from `/workspace/tests`): 27/28 passing (improved from 19/28).
+- `./scripts/run-tests.sh t1014-read-tree-confusing.sh`: 27/28 passing.
+- `rm -rf /workspace/tests/trash.t1416-ref-transaction-hooks && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1416-ref-transaction-hooks.sh` (run from `/workspace/tests`): 9/10 passing (improved from 2/10).
+- `./scripts/run-tests.sh t1416-ref-transaction-hooks.sh`: 9/10 passing.
+- regressions:
+  - `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+  - `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
+  - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing.
+- `cargo build --release -p grit-rs`: success (after reftable fsck compatibility updates across `init`, `worktree add`, and `refs verify` paths).
+- `./scripts/run-tests.sh t0614-reftable-fsck.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check).
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing (regression check).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests remain green).
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4004 bash scripts/run-upstream-tests.sh t4004-diff-rename-symlink 2>&1 | tail -40`: 4/4 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4004 cargo fmt --all 2>/dev/null; true`: completed.
+- `cargo build --release -p grit-rs`: success (after extending `test-tool ref-store` backend coverage in `grit/src/main.rs` for main/submodule/worktree store modes and helper subcommands used by upstream tests).
+- `rm -rf /workspace/tests/trash.t1406-submodule-ref-store && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1406-submodule-ref-store.sh` (run from `/workspace/tests`): 15/15 passing.
+- `rm -rf /workspace/tests/trash.t1405-main-ref-store && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1405-main-ref-store.sh` (run from `/workspace/tests`): 16/16 passing.
+- `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing.
+- `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing.
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check).
+- `cargo build --release -p grit-rs`: success (after adding `test-tool config read_early_config` and repo-discovery fallback behavior for incompatible repository format warnings).
+- `rm -rf /workspace/tests/trash.t1309-early-config && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1309-early-config.sh` (run from `/workspace/tests`): 10/10 passing (2 expected-failure TODO cases preserved).
+- `./scripts/run-tests.sh t1309-early-config.sh`: 10/10 passing.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing (regression check after repository-format parser change).
+- `./scripts/run-tests.sh t1406-submodule-ref-store.sh`: 15/15 passing (regression check after test-tool updates).
+- `./scripts/run-tests.sh t1405-main-ref-store.sh`: 16/16 passing (regression check after test-tool updates).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo check -p grit-rs`: success.
+- `cargo build --release -p grit-rs`: success (after `t1511-rev-parse-caret` peel/message-search compatibility updates in `grit-lib/src/rev_parse.rs`).
+- `rm -rf /workspace/tests/trash.t1511-rev-parse-caret && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1511-rev-parse-caret.sh` (run from `/workspace/tests`): 17/17 passing.
+- `./scripts/run-tests.sh t1511-rev-parse-caret.sh`: 17/17 passing.
+- `cargo build --release -p grit-rs`: success (after `t0100-previous` compatibility fixes in branch deletion shorthand, merge target naming, and reflog-walk revision normalization).
+- `rm -rf /workspace/tests/trash.t0100-previous && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t0100-previous.sh` (run from `/workspace/tests`): 6/6 passing.
+- `./scripts/run-tests.sh t0100-previous.sh`: 6/6 passing.
+- `cargo fmt`: success (after `t1005-read-tree-reset` fixes in `index`, `read-tree`, `reset`, and `checkout` worktree-update paths).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1005-read-tree-reset && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1005-read-tree-reset.sh` (run from `/workspace/tests`): 7/7 passing.
+- `./scripts/run-tests.sh t1005-read-tree-reset.sh`: 7/7 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; grit-lib unit tests 98/98 passing).
+- `cargo fmt`: success (after `t1514-rev-parse-push` updates).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1514-rev-parse-push && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1514-rev-parse-push.sh`: 9/9 passing.
+- `./scripts/run-tests.sh t1514-rev-parse-push.sh`: 9/9 passing.
+- `cargo fmt`: success (after `t1415-worktree-refs` compatibility fixes).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1415-worktree-refs && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1415-worktree-refs.sh`: 10/10 passing.
+- `./scripts/run-tests.sh t1415-worktree-refs.sh`: 10/10 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
+- `cargo fmt`: success (after `t1020-subdirectory` compatibility fixes).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1020-subdirectory && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1020-subdirectory.sh`: 15/15 passing.
+- `./scripts/run-tests.sh t1020-subdirectory.sh`: 15/15 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
+- `cargo fmt`: success (after clone transport and rev-list missing-object compatibility updates for corruption handling).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1060-object-corruption && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1060-object-corruption.sh`: 17/17 passing (1 expected-failure test remains marked TODO in upstream script).
+- `rm -rf /workspace/tests/trash.t1060-object-corruption && ./scripts/run-tests.sh t1060-object-corruption.sh`: 17/17 passing.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing (regression check).
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing (regression check).
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
+- `cargo fmt`: success (after repository-format/repo-version compatibility changes).
+- `cargo build --release -p grit-rs`: success.
+- `./scripts/run-tests.sh t1302-repo-version.sh`: 18/18 passing.
+- `_prereq_DEFAULT_REPO_FORMAT=set GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1302-repo-version.sh`: 18/18 passing with expected non-zero behavior for unsupported repo version/extensions and precious-objects prune protection.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 7/7 passing (regression check).
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing (regression check).
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4036 bash scripts/run-upstream-tests.sh t4036-format-patch-signer-mime 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 5/5 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4036 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 bash scripts/run-upstream-tests.sh t2202 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after accepting Git's pathspec-mode global flags before subcommand dispatch, which unblocked `git --literal-pathspecs add --all` in the upstream setup.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo fmt --all 2>/dev/null; true`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo test -p grit-lib --lib`: 97/97 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2202 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3307 bash scripts/run-upstream-tests.sh t3307 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 3/3 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3450 bash scripts/run-upstream-tests.sh t3450 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3450 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3307 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3423-rebase-reword bash scripts/run-upstream-tests.sh t3423-rebase-reword 2>&1 | tail -40`: the requested wrapper command still reported zero TAP output in this sandbox, so it was not a reliable verification signal.
-- Direct isolated upstream run of `git/t/t3423-rebase-reword.sh` against rebuilt `target/release/grit`: 3/3 passing after accepting dropped commits in the interactive rebase todo parser, handling editor paths that contain spaces, and routing `checkout --theirs <path>` into path mode during conflict resolution.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3423-rebase-reword cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit bash scripts/run-upstream-tests.sh t3702-add-edit 2>&1 | tail -40`: 3/3 passing against `target/release/grit` after implementing `git add -e` patch editing and editor-failure handling.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo fmt --all 2>/dev/null; true`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo test -p grit-lib --lib`: 97/97 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3702-add-edit cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012 2>&1 | tail -40`: the requested tail-only run only surfaced stale `/tmp/grit-upstream-workdir` cleanup noise; the full rerun of `CARGO_TARGET_DIR=/tmp/grit-build-t3012 bash scripts/run-upstream-tests.sh t3012` confirmed 3/3 passing against `target/release/grit`, so the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3012 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2023 bash scripts/run-upstream-tests.sh t2023 2>&1 | tail -40`: 5/5 passing against `target/release/grit` after implementing resolve-undo persistence plus `checkout -m` conflict restoration for both path and branch-switch flows.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3008 bash scripts/run-upstream-tests.sh t3008 2>&1 | tail -40`: 1/1 passing against `target/release/grit`; the tree already contained the required `test-tool online-cpus` and `test-tool lazy-init-name-hash` support, so the remaining `PLAN.md` entry was stale rather than a missing implementation.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3008 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2023 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test -p grit-lib --lib`: 97/97 passing.
-- `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3908 bash scripts/run-upstream-tests.sh t3908 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3908 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3009 bash scripts/run-upstream-tests.sh t3009 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 2/2 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 bash scripts/run-upstream-tests.sh t1512 2>&1 | tail -40`: reran the requested upstream command after rebuilding `target/release/grit`; the aggregate runner still reports broader `t1512` gaps outside this scoped task, but the three tracked ambiguity cases were fixed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 cargo build --release -p grit-rs`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1512 cargo fmt --all 2>/dev/null; true`: completed.
-- `cp target/release/grit tests/grit && cd tests && EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="$(pwd)/grit" BASH_ENV=<temp env sourcing tests/test-lib-functions.sh with test_hash_algo=sha1> bash t1512-rev-parse-disambiguation.sh`: 3/3 passing for the tracked local slice.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3009 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2012 bash scripts/run-upstream-tests.sh t2012 2>&1 | tail -40`: 22/22 passing against `target/release/grit`; the `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3302 bash scripts/run-upstream-tests.sh t3302 2>&1 | tail -40`: the requested tail-only run did not include TAP output, but the full rerun of `CARGO_TARGET_DIR=/tmp/grit-build-t3302 bash scripts/run-upstream-tests.sh t3302` completed with 12/12 passing against `target/release/grit`; this checkout already had the fix, so the `PLAN.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3302 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo clippy --fix --allow-dirty`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2012 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 bash scripts/run-upstream-tests.sh t2050 2>&1 | tail -40`: 4/4 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2050 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2105 bash scripts/run-upstream-tests.sh t2105`: 4/4 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2105 cargo fmt --all`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1015 bash scripts/run-upstream-tests.sh t1015`: 6/6 passing against `target/release/grit`.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which the upstream runner actually executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1015 cargo fmt --all`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which `scripts/run-upstream-tests.sh` executes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2015 bash scripts/run-upstream-tests.sh t2015`: 6/6 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2015 cargo fmt --all`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 bash scripts/run-upstream-tests.sh t1412`: 3/3 passing against `target/release/grit`.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` for the upstream harness after the reflog fix.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 cargo fmt --all`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1412 cargo test -p grit-lib --lib`: 97/97 passing.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 bash scripts/run-upstream-tests.sh t1407`: 4/4 passing against `target/release/grit`.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` before the `t1407` upstream rerun and direct worktree ref-store checks.
-- `cargo fmt`: completed for the `t1407` changes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 cargo test -p grit-lib --lib`: 96/96 passing.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1407 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1600 bash scripts/run-upstream-tests.sh t1600`: 7/7 passing against `target/release/grit`.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` for the upstream runner after the index and `test-tool` changes.
-- `cargo fmt`: completed for the `t1600` changes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1600 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `cargo test -p grit-lib --lib`: 97/97 passing.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1601 bash scripts/run-upstream-tests.sh t1601`: 4/4 passing against `target/release/grit`; the `plan.md` entry was stale.
-- `cargo fmt`: completed for the `t1601` verification pass.
-- `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1503 bash scripts/run-upstream-tests.sh t1503`: 12/12 passing against `target/release/grit`.
-- `cargo fmt`: completed for the `t1503` changes.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1503 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3102 bash scripts/run-upstream-tests.sh t3102`: 4/4 passing against `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3102 cargo fmt`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3102 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3500 cargo test -p grit-lib --lib`: 96/96 passing.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3500 bash scripts/run-upstream-tests.sh t3500`: 4/4 passing against `target/release/grit`; the `plan.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3500 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3205 bash scripts/run-upstream-tests.sh t3205`: 4/4 passing after rebuilding `target/release/grit`; the `plan.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3205 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit`, which the upstream runner uses.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1408 bash scripts/run-upstream-tests.sh t1408`: 3/3 passing against rebuilt `target/release/grit`; the `PLAN.md` entry was stale.
-- `cargo fmt`: completed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1408 cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1303 bash scripts/run-upstream-tests.sh t1303 2>&1 | tail -40`: 11/11 passing against `target/release/grit`; the remaining failing-count entry in `plan.md` was stale and has been removed.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t1303 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2010 bash scripts/run-upstream-tests.sh t2010 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 10/10 passing against `target/release/grit`; `plan.md` was already marked complete and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2010 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2104 bash scripts/run-upstream-tests.sh t2104 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 7/7 passing against `target/release/grit`; the `PLAN.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t2104 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3502 bash scripts/run-upstream-tests.sh t3502 2>&1 | tail -40`: the requested run only surfaced stale `/tmp/grit-upstream-workdir` cleanup noise; after clearing that scratch directory and re-running `bash scripts/run-upstream-tests.sh t3502`, upstream verification confirmed 12/12 passing against `target/release/grit`, so the `PLAN.md` entry was stale.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t3502 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4111 bash scripts/run-upstream-tests.sh t4111-apply-subdir 2>&1 | tail -40`: re-ran the requested upstream verification and confirmed 10/10 passing against `target/release/grit`; the remaining `plan.md` entry was stale and no Rust code changes were required for this task.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4111 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test --workspace`: not run for this task.
-- `./tests/harness/run.sh`: not run for this task.
-- `cargo build --release -p grit-rs`: completed to refresh `target/release/grit` before the upstream rerun for `t4007-rename-3`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4007 bash scripts/run-upstream-tests.sh t4007-rename-3 2>&1 | tail -40`: 13/13 passing against rebuilt `target/release/grit`.
-- `CARGO_TARGET_DIR=/tmp/grit-build-t4007 cargo fmt --all 2>/dev/null; true`: completed.
-- `cargo test -p grit-lib --lib`: 97/97 passing.
-- `cargo clippy --fix --allow-dirty`: blocked in this sandbox because Cargo failed to bind a TCP listener for locking (`Operation not permitted`).
-- `bash scripts/update-dashboard.sh`: refreshed generated dashboard artifacts in `data/` and `docs/`.
+- `cargo build --release -p grit-rs`: success.
+- `./scripts/run-tests.sh t0050-filesystem.sh`: 13/13 passing.
+- `./scripts/run-tests.sh t3102-ls-tree-wildcards.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t3500-cherry.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t3009-ls-files-others-nonsubmodule.sh`: 2/2 passing.
+- `./scripts/run-tests.sh t3908-stash-in-worktree.sh`: 2/2 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success.
+- `cargo build --release -p grit-rs`: success (rebuilt after test-tool changes).
+- `./scripts/run-tests.sh t3008-ls-files-lazy-init-name-hash.sh`: 1/1 passing.
+- `./scripts/run-tests.sh t3205-branch-color.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t1601-index-bogus.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t3012-ls-files-dedup.sh`: 3/3 passing.
+- `GUST_BIN=/workspace/tests/grit bash tests/t3307-notes-man.sh`: 3/3 passing after adding missing fixture files.
+- `./scripts/run-tests.sh t3307-notes-man.sh`: 3/3 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success.
+- `cargo build --release -p grit-rs`: success (rebuilt after adding test-tool mktemp/regex/pkt-line helpers).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 11/11 passing after implementing test-tool mktemp/regex/pkt-line helpers and delegating pkt-line subcommands through `tests/test-tool`.
+- `./scripts/run-tests.sh t0070-fundamental.sh`: 11/11 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after adding `test-tool mktemp`, `test-tool regex`, and extended `test-tool pkt-line` helpers in `grit/src/main.rs`; reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t0070-fundamental.sh`: 4/11 passing (improved from 1/11 after implementing missing `test-tool` subcommands in grit).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0070-fundamental.sh`: 4/11 passing, with remaining failures in `send-split-sideband`/`receive-sideband`/`unpack-sideband` execution via the local `tests/test-tool` wrapper.
+- Direct validation using `/workspace/tests/grit test-tool pkt-line ...`: sideband helper flows match expected output (`receive-sideband`, EOF/missing-sideband diagnostics, and both `unpack-sideband` modes with/without `--reader-use-sideband` and chomp toggles).
+- `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after adding `reflog delete --rewrite` compatibility and fixing quiet reflog-date verification fallback in `rev-parse`).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1503-rev-parse-verify.sh`: 12/12 passing.
+- `./scripts/run-tests.sh t1503-rev-parse-verify.sh`: 12/12 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after fixing D/F conflict handling in `merge --abort` and `am --skip`, and correcting `format-patch -1 <rev>` range selection behavior).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1015-read-index-unmerged.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t1015-read-index-unmerged.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t1408-packed-refs.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t2050-git-dir-relative.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t2015-checkout-unborn.sh`: 6/6 passing.
+- `./scripts/run-tests.sh t2105-update-index-gitfile.sh`: 4/4 passing (re-run confirmed stable full pass).
+- `./scripts/run-tests.sh t2012-checkout-last.sh`: 22/22 passing.
+- `./scripts/run-tests.sh t2010-checkout-ambiguous.sh`: 10/10 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after implementing index v4 write support, zero-checksum acceptance for skipHash, and `test-tool hexdump` helper; reverted unrelated clippy edits in non-target files).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1600-index.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t1600-index.sh`: 7/7 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing `checkout -m` conflict restoration in both path and branch-switch modes and adding ambiguous remote-tracking checkout hints).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2023-checkout-m.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t2023-checkout-m.sh`: 5/5 passing.
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2027-checkout-track.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t2027-checkout-track.sh`: 5/5 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after checkout branch-mode compatibility updates: `<start> -b <name>` ordering, branch-name `@{-N}` resolution, clone `--no-checkout` initial materialization, sparse-checkout preservation, and message compatibility).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2202-add-addremove.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t2202-add-addremove.sh`: 3/3 passing.
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2018-checkout-branch.sh`: 25/25 passing.
+- `./scripts/run-tests.sh t2018-checkout-branch.sh`: 25/25 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing `git repo structure` table/progress compatibility fixes).
+- `./scripts/run-tests.sh t1901-repo-structure.sh`: 4/4 passing.
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1901-repo-structure.sh`: 4/4 passing (with 2 SHA1-gated cases skipped by harness prereq).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding `test-tool ref-store` support for worktree ref-store API tests).
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing.
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1407-worktree-ref-store.sh`: 4/4 passing.
+- `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing checkout `-m` branch/path conflict restoration behavior and stage ordering fixes).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2023-checkout-m.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t2023-checkout-m.sh`: 5/5 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (after checkout changes; reverted unrelated clippy edits in non-target files).
+- `./scripts/run-tests.sh t2104-update-index-skip-worktree.sh`: 7/7 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding global `--literal-pathspecs` passthrough and improving `switch` ambiguous remote-tracking diagnostics).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t2202-add-addremove.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t2202-add-addremove.sh`: 3/3 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in known non-target files).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after adding `test-tool` fallbacks for default hash and `zlib deflate`, exposing loose-abbrev lookup, and enhancing `rev-parse` ambiguous short-OID diagnostics/candidate listing).
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1512-rev-parse-disambiguation.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1512-rev-parse-disambiguation.sh`: 3/3 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after writing branch-creation reflog entries for `checkout -b/-B`).
+- `GUST_BIN=/workspace/tests/grit TEST_VERBOSE=1 bash tests/t1412-reflog-loop.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing.
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (regression check after the above changes).
+- `./scripts/run-tests.sh t1901-repo-structure.sh`: 4/4 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1412-reflog-loop.sh`: 3/3 passing (post-merge regression check).
+- `./scripts/run-tests.sh t1512-rev-parse-disambiguation.sh`: 3/3 passing (post-merge regression check).
+- `./scripts/run-tests.sh t2006-checkout-index-basic.sh`: 9/9 passing (stale plan entry corrected; no code changes required).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after fixing checkout path mode parsing for non-commit first positional argument without `--`).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1051-large-conversion.sh`: 12/12 passing (2 SHA1/size prereq cases skipped by harness as expected).
+- `./scripts/run-tests.sh t1051-large-conversion.sh`: 12/12 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files; retained only checkout/path-mode fix).
+- `cargo fmt && cargo build --release -p grit-rs`: success (after preserving unmerged index stage entries during `read-tree -m -u` checkout updates).
+- `GUST_BIN=/workspace/tests/grit bash tests/t1012-read-tree-df.sh`: 5/5 passing.
+- `./scripts/run-tests.sh t1012-read-tree-df.sh`: 5/5 passing.
+- `cargo fmt && cargo build --release -p grit-rs`: success (after implementing partial-clone/lazy-fetch behavior for clone and pack-objects paths used by promisor tests).
+- `GUST_BIN=/workspace/tests/grit bash tests/t0411-clone-from-partial.sh`: 7/7 passing.
+- `./scripts/run-tests.sh t0411-clone-from-partial.sh`: 7/7 passing.
+- `cargo fmt`: success (after sparse-checkout scope compatibility changes).
+- `cargo build --release -p grit-rs`: success.
+- `./scripts/run-tests.sh t1090-sparse-checkout-scope.sh`: 7/7 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).

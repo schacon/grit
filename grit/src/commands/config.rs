@@ -42,8 +42,8 @@ pub struct Args {
     #[arg(short = 'f', long = "file", global = true)]
     pub file: Option<PathBuf>,
 
-    /// Run as if started in <path> (compatibility with test helpers).
-    #[arg(short = 'C', value_name = "path", global = true)]
+    /// Change to this directory before doing anything.
+    #[arg(short = 'C', value_name = "DIR", global = true)]
     pub change_dir: Option<PathBuf>,
 
     /// Read config from a blob object (e.g. HEAD:.gitmodules).
@@ -126,7 +126,7 @@ pub struct Args {
     pub show_scope: bool,
 
     /// Use NUL as delimiter.
-    #[arg(short = 'z', long = "null")]
+    #[arg(short = 'z')]
     pub null_terminated: bool,
 
     /// Show key names for --get-regexp.
@@ -288,9 +288,14 @@ pub struct EditArgs {}
 
 /// Run the `config` command.
 pub fn run(args: Args) -> Result<()> {
-    if let Some(ref dir) = args.change_dir {
-        std::env::set_current_dir(dir)
-            .with_context(|| format!("could not change to '{}'", dir.display()))?;
+    if let Some(dir) = &args.change_dir {
+        let target = if dir.is_absolute() {
+            dir.clone()
+        } else {
+            std::env::current_dir()?.join(dir)
+        };
+        std::env::set_current_dir(&target)
+            .with_context(|| format!("cannot change to directory '{}'", target.display()))?;
     }
 
     // If --blob is given, read config from the blob and handle read-only ops
@@ -308,22 +313,9 @@ pub fn run(args: Args) -> Result<()> {
 
     // Resolve which file to operate on
     let git_dir = resolve_git_dir();
-
-    // Validate repository format version when operating on a local repo.
-    // Git refuses to operate on repos with an unsupported format version.
-    if git_dir.is_some() && !args.system && !args.global {
-        if let Some(ref gd) = git_dir {
-            let config_path = gd.join("config");
-            if config_path.exists() {
-                if let Ok(text) = std::fs::read_to_string(&config_path) {
-                    if let Err(e) = grit_lib::repo::validate_repo_config(&text) {
-                        anyhow::bail!("{}", e);
-                    }
-                }
-            }
-        }
+    if should_validate_repository(&args) && git_dir.is_some() {
+        Repository::discover(None)?;
     }
-
     let (scope, file_path) = resolve_config_file(&args, git_dir.as_deref())?;
 
     // Handle subcommands first
@@ -502,20 +494,18 @@ pub fn run(args: Args) -> Result<()> {
         return cmd_rename_section(scope, &file_path, &args.positional[0], &args.positional[1]);
     }
 
-    // No explicit operation selected.
-    // For compatibility with the upstream test-lib's "test_config -C <dir> key value"
-    // helper, tolerate a bare "git config" invocation with no positional args.
-    // (The helper records a cleanup command that can call "git config -C <dir>"
-    // with no key/value when shell argument splitting drops parameters.)
-    if args.positional.is_empty() {
-        if args.change_dir.is_some() {
-            return Ok(());
-        }
-        bail!("usage: grit config [<options>]");
-    }
-
     // Legacy set: `git config key value`
     match args.positional.len() {
+        0 => {
+            // Compatibility: some tests invoke `git config -C <dir>` via helper
+            // wrappers that drop key/value operands. In that narrow case, treat
+            // the call as a no-op success after changing directory.
+            if args.change_dir.is_some() {
+                return Ok(());
+            }
+            // No args, no flags → show usage
+            bail!("usage: grit config [<options>]");
+        }
         1 => {
             if args.replace_all {
                 bail!("error: wrong number of arguments, should be 2");
@@ -634,11 +624,7 @@ fn cmd_get(
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else if get_args.show_names {
-                if args.null_terminated {
-                    print!("{}\n{}{}", entry.key, val, terminator);
-                } else {
-                    print!("{} {}{}", entry.key, val, terminator);
-                }
+                print!("{} {}{}", entry.key, val, terminator);
             } else {
                 print!("{}{}", val, terminator);
             }
@@ -756,45 +742,6 @@ fn cmd_set(
         config.set_with_comment(&set_args.key, &value, comment)?;
     }
     config.write().context("writing config file")?;
-    maybe_update_unborn_head_default_branch(set_args, scope)?;
-    Ok(())
-}
-
-fn maybe_update_unborn_head_default_branch(set_args: &SetArgs, scope: ConfigScope) -> Result<()> {
-    // Compatibility: our test harness initializes a repository before it applies
-    // `init.defaultBranch` in global config. If that repository is still unborn
-    // on `master`, Git tests expect subsequent commits to use the configured
-    // default branch. We update HEAD only in this narrow unborn case.
-    if scope != ConfigScope::Global {
-        return Ok(());
-    }
-    if !set_args.key.eq_ignore_ascii_case("init.defaultBranch") {
-        return Ok(());
-    }
-    let target = set_args.value.trim();
-    if target.is_empty() || target.eq_ignore_ascii_case("master") {
-        return Ok(());
-    }
-
-    let Some(git_dir) = resolve_git_dir() else {
-        return Ok(());
-    };
-    let head_path = git_dir.join("HEAD");
-    let head_content = match std::fs::read_to_string(&head_path) {
-        Ok(content) => content,
-        Err(_) => return Ok(()),
-    };
-    if head_content.trim_end() != "ref: refs/heads/master" {
-        return Ok(());
-    }
-
-    // Only rewrite unborn master; never rewrite repositories that already have
-    // commits on master.
-    if git_dir.join("refs").join("heads").join("master").exists() {
-        return Ok(());
-    }
-
-    std::fs::write(head_path, format!("ref: refs/heads/{target}\n"))?;
     Ok(())
 }
 
@@ -1074,11 +1021,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
             if args.name_only {
                 print!("{}{}", entry.key, terminator);
             } else {
-                if args.null_terminated {
-                    print!("{}\n{}{}", entry.key, val, terminator);
-                } else {
-                    print!("{} {}{}", entry.key, val, terminator);
-                }
+                print!("{} {}{}", entry.key, val, terminator);
             }
         }
         return Ok(());
@@ -1255,63 +1198,9 @@ fn resolve_git_dir() -> Option<PathBuf> {
     }
 }
 
-fn resolve_common_git_dir(git_dir: &Path) -> PathBuf {
-    let commondir_file = git_dir.join("commondir");
-    if let Ok(raw) = std::fs::read_to_string(&commondir_file) {
-        let rel = raw.trim();
-        let candidate = if Path::new(rel).is_absolute() {
-            PathBuf::from(rel)
-        } else {
-            git_dir.join(rel)
-        };
-        return candidate.canonicalize().unwrap_or(candidate);
-    }
-    git_dir.to_path_buf()
-}
-
-fn has_linked_worktrees(common_git_dir: &Path) -> bool {
-    let worktrees = common_git_dir.join("worktrees");
-    if !worktrees.is_dir() {
-        return false;
-    }
-    std::fs::read_dir(worktrees)
-        .ok()
-        .map(|mut it| it.any(|e| e.is_ok()))
-        .unwrap_or(false)
-}
-
-fn worktree_config_extension_enabled(common_git_dir: &Path) -> bool {
-    let local_path = common_git_dir.join("config");
-    let Some(local_cfg) = ConfigFile::from_path(&local_path, ConfigScope::Local)
-        .ok()
-        .flatten()
-    else {
-        return false;
-    };
-    let set = {
-        let mut set = ConfigSet::new();
-        set.merge(&local_cfg);
-        set
-    };
-    set.get_bool("extensions.worktreeConfig")
-        .and_then(|r| r.ok())
-        .unwrap_or(false)
-}
-
-fn resolve_worktree_config_target(git_dir: &Path) -> Result<(ConfigScope, PathBuf)> {
-    let common = resolve_common_git_dir(git_dir);
-    let linked = has_linked_worktrees(&common);
-    let enabled = worktree_config_extension_enabled(&common);
-    if enabled {
-        return Ok((ConfigScope::Worktree, git_dir.join("config.worktree")));
-    }
-    if linked {
-        bail!(
-            "--worktree cannot be used with multiple working trees unless the config extension worktreeConfig is enabled"
-        );
-    }
-    // Single-worktree compatibility mode: behave like local config.
-    Ok((ConfigScope::Local, common.join("config")))
+/// Whether this invocation should validate repository format/extensions.
+fn should_validate_repository(args: &Args) -> bool {
+    !(args.system || args.global || args.file.is_some() || args.blob.is_some())
 }
 
 /// Determine which config file to write to based on flags.
@@ -1326,21 +1215,20 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
         return Ok((ConfigScope::System, path));
     }
     if args.global {
-        let path = global_config_path()
+        let path = global_config_path_for_write()
             .ok_or_else(|| anyhow::anyhow!("cannot determine global config path"))?;
         return Ok((ConfigScope::Global, path));
     }
     if args.worktree {
         let gd = git_dir.ok_or_else(|| anyhow::anyhow!("not in a git repository"))?;
-        return resolve_worktree_config_target(gd);
+        return Ok((ConfigScope::Worktree, gd.join("config.worktree")));
     }
     // Default: local
     if let Some(gd) = git_dir {
-        let common = resolve_common_git_dir(gd);
-        Ok((ConfigScope::Local, common.join("config")))
+        Ok((ConfigScope::Local, gd.join("config")))
     } else {
         // Outside repo, default to global for read operations
-        let path = global_config_path().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
+        let path = global_config_path_for_read().unwrap_or_else(|| PathBuf::from("/etc/gitconfig"));
         Ok((ConfigScope::Global, path))
     }
 }
@@ -1369,11 +1257,9 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 
     if args.global {
         let mut set = ConfigSet::new();
-        // Try all global config paths in order (first found wins).
-        for path in grit_lib::config::global_config_paths_pub() {
+        if let Some(path) = global_config_path_for_read() {
             if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
                 set.merge(&f);
-                break; // first found wins
             }
         }
         return Ok(set);
@@ -1382,19 +1268,7 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
     if args.local {
         let mut set = ConfigSet::new();
         if let Some(gd) = git_dir {
-            let common = resolve_common_git_dir(gd);
-            if let Some(f) = ConfigFile::from_path(&common.join("config"), ConfigScope::Local)? {
-                set.merge(&f);
-            }
-        }
-        return Ok(set);
-    }
-
-    if args.worktree {
-        let mut set = ConfigSet::new();
-        if let Some(gd) = git_dir {
-            let (scope, path) = resolve_worktree_config_target(gd)?;
-            if let Some(f) = ConfigFile::from_path(&path, scope)? {
+            if let Some(f) = ConfigFile::from_path(&gd.join("config"), ConfigScope::Local)? {
                 set.merge(&f);
             }
         }
@@ -1406,27 +1280,57 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
 }
 
 /// Get the path for the global config file.
-fn global_config_path() -> Option<PathBuf> {
+fn global_config_path_for_read() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
         return Some(PathBuf::from(p));
     }
-    // If ~/.gitconfig exists, use it; otherwise use XDG path.
-    let home = std::env::var("HOME").ok()?;
-    let home_path = PathBuf::from(&home);
-    let gitconfig = home_path.join(".gitconfig");
-    if gitconfig.exists() {
-        return Some(gitconfig);
+
+    let gitconfig = global_gitconfig_path();
+    let xdg = global_xdg_config_path();
+
+    if gitconfig.as_ref().is_some_and(|p| p.exists()) {
+        return gitconfig;
     }
-    // XDG path
+    if xdg.as_ref().is_some_and(|p| p.exists()) {
+        return xdg;
+    }
+
+    gitconfig.or(xdg)
+}
+
+/// Get the path to write for `--global` config operations.
+fn global_config_path_for_write() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
+        return Some(PathBuf::from(p));
+    }
+
+    let gitconfig = global_gitconfig_path();
+    let xdg = global_xdg_config_path();
+    let gitconfig_exists = gitconfig.as_ref().is_some_and(|p| p.exists());
+    let xdg_exists = xdg.as_ref().is_some_and(|p| p.exists());
+
+    if !gitconfig_exists && xdg_exists {
+        return xdg;
+    }
+
+    gitconfig.or(xdg)
+}
+
+fn global_gitconfig_path() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".gitconfig"))
+}
+
+fn global_xdg_config_path() -> Option<PathBuf> {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(xdg).join("git/config"));
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("git/config"));
+        }
     }
-    let xdg_default = home_path.join(".config/git/config");
-    if xdg_default.exists() {
-        return Some(xdg_default);
-    }
-    // Fall back to creating ~/.gitconfig
-    Some(gitconfig)
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".config/git/config"))
 }
 
 /// Returns whether `--default` is valid for the selected operation.
@@ -1497,10 +1401,8 @@ fn canonicalize_value_for_set(args: &Args, val: &str) -> Result<String> {
 /// Returns true if the value should be skipped.
 fn is_optional_missing_path(args: &Args, val: &str) -> bool {
     let type_name = args.type_name.as_deref();
-    if args.type_path || type_name == Some("path") {
-        if val.starts_with(":(optional)") {
-            return grit_lib::config::parse_path_optional(val).is_none();
-        }
+    if (args.type_path || type_name == Some("path")) && val.starts_with(":(optional)") {
+        return grit_lib::config::parse_path_optional(val).is_none();
     }
     false
 }

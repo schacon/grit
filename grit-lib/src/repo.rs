@@ -15,6 +15,7 @@
 //! - `work_tree` — `Some(path)` for non-bare repos, `None` for bare.
 //! - [`Odb`] — the loose object database.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
@@ -51,6 +52,8 @@ impl Repository {
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
 
+        validate_repository_format(&git_dir)?;
+
         if !git_dir.join("HEAD").exists() {
             return Err(Error::NotARepository(git_dir.display().to_string()));
         }
@@ -59,16 +62,7 @@ impl Repository {
         // directory pointed to by the `commondir` file.
         let objects_dir = if git_dir.join("objects").exists() {
             git_dir.join("objects")
-        } else if let Ok(common_raw) = fs::read_to_string(git_dir.join("commondir")) {
-            let common_rel = common_raw.trim();
-            let common_dir = if Path::new(common_rel).is_absolute() {
-                PathBuf::from(common_rel)
-            } else {
-                git_dir.join(common_rel)
-            };
-            let common_dir = common_dir
-                .canonicalize()
-                .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
+        } else if let Some(common_dir) = resolve_common_dir(&git_dir) {
             common_dir.join("objects")
         } else {
             return Err(Error::NotARepository(git_dir.display().to_string()));
@@ -263,6 +257,138 @@ impl Repository {
         }
         self.odb.read(oid)
     }
+}
+
+/// Resolve the common git directory for linked worktrees.
+fn resolve_common_dir(git_dir: &Path) -> Option<PathBuf> {
+    let common_raw = fs::read_to_string(git_dir.join("commondir")).ok()?;
+    let common_rel = common_raw.trim();
+    if common_rel.is_empty() {
+        return None;
+    }
+    let common_dir = if Path::new(common_rel).is_absolute() {
+        PathBuf::from(common_rel)
+    } else {
+        git_dir.join(common_rel)
+    };
+    Some(common_dir.canonicalize().unwrap_or(common_dir))
+}
+
+/// Determine the config file path for a repository or linked worktree.
+fn repository_config_path(git_dir: &Path) -> Option<PathBuf> {
+    let local = git_dir.join("config");
+    if local.exists() {
+        return Some(local);
+    }
+    let common = resolve_common_dir(git_dir)?;
+    let shared = common.join("config");
+    if shared.exists() {
+        Some(shared)
+    } else {
+        None
+    }
+}
+
+/// Validate core repository format/version compatibility.
+///
+/// Supports repository format versions 0 and 1, with extension handling that
+/// matches Git's compatibility expectations in upstream repo-version tests.
+fn validate_repository_format(git_dir: &Path) -> Result<()> {
+    let Some(config_path) = repository_config_path(git_dir) else {
+        return Ok(());
+    };
+
+    let content = fs::read_to_string(&config_path).map_err(Error::Io)?;
+    let mut in_core = false;
+    let mut in_extensions = false;
+    let mut repo_version = 0u32;
+    let mut extensions = BTreeSet::new();
+
+    for raw_line in content.lines() {
+        let mut line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+
+        if line.starts_with('[') {
+            let Some(end_idx) = line.find(']') else {
+                return Err(Error::ConfigError(format!(
+                    "invalid config in {}",
+                    config_path.display()
+                )));
+            };
+
+            let section = line[1..end_idx].trim();
+            let section_name = section
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            in_core = section_name == "core";
+            in_extensions = section_name == "extensions";
+
+            let remainder = line[end_idx + 1..].trim();
+            if remainder.is_empty() || remainder.starts_with('#') || remainder.starts_with(';') {
+                continue;
+            }
+            line = remainder;
+        }
+
+        if in_core {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("repositoryformatversion") {
+                    repo_version = value.trim().parse::<u32>().map_err(|_| {
+                        Error::ConfigError(format!(
+                            "invalid core.repositoryformatversion in {}",
+                            config_path.display()
+                        ))
+                    })?;
+                }
+            }
+        }
+
+        if in_extensions {
+            let key = if let Some((key, _)) = line.split_once('=') {
+                key.trim()
+            } else {
+                line
+            };
+            if !key.is_empty() {
+                extensions.insert(key.to_ascii_lowercase());
+            }
+        }
+    }
+
+    if repo_version > 1 {
+        return Err(Error::UnsupportedRepositoryFormatVersion(repo_version));
+    }
+
+    for extension in extensions {
+        if repo_version == 0 {
+            if extension.ends_with("-v1") {
+                return Err(Error::UnsupportedRepositoryExtension(extension));
+            }
+            continue;
+        }
+
+        if matches!(
+            extension.as_str(),
+            "noop"
+                | "noop-v1"
+                | "preciousobjects"
+                | "partialclone"
+                | "worktreeconfig"
+                | "objectformat"
+                | "compatobjectformat"
+                | "refstorage"
+        ) {
+            continue;
+        }
+
+        return Err(Error::UnsupportedRepositoryExtension(extension));
+    }
+
+    Ok(())
 }
 
 /// Try to open a repository rooted exactly at `dir`.

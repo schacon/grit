@@ -6,7 +6,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_revision, symbolic_full_name};
 use grit_lib::state::{resolve_head, HeadState};
 use std::fs;
 use std::io::{self, Write};
@@ -866,8 +866,9 @@ fn create_branch(
 
     grit_lib::refs::write_ref(&repo.git_dir, &refname, &oid).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Create reflog if --create-reflog is specified
-    if args.create_reflog {
+    // Create reflog when explicitly requested or when core.logAllRefUpdates
+    // enables branch reflogs for this repository.
+    if args.create_reflog || should_log_ref_updates(repo) {
         let reflog_path = repo.git_dir.join("logs").join(&refname);
         if let Some(parent) = reflog_path.parent() {
             let _ = fs::create_dir_all(parent);
@@ -916,14 +917,37 @@ fn create_branch(
     Ok(())
 }
 
+fn should_log_ref_updates(repo: &Repository) -> bool {
+    ConfigSet::load(Some(&repo.git_dir), true)
+        .ok()
+        .and_then(|cfg| cfg.get("core.logallrefupdates"))
+        .map(|v| {
+            let lowered = v.trim().to_ascii_lowercase();
+            lowered == "true" || lowered == "always"
+        })
+        .unwrap_or(false)
+}
+
 /// Delete a branch.
 fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
-    let name = args
+    let name_input = args
         .name
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("branch name required"))?;
+    let resolved_ref =
+        symbolic_full_name(repo, name_input).filter(|full| full.starts_with("refs/heads/"));
+    let (name, refname) = if let Some(full) = resolved_ref {
+        (
+            full.strip_prefix("refs/heads/")
+                .unwrap_or(name_input)
+                .to_owned(),
+            full,
+        )
+    } else {
+        (name_input.to_owned(), format!("refs/heads/{name_input}"))
+    };
 
-    if let Some(path) = branch_checked_out_in_other_worktree(repo, name) {
+    if let Some(path) = branch_checked_out_in_other_worktree(repo, &name) {
         bail!(
             "cannot delete branch '{}' used by worktree at '{}'",
             name,
@@ -945,7 +969,6 @@ fn delete_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         );
     }
 
-    let refname = format!("refs/heads/{name}");
     let branch_oid = grit_lib::refs::resolve_ref(&repo.git_dir, &refname)
         .map_err(|_| anyhow::anyhow!("branch '{name}' not found."))?;
 

@@ -121,9 +121,7 @@ run_one() {
     local output
     output=$(
         cd "$TESTS_DIR" &&
-            env -u GIT_TEST_DEFAULT_INITIAL_BRANCH_NAME \
-                EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="$(pwd)/grit" \
-                timeout "$TIMEOUT" bash "$f" </dev/null 2>&1
+            EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GUST_BIN="$(pwd)/grit" timeout "$TIMEOUT" bash "$f" 2>&1
     ) || true
     local summary
     summary=$(echo "$output" | grep "^# Tests:" | tail -1)

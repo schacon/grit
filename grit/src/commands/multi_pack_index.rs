@@ -7,7 +7,7 @@
 //! grit currently delegates to the system git for the actual MIDX write,
 //! stripping flags that older system git versions don't support.
 
-use crate::commands::git_passthrough;
+use crate::commands::system_git;
 use anyhow::Result;
 use clap::Args as ClapArgs;
 
@@ -27,7 +27,7 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     // Handle "compact" subcommand: treat as a full rewrite
     if args.args.first().map(|s| s.as_str()) == Some("compact") {
-        return git_passthrough::run("multi-pack-index", &["write".to_string()]);
+        return system_git::run("multi-pack-index", &["write".to_string()]);
     }
 
     // Strip --incremental flag for system git compatibility, but still
@@ -39,5 +39,5 @@ pub fn run(args: Args) -> Result<()> {
         .cloned()
         .collect();
 
-    git_passthrough::run("multi-pack-index", &filtered)
+    system_git::run("multi-pack-index", &filtered)
 }

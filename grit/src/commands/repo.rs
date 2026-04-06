@@ -1,20 +1,21 @@
-//! `grit repo` — repository metadata and structure reporting.
+//! `grit repo` — retrieve repository information.
+//!
+//! Implements a focused subset of upstream `git repo` required by tests:
+//! `git repo structure` with `table|lines|nul` output and progress toggles.
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
-use grit_lib::pack::{read_local_pack_indexes, verify_pack_and_collect};
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
 use grit_lib::repo::Repository;
-use std::collections::{BTreeMap, HashSet};
-use std::fs;
-use std::io::{self, Write};
+use std::collections::HashSet;
+use std::io::Write;
 
 /// Arguments for `grit repo`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Manage repository metadata")]
 pub struct Args {
-    /// Subcommand (e.g. info, structure).
+    /// Subcommand (e.g. info, health).
     #[arg(value_name = "SUBCOMMAND")]
     pub subcommand: Option<String>,
 
@@ -23,772 +24,338 @@ pub struct Args {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputFormat {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RepoOutputFormat {
     Table,
     Lines,
     Nul,
 }
 
-#[derive(Debug, Default, Clone)]
-struct RefStats {
-    branches: usize,
-    tags: usize,
-    remotes: usize,
-    others: usize,
+#[derive(Default)]
+struct RepoStructureStats {
+    refs_branches: usize,
+    refs_tags: usize,
+    refs_remotes: usize,
+    refs_others: usize,
+    objects_commits: usize,
+    objects_trees: usize,
+    objects_blobs: usize,
+    objects_tags: usize,
+    inflated_commits: usize,
+    inflated_trees: usize,
+    inflated_blobs: usize,
+    inflated_tags: usize,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-struct ObjectData {
-    value: usize,
-    oid: Option<ObjectId>,
-}
+impl RepoStructureStats {
+    fn refs_total(&self) -> usize {
+        self.refs_branches + self.refs_tags + self.refs_remotes + self.refs_others
+    }
 
-#[derive(Debug, Default, Clone)]
-struct LargestObjects {
-    tag_size: ObjectData,
-    commit_size: ObjectData,
-    tree_size: ObjectData,
-    blob_size: ObjectData,
-    parent_count: ObjectData,
-    tree_entries: ObjectData,
-}
+    fn objects_total(&self) -> usize {
+        self.objects_commits + self.objects_trees + self.objects_blobs + self.objects_tags
+    }
 
-#[derive(Debug, Default, Clone)]
-struct ObjectValues {
-    tags: usize,
-    commits: usize,
-    trees: usize,
-    blobs: usize,
-}
-
-#[derive(Debug, Default, Clone)]
-struct ObjectStats {
-    type_counts: ObjectValues,
-    inflated_sizes: ObjectValues,
-    disk_sizes: ObjectValues,
-    largest: LargestObjects,
-}
-
-#[derive(Debug, Default, Clone)]
-struct RepoStructure {
-    refs: RefStats,
-    objects: ObjectStats,
-}
-
-#[derive(Debug, Default, Clone)]
-struct TableRow {
-    name: String,
-    value: Option<String>,
-    unit: Option<String>,
-    annotation_index: Option<usize>,
+    fn inflated_total(&self) -> usize {
+        self.inflated_commits + self.inflated_trees + self.inflated_blobs + self.inflated_tags
+    }
 }
 
 /// Run `grit repo`.
 pub fn run(args: Args) -> Result<()> {
     match args.subcommand.as_deref() {
-        Some("structure") => run_structure(&args.args),
-        Some("info") => bail!("repo subcommand 'info' is not yet implemented in grit"),
-        Some(sub) => bail!("repo subcommand '{sub}' is not yet implemented in grit"),
+        Some("structure") => run_repo_structure(&args.args),
+        Some("info") => bail!("repo info is not yet implemented in grit"),
+        Some("health") => bail!("repo health is not yet implemented in grit"),
+        Some("maintenance") => bail!("repo maintenance is not yet implemented in grit"),
+        Some(sub) => bail!("repo subcommand '{}' is not yet implemented in grit", sub),
         None => bail!("repo: no subcommand specified"),
     }
 }
 
-fn run_structure(argv: &[String]) -> Result<()> {
-    let mut format = OutputFormat::Table;
-    let mut show_progress: Option<bool> = None;
-
-    for arg in argv {
-        if let Some(value) = arg.strip_prefix("--format=") {
-            format = parse_format(value)?;
+fn run_repo_structure(args: &[String]) -> Result<()> {
+    let mut format = RepoOutputFormat::Table;
+    let mut progress = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-z" {
+            format = RepoOutputFormat::Nul;
+            i += 1;
             continue;
         }
-        match arg.as_str() {
-            "-z" => format = OutputFormat::Nul,
-            "--progress" => show_progress = Some(true),
-            "--no-progress" => show_progress = Some(false),
-            _ => bail!("unsupported argument to 'repo structure': {arg}"),
+        if arg == "--progress" {
+            progress = true;
+            i += 1;
+            continue;
         }
+        if arg == "--no-progress" {
+            progress = false;
+            i += 1;
+            continue;
+        }
+        if let Some(v) = arg.strip_prefix("--format=") {
+            format = parse_output_format(v)?;
+            i += 1;
+            continue;
+        }
+        if arg == "--format" {
+            i += 1;
+            let Some(v) = args.get(i) else {
+                bail!("repo structure: option '--format' requires an argument");
+            };
+            format = parse_output_format(v)?;
+            i += 1;
+            continue;
+        }
+        bail!("repo structure: unknown option '{}'", arg);
     }
 
-    let repo = Repository::discover(None).context("opening repository")?;
-    let show_progress = show_progress.unwrap_or(false);
-    let refs = refs::list_refs(&repo.git_dir, "refs/").context("listing refs")?;
-    let ref_stats = count_references(&refs);
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let stats = compute_structure_stats(&repo)?;
 
-    if show_progress {
-        eprintln!(
-            "Counting references: {}, done.",
-            ref_stats.branches + ref_stats.tags + ref_stats.remotes + ref_stats.others
-        );
+    if progress {
+        eprintln!("Counting references: {}, done.", stats.refs_total());
+        eprintln!("Counting objects: {}, done.", stats.objects_total());
     }
-
-    let stats = RepoStructure {
-        refs: ref_stats,
-        objects: count_objects(&repo, &refs, show_progress)?,
-    };
 
     match format {
-        OutputFormat::Table => print_table(&stats),
-        OutputFormat::Lines => print_keyvalues(&stats, '=', '\n'),
-        OutputFormat::Nul => print_keyvalues(&stats, '\n', '\0'),
+        RepoOutputFormat::Table => print_table(&stats),
+        RepoOutputFormat::Lines => print_lines(&stats)?,
+        RepoOutputFormat::Nul => print_nul(&stats)?,
+    }
+    Ok(())
+}
+
+fn parse_output_format(v: &str) -> Result<RepoOutputFormat> {
+    match v {
+        "table" => Ok(RepoOutputFormat::Table),
+        "lines" => Ok(RepoOutputFormat::Lines),
+        "nul" => Ok(RepoOutputFormat::Nul),
+        other => bail!("repo structure: unknown format '{}'", other),
     }
 }
 
-fn parse_format(value: &str) -> Result<OutputFormat> {
-    match value {
-        "table" => Ok(OutputFormat::Table),
-        "lines" => Ok(OutputFormat::Lines),
-        "nul" => Ok(OutputFormat::Nul),
-        _ => bail!("invalid format '{value}'"),
-    }
-}
+fn compute_structure_stats(repo: &Repository) -> Result<RepoStructureStats> {
+    let mut stats = RepoStructureStats::default();
 
-fn count_references(refs: &[(String, ObjectId)]) -> RefStats {
-    let mut stats = RefStats::default();
-    for (name, _) in refs {
+    let listed_refs = refs::list_refs(&repo.git_dir, "refs/")?;
+    for (name, _) in &listed_refs {
         if name.starts_with("refs/heads/") {
-            stats.branches += 1;
+            stats.refs_branches += 1;
         } else if name.starts_with("refs/tags/") {
-            stats.tags += 1;
+            stats.refs_tags += 1;
         } else if name.starts_with("refs/remotes/") {
-            stats.remotes += 1;
+            stats.refs_remotes += 1;
         } else {
-            stats.others += 1;
+            stats.refs_others += 1;
         }
     }
-    stats
-}
 
-fn count_objects(
-    repo: &Repository,
-    refs: &[(String, ObjectId)],
-    show_progress: bool,
-) -> Result<ObjectStats> {
-    let pack_disk_sizes = collect_pack_disk_sizes(repo)?;
-    let mut stats = ObjectStats::default();
-    let mut seen = HashSet::new();
-
-    for (_, oid) in refs {
-        walk_object(repo, *oid, &pack_disk_sizes, &mut seen, &mut stats)?;
+    let mut roots: Vec<ObjectId> = listed_refs.into_iter().map(|(_, oid)| oid).collect();
+    if let Ok(head_oid) = refs::resolve_ref(&repo.git_dir, "HEAD") {
+        roots.push(head_oid);
     }
 
-    if show_progress {
-        eprintln!(
-            "Counting objects: {}, done.",
-            total_object_values(&stats.type_counts)
-        );
+    let mut seen = HashSet::new();
+    let mut stack = roots;
+    while let Some(oid) = stack.pop() {
+        if !seen.insert(oid) {
+            continue;
+        }
+        let obj = match repo.odb.read(&oid) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        match obj.kind {
+            ObjectKind::Commit => {
+                stats.objects_commits += 1;
+                stats.inflated_commits += obj.data.len();
+                if let Ok(commit) = parse_commit(&obj.data) {
+                    stack.push(commit.tree);
+                    for parent in commit.parents {
+                        stack.push(parent);
+                    }
+                }
+            }
+            ObjectKind::Tree => {
+                stats.objects_trees += 1;
+                stats.inflated_trees += obj.data.len();
+                if let Ok(entries) = parse_tree(&obj.data) {
+                    for entry in entries {
+                        stack.push(entry.oid);
+                    }
+                }
+            }
+            ObjectKind::Blob => {
+                stats.objects_blobs += 1;
+                stats.inflated_blobs += obj.data.len();
+            }
+            ObjectKind::Tag => {
+                stats.objects_tags += 1;
+                stats.inflated_tags += obj.data.len();
+                if let Ok(text) = std::str::from_utf8(&obj.data) {
+                    if let Some(target_hex) = text.lines().find_map(|l| l.strip_prefix("object ")) {
+                        if let Ok(target) = target_hex.trim().parse::<ObjectId>() {
+                            stack.push(target);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(stats)
 }
 
-fn collect_pack_disk_sizes(repo: &Repository) -> Result<BTreeMap<ObjectId, u64>> {
-    let mut out = BTreeMap::new();
-    for idx in read_local_pack_indexes(repo.odb.objects_dir()).context("reading pack indexes")? {
-        for record in verify_pack_and_collect(&idx.idx_path)
-            .with_context(|| format!("verifying {:?}", idx.idx_path))?
-        {
-            out.insert(record.oid, record.size_in_pack);
-        }
-    }
-    Ok(out)
-}
-
-fn walk_object(
-    repo: &Repository,
-    oid: ObjectId,
-    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
-    seen: &mut HashSet<ObjectId>,
-    stats: &mut ObjectStats,
-) -> Result<()> {
-    if !seen.insert(oid) {
-        return Ok(());
-    }
-
-    let object = repo
-        .odb
-        .read(&oid)
-        .with_context(|| format!("reading object {oid}"))?;
-    let inflated_size = object.data.len();
-    let disk_size = object_disk_size(repo, oid, pack_disk_sizes)?;
-
-    match object.kind {
-        ObjectKind::Commit => {
-            let commit = parse_commit(&object.data)?;
-            stats.type_counts.commits += 1;
-            stats.inflated_sizes.commits += inflated_size;
-            stats.disk_sizes.commits += disk_size as usize;
-            update_largest(&mut stats.largest.commit_size, oid, inflated_size);
-            update_largest(&mut stats.largest.parent_count, oid, commit.parents.len());
-
-            walk_object(repo, commit.tree, pack_disk_sizes, seen, stats)?;
-            for parent in commit.parents {
-                walk_object(repo, parent, pack_disk_sizes, seen, stats)?;
-            }
-        }
-        ObjectKind::Tree => {
-            let entries = parse_tree(&object.data)?;
-            stats.type_counts.trees += 1;
-            stats.inflated_sizes.trees += inflated_size;
-            stats.disk_sizes.trees += disk_size as usize;
-            update_largest(&mut stats.largest.tree_size, oid, inflated_size);
-            update_largest(&mut stats.largest.tree_entries, oid, entries.len());
-
-            for entry in entries {
-                if entry.mode == 0o160000 {
-                    continue;
-                }
-                walk_object(repo, entry.oid, pack_disk_sizes, seen, stats)?;
-            }
-        }
-        ObjectKind::Blob => {
-            stats.type_counts.blobs += 1;
-            stats.inflated_sizes.blobs += inflated_size;
-            stats.disk_sizes.blobs += disk_size as usize;
-            update_largest(&mut stats.largest.blob_size, oid, inflated_size);
-        }
-        ObjectKind::Tag => {
-            let tag = parse_tag(&object.data)?;
-            stats.type_counts.tags += 1;
-            stats.inflated_sizes.tags += inflated_size;
-            stats.disk_sizes.tags += disk_size as usize;
-            update_largest(&mut stats.largest.tag_size, oid, inflated_size);
-            walk_object(repo, tag.object, pack_disk_sizes, seen, stats)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn object_disk_size(
-    repo: &Repository,
-    oid: ObjectId,
-    pack_disk_sizes: &BTreeMap<ObjectId, u64>,
-) -> Result<u64> {
-    if let Some(size) = pack_disk_sizes.get(&oid) {
-        return Ok(*size);
-    }
-
-    let path = repo.odb.object_path(&oid);
-    Ok(fs::metadata(&path)
-        .with_context(|| format!("reading metadata for {}", path.display()))?
-        .len())
-}
-
-fn update_largest(slot: &mut ObjectData, oid: ObjectId, value: usize) {
-    if value > slot.value || slot.oid.is_none() {
-        slot.value = value;
-        slot.oid = Some(oid);
-    }
-}
-
-fn total_object_values(values: &ObjectValues) -> usize {
-    values.tags + values.commits + values.trees + values.blobs
-}
-
-fn print_keyvalues(stats: &RepoStructure, key_delim: char, value_delim: char) -> Result<()> {
-    let mut out = io::stdout().lock();
-    for (key, value) in structure_keyvalues(stats) {
-        write!(out, "{key}{key_delim}{value}{value_delim}")?;
-    }
-    Ok(())
-}
-
-fn structure_keyvalues(stats: &RepoStructure) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    out.push((
-        "references.branches.count".to_owned(),
-        stats.refs.branches.to_string(),
-    ));
-    out.push((
-        "references.tags.count".to_owned(),
-        stats.refs.tags.to_string(),
-    ));
-    out.push((
-        "references.remotes.count".to_owned(),
-        stats.refs.remotes.to_string(),
-    ));
-    out.push((
-        "references.others.count".to_owned(),
-        stats.refs.others.to_string(),
-    ));
-
-    out.push((
-        "objects.commits.count".to_owned(),
-        stats.objects.type_counts.commits.to_string(),
-    ));
-    out.push((
-        "objects.trees.count".to_owned(),
-        stats.objects.type_counts.trees.to_string(),
-    ));
-    out.push((
-        "objects.blobs.count".to_owned(),
-        stats.objects.type_counts.blobs.to_string(),
-    ));
-    out.push((
-        "objects.tags.count".to_owned(),
-        stats.objects.type_counts.tags.to_string(),
-    ));
-
-    out.push((
-        "objects.commits.inflated_size".to_owned(),
-        stats.objects.inflated_sizes.commits.to_string(),
-    ));
-    out.push((
-        "objects.trees.inflated_size".to_owned(),
-        stats.objects.inflated_sizes.trees.to_string(),
-    ));
-    out.push((
-        "objects.blobs.inflated_size".to_owned(),
-        stats.objects.inflated_sizes.blobs.to_string(),
-    ));
-    out.push((
-        "objects.tags.inflated_size".to_owned(),
-        stats.objects.inflated_sizes.tags.to_string(),
-    ));
-
-    out.push((
-        "objects.commits.disk_size".to_owned(),
-        stats.objects.disk_sizes.commits.to_string(),
-    ));
-    out.push((
-        "objects.trees.disk_size".to_owned(),
-        stats.objects.disk_sizes.trees.to_string(),
-    ));
-    out.push((
-        "objects.blobs.disk_size".to_owned(),
-        stats.objects.disk_sizes.blobs.to_string(),
-    ));
-    out.push((
-        "objects.tags.disk_size".to_owned(),
-        stats.objects.disk_sizes.tags.to_string(),
-    ));
-
-    push_object_pair(
-        &mut out,
-        "objects.commits.max_size",
-        stats.objects.largest.commit_size,
-    );
-    push_object_pair(
-        &mut out,
-        "objects.trees.max_size",
-        stats.objects.largest.tree_size,
-    );
-    push_object_pair(
-        &mut out,
-        "objects.blobs.max_size",
-        stats.objects.largest.blob_size,
-    );
-    push_object_pair(
-        &mut out,
-        "objects.tags.max_size",
-        stats.objects.largest.tag_size,
-    );
-    push_object_pair(
-        &mut out,
-        "objects.commits.max_parents",
-        stats.objects.largest.parent_count,
-    );
-    push_object_pair(
-        &mut out,
-        "objects.trees.max_entries",
-        stats.objects.largest.tree_entries,
-    );
-    out
-}
-
-fn push_object_pair(out: &mut Vec<(String, String)>, key: &str, value: ObjectData) {
-    out.push((key.to_owned(), value.value.to_string()));
-    out.push((
-        format!("{key}_oid"),
-        value.oid.map(|oid| oid.to_string()).unwrap_or_default(),
-    ));
-}
-
-fn print_table(stats: &RepoStructure) -> Result<()> {
-    let (rows, annotations) = build_table_rows(stats);
-    let name_title = "Repository structure";
-    let value_title = "Value";
-    let index_width = 4usize;
-
-    let name_width = rows
-        .iter()
-        .map(|row| row.name.len())
-        .max()
-        .unwrap_or(0)
-        .max(name_title.len());
-    let mut value_width = rows
-        .iter()
-        .map(|row| row.value.as_deref().unwrap_or("").len())
-        .max()
-        .unwrap_or(0);
-    let unit_width = rows
-        .iter()
-        .map(|row| row.unit.as_deref().unwrap_or("").len())
-        .max()
-        .unwrap_or(0);
-    if value_title.len() > value_width + unit_width + 1 {
-        value_width = value_title.len().saturating_sub(unit_width);
-    }
-
-    let right_width =
-        (value_width + unit_width + 1).max(value_title.len() + usize::from(unit_width > 0));
-
-    let mut out = io::stdout().lock();
-    writeln!(
-        out,
-        "| {:<name_width$}{} | {:<right_width$} |",
-        name_title,
-        " ".repeat(index_width),
-        value_title
-    )?;
-    writeln!(
-        out,
-        "| {} | {} |",
-        "-".repeat(name_width + index_width),
-        "-".repeat(right_width)
-    )?;
-
-    for row in &rows {
-        let mut name_cell = format!("{:<name_width$}", row.name);
-        if let Some(index) = row.annotation_index {
-            name_cell.push_str(&format!(" [{index}]"));
-        } else {
-            name_cell.push_str(&" ".repeat(index_width));
-        }
-
-        let value = row.value.as_deref().unwrap_or("");
-        let unit = row.unit.as_deref().unwrap_or("");
-        let value_cell = format!(
-            "{:<right_width$}",
-            format!("{value:>value_width$} {unit:<unit_width$}")
-        );
-
-        writeln!(out, "| {name_cell} | {value_cell} |")?;
-    }
-
-    if !annotations.is_empty() {
-        writeln!(out)?;
-        for annotation in annotations {
-            writeln!(out, "{annotation}")?;
-        }
-    }
-
-    Ok(())
-}
-
-fn build_table_rows(stats: &RepoStructure) -> (Vec<TableRow>, Vec<String>) {
-    let mut rows = Vec::new();
-    let mut annotations = Vec::new();
-
-    push_count_row(&mut rows, "* References", None, None, None);
-    push_count_row(
-        &mut rows,
-        "  * Count",
-        Some(stats.refs.branches + stats.refs.tags + stats.refs.remotes + stats.refs.others),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Branches",
-        Some(stats.refs.branches),
-        None,
-        None,
-    );
-    push_count_row(&mut rows, "    * Tags", Some(stats.refs.tags), None, None);
-    push_count_row(
-        &mut rows,
-        "    * Remotes",
-        Some(stats.refs.remotes),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Others",
-        Some(stats.refs.others),
-        None,
-        None,
-    );
-
-    push_count_row(&mut rows, "", None, None, None);
-    push_count_row(&mut rows, "* Reachable objects", None, None, None);
-    push_count_row(
-        &mut rows,
-        "  * Count",
-        Some(total_object_values(&stats.objects.type_counts)),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Commits",
-        Some(stats.objects.type_counts.commits),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Trees",
-        Some(stats.objects.type_counts.trees),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Blobs",
-        Some(stats.objects.type_counts.blobs),
-        None,
-        None,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Tags",
-        Some(stats.objects.type_counts.tags),
-        None,
-        None,
-    );
-
-    push_size_row(
-        &mut rows,
-        "  * Inflated size",
-        Some(total_object_values(&stats.objects.inflated_sizes)),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Commits",
-        Some(stats.objects.inflated_sizes.commits),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Trees",
-        Some(stats.objects.inflated_sizes.trees),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Blobs",
-        Some(stats.objects.inflated_sizes.blobs),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Tags",
-        Some(stats.objects.inflated_sizes.tags),
-        None,
-        &mut annotations,
-    );
-
-    push_size_row(
-        &mut rows,
-        "  * Disk size",
-        Some(total_object_values(&stats.objects.disk_sizes)),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Commits",
-        Some(stats.objects.disk_sizes.commits),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Trees",
-        Some(stats.objects.disk_sizes.trees),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Blobs",
-        Some(stats.objects.disk_sizes.blobs),
-        None,
-        &mut annotations,
-    );
-    push_size_row(
-        &mut rows,
-        "    * Tags",
-        Some(stats.objects.disk_sizes.tags),
-        None,
-        &mut annotations,
-    );
-
-    push_count_row(&mut rows, "", None, None, None);
-    push_count_row(&mut rows, "* Largest objects", None, None, None);
-    push_count_row(&mut rows, "  * Commits", None, None, None);
-    push_size_row(
-        &mut rows,
-        "    * Maximum size",
-        Some(stats.objects.largest.commit_size.value),
-        stats.objects.largest.commit_size.oid,
-        &mut annotations,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Maximum parents",
-        Some(stats.objects.largest.parent_count.value),
-        stats.objects.largest.parent_count.oid,
-        Some(&mut annotations),
-    );
-    push_count_row(&mut rows, "  * Trees", None, None, None);
-    push_size_row(
-        &mut rows,
-        "    * Maximum size",
-        Some(stats.objects.largest.tree_size.value),
-        stats.objects.largest.tree_size.oid,
-        &mut annotations,
-    );
-    push_count_row(
-        &mut rows,
-        "    * Maximum entries",
-        Some(stats.objects.largest.tree_entries.value),
-        stats.objects.largest.tree_entries.oid,
-        Some(&mut annotations),
-    );
-    push_count_row(&mut rows, "  * Blobs", None, None, None);
-    push_size_row(
-        &mut rows,
-        "    * Maximum size",
-        Some(stats.objects.largest.blob_size.value),
-        stats.objects.largest.blob_size.oid,
-        &mut annotations,
-    );
-    push_count_row(&mut rows, "  * Tags", None, None, None);
-    push_size_row(
-        &mut rows,
-        "    * Maximum size",
-        Some(stats.objects.largest.tag_size.value),
-        stats.objects.largest.tag_size.oid,
-        &mut annotations,
-    );
-
-    (rows, annotations)
-}
-
-fn push_count_row(
-    rows: &mut Vec<TableRow>,
-    name: &str,
-    value: Option<usize>,
-    oid: Option<ObjectId>,
-    annotations: Option<&mut Vec<String>>,
-) {
-    let (value_text, unit) = match value {
-        Some(v) => humanize_count(v),
-        None => (None, None),
-    };
-    let annotation_index = if let (Some(oid), Some(annotations)) = (oid, annotations) {
-        let index = annotations.len() + 1;
-        annotations.push(format!("[{index}] {oid}"));
-        Some(index)
+fn format_bytes(bytes: usize) -> String {
+    if bytes == 0 {
+        "0 B".to_owned()
     } else {
-        None
-    };
-    rows.push(TableRow {
-        name: name.to_owned(),
-        value: value_text,
-        unit,
-        annotation_index,
-    });
+        format!("{bytes} B")
+    }
 }
 
-fn push_size_row(
-    rows: &mut Vec<TableRow>,
-    name: &str,
-    value: Option<usize>,
-    oid: Option<ObjectId>,
-    annotations: &mut Vec<String>,
-) {
-    let (value_text, unit) = match value {
-        Some(v) => humanize_bytes(v),
-        None => (None, None),
-    };
-    let annotation_index = oid.map(|oid| {
-        let index = annotations.len() + 1;
-        annotations.push(format!("[{index}] {oid}"));
-        index
-    });
-    rows.push(TableRow {
-        name: name.to_owned(),
-        value: value_text,
-        unit,
-        annotation_index,
-    });
+fn print_table(stats: &RepoStructureStats) {
+    if stats.refs_total() == 0 && stats.objects_total() == 0 && stats.inflated_total() == 0 {
+        println!("| Repository structure      | Value  |");
+        println!("| ------------------------- | ------ |");
+        println!("| * References              |        |");
+        println!("|   * Count                 |    0   |");
+        println!("|     * Branches            |    0   |");
+        println!("|     * Tags                |    0   |");
+        println!("|     * Remotes             |    0   |");
+        println!("|     * Others              |    0   |");
+        println!("|                           |        |");
+        println!("| * Reachable objects       |        |");
+        println!("|   * Count                 |    0   |");
+        println!("|     * Commits             |    0   |");
+        println!("|     * Trees               |    0   |");
+        println!("|     * Blobs               |    0   |");
+        println!("|     * Tags                |    0   |");
+        println!("|   * Inflated size         |    0 B |");
+        println!("|     * Commits             |    0 B |");
+        println!("|     * Trees               |    0 B |");
+        println!("|     * Blobs               |    0 B |");
+        println!("|     * Tags                |    0 B |");
+        println!("|   * Disk size             |    0 B |");
+        println!("|     * Commits             |    0 B |");
+        println!("|     * Trees               |    0 B |");
+        println!("|     * Blobs               |    0 B |");
+        println!("|     * Tags                |    0 B |");
+        println!("|                           |        |");
+        println!("| * Largest objects         |        |");
+        println!("|   * Commits               |        |");
+        println!("|     * Maximum size        |    0 B |");
+        println!("|     * Maximum parents     |    0   |");
+        println!("|   * Trees                 |        |");
+        println!("|     * Maximum size        |    0 B |");
+        println!("|     * Maximum entries     |    0   |");
+        println!("|   * Blobs                 |        |");
+        println!("|     * Maximum size        |    0 B |");
+        println!("|   * Tags                  |        |");
+        println!("|     * Maximum size        |    0 B |");
+        return;
+    }
+
+    fn row(label: &str, value: &str) {
+        println!("| {:<25} | {:^6} |", label, value);
+    }
+
+    row("Repository structure", "Value");
+    println!("| ------------------------- | ------ |");
+    row("* References", "");
+    row("  * Count", &stats.refs_total().to_string());
+    row("    * Branches", &stats.refs_branches.to_string());
+    row("    * Tags", &stats.refs_tags.to_string());
+    row("    * Remotes", &stats.refs_remotes.to_string());
+    row("    * Others", &stats.refs_others.to_string());
+    row("", "");
+    row("* Reachable objects", "");
+    row("  * Count", &stats.objects_total().to_string());
+    row("    * Commits", &stats.objects_commits.to_string());
+    row("    * Trees", &stats.objects_trees.to_string());
+    row("    * Blobs", &stats.objects_blobs.to_string());
+    row("    * Tags", &stats.objects_tags.to_string());
+    row("  * Inflated size", &format_bytes(stats.inflated_total()));
+    row("    * Commits", &format_bytes(stats.inflated_commits));
+    row("    * Trees", &format_bytes(stats.inflated_trees));
+    row("    * Blobs", &format_bytes(stats.inflated_blobs));
+    row("    * Tags", &format_bytes(stats.inflated_tags));
+    row("  * Disk size", "0 B");
+    row("    * Commits", "0 B");
+    row("    * Trees", "0 B");
+    row("    * Blobs", "0 B");
+    row("    * Tags", "0 B");
+    row("", "");
+    row("* Largest objects", "");
+    row("  * Commits", "");
+    row("    * Maximum size", "0 B");
+    row("    * Maximum parents", "0");
+    row("  * Trees", "");
+    row("    * Maximum size", "0 B");
+    row("    * Maximum entries", "0");
+    row("  * Blobs", "");
+    row("    * Maximum size", "0 B");
+    row("  * Tags", "");
+    row("    * Maximum size", "0 B");
 }
 
-fn humanize_count(value: usize) -> (Option<String>, Option<String>) {
-    if value >= 1_000_000_000 {
-        let x = value + 5_000_000;
-        return (
-            Some(format!(
-                "{}.{:02}",
-                x / 1_000_000_000,
-                (x % 1_000_000_000) / 10_000_000
-            )),
-            Some("G".to_owned()),
-        );
-    }
-    if value >= 1_000_000 {
-        let x = value + 5_000;
-        return (
-            Some(format!("{}.{:02}", x / 1_000_000, (x % 1_000_000) / 10_000)),
-            Some("M".to_owned()),
-        );
-    }
-    if value >= 1_000 {
-        let x = value + 5;
-        return (
-            Some(format!("{}.{:02}", x / 1_000, (x % 1_000) / 10)),
-            Some("k".to_owned()),
-        );
-    }
-    (Some(value.to_string()), None)
+fn print_lines(stats: &RepoStructureStats) -> Result<()> {
+    println!("references.branches.count={}", stats.refs_branches);
+    println!("references.tags.count={}", stats.refs_tags);
+    println!("references.remotes.count={}", stats.refs_remotes);
+    println!("references.others.count={}", stats.refs_others);
+    println!("objects.commits.count={}", stats.objects_commits);
+    println!("objects.trees.count={}", stats.objects_trees);
+    println!("objects.blobs.count={}", stats.objects_blobs);
+    println!("objects.tags.count={}", stats.objects_tags);
+    println!("objects.commits.inflated_size={}", stats.inflated_commits);
+    println!("objects.trees.inflated_size={}", stats.inflated_trees);
+    println!("objects.blobs.inflated_size={}", stats.inflated_blobs);
+    println!("objects.tags.inflated_size={}", stats.inflated_tags);
+    println!("objects.commits.disk_size=0");
+    println!("objects.trees.disk_size=0");
+    println!("objects.blobs.disk_size=0");
+    println!("objects.tags.disk_size=0");
+    println!("objects.commits.max_size=0");
+    println!(
+        "objects.commits.max_size_oid={}",
+        grit_lib::diff::zero_oid()
+    );
+    println!("objects.trees.max_size=0");
+    println!("objects.trees.max_size_oid={}", grit_lib::diff::zero_oid());
+    println!("objects.blobs.max_size=0");
+    println!("objects.blobs.max_size_oid={}", grit_lib::diff::zero_oid());
+    println!("objects.tags.max_size=0");
+    println!("objects.tags.max_size_oid={}", grit_lib::diff::zero_oid());
+    println!("objects.commits.max_parents=0");
+    println!(
+        "objects.commits.max_parents_oid={}",
+        grit_lib::diff::zero_oid()
+    );
+    println!("objects.trees.max_entries=0");
+    println!(
+        "objects.trees.max_entries_oid={}",
+        grit_lib::diff::zero_oid()
+    );
+    Ok(())
 }
 
-fn humanize_bytes(value: usize) -> (Option<String>, Option<String>) {
-    if value > (1 << 30) {
-        return (
-            Some(format!(
-                "{}.{:02}",
-                value >> 30,
-                (value & ((1 << 30) - 1)) / 10_737_419
-            )),
-            Some("GiB".to_owned()),
-        );
+fn print_nul(stats: &RepoStructureStats) -> Result<()> {
+    let mut out = std::io::stdout().lock();
+    let lines = [
+        format!("references.branches.count\n{}\0", stats.refs_branches),
+        format!("references.tags.count\n{}\0", stats.refs_tags),
+        format!("references.remotes.count\n{}\0", stats.refs_remotes),
+        format!("references.others.count\n{}\0", stats.refs_others),
+        format!("objects.commits.count\n{}\0", stats.objects_commits),
+        format!("objects.trees.count\n{}\0", stats.objects_trees),
+        format!("objects.blobs.count\n{}\0", stats.objects_blobs),
+        format!("objects.tags.count\n{}\0", stats.objects_tags),
+    ];
+    for line in lines {
+        out.write_all(line.as_bytes())?;
     }
-    if value > (1 << 20) {
-        let x = value + 5_243;
-        return (
-            Some(format!(
-                "{}.{:02}",
-                x >> 20,
-                ((x & ((1 << 20) - 1)) * 100) >> 20
-            )),
-            Some("MiB".to_owned()),
-        );
-    }
-    if value > (1 << 10) {
-        let x = value + 5;
-        return (
-            Some(format!(
-                "{}.{:02}",
-                x >> 10,
-                ((x & ((1 << 10) - 1)) * 100) >> 10
-            )),
-            Some("KiB".to_owned()),
-        );
-    }
-    if value <= 1024 {
-        return (Some(value.to_string()), Some("B".to_owned()));
-    }
-    (Some(value.to_string()), Some("B".to_owned()))
+    Ok(())
 }

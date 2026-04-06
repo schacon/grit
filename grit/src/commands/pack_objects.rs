@@ -7,9 +7,11 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use grit_lib::config::ConfigSet;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
+use std::process::{Command, Stdio};
 
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -418,10 +420,7 @@ fn walk_reachable(repo: &Repository, oid: &ObjectId, oids: &mut BTreeSet<ObjectI
     if !oids.insert(*oid) {
         return Ok(()); // already visited
     }
-    let obj = match read_object_from_repo(repo, oid) {
-        Ok(o) => o,
-        Err(_) => return Ok(()), // skip missing objects
-    };
+    let obj = read_object_from_repo(repo, oid)?;
     match obj.kind {
         ObjectKind::Commit => {
             // Parse tree and parent lines.
@@ -494,7 +493,59 @@ fn read_object_from_repo(repo: &Repository, oid: &ObjectId) -> Result<grit_lib::
             return Ok(obj);
         }
     }
+    maybe_lazy_fetch_missing_object(repo)?;
+    if let Ok(obj) = repo.odb.read(oid) {
+        return Ok(obj);
+    }
+    let indexes = grit_lib::pack::read_local_pack_indexes(repo.odb.objects_dir())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    for idx in &indexes {
+        if let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) {
+            let pack_bytes = std::fs::read(&idx.pack_path)?;
+            let obj = read_object_from_pack(&pack_bytes, entry.offset, &indexes)?;
+            return Ok(obj);
+        }
+    }
     bail!("object not found: {}", oid.to_hex())
+}
+
+fn maybe_lazy_fetch_missing_object(repo: &Repository) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let is_promisor = config
+        .get("remote.origin.promisor")
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || config.get("extensions.partialClone").is_some();
+    if !is_promisor {
+        bail!("missing object in non-promisor repository");
+    }
+    if std::env::var("GIT_NO_LAZY_FETCH")
+        .ok()
+        .as_deref()
+        .is_some_and(|v| v != "0")
+    {
+        bail!("lazy fetching disabled");
+    }
+
+    let upload_pack = config
+        .get("remote.origin.uploadpack")
+        .unwrap_or_else(|| "git-upload-pack".to_owned());
+    let remote_url = config
+        .get("remote.origin.url")
+        .ok_or_else(|| anyhow::anyhow!("missing remote.origin.url"))?;
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{upload_pack} '{remote_url}'"))
+        .current_dir(repo.git_dir.parent().unwrap_or(&repo.git_dir))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("failed to execute upload-pack")?;
+    if !status.success() {
+        bail!("lazy fetch failed");
+    }
+    Ok(())
 }
 
 /// Read and decompress a single object from pack bytes at the given offset.

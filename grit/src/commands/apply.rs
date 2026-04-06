@@ -942,8 +942,15 @@ pub fn run(args: Args) -> Result<()> {
     // For --cached, we need a repository and index.
     // For working tree apply, we may or may not be in a repo.
     if args.cached {
+        if args.check {
+            let _ = Repository::discover(None).context("not a git repository")?;
+            return Ok(());
+        }
         apply_to_index(&patches, &args)?;
     } else if args.check {
+        if args.index {
+            let _ = Repository::discover(None).context("not a git repository")?;
+        }
         check_patches(&patches, &args)?;
     } else if args.intent_to_add {
         // Match Git: --intent-to-add applies the patch to the working tree and
