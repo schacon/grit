@@ -6,19 +6,19 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    92 |
+| Completed   |    93 |
 | In progress |     0 |
-| Remaining   |   675 |
+| Remaining   |   674 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1014-read-tree-confusing` — 28/28 tests pass (normalized zero-width space test variable setup in the test harness to be locale-independent under `LC_ALL=C`, and hardened `read-tree` HFS-protection checks by normalizing path components with U+200C removed before case-insensitive `.git` equivalence checks so confusing Unicode dotgit variants are rejected while legitimate UTF-8 paths still pass when protection is disabled)
 - `t1416-ref-transaction-hooks` — 10/10 tests pass (fixed test-hook lifecycle semantics in the local harness so hooks created without `--setup` are cleaned up after each test via `test_when_finished`, preventing stale `reference-transaction` hooks from leaking into later tests and polluting hook output in queued `update-ref --stdin` symref transactions)
 - `t1403-show-ref` — 12/12 tests pass (extended the `test_commit` test helper to accept `--annotate` so setup creates annotated tags expected by upstream scripts; and fixed `show-ref -d` peeling to emit `^{} ` entries only for annotated tag refs by requiring `refs/tags/*` and peeling tag objects through nested tags while avoiding pseudo/branch refs)
 - `t1421-reflog-write` — 10/10 tests pass (implemented strict `reflog write` argument/validation compatibility: fully-qualified refname checks with root-ref allowance, full-length object-ID enforcement with Git-style error messages for abbreviated vs nonexistent OIDs, reflog message normalization to single-line whitespace, and `%gs` formatting for `reflog show`; fixed `test-tool` global `-C` handling so helper invocations like `test-tool -C <repo> ref-store ...` dispatch correctly; and aligned reflog-write identity resolution with upstream tests by honoring committer env for name/email while preserving test-harness date semantics and config fallback behavior)
 - `t1414-reflog-walk` — 12/12 tests pass (implemented merge-aware reflog commit messages so reflog subjects distinguish merge commits; taught checkout/update-ref reflog writers to respect test-controlled committer dates so reflog chronology is correct; enhanced `log -g` reflog walk with multi-ref interleaving by reflog entry timestamp, support for `--no-merges`/`--merges`/pathspec/date filters in reflog mode, and merge path filtering against the intersection of changed paths across all parents; and fixed `rev-list -g` compatibility for `--parents` output and empty-argument failure behavior)
 - `t1417-reflog-updateref` — 21/21 tests pass (fixed `reflog delete --updateref` head-update semantics for non-top deletions by selecting the nearest remaining pre-delete target, and tightened `reflog expire` argument handling to reject reflog-selector inputs like `HEAD@{1}` so it fails without modifying HEAD as upstream expects)
-- `t1014-read-tree-confusing` — 27/28 tests passing (hardened `read-tree` path-component validation for NTFS confusion cases by rejecting backslashes and `.git`-equivalent suffix/ADS names like `.git. ` and `.git...:stream`; remaining failure depends on harness Unicode variable setup for `${u200c}` case)
 - `t0614-reftable-fsck` — 7/7 tests pass (implemented reftable-aware `refs verify` checks covering main/worktree stacks with Git-compatible corruption diagnostics, ensured `init` honors default ref-format environment/config precedence used by upstream tests, and initialized per-worktree reftable stacks during `worktree add` so verification works immediately across linked worktrees)
 - `t1309-early-config` — 10/10 tests pass (added `test-tool config read_early_config` compatibility in `grit` and aligned early-config behavior with upstream: repository-only parsing path with fallback to non-repo config on incompatible repository format, while preserving invalid-config handling for expected-failure cases)
 - `t1406-submodule-ref-store` — 15/15 tests pass (extended `test-tool ref-store` backend handling to support `submodule:<path>` read-only stores and implemented missing API helpers used by upstream coverage: `for-each-ref`, `resolve-ref` with flags, `verify-ref`, `for-each-reflog`, reflog entry iteration, and `reflog-exists`, while preserving submodule write-operation rejection semantics)

@@ -95,12 +95,15 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         bail!("invalid path '.git'");
     }
 
-    // HFS / NTFS case-insensitive ".git" check
+    // HFS / NTFS case-insensitive ".git" checks.
     if (prot.protect_hfs || prot.protect_ntfs) && name.len() == 4 && name[0] == b'.' {
         let rest = &name[1..];
         if rest.eq_ignore_ascii_case(b"git") {
             bail!("invalid path '{}'", String::from_utf8_lossy(name));
         }
+    }
+    if prot.protect_hfs && hfs_equivalent_to_dotgit(name) {
+        bail!("invalid path '{}'", String::from_utf8_lossy(name));
     }
 
     // NTFS short-name check: "git~1" (case-insensitive)
@@ -142,6 +145,19 @@ fn ntfs_equivalent_to_dotgit(name: &[u8]) -> bool {
     }
 
     trimmed_len == 0
+}
+
+fn hfs_equivalent_to_dotgit(name: &[u8]) -> bool {
+    let Ok(path) = std::str::from_utf8(name) else {
+        return false;
+    };
+
+    let folded: String = path
+        .chars()
+        .filter(|ch| !matches!(*ch, '\u{200c}' | '\u{200d}'))
+        .flat_map(char::to_lowercase)
+        .collect();
+    folded == ".git"
 }
 
 /// Run `grit read-tree`.
