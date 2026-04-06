@@ -50,6 +50,10 @@ pub struct Args {
     #[arg(long = "empty")]
     pub empty: bool,
 
+    /// Per-directory ignore file name (e.g. .gitignore) for worktree safety checks.
+    #[arg(long = "exclude-per-directory", value_name = "GITIGNORE")]
+    pub exclude_per_directory: Option<String>,
+
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
 }
@@ -130,6 +134,11 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    // --exclude-per-directory requires -u
+    if args.exclude_per_directory.is_some() && !args.update {
+        bail!("--exclude-per-directory requires -u");
+    }
+
     let tree_oids: Vec<ObjectId> = args
         .trees
         .iter()
@@ -168,7 +177,8 @@ pub fn run(args: Args) -> Result<()> {
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
         new_index.sort();
         if !dry_run && args.update {
-            checkout_index_entries(&repo, &old_index, &new_index)?;
+            // Reset mode: no clobber check needed
+            checkout_index_entries(&repo, &old_index, &new_index, false)?;
         }
         if !dry_run {
             new_index.write(&index_path).context("writing index")?;
@@ -223,7 +233,8 @@ pub fn run(args: Args) -> Result<()> {
     apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
 
     if !dry_run && args.update {
-        checkout_index_entries(&repo, &old_index, &new_index)?;
+        let skip_ignored = args.exclude_per_directory.is_some();
+        checkout_index_entries(&repo, &old_index, &new_index, skip_ignored)?;
     }
     if !dry_run {
         new_index.write(&index_path).context("writing index")?;
@@ -802,7 +813,15 @@ fn sparse_glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Update working tree to match stage-0 entries in `new_index`.
-fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Index) -> Result<()> {
+///
+/// `skip_ignored`: when true, ignored files are exempt from the clobber check.
+/// Returns an error if untracked (non-ignored) working tree files would be clobbered.
+fn checkout_index_entries(
+    repo: &Repository,
+    old_index: &Index,
+    new_index: &Index,
+    skip_ignored: bool,
+) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
         None => return Ok(()),
@@ -828,6 +847,47 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         .filter(|e| e.stage() == 0 && e.skip_worktree())
         .map(|e| e.path.clone())
         .collect();
+
+    // Safety check: refuse to overwrite untracked files.
+    // A path is "untracked" if it: exists on disk, is NOT in old_stage0, and
+    // the new index wants to write something there.
+    // When skip_ignored=true, files matching .gitignore are exempt.
+    let mut ignore_matcher: Option<grit_lib::ignore::IgnoreMatcher> = if skip_ignored {
+        grit_lib::ignore::IgnoreMatcher::from_repository(repo).ok()
+    } else {
+        None
+    };
+
+    let mut clobber_errors: Vec<String> = Vec::new();
+    for entry in &new_index.entries {
+        if entry.stage() != 0 || entry.skip_worktree() {
+            continue;
+        }
+        let path = &entry.path;
+        // Only check paths that are newly added (not in old index)
+        if old_stage0.contains(path) {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(path).into_owned();
+        let abs = work_tree.join(&rel);
+        if abs.exists() || abs.is_symlink() {
+            // If skip_ignored and this file is ignored, allow clobbering it.
+            if let Some(ref mut matcher) = ignore_matcher {
+                if let Ok((ignored, _)) = matcher.check_path(repo, Some(old_index), &rel, false) {
+                    if ignored {
+                        continue;
+                    }
+                }
+            }
+            clobber_errors.push(rel);
+        }
+    }
+    if !clobber_errors.is_empty() {
+        bail!(
+            "error: Untracked working tree file(s) would be overwritten by merge: {}",
+            clobber_errors.join(", ")
+        );
+    }
 
     for old_path in old_stage0.difference(&new_stage0) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
