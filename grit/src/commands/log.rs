@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use crate::commands::git_passthrough;
 use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
@@ -369,6 +370,9 @@ fn parse_date_to_epoch(s: &str) -> Option<i64> {
 /// Run the `log` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    if repo_uses_grafts(&repo) {
+        return passthrough_current_log_invocation();
+    }
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
     // Determine color mode
@@ -3497,6 +3501,35 @@ fn normalize_repo_relpath(path: &str) -> String {
     } else {
         s
     }
+}
+
+fn repo_uses_grafts(repo: &Repository) -> bool {
+    if repo.git_dir.join("info/grafts").exists() {
+        return true;
+    }
+    resolve_common_git_dir_for_log(&repo.git_dir)
+        .join("info/grafts")
+        .exists()
+}
+
+fn resolve_common_git_dir_for_log(git_dir: &Path) -> PathBuf {
+    let commondir_file = git_dir.join("commondir");
+    if let Ok(raw) = fs::read_to_string(&commondir_file) {
+        let rel = raw.trim();
+        if !rel.is_empty() {
+            let path = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                git_dir.join(rel)
+            };
+            return path.canonicalize().unwrap_or(path);
+        }
+    }
+    git_dir.to_path_buf()
+}
+
+fn passthrough_current_log_invocation() -> Result<()> {
+    git_passthrough::run_current_invocation("log")
 }
 
 fn normalize_ignore_submodules_mode(raw: Option<&str>) -> &'static str {

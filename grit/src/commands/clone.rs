@@ -260,6 +260,7 @@ pub fn run(args: Args) -> Result<()> {
     // Determine which branch to checkout (user override or source HEAD)
     let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
     let source_head_oid = grit_lib::refs::resolve_ref(&source.git_dir, "HEAD").ok();
+    let source_objects_dir = source.odb.objects_dir().to_path_buf();
     let initial_branch = head_branch
         .as_deref()
         .or(source_head_branch.as_deref())
@@ -275,16 +276,15 @@ pub fn run(args: Args) -> Result<()> {
     // Copy or share objects from source to destination
     if args.shared {
         // Write alternates file instead of copying objects
-        write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
+        write_alternates(&source_objects_dir, &dest.git_dir, &args.reference)
             .context("setting up alternates")?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        copy_objects(&source_objects_dir, &dest.git_dir).context("copying objects")?;
         // For local clones, also write alternates pointing to source
         // (like git clone --local)
         let alt_dir = dest.git_dir.join("objects/info");
         let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
+        if let Ok(abs) = source_objects_dir.canonicalize() {
             let alt_path = alt_dir.join("alternates");
             let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
         }
@@ -675,15 +675,16 @@ fn parse_gitfile_target(content: &str, base: &Path) -> Result<PathBuf> {
 /// Write an alternates file pointing to the source and reference repos' object stores.
 /// This is used for `--shared` (`-s`) clones: instead of copying objects, the clone
 /// uses alternates to borrow them from the source (and any `--reference` repos).
-fn write_alternates(src_git_dir: &Path, dst_git_dir: &Path, references: &[String]) -> Result<()> {
+fn write_alternates(src_objects_dir: &Path, dst_git_dir: &Path, references: &[String]) -> Result<()> {
     let dst_info = dst_git_dir.join("objects/info");
     fs::create_dir_all(&dst_info)?;
 
     let mut lines = Vec::new();
 
     // Add source repo's objects directory
-    let src_objects = src_git_dir.join("objects");
-    let src_objects_abs = src_objects.canonicalize().unwrap_or(src_objects);
+    let src_objects_abs = src_objects_dir
+        .canonicalize()
+        .unwrap_or_else(|_| src_objects_dir.to_path_buf());
     lines.push(src_objects_abs.to_string_lossy().to_string());
 
     // Add each --reference repo's objects directory
@@ -691,7 +692,7 @@ fn write_alternates(src_git_dir: &Path, dst_git_dir: &Path, references: &[String
         let ref_path = PathBuf::from(reference);
         let ref_repo = open_source_repo(&ref_path)
             .with_context(|| format!("cannot open reference repository '{}'", reference))?;
-        let ref_objects = ref_repo.git_dir.join("objects");
+        let ref_objects = ref_repo.odb.objects_dir().to_path_buf();
         let ref_objects_abs = ref_objects.canonicalize().unwrap_or(ref_objects);
         lines.push(ref_objects_abs.to_string_lossy().to_string());
     }
@@ -746,8 +747,7 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
 }
 
 /// Copy all objects (loose + packs) from source to destination.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
-    let src_objects = src_git_dir.join("objects");
+fn copy_objects(src_objects: &Path, dst_git_dir: &Path) -> Result<()> {
     let dst_objects = dst_git_dir.join("objects");
 
     // Copy loose objects

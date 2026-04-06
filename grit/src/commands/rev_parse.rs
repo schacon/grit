@@ -444,6 +444,11 @@ pub fn run(args: Args) -> Result<()> {
             Action::GitPath(path_arg) => {
                 if let Some(current) = repo.as_ref() {
                     let common = resolve_common_git_dir(&current.git_dir);
+                    let git_path_base = if git_path_is_worktree_private(path_arg) {
+                        current.git_dir.clone()
+                    } else {
+                        common.clone()
+                    };
                     let resolved = if path_arg == "hooks" || path_arg.starts_with("hooks/") {
                         let config =
                             grit_lib::config::ConfigSet::load(Some(&current.git_dir), true)?;
@@ -459,7 +464,7 @@ pub fn run(args: Args) -> Result<()> {
                             common.join(path_arg)
                         }
                     } else {
-                        common.join(path_arg)
+                        git_path_base.join(path_arg)
                     };
                     if path_format.as_deref() == Some("absolute") {
                         println!("{}", resolved.display());
@@ -946,6 +951,27 @@ fn resolve_common_git_dir(git_dir: &Path) -> PathBuf {
         }
     }
     git_dir.to_path_buf()
+}
+
+fn git_path_is_worktree_private(path_arg: &str) -> bool {
+    matches!(
+        path_arg,
+        "HEAD"
+            | "index"
+            | "ORIG_HEAD"
+            | "MERGE_HEAD"
+            | "CHERRY_PICK_HEAD"
+            | "REVERT_HEAD"
+            | "BISECT_LOG"
+            | "BISECT_NAMES"
+            | "BISECT_TERMS"
+            | "logs/HEAD"
+    ) || path_arg == "rebase-apply"
+        || path_arg.starts_with("rebase-apply/")
+        || path_arg == "rebase-merge"
+        || path_arg.starts_with("rebase-merge/")
+        || path_arg.starts_with("refs/bisect/")
+        || path_arg.starts_with("logs/refs/bisect/")
 }
 
 fn relative_path_from(from: &Path, to: &Path) -> String {

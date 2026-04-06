@@ -149,10 +149,22 @@ pub struct RepoState {
 /// Returns [`Error::Io`] if files cannot be read.
 pub fn resolve_head(git_dir: &Path) -> Result<HeadState> {
     let head_path = git_dir.join("HEAD");
-    let content = match fs::read_to_string(&head_path) {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HeadState::Invalid),
-        Err(e) => return Err(Error::Io(e)),
+    let content = match fs::read_link(&head_path) {
+        Ok(link_target) => {
+            let rendered = link_target.to_string_lossy();
+            if link_target.is_absolute() {
+                format!("ref: {rendered}")
+            } else if rendered.starts_with("refs/") {
+                format!("ref: {rendered}")
+            } else {
+                fs::read_to_string(&head_path).map_err(Error::Io)?
+            }
+        }
+        Err(_) => match fs::read_to_string(&head_path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HeadState::Invalid),
+            Err(e) => return Err(Error::Io(e)),
+        },
     };
 
     let trimmed = content.trim();

@@ -45,7 +45,7 @@ impl Repository {
             .canonicalize()
             .map_err(|_| Error::NotARepository(git_dir.display().to_string()))?;
 
-        if !git_dir.join("HEAD").exists() {
+        if fs::symlink_metadata(git_dir.join("HEAD")).is_err() {
             return Err(Error::NotARepository(git_dir.display().to_string()));
         }
 

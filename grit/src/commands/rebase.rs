@@ -110,6 +110,15 @@ pub fn run(mut args: Args) -> Result<()> {
         return passthrough_current_rebase_invocation();
     }
 
+    // Interactive rebase is delegated to system Git in this build. If we are
+    // asked to continue/skip/abort while that delegated state exists
+    // (`rebase-merge`), delegate those lifecycle operations as well.
+    if (args.abort || args.r#continue || args.skip)
+        && repo_for_cwd_guard.git_dir.join("rebase-merge").exists()
+    {
+        return passthrough_current_rebase_invocation();
+    }
+
     if args.abort {
         return do_abort();
     }
