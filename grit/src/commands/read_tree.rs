@@ -903,7 +903,7 @@ fn checkout_index_entries(
         .collect();
 
     // Safety check: refuse to overwrite untracked files.
-    // A path is "untracked" if it: exists on disk, is NOT in old_stage0, and
+    // A path is "untracked" if it: exists on disk, is NOT in old index at ANY stage, and
     // the new index wants to write something there.
     // When skip_ignored=true, files matching .gitignore are exempt.
     let mut ignore_matcher: Option<grit_lib::ignore::IgnoreMatcher> = if skip_ignored {
@@ -918,8 +918,16 @@ fn checkout_index_entries(
             continue;
         }
         let path = &entry.path;
-        // Only check paths that are newly added (not in old index)
-        if old_stage0.contains(path) {
+        // Only check paths that are newly added (not in old index at any stage).
+        // Files with conflict stages in old index are NOT untracked.
+        // Also skip if old index had entries UNDER this path (D/F: path was a dir).
+        let path_str = String::from_utf8_lossy(path);
+        let dir_prefix = format!("{path_str}/");
+        let in_old = old_index
+            .entries
+            .iter()
+            .any(|e| e.path == *path || String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
+        if in_old {
             continue;
         }
         let rel = String::from_utf8_lossy(path).into_owned();
