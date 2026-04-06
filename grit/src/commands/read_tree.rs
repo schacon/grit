@@ -840,6 +840,26 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         remove_empty_parent_dirs(&work_tree, &abs);
     }
 
+    // Also remove worktree files for paths that exist only as unmerged
+    // entries (stage 1/2/3) in the old index but have no entry in new index.
+    // This handles "ghost" conflict files left by a failed merge.
+    let old_unmerged: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for unmerged_path in &old_unmerged {
+        if !new_stage0.contains(unmerged_path) {
+            let rel = String::from_utf8_lossy(unmerged_path).into_owned();
+            let abs = work_tree.join(&rel);
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+                remove_empty_parent_dirs(&work_tree, &abs);
+            }
+        }
+    }
+
     // Remove files that now have skip-worktree set
     for skip_path in &new_skip_worktree {
         let rel = String::from_utf8_lossy(skip_path).into_owned();
@@ -862,6 +882,21 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         let abs_path = work_tree.join(&path_str);
 
         if let Some(parent) = abs_path.parent() {
+            // Remove any file/symlink blocking directory creation along the path.
+            // This happens e.g. when resetting from a commit where "df" is a file
+            // to one where "df" is a directory containing "df/file".
+            let mut check = work_tree.to_path_buf();
+            for component in parent
+                .strip_prefix(&work_tree)
+                .unwrap_or(parent)
+                .components()
+            {
+                check.push(component);
+                if check.is_file() || check.is_symlink() {
+                    let _ = std::fs::remove_file(&check);
+                    break;
+                }
+            }
             std::fs::create_dir_all(parent)?;
         }
 

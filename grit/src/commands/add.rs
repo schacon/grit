@@ -1030,6 +1030,12 @@ fn stage_gitlink(
         flags_extended: None,
         path: rel_path.as_bytes().to_vec(),
     };
+    // D/F conflict: when adding a file, remove any index entries that live
+    // "under" it as if it were a directory (e.g. adding "df" removes "df/file").
+    let dir_prefix = format!("{rel_path}/");
+    index
+        .entries
+        .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
     index.add_or_replace(entry);
 
     if args.verbose {
@@ -1084,6 +1090,11 @@ fn stage_file(
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
         };
+        // Remove any directory entries that conflict with this file path.
+        let dir_prefix = format!("{rel_path}/");
+        index
+            .entries
+            .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix));
         index.add_or_replace(entry);
         if args.verbose {
             println!("add '{rel_path}'");
@@ -1180,8 +1191,16 @@ fn stage_file(
     };
     let mut entry = entry_from_metadata(&meta, rel_path.as_bytes(), oid, final_mode);
     entry.mode = final_mode; // Ensure mode override sticks
-                             // Use stage_file which also clears conflict stages (1, 2, 3) for the same
-                             // path — this is how `git add` resolves merge/cherry-pick conflicts.
+
+    // D/F conflict: remove any index entries that live under this path as a
+    // directory prefix (e.g. adding "df" removes "df/file" from the index).
+    let dir_prefix_str = format!("{rel_path}/");
+    index
+        .entries
+        .retain(|e| !String::from_utf8_lossy(&e.path).starts_with(&dir_prefix_str));
+
+    // Use stage_file which also clears conflict stages (1, 2, 3) for the same
+    // path — this is how `git add` resolves merge/cherry-pick conflicts.
     index.stage_file(entry);
 
     if args.verbose {

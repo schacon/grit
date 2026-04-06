@@ -782,23 +782,19 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         None => bail!("this operation must be run in a work tree"),
     };
 
-    // Build index from the target tree and force-write all entries
+    let index_path = repo.index_path();
+    let old_index = Index::load(&index_path).unwrap_or_else(|_| Index::new());
+
+    // Build index from the target tree
     let new_entries = tree_to_flat_entries(repo, &target_tree, "")?;
     let mut new_index = Index::new();
     new_index.entries = new_entries;
     new_index.sort();
 
-    // Write every entry to the worktree (force overwrite)
-    for entry in &new_index.entries {
-        if entry.stage() != 0 {
-            continue;
-        }
-        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
-    }
+    // Clean up worktree: remove deleted/conflict files, write new/changed files.
+    checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, true)?;
 
     // Write the new index
-    let index_path = repo.index_path();
     new_index.write(&index_path).context("writing index")?;
 
     // Print current branch/commit info
@@ -2402,6 +2398,24 @@ fn checkout_index_to_worktree(
             let _ = std::fs::remove_dir_all(&abs);
         }
         remove_empty_parent_dirs(work_tree, &abs);
+    }
+
+    // Remove worktree files for unmerged entries in old that have no entry in new.
+    let old_unmerged: HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for path in &old_unmerged {
+        if !new_stage0.contains(path) {
+            let rel = String::from_utf8_lossy(path).into_owned();
+            let abs = work_tree.join(&rel);
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+                remove_empty_parent_dirs(work_tree, &abs);
+            }
+        }
     }
 
     // Write new/modified entries

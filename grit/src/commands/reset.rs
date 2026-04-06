@@ -889,6 +889,25 @@ fn checkout_index_to_worktree(
         remove_empty_parent_dirs(&work_tree, &abs);
     }
 
+    // Remove worktree files for paths that only have unmerged (conflict) entries
+    // in old index and no entry at all in the new index.
+    let old_unmerged_paths: std::collections::HashSet<Vec<u8>> = old_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() != 0)
+        .map(|e| e.path.clone())
+        .collect();
+    for path in &old_unmerged_paths {
+        if !new_stage0.contains(path) {
+            let rel = String::from_utf8_lossy(path).into_owned();
+            let abs = work_tree.join(&rel);
+            if abs.is_file() || abs.is_symlink() {
+                let _ = std::fs::remove_file(&abs);
+                remove_empty_parent_dirs(&work_tree, &abs);
+            }
+        }
+    }
+
     // Write all stage-0 entries from the new index.
     for entry in &mut new_index.entries {
         if entry.stage() != 0 {
