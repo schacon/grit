@@ -743,7 +743,7 @@ commit → check it off → move on.
 - [x] `t6113-rev-list-bitmap-filters` ████████████████████ 14/14 (0 left) — rev-list combining bitmaps and filters
 - [x] `t6436-merge-overwrite` ████████████████████ 18/18 (0 left) — git-merge
 
-- [ ] `t6003-rev-list-topo-order` ███████████░░░░░░░░░ 21/36 (15 left) — Tests git rev-list --topo-order functionality
+- [x] `t6003-rev-list-topo-order` ████████████████████ 36/36 (0 left) — Tests git rev-list --topo-order functionality
 - [ ] `t6601-path-walk` ░░░░░░░░░░░░░░░░░░░░ 0/15 (15 left) — direct path-walk API tests
 - [ ] `t6437-submodule-merge` █████░░░░░░░░░░░░░░░ 6/22 (16 left) — merging with submodules
 - [ ] `t6006-rev-list-format` ███████████████░░░░░ 63/80 (17 left) — git rev-list --pretty=format test

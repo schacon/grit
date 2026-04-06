@@ -85,6 +85,7 @@ pub fn run(args: Args) -> Result<()> {
                 "--simplify-by-decoration" => options.simplify_by_decoration = true,
                 "--topo-order" => options.ordering = OrderingMode::Topo,
                 "--date-order" => options.ordering = OrderingMode::Date,
+                "--author-date-order" => options.ordering = OrderingMode::AuthorDate,
                 "--reverse" => options.reverse = true,
                 "--count" => options.count = true,
                 "--parents" => {
@@ -167,6 +168,14 @@ pub fn run(args: Args) -> Result<()> {
                 _ if arg.starts_with("--skip=") => {
                     let value = arg.trim_start_matches("--skip=");
                     options.skip = parse_non_negative(value, "--skip")?;
+                }
+                _ if arg.starts_with("--max-age=") => {
+                    let value = arg.trim_start_matches("--max-age=");
+                    options.max_age = Some(parse_i64(value, "--max-age")?);
+                }
+                _ if arg.starts_with("--min-age=") => {
+                    let value = arg.trim_start_matches("--min-age=");
+                    options.min_age = Some(parse_i64(value, "--min-age")?);
                 }
                 _ if arg.starts_with("--format=") => {
                     let value = arg.trim_start_matches("--format=").to_owned();
@@ -884,6 +893,11 @@ fn parse_non_negative(text: &str, flag: &str) -> Result<usize> {
         return Ok(usize::MAX);
     }
     Ok(value as usize)
+}
+
+fn parse_i64(text: &str, flag: &str) -> Result<i64> {
+    text.parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("{flag}: '{text}' is not an integer"))
 }
 
 fn combine_object_filters(existing: Option<ObjectFilter>, next: ObjectFilter) -> ObjectFilter {

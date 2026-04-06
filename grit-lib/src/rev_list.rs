@@ -217,10 +217,12 @@ fn url_decode(s: &str) -> String {
 pub enum OrderingMode {
     /// Reverse-chronological by commit date.
     Default,
-    /// Topological ordering with date tie-breaks.
+    /// Topological ordering with stack-like parent traversal.
     Topo,
-    /// Date-order variant (same constraints as topo for this subset).
+    /// Topological ordering constrained by committer date.
     Date,
+    /// Topological ordering constrained by author date.
+    AuthorDate,
 }
 
 /// Parsed and normalized options for rev-list traversal.
@@ -246,6 +248,10 @@ pub struct RevListOptions {
     pub skip: usize,
     /// Optional maximum selected commits.
     pub max_count: Option<usize>,
+    /// Optional maximum age (unix timestamp); keep commits newer than or equal.
+    pub max_age: Option<i64>,
+    /// Optional minimum age (unix timestamp); keep commits older than or equal.
+    pub min_age: Option<i64>,
     /// Ordering strategy.
     pub ordering: OrderingMode,
     /// Reverse selected output order.
@@ -307,6 +313,8 @@ impl Default for RevListOptions {
             count: false,
             skip: 0,
             max_count: None,
+            max_age: None,
+            min_age: None,
             ordering: OrderingMode::Default,
             reverse: false,
             objects: false,
@@ -440,9 +448,21 @@ pub fn rev_list(
         });
     }
 
+    // Age filtering by committer timestamp (`--max-age/--min-age`).
+    if options.max_age.is_some() || options.min_age.is_some() {
+        included.retain(|oid| {
+            let ts = graph.committer_time(*oid);
+            let max_ok = options.max_age.is_none_or(|max_age| ts >= max_age);
+            let min_ok = options.min_age.is_none_or(|min_age| ts <= min_age);
+            max_ok && min_ok
+        });
+    }
+
     let mut ordered = match options.ordering {
         OrderingMode::Default => sort_by_commit_date_desc(&mut graph, &included, &discovery_order)?,
-        OrderingMode::Topo | OrderingMode::Date => topo_sort(&mut graph, &included)?,
+        OrderingMode::Topo => topo_sort(&mut graph, &included)?,
+        OrderingMode::Date => topo_sort_by_time(&mut graph, &included, false)?,
+        OrderingMode::AuthorDate => topo_sort_by_time(&mut graph, &included, true)?,
     };
 
     // Path filtering: keep only commits that modify given paths
@@ -1925,12 +1945,68 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
         }
     }
 
+    // Stack-based topo ordering: when a commit unlocks multiple parents, the
+    // last-listed parent is emitted first. This matches Git's `--topo-order`
+    // behavior for parent-order-sensitive histories.
+    let mut initial_ready: Vec<ObjectId> = child_count
+        .iter()
+        .filter_map(|(&oid, &count)| (count == 0).then_some(oid))
+        .collect();
+    initial_ready.sort_by(|a, b| {
+        graph
+            .committer_time(*a)
+            .cmp(&graph.committer_time(*b))
+            .then_with(|| a.cmp(b))
+    });
+    let mut ready = initial_ready;
+
+    let mut out = Vec::with_capacity(selected.len());
+    while let Some(oid) = ready.pop() {
+        out.push(oid);
+        for parent in graph.parents_of(oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            if let Some(count) = child_count.get_mut(&parent) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    ready.push(parent);
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn topo_sort_by_time(
+    graph: &mut CommitGraph<'_>,
+    selected: &HashSet<ObjectId>,
+    use_author_time: bool,
+) -> Result<Vec<ObjectId>> {
+    let mut child_count: HashMap<ObjectId, usize> = selected.iter().map(|&oid| (oid, 0)).collect();
+
+    for &oid in selected {
+        for parent in graph.parents_of(oid)? {
+            if !selected.contains(&parent) {
+                continue;
+            }
+            if let Some(count) = child_count.get_mut(&parent) {
+                *count += 1;
+            }
+        }
+    }
+
     let mut ready = BinaryHeap::new();
     for (&oid, &count) in &child_count {
         if count == 0 {
             ready.push(CommitDateKey {
                 oid,
-                date: graph.committer_time(oid),
+                date: if use_author_time {
+                    graph.author_time(oid)
+                } else {
+                    graph.committer_time(oid)
+                },
             });
         }
     }
@@ -1948,7 +2024,11 @@ fn topo_sort(graph: &mut CommitGraph<'_>, selected: &HashSet<ObjectId>) -> Resul
                 if *count == 0 {
                     ready.push(CommitDateKey {
                         oid: parent,
-                        date: graph.committer_time(parent),
+                        date: if use_author_time {
+                            graph.author_time(parent)
+                        } else {
+                            graph.committer_time(parent)
+                        },
                     });
                 }
             }
@@ -2204,6 +2284,7 @@ struct CommitGraph<'r> {
     first_parent_only: bool,
     parents: HashMap<ObjectId, Vec<ObjectId>>,
     committer_time: HashMap<ObjectId, i64>,
+    author_time: HashMap<ObjectId, i64>,
     shallow_boundaries: HashSet<ObjectId>,
     graft_parents: HashMap<ObjectId, Vec<ObjectId>>,
 }
@@ -2217,6 +2298,7 @@ impl<'r> CommitGraph<'r> {
             first_parent_only,
             parents: HashMap::new(),
             committer_time: HashMap::new(),
+            author_time: HashMap::new(),
             shallow_boundaries,
             graft_parents,
         }
@@ -2232,6 +2314,13 @@ impl<'r> CommitGraph<'r> {
             return 0;
         }
         self.committer_time.get(&oid).copied().unwrap_or(0)
+    }
+
+    fn author_time(&mut self, oid: ObjectId) -> i64 {
+        if self.populate(oid).is_err() {
+            return 0;
+        }
+        self.author_time.get(&oid).copied().unwrap_or(0)
     }
 
     fn populate(&mut self, oid: ObjectId) -> Result<()> {
@@ -2253,6 +2342,8 @@ impl<'r> CommitGraph<'r> {
         }
         self.committer_time
             .insert(oid, parse_signature_time(&commit.committer));
+        self.author_time
+            .insert(oid, parse_signature_time(&commit.author));
         self.parents.insert(oid, parents);
         Ok(())
     }

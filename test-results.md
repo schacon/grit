@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6003-rev-list-topo-order.sh`: 36/36 passing (direct validation after rev-list ordering/age-option updates: implemented stack-style `--topo-order` parent-release behavior, added `--author-date-order`, and added `--max-age`/`--min-age` timestamp filtering).
+- `./scripts/run-tests.sh t6003-rev-list-topo-order.sh`: 36/36 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (rev-list regression check after ordering/age-option updates).
+- `./scripts/run-tests.sh t6004-rev-list-path-optim.sh`: 7/7 passing (rev-list regression check after ordering/age-option updates).
+- `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (rev-list regression check after ordering/age-option updates).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6113-rev-list-bitmap-filters.sh`: 14/14 passing (direct validation after rev-list filter/bitmap compatibility fixes: added `--filter-provided-objects`, combined `--filter=` handling, `object:type=(tag|commit|tree|blob)` and `sparse:oid=` support, object-filter-aware bitmap fallback, and `--unpacked` object selection aligned with expected loose-object behavior under bitmap traversal cases).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6436-merge-overwrite.sh`: 18/18 passing (direct validation after merge overwrite safety fixes for staged re-added conflict paths, untracked leading-path blockers (`sub` vs `sub/f`), and unborn-branch preflight/state handling).
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (harness validation; file now fully passing and TSV updated).
