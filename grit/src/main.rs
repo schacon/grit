@@ -2349,23 +2349,28 @@ fn run_test_tool_chmtime(rest: &[String]) -> Result<()> {
         };
         // Use touch -t to set the mtime (format: [[CC]YY]MMDDhhmm[.ss])
         // Convert epoch to touch -d format
-        let ts = time::OffsetDateTime::from_unix_timestamp(new_mtime)
-            .map_err(|e| anyhow::anyhow!("chmtime: invalid timestamp {new_mtime}: {e}"))?;
-        let touch_fmt = format!(
-            "{}{:02}{:02}{:02}{:02}.{:02}",
-            ts.year(),
-            ts.month() as u8,
-            ts.day(),
-            ts.hour(),
-            ts.minute(),
-            ts.second()
-        );
-        let status = std::process::Command::new("touch")
-            .args(["-t", &touch_fmt, path])
+        // Use 'touch -m -d @<epoch>' to set mtime in UTC (avoids timezone issues)
+        // macOS supports: touch -m -t YYYYMMDDhhmm.ss but that's TZ-dependent.
+        // Use python or perl as fallback for reliable epoch setting.
+        let ts_str = new_mtime.to_string();
+        // Try touch with @epoch (works on Linux/BSD with GNU touch)
+        let ok = std::process::Command::new("touch")
+            .args(["-m", "-d", &format!("@{ts_str}"), path])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
-            .map_err(|e| anyhow::anyhow!("chmtime: touch failed: {e}"))?;
-        if !status.success() {
-            bail!("chmtime: touch returned error for '{path}'");
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            // Fallback: use Python
+            let py = format!("import os; os.utime('{path}', ({new_mtime}, {new_mtime}))");
+            let status = std::process::Command::new("python3")
+                .args(["-c", &py])
+                .status()
+                .map_err(|e| anyhow::anyhow!("chmtime: python3 failed: {e}"))?;
+            if !status.success() {
+                bail!("chmtime: could not set mtime for '{path}'");
+            }
         }
     }
     Ok(())

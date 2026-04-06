@@ -550,7 +550,8 @@ pub fn run(args: Args) -> Result<()> {
             args.ignore_missing,
         )?;
         index.write(&index_path).context("writing index")?;
-        if !uptodate {
+        // -q (quiet) suppresses the error exit; otherwise exit 1 if files need updating
+        if !uptodate && !args.quiet {
             std::process::exit(1);
         }
         return Ok(());
