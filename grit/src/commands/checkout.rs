@@ -695,6 +695,64 @@ fn force_create_and_switch_branch(
     force: bool,
 ) -> Result<()> {
     let branch_ref = format!("refs/heads/{name}");
+
+    // Check if branch is checked out in another worktree (including main)
+    {
+        let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
+        let worktrees_dir = common.join("worktrees");
+        // Check main worktree HEAD
+        if let Ok(main_head) = grit_lib::state::resolve_head(&common) {
+            if let grit_lib::state::HeadState::Branch { ref refname, .. } = main_head {
+                if *refname == branch_ref {
+                    let main_path = common.parent().unwrap_or(&common).to_path_buf();
+                    bail!(
+                        "fatal: '{}' is already used by worktree at '{}'",
+                        name,
+                        main_path.display()
+                    );
+                }
+            }
+        }
+        // Check linked worktrees
+        if worktrees_dir.is_dir() {
+            for entry in std::fs::read_dir(&worktrees_dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let admin = entry.path();
+                if !admin.is_dir() {
+                    continue;
+                }
+                // Skip current worktree
+                if admin.canonicalize().unwrap_or(admin.clone())
+                    == repo.git_dir.canonicalize().unwrap_or(repo.git_dir.clone())
+                {
+                    continue;
+                }
+                let wt_head = admin.join("HEAD");
+                if let Ok(content) = std::fs::read_to_string(&wt_head) {
+                    if let Some(refname) = content.trim().strip_prefix("ref: ") {
+                        if refname.trim() == branch_ref {
+                            let gitdir_file = admin.join("gitdir");
+                            let wt_path = if let Ok(raw) = std::fs::read_to_string(&gitdir_file) {
+                                let p = std::path::Path::new(raw.trim());
+                                p.parent().unwrap_or(p).to_string_lossy().to_string()
+                            } else {
+                                entry.file_name().to_string_lossy().to_string()
+                            };
+                            bail!(
+                                "fatal: '{}' is already used by worktree at '{}'",
+                                name,
+                                wt_path
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let branch_existed = refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok();
 
     // Resolve start point (default: HEAD)
