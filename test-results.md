@@ -4,6 +4,12 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6131-pathspec-icase.sh`: 9/9 passing (direct validation after fixing `:(icase)` resolution in subdirectories for both `log` and `ls-files --full-name` semantics).
+- `./scripts/run-tests.sh t6131-pathspec-icase.sh`: 9/9 passing (now fully passing).
+- `./scripts/run-tests.sh t6133-pathspec-rev-dwim.sh`: 6/6 passing (regression check after shared pathspec magic resolution updates).
+- `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (regression check after shared pathspec magic resolution updates).
+- `./scripts/run-tests.sh t6136-pathspec-in-bare.sh`: 3/3 passing (regression check after shared pathspec magic resolution updates).
+- `./scripts/run-tests.sh t3004-ls-files-basic.sh`: 6/6 passing (regression check after `ls-files` pathspec resolver updates).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6060-merge-index.sh`: 7/7 passing (direct validation after implementing `merge-index` option semantics/argument order, internal `git-merge-one-file` dispatch, `merge-one-file` index/worktree updates, `diff-files --diff-filter` filtering, and `rev-parse :path` support with `GIT_INDEX_FILE`).
 - `./scripts/run-tests.sh t6060-merge-index.sh`: 7/7 passing (now fully passing).
 - `./scripts/run-tests.sh t6427-diff3-conflict-markers.sh`: 9/9 passing (regression check after merge-index/merge-one-file/diff-files/rev-parse updates).

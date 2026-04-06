@@ -568,6 +568,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // Walk commits
     let mut combined_pathspecs = args.pathspecs.clone();
     combined_pathspecs.extend(implied_pathspecs.iter().cloned());
+    combined_pathspecs = resolve_effective_pathspecs(&repo, &combined_pathspecs)?;
 
     let effective_pathspecs = if args.follow {
         &[][..]
@@ -769,6 +770,99 @@ fn validate_pathspec_scope(repo: &Repository, pathspecs: &[String]) -> Result<()
     }
 
     Ok(())
+}
+
+/// Resolve pathspecs relative to current working directory inside the worktree.
+///
+/// This aligns pathspec matching semantics for commands invoked from
+/// subdirectories, including magic forms like `:(icase)bar`.
+fn resolve_effective_pathspecs(repo: &Repository, pathspecs: &[String]) -> Result<Vec<String>> {
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        return Ok(pathspecs.to_vec());
+    };
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let cwd_norm = normalize_path(&cwd);
+    let work_tree_norm = normalize_path(work_tree);
+    let cwd_rel = cwd_norm
+        .strip_prefix(&work_tree_norm)
+        .unwrap_or(Path::new(""));
+    let cwd_prefix = if cwd_rel.as_os_str().is_empty() {
+        String::new()
+    } else {
+        format!("{}/", cwd_rel.to_string_lossy())
+    };
+
+    let mut resolved = Vec::with_capacity(pathspecs.len());
+    for spec in pathspecs {
+        if spec.starts_with(":/") {
+            resolved.push(spec.clone());
+            continue;
+        }
+
+        if spec.starts_with(":(") {
+            if let Some(resolved_magic) = crate::pathspec::resolve_magic_pathspec(spec, &cwd_prefix)
+            {
+                resolved.push(resolved_magic);
+            } else {
+                resolved.push(spec.clone());
+            }
+            continue;
+        }
+
+        if spec.starts_with(':') {
+            resolved.push(spec.clone());
+            continue;
+        }
+
+        let as_path = Path::new(spec);
+        if as_path.is_absolute() {
+            let candidate = normalize_path(as_path);
+            if let Ok(rel) = candidate.strip_prefix(&work_tree_norm) {
+                resolved.push(normalize_relative_path_str(&rel.to_string_lossy()));
+            } else {
+                resolved.push(spec.clone());
+            }
+            continue;
+        }
+
+        resolved.push(resolve_pathspec_tail_with_prefix(spec, &cwd_prefix));
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_pathspec_tail_with_prefix(tail: &str, cwd_prefix: &str) -> String {
+    if tail.is_empty() {
+        return String::new();
+    }
+    if let Some(rooted) = tail.strip_prefix('/') {
+        return normalize_relative_path_str(rooted);
+    }
+    if cwd_prefix.is_empty() {
+        return normalize_relative_path_str(tail);
+    }
+    normalize_relative_path_str(&format!("{cwd_prefix}{tail}"))
+}
+
+fn normalize_relative_path_str(path: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::Normal(seg) => {
+                parts.push(seg.to_string_lossy().to_string());
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
 }
 
 /// Normalize a path lexically by removing `.` and resolving `..`.

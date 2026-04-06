@@ -94,6 +94,10 @@ pub struct Args {
     #[arg(long)]
     pub eol: bool,
 
+    /// Show paths relative to repository root.
+    #[arg(long = "full-name")]
+    pub full_name: bool,
+
     /// Change directory before listing files.
     #[arg(short = 'C', value_name = "DIR")]
     pub change_dir: Option<PathBuf>,
@@ -154,7 +158,7 @@ pub fn run(args: Args) -> Result<()> {
         .iter()
         .map(|p| resolve_pathspec(work_tree, &cwd, p))
         .collect::<Result<Vec<_>>>()?;
-    if pathspec_filter.is_empty() && !cwd_prefix.is_empty() {
+    if pathspec_filter.is_empty() && !cwd_prefix.is_empty() && !args.full_name {
         pathspec_filter.push(Pathspec::Literal(cwd_prefix.clone()));
     }
 
@@ -259,7 +263,11 @@ pub fn run(args: Args) -> Result<()> {
         };
 
         if args.eol {
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
+            let display = if args.full_name {
+                &entry.path[..]
+            } else {
+                display_path_from_cwd(&entry.path, &cwd_prefix)
+            };
             let name = String::from_utf8_lossy(display);
             let path_str = std::str::from_utf8(&entry.path).unwrap_or("");
 
@@ -308,7 +316,11 @@ pub fn run(args: Args) -> Result<()> {
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
             out.write_all(&[term])?;
         } else if show_stage {
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
+            let display = if args.full_name {
+                &entry.path[..]
+            } else {
+                display_path_from_cwd(&entry.path, &cwd_prefix)
+            };
             let name = String::from_utf8_lossy(display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
@@ -336,7 +348,11 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 last_dedup_path = Some(entry.path.clone());
             }
-            let display = display_path_from_cwd(&entry.path, &cwd_prefix);
+            let display = if args.full_name {
+                &entry.path[..]
+            } else {
+                display_path_from_cwd(&entry.path, &cwd_prefix)
+            };
             let name = String::from_utf8_lossy(display);
             let qname = maybe_quote(&name, use_nul);
             if let Some(t) = tag {
@@ -403,7 +419,11 @@ pub fn run(args: Args) -> Result<()> {
             }
 
             // Make path relative to cwd before collecting
-            let display = display_path_from_cwd(path_bytes, &cwd_prefix);
+            let display = if args.full_name {
+                path_bytes.clone()
+            } else {
+                display_path_from_cwd(path_bytes, &cwd_prefix).to_vec()
+            };
             filtered_untracked.push(display.to_vec());
         }
 
@@ -466,6 +486,7 @@ pub fn run(args: Args) -> Result<()> {
                 let spec_str = match spec {
                     Pathspec::Literal(v) => String::from_utf8_lossy(v).into_owned(),
                     Pathspec::Glob(s) => s.clone(),
+                    Pathspec::Magic(s) => s.clone(),
                 };
                 anyhow::bail!(
                     "error: pathspec '{}' did not match any file(s) known to git",
@@ -542,6 +563,7 @@ fn walk_worktree(
 enum Pathspec {
     Literal(Vec<u8>),
     Glob(String),
+    Magic(String),
 }
 
 impl Pathspec {
@@ -555,6 +577,10 @@ impl Pathspec {
                 }
                 let path_str = String::from_utf8_lossy(path);
                 glob_match(pattern, &path_str)
+            }
+            Pathspec::Magic(spec) => {
+                let path_str = String::from_utf8_lossy(path);
+                crate::pathspec::pathspec_matches(spec, &path_str)
             }
         }
     }
@@ -668,6 +694,12 @@ fn resolve_pathspec(
         return Ok(Pathspec::Literal(cwd_prefix_bytes(work_tree, cwd)?));
     }
     let pathspec_str = pathspec.to_string_lossy();
+    if pathspec_str.starts_with(":(") {
+        let prefix = String::from_utf8_lossy(&cwd_prefix_bytes(work_tree, cwd)?).into_owned();
+        if let Some(resolved) = crate::pathspec::resolve_magic_pathspec(&pathspec_str, &prefix) {
+            return Ok(Pathspec::Magic(resolved));
+        }
+    }
     // Handle magic pathspec ":/<pattern>" — match from the root of the work tree.
     if let Some(rest) = pathspec_str.strip_prefix(":/") {
         if rest.is_empty() || rest == "*" {
