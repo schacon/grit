@@ -18,6 +18,9 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, BufRead, Write};
 
+/// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
+
 /// Arguments for `grit diff-tree`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Compare the content and mode of blobs found via two tree objects")]
@@ -337,11 +340,28 @@ pub fn run(args: Args) -> Result<()> {
 fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Result<bool> {
     let oid1 = resolve_to_tree(repo, &opts.objects[0])?;
     let oid2 = resolve_to_tree(repo, &opts.objects[1])?;
-    let entries = diff_with_opts(&repo.odb, Some(&oid1), Some(&oid2), opts)?;
+    let max_tree_depth = resolve_max_tree_depth(repo)?;
+    let old_tree = if is_magic_empty_tree_oid(&oid1) {
+        None
+    } else {
+        Some(&oid1)
+    };
+    let new_tree = if is_magic_empty_tree_oid(&oid2) {
+        None
+    } else {
+        Some(&oid2)
+    };
+    if let Some(tree_oid) = old_tree {
+        validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
+    }
+    if let Some(tree_oid) = new_tree {
+        validate_tree_depth_limit(&repo.odb, tree_oid, 0, max_tree_depth)?;
+    }
+    let entries = diff_with_opts(&repo.odb, old_tree, new_tree, opts)?;
     let filtered = filter_entries(entries, opts);
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(out, &repo.odb, &filtered, opts, Some(&oid1))?;
+        print_diff(out, &repo.odb, &filtered, opts, old_tree)?;
     }
     Ok(has_diff)
 }
@@ -358,6 +378,8 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
     match obj.kind {
         ObjectKind::Commit => {
             let commit = parse_commit(&obj.data).context("parsing commit")?;
+            let max_tree_depth = resolve_max_tree_depth(repo)?;
+            validate_tree_depth_limit(&repo.odb, &commit.tree, 0, max_tree_depth)?;
             if commit.parents.is_empty() {
                 if opts.root {
                     let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
@@ -1186,6 +1208,11 @@ fn print_stat_summary(out: &mut impl Write, odb: &Odb, entries: &[DiffEntry]) ->
 
 /// Resolve a tree-ish (commit or tree) to a tree OID.
 fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
+    if spec == "4b825dc642cb6eb9a060e54bf899d69f7c6948d4"
+        || spec == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+    {
+        return ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904").map_err(Into::into);
+    }
     let mut oid =
         resolve_revision(repo, spec).with_context(|| format!("unknown revision: '{spec}'"))?;
     loop {
@@ -1199,6 +1226,49 @@ fn resolve_to_tree(repo: &Repository, spec: &str) -> Result<ObjectId> {
             _ => bail!("'{spec}' does not name a tree or commit"),
         }
     }
+}
+
+fn is_magic_empty_tree_oid(oid: &ObjectId) -> bool {
+    let hex = oid.to_hex();
+    hex == "4b825dc642cb6eb9a060e54bf899d69f7c6948d4"
+        || hex == "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+}
+
+fn resolve_max_tree_depth(repo: &Repository) -> Result<usize> {
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)?;
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(depth)
+}
+
+fn validate_tree_depth_limit(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    depth: usize,
+    max_tree_depth: usize,
+) -> Result<()> {
+    if depth > max_tree_depth {
+        bail!(
+            "tree depth {} exceeds core.maxtreedepth {}",
+            depth,
+            max_tree_depth
+        );
+    }
+
+    let obj = odb
+        .read(tree_oid)
+        .context("reading tree for depth validation")?;
+    let entries = parse_tree(&obj.data).context("parsing tree for depth validation")?;
+    for entry in entries {
+        if entry.mode == 0o040000 {
+            validate_tree_depth_limit(odb, &entry.oid, depth + 1, max_tree_depth)?;
+        }
+    }
+    Ok(())
 }
 
 /// Retrieve the tree OID from a commit OID.

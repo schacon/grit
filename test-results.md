@@ -77,3 +77,7 @@
 - `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (regression check after `merge-base`/`show-branch` parser updates).
 - `./scripts/run-tests.sh t6404-recursive-merge.sh`: 6/6 passing (regression check after merge unrelated-histories handling update).
 - `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (regression check after merge unrelated-histories handling update).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6700-tree-depth.sh`: 10/10 passing (direct validation after implementing `core.maxtreedepth` enforcement in `archive`, `ls-tree`, `rev-list --objects`, and `diff-tree -r`, plus empty-tree compatibility handling in `diff-tree`).
+- `./scripts/run-tests.sh t6700-tree-depth.sh`: 10/10 passing (now fully passing).
+- `./scripts/run-tests.sh t6010-merge-base.sh`: 12/12 passing (regression check after tree-depth and diff-tree updates).
+- `./scripts/run-tests.sh t6005-rev-list-count.sh`: 6/6 passing (regression check after rev-list object-depth filtering updates).

@@ -2,6 +2,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::objects::{parse_commit, parse_tree, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
@@ -10,6 +12,19 @@ use grit_lib::rev_list::{
 };
 use std::collections::HashSet;
 use std::io::Write;
+
+/// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
+
+fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(depth)
+}
 
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
@@ -22,8 +37,10 @@ pub struct Args {
 /// Run `grit rev-list`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
     let mut options = RevListOptions::default();
+    let mut object_depth_limit: Option<usize> = None;
     let mut abbrev_len = 7usize;
     let mut revision_specs = Vec::new();
     let mut read_stdin = false;
@@ -145,6 +162,13 @@ pub fn run(args: Args) -> Result<()> {
                     && arg.as_bytes().get(1).is_some_and(u8::is_ascii_digit) =>
                 {
                     options.max_count = Some(parse_non_negative(&arg[1..], "-<n>")?);
+                }
+                _ if arg.starts_with("--max-tree-depth=") => {
+                    let value = arg.trim_start_matches("--max-tree-depth=");
+                    let depth = parse_non_negative(value, "--max-tree-depth")?;
+                    object_depth_limit = Some(depth);
+                    options.filter =
+                        Some(grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64));
                 }
                 _ if arg.starts_with("--glob=") => {
                     let pattern = arg.trim_start_matches("--glob=");
@@ -320,6 +344,12 @@ pub fn run(args: Args) -> Result<()> {
         i += 1;
     }
 
+    if options.objects && options.filter.is_none() {
+        let depth = resolve_max_tree_depth(&config)?;
+        object_depth_limit = Some(depth);
+        options.filter = Some(grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64));
+    }
+
     // Check config for color settings if not explicitly set via --color/--no-color
     if !use_color {
         if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
@@ -395,6 +425,11 @@ pub fn run(args: Args) -> Result<()> {
 
     let result =
         rev_list(&repo, &positive_specs, &negative_specs, &options).context("rev-list failed")?;
+
+    if options.objects {
+        let max_tree_depth = object_depth_limit.unwrap_or(resolve_max_tree_depth(&config)?);
+        validate_rev_list_tree_depth(&repo, &result.commits, max_tree_depth)?;
+    }
 
     if options.count {
         if options.left_right {
@@ -538,6 +573,47 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn validate_rev_list_tree_depth(
+    repo: &Repository,
+    commits: &[ObjectId],
+    max_tree_depth: usize,
+) -> Result<()> {
+    let mut seen_trees = HashSet::new();
+    for oid in commits {
+        let object = repo.odb.read(oid)?;
+        let commit = parse_commit(&object.data)?;
+        validate_tree_depth_limit(repo, commit.tree, 0, max_tree_depth, &mut seen_trees)?;
+    }
+    Ok(())
+}
+
+fn validate_tree_depth_limit(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    depth: usize,
+    max_tree_depth: usize,
+    seen: &mut HashSet<ObjectId>,
+) -> Result<()> {
+    if !seen.insert(tree_oid) {
+        return Ok(());
+    }
+    if depth > max_tree_depth {
+        bail!(
+            "tree depth {} exceeds core.maxtreedepth {}",
+            depth,
+            max_tree_depth
+        );
+    }
+    let object = repo.odb.read(&tree_oid)?;
+    let entries = parse_tree(&object.data)?;
+    for entry in entries {
+        if entry.mode == 0o040000 {
+            validate_tree_depth_limit(repo, entry.oid, depth + 1, max_tree_depth, seen)?;
+        }
+    }
     Ok(())
 }
 

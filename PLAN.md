@@ -720,7 +720,7 @@ commit → check it off → move on.
 - [x] `t6439-merge-co-error-msgs` ████████████████████ 6/6 (0 left) — unpack-trees error messages
 - [x] `t6010-merge-base` ████████████████████ 12/12 (0 left) — Merge base and parent list computation.
 
-- [ ] `t6700-tree-depth` ████████░░░░░░░░░░░░ 4/10 (6 left) — handling of deep trees in various commands
+- [x] `t6700-tree-depth` ████████████████████ 10/10 (0 left) — handling of deep trees in various commands
 - [ ] `t6427-diff3-conflict-markers` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — recursive merge diff3 style conflict markers
 - [ ] `t6060-merge-index` ██░░░░░░░░░░░░░░░░░░ 1/7 (6 left) — basic git merge-index / git-merge-one-file tests
 - [ ] `t6131-pathspec-icase` ████░░░░░░░░░░░░░░░░ 2/9 (7 left) — test case insensitive pathspec limiting

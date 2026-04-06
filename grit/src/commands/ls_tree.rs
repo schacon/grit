@@ -4,9 +4,15 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
 
+use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
+
+/// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
+/// Canonical empty tree object ID (SHA-1).
+const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Arguments for `grit ls-tree`.
 #[derive(Debug, ClapArgs)]
@@ -93,6 +99,8 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let max_tree_depth = resolve_max_tree_depth(&config)?;
 
     // Resolve pathspecs relative to cwd within the work tree, then express
     // them as repo-root-relative paths so the tree walk can match correctly.
@@ -164,6 +172,8 @@ pub fn run(mut args: Args) -> Result<()> {
         &repo,
         &obj.data,
         "",
+        0,
+        max_tree_depth,
         &args,
         &mut out,
         term,
@@ -194,11 +204,21 @@ fn list_tree(
     repo: &Repository,
     data: &[u8],
     prefix: &str,
+    depth: usize,
+    max_tree_depth: usize,
     args: &Args,
     out: &mut impl Write,
     term: u8,
     cwd_prefix: Option<&str>,
 ) -> Result<()> {
+    if depth > max_tree_depth {
+        bail!(
+            "tree depth {} exceeds core.maxtreedepth {}",
+            depth,
+            max_tree_depth
+        );
+    }
+
     let entries = parse_tree(data)?;
 
     for entry in &entries {
@@ -238,7 +258,17 @@ fn list_tree(
                 });
             if is_tree && is_ancestor && !args.recursive {
                 let sub_obj = repo.odb.read(&entry.oid)?;
-                list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
+                list_tree(
+                    repo,
+                    &sub_obj.data,
+                    &full_name,
+                    depth + 1,
+                    max_tree_depth,
+                    args,
+                    out,
+                    term,
+                    cwd_prefix,
+                )?;
                 continue;
             }
         }
@@ -250,7 +280,17 @@ fn list_tree(
             }
             // Recurse
             let sub_obj = repo.odb.read(&entry.oid)?;
-            list_tree(repo, &sub_obj.data, &full_name, args, out, term, cwd_prefix)?;
+            list_tree(
+                repo,
+                &sub_obj.data,
+                &full_name,
+                depth + 1,
+                max_tree_depth,
+                args,
+                out,
+                term,
+                cwd_prefix,
+            )?;
             continue;
         }
 
@@ -395,6 +435,9 @@ fn quote_path_name(name: &str) -> String {
 }
 
 fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
+    if s == EMPTY_TREE_OID {
+        return Ok(ObjectId::from_hex(EMPTY_TREE_OID)?);
+    }
     // First try the full revision syntax (handles ^, ~, :path, etc.)
     if let Ok(oid) = grit_lib::rev_parse::resolve_revision(repo, s) {
         return Ok(oid);
@@ -415,4 +458,14 @@ fn resolve_tree_ish(repo: &Repository, s: &str) -> Result<ObjectId> {
         return Ok(oid);
     }
     bail!("not a valid tree-ish: '{s}'")
+}
+
+fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(depth)
 }
