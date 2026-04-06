@@ -430,7 +430,7 @@ t4070-diff-pairs	yes	7	0	7	ok	0	7	0
 t4071-diff-minimal	yes	1	1	0	ok	1	1	0
 t4072-diff-max-depth	yes	76	76	0	ok	76	76	0
 t4073-diff-stat-name-width	yes	6	6	0	ok	6	6	0
-t4074-diff-shifted-matched-group	yes	4	0	4	ok	0	4	0
+t4074-diff-shifted-matched-group	yes	4	4	0	ok	4	4	0
 t4100-apply-stat	yes	25	10	15	ok	10	25	0
 t4101-apply-nonl	yes	12	12	0	ok	12	12	0
 t4102-apply-rename	yes	5	5	0	ok	5	5	0

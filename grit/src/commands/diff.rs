@@ -1141,8 +1141,22 @@ fn run_no_index(args: &Args) -> Result<()> {
 
     let data_a = std::fs::read(path_a).with_context(|| format!("could not read '{}'", paths[0]))?;
     let data_b = std::fs::read(path_b).with_context(|| format!("could not read '{}'", paths[1]))?;
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: args.ignore_all_space,
+        ignore_space_change: args.ignore_space_change,
+        ignore_space_at_eol: args.ignore_space_at_eol,
+        ignore_blank_lines: args.ignore_blank_lines,
+        ignore_cr_at_eol: args.ignore_cr_at_eol,
+    };
 
-    if data_a == data_b {
+    let has_diff = if ws_mode.any() {
+        let text_a = String::from_utf8_lossy(&data_a);
+        let text_b = String::from_utf8_lossy(&data_b);
+        ws_mode.normalize(&text_a) != ws_mode.normalize(&text_b)
+    } else {
+        data_a != data_b
+    };
+    if !has_diff {
         return Ok(());
     }
 
@@ -1204,6 +1218,10 @@ fn run_no_index(args: &Args) -> Result<()> {
         std::process::exit(1);
     }
 
+    write_no_index_headers(
+        &mut out, paths[0], paths[1], path_a, path_b, &data_a, &data_b,
+    )?;
+
     // Determine the effective diff algorithm: last-specified algorithm flag wins.
     let use_anchored = if !args.anchored.is_empty() {
         // Check if a non-anchored algorithm flag appears after --anchored in args
@@ -1223,7 +1241,16 @@ fn run_no_index(args: &Args) -> Result<()> {
     } else {
         false
     };
-    let diff_output = if use_anchored {
+    let diff_output = if ws_mode.any() {
+        no_index_unified_diff_with_ws_mode(
+            &text_a,
+            &text_b,
+            paths[0],
+            paths[1],
+            context_lines,
+            &ws_mode,
+        )
+    } else if use_anchored {
         anchored_unified_diff(
             &text_a,
             &text_b,
@@ -1376,6 +1403,152 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// Build unified diff output for `--no-index` with whitespace-aware matching.
+fn no_index_unified_diff_with_ws_mode(
+    old_content: &str,
+    new_content: &str,
+    old_path: &str,
+    new_path: &str,
+    context_lines: usize,
+    ws_mode: &WhitespaceMode,
+) -> String {
+    use similar::TextDiff;
+
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let old_norm: Vec<String> = old_lines
+        .iter()
+        .map(|line| ws_mode.normalize_line(line))
+        .collect();
+    let new_norm: Vec<String> = new_lines
+        .iter()
+        .map(|line| ws_mode.normalize_line(line))
+        .collect();
+    let old_norm_refs: Vec<&str> = old_norm.iter().map(String::as_str).collect();
+    let new_norm_refs: Vec<&str> = new_norm.iter().map(String::as_str).collect();
+
+    let diff = TextDiff::from_slices(&old_norm_refs, &new_norm_refs);
+    let mut out = String::new();
+    out.push_str(&format!("--- a/{old_path}\n"));
+    out.push_str(&format!("+++ b/{new_path}\n"));
+
+    for group in diff.grouped_ops(context_lines) {
+        if group.is_empty() {
+            continue;
+        }
+
+        let old_start = group.first().map_or(0, |op| op.old_range().start);
+        let new_start = group.first().map_or(0, |op| op.new_range().start);
+        let old_end = group.last().map_or(0, |op| op.old_range().end);
+        let new_end = group.last().map_or(0, |op| op.new_range().end);
+        let old_count = old_end.saturating_sub(old_start);
+        let new_count = new_end.saturating_sub(new_start);
+
+        out.push_str(&format!(
+            "@@ -{} +{} @@\n",
+            format_hunk_range(old_start, old_count),
+            format_hunk_range(new_start, new_count)
+        ));
+
+        for op in group {
+            for change in diff.iter_changes(&op) {
+                match change.tag() {
+                    similar::ChangeTag::Equal => {
+                        if let Some(new_idx) = change.new_index() {
+                            out.push(' ');
+                            out.push_str(new_lines.get(new_idx).copied().unwrap_or_default());
+                            out.push('\n');
+                        } else if let Some(old_idx) = change.old_index() {
+                            out.push(' ');
+                            out.push_str(old_lines.get(old_idx).copied().unwrap_or_default());
+                            out.push('\n');
+                        }
+                    }
+                    similar::ChangeTag::Delete => {
+                        if let Some(old_idx) = change.old_index() {
+                            out.push('-');
+                            out.push_str(old_lines.get(old_idx).copied().unwrap_or_default());
+                            out.push('\n');
+                        }
+                    }
+                    similar::ChangeTag::Insert => {
+                        if let Some(new_idx) = change.new_index() {
+                            out.push('+');
+                            out.push_str(new_lines.get(new_idx).copied().unwrap_or_default());
+                            out.push('\n');
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Format a unified-diff hunk range component.
+fn format_hunk_range(start: usize, count: usize) -> String {
+    if count == 1 {
+        (start + 1).to_string()
+    } else {
+        format!("{},{}", start + 1, count)
+    }
+}
+
+/// Write `diff --git` and `index` header lines for `--no-index` output.
+fn write_no_index_headers(
+    out: &mut impl Write,
+    display_old: &str,
+    display_new: &str,
+    old_path: &Path,
+    new_path: &Path,
+    old_data: &[u8],
+    new_data: &[u8],
+) -> Result<()> {
+    let old_oid = Odb::hash_object_data(ObjectKind::Blob, old_data).to_hex();
+    let new_oid = Odb::hash_object_data(ObjectKind::Blob, new_data).to_hex();
+    let old_abbrev = &old_oid[..7];
+    let new_abbrev = &new_oid[..7];
+    writeln!(out, "diff --git a/{display_old} b/{display_new}")?;
+
+    let old_mode = no_index_mode(old_path);
+    let new_mode = no_index_mode(new_path);
+    if let (Some(old_mode), Some(new_mode)) = (old_mode, new_mode) {
+        if old_mode == new_mode {
+            writeln!(out, "index {old_abbrev}..{new_abbrev} {old_mode}")?;
+        } else {
+            writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
+            writeln!(out, "old mode {old_mode}")?;
+            writeln!(out, "new mode {new_mode}")?;
+        }
+    } else {
+        writeln!(out, "index {old_abbrev}..{new_abbrev}")?;
+    }
+    Ok(())
+}
+
+/// Return git-style file mode for a no-index path, if the path exists.
+fn no_index_mode(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        let mode = if meta.file_type().is_symlink() {
+            "120000"
+        } else if (meta.mode() & 0o111) != 0 {
+            "100755"
+        } else {
+            "100644"
+        };
+        Some(mode.to_owned())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Some("100644".to_owned())
+    }
 }
 
 /// Apply an orderfile to sort diff entries.

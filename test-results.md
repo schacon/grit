@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release`: passes (rebuild after `diff --no-index` compatibility for `-c/--cc` and whitespace-aware line matching in histogram output).
+- `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN="/workspace/target/release/grit" bash t4074-diff-shifted-matched-group.sh` (from `tests/`): 4/4 passing.
+- `./scripts/run-tests.sh t4074-diff-shifted-matched-group.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
+- Regression checks:
+  - `./scripts/run-tests.sh t4057-diff-combined-paths.sh`: 4/4 passing.
+  - `./scripts/run-tests.sh t4074-diff-shifted-matched-group.sh`: 4/4 passing (repeat confirmation after quality gates).
+- `cargo fmt`: passes.
+- `cargo clippy --fix --allow-dirty`: passes (unrelated autofixes reverted in files outside scope).
+- `cargo test -p grit-lib --lib`: passes.
+
 - `cargo build --release`: passes (rebuild after `git diff -c/--cc` combined path-list support for merge parents and parser handling of `-c`/`--cc`).
 - `./scripts/run-tests.sh t4057-diff-combined-paths.sh`: 4/4 passing; `data/file-results.tsv` refreshed.
 - `bash scripts/run-upstream-tests.sh t4057-diff-combined-paths`: 4/4 passing in isolated upstream harness.
