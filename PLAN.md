@@ -429,7 +429,7 @@ commit → check it off → move on.
 
 - [x] `t4138-apply-ws-expansion` ████████████████████ 5/5 (0 left) — git apply test patches with whitespace expansion (`core.whitespace tabwidth=<n>` expansion now normalizes leading indent for context matching and whitespace-fix output)
 - [~] `t4023-diff-rename-typechange` ██████████░░░░░░░░░░ 2/4 (2 left) — typechange rename detection (`-B`/`--break-rewrites` + `-M` wiring and `T100` output now match; remaining local/upstream harness mismatch is missing `../Makefile` fixture in this environment)
-- [ ] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
+- [~] `t4057-diff-combined-paths` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — combined diff show only paths that are different to all parents
 - [ ] `t4074-diff-shifted-matched-group` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — shifted diff groups re-diffing during histogram diff
 - [ ] `t4207-log-decoration-colors` ░░░░░░░░░░░░░░░░░░░░ 0/4 (4 left) — test 
 - [ ] `t4055-diff-context` ██████████░░░░░░░░░░ 5/10 (5 left) — diff.context configuration
