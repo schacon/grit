@@ -157,6 +157,7 @@ macro_rules! checkout_eprintln {
 pub fn run(args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     let repo = Repository::discover(None).context("not a git repository")?;
+    let switch_force = args.force || args.merge;
 
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
@@ -238,7 +239,7 @@ pub fn run(args: Args) -> Result<()> {
         };
         let effective_target = target.as_deref().or(pre_head_branch.as_deref());
         let result =
-            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), args.force);
+            create_and_switch_branch(&repo, new_branch_name, target.as_deref(), switch_force);
         if result.is_ok() && !args.no_track {
             maybe_setup_tracking(
                 &repo,
@@ -286,7 +287,7 @@ pub fn run(args: Args) -> Result<()> {
                 // `checkout --detach` with no target: detach at current HEAD
                 match resolve_head(&repo.git_dir)? {
                     HeadState::Branch { oid: Some(oid), .. } | HeadState::Detached { oid } => {
-                        return detach_head(&repo, &oid, args.force);
+                        return detach_head(&repo, &oid, switch_force);
                     }
                     _ => bail!("cannot detach HEAD on unborn branch"),
                 }
@@ -301,10 +302,10 @@ pub fn run(args: Args) -> Result<()> {
             let prev = resolve_nth_previous_branch(&repo, n)?;
             let branch_ref = format!("refs/heads/{prev}");
             if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-                return switch_branch(&repo, &prev, &branch_ref, args.force);
+                return switch_branch(&repo, &prev, &branch_ref, switch_force);
             }
             if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-                return detach_head(&repo, &oid, args.force);
+                return detach_head(&repo, &oid, switch_force);
             }
             bail!("error: previous branch '{}' not found", prev);
         }
@@ -315,11 +316,11 @@ pub fn run(args: Args) -> Result<()> {
         let prev = resolve_previous_branch(&repo)?;
         let branch_ref = format!("refs/heads/{prev}");
         if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-            return switch_branch(&repo, &prev, &branch_ref, args.force);
+            return switch_branch(&repo, &prev, &branch_ref, switch_force);
         }
         // Not a branch — try as a commit (detached HEAD)
         if let Ok(oid) = resolve_to_commit(&repo, &prev) {
-            return detach_head(&repo, &oid, args.force);
+            return detach_head(&repo, &oid, switch_force);
         }
         bail!("error: previous branch '{}' not found", prev);
     }
@@ -340,7 +341,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("--detach does not take a path argument");
         }
         match resolve_to_commit(&repo, &target) {
-            Ok(oid) => return detach_head(&repo, &oid, args.force),
+            Ok(oid) => return detach_head(&repo, &oid, switch_force),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
     }
@@ -348,12 +349,12 @@ pub fn run(args: Args) -> Result<()> {
     // Try as a branch first
     let branch_ref = format!("refs/heads/{target}");
     if !args.detach && refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
-        return switch_branch(&repo, &target, &branch_ref, args.force);
+        return switch_branch(&repo, &target, &branch_ref, switch_force);
     }
 
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
-        Ok(oid) => detach_head(&repo, &oid, args.force),
+        Ok(oid) => detach_head(&repo, &oid, switch_force),
         Err(_) => {
             // Fallback: try as a pathspec (git checkout <file> without --).
             // If the target looks like a tracked file, restore it from HEAD.

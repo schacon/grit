@@ -728,7 +728,7 @@ commit → check it off → move on.
 - [ ] `t6501-freshen-objects` ███████████████░░░░░ 33/42 (9 left) — check pruning of dependent objects
 - [x] `t6433-merge-toplevel` ████████████████████ 15/15 (0 left) — 
 - [ ] `t6409-merge-subtree` ████████████░░░░░░░░ 7/12 (5 left) — subtree merge strategy
-- [ ] `t6418-merge-text-auto` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — CRLF merge conflict across text=auto change
+- [x] `t6418-merge-text-auto` ████████████████████ 11/11 (0 left) — CRLF merge conflict across text=auto change
 
 - [ ] `t6403-merge-file` ██████████████░░░░░░ 29/39 (10 left) — RCS merge replacement: merge-file
 - [ ] `t6016-rev-list-graph-simplify-history` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — --graph and simplified history

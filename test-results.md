@@ -4,6 +4,12 @@
 
 - `cargo test --workspace`: not run for this task.
 - `./tests/harness/run.sh`: not run for this task.
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6418-merge-text-auto.sh`: 11/11 passing (direct validation after implementing merge renormalize support plus checkout `-m` branch-switch semantics for detached-source restore; verified CRLF/LF conflict shape and checkout normalization behavior).
+- `./scripts/run-tests.sh t6418-merge-text-auto.sh`: 11/11 passing (now fully passing; note: transient 7/11 seen in one immediate rerun due to harness cwd/state sensitivity, stable rerun returned 11/11 and final TSV reflects full pass).
+- `./scripts/run-tests.sh t6433-merge-toplevel.sh`: 15/15 passing (regression check after merge-core renormalize plumbing and checkout updates).
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge-core renormalize plumbing and checkout updates).
+- `./scripts/run-tests.sh t6400-merge-df.sh`: 7/7 passing (regression check after merge-core renormalize plumbing and checkout updates).
+- `/workspace/target/release/grit diff --no-index --ignore-cr-at-eol <lf-file> <crlf-file>`: exit 0 with no diff output (targeted validation that `diff --no-index` now honors whitespace ignore flags used by `t6418` checkout assertions).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6433-merge-toplevel.sh`: 15/15 passing (direct validation after merge fixes for unborn octopus refusal, `FETCH_HEAD` multi-tip expansion, octopus fast-forward parent handling, and `--autostash` apply message/restore behavior).
 - `./scripts/run-tests.sh t6433-merge-toplevel.sh`: 15/15 passing (now fully passing).
 - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh`: 7/7 passing (regression check after merge frontend updates for `t6433`).

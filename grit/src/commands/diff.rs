@@ -1029,6 +1029,14 @@ fn run_no_index(args: &Args) -> Result<()> {
         return Ok(());
     }
 
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: args.ignore_all_space,
+        ignore_space_change: args.ignore_space_change,
+        ignore_space_at_eol: args.ignore_space_at_eol,
+        ignore_blank_lines: args.ignore_blank_lines,
+        ignore_cr_at_eol: args.ignore_cr_at_eol,
+    };
+
     // --quiet / --exit-code: just exit 1 for differences, no output
     if args.quiet {
         std::process::exit(1);
@@ -1036,6 +1044,9 @@ fn run_no_index(args: &Args) -> Result<()> {
 
     let text_a = String::from_utf8_lossy(&data_a);
     let text_b = String::from_utf8_lossy(&data_b);
+    if ws_mode.any() && ws_mode.normalize(&text_a) == ws_mode.normalize(&text_b) {
+        return Ok(());
+    }
     let context_lines = args.unified.unwrap_or(3);
 
     let stdout = io::stdout();
@@ -1187,6 +1198,13 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
     let stdout = io::stdout();
     let mut out = stdout.lock();
     let context_lines = args.unified.unwrap_or(3);
+    let ws_mode = WhitespaceMode {
+        ignore_all_space: args.ignore_all_space,
+        ignore_space_change: args.ignore_space_change,
+        ignore_space_at_eol: args.ignore_space_at_eol,
+        ignore_blank_lines: args.ignore_blank_lines,
+        ignore_cr_at_eol: args.ignore_cr_at_eol,
+    };
 
     for rel in &all_files {
         let fa = dir_a.join(rel);
@@ -1207,6 +1225,18 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             _ => {}
         }
 
+        let text_a = data_a
+            .as_ref()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .unwrap_or_default();
+        let text_b = data_b
+            .as_ref()
+            .map(|d| String::from_utf8_lossy(d).to_string())
+            .unwrap_or_default();
+        if ws_mode.any() && ws_mode.normalize(&text_a) == ws_mode.normalize(&text_b) {
+            continue;
+        }
+
         has_diff = true;
         let _label_a = format!("{}/{}", dir_a.display(), rel);
         let label_b = format!("{}/{}", dir_b.display(), rel);
@@ -1224,15 +1254,6 @@ fn run_no_index_dirs(args: &Args, dir_a: &Path, dir_b: &Path) -> Result<()> {
             writeln!(out, "{}\t{}", status, label_b)?;
             continue;
         }
-
-        let text_a = data_a
-            .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
-            .unwrap_or_default();
-        let text_b = data_b
-            .as_ref()
-            .map(|d| String::from_utf8_lossy(d).to_string())
-            .unwrap_or_default();
 
         let old_label = if data_a.is_some() {
             format!("a/{}", rel)

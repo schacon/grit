@@ -232,6 +232,7 @@ pub fn run(mut args: Args) -> Result<()> {
     if args.commits.len() == 1 && args.commits[0] == "FETCH_HEAD" {
         args.commits = read_fetch_head_merge_oids(&repo)?;
     }
+    let mut merge_renormalize = false;
     {
         let config = ConfigSet::load(Some(&repo.git_dir), true)?;
 
@@ -252,6 +253,9 @@ pub fn run(mut args: Args) -> Result<()> {
                     _ => {} // "true" or anything else = default (allow ff)
                 }
             }
+        }
+        if let Some(value) = config.get_bool("merge.renormalize") {
+            merge_renormalize = value.unwrap_or(false);
         }
         // Read merge.log config
         if args.log.is_none() && !args.no_log {
@@ -324,6 +328,10 @@ pub fn run(mut args: Args) -> Result<()> {
     for xopt in &args.strategy_option {
         if let Some(algo) = xopt.strip_prefix("diff-algorithm=") {
             diff_algorithm = Some(algo.to_string());
+        } else if xopt == "renormalize" {
+            merge_renormalize = true;
+        } else if xopt == "no-renormalize" {
+            merge_renormalize = false;
         } else if xopt == "subtree" {
             subtree_shift = SubtreeShift::Auto;
         } else if let Some(path) = xopt.strip_prefix("subtree=") {
@@ -387,6 +395,7 @@ pub fn run(mut args: Args) -> Result<()> {
             favor,
             diff_algorithm.as_deref(),
             &subtree_shift,
+            merge_renormalize,
         );
     }
 
@@ -437,6 +446,7 @@ pub fn run(mut args: Args) -> Result<()> {
                 favor,
                 diff_algorithm.as_deref(),
                 &subtree_shift,
+                merge_renormalize,
             );
         }
         return do_fast_forward(&repo, &head, head_oid, merge_oid, &args);
@@ -464,6 +474,7 @@ pub fn run(mut args: Args) -> Result<()> {
         favor,
         diff_algorithm.as_deref(),
         &subtree_shift,
+        merge_renormalize,
     )
 }
 
@@ -557,6 +568,7 @@ fn create_virtual_merge_base(
     repo: &Repository,
     bases: &[ObjectId],
     favor: MergeFavor,
+    merge_renormalize: bool,
 ) -> Result<ObjectId> {
     if bases.len() == 1 {
         return Ok(bases[0]);
@@ -589,7 +601,7 @@ fn create_virtual_merge_base(
             let commit_bytes = serialize_commit(&commit_data);
             repo.odb.write(ObjectKind::Commit, &commit_bytes)?
         } else if sub_bases.len() > 1 {
-            create_virtual_merge_base(repo, &sub_bases, favor)?
+            create_virtual_merge_base(repo, &sub_bases, favor, merge_renormalize)?
         } else {
             sub_bases[0]
         };
@@ -622,6 +634,7 @@ fn create_virtual_merge_base(
             "merged common ancestors",
             favor,
             None,
+            merge_renormalize,
         )?;
 
         // Build a tree from the merged index:
@@ -838,6 +851,7 @@ fn do_real_merge(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     subtree_shift: &SubtreeShift,
+    merge_renormalize: bool,
 ) -> Result<()> {
     // Find merge base(s)
     let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, head_oid, &[merge_oid])?;
@@ -853,7 +867,7 @@ fn do_real_merge(
         if args.strategy.as_deref() == Some("resolve") {
             bail!("merge: warning: multiple common ancestors found");
         }
-        create_virtual_merge_base(repo, &bases, favor)?
+        create_virtual_merge_base(repo, &bases, favor, merge_renormalize)?
     } else {
         bases[0]
     };
@@ -911,6 +925,7 @@ fn do_real_merge(
         &base_label_prefix,
         favor,
         diff_algorithm,
+        merge_renormalize,
     )?;
 
     // Refuse merges that would overwrite local changes or untracked files.
@@ -1477,6 +1492,7 @@ fn do_octopus_merge(
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
     subtree_shift: &SubtreeShift,
+    merge_renormalize: bool,
 ) -> Result<()> {
     // Resolve all merge targets, deduplicating and filtering ancestors of HEAD
     let mut merge_oids = Vec::new();
@@ -1520,6 +1536,7 @@ fn do_octopus_merge(
                 favor,
                 diff_algorithm,
                 subtree_shift,
+                merge_renormalize,
             );
         }
         if is_ancestor(repo, head_oid, merge_oid)? {
@@ -1534,6 +1551,7 @@ fn do_octopus_merge(
             favor,
             diff_algorithm,
             subtree_shift,
+            merge_renormalize,
         );
     }
 
@@ -1599,6 +1617,7 @@ fn do_octopus_merge(
             &base_label_prefix,
             favor,
             diff_algorithm,
+            merge_renormalize,
         )?;
 
         if merge_result.has_conflicts {
@@ -2567,6 +2586,7 @@ fn merge_trees(
     base_label_prefix: &str,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
+    merge_renormalize: bool,
 ) -> Result<MergeResult> {
     // Detect renames on each side
     let (ours_renames, theirs_renames) = detect_merge_renames(repo, base, ours, theirs);
@@ -2628,6 +2648,7 @@ fn merge_trees(
                         their_name,
                         favor,
                         diff_algorithm,
+                        merge_renormalize,
                     )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = oe.clone();
@@ -2684,6 +2705,7 @@ fn merge_trees(
                                 their_name,
                                 favor,
                                 diff_algorithm,
+                                merge_renormalize,
                             )? {
                                 ContentMergeResult::Clean(merged_oid, mode) => {
                                     let mut entry = oe.clone();
@@ -2839,6 +2861,7 @@ fn merge_trees(
                         their_name,
                         favor,
                         diff_algorithm,
+                        merge_renormalize,
                     )? {
                         ContentMergeResult::Clean(merged_oid, mode) => {
                             let mut entry = te.clone();
@@ -2985,6 +3008,7 @@ fn merge_trees(
                     their_name,
                     favor,
                     diff_algorithm,
+                    merge_renormalize,
                 )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
@@ -3021,6 +3045,9 @@ fn merge_trees(
                     // Already handled in rename pass
                 } else if be.oid == te.oid && be.mode == te.mode {
                     // Theirs didn't change it, ours deleted → clean delete
+                } else if merge_renormalize && blobs_equivalent_after_renormalize(repo, be, te)? {
+                    // With merge.renormalize, treat pure normalization-only edits
+                    // as unchanged so delete/modify can resolve to delete.
                 } else {
                     match favor {
                         MergeFavor::Ours => {
@@ -3064,6 +3091,9 @@ fn merge_trees(
                     // Already handled in rename pass
                 } else if be.oid == oe.oid && be.mode == oe.mode {
                     // Ours didn't change it, theirs deleted → clean delete
+                } else if merge_renormalize && blobs_equivalent_after_renormalize(repo, be, oe)? {
+                    // With merge.renormalize, treat pure normalization-only edits
+                    // as unchanged so modify/delete can resolve to delete.
                 } else {
                     match favor {
                         MergeFavor::Ours => {
@@ -3112,6 +3142,7 @@ fn merge_trees(
                     their_name,
                     favor,
                     diff_algorithm,
+                    merge_renormalize,
                 )? {
                     ContentMergeResult::Clean(merged_oid, mode) => {
                         let mut entry = oe.clone();
@@ -3173,45 +3204,55 @@ fn try_content_merge(
     theirs_label: &str,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
+    merge_renormalize: bool,
 ) -> Result<ContentMergeResult> {
     let base_obj = repo.odb.read(&base.oid)?;
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
 
-    // Check .gitattributes for binary marking
     let path_str = String::from_utf8_lossy(&ours.path).to_string();
-    let is_attr_binary = {
-        let wt_path = repo
+    let mut base_data = base_obj.data.clone();
+    let mut ours_data = ours_obj.data.clone();
+    let mut theirs_data = theirs_obj.data.clone();
+
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let file_attrs = config.as_ref().map(|cfg| {
+        let attrs = repo
             .work_tree
             .as_deref()
-            .unwrap_or(std::path::Path::new("."));
-        let attrs = grit_lib::crlf::load_gitattributes(wt_path);
-        if let Ok(config) = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true) {
-            let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, &path_str, &config);
-            file_attrs.text == grit_lib::crlf::TextAttr::Unset
-        } else {
-            false
-        }
-    };
+            .map(grit_lib::crlf::load_gitattributes)
+            .unwrap_or_default();
+        grit_lib::crlf::get_file_attrs(&attrs, &path_str, cfg)
+    });
+
+    let is_attr_binary = file_attrs
+        .as_ref()
+        .is_some_and(|attrs| attrs.text == grit_lib::crlf::TextAttr::Unset);
+
+    if merge_renormalize {
+        base_data = renormalize_merge_blob(&base_data);
+        ours_data = renormalize_merge_blob(&ours_data);
+        theirs_data = renormalize_merge_blob(&theirs_data);
+    }
 
     // If any is binary (by content or attribute), conflict (unless -X ours/theirs resolves it)
     if is_attr_binary
-        || merge_file::is_binary(&base_obj.data)
-        || merge_file::is_binary(&ours_obj.data)
-        || merge_file::is_binary(&theirs_obj.data)
+        || merge_file::is_binary(&base_data)
+        || merge_file::is_binary(&ours_data)
+        || merge_file::is_binary(&theirs_data)
     {
         match favor {
             MergeFavor::Ours => {
-                let oid = repo.odb.write(ObjectKind::Blob, &ours_obj.data)?;
+                let oid = repo.odb.write(ObjectKind::Blob, &ours_data)?;
                 return Ok(ContentMergeResult::Clean(oid, ours.mode));
             }
             MergeFavor::Theirs => {
-                let oid = repo.odb.write(ObjectKind::Blob, &theirs_obj.data)?;
+                let oid = repo.odb.write(ObjectKind::Blob, &theirs_data)?;
                 return Ok(ContentMergeResult::Clean(oid, theirs.mode));
             }
             MergeFavor::None | MergeFavor::Union => {
                 // Binary conflict — keep ours in working tree
-                return Ok(ContentMergeResult::Conflict(ours_obj.data.clone()));
+                return Ok(ContentMergeResult::Conflict(ours_data));
             }
         }
     }
@@ -3226,9 +3267,9 @@ fn try_content_merge(
 
     let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
-        base: &base_obj.data,
-        ours: &ours_obj.data,
-        theirs: &theirs_obj.data,
+        base: &base_data,
+        ours: &ours_data,
+        theirs: &theirs_data,
         label_ours: ours_label,
         label_base: base_label,
         label_theirs: theirs_label,
@@ -3242,6 +3283,25 @@ fn try_content_merge(
     let mode = ours.mode; // Use ours mode by default
 
     if output.conflicts == 0 {
+        if !merge_renormalize
+            && ours_data != theirs_data
+            && renormalize_merge_blob(&ours_data) == renormalize_merge_blob(&theirs_data)
+        {
+            let ours_text = String::from_utf8_lossy(&ours_data);
+            let theirs_text = String::from_utf8_lossy(&theirs_data);
+            let mut content = format!("<<<<<<< {ours_label}\n").into_bytes();
+            content.extend_from_slice(ours_text.as_bytes());
+            if !content.ends_with(b"\n") {
+                content.push(b'\n');
+            }
+            content.extend_from_slice(b"=======\n");
+            content.extend_from_slice(theirs_text.as_bytes());
+            if !content.ends_with(b"\n") {
+                content.push(b'\n');
+            }
+            content.extend_from_slice(format!(">>>>>>> {theirs_label}\n").as_bytes());
+            return Ok(ContentMergeResult::Conflict(content));
+        }
         let oid = repo.odb.write(ObjectKind::Blob, &output.content)?;
         Ok(ContentMergeResult::Clean(oid, mode))
     } else {
@@ -3258,12 +3318,20 @@ fn try_content_merge_add_add(
     theirs_label: &str,
     favor: MergeFavor,
     diff_algorithm: Option<&str>,
+    merge_renormalize: bool,
 ) -> Result<ContentMergeResult> {
     let ours_obj = repo.odb.read(&ours.oid)?;
     let theirs_obj = repo.odb.read(&theirs.oid)?;
+    let mut ours_data = ours_obj.data.clone();
+    let mut theirs_data = theirs_obj.data.clone();
 
-    if merge_file::is_binary(&ours_obj.data) || merge_file::is_binary(&theirs_obj.data) {
-        return Ok(ContentMergeResult::BinaryConflict(ours_obj.data.clone()));
+    if merge_renormalize {
+        ours_data = renormalize_merge_blob(&ours_data);
+        theirs_data = renormalize_merge_blob(&theirs_data);
+    }
+
+    if merge_file::is_binary(&ours_data) || merge_file::is_binary(&theirs_data) {
+        return Ok(ContentMergeResult::BinaryConflict(ours_data));
     }
 
     let marker_size = if ours_label.starts_with("Temporary merge branch")
@@ -3277,8 +3345,8 @@ fn try_content_merge_add_add(
     let conflict_style = resolve_conflict_style(repo);
     let input = MergeInput {
         base: &[], // empty base for add/add
-        ours: &ours_obj.data,
-        theirs: &theirs_obj.data,
+        ours: &ours_data,
+        theirs: &theirs_data,
         label_ours: ours_label,
         label_base: "empty tree",
         label_theirs: theirs_label,
@@ -3297,6 +3365,23 @@ fn try_content_merge_add_add(
     } else {
         Ok(ContentMergeResult::Conflict(output.content))
     }
+}
+
+fn renormalize_merge_blob(data: &[u8]) -> Vec<u8> {
+    if merge_file::is_binary(data) {
+        return data.to_vec();
+    }
+    grit_lib::crlf::crlf_to_lf(data)
+}
+
+fn blobs_equivalent_after_renormalize(
+    repo: &Repository,
+    left: &IndexEntry,
+    right: &IndexEntry,
+) -> Result<bool> {
+    let left_obj = repo.odb.read(&left.oid)?;
+    let right_obj = repo.odb.read(&right.oid)?;
+    Ok(renormalize_merge_blob(&left_obj.data) == renormalize_merge_blob(&right_obj.data))
 }
 
 fn resolve_conflict_style(repo: &Repository) -> ConflictStyle {
@@ -3732,7 +3817,13 @@ fn remove_deleted_files(
 /// Checkout index entries to working tree.
 fn checkout_entries(repo: &Repository, work_tree: &Path, index: &Index) -> Result<()> {
     // Load gitattributes and config for CRLF conversion
-    let attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
+    let mut attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
+    if index.get(b".gitattributes", 0).is_some() {
+        let from_index = grit_lib::crlf::load_gitattributes_from_index(index, &repo.odb);
+        if !from_index.is_empty() {
+            attr_rules = from_index;
+        }
+    }
     let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
     let conv = config
         .as_ref()
