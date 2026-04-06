@@ -5,7 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -481,23 +481,126 @@ pub fn run(mut args: Args) -> Result<()> {
     )
 }
 
+fn first_unborn_untracked_overwrite_path(
+    work_tree: &Path,
+    new_index: &Index,
+    current_tracked_paths: &BTreeSet<Vec<u8>>,
+) -> Result<Option<String>> {
+    for new_entry in new_index.entries.iter().filter(|e| e.stage() == 0) {
+        if current_tracked_paths.contains(&new_entry.path) {
+            continue;
+        }
+
+        let rel = String::from_utf8_lossy(&new_entry.path).to_string();
+
+        let mut prefix = String::new();
+        let mut components = rel.split('/').peekable();
+        while let Some(component) = components.next() {
+            if prefix.is_empty() {
+                prefix.push_str(component);
+            } else {
+                prefix.push('/');
+                prefix.push_str(component);
+            }
+            if components.peek().is_none() {
+                break;
+            }
+            if current_tracked_paths.contains(prefix.as_bytes()) {
+                continue;
+            }
+            let prefix_abs = work_tree.join(&prefix);
+            if let Ok(meta) = fs::symlink_metadata(&prefix_abs) {
+                if !meta.file_type().is_dir() {
+                    return Ok(Some(prefix));
+                }
+            }
+        }
+
+        let abs = work_tree.join(&rel);
+        if fs::symlink_metadata(&abs).is_ok() {
+            return Ok(Some(rel));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Handle merge when HEAD is unborn — just set HEAD to merge target.
 fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     if args.commits.len() != 1 {
         bail!("Can merge only exactly one commit into empty head");
     }
     let merge_oid = resolve_merge_target(repo, &args.commits[0])?;
-    update_head(&repo.git_dir, head, &merge_oid)?;
-    // Update index and working tree
+
+    // Build target tree index.
     let commit_obj = repo.odb.read(&merge_oid)?;
     let commit = parse_commit(&commit_obj.data)?;
     let entries = tree_to_index_entries(repo, &commit.tree, "")?;
-    let mut index = Index::new();
-    index.entries = entries;
-    index.sort();
+    let mut target_index = Index::new();
+    target_index.entries = entries;
+    target_index.sort();
+
+    // Preserve existing stage-0 entries on unborn HEAD (e.g. manually staged
+    // paths) unless the merge target explicitly updates the same path.
+    let current_index = Index::load(&repo.index_path())?;
+    let current_stage0: HashMap<Vec<u8>, IndexEntry> = current_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e.clone()))
+        .collect();
+    let current_tracked_paths: BTreeSet<Vec<u8>> = current_stage0.keys().cloned().collect();
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &index, None)?;
+        if let Some(path) =
+            first_unborn_untracked_overwrite_path(wt, &target_index, &current_tracked_paths)?
+        {
+            eprintln!("error: Untracked working tree file '{path}' would be overwritten by merge.");
+            eprintln!("fatal: read-tree failed");
+            std::process::exit(128);
+        }
+    }
+
+    let mut merged_entries: HashMap<Vec<u8>, IndexEntry> = target_index
+        .entries
+        .iter()
+        .filter(|e| e.stage() == 0)
+        .map(|e| (e.path.clone(), e.clone()))
+        .collect();
+    let mut overwrite_local: BTreeSet<String> = BTreeSet::new();
+    for (path, cur_entry) in &current_stage0 {
+        match merged_entries.get(path) {
+            Some(target_entry)
+                if target_entry.oid != cur_entry.oid || target_entry.mode != cur_entry.mode =>
+            {
+                overwrite_local.insert(String::from_utf8_lossy(path).to_string());
+            }
+            Some(_) => {}
+            None => {
+                merged_entries.insert(path.clone(), cur_entry.clone());
+            }
+        }
+    }
+
+    if !overwrite_local.is_empty() {
+        let mut msg = String::from(
+            "Your local changes to the following files would be overwritten by merge:\n",
+        );
+        for path in &overwrite_local {
+            msg.push_str(&format!("\t{path}\n"));
+        }
+        msg.push_str("Please commit your changes or stash them before you merge.\nAborting");
+        bail!("{msg}");
+    }
+
+    let mut index = Index::new();
+    index.entries = merged_entries.into_values().collect();
+    index.sort();
+
+    update_head(&repo.git_dir, head, &merge_oid)?;
+
+    if let Some(ref wt) = repo.work_tree {
+        checkout_entries(repo, wt, &index, Some(&current_stage0))?;
     }
     index.write(&repo.index_path())?;
 
@@ -1152,6 +1255,11 @@ fn bail_if_merge_would_overwrite_local_changes(
         .filter(|e| e.stage() == 0)
         .map(|e| (e.path.as_slice(), e))
         .collect();
+    let merge_touched_paths: HashSet<&[u8]> = new_index
+        .entries
+        .iter()
+        .map(|e| e.path.as_slice())
+        .collect();
 
     let mut overwrite_local: BTreeSet<String> = BTreeSet::new();
     let current_tracked_paths: BTreeSet<Vec<u8>> = current_index
@@ -1208,7 +1316,7 @@ fn bail_if_merge_would_overwrite_local_changes(
             (Some(head), Some(ne)) => ne.oid != head.oid || ne.mode != head.mode,
             (Some(_), None) => true,
             (None, Some(_)) => true,
-            (None, None) => false,
+            (None, None) => merge_touched_paths.contains(idx_entry.path.as_slice()),
         };
         if !target_changes {
             continue;
@@ -1228,6 +1336,32 @@ fn bail_if_merge_would_overwrite_local_changes(
         }
 
         let rel = String::from_utf8_lossy(&new_entry.path).to_string();
+        let mut prefix = String::new();
+        let mut components = rel.split('/').peekable();
+        while let Some(component) = components.next() {
+            if prefix.is_empty() {
+                prefix.push_str(component);
+            } else {
+                prefix.push('/');
+                prefix.push_str(component);
+            }
+            if components.peek().is_none() {
+                break;
+            }
+            if current_tracked_paths.contains(prefix.as_bytes()) {
+                continue;
+            }
+            let prefix_abs = work_tree.join(&prefix);
+            if let Ok(meta) = fs::symlink_metadata(&prefix_abs) {
+                if !meta.file_type().is_dir() {
+                    overwrite_untracked.insert(prefix.clone());
+                    continue;
+                }
+            }
+        }
+        if overwrite_untracked.contains(&rel) {
+            continue;
+        }
         let abs = work_tree.join(&rel);
         let Ok(_meta) = fs::symlink_metadata(&abs) else {
             continue;

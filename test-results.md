@@ -3,6 +3,13 @@
 **Updated:** 2026-04-06
 
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6113-rev-list-bitmap-filters.sh`: 14/14 passing (direct validation after rev-list filter/bitmap compatibility fixes: added `--filter-provided-objects`, combined `--filter=` handling, `object:type=(tag|commit|tree|blob)` and `sparse:oid=` support, object-filter-aware bitmap fallback, and `--unpacked` object selection aligned with expected loose-object behavior under bitmap traversal cases).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6436-merge-overwrite.sh`: 18/18 passing (direct validation after merge overwrite safety fixes for staged re-added conflict paths, untracked leading-path blockers (`sub` vs `sub/f`), and unborn-branch preflight/state handling).
+- `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6439-merge-co-error-msgs.sh`: 6/6 passing (merge regression check after overwrite-preflight updates).
+- `./scripts/run-tests.sh t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (merge regression check after overwrite-preflight updates).
+- `./scripts/run-tests.sh t6406-merge-attr.sh`: 13/13 passing (merge regression check after overwrite-preflight updates).
+- `cargo clippy --fix --allow-dirty`: passing (unrelated clippy edits in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, `grit/src/commands/reset.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: 98/98 passing.
 - `./scripts/run-tests.sh t6113-rev-list-bitmap-filters.sh`: 14/14 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6112-rev-list-filters-objects.sh`: 26/54 passing (targeted regression snapshot after rev-list filter updates; suite remains partially implemented overall, with no new pass claim beyond existing coverage).
 - `./scripts/run-tests.sh t6115-rev-list-du.sh`: 17/17 passing (rev-list regression check after bitmap/filter option parsing and traversal updates).
