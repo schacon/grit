@@ -97,10 +97,10 @@ commit → check it off → move on.
 - [x] `t1020-subdirectory` ████████████████████ 15/15 (0 left) — Try various core-level commands in subdirectory.
 
 - [ ] `t1415-worktree-refs` ████████░░░░░░░░░░░░ 4/10 (6 left) — per-worktree refs
-- [ ] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
+- [x] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax
 - [x] `t1005-read-tree-reset` ████████████████████ 7/7 (0 left) — read-tree -u --reset
 - [ ] `t0100-previous` ░░░░░░░░░░░░░░░░░░░░ 0/6 (6 left) — previous branch syntax @{-n}
-- [ ] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
+- [x] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
 - [ ] `t1406-submodule-ref-store` ██████████░░░░░░░░░░ 8/15 (7 left) — test submodule ref store api
 - [ ] `t1309-early-config` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — Test read_early_config()
 - [ ] `t0614-reftable-fsck` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — Test reftable backend consistency check
@@ -109,8 +109,8 @@ commit → check it off → move on.
 - [ ] `t1417-reflog-updateref` ███████████░░░░░░░░░ 12/21 (9 left) — git reflog --updateref
 - [ ] `t1414-reflog-walk` █████░░░░░░░░░░░░░░░ 3/12 (9 left) — various tests of reflog walk (log -g) behavior
 - [ ] `t1421-reflog-write` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Manually write reflog entries
-- [ ] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
-- [ ] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
+- [x] `t1403-show-ref` ███░░░░░░░░░░░░░░░░░ 2/12 (10 left) — show-ref
+- [x] `t1306-xdg-files` █████████░░░░░░░░░░░ 10/21 (11 left) — Compatibility with $XDG_CONFIG_HOME/git/ files
 - [ ] `t1004-read-tree-m-u-wf` ███████░░░░░░░░░░░░░ 6/17 (11 left) — read-tree -m -u checks working tree files
 - [ ] `t1411-reflog-show` ███████░░░░░░░░░░░░░ 6/17 (11 left) — Test reflog display routines
 - [ ] `t0212-trace2-event` ░░░░░░░░░░░░░░░░░░░░ 0/11 (11 left) — test trace2 facility
