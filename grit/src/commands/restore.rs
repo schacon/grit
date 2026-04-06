@@ -39,6 +39,22 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// For unmerged paths, restore our version (stage #2) to the working tree.
+    #[arg(long = "ours")]
+    pub ours: bool,
+
+    /// For unmerged paths, restore their version (stage #3) to the working tree.
+    #[arg(long = "theirs")]
+    pub theirs: bool,
+
+    /// Recreate conflicted merge markers in the working tree from unmerged index entries.
+    #[arg(long = "merge")]
+    pub merge: bool,
+
+    /// Conflict style (accepted for compatibility).
+    #[arg(long = "conflict")]
+    pub conflict: Option<String>,
+
     /// Interactively select hunks to discard.
     #[arg(short = 'p', long = "patch")]
     pub patch: bool,
@@ -66,6 +82,11 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.patch {
         bail!("--patch is not yet implemented");
+    }
+    if (args.ours || args.theirs || args.merge || args.conflict.is_some())
+        && (args.staged || args.source.is_some())
+    {
+        bail!("these options cannot be used together");
     }
 
     let mut pathspecs = args.pathspec.clone();
@@ -139,11 +160,29 @@ pub fn run(args: Args) -> Result<()> {
     for rel_path in &expanded {
         let path_bytes = rel_path.as_bytes();
 
+        if args.merge && restore_worktree {
+            do_restore_worktree_merge(
+                &repo,
+                &index,
+                &work_tree,
+                rel_path,
+                args.conflict.as_deref(),
+            )?;
+            continue;
+        }
         // Check for unmerged (conflicted) entries in the index.
         let is_unmerged = index
             .entries
             .iter()
             .any(|e| e.path == path_bytes && e.stage() != 0);
+        if is_unmerged && args.ours && restore_worktree {
+            do_restore_worktree_side(&repo, &index, &work_tree, rel_path, 2)?;
+            continue;
+        }
+        if is_unmerged && args.theirs && restore_worktree {
+            do_restore_worktree_side(&repo, &index, &work_tree, rel_path, 3)?;
+            continue;
+        }
         if is_unmerged && !args.ignore_unmerged {
             bail!(
                 "path '{}' has unmerged conflicts; use --ignore-unmerged to skip",
@@ -314,6 +353,116 @@ fn do_restore_worktree_from_index(
     Ok(())
 }
 
+fn do_restore_worktree_merge(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    rel_path: &str,
+    conflict_style: Option<&str>,
+) -> Result<()> {
+    let path_bytes = rel_path.as_bytes();
+    let staged_ours = index.get(path_bytes, 2).map(|e| (e.oid, e.mode));
+    let staged_theirs = index.get(path_bytes, 3).map(|e| (e.oid, e.mode));
+    let ((ours_oid, ours_mode), (theirs_oid, _theirs_mode)) =
+        if let (Some(ours), Some(theirs)) = (staged_ours, staged_theirs) {
+            (ours, theirs)
+        } else if let Some(saved) = read_saved_merge_state(repo, rel_path)? {
+            ((saved.0, saved.1), (saved.2, saved.3))
+        } else {
+            bail!("path '{}' is not unmerged", rel_path);
+        };
+
+    let ours_obj = repo
+        .odb
+        .read(&ours_oid)
+        .with_context(|| format!("reading ours blob for '{rel_path}'"))?;
+    let theirs_obj = repo
+        .odb
+        .read(&theirs_oid)
+        .with_context(|| format!("reading theirs blob for '{rel_path}'"))?;
+    if ours_obj.kind != ObjectKind::Blob || theirs_obj.kind != ObjectKind::Blob {
+        bail!("cannot restore merge state for non-blob path '{}'", rel_path);
+    }
+
+    let ours_text = ensure_trailing_newline(String::from_utf8_lossy(&ours_obj.data).into_owned());
+    let theirs_text =
+        ensure_trailing_newline(String::from_utf8_lossy(&theirs_obj.data).into_owned());
+
+    // For now all supported styles map to standard conflict markers.
+    // Accept Git's names for compatibility.
+    let _ = conflict_style;
+    let merged = format!(
+        "<<<<<<< ours\n{}=======\n{}>>>>>>> theirs\n",
+        ours_text, theirs_text
+    );
+    write_to_worktree(work_tree, rel_path, merged.as_bytes(), ours_mode)?;
+    Ok(())
+}
+
+fn do_restore_worktree_side(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    rel_path: &str,
+    stage: u8,
+) -> Result<()> {
+    let path_bytes = rel_path.as_bytes();
+    let entry = index
+        .get(path_bytes, stage)
+        .ok_or_else(|| anyhow::anyhow!("path '{}' is not unmerged", rel_path))?;
+    let obj = repo
+        .odb
+        .read(&entry.oid)
+        .with_context(|| format!("reading stage {stage} blob for '{rel_path}'"))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("'{}' is not a blob in the index", rel_path);
+    }
+    write_to_worktree(work_tree, rel_path, &obj.data, entry.mode)?;
+    Ok(())
+}
+
+fn ensure_trailing_newline(mut text: String) -> String {
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
+}
+
+fn read_saved_merge_state(
+    repo: &Repository,
+    rel_path: &str,
+) -> Result<Option<(ObjectId, u32, ObjectId, u32)>> {
+    let state_path = repo.git_dir.join("grit-restore-merge-state");
+    let content = match std::fs::read_to_string(&state_path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    for line in content.lines() {
+        let mut parts = line.splitn(5, '\t');
+        let Some(path) = parts.next() else { continue };
+        if path != rel_path {
+            continue;
+        }
+        let Some(ours_oid_s) = parts.next() else { continue };
+        let Some(ours_mode_s) = parts.next() else { continue };
+        let Some(theirs_oid_s) = parts.next() else {
+            continue;
+        };
+        let Some(theirs_mode_s) = parts.next() else {
+            continue;
+        };
+        let ours_oid = ours_oid_s.parse::<ObjectId>()?;
+        let ours_mode = u32::from_str_radix(ours_mode_s, 8).unwrap_or(0o100644);
+        let theirs_oid = theirs_oid_s.parse::<ObjectId>()?;
+        let theirs_mode = u32::from_str_radix(theirs_mode_s, 8).unwrap_or(0o100644);
+        return Ok(Some((ours_oid, ours_mode, theirs_oid, theirs_mode)));
+    }
+
+    Ok(None)
+}
+
 /// Write blob data to the working tree at `rel_path` under `work_tree`.
 ///
 /// Creates parent directories as needed.  Handles symlinks and executable
@@ -477,10 +626,13 @@ fn expand_pathspecs(
                 collect_tree_paths(repo, *tree_oid, "", &mut tree_paths)?;
                 result.extend(tree_paths);
             } else {
-                // Collect all stage-0 paths from the index
+                // Collect all tracked paths from the index, including unmerged
+                // stage entries, so `restore .` can properly error/ignore on
+                // conflicts depending on `--ignore-unmerged`.
+                let mut seen = std::collections::BTreeSet::new();
                 for entry in &index.entries {
-                    if entry.stage() == 0 {
-                        let path = String::from_utf8_lossy(&entry.path).into_owned();
+                    let path = String::from_utf8_lossy(&entry.path).into_owned();
+                    if seen.insert(path.clone()) {
                         result.push(path);
                     }
                 }

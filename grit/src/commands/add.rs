@@ -857,6 +857,9 @@ fn add_path(
                 }
             }
         }
+        if has_unmerged && !args.dry_run {
+            let _ = record_merge_restore_state(repo, index, path);
+        }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
     }
@@ -1585,6 +1588,76 @@ fn normalize_repo_relpath(path: &str) -> String {
     }
     let s = out.to_string_lossy().to_string();
     if s.is_empty() { path.trim_end_matches('/').to_string() } else { s }
+}
+
+fn record_merge_restore_state(repo: &Repository, index: &Index, rel_path: &str) -> Result<()> {
+    let path_bytes = rel_path.as_bytes();
+    let Some(ours) = index.get(path_bytes, 2) else {
+        return Ok(());
+    };
+    let Some(theirs) = index.get(path_bytes, 3) else {
+        return Ok(());
+    };
+
+    let state_path = repo.git_dir.join("grit-restore-merge-state");
+    let mut entries: std::collections::BTreeMap<String, (String, u32, String, u32)> =
+        std::collections::BTreeMap::new();
+
+    if let Ok(content) = fs::read_to_string(&state_path) {
+        for line in content.lines() {
+            let mut parts = line.split('\t');
+            let Some(path) = parts.next() else {
+                continue;
+            };
+            let Some(ours_oid) = parts.next() else {
+                continue;
+            };
+            let Some(ours_mode_str) = parts.next() else {
+                continue;
+            };
+            let Some(theirs_oid) = parts.next() else {
+                continue;
+            };
+            let Some(theirs_mode_str) = parts.next() else {
+                continue;
+            };
+            let (Ok(ours_mode), Ok(theirs_mode)) = (
+                u32::from_str_radix(ours_mode_str, 8),
+                u32::from_str_radix(theirs_mode_str, 8),
+            ) else {
+                continue;
+            };
+            entries.insert(
+                path.to_string(),
+                (
+                    ours_oid.to_string(),
+                    ours_mode,
+                    theirs_oid.to_string(),
+                    theirs_mode,
+                ),
+            );
+        }
+    }
+
+    entries.insert(
+        rel_path.to_string(),
+        (
+            ours.oid.to_hex(),
+            ours.mode,
+            theirs.oid.to_hex(),
+            theirs.mode,
+        ),
+    );
+
+    let mut out = String::new();
+    for (path, (ours_oid, ours_mode, theirs_oid, theirs_mode)) in entries {
+        out.push_str(&format!(
+            "{path}\t{ours_oid}\t{:o}\t{theirs_oid}\t{:o}\n",
+            ours_mode, theirs_mode
+        ));
+    }
+    fs::write(&state_path, out)?;
+    Ok(())
 }
 
 fn load_submodule_ignore_settings(
