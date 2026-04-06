@@ -65,6 +65,10 @@ pub struct Args {
     #[arg(long = "recurse-submodules", alias = "recursive")]
     pub recurse_submodules: bool,
 
+    /// Path to template directory (accepted for compatibility).
+    #[arg(long = "template", value_name = "TEMPLATE_DIR")]
+    pub template: Option<String>,
+
     /// Use remote-tracking branch for submodules.
     #[arg(long = "remote-submodules")]
     pub remote_submodules: bool,
