@@ -42,6 +42,10 @@ pub struct Args {
     #[arg(short = 'f', long = "force", hide = true)]
     pub force: bool,
 
+    /// Overwrite ignored files (allow checkout to clobber ignored files).
+    #[arg(long = "overwrite-ignore")]
+    pub overwrite_ignore: bool,
+
     /// Suppress feedback messages.
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
@@ -492,6 +496,15 @@ fn create_and_switch_branch(
     start: Option<&str>,
     force: bool,
 ) -> Result<()> {
+    // Check for HEAD.lock (another process is writing)
+    let head_lock = repo.git_dir.join("HEAD.lock");
+    if head_lock.exists() {
+        bail!(
+            "Unable to create '{}': The file exists.",
+            head_lock.display()
+        );
+    }
+
     // Check the branch doesn't already exist
     let branch_ref = format!("refs/heads/{name}");
     if refs::resolve_ref(&repo.git_dir, &branch_ref).is_ok() {
