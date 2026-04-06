@@ -727,12 +727,12 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
 
     // Main worktree (or bare repo)
     let main_head = resolve_head(&common).unwrap_or(HeadState::Invalid);
+    // The main worktree path is common.parent() (e.g., /repo for /repo/.git)
+    // NOT repo.work_tree (which would be the current linked worktree when running from there)
     let main_path = if repo.is_bare() {
         common.clone()
     } else {
-        repo.work_tree
-            .clone()
-            .unwrap_or_else(|| common.parent().unwrap_or(&common).to_path_buf())
+        common.parent().unwrap_or(&common).to_path_buf()
     };
     entries.push(WorktreeInfo {
         path: main_path,
