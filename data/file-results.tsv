@@ -154,7 +154,7 @@ t1507-rev-parse-upstream	yes	29	13	16	ok	13	29	0
 t1508-at-combinations	yes	35	24	11	ok	24	35	0
 t1509-root-work-tree	yes	0	0	0	ok	0	0	0
 t1510-repo-setup	yes	109	13	96	ok	13	109	0
-t1511-rev-parse-caret	yes	17	10	7	ok	10	17	0
+t1511-rev-parse-caret	yes	17	17	0	ok	17	17	0
 t1512-rev-parse-disambiguation	yes	3	3	0	ok	0	0	3
 t1513-rev-parse-prefix	yes	11	11	0	ok	11	11	0
 t1514-rev-parse-push	yes	9	9	0	ok	9	9	0

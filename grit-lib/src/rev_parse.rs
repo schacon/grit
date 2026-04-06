@@ -15,6 +15,7 @@ use crate::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use crate::reflog::read_reflog;
 use crate::refs;
 use crate::repo::Repository;
+use regex::Regex;
 
 /// Return `Some(repo)` when a repository can be discovered at `start`.
 ///
@@ -1231,6 +1232,17 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
             }
         }
+        Some("tag") => {
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Tag {
+                Ok(oid)
+            } else {
+                Err(Error::InvalidRef("expected tag".to_owned()))
+            }
+        }
+        Some(search) if search.starts_with('/') => {
+            resolve_commit_message_search_from_oid(repo, oid, search)
+        }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
         ))),
@@ -1397,10 +1409,35 @@ fn resolve_commit_message_search(
         None => return Err(Error::ObjectNotFound(format!(":/{pattern}"))),
     };
 
+    resolve_commit_message_search_from_oid(repo, start_oid, &format!("/{pattern}"))
+}
+
+fn resolve_commit_message_search_from_oid(
+    repo: &crate::repo::Repository,
+    start_oid: ObjectId,
+    selector: &str,
+) -> Result<ObjectId> {
+    let mut current = start_oid;
+    loop {
+        let obj = repo.odb.read(&current)?;
+        match obj.kind {
+            ObjectKind::Commit => break,
+            ObjectKind::Tag => {
+                current = parse_tag_target(&obj.data)?;
+            }
+            _ => {
+                return Err(Error::InvalidRef(
+                    "commit message search requires a commit-ish".to_owned(),
+                ))
+            }
+        }
+    }
+
+    let (matcher, negate) = parse_commit_message_selector(selector)?;
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
-    queue.push_back(start_oid);
-    visited.insert(start_oid);
+    queue.push_back(current);
+    visited.insert(current);
 
     while let Some(oid) = queue.pop_front() {
         let obj = match repo.odb.read(&oid) {
@@ -1416,8 +1453,8 @@ fn resolve_commit_message_search(
             Err(_) => continue,
         };
 
-        // Check if message contains pattern
-        if commit.message.contains(pattern) {
+        let matches = matcher.is_match(&commit.message);
+        if (matches && !negate) || (!matches && negate) {
             return Ok(oid);
         }
 
@@ -1429,5 +1466,41 @@ fn resolve_commit_message_search(
         }
     }
 
-    Err(Error::ObjectNotFound(format!(":/{pattern}")))
+    Err(Error::ObjectNotFound(format!(":/{selector}")))
+}
+
+fn parse_commit_message_selector(selector: &str) -> Result<(Regex, bool)> {
+    let expr = selector.strip_prefix('/').unwrap_or(selector);
+    if expr.is_empty() {
+        return Err(Error::InvalidRef(
+            "empty commit message selector".to_owned(),
+        ));
+    }
+
+    if expr == "!" {
+        return Err(Error::InvalidRef(
+            "invalid commit message selector".to_owned(),
+        ));
+    }
+
+    let (pattern, negate) = if let Some(rest) = expr.strip_prefix("!!") {
+        (format!("!{rest}"), false)
+    } else if let Some(rest) = expr.strip_prefix("!-") {
+        if rest.is_empty() {
+            return Err(Error::InvalidRef(
+                "invalid commit message selector".to_owned(),
+            ));
+        }
+        (rest.to_owned(), true)
+    } else if expr.starts_with('!') {
+        return Err(Error::InvalidRef(
+            "invalid commit message selector".to_owned(),
+        ));
+    } else {
+        (expr.to_owned(), false)
+    };
+
+    let regex = Regex::new(&pattern)
+        .map_err(|err| Error::InvalidRef(format!("invalid commit message selector: {err}")))?;
+    Ok((regex, negate))
 }

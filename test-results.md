@@ -2,6 +2,9 @@
 
 **Updated:** 2026-04-06
 
+- `cargo build --release -p grit-rs`: success (after `t1511-rev-parse-caret` peel/message-search compatibility updates in `grit-lib/src/rev_parse.rs`).
+- `rm -rf /workspace/tests/trash.t1511-rev-parse-caret && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1511-rev-parse-caret.sh` (run from `/workspace/tests`): 17/17 passing.
+- `./scripts/run-tests.sh t1511-rev-parse-caret.sh`: 17/17 passing.
 - `cargo build --release -p grit-rs`: success (after `t0100-previous` compatibility fixes in branch deletion shorthand, merge target naming, and reflog-walk revision normalization).
 - `rm -rf /workspace/tests/trash.t0100-previous && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t0100-previous.sh` (run from `/workspace/tests`): 6/6 passing.
 - `./scripts/run-tests.sh t0100-previous.sh`: 6/6 passing.

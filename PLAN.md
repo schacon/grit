@@ -101,7 +101,7 @@ commit → check it off → move on.
 - [x] `t1514-rev-parse-push` ████████████████████ 9/9 (0 left) — test <branch>@{push} syntax
 - [x] `t1005-read-tree-reset` ████████████████████ 7/7 (0 left) — read-tree -u --reset
 - [x] `t0100-previous` ████████████████████ 6/6 (0 left) — previous branch syntax @{-n}
-- [ ] `t1511-rev-parse-caret` ███████████░░░░░░░░░ 10/17 (7 left) — tests for ref^{stuff}
+- [x] `t1511-rev-parse-caret` ████████████████████ 17/17 (0 left) — tests for ref^{stuff}
 - [ ] `t1406-submodule-ref-store` ██████████░░░░░░░░░░ 8/15 (7 left) — test submodule ref store api
 - [ ] `t1309-early-config` ██████░░░░░░░░░░░░░░ 3/10 (7 left) — Test read_early_config()
 - [ ] `t0614-reftable-fsck` ░░░░░░░░░░░░░░░░░░░░ 0/7 (7 left) — Test reftable backend consistency check
