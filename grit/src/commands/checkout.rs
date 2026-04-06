@@ -382,6 +382,69 @@ pub fn run(args: Args) -> Result<()> {
         return switch_branch(&repo, &target, &branch_ref, switch_force);
     }
 
+    // DWIM: if branch doesn't exist locally, check if exactly one remote has it
+    // Skip if --no-guess or checkout.guess=false
+    let dwim_enabled = !args.no_guess && {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        config
+            .get("checkout.guess")
+            .map(|v| v != "false")
+            .unwrap_or(true)
+    };
+    if !args.detach && dwim_enabled {
+        let remote_prefix = "refs/remotes/";
+        let all_remote_refs = refs::list_refs(&repo.git_dir, remote_prefix).unwrap_or_default();
+        let matching: Vec<(String, ObjectId)> = all_remote_refs
+            .into_iter()
+            .filter(|(r, _)| {
+                // refs/remotes/<remote>/<branch>
+                let parts: Vec<&str> = r.trim_start_matches(remote_prefix).splitn(2, '/').collect();
+                parts.len() == 2 && parts[1] == target
+            })
+            .collect();
+        if matching.len() == 1 {
+            let remote_ref = &matching[0].0;
+            let oid = matching[0].1;
+            // Extract remote name from refs/remotes/<remote>/<branch>
+            let remote_part = remote_ref.trim_start_matches(remote_prefix);
+            let remote_name = remote_part.splitn(2, '/').next().unwrap_or("");
+            // Create the local branch tracking the remote
+            let new_branch_ref = format!("refs/heads/{target}");
+            refs::write_ref(&repo.git_dir, &new_branch_ref, &oid)?;
+            // Set up tracking configuration
+            let cfg_path = repo.git_dir.join("config");
+            let mut cfg_content = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+            let section = format!(
+                "\n[branch \"{}\"]\
+\n\tremote = {}\
+\n\tmerge = refs/heads/{}\n",
+                target, remote_name, target
+            );
+            cfg_content.push_str(&section);
+            let _ = std::fs::write(&cfg_path, cfg_content);
+            eprintln!("branch '{target}' set up to track '{remote_name}/{target}'.");
+            return switch_branch(&repo, &target, &new_branch_ref, switch_force);
+        } else if matching.len() > 1 {
+            eprintln!(
+                "hint: If you meant to check out a remote tracking branch on, e.g. 'origin',"
+            );
+            eprintln!("hint: try again with the --track option:");
+            eprintln!("hint:");
+            for (r, _) in &matching {
+                let remote_part = r.trim_start_matches(remote_prefix);
+                let mut parts = remote_part.splitn(2, '/');
+                let rname = parts.next().unwrap_or("");
+                let bname = parts.next().unwrap_or("");
+                eprintln!("hint:     git checkout --track {rname}/{bname}");
+            }
+            eprintln!("hint:");
+            bail!(
+                "'{target}' matched multiple (\'{}\') remote tracking branches",
+                matching.len()
+            );
+        }
+    }
+
     // Try as a commit (detached HEAD)
     match resolve_to_commit(&repo, &target) {
         Ok(oid) => detach_head(&repo, &oid, switch_force),
