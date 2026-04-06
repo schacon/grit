@@ -287,7 +287,11 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     // Use native Git for regular worktree-add behavior. Keep local implementation
     // for relative-path worktree modes because the host Git in this environment
     // does not support --relative-paths/--no-relative-paths.
-    if !args.relative_paths && !args.no_relative_paths && !config_use_relative_paths(&common) {
+    if !args.relative_paths
+        && !args.no_relative_paths
+        && !config_use_relative_paths(&common)
+        && !config_relative_worktrees_enabled(&common)
+    {
         return passthrough_current_worktree_invocation();
     }
 
@@ -388,10 +392,12 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             format!("{}\n", admin_gitdir_target.display())
         };
         fs::write(wt_admin.join("gitdir"), &gitdir_content)?;
-        fs::write(
-            wt_admin.join("commondir"),
-            format!("{}\n", common.display()),
-        )?;
+        let commondir_value = if use_relative_paths {
+            relativize_path(&wt_admin, &common)
+        } else {
+            common.clone()
+        };
+        fs::write(wt_admin.join("commondir"), format!("{}\n", commondir_value.display()))?;
 
         let orphan_branch = args
             .new_branch
@@ -489,9 +495,14 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
     // Write commondir file — relative path from worktree admin to the common dir
     // Standard git uses relative paths like "../../"
+    let commondir_value = if use_relative_paths {
+        relativize_path(&wt_admin, &common)
+    } else {
+        common.clone()
+    };
     fs::write(
         wt_admin.join("commondir"),
-        format!("{}\n", common.display()),
+        format!("{}\n", commondir_value.display()),
     )?;
 
     // Write HEAD — either branch or detached
@@ -1043,18 +1054,20 @@ fn format_list_path(path: &Path, quote_paths: bool) -> String {
 // ---------------------------------------------------------------------------
 
 fn cmd_remove(args: RemoveArgs) -> Result<()> {
-    if args.force > 0 {
+    let repo = Repository::discover(None)?;
+    let common = common_dir(&repo.git_dir)?;
+    let use_relative_paths =
+        config_use_relative_paths(&common) || config_relative_worktrees_enabled(&common);
+    if args.force > 0 && !use_relative_paths {
         return passthrough_current_worktree_invocation();
     }
 
-    let repo = Repository::discover(None)?;
-    let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
     let wt_path = absolutize_from_cwd(&args.path)?;
     let wt_name = find_worktree_name(&worktrees_dir, &wt_path)?;
     let admin = worktrees_dir.join(&wt_name);
 
-    if !worktree_has_gitlink_entries(&admin)? {
+    if !use_relative_paths && !worktree_has_gitlink_entries(&admin)? {
         return passthrough_current_worktree_invocation();
     }
     if worktree_contains_initialized_submodule(&admin, &wt_path)? {
@@ -1870,6 +1883,13 @@ fn worktree_contains_initialized_submodule(admin: &Path, wt_path: &Path) -> Resu
 fn config_use_relative_paths(common: &Path) -> bool {
     let cfg = ConfigSet::load(Some(common), true).unwrap_or_else(|_| ConfigSet::new());
     cfg.get("worktree.useRelativePaths")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false)
+}
+
+fn config_relative_worktrees_enabled(common: &Path) -> bool {
+    let cfg = ConfigSet::load(Some(common), true).unwrap_or_else(|_| ConfigSet::new());
+    cfg.get("extensions.relativeworktrees")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
         .unwrap_or(false)
 }
