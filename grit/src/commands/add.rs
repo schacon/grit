@@ -824,6 +824,7 @@ fn stage_gitlink(
         flags_extended: None,
         path: rel_path.as_bytes().to_vec(),
     };
+    clear_df_conflicts(index, rel_path.as_bytes());
     index.add_or_replace(entry);
 
     if args.verbose {
@@ -831,6 +832,23 @@ fn stage_gitlink(
     }
 
     Ok(())
+}
+
+fn path_is_parent_of(parent: &[u8], child: &[u8]) -> bool {
+    if parent.len() >= child.len() {
+        return false;
+    }
+    child.starts_with(parent) && child[parent.len()] == b'/'
+}
+
+fn paths_conflict_for_df(a: &[u8], b: &[u8]) -> bool {
+    a == b || path_is_parent_of(a, b) || path_is_parent_of(b, a)
+}
+
+fn clear_df_conflicts(index: &mut Index, new_path: &[u8]) {
+    index
+        .entries
+        .retain(|entry| !paths_conflict_for_df(entry.path.as_slice(), new_path));
 }
 
 /// Stage a single file into the index.
@@ -878,6 +896,7 @@ fn stage_file(
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),
         };
+        clear_df_conflicts(index, rel_path.as_bytes());
         index.add_or_replace(entry);
         if args.verbose {
             println!("add '{rel_path}'");
@@ -976,6 +995,7 @@ fn stage_file(
     entry.mode = final_mode; // Ensure mode override sticks
                              // Use stage_file which also clears conflict stages (1, 2, 3) for the same
                              // path — this is how `git add` resolves merge/cherry-pick conflicts.
+    clear_df_conflicts(index, rel_path.as_bytes());
     index.stage_file(entry);
 
     if args.verbose {
