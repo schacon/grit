@@ -112,6 +112,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Ignore changes to submodule during --refresh.
+    #[arg(long = "ignore-submodules")]
+    pub ignore_submodules: bool,
+
     /// Files to add/remove from the index.
     pub files: Vec<PathBuf>,
 }
@@ -548,6 +552,7 @@ pub fn run(args: Args) -> Result<()> {
             &repo.odb,
             args.unmerged,
             args.ignore_missing,
+            args.ignore_submodules,
         )?;
         index.write(&index_path).context("writing index")?;
         // -q (quiet) suppresses the error exit; otherwise exit 1 if files need updating
@@ -650,6 +655,7 @@ fn refresh_index(
     odb: &Odb,
     allow_unmerged: bool,
     ignore_missing: bool,
+    ignore_submodules: bool,
 ) -> Result<(bool, bool)> {
     // Returns (all_uptodate, index_modified)
     // all_uptodate: true if no files need updating
@@ -668,8 +674,48 @@ fn refresh_index(
         if entry.stage() != 0 {
             continue;
         }
-        // Skip gitlinks (submodules) — they're not regular files
+        // Handle gitlinks (submodules)
         if entry.mode == 0o160000 {
+            if ignore_submodules {
+                continue; // ignore submodule changes
+            }
+            // Check if the submodule's HEAD matches the stored OID
+            let path_str2 = std::str::from_utf8(&entry.path).unwrap_or("");
+            let sub_dir = work_tree.join(path_str2);
+            let sub_head_path = sub_dir.join(".git").join("HEAD");
+            // Try to read the HEAD of the submodule
+            let submodule_matches = if let Ok(head_content) =
+                std::fs::read_to_string(&sub_head_path)
+            {
+                if let Some(refname) = head_content.strip_prefix("ref: ").map(|s| s.trim()) {
+                    let ref_file = sub_dir.join(".git").join(refname);
+                    if let Ok(ref_content) = std::fs::read_to_string(&ref_file) {
+                        if let Ok(sub_oid) =
+                            ref_content.trim().parse::<grit_lib::objects::ObjectId>()
+                        {
+                            sub_oid == entry.oid
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    // Detached HEAD
+                    if let Ok(sub_oid) = head_content.trim().parse::<grit_lib::objects::ObjectId>()
+                    {
+                        sub_oid == entry.oid
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                true
+            }; // if we can't read, assume ok
+            if !submodule_matches {
+                eprintln!("{path_str2}: needs update");
+                all_uptodate = false;
+            }
             continue;
         }
         let path_str = std::str::from_utf8(&entry.path)
