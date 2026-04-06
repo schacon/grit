@@ -99,11 +99,65 @@ fn verify_path_component(name: &[u8], prot: PathProtection) -> Result<()> {
         bail!("invalid path '.git'");
     }
 
-    // HFS / NTFS case-insensitive ".git" check
-    if (prot.protect_hfs || prot.protect_ntfs) && name.len() == 4 && name[0] == b'.' {
-        let rest = &name[1..];
-        if rest.eq_ignore_ascii_case(b"git") {
+    // HFS / NTFS case-insensitive ".git" check (including Unicode tricks)
+    if prot.protect_hfs || prot.protect_ntfs {
+        // For HFS+: strip Unicode zero-width / ignorable characters before comparing.
+        // These are chars that HFS+ ignores in filenames.
+        let normalized = if prot.protect_hfs {
+            let s = String::from_utf8_lossy(name);
+            // Remove HFS-ignorable Unicode characters (zero-width, soft hyphen, etc.)
+            let stripped: String = s
+                .chars()
+                .filter(|&c| {
+                    !matches!(c as u32,
+                        // Zero-width non-joiner, non-joiner, joiner
+                        0x200B | 0x200C | 0x200D |
+                        // Zero-width no-break space (BOM)
+                        0xFEFF |
+                        // Soft hyphen
+                        0x00AD |
+                        // Various format chars
+                        0x200E | 0x200F | 0x202A..=0x202E | 0x2066..=0x2069
+                    )
+                })
+                .collect();
+            stripped
+        } else {
+            String::from_utf8_lossy(name).into_owned()
+        };
+        // Check if normalized name is .git (case-insensitive)
+        if normalized.eq_ignore_ascii_case(".git") {
             bail!("invalid path '{}'", String::from_utf8_lossy(name));
+        }
+        // NTFS: also check for .git followed by spaces, dots, or colon streams
+        if prot.protect_ntfs {
+            let lower = normalized.to_lowercase();
+            // .git. or .git<space> etc — NTFS treats trailing dots/spaces as ignored
+            let trimmed = lower.trim_end_matches(|c: char| c == '.' || c == ' ');
+            if trimmed == ".git" {
+                bail!("invalid path '{}'", String::from_utf8_lossy(name));
+            }
+            // Backslash in name on NTFS acts as directory separator
+            if normalized.contains('\\') {
+                // Check if any component after splitting on \\ is .git-like
+                for part in normalized.split('\\') {
+                    let p = part
+                        .trim_end_matches(|c: char| c == '.' || c == ' ')
+                        .to_lowercase();
+                    if p == ".git" || p.eq_ignore_ascii_case("git~1") {
+                        bail!("invalid path '{}'", String::from_utf8_lossy(name));
+                    }
+                }
+            }
+            // :alternate-stream notation
+            if let Some(base) = normalized.split(':').next() {
+                let b = base
+                    .trim_end_matches(|c: char| c == '.' || c == ' ')
+                    .to_lowercase();
+                if b == ".git" {
+                    bail!("invalid path '{}'", String::from_utf8_lossy(name));
+                }
+            }
         }
     }
 
