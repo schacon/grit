@@ -51,6 +51,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowPrefix,
         ShowCdup,
         ShowGitDir,
+        ShowGitCommonDir,
         ShowAbsoluteGitDir,
         ShowRefFormat,
         GitPath(String),
@@ -105,6 +106,8 @@ pub fn run(args: Args) -> Result<()> {
                 abbrev_ref = true;
             } else if arg == "--git-dir" {
                 actions.push(Action::ShowGitDir);
+            } else if arg == "--git-common-dir" {
+                actions.push(Action::ShowGitCommonDir);
             } else if arg == "--absolute-git-dir" {
                 actions.push(Action::ShowAbsoluteGitDir);
             } else if arg == "--git-path" {
@@ -371,6 +374,33 @@ pub fn run(args: Args) -> Result<()> {
                     // From subdirectories or non-standard layouts,
                     // git prints the absolute path
                     println!("{}", current.git_dir.display());
+                }
+            }
+            Action::ShowGitCommonDir => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                // For linked worktrees, common dir is in commondir file; otherwise same as git_dir
+                let commondir_file = current.git_dir.join("commondir");
+                let common_git_dir = if let Ok(s) = std::fs::read_to_string(&commondir_file) {
+                    let p = std::path::Path::new(s.trim());
+                    if p.is_absolute() {
+                        p.to_path_buf()
+                    } else {
+                        current.git_dir.join(p)
+                    }
+                } else {
+                    current.git_dir.clone()
+                };
+                // Print relative path from cwd to common_git_dir
+                if common_git_dir == cwd.join(".git") {
+                    println!(".git");
+                } else if let Ok(rel) = common_git_dir.strip_prefix(&cwd) {
+                    println!("{}", rel.display());
+                } else {
+                    // Compute relative path via common ancestor
+                    let rel = relative_path_from(&cwd, &common_git_dir);
+                    println!("{}", rel.display());
                 }
             }
             Action::ShowAbsoluteGitDir => {
@@ -958,6 +988,27 @@ fn normalize_glob_pattern(pattern: &str) -> String {
 fn normalize_ref_pattern(prefix: &str, pattern: &str) -> String {
     let full = format!("{prefix}{pattern}");
     ensure_glob_suffix(&full)
+}
+
+/// Compute the relative path from `from` to `to` (both should be absolute).
+fn relative_path_from(from: &std::path::Path, to: &std::path::Path) -> std::path::PathBuf {
+    // Find common prefix
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common_len = from_components
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up_count = from_components.len() - common_len;
+    let mut rel = std::path::PathBuf::new();
+    for _ in 0..up_count {
+        rel.push("..");
+    }
+    for component in &to_components[common_len..] {
+        rel.push(component);
+    }
+    rel
 }
 
 /// If the given pattern has no glob characters, treat it as a prefix and
