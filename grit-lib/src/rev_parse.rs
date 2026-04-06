@@ -250,6 +250,7 @@ fn resolve_push_ref(repo: &Repository, branch: &str) -> Option<String> {
 
 fn parse_config_value(config: &str, section: &str, key: &str) -> Option<String> {
     let section_header = format!("[{}]", section);
+    let key_lower = key.to_ascii_lowercase();
     let mut in_section = false;
     for line in config.lines() {
         let trimmed = line.trim();
@@ -258,20 +259,13 @@ fn parse_config_value(config: &str, section: &str, key: &str) -> Option<String> 
             continue;
         }
         if in_section {
-            if let Some(rest) = trimmed
-                .to_ascii_lowercase()
-                .strip_prefix(&format!("{}.", key))
-                .or_else(|| {
-                    trimmed
-                        .to_ascii_lowercase()
-                        .strip_prefix(&format!("{} = ", key))
-                        .map(|_| &trimmed[key.len() + 3..])
-                })
-            {
-                let _ = rest;
-                // Parse the value after '='
-                if let Some(eq_pos) = trimmed.find('=') {
-                    return Some(trimmed[eq_pos + 1..].trim().to_owned());
+            let lower = trimmed.to_ascii_lowercase();
+            if lower.starts_with(&key_lower) {
+                let rest = lower[key_lower.len()..].trim_start().to_string();
+                if rest.starts_with('=') {
+                    if let Some(eq_pos) = trimmed.find('=') {
+                        return Some(trimmed[eq_pos + 1..].trim().to_owned());
+                    }
                 }
             }
         }
