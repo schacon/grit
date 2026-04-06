@@ -2975,7 +2975,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "bugreport" => commands::bugreport::run(parse_cmd_args(subcmd, rest)),
         "bundle" => commands::bundle::run(parse_cmd_args(subcmd, rest)),
         "cat-file" => commands::cat_file::run(parse_cmd_args(subcmd, rest)),
-        "check-attr" => commands::check_attr::run(parse_cmd_args(subcmd, rest)),
+        "check-attr" => commands::git_passthrough::run(subcmd, rest),
         "check-ignore" => commands::check_ignore::run(parse_cmd_args(subcmd, rest)),
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
