@@ -95,7 +95,7 @@ commit → check it off → move on.
 - [x] `t1090-sparse-checkout-scope` ████████████████████ 7/7 (0 left) — sparse checkout scope tests
 - [x] `t1302-repo-version` ████████████████████ 18/18 (0 left) — Test repository version check
 - [x] `t1060-object-corruption` ████████████████████ 17/17 (0 left) — see how we handle various forms of corruption
-- [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.
+- [x] `t1020-subdirectory` ████████████████████ 15/15 (0 left) — Try various core-level commands in subdirectory.
 
 - [ ] `t1415-worktree-refs` ████████░░░░░░░░░░░░ 4/10 (6 left) — per-worktree refs
 - [ ] `t1514-rev-parse-push` ██████░░░░░░░░░░░░░░ 3/9 (6 left) — test <branch>@{push} syntax

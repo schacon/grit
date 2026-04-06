@@ -2,6 +2,11 @@
 
 **Updated:** 2026-04-06
 
+- `cargo fmt`: success (after `t1020-subdirectory` compatibility fixes).
+- `cargo build --release -p grit-rs`: success.
+- `rm -rf /workspace/tests/trash.t1020-subdirectory && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1020-subdirectory.sh`: 15/15 passing.
+- `./scripts/run-tests.sh t1020-subdirectory.sh`: 15/15 passing.
+- `cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (reverted unrelated clippy edits in non-target files).
 - `cargo fmt`: success (after clone transport and rev-list missing-object compatibility updates for corruption handling).
 - `cargo build --release -p grit-rs`: success.
 - `rm -rf /workspace/tests/trash.t1060-object-corruption && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash tests/t1060-object-corruption.sh`: 17/17 passing (1 expected-failure test remains marked TODO in upstream script).

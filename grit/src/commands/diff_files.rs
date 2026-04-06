@@ -31,12 +31,13 @@ pub struct Args {
 
 /// Run `grit diff-files`.
 pub fn run(args: Args) -> Result<()> {
-    let options = parse_options(&args.args)?;
+    let mut options = parse_options(&args.args)?;
     let repo = Repository::discover(None).context("not a git repository")?;
 
     let Some(work_tree) = repo.work_tree.clone() else {
         bail!("this operation must be run in a work tree");
     };
+    options.pathspecs = normalize_pathspecs(&options.pathspecs, &work_tree)?;
 
     let index_path = effective_index_path(&repo)?;
     let index = Index::load(&index_path).context("loading index")?;
@@ -663,11 +664,10 @@ fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {
         return true;
     }
     pathspecs.iter().any(|spec| {
-        if let Some(prefix) = spec.strip_suffix('/') {
-            path == prefix || path.starts_with(&format!("{prefix}/"))
-        } else {
-            path == spec || path.starts_with(&format!("{spec}/"))
+        if spec.is_empty() {
+            return true;
         }
+        crate::pathspec::pathspec_matches(spec, path)
     })
 }
 
@@ -682,4 +682,60 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(path));
     }
     Ok(repo.index_path())
+}
+
+/// Convert command-line pathspecs to worktree-relative patterns.
+///
+/// `git diff-files` interprets pathspecs relative to the current directory.
+/// When invoked from a subdirectory, `.` therefore means "this subdirectory"
+/// (not the repository root).
+fn normalize_pathspecs(pathspecs: &[String], work_tree: &Path) -> Result<Vec<String>> {
+    if pathspecs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    let cwd_prefix = cwd_prefix(work_tree, &cwd);
+    let cwd_prefix_with_slash = cwd_prefix
+        .as_ref()
+        .map(|prefix| format!("{prefix}/"))
+        .unwrap_or_default();
+
+    let mut out = Vec::with_capacity(pathspecs.len());
+    for spec in pathspecs {
+        if spec == "." {
+            out.push(cwd_prefix.clone().unwrap_or_default());
+            continue;
+        }
+
+        let spec_path = Path::new(spec);
+        if spec_path.is_absolute() {
+            if let Ok(rel) = spec_path.strip_prefix(work_tree) {
+                out.push(rel.to_string_lossy().into_owned());
+            } else {
+                out.push(spec.clone());
+            }
+            continue;
+        }
+
+        if cwd_prefix_with_slash.is_empty() {
+            out.push(spec.clone());
+        } else {
+            out.push(format!("{cwd_prefix_with_slash}{spec}"));
+        }
+    }
+    Ok(out)
+}
+
+/// Return the current directory prefix relative to the worktree, if any.
+fn cwd_prefix(work_tree: &Path, cwd: &Path) -> Option<String> {
+    let work_tree = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let rel = cwd.strip_prefix(&work_tree).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    Some(rel.to_string_lossy().into_owned())
 }

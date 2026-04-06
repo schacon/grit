@@ -27,6 +27,7 @@ use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use std::process::Command;
 use unicode_width::UnicodeWidthStr;
 
 /// ANSI color codes for diff output.
@@ -877,6 +878,21 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     let has_diff = !entries.is_empty();
+
+    if let Some(external_diff) = resolve_external_diff_command(&args, &repo) {
+        if !args.quiet {
+            run_external_diff(
+                &external_diff,
+                &entries,
+                wt_for_content.is_some(),
+                repo.work_tree.as_deref(),
+            )?;
+        }
+        if (args.exit_code || args.quiet) && has_diff {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     // Determine color mode
     let use_color = match args.color.as_deref() {
@@ -2656,4 +2672,78 @@ fn resolve_diff_prefixes(args: &Args, repo: &Repository) -> (String, String) {
     };
 
     (src, dst)
+}
+
+/// Resolve the external diff command, honoring command-line flags and config.
+fn resolve_external_diff_command(args: &Args, repo: &Repository) -> Option<String> {
+    if args.no_ext_diff {
+        return None;
+    }
+    if let Ok(cmd) = std::env::var("GIT_EXTERNAL_DIFF") {
+        if !cmd.is_empty() {
+            return Some(cmd);
+        }
+    }
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok()?;
+    config.get("diff.external").filter(|cmd| !cmd.is_empty())
+}
+
+/// Invoke an external diff command once for each diff entry.
+///
+/// The argument order follows Git's external diff interface:
+/// `<path> <old-file> <old-hex> <old-mode> <new-file> <new-hex> <new-mode>`.
+fn run_external_diff(
+    external_diff: &str,
+    entries: &[DiffEntry],
+    worktree_side: bool,
+    work_tree: Option<&Path>,
+) -> Result<()> {
+    let total = entries.len();
+    for (idx, entry) in entries.iter().enumerate() {
+        let path = entry.path();
+        let old_mode = entry.old_mode.clone();
+        let new_mode = entry.new_mode.clone();
+        let old_oid = entry.old_oid.to_hex();
+        let new_oid = if worktree_side {
+            zero_oid().to_hex()
+        } else {
+            entry.new_oid.to_hex()
+        };
+
+        let old_file = if entry.status == DiffStatus::Added {
+            "/dev/null".to_owned()
+        } else {
+            path.to_owned()
+        };
+        let new_file = if entry.status == DiffStatus::Deleted {
+            "/dev/null".to_owned()
+        } else {
+            path.to_owned()
+        };
+
+        let status = Command::new("sh")
+            .arg("-c")
+            .arg(format!("{external_diff} \"$@\""))
+            .arg("grit-external-diff")
+            .arg(path)
+            .arg(old_file)
+            .arg(old_oid)
+            .arg(old_mode)
+            .arg(new_file)
+            .arg(new_oid)
+            .arg(new_mode)
+            .env("GIT_DIFF_PATH_COUNTER", format!("{}", idx + 1))
+            .env("GIT_DIFF_PATH_TOTAL", format!("{total}"))
+            .current_dir(
+                work_tree
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+            )
+            .status()
+            .with_context(|| format!("failed to launch external diff command: {external_diff}"))?;
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
+        }
+    }
+    Ok(())
 }

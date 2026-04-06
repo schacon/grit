@@ -94,7 +94,7 @@ t1012-read-tree-df	yes	5	5	0	ok	5	5	0
 t1014-read-tree-confusing	yes	28	19	9	ok	19	28	0
 t1015-read-index-unmerged	yes	6	6	0	ok	6	6	0
 t1016-compatObjectFormat	yes	0	0	0	timeout	0	0	0
-t1020-subdirectory	yes	15	11	4	ok	11	15	0
+t1020-subdirectory	yes	15	15	0	ok	15	15	0
 t1022-read-tree-partial-clone	yes	1	1	0	ok	1	1	0
 t1050-large	yes	29	14	15	ok	14	29	0
 t1051-large-conversion	yes	12	12	0	ok	12	12	0

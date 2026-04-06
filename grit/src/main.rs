@@ -1546,6 +1546,50 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     Ok(())
 }
 
+/// Compute `GIT_PREFIX` from the current directory and work tree.
+///
+/// Returns an empty string when the current directory is the work-tree root,
+/// and `None` when cwd is outside the work tree.
+fn compute_git_prefix(work_tree: &Path, cwd: &Path) -> Option<String> {
+    let work_tree = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let rel = cwd.strip_prefix(&work_tree).ok()?;
+    if rel.as_os_str().is_empty() {
+        return Some(String::new());
+    }
+    Some(format!("{}/", rel.to_string_lossy()))
+}
+
+/// Set `GIT_PREFIX` for commands running inside a working tree.
+///
+/// Git exports `GIT_PREFIX` for built-ins and aliases invoked from
+/// subdirectories so shell aliases and external helpers can resolve paths
+/// relative to repository root.
+fn refresh_git_prefix_env() {
+    let repo = match grit_lib::repo::Repository::discover(None) {
+        Ok(repo) => repo,
+        Err(_) => {
+            std::env::remove_var("GIT_PREFIX");
+            return;
+        }
+    };
+    let Some(work_tree) = repo.work_tree.as_deref() else {
+        std::env::remove_var("GIT_PREFIX");
+        return;
+    };
+    let Ok(cwd) = std::env::current_dir() else {
+        std::env::remove_var("GIT_PREFIX");
+        return;
+    };
+    if let Some(prefix) = compute_git_prefix(work_tree, &cwd) {
+        std::env::set_var("GIT_PREFIX", prefix);
+    } else {
+        std::env::remove_var("GIT_PREFIX");
+    }
+}
+
 /// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
 ///
 /// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
@@ -1619,6 +1663,7 @@ fn run() -> Result<()> {
     }
 
     apply_globals(&opts)?;
+    refresh_git_prefix_env();
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
     if let Ok(trace_val) = std::env::var("GIT_TRACE") {
@@ -2158,12 +2203,18 @@ fn get_alias_definition(name: &str) -> Option<String> {
 #[allow(dead_code)]
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     if let Some(shell_cmd) = alias.strip_prefix('!') {
-        let status = std::process::Command::new("sh")
+        let mut command = std::process::Command::new("sh");
+        command
             .arg("-c")
             .arg(shell_cmd)
             .arg(format!("git-{name}"))
-            .args(rest)
-            .status()?;
+            .args(rest);
+        if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
+            if let Some(work_tree) = repo.work_tree.as_deref() {
+                command.current_dir(work_tree);
+            }
+        }
+        let status = command.status()?;
         exit_with_status(status);
     }
 
