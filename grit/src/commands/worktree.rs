@@ -52,11 +52,11 @@ pub struct AddArgs {
     pub branch: Option<String>,
 
     /// Create a new branch with this name.
-    #[arg(short = 'b', long, conflicts_with_all = ["force_new_branch", "detach", "orphan"])]
+    #[arg(short = 'b', long)]
     pub new_branch: Option<String>,
 
     /// Detach HEAD in the new worktree.
-    #[arg(long, conflicts_with_all = ["new_branch", "force_new_branch", "orphan"])]
+    #[arg(long)]
     pub detach: bool,
 
     /// Force creation even if the branch is already checked out elsewhere.
@@ -100,7 +100,7 @@ pub struct AddArgs {
     pub no_guess_remote: bool,
 
     /// Create a new branch with -B (reset if exists).
-    #[arg(short = 'B', conflicts_with_all = ["new_branch", "detach", "orphan"])]
+    #[arg(short = 'B')]
     pub force_new_branch: Option<String>,
 }
 
@@ -261,14 +261,24 @@ fn cmd_add(args: AddArgs) -> Result<()> {
             exclusive.push("--orphan");
         }
         if exclusive.len() > 1 {
-            bail!(
-                "options '{}' and '{}' cannot be used together",
-                exclusive[0],
-                exclusive[1]
+            eprintln!(
+                "fatal: options '{}' and '{}' cannot be used together",
+                exclusive[0], exclusive[1]
             );
+            std::process::exit(1);
         }
         if args.orphan && args.no_checkout {
-            bail!("options '--orphan' and '--no-checkout' cannot be used together");
+            eprintln!("fatal: options '--orphan' and '--no-checkout' cannot be used together");
+            std::process::exit(1);
+        }
+        if args.orphan && args.branch.is_some() {
+            eprintln!("fatal: options '--orphan' and '<branch>' cannot be used together");
+            std::process::exit(1);
+        }
+        // Additional mutual exclusions not caught above
+        if args.detach && args.orphan {
+            eprintln!("fatal: options '--detach' and '--orphan' cannot be used together");
+            std::process::exit(1);
         }
         if args.reason.is_some() && !args.lock {
             bail!("--reason requires --lock");
