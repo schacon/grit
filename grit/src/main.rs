@@ -3227,7 +3227,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "diagnose" => commands::diagnose::run(parse_cmd_args(subcmd, rest)),
         "diff" => {
             let processed = preprocess_diff_args(rest);
-            if processed.iter().any(|arg| arg.starts_with(':')) {
+            let needs_passthrough = processed.iter().any(|arg| arg.starts_with(':'))
+                || processed.iter().any(|arg| arg.contains("^!"));
+            if needs_passthrough {
                 commands::git_passthrough::run(subcmd, &processed)
             } else {
                 commands::diff::run(parse_cmd_args(subcmd, &processed))
@@ -3470,7 +3472,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "stash" => commands::stash::run(parse_cmd_args(subcmd, rest)),
         "status" => commands::status::run(parse_cmd_args(subcmd, rest)),
         "stripspace" => commands::stripspace::run(parse_cmd_args(subcmd, rest)),
-        "submodule" => commands::submodule::run(parse_cmd_args(subcmd, rest)),
+        "submodule" => {
+            if discovered_repo_is_reftable() {
+                commands::submodule::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "switch" => commands::switch::run(parse_cmd_args(subcmd, rest)),
         "symbolic-ref" => commands::symbolic_ref::run(parse_cmd_args(subcmd, rest)),
         "tag" => commands::tag::run(parse_cmd_args(subcmd, rest)),
