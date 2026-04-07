@@ -41,8 +41,7 @@ struct IgnoreRule {
 }
 
 /// Engine used to evaluate ignore patterns against repository-relative paths.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct IgnoreMatcher {
     global_rules: Vec<IgnoreRule>,
     info_rules: Vec<IgnoreRule>,
@@ -50,7 +49,6 @@ pub struct IgnoreMatcher {
     /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
     pub warnings: Vec<String>,
 }
-
 
 impl IgnoreMatcher {
     /// Build a matcher from repository exclude sources.
@@ -513,9 +511,10 @@ pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<S
         if repo_rel_path.len() > p.len()
             && repo_rel_path.starts_with(p)
             && repo_rel_path.as_bytes().get(p.len()) == Some(&b'/')
-            && best.is_none_or(|b| p.len() > b.len()) {
-                best = Some(p);
-            }
+            && best.is_none_or(|b| p.len() > b.len())
+        {
+            best = Some(p);
+        }
     }
     best.map(std::string::ToString::to_string)
 }
