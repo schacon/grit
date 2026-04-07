@@ -302,8 +302,7 @@ pub fn parse_date_basic(date: &str) -> Result<(u64, i32), ()> {
             m = match_alpha(&bytes[i..], &mut tm, &mut offset);
         } else if c.is_ascii_digit() {
             m = match_digit(&bytes[i..], &mut tm, &mut offset, &mut tm_gmt);
-        } else if (c == b'-' || c == b'+') && bytes.get(i + 1).is_some_and(|x| x.is_ascii_digit())
-        {
+        } else if (c == b'-' || c == b'+') && bytes.get(i + 1).is_some_and(|x| x.is_ascii_digit()) {
             m = match_tz(&bytes[i..], &mut offset);
         }
         if m == 0 {
@@ -337,7 +336,14 @@ pub fn parse_date_basic(date: &str) -> Result<(u64, i32), ()> {
         if offset < 0 && (-(offset as i128)) * 60 > (TIMESTAMP_MAX as i128 - ts as i128) {
             return Err(());
         }
-        ts = ts.saturating_sub((offset as i64 * 60) as u64);
+        // Git: *timestamp -= *offset * 60 (signed; negative offset adds to the instant).
+        let ts128 = ts as i128;
+        let adj = (offset as i128) * 60;
+        let new_ts = ts128 - adj;
+        if new_ts < 0 {
+            return Err(());
+        }
+        ts = new_ts as u64;
     }
 
     Ok((ts, offset))
@@ -504,7 +510,13 @@ fn set_time(hour: i64, minute: i64, second: i64, tm: &mut tm) -> i32 {
 }
 
 /// Git `match_multi_number` — `sep_i` is index of separator in `date`; returns bytes consumed from `date` start.
-pub(crate) fn match_multi_number(num: u64, date: &[u8], sep_i: usize, tm: &mut tm, now_in: i64) -> usize {
+pub(crate) fn match_multi_number(
+    num: u64,
+    date: &[u8],
+    sep_i: usize,
+    tm: &mut tm,
+    now_in: i64,
+) -> usize {
     let Some(&c) = date.get(sep_i) else {
         return 0;
     };
@@ -620,7 +632,7 @@ fn match_alpha(date: &[u8], tm: &mut tm, offset: &mut i32) -> usize {
     }
 
     if match_string(date, "AM") == 2 {
-        tm.tm_hour = (tm.tm_hour % 12) + 0;
+        tm.tm_hour = ((tm.tm_hour % 12));
         return 2;
     }
 

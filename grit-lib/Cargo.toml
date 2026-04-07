@@ -7,7 +7,7 @@ description = "Core library for the grit Git implementation"
 readme = "README.md"
 repository = "https://github.com/schacon/grit"
 
-# Do not use `lints.workspace = true`: we allow `unsafe_code` here for `git_date` (`libc` like Git `date.c`).
+# Inherit workspace deny rules but allow `unsafe` for `git_date` (`libc` FFI like Git `date.c`).
 [lints.rust]
 unsafe_code = "allow"
 

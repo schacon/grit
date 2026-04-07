@@ -1,8 +1,8 @@
 //! Git-compatible date display (`show_date`, `show_date_relative`, strftime handling).
 
 use super::tm::{
-    empty_tm, get_time_sec, init_tm_unknown, local_time_tzoffset,
-    local_tzoffset, time_to_tm, time_to_tm_local, tm_to_time_t, TzHhmm,
+    empty_tm, get_time_sec, init_tm_unknown, local_time_tzoffset, local_tzoffset, time_to_tm,
+    time_to_tm_local, tm_to_time_t, TzHhmm,
 };
 use libc::{time_t, tm};
 use std::ffi::CString;
@@ -259,17 +259,16 @@ fn show_date_normal(
 
     hide.tz = local || tz == human_tz;
     hide.year = tm.tm_year == human_tm.tm_year;
-    if hide.year
-        && tm.tm_mon == human_tm.tm_mon {
-            if tm.tm_mday > human_tm.tm_mday {
-                // future date in same month
-            } else if tm.tm_mday == human_tm.tm_mday {
-                hide.date = true;
-                hide.wday = true;
-            } else if tm.tm_mday + 5 > human_tm.tm_mday {
-                hide.date = true;
-            }
+    if hide.year && tm.tm_mon == human_tm.tm_mon {
+        if tm.tm_mday > human_tm.tm_mday {
+            // future date in same month
+        } else if tm.tm_mday == human_tm.tm_mday {
+            hide.date = true;
+            hide.wday = true;
+        } else if tm.tm_mday + 5 > human_tm.tm_mday {
+            hide.date = true;
         }
+    }
 
     if hide.wday {
         return show_date_relative(time, get_time_sec());

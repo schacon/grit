@@ -6,8 +6,8 @@ pub mod show;
 pub mod tm;
 
 use show::{parse_date_format, DateMode, DateModeType};
-use tm::{atoi_bytes, parse_timestamp_prefix};
 use std::mem::size_of;
+use tm::{atoi_bytes, parse_timestamp_prefix};
 
 /// Result of `test-tool date` — either lines for stdout or a process exit code (no output).
 pub enum TestToolDateResult {
@@ -38,11 +38,11 @@ pub fn test_tool_date(args: &[String]) -> Result<TestToolDateResult, String> {
     match sub {
         "is64bit" => {
             let code = if size_of::<u64>() == 8 { 0 } else { 1 };
-            return Ok(TestToolDateResult::Exit(code));
+            Ok(TestToolDateResult::Exit(code))
         }
         "time_t-is64bit" => {
             let code = if size_of::<libc::time_t>() == 8 { 0 } else { 1 };
-            return Ok(TestToolDateResult::Exit(code));
+            Ok(TestToolDateResult::Exit(code))
         }
         "relative" => {
             let mut lines = Vec::new();

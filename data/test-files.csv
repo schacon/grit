@@ -5,7 +5,7 @@ t0002-gitfile	t0	yes	14	14	0	true	ok	0
 t0003-attributes	t0	yes	55	19	36	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
-t0006-date	t0	yes	129	16	113	false	ok	0
+t0006-date	t0	yes	129	129	0	true	ok	0
 t0007-git-var	t0	yes	27	27	0	true	ok	0
 t0008-ignores	t0	yes	398	394	4	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
