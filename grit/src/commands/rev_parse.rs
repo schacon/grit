@@ -566,8 +566,17 @@ pub fn run(args: Args) -> Result<()> {
                         }
                     };
                     // Output relative path when possible (relative to cwd)
+                    // Use original path_arg_out to preserve double slashes etc.
                     let cwd = std::env::current_dir().unwrap_or_default();
-                    let output = if let Ok(rel) = resolved.strip_prefix(&cwd) {
+                    let git_dir_rel = if let Ok(rel) = current.git_dir.strip_prefix(&cwd) {
+                        rel.display().to_string()
+                    } else {
+                        current.git_dir.display().to_string()
+                    };
+                    // If the resolved path is under git_dir, use git_dir_rel + path_arg_out
+                    let output = if resolved.starts_with(&current.git_dir) {
+                        format!("{}/{}", git_dir_rel, path_arg_out)
+                    } else if let Ok(rel) = resolved.strip_prefix(&cwd) {
                         rel.display().to_string()
                     } else {
                         resolved.display().to_string()
