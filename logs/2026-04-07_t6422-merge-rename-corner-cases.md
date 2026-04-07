@@ -82,6 +82,30 @@
   - stage population,
   - worktree file placement for D/F rename collisions.
 
+### 2026-04-07 incremental progress (latest)
+
+- Pushed `58c146d1`: improved rename/add conflict handling at rename target (rad case), moving suite from 14/26 → 15/26.
+- Pushed `2c18087e`: improved rename-directory sidepath handling and conflict labels; suite moved to 16/26.
+- Pushed `56533ee5`: improved rename conflict classification and stage replacement behavior; suite moved to 20/26.
+
+#### New improvement in this turn
+- Added additional rename/rename(2to1) handling in `grit/src/commands/merge.rs` for case-2 rename flow:
+  - when case-1 already handled one source of a same-destination rename pair, preserve the other source path for case-2 processing instead of skipping it as fully handled.
+  - this allows expected `rename/rename` conflict shaping for delete/delete-style paired renames.
+- Validation:
+  - direct: `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6422-merge-rename-corner-cases.sh` → **22/26**.
+  - harness: `./scripts/run-tests.sh t6422-merge-rename-corner-cases.sh` → **22/26**.
+  - targeted regressions:
+    - `./scripts/run-tests.sh t6400-merge-df.sh` → 7/7
+    - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh` → 7/7
+    - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh` → 2/2
+
+#### Current remaining failing subtests
+- 7 `rename/directory conflict + clean content merge`
+- 19 `mod6-check: chains of rename/rename(1to2) and rename/rename(2to1)`
+- 24 `check nested conflicts from rename/rename(2to1)`
+- 26 `submodule/directory preliminary conflict`
+
 ## 2026-04-07 — t6422 progress to 20/26
 
 ### Summary

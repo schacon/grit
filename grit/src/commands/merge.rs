@@ -3522,19 +3522,91 @@ fn merge_trees(
                             // rename/rename(1to2): keep base at source path and ours at
                             // our destination; the other destination is handled in case 2.
                             has_conflicts = true;
-                            has_conflict_at_new = true;
                             stage_entry(&mut index, be, 1);
-                            stage_entry(&mut index, oe, 2);
-                            if let Ok(obj) = repo.odb.read(&oe.oid) {
-                                conflict_files.push((
-                                    String::from_utf8_lossy(ours_new_path).to_string(),
-                                    obj.data,
-                                ));
+                            if let Some(theirs_at_ours_target) = theirs_entries.get(ours_new_path) {
+                                has_conflict_at_new = true;
+                                stage_entry(&mut index, oe, 2);
+                                stage_entry(&mut index, theirs_at_ours_target, 3);
+                                let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                                let conflict_content = match try_content_merge_add_add(
+                                    repo,
+                                    &path_str,
+                                    oe,
+                                    theirs_at_ours_target,
+                                    ours_label,
+                                    their_name,
+                                    MergeFavor::None,
+                                    diff_algorithm,
+                                    merge_renormalize,
+                                    ignore_all_space,
+                                    ignore_space_change,
+                                    ignore_space_at_eol,
+                                    ignore_cr_at_eol,
+                                )? {
+                                    ContentMergeResult::Clean(merged_oid, _) => {
+                                        repo.odb.read(&merged_oid)?.data
+                                    }
+                                    ContentMergeResult::Conflict(content)
+                                    | ContentMergeResult::BinaryConflict(content) => content,
+                                };
+                                conflict_files.push((path_str.clone(), conflict_content));
+                                conflict_descriptions.push(("rename/rename".to_string(), path_str));
+                            } else {
+                                stage_entry(&mut index, oe, 2);
+                                if let Ok(obj) = repo.odb.read(&oe.oid) {
+                                    conflict_files.push((
+                                        String::from_utf8_lossy(ours_new_path).to_string(),
+                                        obj.data,
+                                    ));
+                                }
                             }
                             continue;
                         }
                     }
                     if let Some(te_at_new) = theirs_entries.get(ours_new_path) {
+                        if let Some(cross_source) = cross_theirs_source_same_dest.as_ref() {
+                            if !base.contains_key(ours_new_path) {
+                                has_conflicts = true;
+                                has_conflict_at_new = true;
+                                handled_paths.insert(cross_source.clone());
+                                let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                                stage_entry(&mut index, oe, 2);
+                                stage_entry(&mut index, te_at_new, 3);
+                                let conflict_content = match try_content_merge_add_add(
+                                    repo,
+                                    &path_str,
+                                    oe,
+                                    te_at_new,
+                                    ours_label,
+                                    their_name,
+                                    MergeFavor::None,
+                                    diff_algorithm,
+                                    merge_renormalize,
+                                    ignore_all_space,
+                                    ignore_space_change,
+                                    ignore_space_at_eol,
+                                    ignore_cr_at_eol,
+                                )? {
+                                    ContentMergeResult::Clean(merged_oid, _) => {
+                                        repo.odb.read(&merged_oid)?.data
+                                    }
+                                    ContentMergeResult::Conflict(content)
+                                    | ContentMergeResult::BinaryConflict(content) => content,
+                                };
+                                conflict_files.push((path_str.clone(), conflict_content));
+                                conflict_descriptions.push(("rename/rename".to_string(), path_str));
+                                let base_path_str = String::from_utf8_lossy(base_path).to_string();
+                                let new_path_str =
+                                    String::from_utf8_lossy(ours_new_path).to_string();
+                                conflict_descriptions.push((
+                                    "rename/delete".to_string(),
+                                    format!(
+                                        "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
+                                    ),
+                                ));
+                                continue;
+                            }
+                        }
                         if !base.contains_key(ours_new_path) {
                             has_conflicts = true;
                             has_conflict_at_new = true;
@@ -3714,15 +3786,52 @@ fn merge_trees(
                             if let Some(be) = base.get(base_path) {
                                 stage_entry(&mut index, be, 1);
                             }
-                            stage_entry(&mut index, te, 3);
-                            conflict_descriptions.push(("rename/rename".to_string(), path_str));
-                            // Also add the theirs version to the working tree
-                            if let Ok(obj) = repo.odb.read(&te.oid) {
-                                conflict_files.push((
-                                    String::from_utf8_lossy(theirs_new_path).to_string(),
-                                    obj.data,
-                                ));
+                            if !base.contains_key(theirs_new_path) {
+                                if let Some(oe_at_theirs_target) = ours_entries.get(theirs_new_path)
+                                {
+                                    stage_entry(&mut index, oe_at_theirs_target, 2);
+                                    stage_entry(&mut index, te, 3);
+                                    let conflict_content = match try_content_merge_add_add(
+                                        repo,
+                                        &path_str,
+                                        oe_at_theirs_target,
+                                        te,
+                                        ours_label,
+                                        their_name,
+                                        MergeFavor::None,
+                                        diff_algorithm,
+                                        merge_renormalize,
+                                        ignore_all_space,
+                                        ignore_space_change,
+                                        ignore_space_at_eol,
+                                        ignore_cr_at_eol,
+                                    )? {
+                                        ContentMergeResult::Clean(merged_oid, _) => {
+                                            repo.odb.read(&merged_oid)?.data
+                                        }
+                                        ContentMergeResult::Conflict(content)
+                                        | ContentMergeResult::BinaryConflict(content) => content,
+                                    };
+                                    conflict_files.push((path_str.clone(), conflict_content));
+                                } else {
+                                    stage_entry(&mut index, te, 3);
+                                    if let Ok(obj) = repo.odb.read(&te.oid) {
+                                        conflict_files.push((
+                                            String::from_utf8_lossy(theirs_new_path).to_string(),
+                                            obj.data,
+                                        ));
+                                    }
+                                }
+                            } else {
+                                stage_entry(&mut index, te, 3);
+                                if let Ok(obj) = repo.odb.read(&te.oid) {
+                                    conflict_files.push((
+                                        String::from_utf8_lossy(theirs_new_path).to_string(),
+                                        obj.data,
+                                    ));
+                                }
                             }
+                            conflict_descriptions.push(("rename/rename".to_string(), path_str));
                         }
                     }
                 }
