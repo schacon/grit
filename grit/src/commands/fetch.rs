@@ -401,6 +401,16 @@ fn fetch_remote(
                             has_updates = true;
                         }
 
+                        // Refuse to update a ref that's checked out in a worktree
+                        if local_ref.starts_with("refs/heads/") {
+                            if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                                bail!(
+                                    "refusing to fetch into branch '{}' checked out at '{}'",
+                                    local_ref,
+                                    wt_path
+                                );
+                            }
+                        }
                         refs::write_ref(git_dir, &local_ref, remote_oid)
                             .with_context(|| format!("updating ref {local_ref}"))?;
 
@@ -478,6 +488,16 @@ fn fetch_remote(
                         has_updates = true;
                     }
 
+                    // Check if branch is checked out in a worktree before updating
+                    if local_ref.starts_with("refs/heads/") {
+                        if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
+                            bail!(
+                                "refusing to fetch into branch '{}' checked out at '{}'",
+                                local_ref,
+                                wt_path
+                            );
+                        }
+                    }
                     refs::write_ref(git_dir, &local_ref, &remote_oid)
                         .with_context(|| format!("updating ref {local_ref}"))?;
 
@@ -1448,4 +1468,43 @@ fn resolve_git_dir() -> Result<PathBuf> {
             None => bail!("not a git repository (or any of the parent directories): .git"),
         };
     }
+}
+
+/// Check if a branch ref is checked out in any worktree, return the worktree path.
+fn is_branch_in_worktree(git_dir: &std::path::Path, branch_ref: &str) -> Option<String> {
+    let common = grit_lib::refs::common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    // Check main worktree
+    if let Ok(head) = grit_lib::state::resolve_head(&common) {
+        if let grit_lib::state::HeadState::Branch { ref refname, .. } = head {
+            if refname == branch_ref {
+                return Some(common.parent().unwrap_or(&common).display().to_string());
+            }
+        }
+    }
+    // Check linked worktrees
+    let wt_dir = common.join("worktrees");
+    if wt_dir.is_dir() {
+        for entry in std::fs::read_dir(&wt_dir).into_iter().flatten().flatten() {
+            let admin = entry.path();
+            if !admin.is_dir() {
+                continue;
+            }
+            let head_file = admin.join("HEAD");
+            if let Ok(content) = std::fs::read_to_string(&head_file) {
+                if let Some(refname) = content.trim().strip_prefix("ref: ") {
+                    if refname.trim() == branch_ref {
+                        let gitdir_file = admin.join("gitdir");
+                        let path = if let Ok(raw) = std::fs::read_to_string(&gitdir_file) {
+                            let p = std::path::Path::new(raw.trim());
+                            p.parent().unwrap_or(p).display().to_string()
+                        } else {
+                            entry.file_name().to_string_lossy().to_string()
+                        };
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
