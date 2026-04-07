@@ -1137,6 +1137,25 @@ fn switch_to_tree(
     // When force, write all entries even if OID matches (to restore dirty files).
     checkout_index_to_worktree(repo, &old_index, &new_index, &work_tree, force)?;
 
+    // Update stat info in the new index to match the freshly checked-out files
+    for entry in &mut new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            use std::os::unix::fs::MetadataExt as _;
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.size = meta.size() as u32;
+        }
+    }
+
     // Write the new index
     new_index.write(&index_path).context("writing index")?;
 
