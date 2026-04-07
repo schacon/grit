@@ -3,8 +3,10 @@
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 
-use grit_lib::index::{Index, MODE_TREE};
-use grit_lib::objects::{serialize_tree, ObjectId, ObjectKind, TreeEntry};
+use grit_lib::index::{
+    Index, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
+};
+use grit_lib::objects::{serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
@@ -172,7 +174,7 @@ fn build_tree_flat(
         } else {
             // Leaf blob/symlink/gitlink entry
             tree_entries.push(TreeEntry {
-                mode: entry.mode,
+                mode: canonicalize_blob_mode(entry.mode),
                 name: rel.to_vec(),
                 oid: entry.oid,
             });
@@ -180,12 +182,28 @@ fn build_tree_flat(
         }
     }
 
-    // Index entries are sorted, so tree_entries is already in Git's canonical
-    // tree order — no need to sort.  (Git's tree sort appends '/' to directory
-    // names, which is consistent with lexicographic byte order of the paths
-    // stored in the index.)
+    tree_entries.sort_by(|a, b| {
+        let a_tree = a.mode == MODE_TREE;
+        let b_tree = b.mode == MODE_TREE;
+        tree_entry_cmp(&a.name, a_tree, &b.name, b_tree)
+    });
 
     let data = serialize_tree(&tree_entries);
     let oid = odb.write(ObjectKind::Tree, &data).context("writing tree")?;
     Ok((oid, i))
+}
+
+fn canonicalize_blob_mode(mode: u32) -> u32 {
+    match mode & 0o170000 {
+        0o120000 => MODE_SYMLINK,
+        0o160000 => MODE_GITLINK,
+        0o100000 => {
+            if mode & 0o111 != 0 {
+                MODE_EXECUTABLE
+            } else {
+                MODE_REGULAR
+            }
+        }
+        _ => MODE_REGULAR,
+    }
 }

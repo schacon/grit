@@ -103,24 +103,24 @@ test_expect_success() {
 		maybe_teardown_verbose
 		return 0
 	fi
-	_test_eval_result=0
-	_test_eval_inner() {
-		set -e
-		cd "$TRASH_DIRECTORY" || exit 1
-		test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
-		eval "$1"
-	}
-	_twf_cmd=""
+	test_cleanup=:
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
-	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
-	result=$_test_eval_result
-	set +e
-	if test -n "${_twf_cmd+set}"
+	cd "$TRASH_DIRECTORY" || exit 1
+	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
+	test_run_ "$commands"
+	result=$?
+	test -f "$TRASH_DIRECTORY/.test-exports" && . "$TRASH_DIRECTORY/.test-exports"
+	if test -f "$_TICK_FILE"
 	then
-		eval "$_twf_cmd" 2>/dev/null
-		_twf_cmd=
-		trap - EXIT
+		test_tick=$(cat "$_TICK_FILE")
+		GIT_COMMITTER_DATE="$test_tick -0700"
+		GIT_AUTHOR_DATE="$test_tick -0700"
+		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+	elif test -n "${test_tick+set}"
+	then
+		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
 	fi
+	echo >&3 ""
 	maybe_teardown_verbose
 	if test "$result" -eq 0
 	then
@@ -132,11 +132,23 @@ test_expect_success() {
 		test_fail=$((test_fail + 1))
 		test_failures="$test_failures
   FAIL $test_count: $description"
-		printf '%snot ok %d - %s%s\n' "$RED" "$test_count" "$description" "$RESET"
+		pfx=""
+		if test -n "$invert_exit_code"
+		then
+			pfx="# TODO induced breakage (--invert-exit-code): "
+		fi
+		printf '%snot ok %d - %s%s%s\n' "$RED" "$test_count" "$pfx" "$description" "$RESET"
 		printf '%s\n' "$commands" | sed -e 's/^/#	/'
 		if test -n "$immediate"
 		then
 			echo "1..$test_count"
+			if test -n "$invert_exit_code"
+			then
+				echo "# faked up failures as TODO & now exiting with 0 due to --invert-exit-code"
+				GIT_EXIT_OK=t
+				exit 0
+			fi
+			GIT_EXIT_OK=t
 			exit 1
 		fi
 	fi
@@ -173,14 +185,12 @@ test_expect_failure() {
 		maybe_teardown_verbose
 		return 0
 	fi
+	test_cleanup=:
 	test -z "$verbose" || say "checking known breakage of $TEST_NUMBER.$test_count '$description': $commands"
 	_exports_file="$TRASH_DIRECTORY/.test-exports"
-	(
-		set -e
-		cd "$TRASH_DIRECTORY" || exit 1
-		test -f "$_exports_file" && . "$_exports_file"
-		eval "$commands" </dev/null
-	)
+	cd "$TRASH_DIRECTORY" || exit 1
+	test -f "$_exports_file" && . "$_exports_file"
+	test_run_ "$commands" expecting_failure
 	result=$?
 	test -f "$_exports_file" && . "$_exports_file"
 	if test -f "$_TICK_FILE"
@@ -193,6 +203,7 @@ test_expect_failure() {
 	then
 		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
 	fi
+	echo >&3 ""
 	maybe_teardown_verbose
 	if test "$result" -ne 0
 	then
@@ -234,7 +245,9 @@ test_must_fail_acceptable() {
 	esac
 }
 
-test_must_fail() {
+# Wrapper matches git test-lib: stderr of the command goes to original stderr (7),
+# framework diagnostics go to fd 4 (verbose / dev-null).
+test_must_fail_inner () {
 	_test_ok=
 	case "$1" in
 	ok=*)
@@ -244,34 +257,39 @@ test_must_fail() {
 	esac
 	if ! test_must_fail_acceptable "$@"
 	then
-		echo "test_must_fail: only 'git' is allowed: $*" >&2
+		echo "test_must_fail: only 'git' is allowed: $*" >&7
 		return 1
 	fi
 	set +e
-	"$@"
+	"$@" 2>&7
 	exit_code=$?
 	set -e
 	if test "$exit_code" -eq 0 && ! echo "$_test_ok" | grep -q success
 	then
-		echo "test_must_fail: command succeeded: $*" >&2
+		echo "test_must_fail: command succeeded: $*" >&4
 		return 1
 	elif test "$exit_code" -gt 129 && test "$exit_code" -le 192
 	then
-		echo "test_must_fail: died by signal $(($exit_code - 128)): $*" >&2
+		echo "test_must_fail: died by signal $(($exit_code - 128)): $*" >&4
 		return 1
 	elif test "$exit_code" -eq 127
 	then
-		echo "test_must_fail: command not found: $*" >&2
+		echo "test_must_fail: command not found: $*" >&4
 		return 1
 	elif test "$exit_code" -eq 126
 	then
-		echo "test_must_fail: valgrind error: $*" >&2
+		echo "test_must_fail: valgrind error: $*" >&4
 		return 1
 	fi
 	return 0
 }
 
+test_must_fail () {
+	test_must_fail_inner "$@" 7>&2 2>&4
+}
+
 test_done() {
+	test_atexit_handler
 	rm -rf "$BIN_DIRECTORY" 2>/dev/null
 	if test -n "$skip_all"
 	then
@@ -280,6 +298,7 @@ test_done() {
 		then
 			echo "# Tests: 0  Pass: 0  Fail: 0  Skip: 0"
 		fi
+		GIT_EXIT_OK=t
 		exit 0
 	fi
 	if test "$test_fixed" != 0
@@ -305,10 +324,53 @@ test_done() {
 			echo "# passed all $msg"
 		fi
 		echo "1..$test_count"
+		if test "$test_fixed" != 0
+		then
+			if test -z "$invert_exit_code"
+			then
+				if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+				then
+					echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+				fi
+				GIT_EXIT_OK=t
+				exit 1
+			fi
+			if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+			then
+				echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+			fi
+			GIT_EXIT_OK=t
+			exit 0
+		elif test -n "$invert_exit_code"
+		then
+			echo "# faking up non-zero exit with --invert-exit-code"
+			if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+			then
+				echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+			fi
+			GIT_EXIT_OK=t
+			exit 1
+		fi
+		if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+		then
+			echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+		fi
+		GIT_EXIT_OK=t
+		exit 0
 		;;
 	*)
 		echo "# failed $test_failure among $msg"
 		echo "1..$test_count"
+		if test -n "$invert_exit_code"
+		then
+			echo "# faked up failures as TODO & now exiting with 0 due to --invert-exit-code"
+			if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
+			then
+				echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
+			fi
+			GIT_EXIT_OK=t
+			exit 0
+		fi
 		;;
 	esac
 	if test -n "${GRIT_TEST_LIB_SUMMARY:-}"
@@ -317,11 +379,9 @@ test_done() {
 	fi
 	if test "$test_failure" -gt 0
 	then
+		GIT_EXIT_OK=t
 		exit 1
 	fi
-	if test "$test_fixed" != 0 && test -z "$invert_exit_code"
-	then
-		exit 1
-	fi
+	GIT_EXIT_OK=t
 	exit 0
 }

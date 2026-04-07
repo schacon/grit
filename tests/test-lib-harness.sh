@@ -184,14 +184,12 @@ match_test_selector_list () {
 			*-*)
 				if expr "z${selector%%-*}" : "z[0-9]*[^0-9]" >/dev/null
 				then
-					echo "error: $operation: invalid non-numeric in range" \
-						"start: '$orig_selector'" >&2
+					echo "error: $operation: invalid non-numeric in range start: '$orig_selector'" >&2
 					exit 1
 				fi
 				if expr "z${selector#*-}" : "z[0-9]*[^0-9]" >/dev/null
 				then
-					echo "error: $operation: invalid non-numeric in range" \
-						"end: '$orig_selector'" >&2
+					echo "error: $operation: invalid non-numeric in range end: '$orig_selector'" >&2
 					exit 1
 				fi
 				;;
