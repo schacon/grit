@@ -476,19 +476,26 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                     // No remotes, no way to branch — fail with hint
                     let branch_n = &wt_name;
                     eprintln!(
-                        "hint: If you meant to create a worktree containing a new orphan branch"
+                        "hint: If you meant to create a worktree containing a new unborn branch"
                     );
                     eprintln!(
                         "hint: named '{}', use the option '--orphan' as follows:",
                         branch_n
                     );
                     eprintln!("hint:");
-                    eprintln!(
-                        "hint:     git worktree add --orphan -b {} {}",
-                        branch_n,
-                        args.path.display()
-                    );
-                    bail!("fatal: invalid reference: HEAD");
+                    if args.new_branch.is_some() {
+                        eprintln!(
+                            "hint:     git worktree add --orphan -b {} {}",
+                            branch_n,
+                            args.path.display()
+                        );
+                    } else {
+                        eprintln!(
+                            "hint:     git worktree add --orphan {}",
+                            args.path.display()
+                        );
+                    }
+                    bail!("invalid reference: HEAD");
                 }
             }
         }
