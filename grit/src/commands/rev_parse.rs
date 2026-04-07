@@ -43,6 +43,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut sq_output = false;
 
     // Collect ordered actions for sequential output
+    // Each action captures the flag state at time of parsing
     #[derive(Debug)]
     enum Action {
         ShowIsInsideWorkTree,
@@ -64,7 +65,7 @@ pub fn run(args: Args) -> Result<()> {
         Exclude(String),
         LocalEnvVars,
         ResolveGitDir(String),
-        Revision(String),
+        Revision(String, bool), // (rev_spec, symbolic_full_name_at_parse_time)
         ForcedPath(String),
         PathSeparator,
     }
@@ -209,7 +210,7 @@ pub fn run(args: Args) -> Result<()> {
         if saw_path_separator {
             actions.push(Action::ForcedPath(arg.clone()));
         } else {
-            actions.push(Action::Revision(arg.clone()));
+            actions.push(Action::Revision(arg.clone(), show_symbolic_full_name));
         }
         i += 1;
     }
@@ -218,7 +219,7 @@ pub fn run(args: Args) -> Result<()> {
     if sq_quote {
         let mut out = String::new();
         for action in &actions {
-            if let Action::Revision(rev) = action {
+            if let Action::Revision(rev, _) = action {
                 if !out.is_empty() {
                     out.push(' ');
                 }
@@ -234,7 +235,7 @@ pub fn run(args: Args) -> Result<()> {
         let revisions: Vec<&str> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::Revision(r) => Some(r.as_str()),
+                Action::Revision(r, _) => Some(r.as_str()),
                 _ => None,
             })
             .collect();
@@ -274,9 +275,9 @@ pub fn run(args: Args) -> Result<()> {
 
     // Apply --default: if no Revision actions exist, inject the default
     if let Some(ref def) = default_rev {
-        let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_)));
+        let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_, _)));
         if !has_revision {
-            actions.push(Action::Revision(def.clone()));
+            actions.push(Action::Revision(def.clone(), show_symbolic_full_name));
         }
     }
 
@@ -604,13 +605,15 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 return Ok(());
             }
-            Action::Revision(rev) => {
+            Action::Revision(rev, rev_symbolic_full_name) => {
                 let Some(current) = repo.as_ref() else {
                     if quiet {
                         std::process::exit(1);
                     }
                     bail!("not a git repository (or any of the parent directories)");
                 };
+                // Use ONLY the per-action flag (not global, to support mixed usage)
+                let use_symbolic = *rev_symbolic_full_name;
 
                 if abbrev_ref {
                     // --abbrev-ref: resolve to symbolic name and abbreviate
@@ -621,7 +624,7 @@ pub fn run(args: Args) -> Result<()> {
                     // Fall through to try resolving as OID and printing as-is
                 }
 
-                if show_symbolic_full_name {
+                if use_symbolic {
                     if let Some(full) = symbolic_full_name(current, rev) {
                         println!("{full}");
                         continue;
