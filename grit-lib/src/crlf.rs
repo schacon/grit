@@ -468,6 +468,31 @@ pub fn has_lone_lf(data: &[u8]) -> bool {
     false
 }
 
+/// Returns true if data contains a bare CR not followed by LF (Git `text_stat.lonecr`).
+fn has_lone_cr(data: &[u8]) -> bool {
+    for i in 0..data.len() {
+        if data[i] == b'\r' && (i + 1 >= data.len() || data[i + 1] != b'\n') {
+            return true;
+        }
+    }
+    false
+}
+
+/// Git `convert.c` `will_convert_lf_to_crlf` for `CRLF_AUTO` / `CRLF_AUTO_INPUT` / `CRLF_AUTO_CRLF`:
+/// if the blob already has CRLF pairs or lone CRs, do not convert lone LFs to CRLF on checkout.
+fn auto_crlf_should_smudge_lf_to_crlf(data: &[u8]) -> bool {
+    if !has_lone_lf(data) {
+        return false;
+    }
+    if has_lone_cr(data) || has_crlf(data) {
+        return false;
+    }
+    if is_binary(data) {
+        return false;
+    }
+    true
+}
+
 /// Returns true if ALL line endings are CRLF (no lone LF).
 pub fn is_all_crlf(data: &[u8]) -> bool {
     has_crlf(data) && !has_lone_lf(data)
@@ -763,7 +788,15 @@ fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
         if attrs.text == TextAttr::Auto && is_binary(data) {
             return false;
         }
-        return attrs.eol == EolAttr::Crlf;
+        if attrs.eol != EolAttr::Crlf {
+            return false;
+        }
+        // `text=auto` + `eol=crlf` → Git `CRLF_AUTO_CRLF` (safe mixed handling).
+        if attrs.text == TextAttr::Auto {
+            return auto_crlf_should_smudge_lf_to_crlf(data);
+        }
+        // Explicit `eol=crlf` with `text` set, etc. → `CRLF_TEXT_CRLF` (always normalize).
+        return true;
     }
 
     // If text is explicitly set, use eol config
@@ -775,7 +808,10 @@ fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
         if is_binary(data) {
             return false;
         }
-        return output_eol_is_crlf(conv);
+        if !output_eol_is_crlf(conv) {
+            return false;
+        }
+        return auto_crlf_should_smudge_lf_to_crlf(data);
     }
 
     // No text attribute: fall back to core.autocrlf
@@ -784,7 +820,7 @@ fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
             if is_binary(data) {
                 return false;
             }
-            true
+            auto_crlf_should_smudge_lf_to_crlf(data)
         }
         AutoCrlf::Input | AutoCrlf::False => false,
     }
@@ -905,6 +941,42 @@ mod tests {
     fn test_has_crlf() {
         assert!(has_crlf(b"hello\r\nworld"));
         assert!(!has_crlf(b"hello\nworld"));
+    }
+
+    #[test]
+    fn smudge_mixed_line_endings_unchanged_with_autocrlf_true() {
+        let mut blob = Vec::new();
+        for part in [
+            b"Oh\n".as_slice(),
+            b"here\n",
+            b"is\n",
+            b"CRLF\r\n",
+            b"in\n",
+            b"text\n",
+        ] {
+            blob.extend_from_slice(part);
+        }
+        let conv = ConversionConfig {
+            autocrlf: AutoCrlf::True,
+            eol: CoreEol::Lf,
+            safecrlf: SafeCrlf::False,
+        };
+        let attrs = FileAttrs::default();
+        let out = convert_to_worktree(&blob, "mixed", &conv, &attrs, None).unwrap();
+        assert_eq!(out, blob);
+    }
+
+    #[test]
+    fn smudge_lf_only_gets_crlf_with_autocrlf_true() {
+        let blob = b"a\nb\n";
+        let conv = ConversionConfig {
+            autocrlf: AutoCrlf::True,
+            eol: CoreEol::Lf,
+            safecrlf: SafeCrlf::False,
+        };
+        let attrs = FileAttrs::default();
+        let out = convert_to_worktree(blob, "x", &conv, &attrs, None).unwrap();
+        assert_eq!(out, b"a\r\nb\r\n");
     }
 
     #[test]
