@@ -957,7 +957,16 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if !args.quiet {
-        let context_lines = args.unified.unwrap_or(3);
+        let config_context = if args.unified.is_none() {
+            // Read diff.context from config
+            grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+                .ok()
+                .and_then(|cfg| cfg.get("diff.context"))
+                .and_then(|s| s.parse::<usize>().ok())
+        } else {
+            None
+        };
+        let context_lines = args.unified.or(config_context).unwrap_or(3);
         if args.shortstat {
             write_shortstat(&mut out, &entries, &repo.odb, wt_for_content)?;
         } else if stat_enabled
