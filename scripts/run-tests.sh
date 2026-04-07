@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/run-tests.sh                     # all in-scope test files
-#   ./scripts/run-tests.sh t1                  # one group (t1xxx)
+#   ./scripts/run-tests.sh t1                  # all tests/t1*.sh (glob prefix; t1xxx family)
 #   ./scripts/run-tests.sh t3200-branch.sh     # single file
 #
 # Options:
@@ -24,6 +24,14 @@ CATALOG="$REPO/scripts/generate-test-files-catalog.py"
 APPLY="$REPO/scripts/apply-test-run-results.py"
 BIN="$REPO/target/release/grit"
 TIMEOUT=120
+# GNU coreutils `timeout` is not installed by default on macOS; `gtimeout` may be.
+if command -v timeout >/dev/null 2>&1; then
+	TIMEOUT_PREFIX=(timeout "$TIMEOUT")
+elif command -v gtimeout >/dev/null 2>&1; then
+	TIMEOUT_PREFIX=(gtimeout "$TIMEOUT")
+else
+	TIMEOUT_PREFIX=()
+fi
 QUIET=false
 TARGET=""
 POS=()
@@ -124,7 +132,8 @@ run_one() {
     local output summary total pass fail status ef
     output=$(
         cd "$TESTS_DIR" &&
-            EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GUST_BIN="$(pwd)/grit" timeout "$TIMEOUT" bash "$f" 2>&1
+            EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
+            "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true
     total=0 pass=0 fail=0 status="error"

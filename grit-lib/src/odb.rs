@@ -145,7 +145,7 @@ impl Odb {
                 decoder
                     .read_to_end(&mut raw)
                     .map_err(|e| Error::Zlib(e.to_string()))?;
-                return parse_object_bytes(&raw);
+                return parse_object_bytes_with_oid(&raw, oid);
             }
             Err(_) => {
                 // Loose object not found; try pack files.
@@ -187,7 +187,7 @@ impl Odb {
             decoder
                 .read_to_end(&mut raw)
                 .map_err(|e| Error::Zlib(e.to_string()))?;
-            return parse_object_bytes(&raw);
+            return parse_object_bytes_with_oid(&raw, oid);
         }
         pack::read_object_from_packs(objects_dir, oid)
     }
@@ -303,6 +303,14 @@ fn build_store_bytes(kind: ObjectKind, data: &[u8]) -> Vec<u8> {
 
 /// Parse decompressed object bytes (`"<type> <size>\0<data>"`) into an [`Object`].
 pub(crate) fn parse_object_bytes(raw: &[u8]) -> Result<Object> {
+    parse_object_bytes_inner(raw, None)
+}
+
+pub(crate) fn parse_object_bytes_with_oid(raw: &[u8], oid: &ObjectId) -> Result<Object> {
+    parse_object_bytes_inner(raw, Some(oid))
+}
+
+fn parse_object_bytes_inner(raw: &[u8], oid_hint: Option<&ObjectId>) -> Result<Object> {
     let nul = raw
         .iter()
         .position(|&b| b == 0)
@@ -315,6 +323,13 @@ pub(crate) fn parse_object_bytes(raw: &[u8]) -> Result<Object> {
         .iter()
         .position(|&b| b == b' ')
         .ok_or_else(|| Error::CorruptObject("missing space in object header".to_owned()))?;
+
+    if sp > 32 {
+        let oid_str = oid_hint
+            .map(|o| o.to_hex())
+            .unwrap_or_else(|| hash_bytes(raw).to_hex());
+        return Err(Error::ObjectHeaderTooLong { oid: oid_str });
+    }
 
     let kind = ObjectKind::from_bytes(&header[..sp])?;
 

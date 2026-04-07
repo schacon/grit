@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build or merge data/test-files.csv from tests/t*.sh.
 
-Scans tests/ for harness files, assigns group (t0..t9 from the first digit after t),
-counts test_expect_success / test_expect_failure per file, and merges with any
-existing CSV so run results are preserved for files that still exist.
+Scans tests/ for harness files, assigns ``group`` from the first decimal digit
+after ``t`` (Git upstream families; see ``git/t/README`` “Naming Tests”):
+``t0``–``t9``. Counts test markers per file and merges with any existing CSV so
+run results are preserved for files that still exist.
 """
 
 from __future__ import annotations
@@ -33,11 +34,28 @@ HEADER = [
 FILE_RE = re.compile(r"^t\d+.+\.sh$")
 
 
+def group_from_stem(stem: str) -> str:
+    """Harness group from a test file stem (no ``.sh``).
+
+    Uses the first digit of the numeric prefix after ``t``, matching upstream
+    Git test family numbering (``tNNNN-…`` → family ``N``'s first digit).
+    """
+    if not stem.startswith("t"):
+        return "t?"
+    rest = stem[1:]
+    i = 0
+    while i < len(rest) and rest[i].isdigit():
+        i += 1
+    digits = rest[:i]
+    if len(digits) >= 1:
+        return f"t{digits[0]}"
+    return "t?"
+
+
 def count_expects_and_group(sh_path: Path) -> tuple[str, int, int]:
     """Return (group, test markers count, test_expect_failure count)."""
-    name = sh_path.name
-    m = re.match(r"^t(\d)", name)
-    group = f"t{m.group(1)}" if m else "t?"
+    stem = sh_path.stem
+    group = group_from_stem(stem)
     try:
         text = sh_path.read_text(encoding="utf-8", errors="replace")
     except OSError:

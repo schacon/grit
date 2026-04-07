@@ -1,5 +1,10 @@
 # Support routines for hand-crafting loose objects.
 
+# The minimal test-lib does not set test_hash_algo; default to sha1 so loose_obj
+# and tests that configure extensions.objectformat work.
+test_hash_algo=${test_hash_algo:-sha1}
+export test_hash_algo
+
 # Write a loose object into the odb at $1, with object type $2 and contents
 # from stdin. Writes the oid to stdout. Example:
 #

@@ -16,17 +16,18 @@ DATA = REPO / "data" / "test-files.csv"
 OUT_INDEX = REPO / "docs" / "index.html"
 OUT_FILES = REPO / "docs" / "testfiles.html"
 
+# Labels from git/t/README "Naming Tests" (first digit = family).
 GROUP_DESC: dict[str, str] = {
-    "t0": "Basic / setup",
-    "t1": "Plumbing: read-tree, cat-file, refs",
-    "t2": "Checkout / index",
-    "t3": "ls-files, merge, cherry-pick, rm, add, mv",
-    "t4": "Diff",
-    "t5": "Pack / fetch / push / clone",
-    "t6": "Rev-list, rev-parse, merge-base, for-each-ref",
-    "t7": "Porcelain: commit, status, tag, branch, reset",
-    "t8": "Git-p4 / misc",
-    "t9": "Contrib / completion",
+    "t0": "Absolute basics and global stuff",
+    "t1": "Basic commands concerning the database",
+    "t2": "Basic commands concerning the working tree",
+    "t3": "Other basic commands (e.g. ls-files)",
+    "t4": "Diff commands",
+    "t5": "Pull and exporting commands",
+    "t6": "Revision tree commands (e.g. merge-base)",
+    "t7": "Porcelainish commands concerning the working tree",
+    "t8": "Porcelainish commands concerning forensics",
+    "t9": "Git tools",
 }
 
 
@@ -243,7 +244,7 @@ def generate_testfiles(rows: list[dict[str, str]]) -> str:
         pc = pct(pl, tt) if tt > 0 else 0.0
         row_cls = "row-skip" if is_skip else ""
         table_rows += f"""
-<tr class="{row_cls}" data-group="{html.escape(g)}">
+<tr class="{row_cls}" data-group="{html.escape(g)}" data-tests="{tt}" data-passed="{pl}">
   <td class="mono">{html.escape(base)}</td>
   <td>{html.escape(g)}</td>
   <td>{skip_badge}{fp_badge}</td>
@@ -334,18 +335,25 @@ tr.row-skip td {{ opacity: 0.65; }}
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }}
+.summary-note {{
+  color: #7d8590;
+  font-size: 0.82rem;
+  margin: -0.5rem 0 1rem;
+  min-height: 1.2em;
+}}
 </style>
 </head>
 <body>
 <h1>Test files</h1>
 <p class="sub"><a href="index.html">Dashboard</a> · {html.escape(gen_time)} · {html.escape(sha)}</p>
 
-<div class="summary-cards" aria-label="Aggregate counts for in-scope test files">
-  <div class="card"><div class="n">{file_count:,}</div><div class="lbl">Files in scope</div></div>
-  <div class="card"><div class="n">{total_tests:,}</div><div class="lbl">Unskipped tests</div></div>
-  <div class="card accent"><div class="n">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
-  <div class="card accent"><div class="n">{pass_rate}%</div><div class="lbl">Pass rate</div></div>
+<div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for visible in-scope rows" aria-live="polite">
+  <div class="card"><div class="n" id="sum-files">{file_count:,}</div><div class="lbl">Files in scope</div></div>
+  <div class="card"><div class="n" id="sum-tests">{total_tests:,}</div><div class="lbl">Unskipped tests</div></div>
+  <div class="card accent"><div class="n" id="sum-passed">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
+  <div class="card accent"><div class="n" id="sum-pct">{pass_rate}%</div><div class="lbl">Pass rate</div></div>
 </div>
+<p class="summary-note" id="summaryNote"></p>
 
 <div class="toolbar">
   <label for="groupSel">Group</label>
@@ -371,7 +379,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 {table_rows}
 </tbody>
 </table>
-<p class="hint">Manually skipped files are marked and excluded from the aggregate counts above and from dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
+<p class="hint">Manually skipped files are marked and excluded from the aggregate cards (totals follow visible rows when you filter). The same exclusions apply to dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
 
 <script>
 (function() {{
@@ -385,7 +393,8 @@ tr.row-skip td {{ opacity: 0.65; }}
     const g = sel.value;
     const q = (search.value || '').toLowerCase();
     const rows = document.querySelectorAll('#tbody tr');
-    let n = 0;
+    let nShown = 0;
+    let files = 0, tests = 0, passed = 0;
     rows.forEach(row => {{
       const rg = row.dataset.group || '';
       const file = row.cells[0].textContent.toLowerCase();
@@ -393,9 +402,26 @@ tr.row-skip td {{ opacity: 0.65; }}
       const okQ = !q || file.includes(q);
       const show = okG && okQ;
       row.style.display = show ? '' : 'none';
-      if (show) n++;
+      if (show) {{
+        nShown++;
+        if (!row.classList.contains('row-skip')) {{
+          files++;
+          tests += parseInt(row.dataset.tests || '0', 10);
+          passed += parseInt(row.dataset.passed || '0', 10);
+        }}
+      }}
     }});
-    document.getElementById('count').textContent = n + ' files shown';
+    const nf = (x) => x.toLocaleString('en-US');
+    const pct = tests > 0 ? Math.round(1000 * passed / tests) / 10 : 0;
+    document.getElementById('sum-files').textContent = nf(files);
+    document.getElementById('sum-tests').textContent = nf(tests);
+    document.getElementById('sum-passed').textContent = nf(passed);
+    document.getElementById('sum-pct').textContent = pct + '%';
+    const filtered = !!(g || q);
+    document.getElementById('summaryNote').textContent = filtered
+      ? 'Totals reflect visible rows (manually skipped files still excluded).'
+      : '';
+    document.getElementById('count').textContent = nShown + ' files shown';
     const u = new URL(window.location.href);
     if (g) u.searchParams.set('group', g); else u.searchParams.delete('group');
     history.replaceState(null, '', u.pathname + u.search);

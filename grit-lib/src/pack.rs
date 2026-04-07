@@ -730,6 +730,36 @@ pub fn read_object_from_packs(objects_dir: &Path, oid: &ObjectId) -> Result<Obje
     Err(Error::ObjectNotFound(oid.to_hex()))
 }
 
+/// When `oid` is stored as a delta in a pack, return its delta base object id.
+/// Returns [`None`] for loose objects and for non-delta packed objects.
+pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Option<ObjectId>> {
+    let indexes = read_local_pack_indexes(objects_dir)?;
+    for idx in indexes {
+        let Some(entry) = idx.entries.iter().find(|e| e.oid == *oid) else {
+            continue;
+        };
+        let pack_bytes = fs::read(&idx.pack_path).map_err(Error::Io)?;
+        let mut p = entry.offset as usize;
+        let (packed_type, _) = parse_pack_object_header(&pack_bytes, &mut p)?;
+        match packed_type {
+            PackedType::RefDelta => {
+                if p + 20 > pack_bytes.len() {
+                    return Err(Error::CorruptObject(
+                        "truncated ref-delta base".to_owned(),
+                    ));
+                }
+                return Ok(Some(ObjectId::from_bytes(&pack_bytes[p..p + 20])?));
+            }
+            PackedType::OfsDelta => {
+                let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry.offset)?;
+                return Ok(idx.entries.iter().find(|e| e.offset == base_off).map(|e| e.oid));
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
+
 fn parse_pack_object_header(bytes: &[u8], pos: &mut usize) -> Result<(PackedType, u64)> {
     let first = *bytes.get(*pos).ok_or_else(|| {
         Error::CorruptObject("unexpected end of pack header while decoding object".to_owned())

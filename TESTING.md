@@ -16,7 +16,7 @@ cargo build --release -p grit-rs
 # Single file
 ./scripts/run-tests.sh t3200-branch.sh
 
-# One group (all t1xxx `.sh` files that are in scope, e.g. t1000-…, t1999-…)
+# Prefix run: `tests/<arg>*.sh` (e.g. `t1` matches all `t1*.sh` harness files)
 ./scripts/run-tests.sh t1
 
 # Full suite (every row in test-files.csv with in_scope=yes)
@@ -56,7 +56,7 @@ generate-test-files-catalog.py     (start of run-tests.sh: discover files, group
 
 ## Data pipeline (step by step)
 
-1. **`scripts/generate-test-files-catalog.py`** — Scans `tests/t*.sh`, counts `test_expect_success` / `test_expect_failure` per file, assigns `group` (`t0`…`t9` from the first digit after `t`), and writes or merges **`data/test-files.csv`**. Invoked automatically at the start of **`run-tests.sh`**.
+1. **`scripts/generate-test-files-catalog.py`** — Scans `tests/t*.sh`, counts `test_expect_success` / `test_expect_failure` per file, assigns `group` (`t0`–`t9` from the first digit of the `tNNNN…` prefix, matching **`git/t/README`** test families), and writes or merges **`data/test-files.csv`**. Invoked automatically at the start of **`run-tests.sh`**.
 
 2. **`scripts/run-tests.sh`** — Copies `target/release/grit` to `tests/grit`, builds the file list (honoring **`in_scope`**), runs each selected script under `timeout`, parses the `# Tests:` summary line, writes a small batch TSV for **`scripts/apply-test-run-results.py`**.
 
@@ -67,7 +67,7 @@ generate-test-files-catalog.py     (start of run-tests.sh: discover files, group
 | Column | Meaning |
 |--------|---------|
 | `file` | Base name (no `.sh`) |
-| `group` | `t0` … `t9` from the file prefix |
+| `group` | `t0`–`t9` (first digit of `tNNNN…`; see `git/t/README` and catalog script) |
 | `in_scope` | `yes` or `skip` (manual) |
 | `tests_total` | Count of test markers in the file |
 | `passed_last` | Pass count from the last run |

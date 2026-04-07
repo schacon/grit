@@ -46,6 +46,10 @@ pub enum Error {
     #[error("unknown object type '{0}'")]
     UnknownObjectType(String),
 
+    /// Loose object header type field exceeds Git's 32-byte limit.
+    #[error("header for {oid} too long, exceeds 32 bytes")]
+    ObjectHeaderTooLong { oid: String },
+
     /// An I/O error from the underlying filesystem.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

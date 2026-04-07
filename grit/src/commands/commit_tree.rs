@@ -8,6 +8,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use std::collections::HashSet;
 use std::env;
 use std::io::Read;
 use time::format_description::well_known::Rfc3339;
@@ -46,11 +47,15 @@ pub fn run(args: Args) -> Result<()> {
 
     let tree_oid = resolve_tree_ish(&repo, &args.tree)?;
 
-    let parent_oids: Vec<ObjectId> = args
-        .parents
-        .iter()
-        .map(|p| resolve_tree_ish(&repo, p))
-        .collect::<Result<Vec<_>>>()?;
+    // Git omits duplicate parents (e.g. `-p P -p P` records P once).
+    let mut parent_oids: Vec<ObjectId> = Vec::new();
+    let mut seen: HashSet<ObjectId> = HashSet::new();
+    for p in &args.parents {
+        let oid = resolve_tree_ish(&repo, p)?;
+        if seen.insert(oid) {
+            parent_oids.push(oid);
+        }
+    }
 
     // Build commit message
     let message = build_message(&args)?;

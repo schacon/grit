@@ -34,7 +34,7 @@ Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`
 
 **Flow:**
 
-1. **`scripts/generate-test-files-catalog.py`** — At the start of every `run-tests.sh` invocation, refreshes the catalog: discovers `tests/t*.sh`, assigns **`group`** (`t0`–`t9`), counts test markers, merges with existing rows so **`in_scope`** and prior results are preserved.
+1. **`scripts/generate-test-files-catalog.py`** — At the start of every `run-tests.sh` invocation, refreshes the catalog: discovers `tests/t*.sh`, assigns **`group`** (`t0`–`t9` from the first digit after `t`, per **`git/t/README`** families), counts test markers, merges with existing rows so **`in_scope`** and prior results are preserved.
 2. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
 3. **`scripts/apply-test-run-results.py`** — Merges the batch output into **`data/test-files.csv`**.
 4. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** and **`docs/testfiles.html`**.

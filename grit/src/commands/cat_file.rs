@@ -2,6 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::error::Error as LibError;
 use grit_lib::pack;
 use std::io::{self, BufRead, Read as _, Write};
 use std::path::Path;
@@ -150,9 +151,13 @@ pub fn run(args: Args) -> Result<()> {
 
     let (expected_kind, obj_str) = match (args.type_or_object.as_deref(), args.object.as_deref()) {
         (Some(kind_str), Some(obj)) => {
-            let kind = kind_str
-                .parse::<ObjectKind>()
-                .map_err(|_| anyhow::anyhow!("unknown type '{}'", kind_str))?;
+            let kind = match kind_str.parse::<ObjectKind>() {
+                Ok(k) => k,
+                Err(_) => {
+                    eprintln!("fatal: invalid object type \"{kind_str}\"");
+                    std::process::exit(128);
+                }
+            };
             (Some(kind), obj)
         }
         (Some(obj), None) => (None, obj),
@@ -171,11 +176,18 @@ pub fn run(args: Args) -> Result<()> {
             std::process::exit(128);
         }
     };
-    let obj = repo.read_replaced(&oid)?;
 
     if args.exists {
-        return Ok(());
+        if repo.odb.exists(&oid) {
+            return Ok(());
+        }
+        std::process::exit(1);
     }
+
+    let obj = match repo.read_replaced(&oid) {
+        Ok(o) => o,
+        Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+    };
 
     if args.show_type {
         println!("{}", obj.kind);
@@ -206,7 +218,10 @@ pub fn run(args: Args) -> Result<()> {
                         _current_oid = target_hex
                             .parse::<ObjectId>()
                             .map_err(|_| anyhow::anyhow!("bad tag target"))?;
-                        current_obj = repo.read_replaced(&_current_oid)?;
+                        current_obj = match repo.read_replaced(&_current_oid) {
+                            Ok(o) => o,
+                            Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                        };
                     } else {
                         bail!("object {} is of type tag, not {}", oid, kind);
                     }
@@ -214,7 +229,10 @@ pub fn run(args: Args) -> Result<()> {
                 ObjectKind::Commit if kind == ObjectKind::Tree => {
                     let commit = parse_commit(&current_obj.data)?;
                     _current_oid = commit.tree;
-                    current_obj = repo.read_replaced(&_current_oid)?;
+                    current_obj = match repo.read_replaced(&_current_oid) {
+                        Ok(o) => o,
+                        Err(e) => exit_cat_file_read_error(&e, &args, obj_str),
+                    };
                 }
                 _ => {
                     if !args.allow_unknown_type {
@@ -254,6 +272,29 @@ pub fn run(args: Args) -> Result<()> {
 fn usage_error(msg: &str) -> ! {
     eprintln!("{}", msg);
     std::process::exit(129);
+}
+
+/// Map ODB read failures to `git cat-file` stderr (exit 128).
+fn exit_cat_file_read_error(err: &LibError, args: &Args, obj_spec: &str) -> ! {
+    match err {
+        LibError::UnknownObjectType(_) => {
+            eprintln!("fatal: invalid object type");
+            std::process::exit(128);
+        }
+        LibError::ObjectHeaderTooLong { oid } => {
+            eprintln!("error: header for {oid} too long, exceeds 32 bytes");
+            if args.pretty {
+                eprintln!("fatal: Not a valid object name {obj_spec}");
+            } else {
+                eprintln!("fatal: git cat-file: could not get object info");
+            }
+            std::process::exit(128);
+        }
+        _ => {
+            eprintln!("fatal: git cat-file: could not get object info");
+            std::process::exit(128);
+        }
+    }
 }
 
 /// Validate argument combinations and produce git-compatible error messages.
@@ -578,10 +619,16 @@ fn print_batch_entry(
             out.write_all(eol)?;
         }
         Ok((oid, mode)) => match repo.read_replaced(&oid) {
-            Err(_) => {
-                write!(out, "{obj_str} missing")?;
-                out.write_all(eol)?;
-            }
+            Err(e) => match e {
+                LibError::UnknownObjectType(_) => {
+                    eprintln!("fatal: invalid object type");
+                    std::process::exit(128);
+                }
+                _ => {
+                    write!(out, "{obj_str} missing")?;
+                    out.write_all(eol)?;
+                }
+            },
             Ok(obj) => {
                 let oid_str = oid.to_string();
                 let kind_str = obj.kind.to_string();
@@ -591,13 +638,31 @@ fn print_batch_entry(
                     None => String::new(),
                 };
                 let disk_size = object_disk_size(repo, oid, packed_sizes)?;
+                let deltabase_hex = if format.contains("%(deltabase)") {
+                    match pack::packed_delta_base_oid(repo.odb.objects_dir(), &oid) {
+                        Ok(Some(base)) => base.to_hex(),
+                        Ok(None) => "0000000000000000000000000000000000000000".to_string(),
+                        Err(e) => return Err(e.into()),
+                    }
+                } else {
+                    String::new()
+                };
                 if format.is_empty() {
                     write!(out, "{} {} {}", oid_str, kind_str, size)?;
                 } else {
                     write!(
                         out,
                         "{}",
-                        apply_format(format, &oid_str, &kind_str, size, disk_size, rest, &mode_str)
+                        apply_format(
+                            format,
+                            &oid_str,
+                            &kind_str,
+                            size,
+                            disk_size,
+                            rest,
+                            &mode_str,
+                            &deltabase_hex,
+                        )
                     )?;
                 }
                 out.write_all(eol)?;
@@ -637,6 +702,7 @@ fn apply_format(
     object_size_disk: u64,
     rest: &str,
     object_mode: &str,
+    deltabase_hex: &str,
 ) -> String {
     format
         .replace("%(objecttype)", object_type)
@@ -645,6 +711,7 @@ fn apply_format(
         .replace("%(objectsize)", &object_size.to_string())
         .replace("%(objectmode)", object_mode)
         .replace("%(rest)", rest)
+        .replace("%(deltabase)", deltabase_hex)
 }
 
 fn collect_packed_object_sizes(objects_dir: &Path) -> Result<HashMap<ObjectId, u64>> {

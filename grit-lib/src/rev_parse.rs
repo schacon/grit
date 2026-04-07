@@ -384,12 +384,9 @@ pub fn resolve_revision(repo: &Repository, spec: &str) -> Result<ObjectId> {
     }
 
     // Handle <rev>:<path> — resolve a tree entry.
-    // Must come after :/ handling. Look for a single colon that isn't doubled,
-    // and isn't part of ^{ or :/. The colon separates the revision from the path.
-    if let Some(colon_idx) = spec.find(':') {
-        // Exclude :/ (commit search) and :N:path (stage number)
-        let before = &spec[..colon_idx];
-        let after = &spec[colon_idx + 1..];
+    // Must come after :/ handling. The colon must not be inside `^{...}` (e.g.
+    // `other^{/msg:}:file`) and must not be the `:path` / `:N:path` index forms.
+    if let Some((before, after)) = split_treeish_colon(spec) {
         if !before.is_empty() && !spec.starts_with(":/") {
             // <rev>:<path> — resolve rev to tree, then navigate path
             let rev_oid = resolve_revision(repo, before)?;
@@ -1008,12 +1005,44 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
     }
 }
 
-fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
-    let (treeish, path) = spec.split_once(':')?;
-    if treeish.is_empty() || path.is_empty() {
+/// Split `treeish:path` at the first colon that separates a revision from a path,
+/// ignoring colons inside `^{...}` peel operators.
+///
+/// Returns [`None`] for index-only forms like `:path` and `:N:path` (leading `:`).
+fn split_treeish_colon(spec: &str) -> Option<(&str, &str)> {
+    if spec.starts_with(':') {
         return None;
     }
-    Some((treeish, path))
+    let bytes = spec.as_bytes();
+    let mut i = 0usize;
+    let mut peel_depth = 0usize;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'^' && bytes[i + 1] == b'{' {
+            peel_depth += 1;
+            i += 2;
+            continue;
+        }
+        if peel_depth > 0 {
+            if bytes[i] == b'}' {
+                peel_depth -= 1;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b':' && i > 0 {
+            let before = &spec[..i];
+            let after = &spec[i + 1..];
+            if !before.is_empty() && !after.is_empty() {
+                return Some((before, after));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_treeish_spec(spec: &str) -> Option<(&str, &str)> {
+    split_treeish_colon(spec)
 }
 
 fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Result<ObjectId> {

@@ -1296,6 +1296,18 @@ PY
       }
     ' "$_fixture"
     exit 1 ;;
+  zlib)
+    shift
+    case "$1" in
+      deflate)
+        python3 -c "import sys,zlib; sys.stdout.buffer.write(zlib.compress(sys.stdin.buffer.read()))"
+        ;;
+      *)
+        echo "test-tool zlib: unknown mode '$1' (only deflate is implemented)" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   find-pack)
     shift
     exec "$SCRIPT_DIR/../target/release/grit" test-tool find-pack "$@" ;;

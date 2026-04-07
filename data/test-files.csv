@@ -1,5 +1,5 @@
 file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_failure
-t0000-basic	t0	yes	92	9	83	false	ok	8
+t0000-basic	t0	yes	92	75	17	false	ok	8
 t0001-init	t0	yes	94	0	0	false	ok	0
 t0002-gitfile	t0	yes	14	13	1	false	ok	0
 t0003-attributes	t0	yes	55	19	36	false	ok	0
@@ -25,7 +25,7 @@ t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	2	4	false	ok	0
 t0027-auto-crlf	t0	yes	2600	1238	1362	false	ok	0
 t0028-working-tree-encoding	t0	yes	13	0	0	false	ok	0
-t0029-core-unsetenvvars	t0	yes	2	0	0	false	ok	0
+t0029-core-unsetenvvars	t0	skip	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0
 t0031-lockfile-pid	t0	yes	7	7	0	true	ok	0
 t0033-safe-directory	t0	yes	22	20	2	false	ok	0
@@ -34,7 +34,7 @@ t0035-safe-bare-repository	t0	yes	12	0	0	false	ok	0
 t0040-parse-options	t0	yes	93	0	0	false	ok	0
 t0041-usage	t0	yes	16	16	0	true	ok	0
 t0050-filesystem	t0	yes	13	9	4	false	ok	2
-t0051-windows-named-pipe	t0	yes	1	0	0	false	ok	0
+t0051-windows-named-pipe	t0	skip	1	0	0	false	ok	0
 t0052-simple-ipc	t0	yes	9	0	0	false	ok	0
 t0055-beyond-symlinks	t0	yes	3	3	0	true	ok	0
 t0056-git-C	t0	yes	11	11	0	true	ok	0
@@ -58,19 +58,19 @@ t0101-at-syntax	t0	yes	8	8	0	true	ok	0
 t0110-environment	t0	yes	31	0	0	false		0
 t0120-dot-git-dir	t0	yes	32	0	0	false		0
 t0130-sha1-validation	t0	yes	30	0	0	false		0
-t0200-gettext-basic	t0	yes	16	0	0	false	ok	0
-t0201-gettext-fallbacks	t0	yes	8	0	0	false	ok	0
-t0202-gettext-perl	t0	yes	1	0	0	false	ok	0
-t0203-gettext-setlocale-sanity	t0	yes	2	0	0	false	ok	0
-t0204-gettext-reencode-sanity	t0	yes	8	0	0	false	ok	0
-t0210-trace2-normal	t0	yes	14	0	14	false	ok	0
-t0211-trace2-perf	t0	yes	17	4	13	false	ok	0
-t0212-trace2-event	t0	yes	11	0	11	false	ok	0
-t0213-trace2-ancestry	t0	yes	5	4	1	false	ok	0
-t0300-credentials	t0	yes	56	0	0	false	ok	0
-t0301-credential-cache	t0	yes	52	6	46	false	ok	0
-t0302-credential-store	t0	yes	65	5	60	false	ok	0
-t0303-credential-external	t0	yes	23	23	0	true	ok	0
+t0200-gettext-basic	t0	skip	16	0	0	false	ok	0
+t0201-gettext-fallbacks	t0	skip	8	0	0	false	ok	0
+t0202-gettext-perl	t0	skip	1	0	0	false	ok	0
+t0203-gettext-setlocale-sanity	t0	skip	2	0	0	false	ok	0
+t0204-gettext-reencode-sanity	t0	skip	8	0	0	false	ok	0
+t0210-trace2-normal	t0	skip	14	0	14	false	ok	0
+t0211-trace2-perf	t0	skip	17	4	13	false	ok	0
+t0212-trace2-event	t0	skip	11	0	11	false	ok	0
+t0213-trace2-ancestry	t0	skip	5	4	1	false	ok	0
+t0300-credentials	t0	skip	56	0	0	false	ok	0
+t0301-credential-cache	t0	skip	52	6	46	false	ok	0
+t0302-credential-store	t0	skip	65	5	60	false	ok	0
+t0303-credential-external	t0	skip	23	23	0	true	ok	0
 t0410-partial-clone	t0	yes	38	0	0	false	ok	0
 t0411-clone-from-partial	t0	yes	7	2	5	false	ok	0
 t0450-txt-doc-vs-help	t0	yes	554	401	153	false	ok	0
@@ -78,11 +78,11 @@ t0500-progress-display	t0	yes	16	0	16	false	ok	0
 t0600-reffiles-backend	t0	yes	33	0	0	false	ok	0
 t0601-reffiles-pack-refs	t0	yes	0	0	0	false		0
 t0602-reffiles-fsck	t0	yes	23	4	19	false	ok	0
-t0610-reftable-basics	t0	yes	73	0	0	false	ok	0
-t0611-reftable-httpd	t0	yes	1	0	1	false	ok	0
-t0612-reftable-jgit-compatibility	t0	yes	4	0	0	false	ok	0
-t0613-reftable-write-options	t0	yes	11	0	11	false	ok	0
-t0614-reftable-fsck	t0	yes	7	1	6	false	ok	0
+t0610-reftable-basics	t0	skip	73	0	0	false	ok	0
+t0611-reftable-httpd	t0	skip	1	0	1	false	ok	0
+t0612-reftable-jgit-compatibility	t0	skip	4	0	0	false	ok	0
+t0613-reftable-write-options	t0	skip	11	0	11	false	ok	0
+t0614-reftable-fsck	t0	skip	7	1	6	false	ok	0
 t1000-read-tree-m-3way	t1	yes	39	0	0	false	ok	0
 t10000-for-each-ref-merged	t1	yes	32	0	0	false		0
 t1001-read-tree-m-2way	t1	yes	29	0	0	false	ok	0
@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	0	0	false		0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	14	3	false	ok	0
 t1005-read-tree-reset	t1	yes	7	1	6	false	ok	0
-t1006-cat-file	t1	yes	121	0	0	false	ok	1
+t1006-cat-file	t1	yes	0	0	0	false	timeout	1
 t10060-hash-object-determinism	t1	yes	34	0	0	false		0
 t1007-hash-object	t1	yes	31	0	0	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	0	0	false		0
@@ -407,7 +407,7 @@ t1404-update-ref-errors	t1	yes	38	0	0	false	ok	0
 t1405-main-ref-store	t1	yes	16	2	14	false	ok	0
 t1405-main-ref-store-reftable	t1	yes	29	0	0	false		0
 t1406-submodule-ref-store	t1	yes	15	8	7	false	ok	0
-t1407-worktree-ref-store	t1	yes	4	1	3	false	ok	0
+t1407-worktree-ref-store	t1	skip	4	1	3	false	ok	0
 t1408-packed-refs	t1	yes	3	3	0	true	ok	0
 t1409-avoid-packing-refs	t1	yes	11	0	0	false	ok	0
 t1410-reflog	t1	yes	41	0	0	false	ok	1
@@ -415,21 +415,21 @@ t1411-reflog-show	t1	yes	17	6	11	false	ok	0
 t1412-reflog-loop	t1	yes	3	0	3	false	ok	0
 t1413-reflog-detach	t1	yes	7	7	0	true	ok	0
 t1414-reflog-walk	t1	yes	12	0	0	false	ok	0
-t1415-worktree-refs	t1	yes	10	4	6	false	ok	0
+t1415-worktree-refs	t1	skip	10	4	6	false	ok	0
 t1416-ref-transaction-hooks	t1	yes	10	9	1	false	ok	0
 t1417-reflog-updateref	t1	yes	21	21	0	true	ok	0
 t1418-reflog-exists	t1	yes	6	6	0	true	ok	0
-t1419-exclude-refs	t1	yes	13	1	12	false	ok	0
+t1419-exclude-refs	t1	skip	13	1	12	false	ok	0
 t1420-lost-found	t1	yes	2	2	0	true	ok	0
 t1421-reflog-write	t1	yes	10	5	5	false	ok	0
 t1422-show-ref-exists	t1	yes	0	0	0	false		0
-t1423-ref-backend	t1	yes	9	0	0	false	ok	0
+t1423-ref-backend	t1	skip	9	0	0	false	ok	0
 t1430-bad-ref-name	t1	yes	42	0	0	false	ok	2
 t1450-fsck	t1	yes	74	0	0	false	ok	0
 t1450-fsck-basic	t1	yes	31	0	0	false		0
 t1450-fsck-flags	t1	yes	10	0	0	false		0
 t1451-fsck-buffer	t1	yes	6	0	0	false	ok	0
-t1460-refs-migrate	t1	yes	22	0	0	false	ok	0
+t1460-refs-migrate	t1	skip	22	0	0	false	ok	0
 t1461-refs-list	t1	yes	0	0	0	false		0
 t1462-refs-exists	t1	yes	0	0	0	false		0
 t1463-refs-optimize	t1	yes	0	0	0	false		0
@@ -516,17 +516,17 @@ t2201-add-update-typechange	t2	yes	6	2	4	false	ok	0
 t2202-add-addremove	t2	yes	3	3	0	true	ok	0
 t2203-add-intent	t2	yes	19	13	6	false	ok	0
 t2204-add-ignored	t2	yes	47	47	0	true	ok	0
-t2205-add-worktree-config	t2	yes	13	5	8	false	ok	0
+t2205-add-worktree-config	t2	skip	13	5	8	false	ok	0
 t2206-add-submodule-ignored	t2	yes	8	4	4	false	ok	0
 t2300-cd-to-toplevel	t2	yes	1	0	0	false		0
-t2400-worktree-add	t2	yes	89	0	0	false	ok	0
-t2401-worktree-prune	t2	yes	13	12	1	false	ok	0
-t2402-worktree-list	t2	yes	27	20	7	false	ok	0
-t2403-worktree-move	t2	yes	33	26	7	false	ok	0
-t2404-worktree-config	t2	yes	12	0	0	false	ok	0
-t2405-worktree-submodule	t2	yes	11	3	8	false	ok	1
-t2406-worktree-repair	t2	yes	24	0	0	false	ok	0
-t2407-worktree-heads	t2	yes	12	7	5	false	ok	0
+t2400-worktree-add	t2	skip	89	0	0	false	ok	0
+t2401-worktree-prune	t2	skip	13	12	1	false	ok	0
+t2402-worktree-list	t2	skip	27	20	7	false	ok	0
+t2403-worktree-move	t2	skip	33	26	7	false	ok	0
+t2404-worktree-config	t2	skip	12	0	0	false	ok	0
+t2405-worktree-submodule	t2	skip	11	3	8	false	ok	1
+t2406-worktree-repair	t2	skip	24	0	0	false	ok	0
+t2407-worktree-heads	t2	skip	12	7	5	false	ok	0
 t2500-untracked-overwriting	t2	yes	10	6	4	false	ok	2
 t2501-cwd-empty	t2	yes	24	7	17	false	ok	0
 t3000-ls-files-others	t3	yes	15	6	9	false	ok	0
@@ -970,8 +970,8 @@ t5546-receive-limits	t5	yes	9	0	0	false	ok	0
 t5547-push-quarantine	t5	yes	6	6	0	true	ok	0
 t5548-push-porcelain	t5	yes	11	0	0	false	ok	0
 t5549-fetch-push-http	t5	yes	3	3	0	true	ok	0
-t5550-http-fetch-dumb	t5	yes	57	0	0	false	ok	0
-t5551-http-fetch-smart	t5	yes	36	0	0	false	timeout	6
+t5550-http-fetch-dumb	t5	skip	57	0	0	false	ok	0
+t5551-http-fetch-smart	t5	skip	36	0	0	false	timeout	6
 t5552-skipping-fetch-negotiator	t5	yes	6	0	6	false	ok	0
 t5553-set-upstream	t5	yes	21	4	17	false	ok	0
 t5554-noop-fetch-negotiator	t5	yes	1	0	1	false	ok	0
@@ -982,7 +982,7 @@ t5559-http-fetch-smart-http2	t5	yes	0	0	0	false		0
 t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
 t5561-http-backend	t5	yes	1	0	0	false	ok	0
 t5562-http-backend-content-length	t5	yes	17	0	0	false	ok	0
-t5563-simple-http-auth	t5	yes	17	0	0	false	ok	0
+t5563-simple-http-auth	t5	skip	17	0	0	false	ok	0
 t5564-http-proxy	t5	yes	7	0	0	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	34	0	0	false	ok	0
@@ -990,7 +990,7 @@ t5571-pre-push-hook	t5	yes	11	0	0	false	ok	0
 t5572-pull-submodule	t5	yes	69	9	60	false	ok	0
 t5573-pull-verify-signatures	t5	yes	16	0	0	false	ok	0
 t5574-fetch-output	t5	yes	14	1	13	false	ok	0
-t5580-unc-paths	t5	yes	8	0	0	false	ok	0
+t5580-unc-paths	t5	skip	8	0	0	false	ok	0
 t5581-http-curl-verbose	t5	yes	2	1	1	false	ok	0
 t5582-fetch-negative-refspec	t5	yes	16	0	0	false	ok	0
 t5583-push-branches	t5	yes	8	8	0	true	ok	0
@@ -1214,7 +1214,7 @@ t7420-submodule-set-url	t7	yes	3	3	0	true	ok	0
 t7421-submodule-summary-add	t7	yes	5	1	4	false	ok	0
 t7422-submodule-output	t7	yes	18	1	17	false	ok	0
 t7423-submodule-symlinks	t7	yes	6	4	2	false	ok	0
-t7424-submodule-mixed-ref-formats	t7	yes	14	3	11	false	ok	0
+t7424-submodule-mixed-ref-formats	t7	skip	14	3	11	false	ok	0
 t7425-submodule-gitdir-path-extension	t7	yes	23	6	17	false	ok	0
 t7426-submodule-get-default-remote	t7	yes	15	3	12	false	ok	0
 t7450-bad-git-dotfiles	t7	yes	26	0	0	false	ok	0

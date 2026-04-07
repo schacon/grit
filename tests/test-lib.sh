@@ -45,8 +45,11 @@ fi
 # Resolve GUST_BIN to an absolute path so wrapper scripts work regardless of cwd.
 GUST_BIN="$(cd "$(dirname "$GUST_BIN")" && pwd)/$(basename "$GUST_BIN")"
 
-# Test environment
-TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
+# Test environment (honour TEST_DIRECTORY when exported, e.g. subtests in a subdir)
+if test -z "$TEST_DIRECTORY"
+then
+	TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
+fi
 # Use a per-test trash directory to avoid interference between tests.
 # Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
 _test_basename="$(basename "$0" .sh)"
@@ -56,6 +59,25 @@ TRASH_DIRECTORY="${TRASH_DIRECTORY:-$TEST_DIRECTORY/trash.$_test_basename}"
 # scripts.  Using a sibling directory keeps things self-contained.
 BIN_DIRECTORY="${TEST_DIRECTORY}/bin.${_test_basename}"
 TEST_RESULTS_DIR="${TEST_DIRECTORY}/test-results"
+
+. "$TEST_DIRECTORY"/test-lib-harness.sh
+init_test_harness_options "$@"
+TEST_NAME="$_test_basename"
+TEST_NUMBER="${TEST_NAME%%-*}"
+TEST_NUMBER="${TEST_NUMBER#t}"
+this_test=${0##*/}
+this_test=${this_test%%-*}
+if test "$verbose" = t
+then
+	exec 4>&2 3>&2
+else
+	exec 4>/dev/null 3>/dev/null
+fi
+test_success=0
+test_failure=0
+test_fixed=0
+test_broken=0
+skip_all=
 
 # Counters
 test_count=0
@@ -404,32 +426,75 @@ EMPTY_TREE=4b825dc642cb6eb9a060e54bf899d69f7c6948d4
 EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
-# test_oid helpers — support SHA-1 only for now
+# Hash algorithm for test_oid (sha1 / sha256); overridden by test_set_hash / test_detect_hash.
+test_hash_algo=
+test_set_hash () {
+	test_hash_algo="$1"
+}
+test_detect_hash () {
+	test_hash_algo=$(git rev-parse --show-object-format 2>/dev/null) || test_hash_algo=
+	case "$test_hash_algo" in
+	sha256) ;;
+	*) test_hash_algo=sha1 ;;
+	esac
+}
+
+# test_oid — match git/t test_oid expectations for t0000 (SHA-1 and SHA-256).
 test_oid () {
 	local hash_algo=
-	if test "${1#--hash=}" != "$1"
-	then
+	while test "${1#--hash=}" != "$1"
+	do
 		hash_algo="${1#--hash=}"
 		shift
-	fi
-	# We only implement SHA-1 in this test harness.
-	if test -n "$hash_algo" && test "$hash_algo" != "sha1" && test "$hash_algo" != "builtin"
-	then
-		echo "unknown-oid"
-		return
-	fi
+		test "${hash_algo:-}" = "builtin" && hash_algo=sha1
+	done
+
+	local effective=${hash_algo:-${test_hash_algo:-sha1}}
+	case "$effective" in
+	sha1|builtin) effective=sha1 ;;
+	sha256) ;;
+	*) echo "unknown-oid"; return ;;
+	esac
 
 	case "$1" in
-	numeric) echo "1234567890123456789012345678901234567890" ;;
+	numeric)
+		if test "$effective" = sha256
+		then
+			echo "1234567890123456789012345678901234567890123456789012345678901234"
+		else
+			echo "1234567890123456789012345678901234567890"
+		fi
+		;;
 	oid_version) echo "1" ;;
-	rawsz) echo "20" ;;
-	hexsz) echo "40" ;;
-	algo) echo "sha1" ;;
-	zero) echo "$ZERO_OID" ;;
+	rawsz)
+		if test "$effective" = sha256
+		then
+			echo 32
+		else
+			echo 20
+		fi
+		;;
+	hexsz)
+		if test "$effective" = sha256
+		then
+			echo 64
+		else
+			echo 40
+		fi
+		;;
+	algo) echo "$effective" ;;
+	zero)
+		if test "$effective" = sha256
+		then
+			printf '%064d\n' 0
+		else
+			echo "$ZERO_OID"
+		fi
+		;;
 	*)
 		if test -n "$TEST_OID_CACHE_FILE" && test -f "$TEST_OID_CACHE_FILE"
 		then
-			oid=$(awk -v key="$1" '$1 == key { print $2; exit }' "$TEST_OID_CACHE_FILE")
+			oid=$(awk -v key="$1" -v algo="$effective" '$1 == key && $2 == algo { print $3; exit }' "$TEST_OID_CACHE_FILE")
 			if test -n "$oid"
 			then
 				echo "$oid"
@@ -438,7 +503,15 @@ test_oid () {
 		fi
 		case "$1" in
 		''|*[!0-9]*) ;;
-		*) printf '%040d\n' "$1"; return ;;
+		*)
+			if test "$effective" = sha256
+			then
+				printf '%064d\n' "$1"
+			else
+				printf '%040d\n' "$1"
+			fi
+			return
+			;;
 		esac
 		echo "unknown-oid"
 		;;
@@ -452,7 +525,10 @@ test_oid_cache () {
 		test -z "$name" && continue
 		case "$value" in
 		sha1:*)
-			echo "$name ${value#sha1:}" >>"$TEST_OID_CACHE_FILE"
+			echo "$name sha1 ${value#sha1:}" >>"$TEST_OID_CACHE_FILE"
+			;;
+		sha256:*)
+			echo "$name sha256 ${value#sha256:}" >>"$TEST_OID_CACHE_FILE"
 			;;
 		esac
 	done
@@ -490,17 +566,40 @@ test_dir_is_empty () {
 	fi
 }
 
-# test_bool_env VAR DEFAULT
+# test_bool_env VAR DEFAULT — match git/t (errors to fd 7; empty env = invalid).
 test_bool_env () {
-	local val="$(eval echo \$$1)"
-	if test -z "$val"
+	if test $# -ne 2
 	then
-		val="$2"
+		echo >&2 "BUG: test_bool_env requires two parameters"
+		return 1
+	fi
+	local _d="$2"
+	case "$_d" in
+	true|yes|1|false|no|0) ;;
+	*)
+		echo >&7 "error: test_bool_env requires bool values both for \$$1 and for the default fallback"
+		return 1
+		;;
+	esac
+	local val
+	if eval "test \"\${$1+set}\" = set"
+	then
+		eval "val=\"\$$1\""
+		if test -z "$val"
+		then
+			echo >&7 "error: test_bool_env requires bool values both for \$$1 and for the default fallback"
+			return 1
+		fi
+	else
+		val="$_d"
 	fi
 	case "$val" in
 	true|yes|1) return 0 ;;
 	false|no|0) return 1 ;;
-	*) return 1 ;;
+	*)
+		echo >&7 "error: test_bool_env requires bool values both for \$$1 and for the default fallback"
+		return 1
+		;;
 	esac
 }
 
@@ -591,33 +690,58 @@ test_must_be_empty () { test ! -s "$1"; }
 
 test_have_prereq () {
 	local _p="$1"
+	case "$_p" in
+	*,*)
+		local _saveIFS=$IFS
+		IFS=','
+		for _p in $_p
+		do
+			IFS=$_saveIFS
+			if ! test_have_prereq "$_p"
+			then
+				return 1
+			fi
+			IFS=','
+		done
+		IFS=$_saveIFS
+		return 0
+		;;
+	esac
 	# Handle negation: !PREREQ means "PREREQ is NOT set"
 	if test "${_p#!}" != "$_p"; then
 		local _neg="${_p#!}"
-		! test_have_prereq "$_neg"
-		return $?
+		if test_have_prereq "$_neg"
+		then
+			missing_prereq=$_p
+			return 1
+		fi
+		return 0
 	fi
 	case "$_p" in
 	POSIXPERM) return 0 ;;
 	SYMLINKS)  return 0 ;;
-	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; return 1 ;;
+	PIPE)      command -v mkfifo >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
 	SANITY)    return 0 ;;
 	FUNNYNAMES) return 0 ;;
 	FILEMODE)  return 0 ;;
 	COLON_DIR) return 0 ;;
 	BSLASHPSPEC) return 0 ;;
-	MINGW)     return 1 ;;  # Not on Windows
-	CYGWIN)    return 1 ;;  # Not on Cygwin
-	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
-	PERL_TEST_HELPERS) command -v perl >/dev/null 2>&1 && return 0 ; return 1 ;;
-	GZIP)      command -v gzip >/dev/null 2>&1 && return 0 ; return 1 ;;
-	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; return 1 ;;
-	CGIPASSAUTH) return 1 ;; # Not supported by test-httpd
+	MINGW)     missing_prereq=$_p; return 1 ;;  # Not on Windows
+	CYGWIN)    missing_prereq=$_p; return 1 ;;  # Not on Cygwin
+	PERL)      command -v perl >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
+	PERL_TEST_HELPERS) command -v perl >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
+	GZIP)      command -v gzip >/dev/null 2>&1 && return 0 ; missing_prereq=$_p; return 1 ;;
+	FAKENC)    perl -MIO::Socket::INET -e 'exit 0' 2>/dev/null && return 0 ; missing_prereq=$_p; return 1 ;;
+	CGIPASSAUTH) missing_prereq=$_p; return 1 ;; # Not supported by test-httpd
 	*)
 		# Check dynamic prereqs set by test_set_prereq
 		local _var="_prereq_${_p}"
-		eval "test \"\${${_var}:-}\" = set"
-		return $?
+		if eval "test \"\${${_var}:-}\" = set"
+		then
+			return 0
+		fi
+		missing_prereq=$_p
+		return 1
 		;;
 	esac
 }
@@ -843,189 +967,6 @@ test_cmp () {
 	diff -u "$1" "$2"
 }
 
-# ── core test functions ───────────────────────────────────────────────────────
-
-test_expect_success () {
-	local prereq=""
-	local description
-	local commands
-	if test $# -eq 3
-	then
-		prereq="$1"
-		description="$2"
-		commands="$3"
-	elif test $# -eq 2
-	then
-		description="$1"
-		commands="$2"
-	else
-		echo >&2 "BUG: test_expect_success requires 2 or 3 arguments, got $#"
-		return 1
-	fi
-	if test "$commands" = "-"
-	then
-		commands="$(cat)"
-	fi
-	test_count=$(($test_count + 1))
-
-	# Check prerequisites (comma-separated)
-	if test -n "$prereq"
-	then
-		local _all_met=1
-		local _save_IFS="$IFS"
-		IFS=','
-		for _p in $prereq
-		do
-			if ! test_have_prereq "$_p"
-			then
-				_all_met=0
-				break
-			fi
-		done
-		IFS="$_save_IFS"
-		if test "$_all_met" = 0
-		then
-			test_pass=$(($test_pass + 1))
-			test_skip=$(($test_skip + 1))
-			if test -n "$TEST_VERBOSE"
-			then
-				printf '%sok %d - %s # SKIP (missing prereq %s)%s\n' "$YELLOW" "$test_count" "$description" "$prereq" "$RESET"
-			else
-				printf 's'
-			fi
-			return 0
-		fi
-	fi
-
-	# Run test body in the current shell (like upstream) so that
-	# variables and working-directory changes can intentionally persist
-	# across tests.
-	# We save and restore 'set -e' state since eval doesn't
-	# propagate exit-on-error the way a subshell does.
-	# Run with errexit but capture result.
-	# Wrap in a function to localize set -e.
-	_test_eval_result=0
-	_test_eval_inner () {
-		set -e
-		eval "$1"
-	}
-	_twf_cmd=""
-	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
-	local result=$_test_eval_result
-	# Ensure errexit is off at top level
-	set +e
-	# Run test_when_finished cleanups (like upstream's per-test subshell EXIT trap).
-	if test -n "${_twf_cmd+set}"
-	then
-		eval "$_twf_cmd" 2>/dev/null
-		_twf_cmd=
-		trap - EXIT
-	fi
-
-	if test $result -eq 0
-	then
-		test_pass=$(($test_pass + 1))
-		if test -n "$TEST_VERBOSE"
-		then
-			printf '%sok %d - %s%s\n' "$GREEN" "$test_count" "$description" "$RESET"
-		else
-			printf '.'
-		fi
-	else
-		test_fail=$(($test_fail + 1))
-		test_failures="$test_failures
-  FAIL $test_count: $description"
-		printf '%snot ok %d - %s%s\n' "$RED" "$test_count" "$description" "$RESET" >&2
-	fi
-}
-
-test_expect_failure () {
-	local prereq=""
-	local description
-	local commands
-	if test $# -eq 3
-	then
-		prereq="$1"
-		description="$2"
-		commands="$3"
-	elif test $# -eq 2
-	then
-		description="$1"
-		commands="$2"
-	else
-		echo >&2 "BUG: test_expect_failure requires 2 or 3 arguments, got $#"
-		return 1
-	fi
-	if test "$commands" = "-"
-	then
-		commands="$(cat)"
-	fi
-	test_count=$(($test_count + 1))
-
-	# Check prerequisites (comma-separated)
-	if test -n "$prereq"
-	then
-		local _all_met=1
-		local _save_IFS="$IFS"
-		IFS=','
-		for _p in $prereq
-		do
-			if ! test_have_prereq "$_p"
-			then
-				_all_met=0
-				break
-			fi
-		done
-		IFS="$_save_IFS"
-		if test "$_all_met" = 0
-		then
-			test_pass=$(($test_pass + 1))
-			test_skip=$(($test_skip + 1))
-			if test -n "$TEST_VERBOSE"
-			then
-				printf '%sok %d - %s # SKIP (missing prereq %s)%s\n' "$YELLOW" "$test_count" "$description" "$prereq" "$RESET"
-			else
-				printf 's'
-			fi
-			return 0
-		fi
-	fi
-
-	local _exports_file="$TRASH_DIRECTORY/.test-exports"
-	(
-		set -e
-		cd "$TRASH_DIRECTORY" || exit 1
-		test -f "$_exports_file" && . "$_exports_file"
-		eval "$commands" </dev/null
-	)
-	local result=$?
-	test -f "$_exports_file" && . "$_exports_file"
-
-	# Sync test_tick state from file back to parent shell
-	if test -f "$_TICK_FILE"
-	then
-		test_tick=$(cat "$_TICK_FILE")
-		GIT_COMMITTER_DATE="$test_tick -0700"
-		GIT_AUTHOR_DATE="$test_tick -0700"
-		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
-	elif test -n "${test_tick+set}"
-	then
-		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
-	fi
-
-	if test $result -ne 0
-	then
-		test_pass=$(($test_pass + 1))
-		test_skip=$(($test_skip + 1))
-		printf '%sok %d - %s # TODO expected failure%s\n' "$YELLOW" "$test_count" "$description" "$RESET"
-	else
-		test_fail=$(($test_fail + 1))
-		test_failures="$test_failures
-  FAIL(expected) $test_count: $description"
-		printf '%snot ok %d - %s%s\n' "$RED" "$test_count" "$description" "$RESET" >&2
-	fi
-}
-
 # Persist shell variables across test subshells.  Writes name=value pairs
 # to a file that later subshells source on startup.  Usage:
 #   test_export newf oldf f5id
@@ -1052,6 +993,13 @@ test_when_finished () {
 	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
 }
 
+. "$TEST_DIRECTORY"/test-lib-tap.sh
+if match_pattern_list "$this_test" "$GIT_SKIP_TESTS"
+then
+	skip_all="skip all tests in $this_test"
+	test_done
+fi
+
 test_must_be_empty () {
 	if test -s "$1"
 	then
@@ -1071,19 +1019,6 @@ test_ref_missing () {
 
 test_path_is_file_not_symlink () {
 	test -f "$1" && ! test -L "$1"
-}
-
-test_must_fail () {
-	set +e
-	if test "${TEST_HIDE_EXPECTED_FAIL_STDERR:-0}" = "1" && test -t 2
-	then
-		"$@" 2>/dev/null
-	else
-		"$@"
-	fi
-	status=$?
-	set -e
-	test $status -ne 0
 }
 
 test_expect_code () {
@@ -1222,17 +1157,4 @@ append_cr () {
 # Remove CR from each line.
 remove_cr () {
 	tr -d '\015'
-}
-
-test_done () {
-	# Clean up the bin directory that lives outside the working tree
-	rm -rf "$BIN_DIRECTORY" 2>/dev/null
-	printf '\n'
-	echo "# Tests: $test_count  Pass: $test_pass  Fail: $test_fail  Skip: $test_skip"
-	if test $test_fail -gt 0
-	then
-		echo "${RED}FAILED:${RESET}$test_failures" >&2
-		exit 1
-	fi
-	exit 0
 }
