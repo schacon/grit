@@ -103,17 +103,31 @@ test_expect_success() {
 		maybe_teardown_verbose
 		return 0
 	fi
+	_exports_file="$TRASH_DIRECTORY/.test-exports"
 	_test_eval_result=0
 	_test_eval_inner() {
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
+		test -f "$_exports_file" && . "$_exports_file"
 		eval "$1"
 	}
 	_twf_cmd=""
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
 	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
+	cd "$TRASH_DIRECTORY" || exit 1
 	result=$_test_eval_result
 	set +e
+	test -f "$_exports_file" && . "$_exports_file"
+	if test -f "$_TICK_FILE"
+	then
+		test_tick=$(cat "$_TICK_FILE")
+		GIT_COMMITTER_DATE="$test_tick -0700"
+		GIT_AUTHOR_DATE="$test_tick -0700"
+		export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
+	elif test -n "${test_tick+set}"
+	then
+		unset test_tick GIT_COMMITTER_DATE GIT_AUTHOR_DATE 2>/dev/null
+	fi
 	if test -n "${_twf_cmd+set}"
 	then
 		eval "$_twf_cmd" 2>/dev/null
@@ -224,7 +238,7 @@ test_must_fail_acceptable() {
 		shift
 	fi
 	case "$1" in
-	git|__git*|scalar|test-tool|test_terminal)
+	git|__git*|grit|scalar|test-tool|test_terminal)
 		return 0
 		;;
 	*)
@@ -243,7 +257,7 @@ test_must_fail() {
 	esac
 	if ! test_must_fail_acceptable "$@"
 	then
-		echo "test_must_fail: only 'git' is allowed: $*" >&2
+		echo "test_must_fail: only git/grit and related wrappers are allowed: $*" >&2
 		return 1
 	fi
 	set +e
