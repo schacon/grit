@@ -1,15 +1,15 @@
 file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_failure
-t0000-basic	t0	yes	139	9	83	false	ok	8
+t0000-basic	t0	yes	92	9	83	false	ok	8
 t0001-init	t0	yes	94	0	0	false	ok	0
 t0002-gitfile	t0	yes	14	13	1	false	ok	0
 t0003-attributes	t0	yes	55	19	36	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
-t0006-date	t0	yes	3	16	113	false	ok	0
+t0006-date	t0	yes	129	16	113	false	ok	0
 t0007-git-var	t0	yes	27	25	2	false	ok	0
 t0008-ignores	t0	yes	50	0	0	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
-t0010-racy-git	t0	yes	2	10	0	true	ok	0
+t0010-racy-git	t0	yes	10	10	0	true	ok	0
 t0012-help	t0	yes	22	0	0	false	ok	0
 t0013-sha1dc	t0	yes	1	0	0	false	ok	0
 t0014-alias	t0	yes	22	0	0	false	ok	1
@@ -23,7 +23,7 @@ t0023-crlf-am	t0	yes	2	1	1	false	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
 t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	2	4	false	ok	0
-t0027-auto-crlf	t0	yes	39	1238	1362	false	ok	0
+t0027-auto-crlf	t0	yes	2600	1238	1362	false	ok	0
 t0028-working-tree-encoding	t0	yes	13	0	0	false	ok	0
 t0029-core-unsetenvvars	t0	yes	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0
@@ -68,12 +68,12 @@ t0211-trace2-perf	t0	yes	17	4	13	false	ok	0
 t0212-trace2-event	t0	yes	11	0	11	false	ok	0
 t0213-trace2-ancestry	t0	yes	5	4	1	false	ok	0
 t0300-credentials	t0	yes	56	0	0	false	ok	0
-t0301-credential-cache	t0	yes	6	6	46	false	ok	0
-t0302-credential-store	t0	yes	15	5	60	false	ok	0
-t0303-credential-external	t0	yes	1	23	0	true	ok	0
+t0301-credential-cache	t0	yes	52	6	46	false	ok	0
+t0302-credential-store	t0	yes	65	5	60	false	ok	0
+t0303-credential-external	t0	yes	23	23	0	true	ok	0
 t0410-partial-clone	t0	yes	38	0	0	false	ok	0
 t0411-clone-from-partial	t0	yes	7	2	5	false	ok	0
-t0450-txt-doc-vs-help	t0	yes	9	401	153	false	ok	0
+t0450-txt-doc-vs-help	t0	yes	554	401	153	false	ok	0
 t0500-progress-display	t0	yes	16	0	16	false	ok	0
 t0600-reffiles-backend	t0	yes	33	0	0	false	ok	0
 t0601-reffiles-pack-refs	t0	yes	0	0	0	false		0
@@ -82,7 +82,7 @@ t0610-reftable-basics	t0	yes	73	0	0	false	ok	0
 t0611-reftable-httpd	t0	yes	1	0	1	false	ok	0
 t0612-reftable-jgit-compatibility	t0	yes	4	0	0	false	ok	0
 t0613-reftable-write-options	t0	yes	11	0	11	false	ok	0
-t0614-reftable-fsck	t0	yes	4	1	6	false	ok	0
+t0614-reftable-fsck	t0	yes	7	1	6	false	ok	0
 t1000-read-tree-m-3way	t1	yes	39	0	0	false	ok	0
 t10000-for-each-ref-merged	t1	yes	32	0	0	false		0
 t1001-read-tree-m-2way	t1	yes	29	0	0	false	ok	0
@@ -108,7 +108,7 @@ t1012-read-tree-df	t1	yes	5	5	0	true	ok	0
 t10120-config-unset-all	t1	yes	33	0	0	false		0
 t1013-read-tree-submodule	t1	yes	0	0	0	false		0
 t10130-init-bare-reinit	t1	yes	32	0	0	false		0
-t1014-read-tree-confusing	t1	yes	6	27	1	false	ok	0
+t1014-read-tree-confusing	t1	yes	28	27	1	false	ok	0
 t10140-branch-show-current	t1	yes	32	0	0	false		0
 t1015-read-index-unmerged	t1	yes	6	5	1	false	ok	0
 t10150-tag-delete-force	t1	yes	34	0	0	false		0
@@ -144,7 +144,7 @@ t10460-log-format-author-committer	t1	yes	31	0	0	false		0
 t10460-status-ahead-behind	t1	yes	5	0	0	false		0
 t10480-config-list-file	t1	yes	34	0	0	false		0
 t10490-init-quiet-branch	t1	yes	32	0	0	false		0
-t1050-large	t1	yes	22	13	16	false	ok	0
+t1050-large	t1	yes	29	13	16	false	ok	0
 t10500-branch-force-create	t1	yes	33	0	0	false		0
 t1051-large-conversion	t1	yes	12	8	4	false	ok	0
 t1051-unpack-file	t1	yes	12	0	0	false		0
@@ -191,7 +191,7 @@ t1090-sparse-checkout-scope	t1	yes	7	3	4	false	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	0	0	false		0
 t1091-sparse-checkout-builtin	t1	yes	77	0	0	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	0	0	false		0
-t1092-sparse-checkout-compatibility	t1	yes	104	3	103	false	ok	3
+t1092-sparse-checkout-compatibility	t1	yes	106	3	103	false	ok	3
 t10920-update-ref-create-delete	t1	yes	29	0	0	false		0
 t10930-symbolic-ref-read-write	t1	yes	29	0	0	false		0
 t10940-check-ignore-dir-pattern	t1	yes	35	0	0	false		0
@@ -351,9 +351,9 @@ t12980-tag-force-replace	t1	yes	33	0	0	false		0
 t12990-commit-reuse-message	t1	yes	32	0	0	false		0
 t1300-config	t1	yes	237	0	0	false	ok	0
 t13000-add-bulk-paths	t1	yes	31	0	0	false		0
-t1301-shared-repo	t1	yes	13	2	20	false	ok	0
+t1301-shared-repo	t1	yes	22	2	20	false	ok	0
 t13010-rm-ignore-unmatch	t1	yes	30	0	0	false		0
-t1302-repo-version	t1	yes	11	17	1	false	ok	0
+t1302-repo-version	t1	yes	18	17	1	false	ok	0
 t13020-mv-force-overwrite	t1	yes	30	0	0	false		0
 t1303-wacky-config	t1	yes	11	11	0	true	ok	0
 t13030-switch-quiet-verbose	t1	yes	30	0	0	false		0
@@ -401,7 +401,7 @@ t13410-merge-file-crlf-eol	t1	yes	30	0	0	false		0
 t1350-config-hooks-path	t1	yes	4	4	0	true	ok	0
 t1400-update-ref	t1	yes	254	0	0	false	ok	0
 t1401-symbolic-ref	t1	yes	25	25	0	true	ok	0
-t1402-check-ref-format	t1	yes	9	99	0	true	ok	0
+t1402-check-ref-format	t1	yes	99	99	0	true	ok	0
 t1403-show-ref	t1	yes	12	2	10	false	ok	0
 t1404-update-ref-errors	t1	yes	38	0	0	false	ok	0
 t1405-main-ref-store	t1	yes	16	2	14	false	ok	0
@@ -417,7 +417,7 @@ t1413-reflog-detach	t1	yes	7	7	0	true	ok	0
 t1414-reflog-walk	t1	yes	12	0	0	false	ok	0
 t1415-worktree-refs	t1	yes	10	4	6	false	ok	0
 t1416-ref-transaction-hooks	t1	yes	10	9	1	false	ok	0
-t1417-reflog-updateref	t1	yes	2	21	0	true	ok	0
+t1417-reflog-updateref	t1	yes	21	21	0	true	ok	0
 t1418-reflog-exists	t1	yes	6	6	0	true	ok	0
 t1419-exclude-refs	t1	yes	13	1	12	false	ok	0
 t1420-lost-found	t1	yes	2	2	0	true	ok	0
@@ -433,7 +433,7 @@ t1460-refs-migrate	t1	yes	22	0	0	false	ok	0
 t1461-refs-list	t1	yes	0	0	0	false		0
 t1462-refs-exists	t1	yes	0	0	0	false		0
 t1463-refs-optimize	t1	yes	0	0	0	false		0
-t1500-rev-parse	t1	yes	24	37	44	false	ok	0
+t1500-rev-parse	t1	yes	81	37	44	false	ok	0
 t1501-work-tree	t1	yes	39	21	18	false	ok	0
 t1502-rev-parse-parseopt	t1	yes	35	0	0	false	ok	0
 t1503-rev-parse-verify	t1	yes	12	11	1	false	ok	0
@@ -444,9 +444,9 @@ t1506-rev-parse-diagnosis	t1	yes	30	14	16	false	ok	0
 t1507-rev-parse-upstream	t1	yes	29	0	0	false	ok	0
 t1508-at-combinations	t1	yes	5	0	0	false	ok	0
 t1509-root-work-tree	t1	yes	27	0	0	false	ok	0
-t1510-repo-setup	t1	yes	55	13	96	false	ok	0
+t1510-repo-setup	t1	yes	109	13	96	false	ok	0
 t1511-rev-parse-caret	t1	yes	17	0	0	false	ok	0
-t1512-rev-parse-disambiguation	t1	yes	38	2	1	false	ok	3
+t1512-rev-parse-disambiguation	t1	yes	3	2	1	false	ok	3
 t1513-rev-parse-prefix	t1	yes	11	11	0	true	ok	0
 t1514-rev-parse-push	t1	yes	9	0	0	false	ok	0
 t1515-rev-parse-outside-repo	t1	yes	4	0	0	false	ok	0
@@ -454,7 +454,7 @@ t1517-outside-repo	t1	yes	11	0	0	false	ok	0
 t1600-index	t1	yes	7	5	2	false	ok	0
 t1601-index-bogus	t1	yes	4	4	0	true	ok	0
 t1700-split-index	t1	yes	28	3	25	false	ok	0
-t1701-racy-split-index	t1	yes	7	1	30	false	ok	0
+t1701-racy-split-index	t1	yes	31	1	30	false	ok	0
 t1800-hook	t1	yes	41	0	0	false	ok	0
 t1800-ls-remote	t1	yes	24	0	0	false		0
 t1900-repo-info	t1	yes	16	0	0	false	ok	0
@@ -464,7 +464,7 @@ t2002-checkout-cache-u	t2	yes	3	0	0	false		0
 t2003-checkout-cache-mkdir	t2	yes	10	6	4	false	ok	0
 t2004-checkout-cache-temp	t2	yes	23	0	0	false	ok	0
 t2005-checkout-index-symlinks	t2	yes	3	3	0	true	ok	0
-t2006-checkout-index-basic	t2	yes	8	9	0	true	ok	0
+t2006-checkout-index-basic	t2	yes	9	9	0	true	ok	0
 t2007-checkout-symlink	t2	yes	4	4	0	true	ok	0
 t2008-checkout-subdir	t2	yes	9	9	0	true	ok	0
 t2009-checkout-statinfo	t2	yes	3	2	1	false	ok	0
@@ -474,11 +474,11 @@ t2012-checkout-last	t2	yes	22	22	0	true	ok	0
 t2013-checkout-submodule	t2	yes	6	0	0	false	ok	0
 t2014-checkout-switch	t2	yes	4	4	0	true	ok	0
 t2015-checkout-unborn	t2	yes	6	6	0	true	ok	0
-t2016-checkout-patch	t2	yes	16	7	12	false	ok	0
+t2016-checkout-patch	t2	yes	19	7	12	false	ok	0
 t2017-checkout-orphan	t2	yes	13	11	2	false	ok	0
 t2018-checkout-branch	t2	yes	25	24	1	false	ok	0
 t2019-checkout-ambiguous-ref	t2	yes	9	9	0	true	ok	0
-t2020-checkout-detach	t2	yes	25	19	7	false	ok	0
+t2020-checkout-detach	t2	yes	26	19	7	false	ok	0
 t2021-checkout-overwrite	t2	yes	9	7	2	false	ok	0
 t2022-checkout-paths	t2	yes	5	4	1	false	ok	0
 t2023-checkout-m	t2	yes	5	2	3	false	ok	0
@@ -497,9 +497,9 @@ t2050-git-dir-relative	t2	yes	4	2	2	false	ok	0
 t2060-switch	t2	yes	16	16	0	true	ok	0
 t2061-switch-orphan	t2	yes	15	0	0	false		0
 t2070-restore	t2	yes	15	13	2	false	ok	0
-t2071-restore-patch	t2	yes	14	15	0	true	ok	0
+t2071-restore-patch	t2	yes	15	15	0	true	ok	0
 t2072-restore-pathspec-file	t2	yes	12	12	0	true	ok	0
-t2080-parallel-checkout-basics	t2	yes	8	0	11	false	ok	0
+t2080-parallel-checkout-basics	t2	yes	11	0	11	false	ok	0
 t2081-parallel-checkout-collisions	t2	yes	6	6	0	true	ok	0
 t2082-parallel-checkout-attributes	t2	yes	5	1	4	false	ok	0
 t2100-update-cache-badpath	t2	yes	2	0	0	false		0
@@ -515,7 +515,7 @@ t2200-add-update	t2	yes	19	18	1	false	ok	0
 t2201-add-update-typechange	t2	yes	6	2	4	false	ok	0
 t2202-add-addremove	t2	yes	3	3	0	true	ok	0
 t2203-add-intent	t2	yes	19	13	6	false	ok	0
-t2204-add-ignored	t2	yes	10	47	0	true	ok	0
+t2204-add-ignored	t2	yes	47	47	0	true	ok	0
 t2205-add-worktree-config	t2	yes	13	5	8	false	ok	0
 t2206-add-submodule-ignored	t2	yes	8	4	4	false	ok	0
 t2300-cd-to-toplevel	t2	yes	1	0	0	false		0
@@ -532,7 +532,7 @@ t2501-cwd-empty	t2	yes	24	7	17	false	ok	0
 t3000-ls-files-others	t3	yes	15	6	9	false	ok	0
 t3001-ls-files-others-exclude	t3	yes	27	10	17	false	ok	0
 t3002-ls-files-dashpath	t3	yes	6	6	0	true	ok	0
-t3003-ls-files-exclude	t3	yes	4	7	0	true	ok	0
+t3003-ls-files-exclude	t3	yes	7	7	0	true	ok	0
 t3004-ls-files-basic	t3	yes	6	5	1	false	ok	0
 t3005-ls-files-relative	t3	yes	4	1	3	false	ok	0
 t3006-ls-files-long	t3	yes	3	3	0	true	ok	0
@@ -543,7 +543,7 @@ t3010-ls-files-killed-modified	t3	yes	6	3	3	false	ok	0
 t3011-common-prefixes-and-directory-traversal	t3	yes	21	17	4	false	ok	1
 t3011-ls-files-staged	t3	yes	29	0	0	false		0
 t3012-ls-files-dedup	t3	yes	3	2	1	false	ok	0
-t3013-ls-files-format	t3	yes	14	8	12	false	ok	0
+t3013-ls-files-format	t3	yes	20	8	12	false	ok	0
 t3014-ls-files-pathspec-magic	t3	yes	29	0	0	false		0
 t3020-ls-files-error-unmatch	t3	yes	3	3	0	true	ok	0
 t3030-merge-recursive	t3	yes	26	0	0	false		0
@@ -551,13 +551,13 @@ t3040-subprojects-basic	t3	yes	11	9	2	false	ok	0
 t3050-ls-files-unmerged	t3	yes	23	0	0	false		0
 t3050-subprojects-fetch	t3	yes	4	0	0	false		0
 t3060-ls-files-with-tree	t3	yes	8	2	6	false	ok	0
-t3070-wildmatch	t3	yes	13	1901	0	true	ok	3
+t3070-wildmatch	t3	yes	1901	1901	0	true	ok	3
 t3100-ls-tree-restrict	t3	yes	14	0	0	false		0
-t3101-ls-tree-dirname	t3	yes	17	13	6	false	ok	0
+t3101-ls-tree-dirname	t3	yes	19	13	6	false	ok	0
 t3102-ls-tree-wildcards	t3	yes	4	3	1	false	ok	0
-t3103-ls-tree-misc	t3	yes	4	10	0	true	ok	0
-t3104-ls-tree-format	t3	yes	5	12	7	false	ok	0
-t3105-ls-tree-output	t3	yes	7	20	40	false	ok	0
+t3103-ls-tree-misc	t3	yes	10	10	0	true	ok	0
+t3104-ls-tree-format	t3	yes	19	12	7	false	ok	0
+t3105-ls-tree-output	t3	yes	60	20	40	false	ok	0
 t3200-branch	t3	yes	167	0	0	false	ok	0
 t3201-branch-contains	t3	yes	24	15	9	false	ok	0
 t3202-show-branch	t3	yes	22	0	0	false	ok	0
@@ -572,7 +572,7 @@ t3211-peel-ref	t3	yes	8	8	0	true	ok	0
 t3300-funny-names	t3	yes	21	8	13	false	ok	0
 t3301-notes	t3	yes	125	0	0	false	ok	0
 t3301-notes-basic	t3	yes	38	0	0	false		0
-t3302-notes-index-expensive	t3	yes	3	12	0	true	ok	0
+t3302-notes-index-expensive	t3	yes	12	12	0	true	ok	0
 t3303-notes-subtrees	t3	yes	23	14	9	false	ok	0
 t3304-notes-mixed	t3	yes	6	6	0	true	ok	0
 t3305-notes-fanout	t3	yes	7	6	1	false	ok	0
@@ -595,8 +595,8 @@ t3402-rebase-merge	t3	yes	13	0	0	false	ok	0
 t3403-rebase-skip	t3	yes	20	0	0	false	ok	0
 t3404-rebase-interactive	t3	yes	132	0	0	false	ok	0
 t3405-rebase-malformed	t3	yes	5	5	0	true	ok	0
-t3406-rebase-message	t3	yes	17	3	29	false	ok	0
-t3407-rebase-abort	t3	yes	9	0	17	false	ok	0
+t3406-rebase-message	t3	yes	32	3	29	false	ok	0
+t3407-rebase-abort	t3	yes	17	0	17	false	ok	0
 t3408-rebase-multi-line	t3	yes	2	0	0	false		0
 t3409-rebase-environ	t3	yes	3	3	0	true	ok	0
 t3412-rebase-root	t3	yes	25	0	0	false	ok	0
@@ -606,19 +606,19 @@ t3416-rebase-onto-threedots	t3	yes	18	0	0	false	ok	0
 t3417-rebase-whitespace-fix	t3	yes	4	0	4	false	ok	0
 t3418-rebase-continue	t3	yes	22	0	0	false	ok	0
 t3419-rebase-patch-id	t3	yes	8	4	4	false	ok	0
-t3420-rebase-autostash	t3	yes	24	4	48	false	ok	0
-t3421-rebase-topology-linear	t3	yes	5	8	56	false	ok	0
+t3420-rebase-autostash	t3	yes	52	4	48	false	ok	0
+t3421-rebase-topology-linear	t3	yes	64	8	56	false	ok	0
 t3422-rebase-incompatible-options	t3	yes	18	0	0	false	ok	0
 t3423-rebase-reword	t3	yes	3	1	2	false	ok	0
 t3424-rebase-empty	t3	yes	20	3	17	false	ok	1
-t3425-rebase-topology-merges	t3	yes	1	1	12	false	ok	0
-t3426-rebase-submodule	t3	yes	1	4	25	false	ok	0
+t3425-rebase-topology-merges	t3	yes	13	1	12	false	ok	0
+t3426-rebase-submodule	t3	yes	29	4	25	false	ok	0
 t3427-rebase-subtree	t3	yes	3	0	3	false	ok	0
 t3428-rebase-signoff	t3	yes	7	1	6	false	ok	0
 t3429-rebase-edit-todo	t3	yes	7	4	3	false	ok	0
 t3430-rebase-merges	t3	yes	34	1	33	false	ok	0
 t3431-rebase-fork-point	t3	yes	9	0	0	false	ok	0
-t3432-rebase-fast-forward	t3	yes	3	219	6	false	ok	0
+t3432-rebase-fast-forward	t3	yes	225	219	6	false	ok	0
 t3433-rebase-across-mode-change	t3	yes	4	4	0	true	ok	0
 t3434-rebase-i18n	t3	yes	4	0	0	false	ok	0
 t3435-rebase-gpg-sign	t3	yes	11	0	0	false	ok	0
@@ -644,12 +644,12 @@ t3509-cherry-pick-merge-df	t3	yes	9	6	3	false	ok	0
 t3510-cherry-pick	t3	yes	65	0	0	false		0
 t3510-cherry-pick-sequence	t3	yes	55	0	0	false	ok	0
 t3511-cherry-pick-x	t3	yes	22	0	22	false	ok	0
-t3512-cherry-pick-submodule	t3	yes	1	3	12	false	ok	0
+t3512-cherry-pick-submodule	t3	yes	15	3	12	false	ok	0
 t3513-revert-submodule	t3	yes	0	0	0	false		0
 t3514-cherry-pick-revert-gpg	t3	yes	2	0	0	false	ok	0
 t3600-rm	t3	yes	82	0	0	false	ok	0
 t3601-rm-pathspec-file	t3	yes	5	5	0	true	ok	0
-t3602-rm-sparse-checkout	t3	yes	11	2	11	false	ok	0
+t3602-rm-sparse-checkout	t3	yes	13	2	11	false	ok	0
 t3650-replay-basics	t3	yes	31	0	0	false	ok	0
 t3700-add	t3	yes	58	0	0	false	ok	0
 t3700-add-pathspec-file	t3	yes	24	0	0	false		0
@@ -657,7 +657,7 @@ t3701-add-interactive	t3	yes	111	0	0	false	ok	0
 t3702-add-edit	t3	yes	3	1	2	false	ok	0
 t3703-add-magic-pathspec	t3	yes	6	6	0	true	ok	0
 t3704-add-pathspec-file	t3	yes	11	3	8	false	ok	0
-t3705-add-sparse-checkout	t3	yes	16	3	17	false	ok	0
+t3705-add-sparse-checkout	t3	yes	20	3	17	false	ok	0
 t3800-mktag	t3	yes	11	0	0	false	ok	0
 t3900-i18n-commit	t3	yes	21	0	0	false	ok	0
 t3901-i18n-patch	t3	yes	20	0	0	false	ok	0
@@ -666,15 +666,15 @@ t3902-quoted-ls-tree	t3	yes	8	0	0	false		0
 t3903-stash	t3	yes	142	0	0	false	ok	0
 t3904-stash-patch	t3	yes	10	4	6	false	ok	0
 t3905-stash-include-untracked	t3	yes	34	0	0	false	ok	0
-t3906-stash-submodule	t3	yes	2	10	6	false	ok	0
+t3906-stash-submodule	t3	yes	16	10	6	false	ok	0
 t3907-stash-show-config	t3	yes	10	1	9	false	ok	0
 t3908-stash-in-worktree	t3	yes	2	2	0	true	ok	0
 t3909-stash-pathspec-file	t3	yes	5	5	0	true	ok	0
 t3910-mac-os-precompose	t3	yes	29	0	0	false	ok	1
-t3920-crlf-messages	t3	yes	4	6	12	false	ok	0
-t4000-diff-format	t4	yes	11	17	24	false	ok	0
+t3920-crlf-messages	t3	yes	18	6	12	false	ok	0
+t4000-diff-format	t4	yes	41	17	24	false	ok	0
 t4001-diff-rename	t4	yes	23	18	5	false	ok	0
-t4002-diff-basic	t4	yes	19	53	10	false	ok	0
+t4002-diff-basic	t4	yes	63	53	10	false	ok	0
 t4003-diff-rename-1	t4	yes	7	7	0	true	ok	0
 t4004-diff-rename-symlink	t4	yes	4	4	0	true	ok	0
 t4005-diff-rename-2	t4	yes	4	4	0	true	ok	0
@@ -693,10 +693,10 @@ t4015-format-patch-options	t4	yes	12	0	0	false		0
 t4016-diff-quote	t4	yes	5	5	0	true	ok	0
 t4017-diff-retval	t4	yes	30	0	0	false	ok	0
 t4018-diff-files	t4	yes	41	0	0	false		0
-t4018-diff-funcname	t4	yes	8	104	93	false	ok	0
+t4018-diff-funcname	t4	yes	197	104	93	false	ok	0
 t4019-diff-options	t4	yes	26	0	0	false		0
 t4019-diff-wserror	t4	yes	21	5	16	false	ok	0
-t4020-diff-external	t4	yes	30	21	51	false	ok	0
+t4020-diff-external	t4	yes	72	21	51	false	ok	0
 t4020-diff-plumbing	t4	yes	21	0	0	false		0
 t4021-format-patch-numbered	t4	yes	14	14	0	true	ok	0
 t4022-diff-rewrite	t4	yes	11	6	5	false	ok	0
@@ -709,7 +709,7 @@ t4028-format-patch-mime-headers	t4	yes	3	3	0	true	ok	0
 t4029-diff-trailing-space	t4	yes	1	1	0	true	ok	0
 t4030-diff-textconv	t4	yes	19	2	17	false	ok	0
 t4031-diff-rewrite-binary	t4	yes	8	3	5	false	ok	0
-t4032-diff-inter-hunk-context	t4	yes	3	19	18	false	ok	0
+t4032-diff-inter-hunk-context	t4	yes	37	19	18	false	ok	0
 t4033-diff-patience	t4	yes	1	0	0	false	ok	0
 t4034-diff-words	t4	yes	28	0	0	false	ok	0
 t4035-diff-quiet	t4	yes	23	15	8	false	ok	0
@@ -718,11 +718,11 @@ t4037-diff-r-t-dirs	t4	yes	2	0	0	false		0
 t4038-diff-combined	t4	yes	26	0	0	false	ok	1
 t4039-diff-assume-unchanged	t4	yes	4	2	2	false	ok	0
 t4040-whitespace-status	t4	yes	11	9	2	false	ok	0
-t4041-diff-submodule-option	t4	yes	47	4	42	false	ok	0
+t4041-diff-submodule-option	t4	yes	46	4	42	false	ok	0
 t4042-diff-textconv-caching	t4	yes	8	0	0	false	ok	0
 t4043-diff-rename-binary	t4	yes	3	3	0	true	ok	0
 t4044-diff-index-unique-abbrev	t4	yes	2	1	1	false	ok	0
-t4045-diff-relative	t4	yes	12	21	18	false	ok	1
+t4045-diff-relative	t4	yes	39	21	18	false	ok	1
 t4046-diff-unmerged	t4	yes	8	3	5	false	ok	0
 t4047-diff-dirstat	t4	yes	41	4	37	false	ok	0
 t4047-diff-numstat	t4	yes	26	0	0	false		0
@@ -730,9 +730,9 @@ t4048-diff-combined-binary	t4	yes	14	0	0	false	ok	0
 t4049-diff-stat-count	t4	yes	4	1	3	false	ok	0
 t4050-diff	t4	yes	219	0	0	false		0
 t4050-diff-histogram	t4	yes	0	0	0	false		0
-t4051-diff-function-context	t4	yes	30	12	30	false	ok	0
+t4051-diff-function-context	t4	yes	42	12	30	false	ok	0
 t4051-diff-function-name	t4	yes	27	0	0	false		0
-t4052-stat-output	t4	yes	34	17	72	false	ok	0
+t4052-stat-output	t4	yes	89	17	72	false	ok	0
 t4053-diff-no-index	t4	yes	41	0	0	false	ok	0
 t4054-diff-bogus-tree	t4	yes	14	0	0	false	ok	0
 t4055-diff-context	t4	yes	10	6	4	false	ok	0
@@ -740,7 +740,7 @@ t4056-diff-order	t4	yes	18	0	0	false	ok	0
 t4057-diff-combined-paths	t4	yes	4	0	0	false	ok	0
 t4058-diff-duplicates	t4	yes	16	8	8	false	ok	2
 t4059-diff-submodule-not-initialized	t4	yes	8	1	7	false	ok	0
-t4060-diff-submodule-option-diff-format	t4	yes	51	6	44	false	ok	0
+t4060-diff-submodule-option-diff-format	t4	yes	50	6	44	false	ok	0
 t4061-diff-indent	t4	yes	33	6	27	false	ok	0
 t4062-diff-pickaxe	t4	yes	3	3	0	true	ok	0
 t4063-diff-blobs	t4	yes	18	2	16	false	ok	0
@@ -770,11 +770,11 @@ t4090-diff-empty	t4	yes	32	0	0	false		0
 t4095-diff-headers	t4	yes	32	0	0	false		0
 t4096-diff-newline	t4	yes	33	0	0	false		0
 t4100-apply-stat	t4	yes	9	0	0	false	ok	0
-t4101-apply-nonl	t4	yes	1	12	0	true	ok	0
+t4101-apply-nonl	t4	yes	12	12	0	true	ok	0
 t4102-apply-rename	t4	yes	5	5	0	true	ok	0
 t4103-apply-binary	t4	yes	24	0	0	false	ok	0
-t4104-apply-boundary	t4	yes	5	24	0	true	ok	0
-t4105-apply-fuzz	t4	yes	2	9	0	true	ok	0
+t4104-apply-boundary	t4	yes	24	24	0	true	ok	0
+t4105-apply-fuzz	t4	yes	9	9	0	true	ok	0
 t4106-apply-stdin	t4	yes	3	3	0	true	ok	0
 t4107-apply-ignore-whitespace	t4	yes	11	11	0	true	ok	0
 t4108-apply-threeway	t4	yes	18	0	0	false	ok	0
@@ -793,7 +793,7 @@ t4120-apply-popt	t4	yes	12	0	0	false	ok	0
 t4121-apply-diffs	t4	yes	2	2	0	true	ok	0
 t4122-apply-symlink-inside	t4	yes	7	4	3	false	ok	0
 t4123-apply-shrink	t4	yes	2	2	0	true	ok	0
-t4124-apply-ws-rule	t4	yes	41	11	74	false	ok	0
+t4124-apply-ws-rule	t4	yes	85	11	74	false	ok	0
 t4125-apply-ws-fuzz	t4	yes	4	2	2	false	ok	0
 t4126-apply-empty	t4	yes	8	7	1	false	ok	0
 t4127-apply-same-fn	t4	yes	7	7	0	true	ok	0
@@ -801,21 +801,21 @@ t4128-apply-root	t4	yes	12	0	0	false	ok	0
 t4129-apply-samemode	t4	yes	23	0	0	false	ok	0
 t4130-apply-criss-cross-rename	t4	yes	7	7	0	true	ok	0
 t4131-apply-fake-ancestor	t4	yes	3	3	0	true	ok	0
-t4132-apply-removal	t4	yes	2	1	13	false	ok	0
+t4132-apply-removal	t4	yes	14	1	13	false	ok	0
 t4133-apply-filenames	t4	yes	4	4	0	true	ok	0
 t4134-apply-submodule	t4	yes	2	2	0	true	ok	0
-t4135-apply-weird-filenames	t4	yes	5	3	17	false	ok	0
+t4135-apply-weird-filenames	t4	yes	20	3	17	false	ok	0
 t4136-apply-check	t4	yes	6	0	0	false	ok	0
 t4137-apply-submodule	t4	yes	0	0	0	false		0
-t4138-apply-ws-expansion	t4	yes	2	5	0	true	ok	0
+t4138-apply-ws-expansion	t4	yes	5	5	0	true	ok	0
 t4139-apply-escape	t4	yes	12	6	6	false	ok	0
 t4140-apply-ita	t4	yes	7	7	0	true	ok	0
 t4141-apply-too-large	t4	yes	1	1	0	true	ok	0
 t4150-am	t4	yes	87	0	0	false	ok	0
 t4151-am-abort	t4	yes	17	0	0	false	ok	0
-t4152-am-subjects	t4	yes	11	13	0	true	ok	0
+t4152-am-subjects	t4	yes	13	13	0	true	ok	0
 t4153-am-resume-override-opts	t4	yes	6	6	0	true	ok	0
-t4200-rerere	t4	yes	35	7	29	false	ok	0
+t4200-rerere	t4	yes	36	7	29	false	ok	0
 t4201-log-graph	t4	yes	23	0	0	false		0
 t4201-shortlog	t4	yes	32	0	0	false	ok	0
 t4202-log	t4	yes	145	0	0	false	ok	0
@@ -830,14 +830,14 @@ t4207-log-decoration	t4	yes	23	0	0	false		0
 t4207-log-decoration-colors	t4	yes	4	1	3	false	ok	0
 t4208-diff-pathspec-magic	t4	yes	22	0	0	false		0
 t4208-log-magic-pathspec	t4	yes	21	0	0	false	ok	0
-t4209-log-pickaxe	t4	yes	19	15	33	false	ok	0
+t4209-log-pickaxe	t4	yes	48	15	33	false	ok	0
 t4210-log-i18n	t4	yes	9	0	0	false	ok	0
 t4211-line-log	t4	yes	27	0	0	false	ok	0
 t4212-log-corrupt	t4	yes	13	3	10	false	ok	0
-t4213-log-tabexpand	t4	yes	2	1	8	false	ok	0
+t4213-log-tabexpand	t4	yes	9	1	8	false	ok	0
 t4214-log-graph-octopus	t4	yes	17	0	17	false	ok	0
 t4215-log-skewed-merges	t4	yes	10	0	10	false	ok	0
-t4216-log-bloom	t4	yes	48	12	155	false	ok	0
+t4216-log-bloom	t4	yes	167	12	155	false	ok	0
 t4217-log-limit	t4	yes	3	1	2	false	ok	0
 t4218-log-no-walk	t4	yes	7	0	0	false		0
 t4219-log-date-format	t4	yes	14	0	0	false		0
@@ -846,20 +846,20 @@ t4221-log-simplify-decoration	t4	yes	4	0	0	false		0
 t4252-am-options	t4	yes	8	1	7	false	ok	0
 t4253-am-keep-cr-dos	t4	yes	7	7	0	true	ok	0
 t4254-am-corrupt	t4	yes	4	0	0	false	ok	0
-t4255-am-submodule	t4	yes	5	5	28	false	ok	0
+t4255-am-submodule	t4	yes	33	5	28	false	ok	0
 t4256-am-format-flowed	t4	yes	2	2	0	true	ok	0
 t4257-am-interactive	t4	yes	4	2	2	false	ok	0
 t4258-am-quoted-cr	t4	yes	4	3	1	false	ok	0
 t4300-merge-tree	t4	yes	22	5	17	false	ok	0
 t4301-merge-tree-write-tree	t4	yes	34	0	0	false	ok	0
-t5000-tar-tree	t5	yes	67	40	50	false	ok	0
+t5000-tar-tree	t5	yes	90	40	50	false	ok	0
 t5000-write-tree	t5	yes	5	0	0	false		0
-t5001-archive-attr	t5	yes	11	26	18	false	ok	0
-t5002-archive-attr-pattern	t5	yes	4	5	14	false	ok	0
+t5001-archive-attr	t5	yes	44	26	18	false	ok	0
+t5002-archive-attr-pattern	t5	yes	19	5	14	false	ok	0
 t5003-archive-zip	t5	yes	34	0	0	false	ok	0
 t5004-archive-corner-cases	t5	yes	14	0	0	false	ok	0
 t5100-count-objects	t5	yes	26	0	0	false		0
-t5100-mailinfo	t5	yes	25	33	19	false	ok	0
+t5100-mailinfo	t5	yes	52	33	19	false	ok	0
 t5150-request-pull	t5	yes	10	1	9	false	ok	0
 t5200-update-server-info	t5	yes	8	6	2	false	ok	0
 t5300-pack-object	t5	yes	60	0	0	false	ok	0
@@ -876,12 +876,12 @@ t5306-pack-nobase	t5	yes	4	4	0	true	ok	0
 t5307-pack-missing-commit	t5	yes	5	5	0	true	ok	0
 t5308-pack-detect-duplicates	t5	yes	6	2	4	false	ok	0
 t5309-pack-delta-cycles	t5	yes	7	2	5	false	ok	0
-t5310-pack-bitmaps	t5	yes	41	27	209	false	ok	0
-t5311-pack-bitmaps-shallow	t5	yes	3	6	0	true	ok	0
+t5310-pack-bitmaps	t5	yes	236	27	209	false	ok	0
+t5311-pack-bitmaps-shallow	t5	yes	6	6	0	true	ok	0
 t5312-prune-corruption	t5	yes	11	0	0	false	ok	0
 t5313-pack-bounds-checks	t5	yes	9	0	0	false	ok	0
 t5314-pack-cycle-detection	t5	yes	2	2	0	true	ok	0
-t5315-pack-objects-compression	t5	yes	2	1	8	false	ok	0
+t5315-pack-objects-compression	t5	yes	9	1	8	false	ok	0
 t5316-pack-delta-depth	t5	yes	5	0	5	false	ok	0
 t5317-pack-objects-filter-objects	t5	yes	33	0	0	false	ok	0
 t5318-commit-graph	t5	yes	85	0	0	false	ok	0
@@ -891,23 +891,23 @@ t5320-delta-islands	t5	yes	15	5	10	false	ok	0
 t5321-pack-large-objects	t5	yes	2	0	2	false	ok	0
 t5322-pack-objects-sparse	t5	yes	11	3	8	false	ok	0
 t5323-pack-redundant	t5	yes	18	2	16	false	ok	0
-t5324-split-commit-graph	t5	yes	36	3	39	false	ok	0
+t5324-split-commit-graph	t5	yes	42	3	39	false	ok	0
 t5325-reverse-index	t5	yes	16	3	13	false	ok	0
-t5326-multi-pack-bitmaps	t5	yes	20	97	260	false	ok	0
-t5327-multi-pack-bitmaps-rev	t5	yes	1	80	234	false	ok	0
+t5326-multi-pack-bitmaps	t5	yes	357	97	260	false	ok	0
+t5327-multi-pack-bitmaps-rev	t5	yes	314	80	234	false	ok	0
 t5328-commit-graph-64bit-time	t5	yes	4	0	0	false	ok	0
-t5329-pack-objects-cruft	t5	yes	19	2	23	false	ok	0
+t5329-pack-objects-cruft	t5	yes	25	2	23	false	ok	0
 t5330-no-lazy-fetch-with-commit-graph	t5	yes	4	4	0	true	ok	0
 t5331-pack-objects-stdin	t5	yes	16	1	15	false	ok	0
 t5332-multi-pack-reuse	t5	yes	14	1	13	false	ok	0
 t5333-pseudo-merge-bitmaps	t5	yes	18	3	15	false	ok	0
-t5334-incremental-multi-pack-index	t5	yes	12	5	11	false	ok	0
+t5334-incremental-multi-pack-index	t5	yes	16	5	11	false	ok	0
 t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
 t5351-unpack-large-objects	t5	yes	7	4	3	false	ok	0
 t5400-send-pack	t5	yes	17	10	7	false	ok	0
 t5401-update-hooks	t5	yes	13	0	0	false	ok	0
 t5402-post-merge-hook	t5	yes	7	3	4	false	ok	0
-t5403-post-checkout-hook	t5	yes	10	3	11	false	ok	0
+t5403-post-checkout-hook	t5	yes	14	3	11	false	ok	0
 t5404-tracking-branches	t5	yes	7	4	3	false	ok	0
 t5405-send-pack-rewind	t5	yes	3	1	2	false	ok	0
 t5406-remote-rejects	t5	yes	3	3	0	true	ok	0
@@ -929,8 +929,8 @@ t5510-fetch	t5	yes	106	0	0	false	ok	0
 t5511-refspec	t5	yes	1	0	0	false	ok	0
 t5512-ls-remote	t5	yes	38	0	0	false	ok	0
 t5513-fetch-track	t5	yes	2	0	0	false		0
-t5514-fetch-multiple	t5	yes	23	4	21	false	ok	0
-t5515-fetch-merge-logic	t5	yes	2	1	64	false	ok	0
+t5514-fetch-multiple	t5	yes	25	4	21	false	ok	0
+t5515-fetch-merge-logic	t5	yes	65	1	64	false	ok	0
 t5516-fetch-push	t5	yes	111	0	0	false	ok	0
 t5517-push-mirror	t5	yes	13	8	5	false	ok	0
 t5518-fetch-exit-status	t5	yes	3	3	0	true	ok	0
@@ -979,7 +979,7 @@ t5555-http-smart-common	t5	yes	11	0	0	false	ok	0
 t5557-http-get	t5	yes	2	2	0	true	ok	0
 t5558-clone-bundle-uri	t5	yes	44	0	0	false	ok	0
 t5559-http-fetch-smart-http2	t5	yes	0	0	0	false		0
-t5560-http-backend-noserver	t5	yes	1	2	12	false	ok	0
+t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
 t5561-http-backend	t5	yes	1	0	0	false	ok	0
 t5562-http-backend-content-length	t5	yes	17	0	0	false	ok	0
 t5563-simple-http-auth	t5	yes	17	0	0	false	ok	0
@@ -987,9 +987,9 @@ t5564-http-proxy	t5	yes	7	0	0	false	ok	0
 t5565-push-multiple	t5	yes	2	2	0	true	ok	0
 t5570-git-daemon	t5	yes	34	0	0	false	ok	0
 t5571-pre-push-hook	t5	yes	11	0	0	false	ok	0
-t5572-pull-submodule	t5	yes	13	9	60	false	ok	0
+t5572-pull-submodule	t5	yes	69	9	60	false	ok	0
 t5573-pull-verify-signatures	t5	yes	16	0	0	false	ok	0
-t5574-fetch-output	t5	yes	13	1	13	false	ok	0
+t5574-fetch-output	t5	yes	14	1	13	false	ok	0
 t5580-unc-paths	t5	yes	8	0	0	false	ok	0
 t5581-http-curl-verbose	t5	yes	2	1	1	false	ok	0
 t5582-fetch-negative-refspec	t5	yes	16	0	0	false	ok	0
@@ -997,7 +997,7 @@ t5583-push-branches	t5	yes	8	8	0	true	ok	0
 t5600-clone-fail-cleanup	t5	yes	14	14	0	true	ok	0
 t5601-clone	t5	yes	90	0	0	false	ok	0
 t5602-clone-remote-exec	t5	yes	3	3	0	true	ok	0
-t5603-clone-dirname	t5	yes	1	1	46	false	ok	0
+t5603-clone-dirname	t5	yes	47	1	46	false	ok	0
 t5604-clone-reference	t5	yes	34	19	15	false	ok	0
 t5605-clone-local	t5	yes	23	0	0	false	ok	0
 t5606-clone-options	t5	yes	21	0	0	false	ok	0
@@ -1021,7 +1021,7 @@ t5701-git-serve	t5	yes	25	25	0	true	ok	0
 t5702-protocol-v2	t5	yes	85	0	0	false	ok	0
 t5703-upload-pack-ref-in-want	t5	yes	26	0	0	false	ok	0
 t5704-protocol-violations	t5	yes	3	0	3	false	ok	0
-t5705-session-id-in-capabilities	t5	yes	7	2	15	false	ok	0
+t5705-session-id-in-capabilities	t5	yes	17	2	15	false	ok	0
 t5710-promisor-remote-capability	t5	yes	22	1	21	false	ok	0
 t5730-protocol-v2-bundle-uri-file	t5	yes	0	0	0	false		0
 t5731-protocol-v2-bundle-uri-git	t5	yes	0	0	0	false		0
@@ -1029,20 +1029,20 @@ t5732-protocol-v2-bundle-uri-http	t5	yes	0	0	0	false		0
 t5750-bundle-uri-parse	t5	yes	13	0	0	false	ok	0
 t5801-remote-helpers	t5	yes	35	0	0	false	ok	1
 t5802-connect-helper	t5	yes	8	2	6	false	ok	0
-t5810-proto-disable-local	t5	yes	4	47	7	false	ok	0
-t5811-proto-disable-git	t5	yes	1	9	17	false	ok	0
+t5810-proto-disable-local	t5	yes	54	47	7	false	ok	0
+t5811-proto-disable-git	t5	yes	26	9	17	false	ok	0
 t5812-proto-disable-http	t5	yes	4	0	0	false	ok	0
-t5813-proto-disable-ssh	t5	yes	5	30	51	false	ok	0
-t5814-proto-disable-ext	t5	yes	1	11	16	false	ok	0
-t5815-submodule-protos	t5	yes	6	8	0	true	ok	0
+t5813-proto-disable-ssh	t5	yes	81	30	51	false	ok	0
+t5814-proto-disable-ext	t5	yes	27	11	16	false	ok	0
+t5815-submodule-protos	t5	yes	8	8	0	true	ok	0
 t5900-repo-selection	t5	yes	8	0	8	false	ok	0
 t6000-rev-list-misc	t6	yes	23	0	0	false	ok	0
-t6001-rev-list-graft	t6	yes	6	14	0	true	ok	0
-t6002-rev-list-bisect	t6	yes	6	4	49	false	ok	0
-t6003-rev-list-topo-order	t6	yes	2	21	15	false	ok	0
+t6001-rev-list-graft	t6	yes	14	14	0	true	ok	0
+t6002-rev-list-bisect	t6	yes	53	4	49	false	ok	0
+t6003-rev-list-topo-order	t6	yes	36	21	15	false	ok	0
 t6004-rev-list-path-optim	t6	yes	7	7	0	true	ok	0
 t6005-rev-list-count	t6	yes	6	6	0	true	ok	0
-t6006-rev-list-format	t6	yes	37	63	17	false	ok	0
+t6006-rev-list-format	t6	yes	80	63	17	false	ok	0
 t6007-rev-list-cherry-pick-file	t6	yes	23	6	17	false	ok	0
 t6007-rev-list-cherry-pick-status	t6	yes	29	0	0	false		0
 t6008-rev-list-submodule	t6	yes	2	2	0	true	ok	0
@@ -1050,17 +1050,17 @@ t6009-rev-list-parent	t6	yes	15	15	0	true	ok	0
 t6010-merge-base	t6	yes	12	12	0	true	ok	0
 t6011-rev-list-with-bad-commit	t6	yes	6	0	0	false	ok	0
 t6011-rev-list-with-hierarchies	t6	yes	28	0	0	false		0
-t6012-rev-list-simplify	t6	yes	5	1	41	false	ok	0
+t6012-rev-list-simplify	t6	yes	42	1	41	false	ok	0
 t6013-rev-list-reverse-parents	t6	yes	3	2	1	false	ok	0
 t6014-rev-list-all	t6	yes	4	4	0	true	ok	0
 t6015-rev-list-show-all-parents	t6	yes	38	0	0	false		0
 t6016-rev-list-graph-simplify-history	t6	yes	12	12	0	true	ok	0
 t6017-rev-list-stdin	t6	yes	8	0	0	false	ok	0
-t6018-rev-list-glob	t6	yes	69	30	65	false	ok	0
-t6019-rev-list-ancestry-path	t6	yes	5	1	17	false	ok	0
-t6020-bundle-misc	t6	yes	30	9	28	false	ok	0
+t6018-rev-list-glob	t6	yes	95	30	65	false	ok	0
+t6019-rev-list-ancestry-path	t6	yes	18	1	17	false	ok	0
+t6020-bundle-misc	t6	yes	37	9	28	false	ok	0
 t6021-rev-list-exclude-hidden	t6	yes	18	0	0	false	ok	0
-t6022-rev-list-missing	t6	yes	6	4	36	false	ok	0
+t6022-rev-list-missing	t6	yes	40	4	36	false	ok	0
 t6030-bisect-porcelain	t6	yes	96	0	0	false	ok	0
 t6040-tracking-info	t6	yes	44	3	41	false	ok	0
 t6041-bisect-submodule	t6	yes	0	0	0	false		0
@@ -1074,7 +1074,7 @@ t6111-rev-list-treesame	t6	yes	1	0	0	false		0
 t6112-rev-list-filters-objects	t6	yes	54	0	0	false	ok	0
 t6113-rev-list-bitmap-filters	t6	yes	14	2	12	false	ok	0
 t6114-keep-packs	t6	yes	3	3	0	true	ok	0
-t6115-rev-list-du	t6	yes	8	17	0	true	ok	0
+t6115-rev-list-du	t6	yes	17	17	0	true	ok	0
 t6120-describe	t6	yes	59	0	0	false	ok	0
 t6120-name-rev	t6	yes	41	0	0	false		0
 t6130-pathspec-noglob	t6	yes	21	8	13	false	ok	0
@@ -1107,8 +1107,8 @@ t6406-merge-attr	t6	yes	13	13	0	true	ok	0
 t6407-merge-binary	t6	yes	3	0	0	false		0
 t6408-merge-up-to-date	t6	yes	7	7	0	true	ok	0
 t6409-merge-subtree	t6	yes	12	12	0	true	ok	0
-t6411-merge-filemode	t6	yes	8	14	5	false	ok	0
-t6412-merge-large-rename	t6	yes	6	10	0	true	ok	0
+t6411-merge-filemode	t6	yes	19	14	5	false	ok	0
+t6412-merge-large-rename	t6	yes	10	10	0	true	ok	0
 t6413-merge-crlf	t6	yes	3	3	0	true	ok	0
 t6414-merge-rename-nocruft	t6	yes	3	3	0	true	ok	0
 t6415-merge-dir-to-symlink	t6	yes	24	24	0	true	ok	0
@@ -1117,7 +1117,7 @@ t6417-merge-ours-theirs	t6	yes	7	7	0	true	ok	0
 t6418-merge-text-auto	t6	yes	11	11	0	true	ok	0
 t6419-merge-ignorecase	t6	yes	2	0	0	false	ok	0
 t6421-merge-partial-clone	t6	yes	3	3	0	true	ok	0
-t6422-merge-rename-corner-cases	t6	yes	23	14	12	false	ok	6
+t6422-merge-rename-corner-cases	t6	yes	26	14	12	false	ok	6
 t6423-merge-rename-directories	t6	yes	82	30	52	false	ok	2
 t6424-merge-unrelated-index-changes	t6	yes	19	5	14	false	ok	0
 t6425-merge-rename-delete	t6	yes	1	1	0	true	ok	0
@@ -1139,8 +1139,8 @@ t6436-merge-overwrite	t6	yes	18	0	0	false	ok	0
 t6437-submodule-merge	t6	yes	22	5	17	false	ok	2
 t6438-submodule-directory-file-conflicts	t6	yes	0	0	0	false		0
 t6439-merge-co-error-msgs	t6	yes	6	6	0	true	ok	0
-t6500-gc	t6	yes	31	17	18	false	ok	0
-t6501-freshen-objects	t6	yes	16	42	0	true	ok	0
+t6500-gc	t6	yes	35	17	18	false	ok	0
+t6501-freshen-objects	t6	yes	42	42	0	true	ok	0
 t6600-test-reach	t6	yes	47	12	35	false	ok	0
 t6601-path-walk	t6	yes	15	0	15	false	ok	0
 t6700-tree-depth	t6	yes	10	10	0	true	ok	0
@@ -1149,13 +1149,13 @@ t7002-mv-sparse-checkout	t7	yes	22	0	0	false	ok	0
 t7003-filter-branch	t7	yes	48	0	0	false	ok	0
 t7004-tag	t7	yes	219	0	0	false	ok	0
 t7005-editor	t7	yes	8	0	0	false	ok	0
-t7006-pager	t7	yes	63	108	1	false	ok	1
+t7006-pager	t7	yes	109	108	1	false	ok	1
 t7007-show	t7	yes	18	0	0	false	ok	0
 t7008-filter-branch-null-sha1	t7	yes	6	5	1	false	ok	0
 t7008-show-stat-raw-name	t7	yes	21	0	0	false		0
 t7010-setup	t7	yes	16	9	7	false	ok	0
 t7011-skip-worktree-reading	t7	yes	15	0	0	false	ok	0
-t7012-skip-worktree-writing	t7	yes	17	10	1	false	ok	6
+t7012-skip-worktree-writing	t7	yes	11	10	1	false	ok	6
 t7020-commit-encoding	t7	yes	26	0	0	false		0
 t7030-verify-tag	t7	yes	16	0	0	false	ok	0
 t7031-verify-tag-signed-ssh	t7	yes	14	0	0	false	ok	0
@@ -1180,10 +1180,10 @@ t7080-mv-advanced	t7	yes	29	0	0	false		0
 t7090-rm-advanced	t7	yes	31	0	0	false		0
 t7101-reset	t7	yes	11	0	0	false		0
 t7101-reset-empty-subdirs	t7	yes	10	10	0	true	ok	0
-t7102-reset	t7	yes	34	22	16	false	ok	0
+t7102-reset	t7	yes	38	22	16	false	ok	0
 t7103-reset-bare	t7	yes	13	0	0	false	ok	0
 t7104-reset-hard	t7	yes	3	3	0	true	ok	0
-t7105-reset-patch	t7	yes	11	6	7	false	ok	0
+t7105-reset-patch	t7	yes	13	6	7	false	ok	0
 t7106-reset-unborn-branch	t7	yes	7	7	0	true	ok	0
 t7107-reset-pathspec-file	t7	yes	11	0	11	false	ok	0
 t7110-reset-merge	t7	yes	21	0	0	false	ok	0
@@ -1195,7 +1195,7 @@ t7201-co	t7	yes	46	0	0	false	ok	0
 t7300-clean	t7	yes	55	26	29	false	ok	2
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	123	0	0	false	ok	0
-t7401-submodule-summary	t7	yes	26	6	19	false	ok	0
+t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
 t7402-submodule-rebase	t7	yes	6	2	4	false	ok	0
 t7403-submodule-sync	t7	yes	18	2	16	false	ok	0
 t7406-submodule-update	t7	yes	70	8	62	false	ok	0
@@ -1212,9 +1212,9 @@ t7418-submodule-sparse-gitmodules	t7	yes	9	3	6	false	ok	0
 t7419-submodule-set-branch	t7	yes	9	3	6	false	ok	0
 t7420-submodule-set-url	t7	yes	3	3	0	true	ok	0
 t7421-submodule-summary-add	t7	yes	5	1	4	false	ok	0
-t7422-submodule-output	t7	yes	8	1	17	false	ok	0
+t7422-submodule-output	t7	yes	18	1	17	false	ok	0
 t7423-submodule-symlinks	t7	yes	6	4	2	false	ok	0
-t7424-submodule-mixed-ref-formats	t7	yes	7	3	11	false	ok	0
+t7424-submodule-mixed-ref-formats	t7	yes	14	3	11	false	ok	0
 t7425-submodule-gitdir-path-extension	t7	yes	23	6	17	false	ok	0
 t7426-submodule-get-default-remote	t7	yes	15	3	12	false	ok	0
 t7450-bad-git-dotfiles	t7	yes	26	0	0	false	ok	0
@@ -1228,11 +1228,11 @@ t7504-commit-msg-hook	t7	yes	30	0	0	false	ok	1
 t7505-prepare-commit-msg	t7	yes	30	0	0	false		0
 t7505-prepare-commit-msg-hook	t7	yes	22	0	0	false	ok	0
 t7506-status-submodule	t7	yes	40	0	0	false	ok	0
-t7507-commit-verbose	t7	yes	19	19	26	false	ok	0
-t7508-status	t7	yes	122	64	62	false	ok	0
+t7507-commit-verbose	t7	yes	45	19	26	false	ok	0
+t7508-status	t7	yes	126	64	62	false	ok	0
 t7509-commit-authorship	t7	yes	12	1	11	false	ok	0
 t7510-signed-commit	t7	yes	28	0	0	false	ok	0
-t7511-status-index	t7	yes	1	24	0	true	ok	0
+t7511-status-index	t7	yes	24	24	0	true	ok	0
 t7512-status-help	t7	yes	47	0	0	false	ok	0
 t7513-interpret-trailers	t7	yes	98	0	0	false	ok	0
 t7514-commit-patch	t7	yes	3	1	2	false	ok	0
@@ -1241,7 +1241,7 @@ t7515-status-symlinks	t7	yes	3	3	0	true	ok	0
 t7516-commit-races	t7	yes	2	0	2	false	ok	0
 t7517-per-repo-email	t7	yes	16	0	0	false	ok	0
 t7518-ident-corner-cases	t7	yes	5	5	0	true	ok	0
-t7519-status-fsmonitor	t7	yes	23	14	19	false	ok	0
+t7519-status-fsmonitor	t7	yes	33	14	19	false	ok	0
 t7520-ignored-hook-warning	t7	yes	5	4	1	false	ok	0
 t7521-ignored-mode	t7	yes	12	1	11	false	ok	0
 t7524-commit-summary	t7	yes	2	1	1	false	ok	0
@@ -1292,10 +1292,10 @@ t8008-blame-formats	t8	yes	5	5	0	true	ok	0
 t8009-blame-vs-topicbranches	t8	yes	2	2	0	true	ok	0
 t8010-cat-file-batch	t8	yes	26	0	0	false		0
 t8010-cat-file-filters	t8	yes	9	4	5	false	ok	0
-t8011-blame-split-file	t8	yes	6	10	0	true	ok	0
+t8011-blame-split-file	t8	yes	10	10	0	true	ok	0
 t8012-blame-colors	t8	yes	4	0	0	false	ok	0
-t8013-blame-ignore-revs	t8	yes	16	19	0	true	ok	0
-t8014-blame-ignore-fuzzy	t8	yes	5	16	0	true	ok	0
+t8013-blame-ignore-revs	t8	yes	19	19	0	true	ok	0
+t8014-blame-ignore-fuzzy	t8	yes	16	16	0	true	ok	0
 t8015-blame-diff-algorithm	t8	yes	7	7	0	true	ok	0
 t8016-blame-line-range-extended	t8	yes	5	0	0	false		0
 t8017-blame-ignore-rev-extended	t8	yes	4	0	0	false		0
@@ -1389,7 +1389,7 @@ t8990-config-set-unset	t8	yes	27	0	0	false		0
 t9000-init-default-branch	t9	yes	24	0	0	false		0
 t9001-send-email	t9	yes	200	0	0	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
-t9003-help-autocorrect	t9	yes	5	1	9	false	ok	0
+t9003-help-autocorrect	t9	yes	10	1	9	false	ok	0
 t9010-branch-list-sort	t9	yes	26	0	0	false		0
 t9020-tag-list-contains	t9	yes	28	0	0	false		0
 t9030-commit-tree-parents	t9	yes	25	0	0	false		0
@@ -1496,7 +1496,7 @@ t9300-branch-delete-force	t9	yes	25	0	0	false		0
 t9300-fast-import	t9	yes	204	0	0	false	ok	0
 t9301-fast-import-notes	t9	yes	17	14	3	false	ok	0
 t9302-fast-import-unpack-limit	t9	yes	3	3	0	true	ok	0
-t9303-fast-import-compression	t9	yes	2	0	16	false	ok	0
+t9303-fast-import-compression	t9	yes	16	0	16	false	ok	0
 t9304-fast-import-marks	t9	yes	8	7	1	false	ok	0
 t9305-fast-import-signatures	t9	yes	16	0	0	false	ok	0
 t9306-fast-import-signed-tags	t9	yes	10	0	0	false	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	0	0	false		0
 t9890-init-object-format	t9	yes	31	0	0	false		0
 t9900-branch-verbose-all	t9	yes	33	0	0	false		0
 t9901-git-web--browse	t9	yes	5	0	0	false		0
-t9902-completion	t9	yes	261	22	241	false	ok	2
+t9902-completion	t9	yes	263	22	241	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	0	0	false		0
 t9920-commit-tree-author-env	t9	yes	26	0	0	false		0

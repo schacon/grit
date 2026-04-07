@@ -74,20 +74,40 @@ def main() -> None:
 
     for base in discovered:
         sh = TESTS_DIR / f"{base}.sh"
-        group, tests_total, expect_failure = count_expects_and_group(sh)
+        group, marker_count, expect_failure = count_expects_and_group(sh)
         prev = existing.get(base, {})
         if prev and prev.get("file"):
             in_scope = prev.get("in_scope", "yes")
+            # Run metrics come from apply-test-run-results.py after harness runs.
+            # Keep tests_total from the last harness merge when present; do not
+            # replace it with the static marker count (regex can under-count, and
+            # resetting tests_total while preserving passed_last corrupts the row).
             passed_last = prev.get("passed_last", "0")
             failing = prev.get("failing", "0")
             fully_passing = prev.get("fully_passing", "false")
             status = prev.get("status", "")
+            prev_tt = prev.get("tests_total", "").strip()
+            try:
+                pl = int(passed_last)
+                fl = int(failing)
+                run_sum = pl + fl
+            except ValueError:
+                run_sum = -1
+            if prev_tt.isdigit():
+                tests_total = int(prev_tt)
+            else:
+                tests_total = marker_count
+            # Repair rows where an older catalog run reset tests_total to the marker
+            # count but left pass/fail from the harness (totals must agree).
+            if run_sum >= 0 and tests_total != run_sum and run_sum > 0:
+                tests_total = run_sum
         else:
             in_scope = "yes"
             passed_last = "0"
             failing = "0"
             fully_passing = "false"
             status = ""
+            tests_total = marker_count
 
         merged[base] = {
             "file": base,
