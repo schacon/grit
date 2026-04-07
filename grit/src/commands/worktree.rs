@@ -177,6 +177,14 @@ pub struct MoveArgs {
     /// Force move. Once: allow moving to existing path. Twice: also allow moving locked worktree.
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub force: u8,
+
+    /// Store paths as relative.
+    #[arg(long)]
+    pub relative_paths: bool,
+
+    /// Store paths as absolute.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
 }
 
 #[derive(Debug, ClapArgs)]
