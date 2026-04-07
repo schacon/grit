@@ -109,6 +109,18 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
+    let requested_repository = args.repository.clone();
+    let rewritten_repository = crate::trace2_apply_url_instead_of(&requested_repository);
+    let display_repository = if std::env::var("GIT_TRACE2_REDACT")
+        .ok()
+        .and_then(|v| crate::parse_bool_str(&v))
+        .unwrap_or(true)
+    {
+        crate::trace2_redact_value(&requested_repository)
+    } else {
+        requested_repository.clone()
+    };
+
     // --revision conflicts with --branch and --mirror
     if args.revision.is_some() && args.branch.is_some() {
         bail!("--revision and --branch are mutually exclusive");
@@ -118,30 +130,34 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Detect ext:: transport
-    if args.repository.starts_with("ext::") {
+    if rewritten_repository.starts_with("ext::") {
         crate::protocol::check_protocol_allowed("ext", None)?;
         bail!("ext:: transport is not yet supported");
     }
 
     // Detect SSH URL: host:/path (colon after hostname, no preceding //)
-    if is_ssh_url(&args.repository) {
+    if is_ssh_url(&rewritten_repository) {
         crate::protocol::check_protocol_allowed("ssh", None)?;
-        return run_ssh_clone(args);
+        let mut ssh_args = args;
+        ssh_args.repository = rewritten_repository;
+        return run_ssh_clone(ssh_args);
     }
-    if args.repository.starts_with("ssh://") {
+    if rewritten_repository.starts_with("ssh://") {
         crate::protocol::check_protocol_allowed("ssh", None)?;
-        return run_ssh_clone(args);
+        let mut ssh_args = args;
+        ssh_args.repository = rewritten_repository;
+        return run_ssh_clone(ssh_args);
     }
 
     // Detect git:// protocol
-    if args.repository.starts_with("git://") {
+    if rewritten_repository.starts_with("git://") {
         crate::protocol::check_protocol_allowed("git", None)?;
         bail!("git:// protocol transport is not yet supported");
     }
 
     // Detect http(s):// protocol
-    if args.repository.starts_with("http://") || args.repository.starts_with("https://") {
-        let proto = if args.repository.starts_with("https://") {
+    if rewritten_repository.starts_with("http://") || rewritten_repository.starts_with("https://") {
+        let proto = if rewritten_repository.starts_with("https://") {
             "https"
         } else {
             "http"
@@ -149,19 +165,23 @@ pub fn run(args: Args) -> Result<()> {
         crate::protocol::check_protocol_allowed(proto, None)?;
     }
 
+    crate::trace2_emit_def_param("remote.origin.url", &display_repository);
+
     // Detect bundle file
-    if is_bundle_file(&args.repository) {
-        return run_bundle_clone(args);
+    if is_bundle_file(&rewritten_repository) {
+        let mut bundle_args = args;
+        bundle_args.repository = rewritten_repository;
+        return run_bundle_clone(bundle_args);
     }
 
     // Check protocol.file.allow before local clone
     crate::protocol::check_protocol_allowed("file", None)?;
 
     // Strip file:// prefix if present
-    let repo_path_str = if let Some(stripped) = args.repository.strip_prefix("file://") {
+    let repo_path_str = if let Some(stripped) = rewritten_repository.strip_prefix("file://") {
         stripped.to_string()
     } else {
-        args.repository.clone()
+        rewritten_repository.clone()
     };
     let source_path = PathBuf::from(&repo_path_str);
 
@@ -176,7 +196,7 @@ pub fn run(args: Args) -> Result<()> {
                 Err(_) => {
                     return Err(anyhow::anyhow!(
                         "'{}' does not appear to be a git repository",
-                        args.repository
+                        requested_repository
                     ));
                 }
             }

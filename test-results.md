@@ -1,6 +1,16 @@
 # Test Results
 
-**Updated:** 2026-04-06
+**Updated:** 2026-04-07
+
+- `cargo build --release -p grit-rs`: success (after trace2 text-writer/process-depth + alias-expansion fixes in `grit/src/main.rs` and bare `-c <key>` config override handling in `grit-lib/src/config.rs`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0211-trace2-perf.sh` (run from `/workspace/tests`): 17/17 passing (improved from 14/17; fixed remaining nested alias def_param/cmd_name behavior).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0210-trace2-normal.sh` (run from `/workspace/tests`): 14/14 passing (improved from 13/14; fixed valueless `foo.true` output behavior).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0213-trace2-ancestry.sh` (run from `/workspace/tests`): 5/5 passing (regression restored after trace2 ancestry formatting was re-aligned to target-specific output).
+- `./scripts/run-tests.sh t0210-trace2-normal.sh`: 14/14 passing.
+- `./scripts/run-tests.sh t0211-trace2-perf.sh`: 17/17 passing.
+- `./scripts/run-tests.sh t0212-trace2-event.sh`: 11/11 passing (regression check).
+- `./scripts/run-tests.sh t0213-trace2-ancestry.sh`: 5/5 passing (regression check).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests passing after trace2/config changes).
 
 - `cargo build --release -p grit-rs`: success (after implementing `test-tool ref-store for-each-ref--exclude` compatibility for `t1419`: prefix normalization, literal exclude-region matching, ignore wildcard/empty excludes, and conditional jump/reseek metrics emission).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t1419-exclude-refs.sh` (run from `/workspace/tests`): 13/13 passing (improved from 1/13).

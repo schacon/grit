@@ -117,10 +117,10 @@ commit → check it off → move on.
 - [x] `t0212-trace2-event` ████████████████████ 11/11 (0 left) — test trace2 facility
 - [x] `t0613-reftable-write-options` ████████████████████ 11/11 (0 left) — reftable write options
 - [x] `t1419-exclude-refs` ████████████████████ 13/13 (0 left) — test exclude_patterns functionality in main ref store
-- [ ] `t0211-trace2-perf` ████░░░░░░░░░░░░░░░░ 4/17 (13 left) — test trace2 facility (perf target)
+- [x] `t0211-trace2-perf` ████████████████████ 17/17 (0 left) — test trace2 facility (perf target)
 - [ ] `t1508-at-combinations` ████████████░░░░░░░░ 21/35 (14 left) — test various @{X} syntax combinations together
 - [x] `t1405-main-ref-store` ████████████████████ 16/16 (0 left) — test main ref store api
-- [ ] `t0210-trace2-normal` ░░░░░░░░░░░░░░░░░░░░ 0/14 (14 left) — test trace2 facility (normal target)
+- [x] `t0210-trace2-normal` ████████████████████ 14/14 (0 left) — test trace2 facility (normal target)
 - [ ] `t1050-large` █████████░░░░░░░░░░░ 14/29 (15 left) — adding and checking out large blobs
 - [ ] `t1507-rev-parse-upstream` ████████░░░░░░░░░░░░ 13/29 (16 left) — test <branch>@{upstream} syntax
 - [ ] `t0500-progress-display` ░░░░░░░░░░░░░░░░░░░░ 0/16 (16 left) — progress display
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,846/24,806 tests passing, 15,960 failures remaining**
+**8,873/24,806 tests passing, 15,933 failures remaining**

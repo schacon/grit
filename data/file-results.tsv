@@ -59,8 +59,8 @@ t0201-gettext-fallbacks	yes	0	0	0	ok	0	0	0
 t0202-gettext-perl	yes	0	0	0	ok	0	0	0
 t0203-gettext-setlocale-sanity	yes	0	0	0	ok	0	0	0
 t0204-gettext-reencode-sanity	yes	0	0	0	ok	0	0	0
-t0210-trace2-normal	yes	14	0	14	ok	0	14	0
-t0211-trace2-perf	yes	17	4	13	ok	4	17	0
+t0210-trace2-normal	yes	14	14	0	ok	14	14	0
+t0211-trace2-perf	yes	17	17	0	ok	17	17	0
 t0212-trace2-event	yes	11	11	0	ok	11	11	0
 t0213-trace2-ancestry	yes	5	5	0	ok	5	5	0
 t0300-credentials	yes	56	3	53	ok	3	56	0

@@ -692,8 +692,24 @@ fn cmd_get(
         std::process::exit(1);
     }
 
+    let has_bare_key = config
+        .entries()
+        .iter()
+        .rev()
+        .find(|entry| entry.key == get_args.key)
+        .is_some_and(|entry| entry.value.is_none());
+
     match config.get(&get_args.key) {
         Some(val) => {
+            if has_bare_key
+                && !(args.type_bool
+                    || args.type_bool_or_int
+                    || args.type_name.as_deref() == Some("bool")
+                    || args.type_name.as_deref() == Some("bool-or-int"))
+            {
+                print!("{terminator}");
+                return Ok(());
+            }
             let val = format_typed_value(args, &val)?;
             print!("{val}{terminator}");
             Ok(())

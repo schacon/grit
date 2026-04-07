@@ -1232,6 +1232,19 @@ impl ConfigSet {
         Ok(())
     }
 
+    /// Add a bare command-line override (`-c key`) as a valueless true entry.
+    pub fn add_command_override_bare(&mut self, key: &str) -> Result<()> {
+        let canon = canonical_key(key)?;
+        self.entries.push(ConfigEntry {
+            key: canon,
+            value: None,
+            scope: ConfigScope::Command,
+            file: None,
+            line: 0,
+        });
+        Ok(())
+    }
+
     /// Get the last (highest-priority) value for a key.
     ///
     /// # Parameters
@@ -1371,8 +1384,8 @@ impl ConfigSet {
                     // Validation/parsing happens in command-specific callers.
                     let _ = set.add_command_override(key.trim(), val);
                 } else {
-                    // Bare key (boolean true)
-                    let _ = set.add_command_override(entry.trim(), "true");
+                    // Bare key (boolean true, valueless).
+                    let _ = set.add_command_override_bare(entry.trim());
                 }
             }
         }
@@ -1438,11 +1451,11 @@ impl ConfigSet {
 
 /// Parse a Git boolean value.
 ///
-/// Accepts: `true`, `yes`, `on`, `1` (and bare key / empty) as true.
+/// Accepts: `true`, `yes`, `on`, `1` as true.
 /// Accepts: `false`, `no`, `off`, `0` as false.
 pub fn parse_bool(s: &str) -> std::result::Result<bool, String> {
     match s.to_lowercase().as_str() {
-        "true" | "yes" | "on" | "" => Ok(true),
+        "true" | "yes" | "on" => Ok(true),
         "false" | "no" | "off" => Ok(false),
         _ => {
             // Try parsing as integer: 0 → false, non-zero → true

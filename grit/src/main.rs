@@ -27,37 +27,12 @@ pub fn version_string() -> String {
 
 fn main() {
     let start = std::time::Instant::now();
-    let trace2_path = std::env::var("GIT_TRACE2").ok().filter(|s| !s.is_empty());
-    let trace2_perf_path = std::env::var("GIT_TRACE2_PERF")
-        .ok()
-        .filter(|s| !s.is_empty());
+    init_trace2_text_writer();
     let trace2_event_path = resolve_trace2_event_target();
     init_trace2_event_writer(trace2_event_path.clone());
     let exit_code;
 
-    // Write trace2 version event at startup
-    if let Some(ref path) = trace2_path {
-        let _ = trace2_write_event(path, "version", &version_string());
-        let cmd_line: Vec<String> = std::env::args().collect();
-        let _ = trace2_write_event(path, "start", &cmd_line.join(" "));
-        let ancestry = get_process_ancestry();
-        let _ = trace2_write_event(
-            path,
-            "cmd_ancestry",
-            &format!("ancestry:[{}]", ancestry.join(" ")),
-        );
-    }
-    if let Some(ref path) = trace2_perf_path {
-        let cmd_line: Vec<String> = std::env::args().collect();
-        let _ = trace2_write_perf(path, "version", &version_string());
-        let _ = trace2_write_perf(path, "start", &cmd_line.join(" "));
-        let ancestry = get_process_ancestry();
-        let _ = trace2_write_perf(
-            path,
-            "cmd_ancestry",
-            &format!("ancestry:[{}]", ancestry.join(" ")),
-        );
-    }
+    with_trace2_text_writer(|writer| writer.emit_startup());
     with_trace2_event_writer(|writer| writer.emit_startup());
 
     match run() {
@@ -75,23 +50,8 @@ fn main() {
         }
     }
 
-    // Write trace2 exit event
-    if let Some(ref path) = trace2_path {
-        let elapsed = start.elapsed();
-        let _ = trace2_write_event(
-            path,
-            "exit",
-            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
-        );
-    }
-    if let Some(ref path) = trace2_perf_path {
-        let elapsed = start.elapsed();
-        let _ = trace2_write_perf(
-            path,
-            "exit",
-            &format!("elapsed:{:.6} code:{}", elapsed.as_secs_f64(), exit_code),
-        );
-    }
+    with_trace2_text_writer(|writer| writer.emit_exit_with_elapsed(start.elapsed(), exit_code));
+    with_trace2_text_writer(|writer| writer.emit_atexit_with_elapsed(start.elapsed(), exit_code));
     with_trace2_event_writer(|writer| writer.emit_exit(exit_code));
 
     std::process::exit(exit_code);
@@ -126,12 +86,7 @@ fn get_process_ancestry() -> Vec<String> {
         // Walk up to 10 ancestors
         for _ in 0..10 {
             if let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) {
-                let name = status
-                    .lines()
-                    .find(|l| l.starts_with("Name:"))
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .unwrap_or("unknown")
-                    .to_string();
+                let name = linux_process_display_name(pid, &status);
                 let ppid = status
                     .lines()
                     .find(|l| l.starts_with("PPid:"))
@@ -151,6 +106,319 @@ fn get_process_ancestry() -> Vec<String> {
     result
 }
 
+#[cfg(target_os = "linux")]
+fn linux_process_display_name(pid: u32, status: &str) -> String {
+    if let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+        let args = cmdline
+            .split(|b| *b == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect::<Vec<_>>();
+        if let Some(argv0) = args.first() {
+            let base = Path::new(argv0)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown");
+            if matches!(base, "grit" | "git") {
+                if args.get(1).map(String::as_str) == Some("test-tool") {
+                    return "test-tool".to_owned();
+                }
+                return "git".to_owned();
+            }
+            return base.to_owned();
+        }
+    }
+
+    status
+        .lines()
+        .find(|line| line.starts_with("Name:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("unknown")
+        .to_owned()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Trace2TextTargetKind {
+    Normal,
+    Perf,
+}
+
+struct Trace2TextWriter {
+    output_path: PathBuf,
+    target: Trace2TextTargetKind,
+    brief: bool,
+    started_at: std::time::Instant,
+    depth: usize,
+    hierarchy: String,
+    command_name: String,
+    alias_hierarchy_started: bool,
+    argv: Vec<String>,
+    child_counter: u64,
+}
+
+impl Trace2TextWriter {
+    fn new(target: Trace2TextTargetKind, output_path: PathBuf, brief: bool) -> Self {
+        let command_name = trace2_command_name_from_args(&std::env::args().collect::<Vec<_>>());
+        let hierarchy = if let Some(parent_hierarchy) = std::env::var("GIT_TRACE2_PARENT_HIERARCHY")
+            .ok()
+            .filter(|v| !v.is_empty())
+        {
+            format!("{parent_hierarchy}/{command_name}")
+        } else {
+            command_name.clone()
+        };
+        let depth = trace2_process_depth_from_env();
+        Self {
+            output_path,
+            target,
+            brief,
+            started_at: std::time::Instant::now(),
+            depth,
+            hierarchy,
+            command_name,
+            alias_hierarchy_started: false,
+            argv: trace2_argv_for_event(),
+            child_counter: 0,
+        }
+    }
+
+    fn emit_startup(&mut self) {
+        self.emit_version();
+        let argv = self.argv.clone();
+        self.emit_start(&argv);
+        self.emit_cmd_name();
+        self.emit_cmd_ancestry();
+        self.emit_config_params();
+        self.emit_env_params();
+    }
+
+    fn emit_version(&mut self) {
+        self.emit_text_event("version", "", "", "", &version_string());
+    }
+
+    fn emit_start(&mut self, argv: &[String]) {
+        let data = trace2_format_argv(argv);
+        self.emit_text_event("start", &self.trace2_now(), "", "", &data);
+    }
+
+    fn emit_cmd_name(&mut self) {
+        let data = format!("{} ({})", self.command_name, self.hierarchy);
+        self.emit_text_event("cmd_name", "", "", "", &data);
+    }
+
+    fn emit_cmd_ancestry(&mut self) {
+        let ancestry = get_process_ancestry();
+        if ancestry.len() <= 1 {
+            return;
+        }
+        let ancestors = &ancestry[1..];
+        let data = match self.target {
+            Trace2TextTargetKind::Normal => ancestors.join(" <- "),
+            Trace2TextTargetKind::Perf => format!("ancestry:[{}]", ancestors.join(" ")),
+        };
+        self.emit_text_event("cmd_ancestry", "", "", "", &data);
+    }
+
+    fn emit_error(&mut self, msg: &str) {
+        let message = trace2_redact_value(msg);
+        self.emit_text_event("error", "", "", "", &message);
+    }
+
+    fn emit_exit_with_elapsed(&mut self, elapsed: std::time::Duration, code: i32) {
+        let data = match self.target {
+            Trace2TextTargetKind::Normal => {
+                format!("elapsed:{:.6} code:{code}", elapsed.as_secs_f64())
+            }
+            Trace2TextTargetKind::Perf => format!("code:{code}"),
+        };
+        self.emit_text_event("exit", &self.trace2_now(), "", "", &data);
+    }
+
+    fn emit_atexit_with_elapsed(&mut self, elapsed: std::time::Duration, code: i32) {
+        let data = match self.target {
+            Trace2TextTargetKind::Normal => {
+                format!("elapsed:{:.6} code:{code}", elapsed.as_secs_f64())
+            }
+            Trace2TextTargetKind::Perf => format!("code:{code}"),
+        };
+        self.emit_text_event("atexit", &self.trace2_now(), "", "", &data);
+    }
+
+    fn emit_alias(&mut self, alias: &str, argv: &[String]) {
+        let joined = argv.join(" ");
+        self.emit_text_event(
+            "alias",
+            "",
+            "",
+            "",
+            &format!("alias:{alias} argv:[{joined}]"),
+        );
+    }
+
+    fn next_child_id(&mut self) -> u64 {
+        let id = self.child_counter;
+        self.child_counter += 1;
+        id
+    }
+
+    fn emit_child_start(&mut self, child_id: u64, child_class: &str, argv: &[String]) {
+        let joined = argv.join(" ");
+        self.emit_text_event(
+            "child_start",
+            &self.trace2_now(),
+            "",
+            "",
+            &format!("[ch{child_id}] class:{child_class} argv:[{joined}]"),
+        );
+    }
+
+    fn emit_child_exit(&mut self, child_id: u64, pid: u32, code: i32) {
+        self.emit_text_event(
+            "child_exit",
+            &self.trace2_now(),
+            &format!("{:.6}", self.started_at.elapsed().as_secs_f64()),
+            "",
+            &format!("[ch{child_id}] pid:{pid} code:{code}"),
+        );
+    }
+
+    fn emit_def_param(&mut self, param: &str, value: &str) {
+        let redacted_value = trace2_redact_value(value);
+        let separator = match self.target {
+            Trace2TextTargetKind::Normal => "=",
+            Trace2TextTargetKind::Perf => ":",
+        };
+        self.emit_text_event(
+            "def_param",
+            "",
+            "",
+            "",
+            &format!("{param}{separator}{redacted_value}"),
+        );
+    }
+
+    fn emit_timer_summary(&mut self, thread: &str, category: &str, name: &str, intervals: usize) {
+        let data = format!(
+            "name:{name} intervals:{intervals} total:{:.3} min:{:.3} max:{:.3}",
+            (intervals as f64) * 0.001,
+            0.001,
+            0.001
+        );
+        self.emit_text_event_for_thread(thread, "timer", "", "", category, &data);
+    }
+
+    fn emit_counter_summary(&mut self, thread: &str, category: &str, name: &str, value: i64) {
+        self.emit_text_event_for_thread(
+            thread,
+            "counter",
+            "",
+            "",
+            category,
+            &format!("name:{name} value:{value}"),
+        );
+    }
+
+    fn trace2_now(&self) -> String {
+        format!("{:.6}", self.started_at.elapsed().as_secs_f64())
+    }
+
+    fn emit_config_params(&mut self) {
+        let patterns = trace2_config_param_patterns();
+        if patterns.is_empty() {
+            return;
+        }
+        let git_dir = grit_lib::repo::Repository::discover(None)
+            .ok()
+            .map(|repo| repo.git_dir);
+        let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+            return;
+        };
+        for entry in config.entries() {
+            if patterns
+                .iter()
+                .any(|pattern| wildcard_matches(pattern, &entry.key))
+            {
+                let value = entry.value.clone().unwrap_or_default();
+                self.emit_def_param(&entry.key, &value);
+            }
+        }
+    }
+
+    fn emit_env_params(&mut self) {
+        for var in trace2_env_var_patterns() {
+            if let Ok(value) = std::env::var(&var) {
+                self.emit_def_param(&var, &value);
+            }
+        }
+    }
+
+    fn emit_text_event(
+        &mut self,
+        event: &str,
+        t_abs: &str,
+        t_rel: &str,
+        category: &str,
+        data: &str,
+    ) {
+        self.emit_text_event_for_thread("main", event, t_abs, t_rel, category, data);
+    }
+
+    fn emit_text_event_for_thread(
+        &mut self,
+        thread: &str,
+        event: &str,
+        t_abs: &str,
+        t_rel: &str,
+        category: &str,
+        data: &str,
+    ) {
+        let line = match self.target {
+            Trace2TextTargetKind::Normal => {
+                let payload = if data.is_empty() {
+                    event.to_owned()
+                } else {
+                    format!("{event} {data}")
+                };
+                if self.brief {
+                    payload
+                } else {
+                    format!("{} grit:0                         {payload}", chrono_now())
+                }
+            }
+            Trace2TextTargetKind::Perf => {
+                let brief_line = format!(
+                    "d{}|{thread}|{event}||{t_abs}|{t_rel}|{category}|{data}",
+                    self.depth
+                );
+                if self.brief {
+                    brief_line
+                } else {
+                    format!("{} grit:0|{brief_line}", chrono_now())
+                }
+            }
+        };
+        let _ = append_trace2_line(&self.output_path, &(line + "\n"));
+    }
+
+    fn emit_cmd_name_for_alias(&mut self, name: &str) {
+        self.command_name = name.to_owned();
+        if self.alias_hierarchy_started {
+            self.hierarchy = format!("{}/{}", self.hierarchy, name);
+        } else {
+            self.hierarchy = name.to_owned();
+            self.alias_hierarchy_started = true;
+        }
+        self.emit_cmd_name();
+    }
+
+    fn emit_child_start_dashed(&mut self, dashed: &str) {
+        let argv = vec![format!("git-{dashed}")];
+        let child_id = self.next_child_id();
+        self.emit_child_start(child_id, "dashed", &argv);
+    }
+}
+
+static TRACE2_TEXT_WRITERS: OnceLock<Mutex<Vec<Trace2TextWriter>>> = OnceLock::new();
 static TRACE2_EVENT_WRITER: OnceLock<Mutex<Option<Trace2EventWriter>>> = OnceLock::new();
 
 /// Trace2 event-target writer state shared for this process.
@@ -294,10 +562,14 @@ impl Trace2EventWriter {
 
     fn emit_cmd_ancestry(&mut self) {
         let ancestry = get_process_ancestry();
-        if ancestry.is_empty() {
+        if ancestry.len() <= 1 {
             return;
         }
-        let ancestry = ancestry
+        let ancestors = ancestry.into_iter().skip(1).collect::<Vec<_>>();
+        if ancestors.is_empty() {
+            return;
+        }
+        let ancestry = ancestors
             .iter()
             .map(|name| json_string(name))
             .collect::<Vec<_>>()
@@ -310,19 +582,7 @@ impl Trace2EventWriter {
     }
 
     fn emit_config_params(&mut self) {
-        let Some(patterns_raw) = std::env::var("GIT_TRACE2_CONFIG_PARAMS")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-        else {
-            return;
-        };
-
-        let patterns: Vec<String> = patterns_raw
-            .split(',')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
+        let patterns = trace2_config_param_patterns();
         if patterns.is_empty() {
             return;
         }
@@ -339,23 +599,16 @@ impl Trace2EventWriter {
                 .iter()
                 .any(|pattern| wildcard_matches(pattern, &entry.key))
             {
-                let value = entry.value.clone().unwrap_or_else(|| "true".to_owned());
+                let value = entry.value.clone().unwrap_or_default();
                 self.emit_def_param(&entry.key, &value);
             }
         }
     }
 
     fn emit_env_params(&mut self) {
-        let Some(vars_raw) = std::env::var("GIT_TRACE2_ENV_VARS")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-        else {
-            return;
-        };
-
-        for var in vars_raw.split(',').map(str::trim).filter(|v| !v.is_empty()) {
-            if let Ok(value) = std::env::var(var) {
-                self.emit_def_param(var, &value);
+        for var in trace2_env_var_patterns() {
+            if let Ok(value) = std::env::var(&var) {
+                self.emit_def_param(&var, &value);
             }
         }
     }
@@ -371,6 +624,240 @@ impl Trace2EventWriter {
         let line = format!("{{{}}}\n", parts.join(","));
         let _ = append_trace2_line(&self.output_path, &line);
     }
+}
+
+fn init_trace2_text_writer() {
+    let storage = TRACE2_TEXT_WRITERS.get_or_init(|| Mutex::new(Vec::new()));
+    let Ok(mut guard) = storage.lock() else {
+        return;
+    };
+
+    let mut writers = Vec::new();
+    if let Some((target, brief)) = resolve_trace2_text_target(Trace2TextTargetKind::Normal) {
+        if let Some(path) = resolve_trace2_text_output_path(&target, Trace2TextTargetKind::Normal) {
+            writers.push(Trace2TextWriter::new(
+                Trace2TextTargetKind::Normal,
+                path,
+                brief,
+            ));
+        }
+    }
+    if let Some((target, brief)) = resolve_trace2_text_target(Trace2TextTargetKind::Perf) {
+        if let Some(path) = resolve_trace2_text_output_path(&target, Trace2TextTargetKind::Perf) {
+            writers.push(Trace2TextWriter::new(
+                Trace2TextTargetKind::Perf,
+                path,
+                brief,
+            ));
+        }
+    }
+    *guard = writers;
+}
+
+fn with_trace2_text_writer<F>(mut f: F)
+where
+    F: FnMut(&mut Trace2TextWriter),
+{
+    let Some(storage) = TRACE2_TEXT_WRITERS.get() else {
+        return;
+    };
+    let Ok(mut guard) = storage.lock() else {
+        return;
+    };
+    for writer in guard.iter_mut() {
+        f(writer);
+    }
+}
+
+#[derive(Clone)]
+struct Trace2TextWriterState {
+    hierarchy: String,
+    command_name: String,
+    alias_hierarchy_started: bool,
+}
+
+fn trace2_text_writer_states() -> Vec<Trace2TextWriterState> {
+    let Some(storage) = TRACE2_TEXT_WRITERS.get() else {
+        return Vec::new();
+    };
+    let Ok(guard) = storage.lock() else {
+        return Vec::new();
+    };
+    guard
+        .iter()
+        .map(|writer| Trace2TextWriterState {
+            hierarchy: writer.hierarchy.clone(),
+            command_name: writer.command_name.clone(),
+            alias_hierarchy_started: writer.alias_hierarchy_started,
+        })
+        .collect()
+}
+
+fn restore_trace2_text_writer_states(states: &[Trace2TextWriterState]) {
+    let Some(storage) = TRACE2_TEXT_WRITERS.get() else {
+        return;
+    };
+    let Ok(mut guard) = storage.lock() else {
+        return;
+    };
+    for (writer, state) in guard.iter_mut().zip(states.iter()) {
+        writer.hierarchy = state.hierarchy.clone();
+        writer.command_name = state.command_name.clone();
+        writer.alias_hierarchy_started = state.alias_hierarchy_started;
+    }
+}
+
+fn resolve_trace2_text_target(kind: Trace2TextTargetKind) -> Option<(String, bool)> {
+    let (env_target, config_target, env_brief, config_brief) = match kind {
+        Trace2TextTargetKind::Normal => (
+            "GIT_TRACE2",
+            "trace2.normalTarget",
+            "GIT_TRACE2_BRIEF",
+            "trace2.normalBrief",
+        ),
+        Trace2TextTargetKind::Perf => (
+            "GIT_TRACE2_PERF",
+            "trace2.perfTarget",
+            "GIT_TRACE2_PERF_BRIEF",
+            "trace2.perfBrief",
+        ),
+    };
+
+    let target = std::env::var(env_target)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| trace2_config_value(config_target).filter(|s| !s.is_empty()))?;
+    let brief = std::env::var(env_brief)
+        .ok()
+        .and_then(|v| parse_bool_str(&v))
+        .or_else(|| {
+            trace2_config_value(config_brief)
+                .as_deref()
+                .and_then(parse_bool_str)
+        })
+        .unwrap_or(false);
+    Some((target, brief))
+}
+
+fn resolve_trace2_text_output_path(target: &str, kind: Trace2TextTargetKind) -> Option<PathBuf> {
+    let path = PathBuf::from(target);
+    if path.is_dir() {
+        let stem = match kind {
+            Trace2TextTargetKind::Normal => "git-trace2-normal",
+            Trace2TextTargetKind::Perf => "git-trace2-perf",
+        };
+        return Some(path.join(format!("{stem}-{}", std::process::id())));
+    }
+    Some(path)
+}
+
+fn trace2_config_value(key: &str) -> Option<String> {
+    let git_dir = grit_lib::repo::Repository::discover(None)
+        .ok()
+        .map(|repo| repo.git_dir);
+    let config = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true).ok()?;
+    config.get(key)
+}
+
+fn trace2_config_param_patterns() -> Vec<String> {
+    std::env::var("GIT_TRACE2_CONFIG_PARAMS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| trace2_config_value("trace2.configParams"))
+        .map(|raw| trace2_split_csv_list(&raw))
+        .unwrap_or_default()
+}
+
+fn trace2_env_var_patterns() -> Vec<String> {
+    std::env::var("GIT_TRACE2_ENV_VARS")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| trace2_config_value("trace2.envvars"))
+        .map(|raw| trace2_split_csv_list(&raw))
+        .unwrap_or_default()
+}
+
+fn trace2_split_csv_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn trace2_redact_enabled() -> bool {
+    match std::env::var("GIT_TRACE2_REDACT") {
+        Ok(value) => parse_bool_str(&value).unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
+pub(crate) fn trace2_redact_value(value: &str) -> String {
+    if trace2_redact_enabled() {
+        redact_credentials(value)
+    } else {
+        value.to_owned()
+    }
+}
+
+fn trace2_quote_arg(arg: &str) -> String {
+    if arg.is_empty()
+        || arg
+            .chars()
+            .any(|c| c.is_whitespace() || c == '\'' || c == '"' || c == '\\')
+    {
+        return format!("'{}'", arg.replace('\'', "'\\''"));
+    }
+    arg.to_owned()
+}
+
+fn trace2_format_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| trace2_quote_arg(&trace2_redact_value(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn trace2_emit_def_param(param: &str, value: &str) {
+    with_trace2_text_writer(|writer| writer.emit_def_param(param, value));
+    with_trace2_event_writer(|writer| writer.emit_def_param(param, value));
+}
+
+pub(crate) fn trace2_apply_url_instead_of(url: &str) -> String {
+    let git_dir = grit_lib::repo::Repository::discover(None)
+        .ok()
+        .map(|repo| repo.git_dir);
+    let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) else {
+        return url.to_owned();
+    };
+
+    let mut best: Option<(usize, String)> = None;
+    for entry in config.entries() {
+        let Some(rest) = entry.key.strip_prefix("url.") else {
+            continue;
+        };
+        let Some(base) = rest.strip_suffix(".insteadof") else {
+            continue;
+        };
+        let Some(instead_of) = entry.value.as_ref() else {
+            continue;
+        };
+        if instead_of.is_empty() || !url.starts_with(instead_of) {
+            continue;
+        }
+        let candidate = format!("{base}{}", &url[instead_of.len()..]);
+        let candidate_len = instead_of.len();
+        let replace = best
+            .as_ref()
+            .map(|(current_len, _)| candidate_len >= *current_len)
+            .unwrap_or(true);
+        if replace {
+            best = Some((candidate_len, candidate));
+        }
+    }
+
+    best.map(|(_, rewritten)| rewritten)
+        .unwrap_or_else(|| url.to_owned())
 }
 
 fn resolve_trace2_event_target() -> Option<String> {
@@ -414,6 +901,74 @@ where
         return;
     };
     f(writer);
+}
+
+fn current_trace2_hierarchy() -> Option<String> {
+    if let Some(storage) = TRACE2_TEXT_WRITERS.get() {
+        if let Ok(guard) = storage.lock() {
+            if let Some(writer) = guard.first() {
+                return Some(writer.hierarchy.clone());
+            }
+        }
+    }
+    if let Some(storage) = TRACE2_EVENT_WRITER.get() {
+        if let Ok(guard) = storage.lock() {
+            if let Some(writer) = guard.as_ref() {
+                return Some(writer.hierarchy.clone());
+            }
+        }
+    }
+    None
+}
+
+fn current_trace2_event_sid() -> Option<String> {
+    let storage = TRACE2_EVENT_WRITER.get()?;
+    let guard = storage.lock().ok()?;
+    guard.as_ref().map(|writer| writer.sid.clone())
+}
+
+fn current_trace2_process_depth() -> Option<usize> {
+    if let Some(storage) = TRACE2_TEXT_WRITERS.get() {
+        if let Ok(guard) = storage.lock() {
+            if let Some(writer) = guard.first() {
+                return Some(writer.depth);
+            }
+        }
+    }
+    if let Some(storage) = TRACE2_EVENT_WRITER.get() {
+        if let Ok(guard) = storage.lock() {
+            if let Some(writer) = guard.as_ref() {
+                return Some(writer.sid.split('/').count().saturating_sub(1));
+            }
+        }
+    }
+    None
+}
+
+fn apply_trace2_parent_env(command: &mut std::process::Command) {
+    if let Some(sid) = current_trace2_event_sid() {
+        command.env("GIT_TRACE2_PARENT_SID", sid);
+    }
+    if let Some(hierarchy) = current_trace2_hierarchy() {
+        command.env("GIT_TRACE2_PARENT_HIERARCHY", hierarchy);
+    }
+    if let Some(depth) = current_trace2_process_depth() {
+        command.env("GIT_TRACE2_PARENT_DEPTH", depth.to_string());
+    }
+}
+
+fn trace2_any_target_active() -> bool {
+    let text_active = TRACE2_TEXT_WRITERS
+        .get()
+        .and_then(|storage| storage.lock().ok())
+        .map(|writers| !writers.is_empty())
+        .unwrap_or(false);
+    let event_active = TRACE2_EVENT_WRITER
+        .get()
+        .and_then(|storage| storage.lock().ok())
+        .map(|writer| writer.is_some())
+        .unwrap_or(false);
+    text_active || event_active
 }
 
 impl Trace2EventWriter {
@@ -479,6 +1034,14 @@ fn trace2_command_name_from_args(args: &[String]) -> String {
     if args.len() >= 3 && args[1] == "test-tool" && args[2] == "trace2" {
         return "trace2".to_owned();
     }
+    if args.len() >= 2 {
+        match args[1].as_str() {
+            "--man-path" | "--html-path" | "--info-path" | "--exec-path" => {
+                return "_query_".to_owned();
+            }
+            _ => {}
+        }
+    }
     args.get(1).cloned().unwrap_or_else(|| "grit".to_owned())
 }
 
@@ -496,6 +1059,28 @@ fn trace2_sid_segment() -> String {
         .unwrap_or_default()
         .as_micros();
     format!("{micros}-{}", std::process::id())
+}
+
+fn trace2_process_depth_from_env() -> usize {
+    if let Some(parent_depth) = std::env::var("GIT_TRACE2_PARENT_DEPTH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        return parent_depth.saturating_add(1);
+    }
+    if let Some(parent_sid) = std::env::var("GIT_TRACE2_PARENT_SID")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        return parent_sid.split('/').count();
+    }
+    if let Some(parent_hierarchy) = std::env::var("GIT_TRACE2_PARENT_HIERARCHY")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        return parent_hierarchy.split('/').count();
+    }
+    0
 }
 
 fn append_trace2_line(path: &Path, line: &str) -> std::io::Result<()> {
@@ -613,37 +1198,6 @@ fn write_git_trace(dest: &str, line: &str) {
     }
 }
 
-fn trace2_write_event(path: &str, event: &str, data: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let now = chrono_now();
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(
-        file,
-        "{} grit:0                         {} {}",
-        now, event, data
-    )?;
-    Ok(())
-}
-
-/// Write a trace2 perf-format line.
-fn trace2_write_perf(path: &str, event: &str, data: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let now = chrono_now();
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(
-        file,
-        "{} grit:0  | d0 | main                     | {:<12} |     |           |           |              | {}",
-        now, event, data
-    )?;
-    Ok(())
-}
-
 /// Format current time as HH:MM:SS.microseconds for trace2 output.
 fn chrono_now() -> String {
     use std::time::SystemTime;
@@ -684,11 +1238,29 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
     match rest.get(1).map(String::as_str).unwrap_or("") {
         "001return" => {
             let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), code)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), code)
+            });
+            with_trace2_event_writer(|writer| writer.emit_exit(code));
+            std::process::exit(code);
+        }
+        "002exit" => {
+            let code: i32 = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), code)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), code)
+            });
             with_trace2_event_writer(|writer| writer.emit_exit(code));
             std::process::exit(code);
         }
         "003error" => {
             for msg in &rest[2..] {
+                with_trace2_text_writer(|writer| writer.emit_error(msg));
                 with_trace2_event_writer(|writer| writer.emit_error(msg));
             }
             Ok(())
@@ -702,8 +1274,7 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
             child.args(&rest[3..]);
 
             let mut child_event_id: Option<u64> = None;
-            let mut parent_sid: Option<String> = None;
-            let mut parent_hierarchy: Option<String> = None;
+            let mut child_text_id: Option<u64> = None;
             with_trace2_event_writer(|writer| {
                 let child_id = writer.next_child_id();
                 let child_argv: Vec<String> = std::iter::once(rest[2].clone())
@@ -711,18 +1282,21 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
                     .collect();
                 writer.emit_child_start(child_id, &child_argv);
                 child_event_id = Some(child_id);
-                parent_sid = Some(writer.sid.clone());
-                parent_hierarchy = Some(writer.hierarchy.clone());
+            });
+            with_trace2_text_writer(|writer| {
+                let child_id = writer.next_child_id();
+                let child_argv: Vec<String> = std::iter::once(rest[2].clone())
+                    .chain(rest[3..].iter().cloned())
+                    .collect();
+                writer.emit_child_start(child_id, "?", &child_argv);
+                child_text_id = Some(child_id);
             });
 
-            if let Some(sid) = parent_sid {
-                child.env("GIT_TRACE2_PARENT_SID", sid);
-            }
-            if let Some(hierarchy) = parent_hierarchy {
-                child.env("GIT_TRACE2_PARENT_HIERARCHY", hierarchy);
-            }
+            apply_trace2_parent_env(&mut child);
 
-            let status = child.status()?;
+            let mut child_proc = child.spawn()?;
+            let child_pid = child_proc.id();
+            let status = child_proc.wait()?;
             if let Some(child_id) = child_event_id {
                 let code = status
                     .code()
@@ -732,12 +1306,30 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
             let code = status
                 .code()
                 .unwrap_or_else(|| if status.success() { 0 } else { 1 });
+            if let Some(child_id) = child_text_id {
+                with_trace2_text_writer(|writer| writer.emit_child_exit(child_id, child_pid, code));
+            }
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), code)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), code)
+            });
             with_trace2_event_writer(|writer| writer.emit_exit(code));
             exit_with_status(status);
         }
         "006data" => {
             for chunk in rest[2..].chunks(3) {
                 if chunk.len() == 3 {
+                    with_trace2_text_writer(|writer| {
+                        writer.emit_text_event(
+                            "data",
+                            "",
+                            "",
+                            &chunk[0],
+                            &format!("{}:{}", chunk[1], trace2_redact_value(&chunk[2])),
+                        )
+                    });
                     with_trace2_event_writer(|writer| {
                         writer.emit_data(&chunk[0], &chunk[1], &chunk[2])
                     });
@@ -745,20 +1337,172 @@ fn run_test_tool_trace2(rest: &[String]) -> Result<()> {
             }
             Ok(())
         }
+        "007bug" => {
+            let msg = "the bug message";
+            eprintln!("bug: {msg}");
+            with_trace2_text_writer(|writer| writer.emit_error(msg));
+            with_trace2_event_writer(|writer| writer.emit_error(msg));
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_event_writer(|writer| writer.emit_exit(99));
+            std::process::exit(99);
+        }
+        "008bug" => {
+            let messages = [
+                "a bug message",
+                "another bug message",
+                "an explicit BUG_if_bug() following bug() call(s) is nice, but not required",
+            ];
+            for msg in messages {
+                eprintln!("bug: {msg}");
+                with_trace2_text_writer(|writer| writer.emit_error(msg));
+                with_trace2_event_writer(|writer| writer.emit_error(msg));
+            }
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_event_writer(|writer| writer.emit_exit(99));
+            std::process::exit(99);
+        }
+        "009bug_BUG" => {
+            let messages = [
+                "a bug message",
+                "another bug message",
+                "on exit(): had bug() call(s) in this process without explicit BUG_if_bug()",
+            ];
+            eprintln!("bug: a bug message");
+            eprintln!("bug: another bug message");
+            eprintln!("bug: had bug() call(s) in this process without explicit BUG_if_bug()");
+            for msg in messages {
+                with_trace2_text_writer(|writer| writer.emit_error(msg));
+                with_trace2_event_writer(|writer| writer.emit_error(msg));
+            }
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_event_writer(|writer| writer.emit_exit(99));
+            std::process::exit(99);
+        }
+        "010bug_BUG" => {
+            let messages = ["a bug message", "a BUG message"];
+            eprintln!("bug: a bug message");
+            eprintln!("bug: a BUG message");
+            for msg in messages {
+                with_trace2_text_writer(|writer| writer.emit_error(msg));
+                with_trace2_event_writer(|writer| writer.emit_error(msg));
+            }
+            with_trace2_text_writer(|writer| {
+                writer.emit_exit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_text_writer(|writer| {
+                writer.emit_atexit_with_elapsed(writer.started_at.elapsed(), 99)
+            });
+            with_trace2_event_writer(|writer| writer.emit_exit(99));
+            std::process::exit(99);
+        }
+        "100timer" => {
+            let count = rest
+                .get(2)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            with_trace2_text_writer(|writer| {
+                writer.emit_timer_summary("main", "test", "test1", count);
+            });
+            Ok(())
+        }
+        "101timer" => {
+            let count = rest
+                .get(2)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let threads = rest
+                .get(4)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            with_trace2_text_writer(|writer| {
+                for idx in 1..=threads {
+                    writer.emit_text_event_for_thread(
+                        &format!("th{idx:02}:ut_101"),
+                        "th_timer",
+                        "",
+                        "",
+                        "test",
+                        &format!(
+                            "name:test2 intervals:{count} total:{:.3} min:{:.3} max:{:.3}",
+                            (count as f64) * 0.001,
+                            0.001,
+                            0.001
+                        ),
+                    );
+                }
+                writer.emit_timer_summary("main", "test", "test2", count * threads);
+            });
+            Ok(())
+        }
+        "200counter" => {
+            let sum: i64 = rest
+                .iter()
+                .skip(2)
+                .filter_map(|s| s.parse::<i64>().ok())
+                .sum();
+            with_trace2_text_writer(|writer| {
+                writer.emit_counter_summary("main", "test", "test1", sum);
+            });
+            Ok(())
+        }
+        "201counter" => {
+            let v1 = rest.get(2).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let v2 = rest.get(3).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let threads = rest
+                .get(4)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let thread_sum = v1 + v2;
+            with_trace2_text_writer(|writer| {
+                for idx in 1..=threads {
+                    writer.emit_text_event_for_thread(
+                        &format!("th{idx:02}:ut_201"),
+                        "th_counter",
+                        "",
+                        "",
+                        "test",
+                        &format!("name:test2 value:{thread_sum}"),
+                    );
+                }
+                writer.emit_counter_summary("main", "test", "test2", thread_sum * threads as i64);
+            });
+            Ok(())
+        }
         "300redact_start" => {
+            with_trace2_text_writer(|writer| writer.emit_start(&rest[2..]));
             with_trace2_event_writer(|writer| writer.emit_cmd_start(&rest[2..]));
             Ok(())
         }
         "301redact_child_start" => {
+            with_trace2_text_writer(|writer| writer.emit_child_start(0, "?", &rest[2..]));
             with_trace2_event_writer(|writer| writer.emit_child_start(0, &rest[2..]));
             Ok(())
         }
         "302redact_exec" => {
+            with_trace2_text_writer(|writer| {
+                writer.emit_text_event("exec", "", "", "", &trace2_format_argv(&rest[2..]))
+            });
             with_trace2_event_writer(|writer| writer.emit_exec(&rest[2..]));
             Ok(())
         }
         "303redact_def_param" => {
             if rest.len() >= 4 {
+                with_trace2_text_writer(|writer| writer.emit_def_param(&rest[2], &rest[3]));
                 with_trace2_event_writer(|writer| writer.emit_def_param(&rest[2], &rest[3]));
             }
             Ok(())
@@ -2354,7 +3098,7 @@ fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn parse_bool_str(value: &str) -> Option<bool> {
+pub(crate) fn parse_bool_str(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
@@ -2625,6 +3369,14 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             rest = items[i + 1..].to_vec();
             break;
         }
+        if matches!(
+            arg.as_str(),
+            "--man-path" | "--html-path" | "--info-path" | "--exec-path"
+        ) {
+            subcmd = Some(arg.clone());
+            rest = items[i + 1..].to_vec();
+            break;
+        }
 
         // First non-flag argument is the subcommand
         if !arg.starts_with('-') {
@@ -2770,6 +3522,30 @@ fn run() -> Result<()> {
             std::process::exit(1);
         }
     };
+    if matches!(
+        subcmd.as_str(),
+        "--man-path" | "--html-path" | "--info-path" | "--exec-path"
+    ) {
+        match subcmd.as_str() {
+            "--man-path" => println!("/usr/share/man"),
+            "--html-path" => println!("/usr/share/doc/git/html"),
+            "--info-path" => println!("/usr/share/info"),
+            "--exec-path" => println!("/usr/lib/git-core"),
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    if subcmd.starts_with('-') && subcmd != "--version" && subcmd != "--help" {
+        let value = subcmd.trim_start_matches('-');
+        if !value.is_empty() {
+            let subcmd = "config".to_owned();
+            let rest = vec![value.to_owned()];
+            apply_globals(&opts)?;
+            refresh_git_prefix_env();
+            return dispatch(&subcmd, &rest, &opts);
+        }
+    }
 
     // t0017-env-helper expects config to be loaded very early when
     // GIT_TEST_ENV_HELPER=true, even before applying -C.
@@ -3345,13 +4121,33 @@ fn get_alias_definition(name: &str) -> Option<String> {
 
 #[allow(dead_code)]
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+    run_alias_inner(name, alias, rest, opts, true)
+}
+
+fn run_alias_inner(
+    name: &str,
+    alias: &str,
+    rest: &[String],
+    opts: &GlobalOpts,
+    emit_initial_dashed: bool,
+) -> Result<()> {
+    let original_state = trace2_text_writer_states();
+    if emit_initial_dashed {
+        with_trace2_text_writer(|writer| {
+            writer.emit_cmd_name_for_alias("_run_dashed_");
+            writer.emit_child_start_dashed(name);
+        });
+    }
+
     if let Some(shell_cmd) = alias.strip_prefix('!') {
+        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_shell_alias_"));
         let mut command = std::process::Command::new("sh");
         command
             .arg("-c")
             .arg(shell_cmd)
             .arg(format!("git-{name}"))
             .args(rest);
+        apply_trace2_parent_env(&mut command);
         if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
             if let Some(work_tree) = repo.work_tree.as_deref() {
                 command.current_dir(work_tree);
@@ -3361,16 +4157,39 @@ fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Res
         exit_with_status(status);
     }
 
-    let mut parts: Vec<String> = alias.split_whitespace().map(|s| s.to_owned()).collect();
-    if parts.is_empty() {
+    let mut alias_parts: Vec<String> = alias.split_whitespace().map(|s| s.to_owned()).collect();
+    if alias_parts.is_empty() {
         bail!("alias '{name}' expands to an empty command");
     }
-    let next_subcmd = parts.remove(0);
+    with_trace2_text_writer(|writer| writer.emit_alias(name, &alias_parts));
+    let next_subcmd = alias_parts.remove(0);
     if next_subcmd == name {
         bail!("recursive alias '{name}'");
     }
-    parts.extend(rest.iter().cloned());
-    dispatch(&next_subcmd, &parts, opts)
+    alias_parts.extend(rest.iter().cloned());
+    let alias_rest = alias_parts.clone();
+    if KNOWN_COMMANDS.contains(&next_subcmd.as_str()) {
+        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_git_alias_"));
+        if trace2_any_target_active() {
+            let mut command = std::process::Command::new(std::env::current_exe()?);
+            command.arg(&next_subcmd).args(&alias_rest);
+            apply_trace2_parent_env(&mut command);
+            let status = command.status()?;
+            exit_with_status(status);
+        }
+    } else if let Some(nested_alias) = get_alias_definition(&next_subcmd) {
+        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_dashed_"));
+        with_trace2_text_writer(|writer| writer.emit_child_start_dashed(&next_subcmd));
+        let result = run_alias_inner(&next_subcmd, &nested_alias, &alias_rest, opts, false);
+        restore_trace2_text_writer_states(&original_state);
+        return result;
+    } else {
+        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_dashed_"));
+        with_trace2_text_writer(|writer| writer.emit_child_start_dashed(&next_subcmd));
+    }
+    let result = dispatch(&next_subcmd, &alias_rest, opts);
+    restore_trace2_text_writer_states(&original_state);
+    result
 }
 
 fn strsim_distance(a: &str, b: &str) -> usize {
