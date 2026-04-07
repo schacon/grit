@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   102 |
+| Completed   |   103 |
 | In progress |     0 |
-| Remaining   |   665 |
+| Remaining   |   664 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0035-safe-bare-repository` — 12/12 tests pass (fixed unborn-repo `worktree add <path>` behavior to infer implicit orphan creation, emitted `implicit-bare-repository:<path>` perf-trace markers for implicit bare-repo discovery paths, corrected bare-policy enforcement to apply only to truly bare repositories (so `.git` and worktree admin dirs are not misclassified), and aligned `submodule add --name` module storage path to `.git/modules/<name>` so embedded-submodule admin directories match test expectations)
 - `t0095-bloom` — 11/11 tests pass (implemented `test-tool bloom` compatibility helpers in `grit/src/main.rs`: seeded Murmur3 hash output for v2 and v1 behaviors expected by upstream helper tests, Bloom-key/filter generation using Git-compatible constants/seeds/bit placement, and commit changed-path Bloom filter synthesis from first-parent tree diffs including parent-directory path expansion, empty-filter handling, and `>512` changed-path truncation to `ff`)
 - `t0211-trace2-perf` — 17/17 tests pass (implemented trace2 text-writer parity for perf target, including startup/exit events, config/env def_param emission, alias expansion hierarchy handling, nested alias recursion behavior, and process-depth propagation via parent trace2 env so perf alias traces match upstream expectations)
 - `t0210-trace2-normal` — 14/14 tests pass (fixed valueless `-c foo.true` handling by preserving bare command-line config entries as valueless in `ConfigSet`, and aligned trace2 normal startup/def_param URL-redaction and config-param behavior with upstream)

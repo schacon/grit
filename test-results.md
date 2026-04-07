@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after `safe.bareRepository` compatibility fixes in repository discovery, unborn-HEAD `worktree add` behavior alignment, and submodule named-module-path storage correction).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0035-safe-bare-repository.sh` (run from `/workspace/tests`): 12/12 passing (improved from 1/12).
+- `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t1407-worktree-ref-store.sh`: 4/4 passing.
+  - `./scripts/run-tests.sh t0095-bloom.sh`: 11/11 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after adding `test-tool bloom` compatibility helper implementation in `grit/src/main.rs` for Murmur3 hashing, Bloom key generation, and commit changed-path filter computation used by `t0095`).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0095-bloom.sh` (run from `/workspace/tests`): 11/11 passing (improved from 1/11; 1 test remains skipped under missing `EXPENSIVE` prereq in this environment, matching harness behavior).
 - `./scripts/run-tests.sh t0095-bloom.sh`: 11/11 passing.

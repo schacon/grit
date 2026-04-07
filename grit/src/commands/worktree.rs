@@ -297,8 +297,20 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         );
     }
 
-    // Handle --orphan: create worktree with unborn branch
-    if args.orphan {
+    // Determine current HEAD state early so implicit orphan mode can detect
+    // unborn repositories.
+    let head_state = resolve_head(&common)?;
+    let head_oid = head_state.oid().copied();
+
+    let implicit_orphan = !args.orphan
+        && args.new_branch.is_none()
+        && args.force_new_branch.is_none()
+        && args.branch.is_none()
+        && head_oid.is_none();
+
+    // Handle --orphan (or implicit orphan on unborn HEAD): create worktree with unborn branch.
+    if args.orphan || implicit_orphan {
+        let orphan_branch_name = args.branch.clone().unwrap_or_else(|| wt_name.clone());
         // Create the working tree directory
         fs::create_dir_all(&wt_path)
             .with_context(|| format!("cannot create directory '{}'", wt_path.display()))?;
@@ -318,7 +330,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         // HEAD points to an unborn branch
         fs::write(
             wt_admin.join("HEAD"),
-            format!("ref: refs/heads/{}\n", wt_name),
+            format!("ref: refs/heads/{}\n", orphan_branch_name),
         )?;
 
         // Write the .git file in the worktree
@@ -327,15 +339,11 @@ fn cmd_add(args: AddArgs) -> Result<()> {
 
         println!(
             "Preparing worktree (new branch '{}') at '{}'",
-            wt_name,
+            orphan_branch_name,
             wt_path.display()
         );
         return Ok(());
     }
-
-    // Determine branch target and commit.
-    let head_state = resolve_head(&common)?;
-    let head_oid = head_state.oid().copied();
 
     // Determine branch mode and starting commit.
     // `worktree add <path> <branch>` — if <branch> exists as a ref, check it out;

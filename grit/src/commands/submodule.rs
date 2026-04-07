@@ -661,7 +661,8 @@ fn run_add(args: &AddArgs) -> Result<()> {
         eprintln!("Adding existing repo at '{}' to the index", path);
     } else {
         // Clone the submodule.
-        let modules_dir = repo.git_dir.join("modules").join(&path);
+        let submodule_name = args.name.as_deref().unwrap_or(&path);
+        let modules_dir = repo.git_dir.join("modules").join(submodule_name);
         // Only create the parent directory; git clone --separate-git-dir
         // will create the modules_dir itself.
         if let Some(parent) = modules_dir.parent() {

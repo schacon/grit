@@ -18,6 +18,7 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -468,21 +469,43 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
 
     // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
     if dir.join("objects").is_dir() && dir.join("HEAD").is_file() {
-        // Check safe.bareRepository policy before opening bare repos.
-        // When set to "explicit", implicit bare repo discovery is forbidden
-        // unless GIT_DIR was set (handled earlier in discover()).
-        if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
-            if let Some(val) = cfg.get("safe.bareRepository") {
-                if val == "explicit" {
-                    return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
-                }
-            }
-        }
+        emit_implicit_bare_repository_trace(dir);
         let repo = Repository::open(dir, None)?;
+        // Check safe.bareRepository policy before opening implicit bare repos.
+        // This is only respected in protected config (system/global/command).
+        if repo.is_bare() && safe_bare_repository_explicit() {
+            return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+        }
         return Ok(Some(repo));
     }
 
     Ok(None)
+}
+
+fn safe_bare_repository_explicit() -> bool {
+    if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
+        if let Some(val) = cfg.get("safe.bareRepository") {
+            return val.eq_ignore_ascii_case("explicit");
+        }
+    }
+    false
+}
+
+fn emit_implicit_bare_repository_trace(path: &Path) {
+    let Ok(dest) = env::var("GIT_TRACE2_PERF") else {
+        return;
+    };
+    let line = format!("implicit-bare-repository:{}\n", path.display());
+    match dest.as_str() {
+        "1" | "2" | "true" => {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        }
+        _ => {
+            if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(dest) {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+    }
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

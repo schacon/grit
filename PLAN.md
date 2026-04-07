@@ -40,7 +40,7 @@ commit → check it off → move on.
 - [x] `t0070-fundamental` ████████████████████ 11/11 (0 left) — check that the most basic functions work
 
 - [x] `t0095-bloom` ████████████████████ 11/11 (0 left) — Testing the various Bloom filter computations in bloom.c
-- [ ] `t0035-safe-bare-repository` █░░░░░░░░░░░░░░░░░░░ 1/12 (11 left) — verify safe.bareRepository checks
+- [x] `t0035-safe-bare-repository` ████████████████████ 12/12 (0 left) — verify safe.bareRepository checks
 - [ ] `t0033-safe-directory` █████████░░░░░░░░░░░ 10/22 (12 left) — verify safe.directory checks
 - [ ] `t0019-json-writer` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — test json-writer JSON generation
 - [ ] `t0020-crlf` ██████████░░░░░░░░░░ 19/36 (17 left) — CRLF conversion
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,883/24,806 tests passing, 15,923 failures remaining**
+**8,894/24,806 tests passing, 15,912 failures remaining**
