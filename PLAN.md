@@ -349,7 +349,7 @@ commit → check it off → move on.
 - [ ] `t3203-branch-output` ███████░░░░░░░░░░░░░ 15/41 (26 left) — git branch display tests
 - [ ] `t3415-rebase-autosquash` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — auto squash
 - [ ] `t3321-notes-stripspace` ░░░░░░░░░░░░░░░░░░░░ 1/27 (26 left) — Test commit notes with stripspace behavior
-- [ ] `t3406-rebase-message` █░░░░░░░░░░░░░░░░░░░ 3/32 (29 left) — messages from rebase operation
+- [x] `t3406-rebase-message` — messages from rebase operation (32/32)
 - [ ] `t3309-notes-merge-auto-resolve` █░░░░░░░░░░░░░░░░░░░ 2/31 (29 left) — Test notes merging with auto-resolving strategies
 - [ ] `t3400-rebase` ████░░░░░░░░░░░░░░░░ 9/39 (30 left) — git rebase assorted tests
 

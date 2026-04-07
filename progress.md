@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    87 |
+| Completed   |    88 |
 | In progress |     0 |
-| Remaining   |   680 |
+| Remaining   |   679 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3406-rebase-message` — 32/32 tests pass (rebase stdout messages, `--stat`/`rebase.stat`, `-C`/`--whitespace` early errors, interactive listing + verbose diffstat; merge-base commit collection + fast-forward; Git-style rebase reflog including `GIT_REFLOG_ACTION`; checkout only logs branch switches on `HEAD` reflog)
 - `t11490-commit-fixup-squash` — 33/33 tests pass (`commit` message sources, amend, allow-empty, `-a`, `--author`, `--date`, `-q`; harness CSV refreshed after clean run)
 - `t12590-log-format-tformat` — 33/33 tests pass (`log --format` with `%H`/`%h`/`%s`/`%an`/`%ae`/`%cn`/`%ce`/`%T`/`%t`/`%P`/`%p`/`%n`/`%%`, `format:` vs `tformat:` prefixes, `-n`/`--skip`/`--reverse`; verified clean harness run)
 - `t11290-update-ref-atomic-batch` — 33/33 tests pass (`test_must_fail` in `test-lib-tap.sh` now accepts absolute paths to `git`/`grit`/`scalar`, so `test_must_fail "$GUST_BIN"` and `test_must_fail "$REAL_GIT"` work under the harness)
