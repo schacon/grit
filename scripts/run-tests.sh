@@ -163,6 +163,7 @@ run_one() {
     output=$(
         cd "$TESTS_DIR" &&
             EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
+            GIT_SOURCE_DIR="$REPO/git" \
             "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true

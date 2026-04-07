@@ -2,6 +2,7 @@
 name = "grit-rs"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 license = "MIT"
 description = "A Git implementation in Rust"
 readme = "README.md"

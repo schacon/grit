@@ -73,7 +73,7 @@ t0302-credential-store	t0	skip	65	5	60	false	ok	0
 t0303-credential-external	t0	skip	23	23	0	true	ok	0
 t0410-partial-clone	t0	yes	38	9	29	false	ok	0
 t0411-clone-from-partial	t0	yes	7	2	5	false	ok	0
-t0450-txt-doc-vs-help	t0	yes	515	366	149	false	ok	0
+t0450-txt-doc-vs-help	t0	yes	548	548	0	true	ok	0
 t0500-progress-display	t0	yes	16	0	16	false	ok	0
 t0600-reffiles-backend	t0	yes	33	11	22	false	ok	0
 t0601-reffiles-pack-refs	t0	yes	0	0	0	false	ok	0

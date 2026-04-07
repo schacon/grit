@@ -21,6 +21,10 @@ pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
 
+mod upstream_help_builtin_synopsis {
+    include!(concat!(env!("OUT_DIR"), "/upstream_help_synopsis.rs"));
+}
+
 /// Return the version string, e.g. `"2.47.0.grit"`.
 pub fn version_string() -> String {
     "2.47.0.grit".to_owned()
@@ -2000,11 +2004,61 @@ struct ArgsWrapper<T: Args> {
     inner: T,
 }
 
+/// Split adoc synopsis into usage variants: each variant starts with a `git …` line; following
+/// lines are continuations (AsciiDoc tabs) until the next `git …` line.
+fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
+    let mut variants: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    for line in syn.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("git ") && !current.is_empty() {
+            variants.push(core::mem::take(&mut current));
+        }
+        current.push(trimmed.to_owned());
+    }
+    if !current.is_empty() {
+        variants.push(current);
+    }
+    variants
+}
+
+/// Print `git <cmd> -h` synopsis (from vendored Documentation/*.adoc), then exit 129.
+///
+/// Continuation lines are padded with spaces to width `git <cmd> ` (same as t0450 `align_after_nl`).
+fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
+    let pad = " ".repeat(format!("git {subcmd} ").len());
+    let variants = synopsis_variants_from_adoc(syn);
+    for (i, var) in variants.iter().enumerate() {
+        let Some(first) = var.first() else {
+            continue;
+        };
+        if i == 0 {
+            print!("usage: {first}\n");
+        } else {
+            print!("   or: {first}\n");
+        }
+        for cont in var.iter().skip(1) {
+            print!("{pad}{cont}\n");
+        }
+    }
+    print!("\n");
+    std::process::exit(129);
+}
+
 /// Parse a command's clap Args from the remaining arguments.
 ///
 /// When `-h` is passed, clap prints usage and the process exits with code 129
 /// (Git convention for usage errors) instead of clap's default exit code 0.
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
+    if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
+        if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+            print_upstream_synopsis_and_exit(subcmd, syn);
+        }
+    }
+
     let mut argv = vec![format!("git {subcmd}")];
     argv.extend(rest.iter().cloned());
     match ArgsWrapper::<T>::try_parse_from(&argv) {
@@ -2826,7 +2880,9 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // A lone `git grep -h` is Git's short help (exit 129); do not rewrite to --no-filename.
             if rest.len() == 1 && rest[0] == "-h" {
-                return commands::grep::run(parse_cmd_args(subcmd, &["--help".to_string()]));
+                if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
+                    print_upstream_synopsis_and_exit(subcmd, syn);
+                }
             }
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
