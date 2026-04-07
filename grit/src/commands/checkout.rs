@@ -1899,19 +1899,35 @@ fn checkout_paths(
                         .read(&blob_oid)
                         .with_context(|| format!("reading blob for '{rel}'"))?;
 
-                    // Update index entry
+                    // Update index entry with actual file stat
                     let path_bytes = rel.as_bytes().to_vec();
+                    let abs_file = work_tree.join(&rel);
+                    let (cs, cns, ms, mns, dev, ino, fsz) =
+                        if let Ok(m) = std::fs::symlink_metadata(&abs_file) {
+                            use std::os::unix::fs::MetadataExt as _;
+                            (
+                                m.ctime() as u32,
+                                m.ctime_nsec() as u32,
+                                m.mtime() as u32,
+                                m.mtime_nsec() as u32,
+                                m.dev() as u32,
+                                m.ino() as u32,
+                                m.size() as u32,
+                            )
+                        } else {
+                            (0, 0, 0, 0, 0, 0, obj.data.len() as u32)
+                        };
                     let entry = IndexEntry {
-                        ctime_sec: 0,
-                        ctime_nsec: 0,
-                        mtime_sec: 0,
-                        mtime_nsec: 0,
-                        dev: 0,
-                        ino: 0,
+                        ctime_sec: cs,
+                        ctime_nsec: cns,
+                        mtime_sec: ms,
+                        mtime_nsec: mns,
+                        dev,
+                        ino,
                         mode,
                         uid: 0,
                         gid: 0,
-                        size: obj.data.len() as u32,
+                        size: fsz,
                         oid: blob_oid,
                         flags: path_bytes.len().min(0xFFF) as u16,
                         flags_extended: None,
