@@ -1035,7 +1035,7 @@ fn stage_file(
             uid: meta.uid(),
             gid: meta.gid(),
             size: 0,
-            oid: grit_lib::diff::empty_blob_oid(),
+            oid: ObjectId::zero(),
             flags: rel_path.len().min(0xFFF) as u16,
             flags_extended: None,
             path: rel_path.as_bytes().to_vec(),

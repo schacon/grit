@@ -28,6 +28,15 @@ use crate::error::{Error, Result};
 pub struct ObjectId([u8; 20]);
 
 impl ObjectId {
+    /// The all-zero object id (Git's "null" OID).
+    ///
+    /// Used for index placeholders such as intent-to-add entries and for
+    /// special cases in plumbing output.
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self([0u8; 20])
+    }
+
     /// Construct from a 20-byte slice.
     ///
     /// # Errors

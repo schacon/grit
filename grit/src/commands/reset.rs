@@ -26,7 +26,7 @@ use grit_lib::state::{resolve_head, HeadState};
 
 /// The zero OID for reflog entries when there is no previous value.
 fn zero_oid() -> ObjectId {
-    ObjectId::from_hex("0000000000000000000000000000000000000000").expect("zero oid is valid")
+    ObjectId::zero()
 }
 
 /// The reset mode.
@@ -406,11 +406,7 @@ fn reset_paths(
                 continue;
             }
         } else if intent_to_add {
-            // With -N, keep removed paths as intent-to-add entries.
-            let empty_oid = repo
-                .odb
-                .write(grit_lib::objects::ObjectKind::Blob, b"")
-                .context("writing empty blob for intent-to-add")?;
+            // With -N, keep removed paths as intent-to-add entries (Git index uses null OID).
             let mut ita_entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -422,7 +418,7 @@ fn reset_paths(
                 uid: 0,
                 gid: 0,
                 size: 0,
-                oid: empty_oid,
+                oid: zero_oid(),
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
                 path: path_bytes.clone(),
