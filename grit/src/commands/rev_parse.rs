@@ -591,7 +591,28 @@ pub fn run(args: Args) -> Result<()> {
                     let git_dir_rel = if let Ok(rel) = current.git_dir.strip_prefix(&cwd) {
                         rel.display().to_string()
                     } else {
-                        current.git_dir.display().to_string()
+                        // Compute relative path from cwd to git_dir
+                        let git_abs = current
+                            .git_dir
+                            .canonicalize()
+                            .unwrap_or_else(|_| current.git_dir.clone());
+                        let cwd_abs = cwd.canonicalize().unwrap_or(cwd.clone());
+                        let git_comps: Vec<_> = git_abs.components().collect();
+                        let cwd_comps: Vec<_> = cwd_abs.components().collect();
+                        let common = git_comps
+                            .iter()
+                            .zip(cwd_comps.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        let up = cwd_comps.len() - common;
+                        let mut result = std::path::PathBuf::new();
+                        for _ in 0..up {
+                            result.push("..");
+                        }
+                        for comp in &git_comps[common..] {
+                            result.push(comp.as_os_str());
+                        }
+                        result.display().to_string()
                     };
                     // If the resolved path is under git_dir, use git_dir_rel + path_arg_out
                     let output = if resolved.starts_with(&current.git_dir) {
