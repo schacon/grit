@@ -99,6 +99,12 @@ EOF
 exec "$GUST_BIN" "\$@"
 EOF
 	chmod +x "$BIN_DIRECTORY/grit"
+	# Write a 'test-tool' wrapper for shell tests invoking it directly
+	cat >"$BIN_DIRECTORY/test-tool" <<EOF
+#!/bin/sh
+exec "$TEST_DIRECTORY/test-tool" "\$@"
+EOF
+	chmod +x "$BIN_DIRECTORY/test-tool"
 	# Write a 'scalar' wrapper
 	cat >"$BIN_DIRECTORY/scalar" <<EOF
 #!/bin/sh
@@ -116,8 +122,6 @@ PATH="$TEST_DIRECTORY:$PATH"
 	then
 		"$GUST_BIN" init >/dev/null 2>&1 ||
 			echo "warning: could not git init trash directory" >&2
-		"$GUST_BIN" config user.name "Test User" 2>/dev/null
-		"$GUST_BIN" config user.email "test@example.com" 2>/dev/null
 
 	fi
 }
@@ -125,17 +129,28 @@ PATH="$TEST_DIRECTORY:$PATH"
 setup_trash
 
 # Persist test_tick across subshell boundaries via a state file.
-# Store inside .git/ so the file is never tracked by git.
-_TICK_FILE="$TRASH_DIRECTORY/.git/.test_tick"
+# Store tick file in trash root so it works when .git is a gitfile; keep OID
+# cache alongside other test metadata.
+_TICK_FILE="$TRASH_DIRECTORY/.test_tick"
 TEST_OID_CACHE_FILE="$TRASH_DIRECTORY/.test_oid_cache"
 
 test_tick () {
+	local _tick_file="$_TICK_FILE"
+	if ! test -d "$(dirname "$_tick_file")"
+	then
+		local _gitdir
+		_gitdir="$(git rev-parse --git-dir 2>/dev/null || true)"
+		if test -n "$_gitdir"
+		then
+			_tick_file="${_gitdir%/}/.test_tick"
+		fi
+	fi
 	if test -z "${test_tick+set}"
 	then
 		# Try to load from file (survives subshell boundaries)
-		if test -f "$_TICK_FILE"
+		if test -f "$_tick_file"
 		then
-			test_tick=$(cat "$_TICK_FILE")
+			test_tick=$(cat "$_tick_file")
 			test_tick=$(($test_tick + 60))
 		else
 			test_tick=1112911993
@@ -143,7 +158,7 @@ test_tick () {
 	else
 		test_tick=$(($test_tick + 60))
 	fi
-	echo "$test_tick" >"$_TICK_FILE"
+	echo "$test_tick" >"$_tick_file"
 	GIT_COMMITTER_DATE="$test_tick -0700"
 	GIT_AUTHOR_DATE="$test_tick -0700"
 	export GIT_COMMITTER_DATE GIT_AUTHOR_DATE
@@ -161,6 +176,11 @@ DIFF="${DIFF:-diff}"
 HOME="$TRASH_DIRECTORY"
 XDG_CONFIG_HOME="$TRASH_DIRECTORY/.config"
 export HOME XDG_CONFIG_HOME
+LC_ALL=C
+LANG=C
+export LC_ALL LANG
+EDITOR=:
+export EDITOR
 
 # Prevent tests from discovering enclosing repositories
 GIT_CEILING_DIRECTORIES="$(dirname "$TRASH_DIRECTORY")"
@@ -206,6 +226,47 @@ fi
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
+test_path_is_executable () {
+	if test $# -ne 1
+	then
+		echo "test_path_is_executable: expected 1 argument" >&2
+		return 1
+	fi
+	if ! test -x "$1"
+	then
+		echo "$1 is not executable" >&2
+		return 1
+	fi
+}
+
+test_stdout_line_count () {
+	if test $# -le 3
+	then
+		echo "test_stdout_line_count: expected at least 4 arguments" >&2
+		return 1
+	fi
+	local op="$1" count="$2"
+	shift 2
+	local trashdir
+	trashdir="$(git rev-parse --git-dir 2>/dev/null)/trash" || {
+		echo "test_stdout_line_count: must run inside a repository" >&2
+		return 1
+	}
+	mkdir -p "$trashdir" &&
+	"$@" >"$trashdir/output" &&
+	test_line_count "$op" "$count" "$trashdir/output"
+}
+
+test_match_signal () {
+	if test "$2" = "$((128 + $1))"
+	then
+		return 0
+	elif test "$2" = "$((256 + $1))"
+	then
+		return 0
+	fi
+	return 1
+}
 
 test_grep () {
 	local negate=""
@@ -849,7 +910,7 @@ test_expect_success () {
 		eval "$1"
 	}
 	_twf_cmd=""
-	_test_eval_inner "$commands" 2>&1 || _test_eval_result=$?
+	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
 	local result=$_test_eval_result
 	# Ensure errexit is off at top level
 	set +e
@@ -935,7 +996,7 @@ test_expect_failure () {
 		set -e
 		cd "$TRASH_DIRECTORY" || exit 1
 		test -f "$_exports_file" && . "$_exports_file"
-		eval "$commands"
+		eval "$commands" </dev/null
 	)
 	local result=$?
 	test -f "$_exports_file" && . "$_exports_file"

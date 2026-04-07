@@ -4347,7 +4347,11 @@ fn tree_to_map(entries: Vec<IndexEntry>) -> HashMap<Vec<u8>, IndexEntry> {
 /// Resolve a merge target (branch name or commit-ish).
 fn resolve_merge_target(repo: &Repository, spec: &str) -> Result<ObjectId> {
     use grit_lib::rev_parse::resolve_revision;
-    resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{}: {}", spec, e))
+    if let Some(oid) = grit_lib::rev_parse::resolve_at_minus_to_oid(repo, spec)? {
+        Ok(oid)
+    } else {
+        resolve_revision(repo, spec).map_err(|e| anyhow::anyhow!("{e}"))
+    }
 }
 
 fn read_fetch_head_merge_oids(repo: &Repository) -> Result<Vec<String>> {
@@ -4443,15 +4447,30 @@ fn build_merge_message(
     if let Some(msg) = custom {
         return ensure_trailing_newline(msg);
     }
+    // For @{-N} (and @{-N}<suffix>) specs, use the resolved previous branch
+    // name in the default merge message, matching git's behavior.
+    let display_branch = if branch_name.starts_with("@{-") {
+        if let Some(close) = branch_name.find('}') {
+            let token = &branch_name[..=close];
+            match grit_lib::rev_parse::expand_at_minus_to_branch_name(repo, token) {
+                Ok(Some(name)) => name,
+                _ => branch_name.to_string(),
+            }
+        } else {
+            branch_name.to_string()
+        }
+    } else {
+        branch_name.to_string()
+    };
     // Determine if the merge target is a tag, branch, or commit
-    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{branch_name}")).is_ok() {
+    let kind = if resolve_ref(&repo.git_dir, &format!("refs/tags/{display_branch}")).is_ok() {
         "tag"
-    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{branch_name}")).is_ok() {
+    } else if resolve_ref(&repo.git_dir, &format!("refs/remotes/{display_branch}")).is_ok() {
         "remote-tracking branch"
     } else {
         "branch"
     };
-    let base_msg = format!("Merge {kind} '{branch_name}'");
+    let base_msg = format!("Merge {kind} '{display_branch}'");
     // Append "into <branch>" if not merging into main/master
     let msg = if let Some(name) = head.branch_name() {
         if name != "main" && name != "master" {

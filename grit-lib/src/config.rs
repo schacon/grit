@@ -1381,11 +1381,13 @@ impl ConfigSet {
         process_includes: bool,
         depth: usize,
     ) -> Result<()> {
+        // Mirror Git behavior and stop runaway include recursion.
+        // t0017 expects the diagnostic to contain this exact phrase.
         const MAX_INCLUDE_DEPTH: usize = 10;
         if depth > MAX_INCLUDE_DEPTH {
-            return Err(Error::ConfigError(format!(
-                "exceeded maximum include depth ({MAX_INCLUDE_DEPTH})"
-            )));
+            return Err(Error::ConfigError(
+                "exceeded maximum include depth".to_owned(),
+            ));
         }
         // First pass: find include paths
         let mut includes: Vec<(String, Option<String>)> = Vec::new();

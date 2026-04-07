@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod commands;
@@ -70,7 +71,12 @@ fn main() {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
             } else {
-                eprintln!("error: {e:#}");
+                let rendered = format!("{e:#}");
+                if rendered.starts_with("git: '") {
+                    eprintln!("{rendered}");
+                } else {
+                    eprintln!("error: {rendered}");
+                }
                 exit_code = 1;
             }
         }
@@ -955,6 +961,761 @@ fn run_test_tool_env_helper(rest: &[String]) -> Result<()> {
         ),
     }
 }
+fn test_tool_usage() -> Result<()> {
+    bail!("test-tool: unknown or invalid subcommand usage")
+}
+
+fn preprocess_test_tool_args(rest: &[String]) -> Result<Vec<String>> {
+    let mut i = 0usize;
+    let mut change_dir: Option<std::path::PathBuf> = None;
+
+    while i < rest.len() {
+        if rest[i] == "-C" {
+            i += 1;
+            let Some(dir) = rest.get(i) else {
+                bail!("test-tool: option '-C' requires a directory");
+            };
+            let next = std::path::PathBuf::from(dir);
+            change_dir = Some(match change_dir.take() {
+                Some(prev) => prev.join(next),
+                None => next,
+            });
+            i += 1;
+            continue;
+        }
+        break;
+    }
+
+    if let Some(dir) = change_dir {
+        if let Err(e) = std::env::set_current_dir(dir) {
+            let subcmd = rest.get(i).map(String::as_str);
+            let allow_for_env_helper = std::env::var("GIT_TEST_ENV_HELPER").as_deref() == Ok("true")
+                && subcmd == Some("env-helper");
+            if !allow_for_env_helper {
+                return Err(e.into());
+            }
+        }
+    }
+
+    Ok(rest[i..].to_vec())
+}
+fn run_test_tool_sigchain(rest: &[String]) -> Result<()> {
+    let mut signo: i32 = 15;
+    if rest.get(1).map(String::as_str) == Some("--raise") {
+        let Some(v) = rest.get(2) else {
+            bail!("usage: test-tool sigchain [--raise <signal>]");
+        };
+        signo = v
+            .parse::<i32>()
+            .map_err(|_| anyhow::anyhow!("invalid signal '{}'", v))?;
+        eprintln!("pid={} signo={}", std::process::id(), signo);
+    } else {
+        println!("three");
+        println!("two");
+        println!("one");
+    }
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+
+    // Portable enough for our Linux test environment.
+    let pid = std::process::id().to_string();
+    let _ = std::process::Command::new("kill")
+        .arg(format!("-{signo}"))
+        .arg(&pid)
+        .status();
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::process::exit(128 + signo);
+}
+#[derive(Debug, Clone)]
+enum JsonWriterValue {
+    Object(Vec<(String, JsonWriterValue)>),
+    Array(Vec<JsonWriterValue>),
+    String(String),
+    Integer(i64),
+    Double(String),
+    Boolean(bool),
+    Null,
+}
+
+#[derive(Debug)]
+enum JsonWriterContainer {
+    Object {
+        key_in_parent: Option<String>,
+        entries: Vec<(String, JsonWriterValue)>,
+    },
+    Array {
+        key_in_parent: Option<String>,
+        entries: Vec<JsonWriterValue>,
+    },
+}
+
+fn json_escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn render_json_value(v: &JsonWriterValue, pretty: bool, indent: usize) -> String {
+    match v {
+        JsonWriterValue::Object(entries) => {
+            if entries.is_empty() {
+                return "{}".to_string();
+            }
+            if !pretty {
+                let inner = entries
+                    .iter()
+                    .map(|(k, v)| {
+                        format!(
+                            "\"{}\":{}",
+                            json_escape_string(k),
+                            render_json_value(v, false, indent)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{{{inner}}}")
+            } else {
+                let indent_str = "  ".repeat(indent);
+                let child_indent_str = "  ".repeat(indent + 1);
+                let mut out = String::from("{\n");
+                for (idx, (k, v)) in entries.iter().enumerate() {
+                    out.push_str(&child_indent_str);
+                    out.push('"');
+                    out.push_str(&json_escape_string(k));
+                    out.push_str("\": ");
+                    out.push_str(&render_json_value(v, true, indent + 1));
+                    if idx + 1 != entries.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&indent_str);
+                out.push('}');
+                out
+            }
+        }
+        JsonWriterValue::Array(entries) => {
+            if entries.is_empty() {
+                return "[]".to_string();
+            }
+            if !pretty {
+                let inner = entries
+                    .iter()
+                    .map(|v| render_json_value(v, false, indent))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("[{inner}]")
+            } else {
+                let indent_str = "  ".repeat(indent);
+                let child_indent_str = "  ".repeat(indent + 1);
+                let mut out = String::from("[\n");
+                for (idx, v) in entries.iter().enumerate() {
+                    out.push_str(&child_indent_str);
+                    out.push_str(&render_json_value(v, true, indent + 1));
+                    if idx + 1 != entries.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                out.push_str(&indent_str);
+                out.push(']');
+                out
+            }
+        }
+        JsonWriterValue::String(s) => format!("\"{}\"", json_escape_string(s)),
+        JsonWriterValue::Integer(i) => i.to_string(),
+        JsonWriterValue::Double(d) => d.clone(),
+        JsonWriterValue::Boolean(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        JsonWriterValue::Null => "null".to_string(),
+    }
+}
+
+fn attach_json_value(
+    stack: &mut [JsonWriterContainer],
+    root: &mut Option<JsonWriterValue>,
+    key_in_parent: Option<String>,
+    value: JsonWriterValue,
+) -> Result<()> {
+    if let Some(parent) = stack.last_mut() {
+        match parent {
+            JsonWriterContainer::Object { entries, .. } => {
+                let Some(key) = key_in_parent else {
+                    bail!("json-writer: missing object key while attaching value");
+                };
+                entries.push((key, value));
+            }
+            JsonWriterContainer::Array { entries, .. } => {
+                entries.push(value);
+            }
+        }
+    } else {
+        *root = Some(value);
+    }
+    Ok(())
+}
+
+fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
+    let mut pretty = false;
+    if let Some(flag) = rest.get(1) {
+        match flag.as_str() {
+            "-u" | "--unit" => return Ok(()),
+            "-p" | "--pretty" => pretty = true,
+            _ => {}
+        }
+    }
+
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+
+    let mut stack: Vec<JsonWriterContainer> = Vec::new();
+    let mut root: Option<JsonWriterValue> = None;
+    let mut saw_root = false;
+
+    for raw_line in input.lines() {
+        let line = raw_line.trim().trim_end_matches(|c| c == ' ' || c == '\t');
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let verb = parts[0];
+
+        if !saw_root {
+            match verb {
+                "object" => {
+                    stack.push(JsonWriterContainer::Object {
+                        key_in_parent: None,
+                        entries: Vec::new(),
+                    });
+                    saw_root = true;
+                    continue;
+                }
+                "array" => {
+                    stack.push(JsonWriterContainer::Array {
+                        key_in_parent: None,
+                        entries: Vec::new(),
+                    });
+                    saw_root = true;
+                    continue;
+                }
+                _ => bail!("json-writer: first line must be 'object' or 'array'"),
+            }
+        }
+
+        match verb {
+            "end" => {
+                let container = stack
+                    .pop()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: unexpected 'end'"))?;
+                match container {
+                    JsonWriterContainer::Object {
+                        key_in_parent,
+                        entries,
+                    } => {
+                        let value = JsonWriterValue::Object(entries);
+                        attach_json_value(&mut stack, &mut root, key_in_parent, value)?;
+                    }
+                    JsonWriterContainer::Array {
+                        key_in_parent,
+                        entries,
+                    } => {
+                        let value = JsonWriterValue::Array(entries);
+                        attach_json_value(&mut stack, &mut root, key_in_parent, value)?;
+                    }
+                }
+            }
+
+            "object-string" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires key"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires value"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::String((*value).to_string())));
+                    }
+                    _ => bail!("json-writer: object-string used outside object"),
+                }
+            }
+            "object-int" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires key"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires value"))?;
+                let parsed = value
+                    .parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::Integer(parsed)));
+                    }
+                    _ => bail!("json-writer: object-int used outside object"),
+                }
+            }
+            "object-double" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires key"))?;
+                let precision = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires precision"))?;
+                let value = parts.get(3).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires value"))?;
+                let p = precision
+                    .parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
+                let v = value
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
+                let rendered = format!("{v:.p$}");
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), JsonWriterValue::Double(rendered)));
+                    }
+                    _ => bail!("json-writer: object-double used outside object"),
+                }
+            }
+            "object-true" | "object-false" | "object-null" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object literal requires key"))?;
+                let val = match verb {
+                    "object-true" => JsonWriterValue::Boolean(true),
+                    "object-false" => JsonWriterValue::Boolean(false),
+                    _ => JsonWriterValue::Null,
+                };
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Object { entries, .. } => {
+                        entries.push(((*key).to_string(), val));
+                    }
+                    _ => bail!("json-writer: object literal used outside object"),
+                }
+            }
+            "object-object" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-object requires key"))?;
+                stack.push(JsonWriterContainer::Object {
+                    key_in_parent: Some((*key).to_string()),
+                    entries: Vec::new(),
+                });
+            }
+            "object-array" => {
+                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-array requires key"))?;
+                stack.push(JsonWriterContainer::Array {
+                    key_in_parent: Some((*key).to_string()),
+                    entries: Vec::new(),
+                });
+            }
+
+            "array-string" => {
+                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-string requires value"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::String((*value).to_string()));
+                    }
+                    _ => bail!("json-writer: array-string used outside array"),
+                }
+            }
+            "array-int" => {
+                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-int requires value"))?;
+                let parsed = value
+                    .parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::Integer(parsed));
+                    }
+                    _ => bail!("json-writer: array-int used outside array"),
+                }
+            }
+            "array-double" => {
+                let precision = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires precision"))?;
+                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires value"))?;
+                let p = precision
+                    .parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
+                let v = value
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
+                let rendered = format!("{v:.p$}");
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(JsonWriterValue::Double(rendered));
+                    }
+                    _ => bail!("json-writer: array-double used outside array"),
+                }
+            }
+            "array-true" | "array-false" | "array-null" => {
+                let val = match verb {
+                    "array-true" => JsonWriterValue::Boolean(true),
+                    "array-false" => JsonWriterValue::Boolean(false),
+                    _ => JsonWriterValue::Null,
+                };
+                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                match parent {
+                    JsonWriterContainer::Array { entries, .. } => {
+                        entries.push(val);
+                    }
+                    _ => bail!("json-writer: array literal used outside array"),
+                }
+            }
+            "array-object" => {
+                stack.push(JsonWriterContainer::Object {
+                    key_in_parent: None,
+                    entries: Vec::new(),
+                });
+            }
+            "array-array" => {
+                stack.push(JsonWriterContainer::Array {
+                    key_in_parent: None,
+                    entries: Vec::new(),
+                });
+            }
+            _ => bail!("json-writer: unrecognized token '{verb}'"),
+        }
+    }
+
+    if !stack.is_empty() {
+        bail!("json-writer: json not terminated");
+    }
+    let root = root.ok_or_else(|| anyhow::anyhow!("json-writer: empty input"))?;
+    let rendered = render_json_value(&root, pretty, 0);
+    println!("{rendered}");
+    Ok(())
+}
+fn run_test_tool_mktemp(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!("usage: test-tool mktemp <template>");
+    }
+
+    let status = std::process::Command::new("mktemp")
+        .args(&rest[1..])
+        .status()?;
+    exit_with_status(status);
+}
+
+fn run_test_tool_regex(rest: &[String]) -> Result<()> {
+    if rest.get(1).map(String::as_str) == Some("--bug") {
+        return Ok(());
+    }
+    bail!("usage: test-tool regex --bug")
+}
+#[derive(Debug, Clone, Copy)]
+struct BloomSettings {
+    hash_version: u32,
+    num_hashes: usize,
+    bits_per_entry: usize,
+    max_changed_paths: usize,
+}
+
+const TEST_BLOOM_SETTINGS: BloomSettings = BloomSettings {
+    // Matches git's DEFAULT_BLOOM_FILTER_SETTINGS used by test-tool bloom.
+    hash_version: 1,
+    num_hashes: 7,
+    bits_per_entry: 10,
+    max_changed_paths: 512,
+};
+
+fn bloom_rotate_left(value: u32, count: u32) -> u32 {
+    value.rotate_left(count)
+}
+
+fn bloom_signed_char_u32(b: u8) -> u32 {
+    ((b as i8) as i32) as u32
+}
+
+fn bloom_murmur3_seeded_v2(mut seed: u32, data: &[u8]) -> u32 {
+    let c1: u32 = 0xcc9e2d51;
+    let c2: u32 = 0x1b873593;
+    let r1: u32 = 15;
+    let r2: u32 = 13;
+    let m: u32 = 5;
+    let n: u32 = 0xe6546b64;
+
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let mut k = (data[i] as u32)
+            | ((data[i + 1] as u32) << 8)
+            | ((data[i + 2] as u32) << 16)
+            | ((data[i + 3] as u32) << 24);
+        k = k.wrapping_mul(c1);
+        k = bloom_rotate_left(k, r1);
+        k = k.wrapping_mul(c2);
+
+        seed ^= k;
+        seed = bloom_rotate_left(seed, r2).wrapping_mul(m).wrapping_add(n);
+        i += 4;
+    }
+
+    let tail = &data[i..];
+    let mut k1: u32 = 0;
+    match tail.len() {
+        3 => {
+            k1 ^= (tail[2] as u32) << 16;
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+        }
+        2 => {
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+        }
+        1 => {
+            k1 ^= tail[0] as u32;
+        }
+        _ => {}
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(c1);
+        k1 = bloom_rotate_left(k1, r1);
+        k1 = k1.wrapping_mul(c2);
+        seed ^= k1;
+    }
+
+    seed ^= data.len() as u32;
+    seed ^= seed >> 16;
+    seed = seed.wrapping_mul(0x85ebca6b);
+    seed ^= seed >> 13;
+    seed = seed.wrapping_mul(0xc2b2ae35);
+    seed ^= seed >> 16;
+    seed
+}
+
+fn bloom_murmur3_seeded_v1(mut seed: u32, data: &[u8]) -> u32 {
+    let c1: u32 = 0xcc9e2d51;
+    let c2: u32 = 0x1b873593;
+    let r1: u32 = 15;
+    let r2: u32 = 13;
+    let m: u32 = 5;
+    let n: u32 = 0xe6546b64;
+
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let mut k = bloom_signed_char_u32(data[i])
+            | (bloom_signed_char_u32(data[i + 1]) << 8)
+            | (bloom_signed_char_u32(data[i + 2]) << 16)
+            | (bloom_signed_char_u32(data[i + 3]) << 24);
+        k = k.wrapping_mul(c1);
+        k = bloom_rotate_left(k, r1);
+        k = k.wrapping_mul(c2);
+
+        seed ^= k;
+        seed = bloom_rotate_left(seed, r2).wrapping_mul(m).wrapping_add(n);
+        i += 4;
+    }
+
+    let tail = &data[i..];
+    let mut k1: u32 = 0;
+    match tail.len() {
+        3 => {
+            k1 ^= bloom_signed_char_u32(tail[2]) << 16;
+            k1 ^= bloom_signed_char_u32(tail[1]) << 8;
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        2 => {
+            k1 ^= bloom_signed_char_u32(tail[1]) << 8;
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        1 => {
+            k1 ^= bloom_signed_char_u32(tail[0]);
+        }
+        _ => {}
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(c1);
+        k1 = bloom_rotate_left(k1, r1);
+        k1 = k1.wrapping_mul(c2);
+        seed ^= k1;
+    }
+
+    seed ^= data.len() as u32;
+    seed ^= seed >> 16;
+    seed = seed.wrapping_mul(0x85ebca6b);
+    seed ^= seed >> 13;
+    seed = seed.wrapping_mul(0xc2b2ae35);
+    seed ^= seed >> 16;
+    seed
+}
+
+fn bloom_murmur3_seeded(seed: u32, data: &[u8], version: u32) -> u32 {
+    match version {
+        2 => bloom_murmur3_seeded_v2(seed, data),
+        _ => bloom_murmur3_seeded_v1(seed, data),
+    }
+}
+
+fn bloom_key_hashes(data: &[u8], settings: BloomSettings) -> Vec<u32> {
+    let seed0 = 0x293ae76f;
+    let seed1 = 0x7e646e2c;
+    let hash0 = bloom_murmur3_seeded(seed0, data, settings.hash_version);
+    let hash1 = bloom_murmur3_seeded(seed1, data, settings.hash_version);
+
+    let mut out = Vec::with_capacity(settings.num_hashes);
+    for i in 0..settings.num_hashes {
+        out.push(hash0.wrapping_add((i as u32).wrapping_mul(hash1)));
+    }
+    out
+}
+
+fn bloom_add_hashes_to_filter(hashes: &[u32], filter: &mut [u8]) {
+    let mod_bits = (filter.len() * 8) as u64;
+    if mod_bits == 0 {
+        return;
+    }
+    for hash in hashes {
+        let hash_mod = (*hash as u64) % mod_bits;
+        let block_pos = (hash_mod / 8) as usize;
+        let bitmask = 1u8 << (hash_mod & 7);
+        filter[block_pos] |= bitmask;
+    }
+}
+
+fn bloom_print_filter(filter: &[u8]) {
+    println!("Filter_Length:{}", filter.len());
+    print!("Filter_Data:");
+    for b in filter {
+        print!("{b:02x}|");
+    }
+    println!();
+}
+
+fn bloom_collect_paths_with_prefixes(path: &str, out: &mut std::collections::BTreeSet<String>) {
+    if path.is_empty() {
+        return;
+    }
+    let mut cur = path.to_string();
+    loop {
+        out.insert(cur.clone());
+        let Some(pos) = cur.rfind('/') else {
+            break;
+        };
+        cur.truncate(pos);
+        if cur.is_empty() {
+            break;
+        }
+    }
+}
+
+fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!(
+            "usage: test-tool bloom [get_murmur3|get_murmur3_seven_highbit|generate_filter|get_filter_for_commit]"
+        );
+    }
+
+    match rest[1].as_str() {
+        "get_murmur3" => {
+            let Some(s) = rest.get(2) else {
+                bail!("usage: test-tool bloom get_murmur3 <string>");
+            };
+            let hashed = bloom_murmur3_seeded(0, s.as_bytes(), 2);
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        "get_murmur3_seven_highbit" => {
+            let bytes = [0x99u8, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+            let hashed = bloom_murmur3_seeded(0, &bytes, 2);
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        "generate_filter" => {
+            if rest.len() < 3 {
+                bail!("usage: test-tool bloom generate_filter <string> [<string>...]");
+            }
+            let len = (TEST_BLOOM_SETTINGS.bits_per_entry + 7) / 8;
+            let mut filter = vec![0u8; len];
+            for item in rest.iter().skip(2) {
+                let hashes = bloom_key_hashes(item.as_bytes(), TEST_BLOOM_SETTINGS);
+                print!("Hashes:");
+                for h in &hashes {
+                    print!("0x{h:08x}|");
+                }
+                println!();
+                bloom_add_hashes_to_filter(&hashes, &mut filter);
+            }
+            bloom_print_filter(&filter);
+            Ok(())
+        }
+        "get_filter_for_commit" => {
+            let Some(commit_hex) = rest.get(2) else {
+                bail!("usage: test-tool bloom get_filter_for_commit <commit-hex>");
+            };
+            let commit_oid = commit_hex
+                .parse::<grit_lib::objects::ObjectId>()
+                .map_err(|_| anyhow::anyhow!("cannot parse oid '{commit_hex}'"))?;
+            let repo = grit_lib::repo::Repository::discover(None)?;
+            let commit_obj = repo.odb.read(&commit_oid)?;
+            if commit_obj.kind != grit_lib::objects::ObjectKind::Commit {
+                bail!("object '{commit_hex}' is not a commit");
+            }
+            let commit = grit_lib::objects::parse_commit(&commit_obj.data)?;
+
+            let parent_tree = if let Some(parent_oid) = commit.parents.first() {
+                let parent_obj = repo.odb.read(parent_oid)?;
+                if parent_obj.kind != grit_lib::objects::ObjectKind::Commit {
+                    None
+                } else {
+                    let parent_commit = grit_lib::objects::parse_commit(&parent_obj.data)?;
+                    Some(parent_commit.tree)
+                }
+            } else {
+                None
+            };
+
+            let diffs = grit_lib::diff::diff_trees(
+                &repo.odb,
+                parent_tree.as_ref(),
+                Some(&commit.tree),
+                "",
+            )?;
+
+            let mut changed_paths: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            for d in diffs {
+                if let Some(path) = d.new_path.or(d.old_path) {
+                    bloom_collect_paths_with_prefixes(&path, &mut changed_paths);
+                }
+            }
+
+            let mut filter = if changed_paths.len() > TEST_BLOOM_SETTINGS.max_changed_paths {
+                vec![0xff]
+            } else {
+                let bit_count = changed_paths.len() * TEST_BLOOM_SETTINGS.bits_per_entry;
+                let mut len = (bit_count + 7) / 8;
+                if len == 0 {
+                    len = 1;
+                }
+                let mut data = vec![0u8; len];
+                for path in &changed_paths {
+                    let hashes = bloom_key_hashes(path.as_bytes(), TEST_BLOOM_SETTINGS);
+                    bloom_add_hashes_to_filter(&hashes, &mut data);
+                }
+                data
+            };
+
+            bloom_print_filter(&filter);
+            filter.clear();
+            Ok(())
+        }
+        _ => bail!(
+            "usage: test-tool bloom [get_murmur3|get_murmur3_seven_highbit|generate_filter|get_filter_for_commit]"
+        ),
+    }
+}
+
 
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
@@ -2207,6 +2968,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
+            let tt_args = preprocess_test_tool_args(rest)?;
+            let rest = tt_args.as_slice();
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
                 "wildmatch" => {
@@ -2263,7 +3026,12 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "ref-store" => run_test_tool_ref_store(rest),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
-                other => bail!("test-tool: unknown subcommand '{other}'"),
+                "sigchain" => run_test_tool_sigchain(rest),
+                "json-writer" => run_test_tool_json_writer(rest),
+                "bloom" => run_test_tool_bloom(rest),
+                "mktemp" => run_test_tool_mktemp(rest),
+                "regex" => run_test_tool_regex(rest),
+                _other => test_tool_usage(),
             }
         }
         "__list_cmds" => {
@@ -2317,7 +3085,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 /// Normalize a path (resolve . and ..) without requiring filesystem existence.
 /// Returns "++failed++" if path goes above root for relative paths.
 fn normalize_path_simple(path: &str) -> String {
-    use std::path::{Component, PathBuf};
+    use std::path::Component;
     let is_abs = path.starts_with('/');
     // Track trailing slash: if input ends with '/', '/.', '/..', or similar
     // that resolves to a directory reference
@@ -2458,7 +3226,6 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 norm_path[..new_len].trim_end_matches('/').to_string()
             } else {
                 std::process::exit(1);
-                unreachable!()
             };
             println!("{stripped}");
             Ok(())
