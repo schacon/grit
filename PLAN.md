@@ -193,7 +193,7 @@ commit → check it off → move on.
 
 - [x] `t2103-update-index-ignore-missing` ████████████████████ 5/5 (0 left) — update-index with options
 - [x] `t2000-conflict-when-checking-files-out` ████████████████████ 14/14 (0 left) — git conflicts when checking files out test.
-- [ ] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
+- [x] `t2011-checkout-invalid-head` ████████████████████ 10/10 (0 left) — checkout switching away from an invalid branch
 - [x] `t2107-update-index-basic` ████████████████████ 10/10 (0 left) — basic update-index tests
 
 - [ ] `t2021-checkout-overwrite` ████████░░░░░░░░░░░░ 4/9 (5 left) — checkout must not overwrite an untracked objects
