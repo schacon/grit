@@ -6,9 +6,10 @@
 //! out in another worktree (a check that older system `git` versions omit
 //! for `-C`/`-c`).
 
-use crate::commands::git_passthrough;
 use anyhow::Result;
 use clap::Args as ClapArgs;
+use std::ffi::OsString;
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit switch`.
 #[derive(Debug, ClapArgs)]
@@ -27,7 +28,36 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("fatal: {msg}");
         std::process::exit(128);
     }
-    git_passthrough::run("switch", &args.args)
+
+    run_switch_passthrough(&args.args)
+}
+
+fn run_switch_passthrough(args: &[String]) -> Result<()> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
+    let child = Command::new(&git_bin)
+        .arg("switch")
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let output = child.wait_with_output()?;
+
+    let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if stderr.contains("git checkout --track origin/<name>") {
+        stderr = stderr.replace(
+            "git checkout --track origin/<name>",
+            "git switch --track origin/<name>",
+        );
+    }
+    eprint!("{stderr}");
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    std::process::exit(output.status.code().unwrap_or(1));
 }
 
 /// Parse the raw switch arguments to extract the target branch name and check
