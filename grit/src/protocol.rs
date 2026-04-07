@@ -19,12 +19,16 @@ use std::path::Path;
 /// 3. `protocol.allow` config key: blanket default.
 /// 4. Built-in defaults: file/ssh/ext → "user", everything else → "user".
 ///
-/// For simplicity we treat "user" as "always" (we are always in a user context,
-/// never in a remote-triggered server context).
+/// `protocol.*.allow=user` is allowed only when `GIT_PROTOCOL_FROM_USER` is unset
+/// or truthy (Git defaults the env var to true when unset).
 pub fn check_protocol_allowed(protocol: &str, git_dir: Option<&Path>) -> Result<()> {
     // 1. GIT_ALLOW_PROTOCOL overrides everything
     if let Ok(val) = std::env::var("GIT_ALLOW_PROTOCOL") {
-        let allowed: Vec<&str> = val.split(':').collect();
+        let allowed: Vec<&str> = val
+            .split([':', ','])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
         if allowed.contains(&protocol) {
             return Ok(());
         }
@@ -54,12 +58,32 @@ fn check_allow_value(protocol: &str, value: &str) -> Result<()> {
     match value.to_lowercase().as_str() {
         "always" => Ok(()),
         "never" => bail!("protocol '{}' is not allowed", protocol),
-        "user" => Ok(()), // We are always in user context
+        "user" => {
+            if protocol_from_user() {
+                Ok(())
+            } else {
+                bail!("protocol '{}' is not allowed", protocol)
+            }
+        }
         other => bail!(
             "unknown protocol.allow value '{}' for protocol '{}'",
             other,
             protocol
         ),
+    }
+}
+
+fn protocol_from_user() -> bool {
+    match std::env::var("GIT_PROTOCOL_FROM_USER") {
+        Err(_) => true,
+        Ok(v) => {
+            let s = v.trim();
+            if s.is_empty() {
+                true
+            } else {
+                matches!(s.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+            }
+        }
     }
 }
 

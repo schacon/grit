@@ -670,7 +670,7 @@ commit → check it off → move on.
 - [ ] `t5616-partial-clone` ███░░░░░░░░░░░░░░░░░ 9/47 (38 left) — git partial clone
 - [ ] `t5324-split-commit-graph` █░░░░░░░░░░░░░░░░░░░ 3/42 (39 left) — split commit graph
 - [ ] `t5603-clone-dirname` ░░░░░░░░░░░░░░░░░░░░ 1/47 (46 left) — check output directory names used by git-clone
-- [ ] `t5813-proto-disable-ssh` ███████░░░░░░░░░░░░░ 30/81 (51 left) — test disabling of git-over-ssh in clone/fetch
+- [x] `t5813-proto-disable-ssh` — test disabling of git-over-ssh in clone/fetch (81/81)
 - [ ] `t5300-pack-object` ███░░░░░░░░░░░░░░░░░ 12/63 (51 left) — git pack-object
 - [ ] `t5526-fetch-submodules` █░░░░░░░░░░░░░░░░░░░ 5/56 (51 left) — Recursive 
 - [ ] `t5000-tar-tree` ████████░░░░░░░░░░░░ 36/90 (54 left) — git archive and git get-tar-commit-id test

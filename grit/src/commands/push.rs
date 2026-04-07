@@ -235,13 +235,23 @@ fn push_to_url(
     push_all: bool,
     push_refspecs_from_config: &[String],
 ) -> Result<()> {
-    // Check protocol.file.allow before local push
-    crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
-
-    let remote_path = if let Some(stripped) = url.strip_prefix("file://") {
-        PathBuf::from(stripped)
+    let remote_path = if crate::ssh_transport::is_configured_ssh_url(url) {
+        crate::protocol::check_protocol_allowed("ssh", Some(&repo.git_dir))?;
+        let spec = crate::ssh_transport::parse_ssh_url(url)?;
+        let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
+            bail!(
+                "ssh: could not resolve remote URL '{}' to a local repository",
+                url
+            );
+        };
+        gd
     } else {
-        PathBuf::from(url)
+        crate::protocol::check_protocol_allowed("file", Some(&repo.git_dir))?;
+        if let Some(stripped) = url.strip_prefix("file://") {
+            PathBuf::from(stripped)
+        } else {
+            PathBuf::from(url)
+        }
     };
 
     // Open remote repo

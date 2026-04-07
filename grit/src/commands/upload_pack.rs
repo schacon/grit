@@ -1,17 +1,20 @@
 //! `grit upload-pack` — send objects for fetch (server side).
 //!
-//! Invoked on the remote side of a fetch.  Advertises refs, then responds
-//! to want/have negotiation and sends requested objects.
-//! Only local transport is supported.
+//! Invoked on the remote side of a fetch. Advertises refs in pkt-line format,
+//! negotiates want/have, then streams a packfile (side-band-64k) to the client.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
-use std::io::{self, BufRead, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::grit_exe::grit_executable;
+use crate::pkt_line;
 
 /// Arguments for `grit upload-pack`.
 #[derive(Debug, ClapArgs)]
@@ -38,73 +41,133 @@ pub fn run(args: Args) -> Result<()> {
         return advertise_refs_with_caps(&repo);
     }
 
-    // Phase 1: Advertise refs
-    advertise_refs(&repo.git_dir)?;
+    let mut out = io::stdout();
+    write_ref_advertisement(&mut out, &repo.git_dir)?;
+    pkt_line::write_flush(&mut out)?;
+    out.flush()?;
 
-    // Flush packet
-    println!("0000");
-
-    // Phase 2: Read want/have lines from stdin
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
+    let mut stdin = io::stdin();
     let mut wants: HashSet<ObjectId> = HashSet::new();
     let mut haves: HashSet<ObjectId> = HashSet::new();
+    let mut seen_done = false;
 
-    while let Some(Ok(line)) = lines.next() {
-        let line = line.trim().to_string();
-        if line.is_empty() || line == "0000" || line == "done" {
-            break;
-        }
-        if let Some(rest) = line.strip_prefix("want ") {
-            let hex = rest.split_whitespace().next().unwrap_or(rest);
-            if let Ok(oid) = ObjectId::from_hex(hex) {
-                wants.insert(oid);
+    loop {
+        match pkt_line::read_packet(&mut stdin)? {
+            None => break,
+            Some(pkt_line::Packet::Flush) => break,
+            Some(pkt_line::Packet::Data(line)) => {
+                if line == "done" {
+                    seen_done = true;
+                    break;
+                }
+                if let Some(rest) = line.strip_prefix("want ") {
+                    let hex = rest.split_whitespace().next().unwrap_or(rest);
+                    if let Ok(oid) = ObjectId::from_hex(hex) {
+                        wants.insert(oid);
+                    }
+                } else if let Some(rest) = line.strip_prefix("have ") {
+                    let hex = rest.trim();
+                    if let Ok(oid) = ObjectId::from_hex(hex) {
+                        haves.insert(oid);
+                    }
+                }
             }
-        } else if let Some(rest) = line.strip_prefix("have ") {
-            let hex = rest.trim();
-            if let Ok(oid) = ObjectId::from_hex(hex) {
-                haves.insert(oid);
+            _ => {}
+        }
+    }
+
+    if !seen_done {
+        while let Some(pkt) = pkt_line::read_packet(&mut stdin)? {
+            if let pkt_line::Packet::Data(line) = pkt {
+                if line == "done" {
+                    break;
+                }
             }
         }
     }
 
     if wants.is_empty() {
-        // Nothing requested
         return Ok(());
     }
 
-    // Phase 3: Send ACK for common objects
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
     for have in &haves {
-        // Check if we have the object
         if repo.odb.read(have).is_ok() {
-            writeln!(out, "ACK {}", have.to_hex())?;
+            pkt_line::write_line(&mut out, &format!("ACK {}", have.to_hex()))?;
         }
     }
-    writeln!(out, "NAK")?;
+    pkt_line::write_line(&mut out, "NAK")?;
+    out.flush()?;
 
-    // Phase 4: Send pack data containing wanted objects
-    // For local transport, objects can be read directly.
-    // We write loose objects for each wanted OID to stdout as a simple
-    // object listing (real git would send a packfile here).
-    // For now, list the objects that should be sent.
-    for want in &wants {
-        if repo.odb.read(want).is_ok() {
-            writeln!(out, "{}", want.to_hex())?;
+    let grit = grit_executable();
+    let mut child = Command::new(&grit)
+        .arg("pack-objects")
+        .arg("--stdout")
+        .current_dir(&repo.git_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to spawn '{} pack-objects'", grit.display()))?;
+
+    {
+        let mut pin = child.stdin.take().context("pack-objects stdin")?;
+        for w in &wants {
+            writeln!(pin, "{}", w.to_hex())?;
         }
+        pin.flush()?;
     }
 
+    let mut pack_out = child.stdout.take().context("pack-objects stdout")?;
+    let stderr_child = child.stderr.take();
+    let stderr_handle = std::thread::spawn(move || {
+        if let Some(mut e) = stderr_child {
+            let mut buf = Vec::new();
+            let _ = e.read_to_end(&mut buf);
+            buf
+        } else {
+            Vec::new()
+        }
+    });
+
+    const CHUNK: usize = 32000;
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        let n = pack_out.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        write_sideband_64k(&mut out, &buf[..n])?;
+    }
+
+    let status = child.wait()?;
+    let err_bytes = stderr_handle.join().unwrap_or_default();
+    if !err_bytes.is_empty() {
+        let _ = io::stderr().write_all(&err_bytes);
+    }
+    if !status.success() {
+        bail!(
+            "pack-objects failed with exit code {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+
+    pkt_line::write_flush(&mut out)?;
     out.flush()?;
     Ok(())
 }
 
-/// Advertise refs with capabilities in pkt-line format (for --advertise-refs).
-fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
-    let git_dir = &repo.git_dir;
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
+fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    const MAX_PAYLOAD: usize = 65515;
+    for chunk in payload.chunks(MAX_PAYLOAD) {
+        let len = 4 + 1 + chunk.len();
+        write!(w, "{len:04x}")?;
+        w.write_all(&[1u8])?;
+        w.write_all(chunk)?;
+    }
+    Ok(())
+}
 
+fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {
     let version = crate::version_string();
     let caps = format!(
         "multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
@@ -118,12 +181,11 @@ fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
         version,
     );
 
-    // HEAD first, with capabilities after NUL
     let mut first = true;
     if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
         let line = format!("{}\tHEAD\0{}\n", head_oid.to_hex(), caps);
         let len = 4 + line.len();
-        write!(out, "{:04x}{}", len, line)?;
+        write!(w, "{:04x}{}", len, line)?;
         first = false;
     }
 
@@ -132,33 +194,24 @@ fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
         if first {
             let line = format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps);
             let len = 4 + line.len();
-            write!(out, "{:04x}{}", len, line)?;
+            write!(w, "{:04x}{}", len, line)?;
             first = false;
         } else {
             let line = format!("{}\t{}\n", oid.to_hex(), refname);
             let len = 4 + line.len();
-            write!(out, "{:04x}{}", len, line)?;
+            write!(w, "{:04x}{}", len, line)?;
         }
     }
 
-    write!(out, "0000")?;
-    out.flush()?;
     Ok(())
 }
 
-/// Advertise all refs in the repository to stdout.
-fn advertise_refs(git_dir: &Path) -> Result<()> {
-    // HEAD first
-    if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
-        println!("{}\tHEAD", head_oid.to_hex());
-    }
-
-    // All refs
-    let all_refs = list_all_refs(git_dir)?;
-    for (refname, oid) in &all_refs {
-        println!("{}\t{}", oid.to_hex(), refname);
-    }
-
+/// Advertise refs with capabilities in pkt-line format (for --advertise-refs).
+fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
+    let mut out = io::stdout();
+    write_ref_advertisement(&mut out, &repo.git_dir)?;
+    write!(out, "0000")?;
+    out.flush()?;
     Ok(())
 }
 

@@ -2,10 +2,11 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t5813-proto-disable-ssh.sh`: 81/81 passing (SSH protocol allow/deny, `GIT_ALLOW_PROTOCOL` comma lists, `protocol.*.allow=user` + `GIT_PROTOCOL_FROM_USER`, pkt-line `upload-pack`/`receive-pack` with side-band pack; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t5405-send-pack-rewind.sh`: 3/3 passing (`fetch` honors `--update-head-ok` for refspecs that target the checked-out branch; harness CSV/dashboards refreshed).
 - `./scripts/run-tests.sh t6200-fmt-merge-msg-extra.sh`: 23/23 passing (harness CSV/dashboards refreshed; no code changes required).
 - `./scripts/run-tests.sh t11290-update-ref-atomic-batch.sh`: 33/33 passing (harness `test_must_fail` now allows absolute `git`/`grit`/`scalar` paths).
-- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 102/102 passing (2026-04-07).
+- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 105/105 passing (2026-04-07).
 - `./scripts/run-tests.sh t1092-sparse-checkout-compatibility.sh`: 39/106 passing (65 failing; 2 `test_expect_failure`); sparse-index plumbing in progress.
 
 **Updated:** 2026-04-06

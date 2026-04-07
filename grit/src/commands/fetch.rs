@@ -174,16 +174,26 @@ fn fetch_remote(
             .with_context(|| format!("remote '{remote_name}' not found; no such remote"))?
     };
 
-    // Check protocol.file.allow before local fetch
-    crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
-
-    // Strip file:// prefix if present.
-    // For configured remotes, resolve relative paths from the repository root
-    // (not the process CWD), matching Git's behavior for remote.<name>.url.
-    let mut remote_path = if let Some(stripped) = url.strip_prefix("file://") {
-        PathBuf::from(stripped)
+    let mut remote_path = if crate::ssh_transport::is_configured_ssh_url(&url) {
+        crate::protocol::check_protocol_allowed("ssh", Some(git_dir))?;
+        let spec = crate::ssh_transport::parse_ssh_url(&url)?;
+        let Some(gd) = crate::ssh_transport::try_local_git_dir(&spec) else {
+            bail!(
+                "ssh: could not resolve remote URL '{}' to a local repository",
+                url
+            );
+        };
+        gd
     } else {
-        PathBuf::from(&url)
+        crate::protocol::check_protocol_allowed("file", Some(git_dir))?;
+        // Strip file:// prefix if present.
+        // For configured remotes, resolve relative paths from the repository root
+        // (not the process CWD), matching Git's behavior for remote.<name>.url.
+        if let Some(stripped) = url.strip_prefix("file://") {
+            PathBuf::from(stripped)
+        } else {
+            PathBuf::from(&url)
+        }
     };
     if url_override.is_none() && remote_path.is_relative() {
         let base = configured_remote_base(git_dir);
