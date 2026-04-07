@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after adding `test-tool bloom` compatibility helper implementation in `grit/src/main.rs` for Murmur3 hashing, Bloom key generation, and commit changed-path filter computation used by `t0095`).
+- `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0095-bloom.sh` (run from `/workspace/tests`): 11/11 passing (improved from 1/11; 1 test remains skipped under missing `EXPENSIVE` prereq in this environment, matching harness behavior).
+- `./scripts/run-tests.sh t0095-bloom.sh`: 11/11 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0212-trace2-event.sh`: 11/11 passing.
+  - `./scripts/run-tests.sh t0081-find-pack.sh`: 4/4 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after trace2 text-writer/process-depth + alias-expansion fixes in `grit/src/main.rs` and bare `-c <key>` config override handling in `grit-lib/src/config.rs`).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0211-trace2-perf.sh` (run from `/workspace/tests`): 17/17 passing (improved from 14/17; fixed remaining nested alias def_param/cmd_name behavior).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0210-trace2-normal.sh` (run from `/workspace/tests`): 14/14 passing (improved from 13/14; fixed valueless `foo.true` output behavior).

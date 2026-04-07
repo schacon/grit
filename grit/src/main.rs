@@ -2513,6 +2513,307 @@ fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
     }
 }
 
+const TEST_TOOL_BLOOM_NUM_HASHES: usize = 7;
+const TEST_TOOL_BLOOM_BITS_PER_ENTRY: usize = 10;
+const TEST_TOOL_BLOOM_MAX_CHANGED_PATHS: usize = 512;
+
+fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
+    match rest.get(1).map(String::as_str) {
+        Some("get_murmur3") => {
+            let Some(value) = rest.get(2) else {
+                bail!(
+                    "usage: test-tool bloom get_murmur3 <string>\n       test-tool bloom get_murmur3_seven_highbit\n       test-tool bloom generate_filter <string> [<string>...]\n       test-tool bloom get_filter_for_commit <commit-hex>"
+                );
+            };
+            let hashed = test_tool_bloom_murmur3_seeded_v2(0, value.as_bytes());
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        Some("get_murmur3_seven_highbit") => {
+            let bytes = [0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+            let hashed = test_tool_bloom_murmur3_seeded_v2(0, &bytes);
+            println!("Murmur3 Hash with seed=0:0x{hashed:08x}");
+            Ok(())
+        }
+        Some("generate_filter") => {
+            if rest.len() < 3 {
+                bail!(
+                    "usage: test-tool bloom get_murmur3 <string>\n       test-tool bloom get_murmur3_seven_highbit\n       test-tool bloom generate_filter <string> [<string>...]\n       test-tool bloom get_filter_for_commit <commit-hex>"
+                );
+            }
+            let mut filter = vec![0u8; test_tool_bloom_filter_length_for_single_entry()];
+            for value in rest.iter().skip(2) {
+                let hashes = test_tool_bloom_hashes_for_path(value.as_bytes(), 1);
+                print!("Hashes:");
+                for hash in hashes {
+                    print!("0x{hash:08x}|");
+                }
+                println!();
+                test_tool_bloom_add_hashes(&mut filter, &hashes);
+            }
+            test_tool_bloom_print_filter(&filter);
+            Ok(())
+        }
+        Some("get_filter_for_commit") => {
+            let Some(oid_text) = rest.get(2) else {
+                bail!(
+                    "usage: test-tool bloom get_murmur3 <string>\n       test-tool bloom get_murmur3_seven_highbit\n       test-tool bloom generate_filter <string> [<string>...]\n       test-tool bloom get_filter_for_commit <commit-hex>"
+                );
+            };
+            let oid = ObjectId::from_hex(oid_text)?;
+            let repo = grit_lib::repo::Repository::discover(None)?;
+            let filter = test_tool_bloom_filter_for_commit(&repo, &oid)?;
+            test_tool_bloom_print_filter(&filter);
+            Ok(())
+        }
+        _ => bail!(
+            "usage: test-tool bloom get_murmur3 <string>\n       test-tool bloom get_murmur3_seven_highbit\n       test-tool bloom generate_filter <string> [<string>...]\n       test-tool bloom get_filter_for_commit <commit-hex>"
+        ),
+    }
+}
+
+fn test_tool_bloom_filter_length_for_single_entry() -> usize {
+    TEST_TOOL_BLOOM_BITS_PER_ENTRY.div_ceil(8)
+}
+
+fn test_tool_bloom_hashes_for_path(data: &[u8], version: u32) -> [u32; TEST_TOOL_BLOOM_NUM_HASHES] {
+    let seed0 = 0x293a_e76f;
+    let seed1 = 0x7e64_6e2c;
+    let hash0 = if version == 2 {
+        test_tool_bloom_murmur3_seeded_v2(seed0, data)
+    } else {
+        test_tool_bloom_murmur3_seeded_v1(seed0, data)
+    };
+    let hash1 = if version == 2 {
+        test_tool_bloom_murmur3_seeded_v2(seed1, data)
+    } else {
+        test_tool_bloom_murmur3_seeded_v1(seed1, data)
+    };
+    let mut hashes = [0u32; TEST_TOOL_BLOOM_NUM_HASHES];
+    for (i, hash) in hashes.iter_mut().enumerate() {
+        *hash = hash0.wrapping_add((i as u32).wrapping_mul(hash1));
+    }
+    hashes
+}
+
+fn test_tool_bloom_add_hashes(filter: &mut [u8], hashes: &[u32; TEST_TOOL_BLOOM_NUM_HASHES]) {
+    let modulus = (filter.len() * 8) as u64;
+    if modulus == 0 {
+        return;
+    }
+    for hash in hashes {
+        let hash_mod = (*hash as u64) % modulus;
+        let block_pos = (hash_mod / 8) as usize;
+        let bit = 1u8 << (hash_mod as u8 & 7);
+        filter[block_pos] |= bit;
+    }
+}
+
+fn test_tool_bloom_print_filter(filter: &[u8]) {
+    println!("Filter_Length:{}", filter.len());
+    print!("Filter_Data:");
+    for byte in filter {
+        print!("{byte:02x}|");
+    }
+    println!();
+}
+
+fn test_tool_bloom_signed_byte_u32(value: u8) -> u32 {
+    (value as i8 as i32) as u32
+}
+
+fn test_tool_bloom_murmur3_seeded_v2(seed: u32, data: &[u8]) -> u32 {
+    let c1 = 0xcc9e_2d51u32;
+    let c2 = 0x1b87_3593u32;
+    let n = 0xe654_6b64u32;
+
+    let mut hash = seed;
+    let len4 = data.len() / 4;
+    for i in 0..len4 {
+        let offset = i * 4;
+        let byte1 = data[offset] as u32;
+        let byte2 = (data[offset + 1] as u32) << 8;
+        let byte3 = (data[offset + 2] as u32) << 16;
+        let byte4 = (data[offset + 3] as u32) << 24;
+        let mut k = byte1 | byte2 | byte3 | byte4;
+        k = k.wrapping_mul(c1);
+        k = k.rotate_left(15);
+        k = k.wrapping_mul(c2);
+
+        hash ^= k;
+        hash = hash.rotate_left(13);
+        hash = hash.wrapping_mul(5).wrapping_add(n);
+    }
+
+    let tail = &data[len4 * 4..];
+    let mut k1 = 0u32;
+    match tail.len() {
+        3 => {
+            k1 ^= (tail[2] as u32) << 16;
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        2 => {
+            k1 ^= (tail[1] as u32) << 8;
+            k1 ^= tail[0] as u32;
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        1 => {
+            k1 ^= tail[0] as u32;
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        _ => {}
+    }
+
+    hash ^= data.len() as u32;
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x85eb_ca6b);
+    hash ^= hash >> 13;
+    hash = hash.wrapping_mul(0xc2b2_ae35);
+    hash ^= hash >> 16;
+    hash
+}
+
+fn test_tool_bloom_murmur3_seeded_v1(seed: u32, data: &[u8]) -> u32 {
+    let c1 = 0xcc9e_2d51u32;
+    let c2 = 0x1b87_3593u32;
+    let n = 0xe654_6b64u32;
+
+    let mut hash = seed;
+    let len4 = data.len() / 4;
+    for i in 0..len4 {
+        let offset = i * 4;
+        let byte1 = test_tool_bloom_signed_byte_u32(data[offset]);
+        let byte2 = test_tool_bloom_signed_byte_u32(data[offset + 1]) << 8;
+        let byte3 = test_tool_bloom_signed_byte_u32(data[offset + 2]) << 16;
+        let byte4 = test_tool_bloom_signed_byte_u32(data[offset + 3]) << 24;
+        let mut k = byte1 | byte2 | byte3 | byte4;
+        k = k.wrapping_mul(c1);
+        k = k.rotate_left(15);
+        k = k.wrapping_mul(c2);
+
+        hash ^= k;
+        hash = hash.rotate_left(13);
+        hash = hash.wrapping_mul(5).wrapping_add(n);
+    }
+
+    let tail = &data[len4 * 4..];
+    let mut k1 = 0u32;
+    match tail.len() {
+        3 => {
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[2]) << 16;
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[1]) << 8;
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[0]);
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        2 => {
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[1]) << 8;
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[0]);
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        1 => {
+            k1 ^= test_tool_bloom_signed_byte_u32(tail[0]);
+            k1 = k1.wrapping_mul(c1);
+            k1 = k1.rotate_left(15);
+            k1 = k1.wrapping_mul(c2);
+            hash ^= k1;
+        }
+        _ => {}
+    }
+
+    hash ^= data.len() as u32;
+    hash ^= hash >> 16;
+    hash = hash.wrapping_mul(0x85eb_ca6b);
+    hash ^= hash >> 13;
+    hash = hash.wrapping_mul(0xc2b2_ae35);
+    hash ^= hash >> 16;
+    hash
+}
+
+fn test_tool_bloom_commit_data(
+    repo: &grit_lib::repo::Repository,
+    oid: &ObjectId,
+) -> Result<grit_lib::objects::CommitData> {
+    let object = repo.odb.read(oid)?;
+    if object.kind != grit_lib::objects::ObjectKind::Commit {
+        bail!("object '{oid}' is not a commit");
+    }
+    Ok(grit_lib::objects::parse_commit(&object.data)?)
+}
+
+fn test_tool_bloom_filter_for_commit(
+    repo: &grit_lib::repo::Repository,
+    oid: &ObjectId,
+) -> Result<Vec<u8>> {
+    let commit = test_tool_bloom_commit_data(repo, oid)?;
+    let parent_tree = if let Some(parent_oid) = commit.parents.first() {
+        Some(test_tool_bloom_commit_data(repo, parent_oid)?.tree)
+    } else {
+        None
+    };
+    let diffs =
+        grit_lib::diff::diff_trees(&repo.odb, parent_tree.as_ref(), Some(&commit.tree), "")?;
+
+    if diffs.len() > TEST_TOOL_BLOOM_MAX_CHANGED_PATHS {
+        return Ok(vec![0xff]);
+    }
+
+    let mut paths = std::collections::HashSet::new();
+    for diff in &diffs {
+        if let Some(path) = diff.new_path.as_deref().or(diff.old_path.as_deref()) {
+            if path.is_empty() {
+                continue;
+            }
+
+            let mut path = path.to_owned();
+            loop {
+                paths.insert(path.clone());
+                if let Some(pos) = path.rfind('/') {
+                    path.truncate(pos);
+                } else {
+                    break;
+                }
+                if path.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    if paths.len() > TEST_TOOL_BLOOM_MAX_CHANGED_PATHS {
+        return Ok(vec![0xff]);
+    }
+
+    let mut filter_len = (paths.len() * TEST_TOOL_BLOOM_BITS_PER_ENTRY).div_ceil(8);
+    if filter_len == 0 {
+        filter_len = 1;
+    }
+    let mut filter = vec![0u8; filter_len];
+
+    for path in &paths {
+        let hashes = test_tool_bloom_hashes_for_path(path.as_bytes(), 1);
+        test_tool_bloom_add_hashes(&mut filter, &hashes);
+    }
+
+    Ok(filter)
+}
+
 fn run_test_tool_config(rest: &[String]) -> Result<()> {
     if rest.len() == 3 && rest[1] == "read_early_config" {
         let key = &rest[2];
@@ -4671,6 +4972,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mktemp" => run_test_tool_mktemp(tool_args),
                 "regex" => run_test_tool_regex(tool_args),
                 "config" => run_test_tool_config(tool_args),
+                "bloom" => run_test_tool_bloom(tool_args),
                 "hexdump" => run_test_tool_hexdump(tool_args),
                 "zlib" => run_test_tool_zlib(tool_args),
                 "dump-reftable" => run_test_tool_dump_reftable(tool_args),
