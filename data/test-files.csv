@@ -1400,89 +1400,89 @@ t9070-ls-files-cached	t9	yes	29	0	0	false		0
 t9080-ls-tree-recursive	t9	yes	26	0	0	false		0
 t9090-cat-file-pretty	t9	yes	29	0	0	false		0
 t9100-diff-stat-width	t9	yes	28	0	0	false		0
-t9100-git-svn-basic	t9	yes	28	0	0	false	ok	0
-t9101-git-svn-props	t9	yes	17	0	0	false	ok	0
-t9102-git-svn-deep-rmdir	t9	yes	3	0	0	false	ok	0
-t9103-git-svn-tracked-directory-removed	t9	yes	3	0	0	false	ok	0
-t9104-git-svn-follow-parent	t9	yes	13	0	0	false	ok	0
-t9105-git-svn-commit-diff	t9	yes	3	0	0	false	ok	0
-t9106-git-svn-commit-diff-clobber	t9	yes	10	0	0	false	ok	0
-t9107-git-svn-migrate	t9	yes	7	0	0	false	ok	0
-t9108-git-svn-glob	t9	yes	4	0	0	false	ok	0
-t9109-git-svn-multi-glob	t9	yes	5	0	0	false	ok	0
+t9100-git-svn-basic	t9	skip	28	0	0	false	ok	0
+t9101-git-svn-props	t9	skip	17	0	0	false	ok	0
+t9102-git-svn-deep-rmdir	t9	skip	3	0	0	false	ok	0
+t9103-git-svn-tracked-directory-removed	t9	skip	3	0	0	false	ok	0
+t9104-git-svn-follow-parent	t9	skip	13	0	0	false	ok	0
+t9105-git-svn-commit-diff	t9	skip	3	0	0	false	ok	0
+t9106-git-svn-commit-diff-clobber	t9	skip	10	0	0	false	ok	0
+t9107-git-svn-migrate	t9	skip	7	0	0	false	ok	0
+t9108-git-svn-glob	t9	skip	4	0	0	false	ok	0
+t9109-git-svn-multi-glob	t9	skip	5	0	0	false	ok	0
 t9110-diff-cached-empty	t9	yes	29	0	0	false		0
-t9110-git-svn-use-svm-props	t9	yes	6	0	0	false	ok	0
-t9111-git-svn-use-svnsync-props	t9	yes	4	0	0	false	ok	0
-t9112-git-svn-md5less-file	t9	yes	3	0	0	false	ok	0
-t9113-git-svn-dcommit-new-file	t9	yes	2	0	0	false	ok	0
-t9114-git-svn-dcommit-merge	t9	yes	6	0	0	false	ok	0
-t9115-git-svn-dcommit-funky-renames	t9	yes	12	0	0	false	ok	0
-t9116-git-svn-log	t9	yes	17	0	0	false	ok	0
-t9117-git-svn-init-clone	t9	yes	12	0	0	false	ok	0
-t9118-git-svn-funky-branch-names	t9	yes	5	0	0	false	ok	0
-t9119-git-svn-info	t9	yes	41	0	0	false	ok	0
+t9110-git-svn-use-svm-props	t9	skip	6	0	0	false	ok	0
+t9111-git-svn-use-svnsync-props	t9	skip	4	0	0	false	ok	0
+t9112-git-svn-md5less-file	t9	skip	3	0	0	false	ok	0
+t9113-git-svn-dcommit-new-file	t9	skip	2	0	0	false	ok	0
+t9114-git-svn-dcommit-merge	t9	skip	6	0	0	false	ok	0
+t9115-git-svn-dcommit-funky-renames	t9	skip	12	0	0	false	ok	0
+t9116-git-svn-log	t9	skip	17	0	0	false	ok	0
+t9117-git-svn-init-clone	t9	skip	12	0	0	false	ok	0
+t9118-git-svn-funky-branch-names	t9	skip	5	0	0	false	ok	0
+t9119-git-svn-info	t9	skip	41	0	0	false	ok	0
 t9120-diff-tree-merge	t9	yes	29	0	0	false		0
-t9120-git-svn-clone-with-percent-escapes	t9	yes	8	0	0	false	ok	0
-t9121-git-svn-fetch-renamed-dir	t9	yes	2	0	0	false	ok	0
-t9122-git-svn-author	t9	yes	2	0	0	false	ok	0
-t9123-git-svn-rebuild-with-rewriteroot	t9	yes	4	0	0	false	ok	0
-t9124-git-svn-dcommit-auto-props	t9	yes	7	0	0	false	ok	0
-t9125-git-svn-multi-glob-branch-names	t9	yes	3	0	0	false	ok	0
-t9126-git-svn-follow-deleted-readded-directory	t9	yes	2	0	0	false	ok	0
-t9127-git-svn-partial-rebuild	t9	yes	4	0	0	false	ok	0
-t9128-git-svn-cmd-branch	t9	yes	4	0	0	false	ok	0
-t9129-git-svn-i18n-commitencoding	t9	yes	5	0	0	false	ok	0
-t9130-git-svn-authors-file	t9	yes	10	0	0	false	ok	0
+t9120-git-svn-clone-with-percent-escapes	t9	skip	8	0	0	false	ok	0
+t9121-git-svn-fetch-renamed-dir	t9	skip	2	0	0	false	ok	0
+t9122-git-svn-author	t9	skip	2	0	0	false	ok	0
+t9123-git-svn-rebuild-with-rewriteroot	t9	skip	4	0	0	false	ok	0
+t9124-git-svn-dcommit-auto-props	t9	skip	7	0	0	false	ok	0
+t9125-git-svn-multi-glob-branch-names	t9	skip	3	0	0	false	ok	0
+t9126-git-svn-follow-deleted-readded-directory	t9	skip	2	0	0	false	ok	0
+t9127-git-svn-partial-rebuild	t9	skip	4	0	0	false	ok	0
+t9128-git-svn-cmd-branch	t9	skip	4	0	0	false	ok	0
+t9129-git-svn-i18n-commitencoding	t9	skip	5	0	0	false	ok	0
+t9130-git-svn-authors-file	t9	skip	10	0	0	false	ok	0
 t9130-status-porcelain-v2	t9	yes	26	0	0	false		0
-t9131-git-svn-empty-symlink	t9	yes	15	0	0	false	ok	0
-t9132-git-svn-broken-symlink	t9	yes	5	0	0	false	ok	0
-t9133-git-svn-nested-git-repo	t9	yes	8	0	0	false	ok	0
-t9134-git-svn-ignore-paths	t9	yes	13	0	0	false	ok	0
-t9135-git-svn-moved-branch-empty-file	t9	yes	3	0	0	false	ok	0
-t9136-git-svn-recreated-branch-empty-file	t9	yes	2	0	0	false	ok	0
-t9137-git-svn-dcommit-clobber-series	t9	yes	5	0	0	false	ok	0
-t9138-git-svn-authors-prog	t9	yes	9	0	0	false	ok	0
-t9139-git-svn-non-utf8-commitencoding	t9	yes	3	0	0	false	ok	0
-t9140-git-svn-reset	t9	yes	6	0	0	false	ok	0
+t9131-git-svn-empty-symlink	t9	skip	15	0	0	false	ok	0
+t9132-git-svn-broken-symlink	t9	skip	5	0	0	false	ok	0
+t9133-git-svn-nested-git-repo	t9	skip	8	0	0	false	ok	0
+t9134-git-svn-ignore-paths	t9	skip	13	0	0	false	ok	0
+t9135-git-svn-moved-branch-empty-file	t9	skip	3	0	0	false	ok	0
+t9136-git-svn-recreated-branch-empty-file	t9	skip	2	0	0	false	ok	0
+t9137-git-svn-dcommit-clobber-series	t9	skip	5	0	0	false	ok	0
+t9138-git-svn-authors-prog	t9	skip	9	0	0	false	ok	0
+t9139-git-svn-non-utf8-commitencoding	t9	skip	3	0	0	false	ok	0
+t9140-git-svn-reset	t9	skip	6	0	0	false	ok	0
 t9140-log-format-combined	t9	yes	32	0	0	false		0
-t9141-git-svn-multiple-branches	t9	yes	4	0	0	false	ok	0
-t9142-git-svn-shallow-clone	t9	yes	2	0	0	false	ok	0
-t9143-git-svn-gc	t9	yes	11	0	0	false	ok	0
-t9144-git-svn-old-rev_map	t9	yes	2	0	0	false	ok	0
-t9145-git-svn-master-branch	t9	yes	2	0	0	false	ok	0
-t9146-git-svn-empty-dirs	t9	yes	14	0	0	false	ok	0
-t9147-git-svn-include-paths	t9	yes	13	0	0	false	ok	0
-t9148-git-svn-propset	t9	yes	7	0	0	false	ok	0
+t9141-git-svn-multiple-branches	t9	skip	4	0	0	false	ok	0
+t9142-git-svn-shallow-clone	t9	skip	2	0	0	false	ok	0
+t9143-git-svn-gc	t9	skip	11	0	0	false	ok	0
+t9144-git-svn-old-rev_map	t9	skip	2	0	0	false	ok	0
+t9145-git-svn-master-branch	t9	skip	2	0	0	false	ok	0
+t9146-git-svn-empty-dirs	t9	skip	14	0	0	false	ok	0
+t9147-git-svn-include-paths	t9	skip	13	0	0	false	ok	0
+t9148-git-svn-propset	t9	skip	7	0	0	false	ok	0
 t9150-rev-list-all-count	t9	yes	33	0	0	false		0
-t9150-svk-mergetickets	t9	yes	2	0	0	false	ok	0
-t9151-svn-mergeinfo	t9	yes	7	0	0	false	ok	1
-t9152-svn-empty-dirs-after-gc	t9	yes	4	0	0	false	ok	0
-t9153-git-svn-rewrite-uuid	t9	yes	2	0	0	false	ok	0
-t9154-git-svn-fancy-glob	t9	yes	5	0	0	false	ok	0
-t9155-git-svn-fetch-deleted-tag	t9	yes	2	0	0	false	ok	0
-t9156-git-svn-fetch-deleted-tag-2	t9	yes	2	0	0	false	ok	0
-t9157-git-svn-fetch-merge	t9	yes	3	0	0	false	ok	0
-t9158-git-svn-mergeinfo	t9	yes	6	0	0	false	ok	0
-t9159-git-svn-no-parent-mergeinfo	t9	yes	1	0	0	false	ok	0
-t9160-git-svn-preserve-empty-dirs	t9	yes	12	0	0	false	ok	0
+t9150-svk-mergetickets	t9	skip	2	0	0	false	ok	0
+t9151-svn-mergeinfo	t9	skip	7	0	0	false	ok	1
+t9152-svn-empty-dirs-after-gc	t9	skip	4	0	0	false	ok	0
+t9153-git-svn-rewrite-uuid	t9	skip	2	0	0	false	ok	0
+t9154-git-svn-fancy-glob	t9	skip	5	0	0	false	ok	0
+t9155-git-svn-fetch-deleted-tag	t9	skip	2	0	0	false	ok	0
+t9156-git-svn-fetch-deleted-tag-2	t9	skip	2	0	0	false	ok	0
+t9157-git-svn-fetch-merge	t9	skip	3	0	0	false	ok	0
+t9158-git-svn-mergeinfo	t9	skip	6	0	0	false	ok	0
+t9159-git-svn-no-parent-mergeinfo	t9	skip	1	0	0	false	ok	0
+t9160-git-svn-preserve-empty-dirs	t9	skip	12	0	0	false	ok	0
 t9160-update-index-cacheinfo	t9	yes	25	0	0	false		0
-t9161-git-svn-mergeinfo-push	t9	yes	13	0	0	false	ok	0
-t9162-git-svn-dcommit-interactive	t9	yes	5	0	0	false	ok	0
-t9163-git-svn-reset-clears-caches	t9	yes	4	0	0	false	ok	0
-t9164-git-svn-dcommit-concurrent	t9	yes	8	0	0	false	ok	0
-t9165-git-svn-fetch-merge-branch-of-branch	t9	yes	3	0	0	false	ok	0
-t9166-git-svn-fetch-merge-branch-of-branch2	t9	yes	3	0	0	false	ok	0
-t9167-git-svn-cmd-branch-subproject	t9	yes	3	0	0	false	ok	0
-t9168-git-svn-partially-globbed-names	t9	yes	12	0	0	false	ok	0
-t9169-git-svn-dcommit-crlf	t9	yes	1	0	0	false	ok	0
+t9161-git-svn-mergeinfo-push	t9	skip	13	0	0	false	ok	0
+t9162-git-svn-dcommit-interactive	t9	skip	5	0	0	false	ok	0
+t9163-git-svn-reset-clears-caches	t9	skip	4	0	0	false	ok	0
+t9164-git-svn-dcommit-concurrent	t9	skip	8	0	0	false	ok	0
+t9165-git-svn-fetch-merge-branch-of-branch	t9	skip	3	0	0	false	ok	0
+t9166-git-svn-fetch-merge-branch-of-branch2	t9	skip	3	0	0	false	ok	0
+t9167-git-svn-cmd-branch-subproject	t9	skip	3	0	0	false	ok	0
+t9168-git-svn-partially-globbed-names	t9	skip	12	0	0	false	ok	0
+t9169-git-svn-dcommit-crlf	t9	skip	1	0	0	false	ok	0
 t9170-read-tree-prefix	t9	yes	25	0	0	false		0
 t9180-checkout-index-stdin	t9	yes	25	0	0	false		0
 t9190-for-each-ref-atoms	t9	yes	27	0	0	false		0
-t9200-git-cvsexportcommit	t9	yes	17	0	0	false	ok	0
+t9200-git-cvsexportcommit	t9	skip	17	0	0	false	ok	0
 t9200-merge-base-all	t9	yes	31	0	0	false		0
 t9210-name-rev-tags	t9	yes	27	0	0	false		0
-t9210-scalar	t9	yes	22	16	6	false	ok	0
-t9211-scalar-clone	t9	yes	14	10	4	false	ok	0
+t9210-scalar	t9	skip	22	16	6	false	ok	0
+t9211-scalar-clone	t9	skip	14	10	4	false	ok	0
 t9220-diff-tree-pathspec	t9	yes	30	0	0	false		0
 t9230-diff-index-modes	t9	yes	38	0	0	false		0
 t9231-diff-index-patch	t9	yes	11	0	0	false		0
@@ -1493,22 +1493,22 @@ t9270-rev-list-topo-date	t9	yes	31	0	0	false		0
 t9280-config-bool-int	t9	yes	27	0	0	false		0
 t9290-init-template-hooks	t9	yes	31	0	0	false		0
 t9300-branch-delete-force	t9	yes	25	0	0	false		0
-t9300-fast-import	t9	yes	204	0	0	false	ok	0
-t9301-fast-import-notes	t9	yes	17	14	3	false	ok	0
-t9302-fast-import-unpack-limit	t9	yes	3	3	0	true	ok	0
-t9303-fast-import-compression	t9	yes	16	0	16	false	ok	0
-t9304-fast-import-marks	t9	yes	8	7	1	false	ok	0
-t9305-fast-import-signatures	t9	yes	16	0	0	false	ok	0
-t9306-fast-import-signed-tags	t9	yes	10	0	0	false	ok	0
+t9300-fast-import	t9	skip	204	0	0	false	ok	0
+t9301-fast-import-notes	t9	skip	17	14	3	false	ok	0
+t9302-fast-import-unpack-limit	t9	skip	3	3	0	true	ok	0
+t9303-fast-import-compression	t9	skip	16	0	16	false	ok	0
+t9304-fast-import-marks	t9	skip	8	7	1	false	ok	0
+t9305-fast-import-signatures	t9	skip	16	0	0	false	ok	0
+t9306-fast-import-signed-tags	t9	skip	10	0	0	false	ok	0
 t9310-tag-sort-version	t9	yes	27	0	0	false		0
 t9320-commit-allow-empty	t9	yes	24	0	0	false		0
 t9330-add-update-all	t9	yes	26	0	0	false		0
 t9350-fast-export	t9	yes	73	0	0	false	ok	1
 t9351-fast-export-anonymize	t9	yes	17	14	3	false	ok	0
 t9400-for-each-ref-contains	t9	yes	25	0	0	false		0
-t9400-git-cvsserver-server	t9	yes	45	0	0	false	ok	1
-t9401-git-cvsserver-crlf	t9	yes	18	0	0	false	ok	0
-t9402-git-cvsserver-refs	t9	yes	37	0	0	false	ok	0
+t9400-git-cvsserver-server	t9	skip	45	0	0	false	ok	1
+t9401-git-cvsserver-crlf	t9	skip	18	0	0	false	ok	0
+t9402-git-cvsserver-refs	t9	skip	37	0	0	false	ok	0
 t9410-show-ref-verify	t9	yes	31	0	0	false		0
 t9420-update-ref-delete	t9	yes	24	0	0	false		0
 t9430-symbolic-ref-delete	t9	yes	28	0	0	false		0
@@ -1518,10 +1518,10 @@ t9460-hash-object-write	t9	yes	27	0	0	false		0
 t9470-cat-file-batch-all	t9	yes	27	0	0	false		0
 t9480-mktree-empty	t9	yes	27	0	0	false		0
 t9490-write-tree-subdirs	t9	yes	28	0	0	false		0
-t9500-gitweb-standalone-no-errors	t9	yes	120	0	0	false	ok	0
+t9500-gitweb-standalone-no-errors	t9	skip	120	0	0	false	ok	0
 t9500-ls-tree-path-filter	t9	yes	28	0	0	false		0
-t9501-gitweb-standalone-http-status	t9	yes	19	0	0	false	ok	0
-t9502-gitweb-standalone-parse-output	t9	yes	20	0	0	false	ok	0
+t9501-gitweb-standalone-http-status	t9	skip	19	0	0	false	ok	0
+t9502-gitweb-standalone-parse-output	t9	skip	20	0	0	false	ok	0
 t9510-ls-files-error	t9	yes	32	0	0	false		0
 t9520-config-scope-precedence	t9	yes	40	0	0	false		0
 t9530-init-gitdir-structure	t9	yes	38	0	0	false		0
@@ -1530,12 +1530,12 @@ t9550-tag-annotated-deref	t9	yes	37	0	0	false		0
 t9560-commit-message-variants	t9	yes	33	0	0	false		0
 t9580-rm-cached-worktree	t9	yes	40	0	0	false		0
 t9590-mv-cross-directory	t9	yes	40	0	0	false		0
-t9600-cvsimport	t9	yes	15	0	0	false	ok	0
+t9600-cvsimport	t9	skip	15	0	0	false	ok	0
 t9600-switch-branch-create	t9	yes	40	0	0	false		0
-t9601-cvsimport-vendor-branch	t9	yes	9	0	0	false	ok	1
-t9602-cvsimport-branches-tags	t9	yes	11	0	0	false	ok	6
-t9603-cvsimport-patchsets	t9	yes	1	0	0	false		1
-t9604-cvsimport-timestamps	t9	yes	2	0	0	false	ok	0
+t9601-cvsimport-vendor-branch	t9	skip	9	0	0	false	ok	1
+t9602-cvsimport-branches-tags	t9	skip	11	0	0	false	ok	6
+t9603-cvsimport-patchsets	t9	skip	1	0	0	false		1
+t9604-cvsimport-timestamps	t9	skip	2	0	0	false	ok	0
 t9610-restore-staged-worktree	t9	yes	40	0	0	false		0
 t9620-reset-path-commit	t9	yes	40	0	0	false		0
 t9700-for-each-ref-sort-combined	t9	yes	37	0	0	false		0
@@ -1549,47 +1549,47 @@ t9760-hash-object-blob-tree	t9	yes	32	0	0	false		0
 t9770-cat-file-type-size	t9	yes	32	0	0	false		0
 t9780-mktree-modes-roundtrip	t9	yes	24	0	0	false		0
 t9790-write-tree-nested	t9	yes	29	0	0	false		0
-t9800-git-p4-basic	t9	yes	27	0	0	false	ok	0
+t9800-git-p4-basic	t9	skip	27	0	0	false	ok	0
 t9800-ls-tree-format-atoms	t9	yes	31	0	0	false		0
-t9801-git-p4-branch	t9	yes	32	0	0	false	ok	1
-t9802-git-p4-filetype	t9	yes	16	0	0	false	ok	0
-t9803-git-p4-shell-metachars	t9	yes	5	0	0	false	ok	0
-t9804-git-p4-label	t9	yes	3	0	0	false	ok	1
-t9805-git-p4-skip-submit-edit	t9	yes	7	0	0	false	ok	0
-t9806-git-p4-options	t9	yes	19	0	0	false	ok	0
-t9807-git-p4-submit	t9	yes	26	0	0	false	ok	0
-t9808-git-p4-chdir	t9	yes	6	0	0	false	ok	0
-t9809-git-p4-client-view	t9	yes	57	0	0	false	ok	5
-t9810-git-p4-rcs	t9	yes	17	0	0	false	ok	1
+t9801-git-p4-branch	t9	skip	32	0	0	false	ok	1
+t9802-git-p4-filetype	t9	skip	16	0	0	false	ok	0
+t9803-git-p4-shell-metachars	t9	skip	5	0	0	false	ok	0
+t9804-git-p4-label	t9	skip	3	0	0	false	ok	1
+t9805-git-p4-skip-submit-edit	t9	skip	7	0	0	false	ok	0
+t9806-git-p4-options	t9	skip	19	0	0	false	ok	0
+t9807-git-p4-submit	t9	skip	26	0	0	false	ok	0
+t9808-git-p4-chdir	t9	skip	6	0	0	false	ok	0
+t9809-git-p4-client-view	t9	skip	57	0	0	false	ok	5
+t9810-git-p4-rcs	t9	skip	17	0	0	false	ok	1
 t9810-ls-files-stage-modes	t9	yes	30	0	0	false		0
-t9811-git-p4-label-import	t9	yes	8	0	0	false	ok	0
-t9812-git-p4-wildcards	t9	yes	10	0	0	false	ok	0
-t9813-git-p4-preserve-users	t9	yes	6	0	0	false	ok	0
-t9814-git-p4-rename	t9	yes	6	0	0	false	ok	0
-t9815-git-p4-submit-fail	t9	yes	21	0	0	false	ok	0
-t9816-git-p4-locked	t9	yes	9	0	0	false	ok	4
-t9817-git-p4-exclude	t9	yes	7	0	0	false	ok	0
-t9818-git-p4-block	t9	yes	14	0	0	false	ok	0
-t9819-git-p4-case-folding	t9	yes	6	0	0	false	ok	2
+t9811-git-p4-label-import	t9	skip	8	0	0	false	ok	0
+t9812-git-p4-wildcards	t9	skip	10	0	0	false	ok	0
+t9813-git-p4-preserve-users	t9	skip	6	0	0	false	ok	0
+t9814-git-p4-rename	t9	skip	6	0	0	false	ok	0
+t9815-git-p4-submit-fail	t9	skip	21	0	0	false	ok	0
+t9816-git-p4-locked	t9	skip	9	0	0	false	ok	4
+t9817-git-p4-exclude	t9	skip	7	0	0	false	ok	0
+t9818-git-p4-block	t9	skip	14	0	0	false	ok	0
+t9819-git-p4-case-folding	t9	skip	6	0	0	false	ok	2
 t9820-diff-numstat-pathspec	t9	yes	37	0	0	false		0
-t9820-git-p4-editor-handling	t9	yes	3	0	0	false	ok	0
-t9821-git-p4-path-variations	t9	yes	9	0	0	false	ok	0
-t9822-git-p4-path-encoding	t9	yes	5	0	0	false	ok	1
-t9823-git-p4-mock-lfs	t9	yes	7	0	0	false	ok	0
-t9824-git-p4-git-lfs	t9	yes	9	0	0	false	ok	0
-t9825-git-p4-handle-utf16-without-bom	t9	yes	4	0	0	false	ok	1
-t9826-git-p4-keep-empty-commits	t9	yes	5	0	0	false	ok	0
-t9827-git-p4-change-filetype	t9	yes	4	0	0	false	ok	0
-t9828-git-p4-map-user	t9	yes	3	0	0	false	ok	0
-t9829-git-p4-jobs	t9	yes	8	0	0	false	ok	0
+t9820-git-p4-editor-handling	t9	skip	3	0	0	false	ok	0
+t9821-git-p4-path-variations	t9	skip	9	0	0	false	ok	0
+t9822-git-p4-path-encoding	t9	skip	5	0	0	false	ok	1
+t9823-git-p4-mock-lfs	t9	skip	7	0	0	false	ok	0
+t9824-git-p4-git-lfs	t9	skip	9	0	0	false	ok	0
+t9825-git-p4-handle-utf16-without-bom	t9	skip	4	0	0	false	ok	1
+t9826-git-p4-keep-empty-commits	t9	skip	5	0	0	false	ok	0
+t9827-git-p4-change-filetype	t9	skip	4	0	0	false	ok	0
+t9828-git-p4-map-user	t9	skip	3	0	0	false	ok	0
+t9829-git-p4-jobs	t9	skip	8	0	0	false	ok	0
 t9830-diff-stat-binary	t9	yes	38	0	0	false		0
-t9830-git-p4-symlink-dir	t9	yes	2	0	0	false	ok	0
-t9831-git-p4-triggers	t9	yes	5	0	0	false	ok	0
+t9830-git-p4-symlink-dir	t9	skip	2	0	0	false	ok	0
+t9831-git-p4-triggers	t9	skip	5	0	0	false	ok	0
 t9832-unshelve	t9	yes	8	0	0	false	ok	0
 t9833-errors	t9	yes	4	0	0	false	ok	0
-t9834-git-p4-file-dir-bug	t9	yes	5	0	0	false	ok	0
-t9835-git-p4-metadata-encoding-python2	t9	yes	12	0	0	false	ok	0
-t9836-git-p4-metadata-encoding-python3	t9	yes	12	0	0	false	ok	0
+t9834-git-p4-file-dir-bug	t9	skip	5	0	0	false	ok	0
+t9835-git-p4-metadata-encoding-python2	t9	skip	12	0	0	false	ok	0
+t9836-git-p4-metadata-encoding-python3	t9	skip	12	0	0	false	ok	0
 t9840-diff-tree-no-commit-id	t9	yes	34	0	0	false		0
 t9850-shell	t9	yes	5	5	0	true	ok	0
 t9850-status-ignored-patterns	t9	yes	36	0	0	false		0
