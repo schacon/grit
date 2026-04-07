@@ -346,13 +346,15 @@ pub fn run(args: Args) -> Result<()> {
             }
             Action::ShowPrefix => {
                 let Some(current) = repo.as_ref() else {
-                    bail!("not a git repository (or any of the parent directories)");
+                    eprintln!("error: not a git repository (or any of the parent directories)");
+                    std::process::exit(128);
                 };
                 println!("{}", show_prefix(current, &cwd));
             }
             Action::ShowCdup => {
                 let Some(current) = repo.as_ref() else {
-                    bail!("not a git repository (or any of the parent directories)");
+                    eprintln!("error: not a git repository (or any of the parent directories)");
+                    std::process::exit(128);
                 };
                 let pfx = show_prefix(current, &cwd);
                 if pfx.is_empty() {
