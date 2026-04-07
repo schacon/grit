@@ -223,9 +223,7 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
-        if !parent.exists() {
-            std::fs::create_dir_all(parent)?;
-        }
+        ensure_parent_directories(parent, args.force)?;
     }
 
     if abs_path.is_dir() {
@@ -270,6 +268,46 @@ fn checkout_entry(
     }
 
     Ok(outcome)
+}
+
+fn ensure_parent_directories(parent: &std::path::Path, force: bool) -> Result<()> {
+    let mut current = PathBuf::new();
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        let meta = match std::fs::symlink_metadata(&current) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)
+                    .with_context(|| format!("cannot create directory '{}'", current.display()))?;
+                continue;
+            }
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "cannot access '{}': {err}",
+                    current.display()
+                ))
+            }
+        };
+
+        if meta.file_type().is_dir() {
+            continue;
+        }
+
+        if !force {
+            bail!("'{}' is not a directory", current.display());
+        }
+
+        if meta.file_type().is_symlink() || meta.file_type().is_file() {
+            std::fs::remove_file(&current)
+                .with_context(|| format!("cannot remove '{}'", current.display()))?;
+        } else {
+            std::fs::remove_dir_all(&current)
+                .with_context(|| format!("cannot remove '{}'", current.display()))?;
+        }
+        std::fs::create_dir(&current)
+            .with_context(|| format!("cannot create directory '{}'", current.display()))?;
+    }
+    Ok(())
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
