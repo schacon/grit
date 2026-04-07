@@ -12,7 +12,7 @@ t0009-git-dir-validation	yes	6	6	0	ok	6	6	0
 t0010-racy-git	yes	10	10	0	ok	10	10	0
 t0012-help	yes	124	15	109	ok	15	124	0
 t0013-sha1dc	yes	0	0	0	ok	0	0	0
-t0014-alias	yes	21	2	19	ok	2	21	0
+t0014-alias	yes	21	21	0	ok	20	20	1
 t0017-env-helper	yes	5	5	0	ok	5	5	0
 t0018-advice	yes	6	6	0	ok	6	6	0
 t0019-json-writer	yes	16	16	0	ok	16	16	0

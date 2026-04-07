@@ -5,7 +5,7 @@
 //! --work-tree, -c) are extracted from argv by hand, then only the specific
 //! subcommand's clap `Args` struct is parsed.
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -1195,6 +1195,56 @@ fn write_git_trace(dest: &str, line: &str) {
                 let _ = file.write_all(line.as_bytes());
             }
         }
+    }
+}
+
+fn git_trace_destination() -> Option<String> {
+    let trace_val = std::env::var("GIT_TRACE").ok()?;
+    if trace_val.is_empty() || trace_val == "0" || trace_val.eq_ignore_ascii_case("false") {
+        return None;
+    }
+    Some(trace_val)
+}
+
+fn git_trace_format_argv(argv: &[String]) -> String {
+    argv.iter()
+        .map(|arg| trace2_quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn write_git_trace_command(kind: &str, argv: &[String]) {
+    let Some(trace_val) = git_trace_destination() else {
+        return;
+    };
+    let trace_line = if kind == "start_command" {
+        format!("trace: start_command: {}\n", git_trace_format_argv(argv))
+    } else {
+        let now = time::OffsetDateTime::now_utc();
+        format!(
+            "{:02}:{:02}:{:02}.{:06} grit:0               trace: {kind}: {}\n",
+            now.hour(),
+            now.minute(),
+            now.second(),
+            now.microsecond(),
+            git_trace_format_argv(argv),
+        )
+    };
+    write_git_trace(&trace_val, &trace_line);
+}
+
+fn try_run_dashed_external_command(subcmd: &str, rest: &[String]) -> Result<bool> {
+    let dashed = format!("git-{subcmd}");
+    let mut argv = vec![dashed.clone()];
+    argv.extend(rest.iter().cloned());
+    write_git_trace_command("run_command", &argv);
+
+    let mut command = std::process::Command::new(&dashed);
+    command.args(rest);
+    match command.status() {
+        Ok(status) => exit_with_status(status),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -4238,29 +4288,15 @@ fn run() -> Result<()> {
     refresh_git_prefix_env();
 
     // GIT_TRACE: write built-in trace line (after global options are processed)
-    if let Ok(trace_val) = std::env::var("GIT_TRACE") {
-        if !trace_val.is_empty() && trace_val != "0" && trace_val.to_lowercase() != "false" {
-            let mut trace_cmd = format!("git {subcmd}");
-            for arg in &rest {
-                trace_cmd.push(' ');
-                trace_cmd.push_str(arg);
-            }
-            let now = time::OffsetDateTime::now_utc();
-            let trace_line = format!(
-                "{:02}:{:02}:{:02}.{:06} grit:0               trace: built-in: {}\n",
-                now.hour(),
-                now.minute(),
-                now.second(),
-                now.microsecond(),
-                trace_cmd,
-            );
-            write_git_trace(&trace_val, &trace_line);
-        }
-    }
+    let mut built_in_argv = vec![format!("git {subcmd}")];
+    built_in_argv.extend(rest.iter().cloned());
+    write_git_trace_command("built-in", &built_in_argv);
 
     // Expand configured aliases when the subcommand is not a built-in.
-    if !KNOWN_COMMANDS.contains(&subcmd.as_str()) {
-        if let Some(alias) = get_alias_definition(&subcmd) {
+    if !KNOWN_COMMANDS.contains(&subcmd.as_str())
+        || DEPRECATED_ALIAS_SHADOWABLE.contains(&subcmd.as_str())
+    {
+        if let Some(alias) = get_alias_definition(&subcmd)? {
             return run_alias(&subcmd, &alias, &rest, &opts);
         }
     }
@@ -4557,6 +4593,7 @@ fn print_list_cmds(categories: &str) {
         match cat {
             "list-mainporcelain" => result.extend_from_slice(&mainporcelain),
             "list-complete" => result.extend_from_slice(&complete),
+            "deprecated" => result.extend_from_slice(DEPRECATED_ALIAS_SHADOWABLE),
             "list-all" | "builtins" | "main" => {
                 result.extend_from_slice(&mainporcelain);
                 result.extend_from_slice(&complete);
@@ -4767,12 +4804,22 @@ fn get_autocorrect_setting() -> Option<String> {
     None
 }
 
-/// Read an alias definition from config (`alias.<name>`).
-fn get_alias_definition(name: &str) -> Option<String> {
-    let key = format!("alias.{name}");
-    if let Some(val) = protocol::check_config_param(&key) {
-        return Some(val);
+fn alias_key_specificity(key: &str, name: &str) -> Option<usize> {
+    if key == format!("alias.{name}.command") {
+        return Some(3);
     }
+    if key.eq_ignore_ascii_case(&format!("alias..{name}")) {
+        return Some(2);
+    }
+    if key.eq_ignore_ascii_case(&format!("alias.{name}")) {
+        return Some(1);
+    }
+    None
+}
+
+/// Read an alias definition from config (`alias.<name>` and subsection syntax).
+fn get_alias_definition(name: &str) -> Result<Option<String>> {
+    let mut best: Option<(usize, usize, Option<String>, String)> = None;
     let git_dir = std::env::var("GIT_DIR")
         .ok()
         .map(std::path::PathBuf::from)
@@ -4782,14 +4829,32 @@ fn get_alias_definition(name: &str) -> Option<String> {
                 .map(|r| r.git_dir)
         });
     if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
-        return config.get(&key);
+        for (order, entry) in config.entries().iter().enumerate() {
+            if let Some(specificity) = alias_key_specificity(&entry.key, name) {
+                let should_replace = best.as_ref().is_none_or(|(best_spec, best_order, _, _)| {
+                    specificity > *best_spec || (specificity == *best_spec && order >= *best_order)
+                });
+                if should_replace {
+                    best = Some((specificity, order, entry.value.clone(), entry.key.clone()));
+                }
+            }
+        }
     }
-    None
+    if let Some((_, _, value, key)) = best {
+        if let Some(value) = value {
+            Ok(Some(value))
+        } else {
+            Err(anyhow!("{key} is not set"))
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 #[allow(dead_code)]
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
-    run_alias_inner(name, alias, rest, opts, true)
+    let mut alias_stack = Vec::new();
+    run_alias_inner(name, alias, rest, opts, true, &mut alias_stack)
 }
 
 fn run_alias_inner(
@@ -4798,8 +4863,10 @@ fn run_alias_inner(
     rest: &[String],
     opts: &GlobalOpts,
     emit_initial_dashed: bool,
+    alias_stack: &mut Vec<String>,
 ) -> Result<()> {
     let original_state = trace2_text_writer_states();
+    alias_stack.push(name.to_owned());
     if emit_initial_dashed {
         with_trace2_text_writer(|writer| {
             writer.emit_cmd_name_for_alias("_run_dashed_");
@@ -4809,11 +4876,20 @@ fn run_alias_inner(
 
     if let Some(shell_cmd) = alias.strip_prefix('!') {
         with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_shell_alias_"));
+        let prepared_shell = format!("{shell_cmd} \"$@\"");
+        let mut trace_argv = vec![
+            "SHELL".to_owned(),
+            "-c".to_owned(),
+            prepared_shell.clone(),
+            shell_cmd.to_owned(),
+        ];
+        trace_argv.extend(rest.iter().cloned());
+        write_git_trace_command("start_command", &trace_argv);
         let mut command = std::process::Command::new("sh");
         command
             .arg("-c")
+            .arg(prepared_shell)
             .arg(shell_cmd)
-            .arg(format!("git-{name}"))
             .args(rest);
         apply_trace2_parent_env(&mut command);
         if let Ok(repo) = grit_lib::repo::Repository::discover(None) {
@@ -4831,12 +4907,51 @@ fn run_alias_inner(
     }
     with_trace2_text_writer(|writer| writer.emit_alias(name, &alias_parts));
     let next_subcmd = alias_parts.remove(0);
-    if next_subcmd == name {
-        bail!("recursive alias '{name}'");
+    if let Some(loop_start) = alias_stack
+        .iter()
+        .position(|existing| *existing == next_subcmd)
+    {
+        for idx in loop_start..alias_stack.len() {
+            let from = &alias_stack[idx];
+            let to = if idx + 1 < alias_stack.len() {
+                &alias_stack[idx + 1]
+            } else {
+                &next_subcmd
+            };
+            eprintln!("'{from}' is aliased to '{to}'");
+        }
+        let start = &alias_stack[loop_start];
+        eprintln!("fatal: alias loop detected: expansion of '{start}' does not terminate:");
+        eprintln!("  {start} <==");
+        for alias_name in alias_stack.iter().skip(loop_start + 1) {
+            eprintln!("  {alias_name} ==>");
+        }
+        std::process::exit(1);
     }
     alias_parts.extend(rest.iter().cloned());
     let alias_rest = alias_parts.clone();
-    if KNOWN_COMMANDS.contains(&next_subcmd.as_str()) {
+    let nested_alias = if !KNOWN_COMMANDS.contains(&next_subcmd.as_str())
+        || DEPRECATED_ALIAS_SHADOWABLE.contains(&next_subcmd.as_str())
+    {
+        get_alias_definition(&next_subcmd)?
+    } else {
+        None
+    };
+    if let Some(nested_alias) = nested_alias {
+        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_dashed_"));
+        with_trace2_text_writer(|writer| writer.emit_child_start_dashed(&next_subcmd));
+        let result = run_alias_inner(
+            &next_subcmd,
+            &nested_alias,
+            &alias_rest,
+            opts,
+            false,
+            alias_stack,
+        );
+        alias_stack.pop();
+        restore_trace2_text_writer_states(&original_state);
+        return result;
+    } else if KNOWN_COMMANDS.contains(&next_subcmd.as_str()) {
         with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_git_alias_"));
         if trace2_any_target_active() {
             let mut command = std::process::Command::new(std::env::current_exe()?);
@@ -4845,17 +4960,12 @@ fn run_alias_inner(
             let status = command.status()?;
             exit_with_status(status);
         }
-    } else if let Some(nested_alias) = get_alias_definition(&next_subcmd) {
-        with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_dashed_"));
-        with_trace2_text_writer(|writer| writer.emit_child_start_dashed(&next_subcmd));
-        let result = run_alias_inner(&next_subcmd, &nested_alias, &alias_rest, opts, false);
-        restore_trace2_text_writer_states(&original_state);
-        return result;
     } else {
         with_trace2_text_writer(|writer| writer.emit_cmd_name_for_alias("_run_dashed_"));
         with_trace2_text_writer(|writer| writer.emit_child_start_dashed(&next_subcmd));
     }
     let result = dispatch(&next_subcmd, &alias_rest, opts);
+    alias_stack.pop();
     restore_trace2_text_writer_states(&original_state);
     result
 }
@@ -5029,6 +5139,7 @@ const KNOWN_COMMANDS: &[&str] = &[
     "worktree",
     "write-tree",
 ];
+const DEPRECATED_ALIAS_SHADOWABLE: &[&str] = &["whatchanged", "pack-redundant"];
 
 fn run_legacy_merge_strategy(rest: &[String]) -> Result<()> {
     // Legacy strategy helpers are invoked as:
@@ -5111,13 +5222,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "gc" => commands::gc::run(parse_cmd_args(subcmd, rest)),
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
         "grep" => {
+            if rest.len() == 1 && rest.first().map(String::as_str) == Some("-h") {
+                return commands::grep::run(parse_cmd_args(subcmd, rest));
+            }
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
             // combined flags like "-ah" (split into "-a" + "--no-filename").
             let mut new_rest: Vec<String> = Vec::new();
             for a in rest.iter() {
-                if a == "-h" {
+                if a == "-h" && rest.len() > 1 {
                     new_rest.push("--no-filename".to_string());
                 } else if a.starts_with('-')
                     && !a.starts_with("--")
@@ -5355,6 +5469,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
+            if try_run_dashed_external_command(subcmd, rest)? {
+                return Ok(());
+            }
             let commands = KNOWN_COMMANDS;
             // Find similar commands using edit distance
             let mut suggestions: Vec<&str> = commands
@@ -5370,7 +5487,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             match autocorrect.as_deref() {
                 Some("never") => {
                     // With never, just say it's not a command, no suggestions
-                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                    bail!("grit: '{subcmd}' is not a git command. See 'git --help'.");
                 }
                 Some("immediate") | Some("-1") if suggestions.len() == 1 => {
                     // Auto-run the single matching command
@@ -5384,11 +5501,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 _ => {
                     // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                        bail!("grit: '{subcmd}' is not a git command. See 'git --help'.\n\nunrecognized subcommand");
                     } else {
                         let similar = suggestions.join("\n\t");
                         bail!(
-                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
+                            "grit: '{subcmd}' is not a git command. See 'git --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
                         );
                     }
                 }

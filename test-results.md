@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after implementing `t0014` alias compatibility fixes across alias lookup/expansion, shell tracing, external dashed fallback, and help alias listing).
+- `rm -rf /workspace/tests/trash.t0014-alias /workspace/tests/bin.t0014-alias && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0014-alias.sh` (run from `/workspace/tests`): 21/21 passing (improved from 4/21).
+- `./scripts/run-tests.sh t0014-alias.sh`: 21/21 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0210-trace2-normal.sh`: 14/14 passing.
+  - `./scripts/run-tests.sh t0211-trace2-perf.sh`: 17/17 passing.
+  - `./scripts/run-tests.sh t0012-help.sh`: 15/124 (unchanged known baseline for this incomplete file).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing; reverted unrelated clippy formatting-only changes).
+
 - `cargo build --release -p grit-rs`: success (after CRLF-conversion compatibility fixes in add/update-index/apply/rm/checkout/read-tree/checkout-index paths, including conversion-aware index/worktree comparisons and robust attribute-source handling during branch/worktree transitions).
 - `rm -rf /workspace/tests/trash.t0020-crlf /workspace/tests/bin.t0020-crlf && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0020-crlf.sh` (run from `/workspace/tests`): 36/36 passing (improved from 19/36).
 - `./scripts/run-tests.sh t0020-crlf.sh`: 36/36 passing.
