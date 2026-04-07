@@ -92,7 +92,7 @@ t1010-mktree	yes	8	8	0	ok	8	8	0
 t1011-read-tree-sparse-checkout	yes	23	1	22	ok	1	23	0
 t1012-read-tree-df	yes	5	1	4	ok	1	5	0
 t1014-read-tree-confusing	yes	28	19	9	ok	19	28	0
-t1015-read-index-unmerged	yes	6	4	2	ok	4	6	0
+t1015-read-index-unmerged	yes	6	6	0	ok	6	6	0
 t1016-compatObjectFormat	yes	0	0	0	ok	0	0	0
 t1020-subdirectory	yes	15	9	6	ok	9	15	0
 t1022-read-tree-partial-clone	yes	1	1	0	ok	1	1	0
