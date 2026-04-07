@@ -72,7 +72,7 @@
 - [x] t11290-update-ref-atomic-batch.sh
 - [ ] t11300-symbolic-ref-head-detach.sh
 - [ ] t11310-check-ignore-global.sh
-- [ ] t11380-log-graph-all.sh                                                                           - [ ] t11490-commit-fixup-squash.sh
+- [ ] t11380-log-graph-all.sh                                                                           - [x] t11490-commit-fixup-squash.sh
 - [ ] t11500-add-chmod-intent.sh
 - [ ] t11510-rm-cached-worktree.sh
 - [ ] t11520-mv-directory-structure.sh

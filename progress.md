@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    86 |
+| Completed   |    87 |
 | In progress |     0 |
-| Remaining   |   681 |
+| Remaining   |   680 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t11490-commit-fixup-squash` — 33/33 tests pass (`commit` message sources, amend, allow-empty, `-a`, `--author`, `--date`, `-q`; harness CSV refreshed after clean run)
 - `t12590-log-format-tformat` — 33/33 tests pass (`log --format` with `%H`/`%h`/`%s`/`%an`/`%ae`/`%cn`/`%ce`/`%T`/`%t`/`%P`/`%p`/`%n`/`%%`, `format:` vs `tformat:` prefixes, `-n`/`--skip`/`--reverse`; verified clean harness run)
 - `t11290-update-ref-atomic-batch` — 33/33 tests pass (`test_must_fail` in `test-lib-tap.sh` now accepts absolute paths to `git`/`grit`/`scalar`, so `test_must_fail "$GUST_BIN"` and `test_must_fail "$REAL_GIT"` work under the harness)
 - `t1092-sparse-checkout-compatibility` — in progress (~39/106 passing): sparse index (`sdir`), expand/collapse, `sparse-checkout` CLI flags, `ls-files --sparse`, status sparse banner, index write finalization across commands; see `logs/2026-04-07_sparse-index-t1092-progress.md`
@@ -77,4 +78,4 @@
 
 ## What Remains
 
-681 test files still pending. See `plan.md` for the full prioritized list.
+680 test files still pending. See `plan.md` for the full prioritized list.
