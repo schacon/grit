@@ -2644,7 +2644,7 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
 /// `up_path`: path from parent repo root to working tree (navigation from remote)
 /// `url`: the submodule's relative URL from .gitmodules
 fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) -> String {
-    // If url is absolute, return as-is
+    // If url is absolute or has a scheme, return as-is
     if url.contains("://") || url.starts_with('/') {
         return url.to_string();
     }
@@ -2652,22 +2652,31 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         return url.to_string();
     }
 
-    /// Normalize path parts (resolve . and ..), preserving leading / or //
-    fn normalize(s: &str) -> Vec<String> {
-        // Detect leading // (network path) or / (absolute)
+    // Detect and preserve URL schemes in paths
+    let (scheme, path_part) = if let Some(scheme_end) = up_path.find("://") {
+        // Extract scheme+host portion
+        let scheme = &up_path[..scheme_end + 3]; // e.g. "file://"
+        let rest = &up_path[scheme_end + 3..]; // e.g. "/tmp/repo"
+        (scheme.to_string(), rest.to_string())
+    } else {
+        ("".to_string(), up_path.to_string())
+    };
+
+    /// Normalize path, preserving leading / or //
+    fn normalize_parts(s: &str) -> Vec<String> {
         let double_slash = s.starts_with("//");
         let is_abs = s.starts_with('/');
         let mut parts: Vec<String> = Vec::new();
-        // Add sentinel for absolute paths to prevent going above root
         if double_slash {
-            parts.push("//".to_string()); // sentinel
+            parts.push("//".to_string());
         } else if is_abs {
-            parts.push("/".to_string()); // sentinel
+            parts.push("/".to_string());
         }
         for p in s.split('/') {
             match p {
                 ".." => {
-                    if parts.len() <= (if is_abs { 1 } else { 0 })
+                    let min_len = if is_abs { 1 } else { 0 };
+                    if parts.len() <= min_len
                         || parts.last().map(|s: &String| s.as_str()) == Some("..")
                     {
                         if !is_abs {
@@ -2684,22 +2693,31 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         parts
     }
 
-    // Compute base: navigate from remote_url along up_path
-    let base_parts = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
-        // No remote_url — use up_path directly as starting point
-        if up_path.is_empty() || up_path == "(null)" {
-            normalize(".")
+    fn parts_to_string(parts: &[String]) -> String {
+        if !parts.is_empty() && (parts[0] == "//" || parts[0] == "/") {
+            let sentinel = &parts[0];
+            if parts.len() == 1 {
+                sentinel.clone()
+            } else {
+                format!("{}{}", sentinel, parts[1..].join("/"))
+            }
         } else {
-            normalize(up_path)
+            parts.join("/")
         }
-    } else if up_path.is_empty() || up_path == "(null)" {
-        normalize(remote_url.trim_end_matches('/'))
-    } else if up_path.starts_with('/') {
-        // Absolute up_path overrides remote_url
-        normalize(up_path)
+    }
+
+    // Compute base from remote_url and up_path
+    let base_parts = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
+        if path_part.is_empty() || path_part == "(null)" {
+            normalize_parts(".")
+        } else {
+            normalize_parts(&path_part)
+        }
+    } else if path_part.starts_with('/') || path_part.is_empty() {
+        normalize_parts(&path_part)
     } else {
-        let combined = format!("{}/{}", remote_url.trim_end_matches('/'), up_path);
-        normalize(&combined)
+        let combined = format!("{}/{}", remote_url.trim_end_matches('/'), path_part);
+        normalize_parts(&combined)
     };
 
     // Apply url navigation to base
@@ -2707,8 +2725,26 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
     for part in url.split('/') {
         match part {
             ".." => {
-                if result.last().map(|s: &String| s.as_str()) == Some("..") || result.is_empty() {
-                    result.push("..".to_string());
+                let min_len = if result
+                    .first()
+                    .map(|s: &String| s.as_str())
+                    .map(|s| s.starts_with('/'))
+                    .unwrap_or(false)
+                {
+                    1
+                } else {
+                    0
+                };
+                if result.len() <= min_len
+                    || result.last().map(|s: &String| s.as_str()) == Some("..")
+                {
+                    if !result
+                        .first()
+                        .map(|s: &String| s.starts_with('/'))
+                        .unwrap_or(false)
+                    {
+                        result.push("..".to_string());
+                    }
                 } else {
                     result.pop();
                 }
@@ -2718,20 +2754,17 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         }
     }
 
-    let mut out = if !result.is_empty() && (result[0] == "//" || result[0] == "/") {
-        let sentinel = result[0].clone();
-        if result.len() == 1 {
-            sentinel
-        } else {
-            format!("{}{}", sentinel, result[1..].join("/"))
-        }
+    let path_result = parts_to_string(&result);
+
+    // Restore URL scheme if present
+    let out = if scheme.is_empty() {
+        path_result
     } else {
-        result.join("/")
+        format!("{}{}", scheme, path_result)
     };
-    // Strip trailing slash from result (git's resolve_relative_url doesn't preserve it)
-    while out.ends_with('/') && out.len() > 1 {
-        out.pop();
-    }
+
+    // Strip trailing slash
+    let out = out.trim_end_matches(|c: char| c == '/').to_string();
     if out.is_empty() {
         ".".to_string()
     } else {
