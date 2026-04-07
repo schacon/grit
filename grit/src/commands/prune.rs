@@ -153,24 +153,32 @@ fn parse_expire_time(expire: Option<&str>) -> Result<Option<SystemTime>> {
 /// Parse Git-style relative time strings like "2.weeks.ago", "3.days.ago".
 fn parse_relative_time(s: &str) -> Option<SystemTime> {
     let s = s.trim();
-    // Handle forms like "2.weeks.ago", "1.day.ago", "3.hours.ago"
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() == 3 && parts[2] == "ago" {
-        let n: u64 = parts[0].parse().ok()?;
-        let unit = parts[1];
-        let secs = match unit {
-            "second" | "seconds" => n,
-            "minute" | "minutes" => n * 60,
-            "hour" | "hours" => n * 3600,
-            "day" | "days" => n * 86400,
-            "week" | "weeks" => n * 7 * 86400,
-            "month" | "months" => n * 30 * 86400,
-            "year" | "years" => n * 365 * 86400,
-            _ => return None,
-        };
-        return SystemTime::now().checked_sub(Duration::from_secs(secs));
+    // Normalize: replace '.' with spaces, lowercase
+    let normalized = s.replace('.', " ").to_ascii_lowercase();
+    let parts: Vec<&str> = normalized.split_whitespace().collect();
+    // Handle "N unit" or "N unit ago" or "now"
+    if parts.is_empty() {
+        return None;
     }
-    None
+    if parts[0] == "now" {
+        return Some(SystemTime::now());
+    }
+    if parts.len() < 2 {
+        return None;
+    }
+    let n: u64 = parts[0].parse().ok()?;
+    let unit = parts[1].trim_end_matches('s');
+    let secs = match unit {
+        "second" => n,
+        "minute" => n * 60,
+        "hour" => n * 3600,
+        "day" => n * 86400,
+        "week" => n * 7 * 86400,
+        "month" => n * 30 * 86400,
+        "year" => n * 365 * 86400,
+        _ => return None,
+    };
+    SystemTime::now().checked_sub(Duration::from_secs(secs))
 }
 
 /// Build the set of all reachable object IDs by walking from refs.
