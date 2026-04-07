@@ -234,19 +234,25 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Post-process rest: extract -b/-B/--new-branch/--force-new-branch that
     // appeared after a positional arg (e.g. `checkout <rev> -b <branch>`).
+    // Also accept `git switch` spellings: -c/--create and -C/--force-create
+    // (switch delegates here with those flags in `rest`).
     // clap's trailing_var_arg consumes these as raw strings when allow_hyphen_values=true.
     {
         let mut new_rest: Vec<String> = Vec::new();
         let mut i = 0;
         while i < args.rest.len() {
             let s = &args.rest[i];
-            if (s == "-b" || s == "--new-branch" || s == "-B" || s == "--force-new-branch")
+            let is_force_create =
+                s == "-B" || s == "--force-new-branch" || s == "-C" || s == "--force-create";
+            let is_create =
+                s == "-b" || s == "--new-branch" || s == "-c" || s == "--create" || is_force_create;
+            if is_create
                 && args.new_branch.is_none()
                 && args.force_branch.is_none()
                 && i + 1 < args.rest.len()
             {
                 let bname = args.rest[i + 1].clone();
-                if s == "-B" || s == "--force-new-branch" {
+                if is_force_create {
                     args.force_branch = Some(bname);
                 } else {
                     args.new_branch = Some(bname);
