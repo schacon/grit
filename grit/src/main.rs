@@ -2045,10 +2045,14 @@ fn synopsis_variants_from_adoc(syn: &str) -> Vec<Vec<String>> {
     variants
 }
 
-/// Print `git <cmd> -h` synopsis (from vendored Documentation/*.adoc), then exit 129.
+/// Print `git <cmd> -h` synopsis (from vendored Documentation/*.adoc), then exit.
 ///
 /// Continuation lines are padded with spaces to width `git <cmd> ` (same as t0450 `align_after_nl`).
-fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
+///
+/// Git's `-h` uses exit **129** (t0450 and other tests rely on this). Long `--help` uses exit **0**
+/// so POSIX `sh` scripts can chain `git <cmd> --help && grep …` (exit codes >125 are "failure" in
+/// `test -e` / `&&` under `/bin/sh`).
+fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str, exit_code: u8) -> ! {
     let pad = " ".repeat(format!("git {subcmd} ").len());
     let variants = synopsis_variants_from_adoc(syn);
     for (i, var) in variants.iter().enumerate() {
@@ -2065,7 +2069,7 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
         }
     }
     println!();
-    std::process::exit(129);
+    std::process::exit(exit_code.into());
 }
 
 /// Parse a command's clap Args from the remaining arguments.
@@ -2105,7 +2109,8 @@ fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
         if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-            print_upstream_synopsis_and_exit(subcmd, syn);
+            let code = if rest[0] == "--help" { 0 } else { 129 };
+            print_upstream_synopsis_and_exit(subcmd, syn, code);
         }
     }
 
@@ -2127,12 +2132,19 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
             } else {
                 let _ = e.print();
             }
-            match e.kind() {
-                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
-                    std::process::exit(129)
+            let code = match e.kind() {
+                clap::error::ErrorKind::DisplayHelp
+                | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                    if rest.iter().any(|a| a == "--help") {
+                        0
+                    } else {
+                        129
+                    }
                 }
-                _ => std::process::exit(129),
-            }
+                clap::error::ErrorKind::DisplayVersion => 129,
+                _ => 129,
+            };
+            std::process::exit(code);
         }
     }
 }
@@ -2932,7 +2944,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             // A lone `git grep -h` is Git's short help (exit 129); do not rewrite to --no-filename.
             if rest.len() == 1 && rest[0] == "-h" {
                 if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
-                    print_upstream_synopsis_and_exit(subcmd, syn);
+                    print_upstream_synopsis_and_exit(subcmd, syn, 129);
                 }
             }
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
