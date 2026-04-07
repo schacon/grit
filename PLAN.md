@@ -73,7 +73,7 @@ commit → check it off → move on.
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
-- [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
+- [x] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [x] `t1015-read-index-unmerged` ████████████████████ 6/6 (0 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
