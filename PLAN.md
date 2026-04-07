@@ -301,7 +301,7 @@ commit → check it off → move on.
 - [ ] `t3000-ls-files-others` ████████░░░░░░░░░░░░ 6/15 (9 left) — basic tests for ls-files --others
 
 - [ ] `t3508-cherry-pick-many-commits` ███████░░░░░░░░░░░░░ 5/14 (9 left) — test cherry-picking many commits
-- [ ] `t3704-add-pathspec-file` ███░░░░░░░░░░░░░░░░░ 2/11 (9 left) — add --pathspec-from-file
+- [x] `t3704-add-pathspec-file` ████████████████████ 11/11 (0 left) — add --pathspec-from-file
 - [ ] `t3440-rebase-trailer` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — git rebase --trailer integration tests
 
 - [ ] `t3907-stash-show-config` ██░░░░░░░░░░░░░░░░░░ 1/10 (9 left) — Test git stash show configuration.

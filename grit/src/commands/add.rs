@@ -17,6 +17,7 @@ use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use std::fs;
+use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -91,23 +92,45 @@ pub struct Args {
     #[arg(long = "no-warn-embedded-repo")]
     pub no_warn_embedded_repo: bool,
 
-    /// Read pathspecs from a file (one per line).
+    /// Read pathspecs from a file (one per line, or NUL-separated with --pathspec-file-nul).
     #[arg(long = "pathspec-from-file", value_name = "FILE")]
     pub pathspec_from_file: Option<PathBuf>,
+
+    /// NUL-terminated pathspec input (requires --pathspec-from-file).
+    #[arg(long = "pathspec-file-nul")]
+    pub pathspec_file_nul: bool,
 }
 
 /// Run the `add` command.
 pub fn run(mut args: Args) -> Result<()> {
-    // --pathspec-from-file: read pathspecs from a file and append to pathspec list
+    if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
+        bail!("the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+    }
     if let Some(ref file) = args.pathspec_from_file {
-        let content = fs::read_to_string(file)
-            .with_context(|| format!("cannot read pathspec file '{}'", file.display()))?;
-        for line in content.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                args.pathspec.push(line.to_owned());
-            }
+        if !args.pathspec.is_empty() {
+            bail!("'--pathspec-from-file' and pathspec arguments cannot be used together");
         }
+        if args.interactive || args.patch {
+            bail!(
+                "options '--pathspec-from-file' and '--interactive/--patch' cannot be used together"
+            );
+        }
+        if args.edit {
+            bail!("options '--pathspec-from-file' and '--edit' cannot be used together");
+        }
+        let path = file.as_os_str();
+        let data = if path == "-" {
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .context("reading pathspecs from stdin")?;
+            buf
+        } else {
+            fs::read(file)
+                .with_context(|| format!("cannot read pathspec file '{}'", file.display()))?
+        };
+        args.pathspec =
+            crate::pathspec::parse_pathspecs_from_source(&data, args.pathspec_file_nul)?;
     }
 
     // --dry-run is incompatible with interactive modes

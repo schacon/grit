@@ -743,48 +743,6 @@ fn run_test_tool_dir_iterator(rest: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn unquote_c_style(input: &str) -> String {
-    if input.len() >= 2 && input.starts_with('"') && input.ends_with('"') {
-        let mut out = String::new();
-        let mut chars = input[1..input.len() - 1].chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch != '\\' {
-                out.push(ch);
-                continue;
-            }
-
-            match chars.next() {
-                Some('a') => out.push('\u{0007}'),
-                Some('b') => out.push('\u{0008}'),
-                Some('f') => out.push('\u{000C}'),
-                Some('n') => out.push('\n'),
-                Some('r') => out.push('\r'),
-                Some('t') => out.push('\t'),
-                Some('v') => out.push('\u{000B}'),
-                Some('\\') => out.push('\\'),
-                Some('"') => out.push('"'),
-                Some(c @ '0'..='7') => {
-                    let mut value = c.to_digit(8).unwrap_or(0);
-                    for _ in 0..2 {
-                        if let Some(next @ '0'..='7') = chars.peek().copied() {
-                            let _ = chars.next();
-                            value = value * 8 + next.to_digit(8).unwrap_or(0);
-                        } else {
-                            break;
-                        }
-                    }
-                    out.push(char::from_u32(value).unwrap_or('\u{FFFD}'));
-                }
-                Some(other) => out.push(other),
-                None => {}
-            }
-        }
-        out
-    } else {
-        input.to_owned()
-    }
-}
-
 fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
     let mut pathspec_from_file: Option<String> = None;
     let mut pathspec_file_nul = false;
@@ -814,19 +772,7 @@ fn run_test_tool_parse_pathspec_file(rest: &[String]) -> Result<()> {
         std::fs::read(&pathspec_source)?
     };
 
-    let items: Vec<String> = if pathspec_file_nul {
-        data.split(|b| *b == 0u8)
-            .filter(|chunk| !chunk.is_empty())
-            .map(|chunk| String::from_utf8_lossy(chunk).to_string())
-            .collect()
-    } else {
-        let text = String::from_utf8_lossy(&data);
-        text.split('\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| line.strip_suffix('\r').unwrap_or(line))
-            .map(unquote_c_style)
-            .collect()
-    };
+    let items: Vec<String> = pathspec::parse_pathspecs_from_source(&data, pathspec_file_nul)?;
 
     for item in items {
         println!("{item}");

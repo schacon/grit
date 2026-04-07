@@ -61,5 +61,6 @@ pub fn run(args: Args) -> Result<()> {
         ignore_missing: false,
         no_warn_embedded_repo: false,
         pathspec_from_file: None,
+        pathspec_file_nul: false,
     })
 }

@@ -1,5 +1,93 @@
 //! Pathspec matching utilities shared across commands.
 
+use anyhow::{bail, Context, Result};
+
+/// Read pathspec entries from raw file bytes (stdin or file), matching Git's
+/// `--pathspec-from-file` / `--pathspec-file-nul` rules.
+///
+/// * **NUL mode:** entries are separated by `NUL`; each segment must not use
+///   C-style quoted lines (Git rejects quoted pathspecs in this mode).
+/// * **Line mode:** entries are separated by `LF`; optional `CR` before `LF`
+///   is stripped; optional trailing line without a final newline is included;
+///   double-quoted lines are C-unquoted (including octal escapes).
+pub fn parse_pathspecs_from_source(data: &[u8], nul_terminated: bool) -> Result<Vec<String>> {
+    if nul_terminated {
+        let mut out = Vec::new();
+        for chunk in data.split(|b| *b == 0) {
+            if chunk.is_empty() {
+                continue;
+            }
+            let s = String::from_utf8_lossy(chunk);
+            let t = s.trim();
+            if t.starts_with('"') {
+                bail!("pathspec-from-file: line is not NUL terminated: {}", t);
+            }
+            out.push(t.to_string());
+        }
+        return Ok(out);
+    }
+
+    let text = String::from_utf8_lossy(data);
+    let mut out = Vec::new();
+    for raw in text.split_inclusive('\n') {
+        let line = raw.trim_end_matches('\n').trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('"') && line.ends_with('"') && line.len() >= 2 {
+            out.push(unquote_c_style_pathspec_line(line)?);
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Unquote a single `--pathspec-from-file` line that is wrapped in double quotes.
+fn unquote_c_style_pathspec_line(s: &str) -> Result<String> {
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'"') || bytes.last() != Some(&b'"') || bytes.len() < 2 {
+        bail!("invalid C-style quoting: {s}");
+    }
+
+    let inner = &bytes[1..bytes.len() - 1];
+    let mut out = Vec::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        if inner[i] != b'\\' {
+            out.push(inner[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= inner.len() {
+            bail!("invalid escape at end of string");
+        }
+        match inner[i] {
+            b'\\' => out.push(b'\\'),
+            b'"' => out.push(b'"'),
+            b'a' => out.push(7),
+            b'b' => out.push(8),
+            b'f' => out.push(12),
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
+            b'v' => out.push(11),
+            c if c.is_ascii_digit() => {
+                if i + 2 >= inner.len() {
+                    bail!("truncated octal escape");
+                }
+                let oct = std::str::from_utf8(&inner[i..i + 3]).context("invalid octal bytes")?;
+                out.push(u8::from_str_radix(oct, 8).context("invalid octal escape value")?);
+                i += 2;
+            }
+            other => bail!("invalid escape sequence \\{}", char::from(other)),
+        }
+        i += 1;
+    }
+    String::from_utf8(out).context("invalid UTF-8 in quoted pathspec")
+}
+
 /// Check if a string contains glob meta-characters.
 pub fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')

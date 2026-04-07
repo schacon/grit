@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    94 |
+| Completed   |    95 |
 | In progress |     0 |
-| Remaining   |   673 |
+| Remaining   |   672 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t3704-add-pathspec-file` — 11/11 tests pass (`git add --pathspec-from-file` / `--pathspec-file-nul`: raw bytes + CRLF/LF/NUL splitting, C-quoted lines, conflict checks vs `--interactive`/`--patch`/`--edit`/pathspecs; shared `pathspec::parse_pathspecs_from_file`; error text matches grep expectations)
 - `t5813-proto-disable-ssh` — 81/81 tests pass (`GIT_ALLOW_PROTOCOL` comma split, `protocol.*.allow=user` + `GIT_PROTOCOL_FROM_USER`, SSH URL validation, local SSH resolution via `TRASH_DIRECTORY` + absolute `ssh://` paths, pkt-line `upload-pack`/`receive-pack`, side-band pack streaming)
 - `t12730-switch-start-point` — 36/36 tests pass (`grit switch -c` with start-point, `--detach`, `--orphan`, tags, abbreviated hashes, `HEAD~N`; harness CSV refreshed)
 - `t1451-fsck-buffer` — 72/72 tests pass (`hash-object` now runs Git-style standalone fsck on commit/tag/tree buffers with matching `missingTree`/`badTree`/ident diagnostics and stderr ordering; new `grit_lib::fsck_standalone`)
