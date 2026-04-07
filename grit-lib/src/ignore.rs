@@ -43,8 +43,12 @@ struct IgnoreRule {
 /// Engine used to evaluate ignore patterns against repository-relative paths.
 #[derive(Debug, Default)]
 pub struct IgnoreMatcher {
+    /// Patterns from `git ls-files -x` / `--exclude` (Git `EXC_CMDL`), evaluated first.
+    cli_rules: Vec<IgnoreRule>,
     global_rules: Vec<IgnoreRule>,
     info_rules: Vec<IgnoreRule>,
+    /// Patterns from `git ls-files -X` / `--exclude-from` (Git `EXC_FILE`, after global/info).
+    exclude_from_rules: Vec<IgnoreRule>,
     gitignore_cache: HashMap<String, Vec<IgnoreRule>>,
     /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
     pub warnings: Vec<String>,
@@ -64,9 +68,35 @@ impl IgnoreMatcher {
         Ok(Self {
             global_rules: load_global_excludes(repo)?,
             info_rules: load_info_excludes(repo)?,
-            warnings: Vec::new(),
             ..Self::default()
         })
+    }
+
+    /// Append patterns from `ls-files --exclude-from` / `-X` files (relative paths resolve from `cwd`).
+    ///
+    /// Matches Git's `EXC_FILE` lists loaded after `core.excludesfile` and `.git/info/exclude`.
+    pub fn add_exclude_from_files(&mut self, paths: &[PathBuf], cwd: &Path) -> Result<()> {
+        for path in paths {
+            let resolved = if path.is_absolute() {
+                path.clone()
+            } else {
+                cwd.join(path)
+            };
+            let display = path.display().to_string();
+            let mut more =
+                load_rules_from_file(&resolved, display, String::new(), false, &mut self.warnings)?;
+            self.exclude_from_rules.append(&mut more);
+        }
+        Ok(())
+    }
+
+    /// Append patterns from `ls-files --exclude` / `-x` (Git command-line exclude list).
+    pub fn add_cli_excludes(&mut self, patterns: &[String]) {
+        for pat in patterns {
+            if let Some(rule) = parse_rule_line(pat, 1, "--exclude option", "") {
+                self.cli_rules.push(rule);
+            }
+        }
     }
 
     /// Take any warnings accumulated while loading ignore files (caller prints to stderr).
@@ -107,10 +137,15 @@ impl IgnoreMatcher {
         let mut ignored = false;
 
         let per_dir_rules = self.rules_for_path(repo, repo_rel_path)?;
+        // Approximate Git precedence with a single "last match wins" pass: command-line and
+        // `ls-files -X` patterns sit next to the standard file group, then per-directory
+        // `.gitignore` (highest priority), matching the historical behavior that passed t0008.
         let all_rules = self
-            .global_rules
+            .cli_rules
             .iter()
+            .chain(self.global_rules.iter())
             .chain(self.info_rules.iter())
+            .chain(self.exclude_from_rules.iter())
             .chain(per_dir_rules.iter())
             .collect::<Vec<_>>();
         for rule in &all_rules {
@@ -269,19 +304,58 @@ fn load_rules_from_file(
     Ok(rules)
 }
 
+/// Trims only *unescaped* trailing spaces, matching Git's `trim_trailing_spaces` in `dir.c`.
+///
+/// A backslash escapes the following byte; a run of spaces ending the line is removed only
+/// when it is not part of an escape sequence (see t0008 "trailing whitespace is ignored").
+fn trim_trailing_spaces_git(buf: &mut String) {
+    let mut bytes = std::mem::take(buf).into_bytes();
+    let mut last_space_start: Option<usize> = None;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' => {
+                if last_space_start.is_none() {
+                    last_space_start = Some(i);
+                }
+                i += 1;
+            }
+            b'\\' => {
+                last_space_start = None;
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                } else {
+                    *buf = String::from_utf8_lossy(&bytes).into_owned();
+                    return;
+                }
+            }
+            _ => {
+                last_space_start = None;
+                i += 1;
+            }
+        }
+    }
+    if let Some(start) = last_space_start {
+        bytes.truncate(start);
+    }
+    *buf = String::from_utf8_lossy(&bytes).into_owned();
+}
+
 fn parse_rule_line(
     line: &str,
     line_number: usize,
     source_display: &str,
     base_dir: &str,
 ) -> Option<IgnoreRule> {
-    let mut raw = line.trim_end().to_owned();
-    if raw.is_empty() {
+    let mut raw_line = line.trim_end_matches('\r').to_owned();
+    trim_trailing_spaces_git(&mut raw_line);
+    if raw_line.is_empty() || raw_line.starts_with('#') {
         return None;
     }
-    if raw.starts_with('#') {
-        return None;
-    }
+
+    let pattern_text = raw_line.clone();
+    let mut raw = raw_line;
 
     let mut negative = false;
     if let Some(rest) = raw.strip_prefix('!') {
@@ -311,15 +385,16 @@ fn parse_rule_line(
     }
 
     let has_slash = raw.contains('/');
+    let body = raw;
     Some(IgnoreRule {
         source_display: source_display.to_owned(),
         line_number,
-        pattern_text: line.trim_end().to_owned(),
+        pattern_text,
         negative,
         directory_only,
         anchored,
         has_slash,
-        body: raw,
+        body,
         base_dir: base_dir.to_owned(),
     })
 }

@@ -30,7 +30,14 @@ pub struct Args {
     pub no_short: bool,
 
     /// Give output in the porcelain format (v1 or v2).
-    #[arg(long = "porcelain", value_name = "VERSION", num_args = 0..=1, default_missing_value = "v1")]
+    ///
+    /// Values must use `=` (`--porcelain=v2`) so a bare `--porcelain` does not swallow a pathspec.
+    #[arg(
+        long = "porcelain",
+        default_missing_value = "v1",
+        num_args = 0..=1,
+        require_equals = true
+    )]
     pub porcelain: Option<String>,
 
     /// Show the branch name.

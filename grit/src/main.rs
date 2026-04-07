@@ -2072,6 +2072,36 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
 ///
 /// When `-h` is passed, clap prints usage and the process exits with code 129
 /// (Git convention for usage errors) instead of clap's default exit code 0.
+/// Git allows `git status --porcelain path`; clap would treat `path` as the optional porcelain
+/// version unless we insert `--` after a bare `--porcelain` when the next token is a pathspec.
+fn preprocess_status_argv(rest: &[String]) -> Vec<String> {
+    fn next_is_pathspec_after_bare_porcelain(next: Option<&str>) -> bool {
+        let Some(n) = next else {
+            return false;
+        };
+        if n == "--" || n.starts_with('-') {
+            return false;
+        }
+        !matches!(n, "v1" | "v2" | "1" | "2")
+    }
+
+    let mut out = Vec::with_capacity(rest.len() + 1);
+    let mut i = 0usize;
+    while i < rest.len() {
+        let arg = rest[i].as_str();
+        if arg == "--porcelain" {
+            out.push(rest[i].clone());
+            if next_is_pathspec_after_bare_porcelain(rest.get(i + 1).map(|s| s.as_str())) {
+                out.push("--".to_owned());
+            }
+        } else {
+            out.push(rest[i].clone());
+        }
+        i += 1;
+    }
+    out
+}
+
 fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T {
     if rest.len() == 1 && (rest[0] == "-h" || rest[0] == "--help") {
         if let Some(syn) = upstream_help_builtin_synopsis::synopsis_for_builtin(subcmd) {
@@ -3054,7 +3084,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "sparse-checkout" => commands::sparse_checkout::run(parse_cmd_args(subcmd, rest)),
         "stage" => commands::stage::run(parse_cmd_args(subcmd, rest)),
         "stash" => commands::stash::run(parse_cmd_args(subcmd, rest)),
-        "status" => commands::status::run(parse_cmd_args(subcmd, rest)),
+        "status" => commands::status::run(parse_cmd_args(subcmd, &preprocess_status_argv(rest))),
         "stripspace" => commands::stripspace::run(parse_cmd_args(subcmd, rest)),
         "submodule" => commands::submodule::run(parse_cmd_args(subcmd, rest)),
         "switch" => commands::switch::run(parse_cmd_args(subcmd, rest)),

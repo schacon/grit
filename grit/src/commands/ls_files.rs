@@ -181,14 +181,28 @@ pub fn run(args: Args) -> Result<()> {
     // Track which pathspecs matched at least one entry (for --error-unmatch).
     let mut matched: Vec<bool> = vec![false; pathspec_filter.len()];
 
-    // Build exclude/ignore matcher if needed (before cached loop so -i -c works)
+    // Build exclude/ignore matcher if needed (before cached loop so -i -c works).
+    // Git order: standard excludes (global → info → .gitignore), plus `-X` files and `-x` patterns.
     let has_excludes = args.exclude_standard
         || !args.exclude.is_empty()
         || !args.exclude_from.is_empty()
         || args.exclude_per_directory.is_some();
     let use_standard_ignores = args.exclude_standard || args.ignored;
-    let mut matcher = if use_standard_ignores {
-        Some(IgnoreMatcher::from_repository(&repo).unwrap_or_default())
+    let need_matcher =
+        use_standard_ignores || !args.exclude.is_empty() || !args.exclude_from.is_empty();
+    let mut matcher = if need_matcher {
+        let mut m = if use_standard_ignores {
+            IgnoreMatcher::from_repository(&repo).unwrap_or_default()
+        } else {
+            IgnoreMatcher::default()
+        };
+        if !args.exclude_from.is_empty() {
+            m.add_exclude_from_files(&args.exclude_from, &cwd)?;
+        }
+        if !args.exclude.is_empty() {
+            m.add_cli_excludes(&args.exclude);
+        }
+        Some(m)
     } else {
         None
     };
@@ -214,19 +228,14 @@ pub fn run(args: Args) -> Result<()> {
         if args.ignored && show_cached && !args.others {
             let path_str = String::from_utf8_lossy(&entry.path);
             // Pass None for index so tracked files aren't auto-skipped
-            let std_ignored = if let Some(ref mut m) = matcher {
-                let (ignored, _) = m
-                    .check_path(&repo, None, &path_str, false)
-                    .unwrap_or((false, None));
-                ignored
+            let excluded = if let Some(ref mut m) = matcher {
+                m.check_path(&repo, None, &path_str, false)
+                    .map(|(ig, _)| ig)
+                    .unwrap_or(false)
             } else {
                 false
             };
-            let cli_excluded = args
-                .exclude
-                .iter()
-                .any(|pat| match_simple_pattern(pat, &path_str));
-            if !std_ignored && !cli_excluded {
+            if !excluded {
                 continue;
             }
         }
@@ -442,19 +451,13 @@ pub fn run(args: Args) -> Result<()> {
             if has_excludes || args.ignored || matcher.is_some() {
                 let path_str = String::from_utf8_lossy(path_bytes);
                 let is_dir = path_str.ends_with('/');
-                let std_ignored = if let Some(ref mut m) = matcher {
-                    let (ignored, _) = m
-                        .check_path(&repo, Some(&index), &path_str, is_dir)
-                        .unwrap_or((false, None));
-                    ignored
+                let is_excluded = if let Some(ref mut m) = matcher {
+                    m.check_path(&repo, Some(&index), &path_str, is_dir)
+                        .map(|(ig, _)| ig)
+                        .unwrap_or(false)
                 } else {
                     false
                 };
-                let cli_excluded = args
-                    .exclude
-                    .iter()
-                    .any(|pat| match_simple_pattern(pat, &path_str));
-                let is_excluded = std_ignored || cli_excluded;
 
                 if args.ignored && !is_excluded {
                     continue; // --ignored: only show excluded files
@@ -862,48 +865,6 @@ fn collapse_to_directories(paths: &[Vec<u8>]) -> Vec<Vec<u8>> {
         }
     }
     result
-}
-
-/// Simple glob pattern matching for --exclude patterns.
-/// Supports *, ?, and literal matching.
-fn match_simple_pattern(pattern: &str, path: &str) -> bool {
-    let pattern = pattern.trim();
-    if pattern.is_empty() {
-        return false;
-    }
-    // If pattern has no slash, match against basename only
-    let name = if !pattern.contains('/') {
-        path.rsplit('/').next().unwrap_or(path)
-    } else {
-        path
-    };
-    simple_glob(pattern.as_bytes(), name.as_bytes())
-}
-
-/// Basic glob matching for exclude patterns (*, ?).
-fn simple_glob(pattern: &[u8], text: &[u8]) -> bool {
-    let (mut pi, mut ti) = (0, 0);
-    let (mut star_p, mut star_t) = (usize::MAX, 0);
-    while ti < text.len() {
-        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi] == text[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pattern.len() && pattern[pi] == b'*' {
-            star_p = pi;
-            star_t = ti;
-            pi += 1;
-        } else if star_p != usize::MAX {
-            pi = star_p + 1;
-            star_t += 1;
-            ti = star_t;
-        } else {
-            return false;
-        }
-    }
-    while pi < pattern.len() && pattern[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pattern.len()
 }
 
 /// Check whether an index entry's file has been modified on disk.
