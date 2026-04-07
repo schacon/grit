@@ -3331,7 +3331,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "mv" => commands::mv::run(parse_cmd_args(subcmd, rest)),
         "name-rev" => commands::name_rev::run(parse_cmd_args(subcmd, rest)),
         "notes" => commands::notes::run(parse_cmd_args(subcmd, rest)),
-        "pack-objects" => commands::pack_objects::run(parse_cmd_args(subcmd, rest)),
+        "pack-objects" => {
+            if discovered_repo_is_partial_clone() {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::pack_objects::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "pkt-line" => {
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
