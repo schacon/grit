@@ -1612,8 +1612,16 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
             let git_file = abs.join(".git");
             if git_file.is_file() {
                 let content = fs::read_to_string(&git_file).unwrap_or_default();
-                let target = content.trim().strip_prefix("gitdir: ").unwrap_or("");
-                if !std::path::Path::new(target).exists() && !target.contains("worktrees") {
+                let target_str = content.trim().strip_prefix("gitdir: ").unwrap_or("");
+                let target = std::path::Path::new(target_str);
+                if target.exists() && target.is_dir() && !target_str.contains("worktrees") {
+                    // Target is a directory but not a git admin dir
+                    eprintln!(
+                        "error: '{}': .git file does not reference a repository",
+                        abs.display()
+                    );
+                    std::process::exit(1);
+                } else if !target.exists() && !target_str.is_empty() {
                     eprintln!("error: '{}': .git file broken", abs.display());
                     std::process::exit(1);
                 }
