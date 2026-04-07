@@ -6,7 +6,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{resolve_revision, symbolic_full_name};
+use grit_lib::rev_parse::{resolve_revision, resolve_upstream_symbolic_name, symbolic_full_name};
 use grit_lib::state::{resolve_head, HeadState};
 use std::fs;
 use std::io::{self, Write};
@@ -930,6 +930,22 @@ fn create_branch(
                     cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
                     std::fs::write(&config_path, cfg)?;
                 }
+            } else if let Ok(full) = resolve_upstream_symbolic_name(repo, sp) {
+                let config_path = repo.git_dir.join("config");
+                let mut cfg = std::fs::read_to_string(&config_path).unwrap_or_default();
+                cfg.push_str(&format!("\n[branch \"{}\"]", name));
+                if let Some(rest) = full.strip_prefix("refs/remotes/") {
+                    if let Some(slash) = rest.find('/') {
+                        let remote = &rest[..slash];
+                        let branch = &rest[slash + 1..];
+                        cfg.push_str(&format!("\n\tremote = {}", remote));
+                        cfg.push_str(&format!("\n\tmerge = refs/heads/{}\n", branch));
+                    }
+                } else if full.starts_with("refs/heads/") {
+                    cfg.push_str("\n\tremote = .");
+                    cfg.push_str(&format!("\n\tmerge = {}\n", full));
+                }
+                std::fs::write(&config_path, cfg)?;
             }
         }
     }

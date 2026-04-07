@@ -73,6 +73,12 @@ pub enum Error {
     /// A configuration file parsing or access error.
     #[error("config error: {0}")]
     ConfigError(String),
+
+    /// User-facing message that should be printed verbatim (no extra prefix).
+    ///
+    /// Used for revision errors that must match Git's `fatal:` lines exactly.
+    #[error("{0}")]
+    Message(String),
 }
 
 /// Convenience alias for `Result<T, Error>`.

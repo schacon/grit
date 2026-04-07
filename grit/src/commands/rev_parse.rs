@@ -2,12 +2,15 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::error::Error as LibError;
+use grit_lib::merge_base;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::{
     abbreviate_object_id, abbreviate_ref_name, discover_optional, is_inside_git_dir,
-    is_inside_work_tree, list_loose_abbrev_matches, resolve_revision, show_prefix,
-    symbolic_full_name,
+    is_inside_work_tree, list_loose_abbrev_matches, peel_to_commit_for_merge_base,
+    resolve_revision, resolve_revision_without_index_dwim, show_prefix, split_double_dot_range,
+    split_triple_dot_range, symbolic_full_name,
 };
 use std::env;
 
@@ -17,6 +20,16 @@ pub struct Args {
     /// Raw command arguments forwarded by the CLI parser.
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
+}
+
+/// Run `rev-parse` with argv as passed after the subcommand (preserves `--` for path separation).
+///
+/// Clap strips `--` from positional lists; `git rev-parse` relies on it, so the main binary
+/// bypasses clap for this command and forwards raw args here.
+pub fn run_with_raw_args(rest: &[String]) -> Result<()> {
+    run(Args {
+        args: rest.to_vec(),
+    })
 }
 
 /// Run `grit rev-parse`.
@@ -67,14 +80,16 @@ pub fn run(args: Args) -> Result<()> {
         Exclude(String),
         LocalEnvVars,
         ResolveGitDir(String),
-        Revision(String, bool), // (rev_spec, symbolic_full_name_at_parse_time)
+        Revision(String, bool, bool), // (rev_spec, symbolic_full_name, strict_before_first_dd)
         ForcedPath(String),
         PathSeparator,
+        Literal(String),
     }
 
     let mut actions: Vec<Action> = Vec::new();
     let mut end_of_options = false;
     let mut saw_path_separator = false;
+    let first_path_sep_dd = args.args.iter().position(|a| a == "--");
 
     // First pass: parse all arguments and build ordered action list
     let mut i = 0usize;
@@ -84,6 +99,26 @@ pub fn run(args: Args) -> Result<()> {
             end_of_options = true;
             saw_path_separator = true;
             actions.push(Action::PathSeparator);
+            i += 1;
+            continue;
+        }
+        if end_of_options {
+            if arg == "--" {
+                saw_path_separator = true;
+                actions.push(Action::PathSeparator);
+                i += 1;
+                continue;
+            }
+            if saw_path_separator {
+                actions.push(Action::ForcedPath(arg.clone()));
+            } else {
+                let strict = first_path_sep_dd.is_some_and(|dd| i < dd);
+                actions.push(Action::Revision(
+                    arg.clone(),
+                    show_symbolic_full_name,
+                    strict,
+                ));
+            }
             i += 1;
             continue;
         }
@@ -157,6 +192,7 @@ pub fn run(args: Args) -> Result<()> {
                 default_rev = Some(value.to_owned());
             } else if arg == "--end-of-options" {
                 end_of_options = true;
+                actions.push(Action::Literal("--end-of-options".to_owned()));
             } else if arg == "--branches" {
                 actions.push(Action::Branches(None));
             } else if let Some(pattern) = arg.strip_prefix("--branches=") {
@@ -227,7 +263,12 @@ pub fn run(args: Args) -> Result<()> {
         if saw_path_separator {
             actions.push(Action::ForcedPath(arg.clone()));
         } else {
-            actions.push(Action::Revision(arg.clone(), show_symbolic_full_name));
+            let strict = first_path_sep_dd.is_some_and(|dd| i < dd);
+            actions.push(Action::Revision(
+                arg.clone(),
+                show_symbolic_full_name,
+                strict,
+            ));
         }
         i += 1;
     }
@@ -236,7 +277,7 @@ pub fn run(args: Args) -> Result<()> {
     if sq_quote {
         let mut out = String::new();
         for action in &actions {
-            if let Action::Revision(rev, _) = action {
+            if let Action::Revision(rev, _, _) = action {
                 if !out.is_empty() {
                     out.push(' ');
                 }
@@ -252,7 +293,7 @@ pub fn run(args: Args) -> Result<()> {
         let revisions: Vec<&str> = actions
             .iter()
             .filter_map(|a| match a {
-                Action::Revision(r, _) => Some(r.as_str()),
+                Action::Revision(r, _, _) => Some(r.as_str()),
                 _ => None,
             })
             .collect();
@@ -269,9 +310,83 @@ pub fn run(args: Args) -> Result<()> {
         let Some(current) = repo.as_ref() else {
             return fail_verify(quiet, false);
         };
-        let oid = match resolve_revision(current, rev_list[0]) {
+        let spec = rev_list[0];
+        if let Some((left, right)) = split_double_dot_range(spec) {
+            let left_oid = match if left.is_empty() {
+                resolve_revision(current, "HEAD")
+            } else {
+                resolve_revision(current, left)
+            } {
+                Ok(oid) => oid,
+                Err(e) => return fail_verify_resolve(quiet, &e),
+            };
+            let right_oid = match if right.is_empty() {
+                resolve_revision(current, "HEAD")
+            } else {
+                resolve_revision(current, right)
+            } {
+                Ok(oid) => oid,
+                Err(e) => return fail_verify_resolve(quiet, &e),
+            };
+            if let Some(mut len) = short_len {
+                if len == 0 {
+                    use grit_lib::config::ConfigSet;
+                    let config = ConfigSet::load(Some(&current.git_dir), false)
+                        .unwrap_or_else(|_| ConfigSet::new());
+                    len = config
+                        .get("core.abbrev")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(7);
+                }
+                println!("{}", abbreviate_object_id(current, left_oid, len)?);
+                println!("^{}", abbreviate_object_id(current, right_oid, len)?);
+            } else {
+                println!("{left_oid}");
+                println!("^{right_oid}");
+            }
+            return Ok(());
+        }
+        if let Some((left, right)) = split_triple_dot_range(spec) {
+            let left_tip = if left.is_empty() {
+                resolve_revision(current, "HEAD")?
+            } else {
+                resolve_revision(current, left)?
+            };
+            let right_tip = if right.is_empty() {
+                resolve_revision(current, "HEAD")?
+            } else {
+                resolve_revision(current, right)?
+            };
+            let left_commit = peel_to_commit_for_merge_base(current, left_tip)?;
+            let right_commit = peel_to_commit_for_merge_base(current, right_tip)?;
+            let bases =
+                merge_base::merge_bases_first_vs_rest(current, left_commit, &[right_commit])?;
+            let Some(mb) = bases.into_iter().next() else {
+                return fail_verify(quiet, false);
+            };
+            if let Some(mut len) = short_len {
+                if len == 0 {
+                    use grit_lib::config::ConfigSet;
+                    let config = ConfigSet::load(Some(&current.git_dir), false)
+                        .unwrap_or_else(|_| ConfigSet::new());
+                    len = config
+                        .get("core.abbrev")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(7);
+                }
+                println!("{}", abbreviate_object_id(current, left_tip, len)?);
+                println!("{}", abbreviate_object_id(current, right_tip, len)?);
+                println!("^{}", abbreviate_object_id(current, mb, len)?);
+            } else {
+                println!("{left_tip}");
+                println!("{right_tip}");
+                println!("^{mb}");
+            }
+            return Ok(());
+        }
+        let oid = match resolve_revision(current, spec) {
             Ok(oid) => oid,
-            Err(_) => return fail_verify(quiet, false),
+            Err(e) => return fail_verify_resolve(quiet, &e),
         };
         if let Some(mut len) = short_len {
             if len == 0 {
@@ -292,9 +407,15 @@ pub fn run(args: Args) -> Result<()> {
 
     // Apply --default: if no Revision actions exist, inject the default
     if let Some(ref def) = default_rev {
-        let has_revision = actions.iter().any(|a| matches!(a, Action::Revision(_, _)));
+        let has_revision = actions
+            .iter()
+            .any(|a| matches!(a, Action::Revision(_, _, _)));
         if !has_revision {
-            actions.push(Action::Revision(def.clone(), show_symbolic_full_name));
+            actions.push(Action::Revision(
+                def.clone(),
+                show_symbolic_full_name,
+                false,
+            ));
         }
     }
 
@@ -329,8 +450,13 @@ pub fn run(args: Args) -> Result<()> {
     let mut saw_path_sep_output = false;
     let mut exclude_patterns: Vec<String> = Vec::new();
     let _ = sq_output; // --sq accepted but output quoting deferred to callers
+    let mut seen_ambiguous_revision = false;
+    let mut deferred_fatal_stderr: Option<String> = None;
     for action in &actions {
         match action {
+            Action::Literal(s) => {
+                println!("{s}");
+            }
             Action::ShowIsInsideWorkTree => {
                 let inside = repo
                     .as_ref()
@@ -748,7 +874,6 @@ pub fn run(args: Args) -> Result<()> {
                 ] {
                     println!("{var}");
                 }
-                return Ok(());
             }
             Action::ResolveGitDir(path_arg) => {
                 let p = std::path::Path::new(path_arg);
@@ -777,13 +902,23 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 return Ok(());
             }
-            Action::Revision(rev, rev_symbolic_full_name) => {
+            Action::Revision(rev, rev_symbolic_full_name, strict_before_first_dd) => {
                 let Some(current) = repo.as_ref() else {
                     if quiet {
                         std::process::exit(1);
                     }
                     bail!("not a git repository (or any of the parent directories)");
                 };
+                if seen_ambiguous_revision {
+                    println!("{rev}");
+                    if rev.contains(':') && !rev.starts_with(':') {
+                        deferred_fatal_stderr = Some(format!(
+                            "fatal: {rev}: no such path in the working tree.\n\
+Use 'git <command> -- <path>...' to specify paths that do not exist locally."
+                        ));
+                    }
+                    continue;
+                }
                 // Use ONLY the per-action flag (not global, to support mixed usage)
                 let use_symbolic = *rev_symbolic_full_name;
 
@@ -804,7 +939,90 @@ pub fn run(args: Args) -> Result<()> {
                 }
 
                 let rewritten = rewrite_tree_path_spec(rev, prefix.as_deref());
-                match resolve_revision(current, &rewritten) {
+                if let Some((left, right)) = split_triple_dot_range(&rewritten) {
+                    if no_revs {
+                        continue;
+                    }
+                    let left_tip = if left.is_empty() {
+                        resolve_revision_without_index_dwim(current, "HEAD")?
+                    } else {
+                        resolve_revision_without_index_dwim(current, left)?
+                    };
+                    let right_tip = if right.is_empty() {
+                        resolve_revision_without_index_dwim(current, "HEAD")?
+                    } else {
+                        resolve_revision_without_index_dwim(current, right)?
+                    };
+                    let left_commit = peel_to_commit_for_merge_base(current, left_tip)?;
+                    let right_commit = peel_to_commit_for_merge_base(current, right_tip)?;
+                    let bases = merge_base::merge_bases_first_vs_rest(
+                        current,
+                        left_commit,
+                        &[right_commit],
+                    )?;
+                    let Some(mb) = bases.into_iter().next() else {
+                        bail!("no merge base for '{rewritten}'");
+                    };
+                    if let Some(len) = short_len {
+                        println!("{}", abbreviate_object_id(current, left_tip, len)?);
+                        println!("{}", abbreviate_object_id(current, right_tip, len)?);
+                        println!("^{}", abbreviate_object_id(current, mb, len)?);
+                    } else {
+                        println!("{left_tip}");
+                        println!("{right_tip}");
+                        println!("^{mb}");
+                    }
+                    continue;
+                }
+                if let Some((left, right)) = split_double_dot_range(&rewritten) {
+                    if no_revs {
+                        continue;
+                    }
+                    let left_oid = if left.is_empty() {
+                        resolve_revision_without_index_dwim(current, "HEAD")?
+                    } else {
+                        resolve_revision_without_index_dwim(current, left)?
+                    };
+                    let right_oid = if right.is_empty() {
+                        resolve_revision_without_index_dwim(current, "HEAD")?
+                    } else {
+                        resolve_revision_without_index_dwim(current, right)?
+                    };
+                    if left.is_empty() && right.is_empty() {
+                        println!("..");
+                    } else {
+                        if let Some(len) = short_len {
+                            println!("{}", abbreviate_object_id(current, left_oid, len)?);
+                            println!("^{}", abbreviate_object_id(current, right_oid, len)?);
+                        } else {
+                            println!("{left_oid}");
+                            println!("^{right_oid}");
+                        }
+                    }
+                    continue;
+                }
+                if looks_like_shell_glob(&rewritten) {
+                    if no_revs {
+                        continue;
+                    }
+                    match resolve_revision_without_index_dwim(current, &rewritten) {
+                        Ok(oid) => {
+                            if let Some(len) = short_len {
+                                println!("{}", abbreviate_object_id(current, oid, len)?);
+                            } else {
+                                println!("{oid}");
+                            }
+                        }
+                        Err(_) => {
+                            if revs_only {
+                                continue;
+                            }
+                            println!("{rewritten}");
+                        }
+                    }
+                    continue;
+                }
+                match resolve_revision_without_index_dwim(current, &rewritten) {
                     Ok(oid) => {
                         if no_revs {
                             // --no-revs: skip resolved revisions
@@ -822,20 +1040,41 @@ pub fn run(args: Args) -> Result<()> {
                             continue;
                         }
                         let msg = e.to_string();
-                        if let Some(prefix) = parse_ambiguous_short_oid(&msg) {
-                            print_ambiguous_short_oid_error(current, rev, &prefix)?;
+                        if *strict_before_first_dd && !rev.contains(':') {
+                            match &e {
+                                LibError::Message(_) | LibError::ObjectNotFound(_) => {
+                                    bail!("fatal: bad revision '{rev}'");
+                                }
+                                _ if msg.contains("ambiguous argument") => {
+                                    bail!("fatal: bad revision '{rev}'");
+                                }
+                                _ => {}
+                            }
+                        }
+                        if matches!(&e, LibError::Message(m) if m.contains("ambiguous argument")) {
+                            println!("{rev}");
+                            seen_ambiguous_revision = true;
+                            deferred_fatal_stderr = Some(msg);
+                            continue;
+                        }
+                        if matches!(&e, LibError::Message(_) | LibError::InvalidRef(_)) {
+                            return Err(e.into());
+                        }
+                        let amb_prefix = parse_ambiguous_short_oid(&msg);
+                        if let Some(ref pfx) = amb_prefix {
+                            print_ambiguous_short_oid_error(current, rev, pfx)?;
                         }
                         if msg.contains("ambiguous") {
                             return Err(anyhow::anyhow!("{msg}"));
                         }
-                        if no_revs || prefix.is_some() {
+                        if no_revs || amb_prefix.is_some() {
                             if let Some(path_prefix) = prefix.as_deref() {
                                 println!("{}", apply_prefix_for_forced_path(path_prefix, rev));
                             } else {
                                 println!("{rev}");
                             }
                         } else {
-                            return Err(anyhow::anyhow!("bad revision '{rev}'"));
+                            bail!("fatal: bad revision '{rev}'");
                         }
                     }
                 }
@@ -856,6 +1095,10 @@ pub fn run(args: Args) -> Result<()> {
                 }
             }
         }
+    }
+    if let Some(msg) = deferred_fatal_stderr {
+        eprintln!("{msg}");
+        std::process::exit(128);
     }
     Ok(())
 }
@@ -879,6 +1122,20 @@ fn fail_verify(quiet: bool, is_reflog_selector: bool) -> Result<()> {
     }
 }
 
+fn fail_verify_resolve(quiet: bool, err: &LibError) -> Result<()> {
+    if quiet {
+        std::process::exit(1);
+    }
+    let msg = err.to_string();
+    if msg.contains("only has") && msg.contains("entries") {
+        bail!("{msg}");
+    }
+    if matches!(err, LibError::InvalidRef(_) | LibError::Message(_)) {
+        bail!("{msg}");
+    }
+    fail_verify(quiet, false)
+}
+
 fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {
     if prefix.is_empty() {
         return path.to_owned();
@@ -896,11 +1153,14 @@ fn rewrite_tree_path_spec(spec: &str, prefix: Option<&str>) -> String {
     if !raw_path.starts_with("./") && !raw_path.starts_with("../") {
         return spec.to_owned();
     }
+    // Without `--prefix`, `./` and `../` are resolved by the library relative to cwd; do not
+    // normalize here (stripping `./` would wrongly turn `HEAD:./file` into `HEAD:file`).
+    let Some(prefix) = prefix else {
+        return spec.to_owned();
+    };
 
     let mut joined = String::new();
-    if let Some(prefix) = prefix {
-        joined.push_str(prefix);
-    }
+    joined.push_str(prefix);
     joined.push_str(raw_path);
     let normalized = normalize_slash_path(&joined);
     format!("{treeish}:{normalized}")
@@ -993,6 +1253,20 @@ fn sq_quote_str(s: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+fn looks_like_shell_glob(spec: &str) -> bool {
+    let mut it = spec.chars();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            let _ = it.next();
+            continue;
+        }
+        if matches!(c, '*' | '?' | '[') {
+            return true;
+        }
+    }
+    false
 }
 
 fn normalize_slash_path(path: &str) -> String {

@@ -145,14 +145,20 @@ pub fn run(args: Args) -> Result<()> {
 
         return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
     } else if is_local {
-        // "." remote — resolve locally
+        // "." remote — merge the configured upstream ref (e.g. `refs/heads/main`), not a
+        // synthetic `refs/remotes/./main` remote-tracking ref (matches git pull).
         let remote_oid = grit_lib::rev_parse::resolve_revision(&repo, &merge_branch)
             .with_context(|| format!("bad revision '{merge_branch}'"))?;
+
+        let merge_ref = current_branch
+            .as_ref()
+            .and_then(|b| config.get(&format!("branch.{b}.merge")))
+            .unwrap_or_else(|| format!("refs/heads/{merge_branch}"));
 
         let fetch_head = format!("{}\t\t{}\n", remote_oid.to_hex(), merge_branch);
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
-        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
+        return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_ref);
     }
 
     // Step 1: Fetch

@@ -56,6 +56,9 @@ pub struct AddArgs {
     pub name: String,
     /// URL of the remote.
     pub url: String,
+    /// Track only this branch (may be given more than once).
+    #[arg(short = 't', long = "track")]
+    pub track: Vec<String>,
     /// Fetch immediately after adding.
     #[arg(short = 'f')]
     pub fetch: bool,
@@ -184,7 +187,15 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     }
 
     let mut config_file = load_or_create_config_file(&config_path)?;
-    let fetch_refspec = format!("+refs/heads/*:refs/remotes/{}/*", args.name);
+    let fetch_refspec = if args.track.is_empty() {
+        format!("+refs/heads/*:refs/remotes/{}/*", args.name)
+    } else {
+        args.track
+            .iter()
+            .map(|b| format!("+refs/heads/{b}:refs/remotes/{}/{b}", args.name))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     config_file.set(&format!("remote.{}.url", args.name), &args.url)?;
     config_file.set(&format!("remote.{}.fetch", args.name), &fetch_refspec)?;
     config_file.write().context("writing config")?;
