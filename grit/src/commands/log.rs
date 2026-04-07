@@ -2093,10 +2093,12 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
     };
     let decorations = if args.no_decorate {
         None
-    } else {
-        // In no-walk mode, match regular `git log` behavior by decorating
-        // commits by default unless explicitly disabled.
+    } else if args.decorate.is_some() {
+        // Explicitly requested decorations
         Some(collect_decorations(repo, decorate_full)?)
+    } else {
+        // Default: no decorations in no-walk mode (matches git behavior)
+        None
     };
 
     let mut commits = Vec::new();
