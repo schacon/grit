@@ -695,7 +695,8 @@ fn unset_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()
     let mut cs = ConfigSet::new();
     cs.merge(&config);
     if cs.get(&merge_key).is_none() {
-        bail!("branch '{branch_name}' has no upstream configuration");
+        eprintln!("fatal: branch '{branch_name}' has no upstream information");
+        std::process::exit(1);
     }
 
     let remote_key = format!("branch.{branch_name}.remote");
