@@ -89,7 +89,7 @@ commit → check it off → move on.
 - [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
 - [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
 
-- [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
+- [x] `t1051-large-conversion` ████████████████████ 12/12 (0 left) — test conversion filters on large files
 - [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
 - [ ] `t0411-clone-from-partial` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — check that local clone does not fetch from promisor remotes
 - [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
