@@ -1444,13 +1444,20 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
             let gitdir_file = candidate.join("gitdir");
             if gitdir_file.exists() {
                 let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-                let recorded = PathBuf::from(raw.trim());
-                let recorded_wt = recorded
+                let recorded_raw = PathBuf::from(raw.trim());
+                // Resolve relative paths against the admin dir
+                let recorded = if recorded_raw.is_relative() {
+                    candidate.join(&recorded_raw)
+                } else {
+                    recorded_raw
+                };
+                let recorded_normalized = normalize_path(&recorded);
+                let recorded_wt = recorded_normalized
                     .parent()
-                    .unwrap_or(&recorded)
-                    .canonicalize()
-                    .unwrap_or(recorded.parent().unwrap_or(&recorded).to_path_buf());
-                if recorded_wt == target {
+                    .unwrap_or(&recorded_normalized)
+                    .to_path_buf();
+                let recorded_wt_canonical = recorded_wt.canonicalize().unwrap_or(recorded_wt);
+                if recorded_wt_canonical == target {
                     return Ok(basename.to_string());
                 }
             }
@@ -1465,18 +1472,22 @@ fn find_worktree_name(worktrees_dir: &Path, target: &Path) -> Result<String> {
         if !entry.file_type()?.is_dir() {
             continue;
         }
-        let gitdir_file = entry.path().join("gitdir");
+        let admin_dir = entry.path();
+        let gitdir_file = admin_dir.join("gitdir");
         if !gitdir_file.exists() {
             continue;
         }
         let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-        let recorded = PathBuf::from(raw.trim());
-        let recorded_wt = recorded
-            .parent()
-            .unwrap_or(&recorded)
-            .canonicalize()
-            .unwrap_or(recorded.parent().unwrap_or(&recorded).to_path_buf());
-        if recorded_wt == target {
+        let recorded_raw = PathBuf::from(raw.trim());
+        // Resolve relative paths against the admin dir
+        let recorded = if recorded_raw.is_relative() {
+            normalize_path(&admin_dir.join(&recorded_raw))
+        } else {
+            recorded_raw
+        };
+        let recorded_wt = recorded.parent().unwrap_or(&recorded).to_path_buf();
+        let recorded_wt_canonical = recorded_wt.canonicalize().unwrap_or(recorded_wt);
+        if recorded_wt_canonical == target {
             return Ok(entry.file_name().to_string_lossy().to_string());
         }
     }
@@ -1755,15 +1766,59 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
 
     let dst_path = dst_path.canonicalize().unwrap_or(dst_path);
 
+    // Determine if we should use relative paths
+    let use_relative = if args.relative_paths {
+        true
+    } else if args.no_relative_paths {
+        false
+    } else {
+        let cfg = grit_lib::config::ConfigSet::load(Some(&common), true).unwrap_or_default();
+        cfg.get_bool("worktree.useRelativePaths")
+            .and_then(|r| r.ok())
+            .unwrap_or(false)
+    };
+
     // Update the gitdir file in the admin dir to point to the new location
-    let new_gitdir_content = format!("{}\n", dst_path.join(".git").display());
+    let new_gitdir_content = if use_relative {
+        let rel = make_relative_path(&admin, &dst_path.join(".git"));
+        format!("{}\n", rel.display())
+    } else {
+        format!("{}\n", dst_path.join(".git").display())
+    };
     fs::write(admin.join("gitdir"), &new_gitdir_content)?;
 
-    // Update the .git file in the moved worktree (it should still point to the same admin dir)
-    let dotgit_content = format!("gitdir: {}\n", admin.display());
+    // Update the .git file in the moved worktree
+    let dotgit_content = if use_relative {
+        let rel = make_relative_path(&dst_path, &admin);
+        format!("gitdir: {}\n", rel.display())
+    } else {
+        format!("gitdir: {}\n", admin.display())
+    };
     fs::write(dst_path.join(".git"), &dotgit_content)?;
 
     Ok(())
+}
+
+/// Compute the relative path from `from` (a directory) to `to`.
+fn make_relative_path(from: &std::path::Path, to: &std::path::Path) -> PathBuf {
+    let from_abs = from.canonicalize().unwrap_or(from.to_path_buf());
+    let to_abs = to.canonicalize().unwrap_or(to.to_path_buf());
+    let from_comps: Vec<_> = from_abs.components().collect();
+    let to_comps: Vec<_> = to_abs.components().collect();
+    let common_len = from_comps
+        .iter()
+        .zip(to_comps.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up = from_comps.len() - common_len;
+    let mut result = PathBuf::new();
+    for _ in 0..up {
+        result.push("..");
+    }
+    for comp in &to_comps[common_len..] {
+        result.push(comp.as_os_str());
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
