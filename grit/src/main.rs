@@ -3475,7 +3475,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "verify-tag" => commands::verify_tag::run(parse_cmd_args(subcmd, rest)),
         "version" => commands::version::run(parse_cmd_args(subcmd, rest)),
         "whatchanged" => commands::whatchanged::run(parse_cmd_args(subcmd, rest)),
-        "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
+        "worktree" => {
+            if discovered_repo_is_reftable() {
+                commands::worktree::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");

@@ -207,7 +207,7 @@ commit → check it off → move on.
 
 - [x] `t2003-checkout-cache-mkdir` ████████████████████ 10/10 (0 left) — git checkout-index --prefix test.
 
-- [ ] `t2401-worktree-prune` ███████░░░░░░░░░░░░░ 5/13 (8 left) — prune $GIT_DIR/worktrees
+- [x] `t2401-worktree-prune` ████████████████████ 13/13 (0 left) — prune $GIT_DIR/worktrees
 - [ ] `t2404-worktree-config` ██████░░░░░░░░░░░░░░ 4/12 (8 left) — config file in multi worktree
 - [ ] `t2405-worktree-submodule` █████░░░░░░░░░░░░░░░ 3/11 (8 left) — Combination of submodules and multiple worktrees
 - [ ] `t2020-checkout-detach` █████████████░░░░░░░ 17/26 (9 left) — checkout into detached HEAD state
