@@ -220,7 +220,7 @@ t2400-worktree-add	yes	232	40	192	ok	40	232	0
 t2401-worktree-prune	yes	13	13	0	ok	13	13	0
 t2402-worktree-list	yes	27	8	19	ok	8	27	0
 t2403-worktree-move	yes	0	0	0	ok	0	0	0
-t2404-worktree-config	yes	12	4	8	ok	4	12	0
+t2404-worktree-config	yes	12	12	0	ok	12	12	0
 t2405-worktree-submodule	yes	11	3	8	ok	2	10	1
 t2406-worktree-repair	yes	24	4	20	ok	4	24	0
 t2407-worktree-heads	yes	12	1	11	ok	1	12	0

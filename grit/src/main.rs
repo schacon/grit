@@ -3211,7 +3211,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         }
         "commit-graph" => commands::commit_graph::run(parse_cmd_args(subcmd, rest)),
         "commit-tree" => commands::commit_tree::run(parse_cmd_args(subcmd, rest)),
-        "config" => commands::config::run(parse_cmd_args(subcmd, rest)),
+        "config" => {
+            if discovered_repo_is_reftable() {
+                commands::config::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "count-objects" => commands::count_objects::run(parse_cmd_args(subcmd, rest)),
         "credential" => commands::credential::run(parse_cmd_args(subcmd, rest)),
         "credential-cache" => commands::credential_cache::run(parse_cmd_args(subcmd, rest)),
@@ -3429,7 +3435,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 commands::rev_list::run(parse_cmd_args(subcmd, rest))
             }
         }
-        "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
+        "rev-parse" => {
+            if discovered_repo_is_reftable() {
+                commands::rev_parse::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => {
             let recursive = rest

@@ -825,7 +825,13 @@ test_hook () {
 
 # test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
 test_cmp_config () {
+	local gd=""
 	local default=""
+	if test "$1" = "-C"
+	then
+		gd="-C $2"
+		shift 2
+	fi
 	if test "$1" = "--default"
 	then
 		default="$2"
@@ -834,7 +840,7 @@ test_cmp_config () {
 	local expect="$1"
 	shift
 	local actual
-	actual=$(git config "$@" 2>/dev/null) || actual="$default"
+	actual=$(git $gd config "$@" 2>/dev/null) || actual="$default"
 	if test "$expect" = "$actual"
 	then
 		return 0
@@ -845,7 +851,7 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= append= signoff= indir= tag=yes message= file= contents= author=
+	local notick= append= signoff= indir= tag=yes message= file= contents= author= tag_name=
 	local output_cmd=echo
 	while test $# != 0
 	do
@@ -863,6 +869,7 @@ test_commit () {
 	message="${1:?test_commit}" && shift
 	file="${1:-$message.t}" && { test $# -gt 0 && shift || true; }
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
+	tag_name="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
 		if test -n "$append"
@@ -877,7 +884,7 @@ test_commit () {
 		fi &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
-			git tag "$message"
+			git tag "$tag_name"
 		fi
 	)
 }
