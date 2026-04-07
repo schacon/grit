@@ -9,6 +9,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit pull`.
 #[derive(Debug, ClapArgs)]
@@ -83,6 +84,14 @@ pub fn run(args: Args) -> Result<()> {
     };
     let remote_name = remote_name_owned.as_str();
 
+    let work_tree = repo.work_tree.as_ref().context("bare repository")?;
+    let is_local_dot = remote_name == ".";
+    let local_remote_path = if is_local_dot {
+        None
+    } else {
+        resolve_local_remote_path(work_tree, remote_name, &config)?
+    };
+
     // Determine merge branch
     let merge_branch = if let Some(ref b) = args.branch {
         b.clone()
@@ -96,33 +105,23 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             branch.clone()
         }
+    } else if args.remote.is_some() {
+        let Some(path) = local_remote_path.as_ref() else {
+            bail!("no tracking branch configured and no branch specified");
+        };
+        let remote_repo = open_repository_at_path(path)?;
+        let head_sym = refs::read_symbolic_ref(&remote_repo.git_dir, "HEAD")?;
+        let Some(sym) = head_sym else {
+            bail!("no tracking branch configured and no branch specified");
+        };
+        sym.strip_prefix("refs/heads/").unwrap_or(&sym).to_owned()
     } else {
         bail!("no tracking branch configured and no branch specified");
     };
 
-    // Check if remote is local (path-based: "." or contains "/")
-    let is_local = remote_name == "." || remote_name.contains('/');
-
-    if is_local && remote_name != "." {
-        // For local path remotes, open the remote repo, copy objects, and resolve the branch there.
-        let remote_path = if let Some(stripped) = remote_name.strip_prefix("file://") {
-            std::path::PathBuf::from(stripped)
-        } else {
-            std::path::PathBuf::from(remote_name)
-        };
-
+    if let Some(remote_path) = local_remote_path {
         // Open remote repo (bare or non-bare)
-        let remote_repo = if let Ok(r) = Repository::open(&remote_path, None) {
-            r
-        } else {
-            let git_dir = remote_path.join(".git");
-            Repository::open(&git_dir, Some(&remote_path)).with_context(|| {
-                format!(
-                    "could not open remote repository at '{}'",
-                    remote_path.display()
-                )
-            })?
-        };
+        let remote_repo = open_repository_at_path(&remote_path)?;
 
         // Copy objects from remote to local
         super::fetch::copy_objects_for_pull(&remote_repo.git_dir, &repo.git_dir)?;
@@ -144,7 +143,7 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(repo.git_dir.join("FETCH_HEAD"), &fetch_head)?;
 
         return do_merge_or_rebase(&args, &config, remote_oid.to_hex(), &merge_branch);
-    } else if is_local {
+    } else if is_local_dot {
         // "." remote — merge the configured upstream ref (e.g. `refs/heads/main`), not a
         // synthetic `refs/remotes/./main` remote-tracking ref (matches git pull).
         let remote_oid = grit_lib::rev_parse::resolve_revision(&repo, &merge_branch)
@@ -278,4 +277,52 @@ fn do_merge_or_rebase(
         };
         super::merge::run(merge_args)
     }
+}
+
+fn remote_token_looks_like_path(token: &str) -> bool {
+    token == "." || token.contains('/') || token.starts_with("file://")
+}
+
+fn resolve_local_remote_path(
+    work_tree: &Path,
+    remote_name: &str,
+    config: &ConfigSet,
+) -> Result<Option<PathBuf>> {
+    if remote_token_looks_like_path(remote_name) {
+        let raw = remote_name.strip_prefix("file://").unwrap_or(remote_name);
+        let p = Path::new(raw);
+        let resolved = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            work_tree.join(p)
+        };
+        return Ok(Some(resolved));
+    }
+    let Some(url) = config.get(&format!("remote.{remote_name}.url")) else {
+        return Ok(None);
+    };
+    if !remote_token_looks_like_path(&url) {
+        return Ok(None);
+    }
+    let raw = url.strip_prefix("file://").unwrap_or(&url);
+    let p = Path::new(raw);
+    let resolved = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        work_tree.join(p)
+    };
+    Ok(Some(resolved))
+}
+
+fn open_repository_at_path(remote_path: &Path) -> Result<Repository> {
+    if let Ok(r) = Repository::open(remote_path, None) {
+        return Ok(r);
+    }
+    let git_dir = remote_path.join(".git");
+    Repository::open(&git_dir, Some(remote_path)).with_context(|| {
+        format!(
+            "could not open remote repository at '{}'",
+            remote_path.display()
+        )
+    })
 }
