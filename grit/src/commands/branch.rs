@@ -824,6 +824,33 @@ fn create_branch(
         bail!("A branch named '{name}' already exists.");
     }
 
+    // Check for D/F conflict: a prefix of the new name exists as a branch
+    // e.g., cannot create 'c/d' if 'c' already exists as a branch
+    let heads_dir = repo.git_dir.join("refs/heads");
+    let mut prefix = std::path::PathBuf::from(name);
+    while prefix.pop() {
+        if !prefix.as_os_str().is_empty() {
+            let prefix_str = prefix.to_string_lossy();
+            let prefix_ref = format!("refs/heads/{}", prefix_str);
+            if grit_lib::refs::resolve_ref(&repo.git_dir, &prefix_ref).is_ok() {
+                bail!(
+                    "cannot lock ref '{}': '{}' exists; cannot create '{}'",
+                    refname,
+                    prefix_ref,
+                    refname
+                );
+            }
+        }
+    }
+    // Also check: a directory with the same name exists (existing branch is prefix)
+    if heads_dir.join(name).is_dir() {
+        bail!(
+            "cannot lock ref '{}': '{}' exists",
+            refname,
+            heads_dir.join(name).display()
+        );
+    }
+
     // Cannot force-update the current branch
     if args.force {
         let current = head.branch_name().unwrap_or("");
