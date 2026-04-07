@@ -14,7 +14,8 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::diff::read_submodule_head_for_checkout;
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
@@ -1607,6 +1608,13 @@ fn is_worktree_dirty(
     entry: &IndexEntry,
     abs_path: &std::path::Path,
 ) -> Result<bool> {
+    if entry.mode == MODE_GITLINK {
+        let wt_head = read_submodule_head_for_checkout(abs_path);
+        return Ok(match wt_head {
+            Some(oid) => oid != entry.oid,
+            None => false,
+        });
+    }
     if entry.mode == MODE_SYMLINK {
         // For symlinks, compare the target
         match std::fs::read_link(abs_path) {
@@ -2715,7 +2723,14 @@ fn checkout_index_to_worktree(
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         } else if abs.is_dir() {
-            let _ = std::fs::remove_dir_all(&abs);
+            // Removing a gitlink from the index must not delete a populated submodule checkout
+            // (directory with `.git`), matching Git and `t4137-apply-submodule`.
+            let is_populated_submodule = old_map
+                .get(old_path.as_slice())
+                .is_some_and(|e| e.mode == MODE_GITLINK && abs.join(".git").exists());
+            if !is_populated_submodule {
+                let _ = std::fs::remove_dir_all(&abs);
+            }
         }
         remove_empty_parent_dirs(work_tree, &abs);
     }

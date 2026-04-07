@@ -479,7 +479,11 @@ pub fn run(mut args: Args) -> Result<()> {
                     args.check = true;
                 }
                 s if s.starts_with("--ignore-submodules") => {
-                    args.ignore_submodules = Some("all".to_owned());
+                    args.ignore_submodules = Some(
+                        s.strip_prefix("--ignore-submodules=")
+                            .unwrap_or("all")
+                            .to_owned(),
+                    );
                 }
                 s if s.starts_with("--color-moved") => {
                     args.color_moved = Some("default".to_owned());
@@ -707,14 +711,15 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
-    // Filter out submodule entries when --ignore-submodules is given.
-    let entries = if args.ignore_submodules.is_some() {
+    // `--ignore-submodules=all` hides gitlink paths entirely. `dirty` / `untracked` still show
+    // when the superproject records a different submodule commit (tree-to-tree / index gitlink
+    // updates); they only suppress "submodule working tree dirty" noise elsewhere (matches Git;
+    // see `t4137-apply-submodule.sh`).
+    let ignore_sm = args.ignore_submodules.as_deref().unwrap_or("none");
+    let entries = if ignore_sm == "all" {
         entries
             .into_iter()
-            .filter(|e| {
-                // Submodule entries have mode 160000
-                e.old_mode != "160000" && e.new_mode != "160000"
-            })
+            .filter(|e| e.old_mode != "160000" && e.new_mode != "160000")
             .collect()
     } else {
         entries
@@ -1843,6 +1848,55 @@ fn write_patch_with_prefix(
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
 
         write_diff_header_with_prefix(out, entry, use_color, abbrev_len, src_prefix, dst_prefix)?;
+
+        // Submodule gitlink (mode 160000): emit `Subproject commit` hunks like Git — the ODB
+        // does not store these as blobs in the superproject (`git apply` / t4137 rely on this).
+        if entry.old_mode == "160000" || entry.new_mode == "160000" {
+            let (old_label, new_label) = match entry.status {
+                DiffStatus::Added => ("/dev/null".to_owned(), format!("{dst_prefix}{new_path}")),
+                DiffStatus::Deleted => (format!("{src_prefix}{old_path}"), "/dev/null".to_owned()),
+                _ => (
+                    format!("{src_prefix}{old_path}"),
+                    format!("{dst_prefix}{new_path}"),
+                ),
+            };
+            writeln!(out, "--- {old_label}")?;
+            writeln!(out, "+++ {new_label}")?;
+            match entry.status {
+                DiffStatus::Added => {
+                    writeln!(out, "@@ -0,0 +1 @@")?;
+                    writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                }
+                DiffStatus::Deleted => {
+                    writeln!(out, "@@ -1 +0,0 @@")?;
+                    writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                }
+                DiffStatus::Modified | DiffStatus::Renamed | DiffStatus::Copied => {
+                    if entry.old_mode == "160000" && entry.new_mode == "160000" {
+                        writeln!(out, "@@ -1 +1 @@")?;
+                        writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                        writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                    } else if entry.old_mode == "160000" {
+                        writeln!(out, "@@ -1 +0,0 @@")?;
+                        writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                    } else {
+                        writeln!(out, "@@ -0,0 +1 @@")?;
+                        writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                    }
+                }
+                DiffStatus::TypeChanged => {
+                    if entry.old_mode == "160000" {
+                        writeln!(out, "@@ -1 +0,0 @@")?;
+                        writeln!(out, "-Subproject commit {}", entry.old_oid.to_hex())?;
+                    } else if entry.new_mode == "160000" {
+                        writeln!(out, "@@ -0,0 +1 @@")?;
+                        writeln!(out, "+Subproject commit {}", entry.new_oid.to_hex())?;
+                    }
+                }
+                DiffStatus::Unmerged => {}
+            }
+            continue;
+        }
 
         // Check for binary content
         let old_content_raw = read_content_raw(odb, &entry.old_oid);

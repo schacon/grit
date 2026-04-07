@@ -17,7 +17,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry};
-use grit_lib::objects::ObjectKind;
+use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::borrow::Cow;
@@ -57,6 +57,10 @@ pub struct Args {
     /// Apply to both the working tree and the index.
     #[arg(long)]
     pub index: bool,
+
+    /// Attempt three-way merge; implies `--index` unless `--cached` is set (matches `git apply`).
+    #[arg(short = '3', long = "3way")]
+    pub three_way: bool,
 
     /// Mark new files as intent-to-add when applying to the working tree.
     #[arg(short = 'N', long = "intent-to-add")]
@@ -307,6 +311,11 @@ struct BinaryPatchPayload {
 }
 
 impl FilePatch {
+    /// True when this patch touches a git submodule gitlink (`mode 160000`).
+    fn involves_gitlink(&self) -> bool {
+        self.old_mode.as_deref() == Some("160000") || self.new_mode.as_deref() == Some("160000")
+    }
+
     /// Effective path for the file.
     /// For deletions, use old_path (new is /dev/null).
     /// For additions, use new_path (old is /dev/null).
@@ -373,6 +382,39 @@ impl FilePatch {
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
+
+/// Strip trailing `\r` and surrounding whitespace from parsed header tokens.
+///
+/// `git diff` may emit CRLF line endings; without this, `new mode 160000\r` fails to match
+/// submodule handling (`t4137-apply-submodule`).
+fn sanitize_patch_header_value(s: &mut String) {
+    *s = s.trim().trim_end_matches('\r').to_string();
+}
+
+fn sanitize_file_patch_headers(fp: &mut FilePatch) {
+    if let Some(ref mut s) = fp.old_mode {
+        sanitize_patch_header_value(s);
+    }
+    if let Some(ref mut s) = fp.new_mode {
+        sanitize_patch_header_value(s);
+    }
+    if let Some(ref mut s) = fp.old_oid {
+        sanitize_patch_header_value(s);
+    }
+    if let Some(ref mut s) = fp.new_oid {
+        sanitize_patch_header_value(s);
+    }
+    for p in [
+        &mut fp.diff_old_path,
+        &mut fp.diff_new_path,
+        &mut fp.old_path,
+        &mut fp.new_path,
+    ] {
+        if let Some(ref mut s) = p {
+            sanitize_patch_header_value(s);
+        }
+    }
+}
 
 /// Parse a unified diff into a list of `FilePatch` entries.
 fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
@@ -448,11 +490,27 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 } else if let Some(val) = line.strip_prefix("dissimilarity index ") {
                     fp.dissimilarity_index = val.trim_end_matches('%').parse().ok();
                 } else if let Some(val) = line.strip_prefix("index ") {
-                    // Parse "index abc123..def456 100644" or "index abc123..def456"
-                    let hash_part = val.split_whitespace().next().unwrap_or("");
-                    if let Some((old, new)) = hash_part.split_once("..") {
-                        fp.old_oid = Some(old.to_string());
-                        fp.new_oid = Some(new.to_string());
+                    // Parse `index abc123..def456` or `index abc123..def456 160000` / `100644`.
+                    // Git emits a single trailing mode when old and new use the same mode (including
+                    // gitlink updates); without this, submodule patches lack `old_mode`/`new_mode`
+                    // and are mis-handled as regular files (`failed to read sub1: Is a directory`).
+                    let parts: Vec<&str> = val.split_whitespace().collect();
+                    if let Some(hash_part) = parts.first() {
+                        if let Some((old, new)) = hash_part.split_once("..") {
+                            fp.old_oid = Some(old.to_string());
+                            fp.new_oid = Some(new.to_string());
+                        }
+                    }
+                    if parts.len() >= 2 {
+                        let mode_tok = parts[1];
+                        if mode_tok.len() == 6 && mode_tok.chars().all(|c| matches!(c, '0'..='7')) {
+                            if fp.old_mode.is_none() {
+                                fp.old_mode = Some(mode_tok.to_string());
+                            }
+                            if fp.new_mode.is_none() {
+                                fp.new_mode = Some(mode_tok.to_string());
+                            }
+                        }
                     }
                 } else if line == "GIT binary patch" {
                     let (binary_patch, next_i) = parse_binary_patch(&lines, i + 1)?;
@@ -485,6 +543,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 i = next_i;
             }
 
+            sanitize_file_patch_headers(&mut fp);
             patches.push(fp);
         } else if lines[i].starts_with("--- ")
             && i + 1 < lines.len()
@@ -536,6 +595,7 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
                 i = next_i;
             }
 
+            sanitize_file_patch_headers(&mut fp);
             patches.push(fp);
         } else {
             i += 1;
@@ -543,6 +603,337 @@ fn parse_patch(input: &str) -> Result<Vec<FilePatch>> {
     }
 
     Ok(patches)
+}
+
+/// Infer `is_new` / `is_deleted` / `is_rename` for submodule diffs that only use mode lines and
+/// `---`/`+++` paths (no `new file mode` / `deleted file mode` headers).
+fn postprocess_gitlink_file_patches(patches: &mut [FilePatch]) {
+    for fp in patches.iter_mut() {
+        if !fp.involves_gitlink() {
+            continue;
+        }
+        if fp.is_rename || fp.is_copy || fp.is_new || fp.is_deleted {
+            continue;
+        }
+        let old_p = fp.old_path.as_deref();
+        let new_p = fp.new_path.as_deref();
+        let old_ok = old_p.is_some_and(|p| p != "/dev/null");
+        let new_ok = new_p.is_some_and(|p| p != "/dev/null");
+        match (old_ok, new_ok) {
+            (true, false) => fp.is_deleted = true,
+            (false, true) => fp.is_new = true,
+            (true, true) => {
+                if old_p != new_p {
+                    fp.is_rename = true;
+                }
+            }
+            (false, false) => {}
+        }
+    }
+}
+
+/// Parse `Subproject commit <hex>` from gitlink patch hunks.
+fn parse_subproject_commit_from_hunks(hunks: &[Hunk]) -> Result<ObjectId> {
+    for hunk in hunks {
+        for line in &hunk.lines {
+            if let HunkLine::Add(s) = line {
+                if let Some(hex) = s.strip_prefix("Subproject commit ") {
+                    let hex = hex.trim();
+                    return ObjectId::from_hex(hex)
+                        .with_context(|| format!("invalid subproject commit `{hex}` in patch"));
+                }
+            }
+        }
+    }
+    ObjectId::from_hex("0000000000000000000000000000000000000000")
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Parse `Subproject commit <hex>` from the first removed line in gitlink deletion hunks.
+fn parse_subproject_commit_from_removal_hunks(hunks: &[Hunk]) -> Option<ObjectId> {
+    for hunk in hunks {
+        for line in &hunk.lines {
+            if let HunkLine::Remove(s) = line {
+                if let Some(hex) = s.strip_prefix("Subproject commit ") {
+                    if let Ok(oid) = ObjectId::from_hex(hex.trim()) {
+                        return Some(oid);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Remove index entries at `prefix` and any path `prefix/<...>` (replacing a tree of files with a
+/// gitlink at `prefix`).
+/// After `--index` apply, nested file patches may have removed an empty gitlink placeholder
+/// directory via `remove_empty_dirs_up`; recreate empty dirs for new/changed gitlinks.
+fn ensure_gitlink_placeholder_dirs(patches: &[FilePatch], args: &Args) -> Result<()> {
+    for fp in patches {
+        let target_is_gitlink = fp.new_mode.as_deref() == Some("160000") && !fp.is_deleted;
+        let need_empty_submodule_dir =
+            target_is_gitlink && (fp.is_new || fp.old_mode.as_deref() != Some("160000"));
+        if !need_empty_submodule_dir {
+            continue;
+        }
+        let Some(path_str) = fp.target_path() else {
+            continue;
+        };
+        let adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path = PathBuf::from(&adjusted);
+        if !path.exists() {
+            fs::create_dir_all(&path)
+                .with_context(|| format!("failed to create {}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_index_tree_prefix(index: &mut Index, prefix: &str) {
+    let prefix_bytes = prefix.as_bytes();
+    let with_slash = format!("{prefix}/");
+    let slash_bytes = with_slash.as_bytes();
+    index.entries.retain(|e| {
+        let p = e.path.as_slice();
+        p != prefix_bytes && !p.starts_with(slash_bytes)
+    });
+}
+
+/// Resolve a possibly-abbreviated object id using the repository.
+fn resolve_oid_for_apply(repo: &Repository, hex: &str) -> Result<ObjectId> {
+    if hex.len() == 40 {
+        return ObjectId::from_hex(hex).map_err(|e| anyhow::anyhow!("{e}"));
+    }
+    resolve_revision(repo, hex).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Apply index updates for gitlink (submodule) entries.
+fn apply_gitlink_to_index(
+    repo: &Repository,
+    index: &mut Index,
+    original_index: &Index,
+    fp: &FilePatch,
+    source_adjusted: &str,
+    target_adjusted: &str,
+    ws_mode: ApplyWhitespaceMode,
+) -> Result<()> {
+    let source_bytes = source_adjusted.as_bytes();
+
+    if fp.is_deleted {
+        let Some(entry) = index.get(source_bytes, 0) else {
+            bail!("{source_adjusted} not found in index");
+        };
+        if entry.mode != grit_lib::index::MODE_GITLINK {
+            bail!("{source_adjusted}: does not match index");
+        }
+        if let Some(expected) = fp.old_oid.as_deref() {
+            if !expected.starts_with("0000000") && !entry.oid.to_hex().starts_with(expected) {
+                bail!("patch does not apply");
+            }
+        }
+        if let Some(expected_oid) = parse_subproject_commit_from_removal_hunks(&fp.hunks) {
+            if expected_oid != entry.oid {
+                bail!("patch does not apply");
+            }
+        }
+        index.remove(source_bytes);
+        return Ok(());
+    }
+
+    if fp.is_new {
+        let new_oid = parse_subproject_commit_from_hunks(&fp.hunks)?;
+        remove_index_tree_prefix(index, &target_adjusted);
+        let entry = grit_lib::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: grit_lib::index::MODE_GITLINK,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: new_oid,
+            flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags_extended: None,
+            path: target_adjusted.to_owned().into_bytes(),
+        };
+        index.add_or_replace(entry);
+        return Ok(());
+    }
+
+    let old_entry = if source_adjusted != target_adjusted {
+        original_index.get(source_bytes, 0)
+    } else {
+        index.get(source_bytes, 0)
+    };
+    let Some(old_entry) = old_entry else {
+        bail!("{source_adjusted} not found in index");
+    };
+
+    // Replace a regular file or symlink in the index with a submodule gitlink (same path).
+    // The unified diff often uses `@@ -0,0` with only `+Subproject commit` even though the
+    // index still records the old blob (see `replace_sub1_with_file` in t4137).
+    if fp.new_mode.as_deref() == Some("160000") && old_entry.mode != grit_lib::index::MODE_GITLINK {
+        if let Some(expected) = fp.old_oid.as_deref() {
+            if !expected.starts_with("0000000") && !old_entry.oid.to_hex().starts_with(expected) {
+                bail!("patch does not apply");
+            }
+        }
+        let new_oid = parse_subproject_commit_from_hunks(&fp.hunks)?;
+        if !fp.hunks.is_empty() {
+            let patched = apply_hunks("", &fp.hunks, ws_mode)
+                .with_context(|| format!("failed to apply patch to {target_adjusted}"))?;
+            let expected_line = subproject_line_for_oid(&new_oid);
+            if patched.trim() != expected_line.trim() {
+                bail!("patch does not apply");
+            }
+        }
+        let entry = grit_lib::index::IndexEntry {
+            ctime_sec: 0,
+            ctime_nsec: 0,
+            mtime_sec: 0,
+            mtime_nsec: 0,
+            dev: 0,
+            ino: 0,
+            mode: grit_lib::index::MODE_GITLINK,
+            uid: 0,
+            gid: 0,
+            size: 0,
+            oid: new_oid,
+            flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+            flags_extended: None,
+            path: target_adjusted.to_owned().into_bytes(),
+        };
+        index.remove(source_bytes);
+        remove_index_tree_prefix(index, &target_adjusted);
+        index.add_or_replace(entry);
+        return Ok(());
+    }
+
+    if old_entry.mode != grit_lib::index::MODE_GITLINK {
+        bail!("{source_adjusted}: does not match index");
+    }
+    if let Some(expected) = fp.old_oid.as_deref() {
+        if !expected.starts_with("0000000") && !old_entry.oid.to_hex().starts_with(expected) {
+            bail!("patch does not apply");
+        }
+    }
+
+    let new_oid = if let Some(new_hex) = fp.new_oid.as_deref() {
+        if new_hex.starts_with("0000000") {
+            parse_subproject_commit_from_hunks(&fp.hunks)?
+        } else if new_hex.len() == 40 {
+            resolve_oid_for_apply(repo, new_hex)?
+        } else {
+            // `index` lines often abbreviate OIDs; the target commit may only exist in the
+            // submodule ODB, not the superproject's — use the full `Subproject commit` line.
+            match resolve_oid_for_apply(repo, new_hex) {
+                Ok(oid) => oid,
+                Err(_) => parse_subproject_commit_from_hunks(&fp.hunks)?,
+            }
+        }
+    } else {
+        parse_subproject_commit_from_hunks(&fp.hunks)?
+    };
+
+    if !fp.hunks.is_empty() {
+        let patched = apply_hunks(&subproject_line_for_oid(&old_entry.oid), &fp.hunks, ws_mode)
+            .with_context(|| format!("failed to apply patch to {target_adjusted}"))?;
+        let expected_line = subproject_line_for_oid(&new_oid);
+        if patched.trim() != expected_line.trim() {
+            bail!("patch does not apply");
+        }
+    }
+
+    let entry = grit_lib::index::IndexEntry {
+        ctime_sec: 0,
+        ctime_nsec: 0,
+        mtime_sec: 0,
+        mtime_nsec: 0,
+        dev: 0,
+        ino: 0,
+        mode: grit_lib::index::MODE_GITLINK,
+        uid: 0,
+        gid: 0,
+        size: 0,
+        oid: new_oid,
+        flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
+        flags_extended: None,
+        path: target_adjusted.to_owned().into_bytes(),
+    };
+
+    index.remove(source_bytes);
+    index.add_or_replace(entry);
+    Ok(())
+}
+
+fn subproject_line_for_oid(oid: &ObjectId) -> String {
+    format!("Subproject commit {}\n", oid.to_hex())
+}
+
+/// Validate work tree state for a gitlink patch before `--index` apply.
+fn verify_worktree_gitlink_patch(
+    fp: &FilePatch,
+    args: &Args,
+    work_tree: &Path,
+    index: &Index,
+) -> Result<()> {
+    if fp.is_deleted && fp.old_mode.as_deref() == Some("160000") {
+        return Ok(());
+    }
+    if fp.is_new && fp.new_mode.as_deref() == Some("160000") {
+        let Some(target) = fp.target_path() else {
+            return Ok(());
+        };
+        let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
+        let path = work_tree.join(&adjusted);
+        if path.exists() && path.is_file() {
+            // Replacing a tracked regular file (or symlink) with a submodule: the work tree must
+            // still match the index entry for that path (`replace_sub1_with_file` → submodule).
+            let Some(entry) = index.get(adjusted.as_bytes(), 0) else {
+                bail!("{}: already exists", adjusted);
+            };
+            if entry.mode == grit_lib::index::MODE_GITLINK {
+                bail!("{}: already exists", adjusted);
+            }
+            let wt_oid = if let Some(ctx) = ApplyCrlfContext::load() {
+                let bytes = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
+                grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &bytes)
+            } else if entry.mode == grit_lib::index::MODE_SYMLINK {
+                let b = read_symlink_target_bytes(&path)?;
+                grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &b)
+            } else {
+                let raw = fs::read(&path)
+                    .with_context(|| format!("failed to read {}", path.display()))?;
+                grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &raw)
+            };
+            if wt_oid != entry.oid {
+                bail!("{adjusted}: does not match index");
+            }
+            return Ok(());
+        }
+        if path.exists() && !path.is_dir() {
+            bail!("{}: already exists", adjusted);
+        }
+        return Ok(());
+    }
+    if fp.old_mode.as_deref() == Some("160000") && !fp.is_deleted {
+        let Some(source) = fp.source_path() else {
+            return Ok(());
+        };
+        let adjusted = adjust_path(source, args.strip, args.directory.as_deref());
+        let path = work_tree.join(&adjusted);
+        if !path.exists() {
+            bail!("{}: does not exist", adjusted);
+        }
+        if !path.is_dir() {
+            bail!("{}: does not match index", adjusted);
+        }
+    }
+    Ok(())
 }
 
 /// Parse a `GIT binary patch` payload.
@@ -732,14 +1123,17 @@ fn parse_hunk(lines: &[&str], start: usize) -> Result<(Hunk, usize)> {
             break;
         }
         if let Some(rest) = line.strip_prefix('+') {
-            hunk.lines.push(HunkLine::Add(rest.to_string()));
+            hunk.lines
+                .push(HunkLine::Add(rest.trim_end_matches('\r').to_string()));
         } else if let Some(rest) = line.strip_prefix('-') {
-            hunk.lines.push(HunkLine::Remove(rest.to_string()));
+            hunk.lines
+                .push(HunkLine::Remove(rest.trim_end_matches('\r').to_string()));
         } else if line.is_empty() {
             hunk.lines.push(HunkLine::Context(String::new()));
         } else if let Some(rest) = line.strip_prefix(' ') {
             // context line
-            hunk.lines.push(HunkLine::Context(rest.to_string()));
+            hunk.lines
+                .push(HunkLine::Context(rest.trim_end_matches('\r').to_string()));
         } else if line.starts_with('\\') {
             hunk.lines.push(HunkLine::NoNewline);
         } else {
@@ -1744,7 +2138,14 @@ fn make_stat_bar(add: usize, del: usize, max_width: usize) -> String {
 // Main run
 // ---------------------------------------------------------------------------
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    if args.three_way && args.reject {
+        bail!("--3way is incompatible with --reject");
+    }
+    if args.three_way && !args.cached {
+        args.index = true;
+    }
+
     // Validate repository format if operating on the index or doing a check that requires it
     if args.cached || args.index || args.check {
         if let Some(git_dir) = crate::commands::config::resolve_git_dir_pub() {
@@ -1783,6 +2184,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let mut patches = parse_patch(&input)?;
+    postprocess_gitlink_file_patches(&mut patches);
     validate_patch_headers(&patches)?;
 
     if args.reverse {
@@ -1828,8 +2230,19 @@ pub fn run(args: Args) -> Result<()> {
 
         if args.index {
             verify_worktree_matches_index(&patches, &args)?;
+            if let Ok(repo) = Repository::discover(None) {
+                if let Some(wt) = repo.work_tree.as_deref() {
+                    let index = repo.load_index().unwrap_or_else(|_| Index::new());
+                    for fp in &patches {
+                        if fp.involves_gitlink() {
+                            verify_worktree_gitlink_patch(fp, &args, wt, &index)?;
+                        }
+                    }
+                }
+            }
             apply_to_worktree(&patches, &args, ws_mode)?;
             apply_to_index(&patches, &args, ws_mode)?;
+            ensure_gitlink_placeholder_dirs(&patches, &args)?;
         } else {
             apply_to_worktree(&patches, &args, ws_mode)?;
             if args.intent_to_add {
@@ -1996,21 +2409,30 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             if let Some(target) = fp.target_path() {
                 let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
                 if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
-                    let path = PathBuf::from(&adjusted);
-                    if !path.exists() {
-                        bail!("{adjusted}: does not match index");
-                    }
-                    let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
-                    let wt_oid =
-                        grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
-                    if wt_oid != entry.oid {
-                        bail!("{adjusted}: does not match index");
+                    let path = ctx.work_tree.join(&adjusted);
+                    if entry.mode == grit_lib::index::MODE_GITLINK {
+                        if !path.exists() {
+                            bail!("{adjusted}: does not match index");
+                        }
+                        if !path.is_dir() {
+                            bail!("{adjusted}: does not match index");
+                        }
+                    } else {
+                        if !path.exists() {
+                            bail!("{adjusted}: does not match index");
+                        }
+                        let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
+                        let wt_oid =
+                            grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+                        if wt_oid != entry.oid {
+                            bail!("{adjusted}: does not match index");
+                        }
                     }
                 }
             }
             continue;
         }
-        // Skip submodule entries
+        // Skip submodule gitlink patches: index-only update (work tree unchanged).
         if fp.old_mode.as_deref() == Some("160000") || fp.new_mode.as_deref() == Some("160000") {
             continue;
         }
@@ -2270,9 +2692,14 @@ fn precheck_worktree_patch_sequence(patches: &[FilePatch], args: &Args) -> Resul
                     source_adjusted
                 );
             }
-            set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
-            if source_adjusted != target_adjusted {
-                set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+            // Removing a gitlink updates the index only; Git keeps the submodule checkout on disk
+            // (`git apply --index`). Do not mark `sub1/*` as removed — later patches adding
+            // `sub1/file` must still see a worktree conflict (t4137).
+            if fp.old_mode.as_deref() != Some("160000") {
+                set_path_and_descendants_state(&mut current_exists, &source_adjusted, false);
+                if source_adjusted != target_adjusted {
+                    set_path_and_descendants_state(&mut current_exists, &target_adjusted, false);
+                }
             }
             continue;
         }
@@ -2337,6 +2764,9 @@ fn apply_to_worktree(
     ws_mode: ApplyWhitespaceMode,
 ) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
+    // With `--index`, the index stores the patch's postimage bytes; writing the work tree through
+    // CRLF smudge would desync `git diff-files` from the index (t4137-apply-submodule).
+    let write_crlf = if args.index { None } else { crlf_ctx.as_ref() };
     let mut had_rejects = false;
     // Snapshot source-side file contents used by cross-path rename/copy patches
     // so later modifications/removals do not affect subsequent patch sections.
@@ -2362,6 +2792,9 @@ fn apply_to_worktree(
             source_snapshots.insert(source_adjusted, content);
         }
     }
+    // Run for `--index` too: Git rejects sequences such as removing a gitlink then adding
+    // `sub1/file*` when those paths already exist in the populated submodule work tree
+    // (`t4137-apply-submodule`).
     precheck_worktree_patch_sequence(patches, args)?;
 
     for fp in patches {
@@ -2370,6 +2803,25 @@ fn apply_to_worktree(
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
         let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
         let path = PathBuf::from(&path_adjusted);
+
+        if args.index && fp.involves_gitlink() {
+            let target_is_gitlink = fp.new_mode.as_deref() == Some("160000") && !fp.is_deleted;
+            let need_empty_submodule_dir =
+                target_is_gitlink && (fp.is_new || fp.old_mode.as_deref() != Some("160000"));
+            if need_empty_submodule_dir {
+                if path.exists() || fs::symlink_metadata(&path).is_ok() {
+                    remove_path_for_replacement(&path)?;
+                }
+                fs::create_dir_all(&path)?;
+            }
+            continue;
+        }
+
+        // With `--index`, removing a submodule only updates the index; the checkout must stay
+        // intact until the user runs further commands (t4137).
+        if args.index && fp.is_deleted && fp.old_mode.as_deref() == Some("160000") {
+            continue;
+        }
 
         if fp.is_deleted {
             // Delete the file (or directory for submodules)
@@ -2401,7 +2853,7 @@ fn apply_to_worktree(
                 &content,
                 fp.new_mode.as_deref(),
                 None,
-                crlf_ctx.as_ref(),
+                write_crlf,
                 &path_adjusted,
             )?;
             continue;
@@ -2510,7 +2962,7 @@ fn apply_to_worktree(
                     &old_content,
                     fp.new_mode.as_deref(),
                     source_exec_bit,
-                    crlf_ctx.as_ref(),
+                    write_crlf,
                     &path_adjusted,
                 )?;
                 if fp.is_rename && read_path != path && !source_contains_target {
@@ -2547,7 +2999,7 @@ fn apply_to_worktree(
             &new_content,
             fp.new_mode.as_deref(),
             source_exec_bit,
-            crlf_ctx.as_ref(),
+            write_crlf,
             &path_adjusted,
         )?;
 
@@ -2572,16 +3024,9 @@ fn apply_to_worktree(
     Ok(())
 }
 
-/// Apply patches to the index only (--cached).
-fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let mut index = match repo.load_index() {
-        Ok(idx) => idx,
-        Err(_) => Index::new(),
-    };
-    let original_index = index.clone();
-    // CWD prefix for subdir apply
-    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+/// Prefix for index paths when `git apply` is run from a subdirectory of the work tree.
+fn apply_cwd_prefix(repo: &Repository) -> String {
+    if let Some(ref wt) = repo.work_tree {
         if let Ok(cwd) = std::env::current_dir() {
             if let Ok(rel) = cwd.strip_prefix(wt) {
                 let s = rel.to_string_lossy().to_string();
@@ -2598,7 +3043,82 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
         }
     } else {
         String::new()
+    }
+}
+
+/// Verify a gitlink patch applies to the current index without persisting changes.
+fn check_gitlink_patch_index(
+    repo: &Repository,
+    index: &Index,
+    fp: &FilePatch,
+    args: &Args,
+    ws_mode: ApplyWhitespaceMode,
+) -> Result<()> {
+    let cwd_prefix = apply_cwd_prefix(repo);
+    let target_path_str = fp
+        .target_path()
+        .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
+    let target_raw = adjust_path(target_path_str, args.strip, args.directory.as_deref());
+    let target_adjusted = format!("{cwd_prefix}{target_raw}");
+    let source_adjusted = fp
+        .source_path()
+        .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+        .map(|raw| format!("{cwd_prefix}{raw}"))
+        .unwrap_or_else(|| target_adjusted.clone());
+
+    let original_index = index.clone();
+    let mut scratch = index.clone();
+    apply_gitlink_to_index(
+        repo,
+        &mut scratch,
+        &original_index,
+        fp,
+        &source_adjusted,
+        &target_adjusted,
+        ws_mode,
+    )?;
+    Ok(())
+}
+
+/// Refresh cached stat fields from the working tree so `git diff` / `diff_index_to_worktree`
+/// fast paths match Git after we stage content without having created the files through the
+/// normal checkout path (index stat fields would otherwise stay zeroed).
+#[cfg(unix)]
+fn refresh_index_stats_from_worktree(index: &mut Index, work_tree: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    for entry in &mut index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let Ok(path_str) = std::str::from_utf8(&entry.path) else {
+            continue;
+        };
+        let abs = work_tree.join(path_str);
+        let Ok(meta) = fs::symlink_metadata(&abs) else {
+            continue;
+        };
+        entry.ctime_sec = meta.ctime() as u32;
+        entry.ctime_nsec = meta.ctime_nsec() as u32;
+        entry.mtime_sec = meta.mtime() as u32;
+        entry.mtime_nsec = meta.mtime_nsec() as u32;
+        entry.dev = meta.dev() as u32;
+        entry.ino = meta.ino() as u32;
+        entry.size = meta.size() as u32;
+    }
+}
+
+#[cfg(not(unix))]
+fn refresh_index_stats_from_worktree(_index: &mut Index, _work_tree: &Path) {}
+
+/// Apply patches to the index only (--cached).
+fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let mut index = match repo.load_index() {
+        Ok(idx) => idx,
+        Err(_) => Index::new(),
     };
+    let original_index = index.clone();
+    let cwd_prefix = apply_cwd_prefix(&repo);
 
     for fp in patches {
         let target_path_str = fp
@@ -2611,6 +3131,19 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
             .map(|raw| format!("{cwd_prefix}{raw}"))
             .unwrap_or_else(|| target_adjusted.clone());
+
+        if fp.involves_gitlink() {
+            apply_gitlink_to_index(
+                &repo,
+                &mut index,
+                &original_index,
+                fp,
+                &source_adjusted,
+                &target_adjusted,
+                ws_mode,
+            )?;
+            continue;
+        }
 
         if fp.is_deleted {
             index.remove(source_adjusted.as_bytes());
@@ -2656,45 +3189,6 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             if fp.is_rename && source_adjusted != target_adjusted {
                 index.remove(source_adjusted.as_bytes());
             }
-            index.add_or_replace(entry);
-            continue;
-        }
-
-        // Handle submodule (gitlink) entries specially
-        if (fp.new_mode.as_deref() == Some("160000") || fp.old_mode.as_deref() == Some("160000"))
-            && fp.is_new
-        {
-            let commit_hash = fp
-                .hunks
-                .iter()
-                .flat_map(|h| h.lines.iter())
-                .find_map(|l| {
-                    if let HunkLine::Add(s) = l {
-                        s.strip_prefix("Subproject commit ")
-                            .map(|h| h.trim().to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "0000000000000000000000000000000000000000".to_string());
-            let oid = grit_lib::objects::ObjectId::from_hex(&commit_hash)?;
-            let mode = grit_lib::index::MODE_GITLINK;
-            let entry = grit_lib::index::IndexEntry {
-                ctime_sec: 0,
-                ctime_nsec: 0,
-                mtime_sec: 0,
-                mtime_nsec: 0,
-                dev: 0,
-                ino: 0,
-                mode,
-                uid: 0,
-                gid: 0,
-                size: 0,
-                oid,
-                flags: ((target_adjusted.len().min(0xFFF)) as u16) & 0x0FFF,
-                flags_extended: None,
-                path: target_adjusted.into_bytes(),
-            };
             index.add_or_replace(entry);
             continue;
         }
@@ -2770,6 +3264,10 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
             index.remove(source_adjusted.as_bytes());
         }
         index.add_or_replace(entry);
+    }
+
+    if let Some(wt) = repo.work_tree.as_deref() {
+        refresh_index_stats_from_worktree(&mut index, wt);
     }
 
     repo.write_index(&mut index)?;
@@ -2856,6 +3354,13 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
 fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
     let crlf_ctx = ApplyCrlfContext::load();
     for fp in patches {
+        if fp.involves_gitlink() {
+            let repo = Repository::discover(None).context("not a git repository")?;
+            let index = repo.load_index().unwrap_or_else(|_| Index::new());
+            check_gitlink_patch_index(&repo, &index, fp, args, ws_mode)?;
+            continue;
+        }
+
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
