@@ -655,6 +655,10 @@ fn refresh_index(
     let index_mtime = std::fs::metadata(work_tree.join(".git/index"))
         .ok()
         .map(|m| (m.mtime() as i64, m.mtime_nsec() as i64));
+    let trust_ctime = config
+        .get_bool("core.trustctime")
+        .and_then(|result| result.ok())
+        .unwrap_or(true);
     let mut touched_entries = false;
 
     for entry in &mut index.entries {
@@ -726,8 +730,20 @@ fn refresh_index(
             continue;
         }
 
+        let ctime_differs = entry.ctime_sec != meta.ctime() as u32
+            || entry.ctime_nsec != meta.ctime_nsec() as u32;
+        let stat_differs = (trust_ctime && ctime_differs)
+            || entry.mtime_sec != meta.mtime() as u32
+            || entry.mtime_nsec != meta.mtime_nsec() as u32
+            || entry.dev != meta.dev() as u32
+            || entry.ino != meta.ino() as u32
+            || entry.uid != meta.uid()
+            || entry.gid != meta.gid()
+            || entry.size != meta.size() as u32;
+
         // For racily-clean entries (file mtime >= index mtime), force a
-        // refresh rewrite so future checks are reliable.
+        // refresh rewrite so future checks are reliable even if stat info
+        // is already identical.
         let is_racy = index_mtime
             .map(|(idx_sec, idx_nsec)| {
                 let file_sec = meta.mtime() as i64;
@@ -735,7 +751,7 @@ fn refresh_index(
                 file_sec > idx_sec || (file_sec == idx_sec && file_nsec >= idx_nsec)
             })
             .unwrap_or(false);
-        if !is_racy {
+        if !stat_differs && !is_racy {
             continue;
         }
 
@@ -743,6 +759,10 @@ fn refresh_index(
         entry.ctime_nsec = meta.ctime_nsec() as u32;
         entry.mtime_sec = meta.mtime() as u32;
         entry.mtime_nsec = meta.mtime_nsec() as u32;
+        entry.dev = meta.dev() as u32;
+        entry.ino = meta.ino() as u32;
+        entry.uid = meta.uid();
+        entry.gid = meta.gid();
         entry.size = meta.size() as u32;
         touched_entries = true;
     }

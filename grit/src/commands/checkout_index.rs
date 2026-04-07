@@ -222,8 +222,9 @@ fn checkout_entry(
         return Ok(outcome);
     }
 
+    let symlink_prefix_dir = fixed_prefix_directory(prefix);
     if let Some(parent) = abs_path.parent() {
-        ensure_parent_directories(parent, args.force)?;
+        ensure_parent_directories(parent, args.force, work_tree, symlink_prefix_dir.as_deref())?;
     }
 
     if abs_path.is_dir() {
@@ -270,7 +271,12 @@ fn checkout_entry(
     Ok(outcome)
 }
 
-fn ensure_parent_directories(parent: &std::path::Path, force: bool) -> Result<()> {
+fn ensure_parent_directories(
+    parent: &std::path::Path,
+    force: bool,
+    work_tree: &std::path::Path,
+    symlink_prefix_dir: Option<&std::path::Path>,
+) -> Result<()> {
     let mut current = PathBuf::new();
     for component in parent.components() {
         current.push(component.as_os_str());
@@ -293,6 +299,16 @@ fn ensure_parent_directories(parent: &std::path::Path, force: bool) -> Result<()
             continue;
         }
 
+        if meta.file_type().is_symlink()
+            && symlink_parent_component_allowed(
+                &current,
+                work_tree,
+                symlink_prefix_dir,
+            )
+        {
+            continue;
+        }
+
         if !force {
             bail!("'{}' is not a directory", current.display());
         }
@@ -308,6 +324,62 @@ fn ensure_parent_directories(parent: &std::path::Path, force: bool) -> Result<()
             .with_context(|| format!("cannot create directory '{}'", current.display()))?;
     }
     Ok(())
+}
+
+fn symlink_parent_component_allowed(
+    current: &std::path::Path,
+    work_tree: &std::path::Path,
+    symlink_prefix_dir: Option<&std::path::Path>,
+) -> bool {
+    let Some(prefix_dir) = symlink_prefix_dir else {
+        return false;
+    };
+    let Ok(rel) = current.strip_prefix(work_tree) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    if !prefix_dir.starts_with(rel) {
+        return false;
+    }
+    std::fs::metadata(current)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
+}
+
+fn fixed_prefix_directory(prefix: &str) -> Option<PathBuf> {
+    if prefix.is_empty() {
+        return None;
+    }
+    let mut raw = if prefix.ends_with('/') {
+        prefix.trim_end_matches('/').to_owned()
+    } else {
+        match prefix.rsplit_once('/') {
+            Some((dir, _)) => dir.to_owned(),
+            None => String::new(),
+        }
+    };
+    if raw.is_empty() {
+        return None;
+    }
+    let mut normalized = PathBuf::new();
+    for component in std::path::Path::new(&raw).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+            _ => {}
+        }
+    }
+    raw.clear();
+    if normalized.as_os_str().is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {

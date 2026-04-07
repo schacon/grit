@@ -141,6 +141,9 @@ impl ConversionConfig {
 /// A parsed .gitattributes rule.
 #[derive(Debug, Clone)]
 pub struct AttrRule {
+    /// Directory (relative to repository root) where this rule originates.
+    /// Empty string means repository root / info attributes.
+    base_dir: String,
     pattern: String,
     attrs: Vec<(String, String)>, // (name, value) where value is "set"/"unset"/specific value
 }
@@ -151,12 +154,15 @@ pub fn load_gitattributes(work_tree: &Path) -> Vec<AttrRule> {
 
     let root_attrs = work_tree.join(".gitattributes");
     if let Ok(content) = std::fs::read_to_string(&root_attrs) {
-        parse_gitattributes(&content, &mut rules);
+        parse_gitattributes(&content, "", &mut rules);
     }
+
+    collect_nested_gitattributes(work_tree, work_tree, &mut rules);
 
     let info_attrs = work_tree.join(".git/info/attributes");
     if let Ok(content) = std::fs::read_to_string(&info_attrs) {
-        parse_gitattributes(&content, &mut rules);
+        // info/attributes has the highest precedence.
+        parse_gitattributes(&content, "", &mut rules);
     }
 
     rules
@@ -170,11 +176,28 @@ pub fn load_gitattributes_from_index(
 ) -> Vec<AttrRule> {
     let mut rules = Vec::new();
 
-    // Look for .gitattributes in the index (stage 0)
-    if let Some(entry) = index.get(b".gitattributes", 0) {
+    let mut attr_paths: Vec<Vec<u8>> = index
+        .entries
+        .iter()
+        .filter(|entry| entry.stage() == 0 && entry.path.ends_with(b".gitattributes"))
+        .map(|entry| entry.path.clone())
+        .collect();
+    attr_paths.sort();
+
+    for path in attr_paths {
+        let Some(entry) = index.get(&path, 0) else {
+            continue;
+        };
         if let Ok(obj) = odb.read(&entry.oid) {
             if let Ok(content) = String::from_utf8(obj.data) {
-                parse_gitattributes(&content, &mut rules);
+                let base_dir = match std::str::from_utf8(&path) {
+                    Ok(p) => {
+                        let parent = Path::new(p).parent().unwrap_or_else(|| Path::new(""));
+                        normalize_attr_base_dir(parent)
+                    }
+                    Err(_) => String::new(),
+                };
+                parse_gitattributes(&content, &base_dir, &mut rules);
             }
         }
     }
@@ -182,7 +205,62 @@ pub fn load_gitattributes_from_index(
     rules
 }
 
-fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
+fn collect_nested_gitattributes(root: &Path, dir: &Path, rules: &mut Vec<AttrRule>) {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    let mut entries: Vec<std::fs::DirEntry> = read_dir.filter_map(Result::ok).collect();
+    entries.sort_by_key(|entry| entry.path());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        if file_name == ".git" {
+            continue;
+        }
+
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+
+        if file_type.is_dir() {
+            collect_nested_gitattributes(root, &path, rules);
+            continue;
+        }
+
+        if !file_type.is_file() || file_name != ".gitattributes" {
+            continue;
+        }
+
+        if path == root.join(".gitattributes") {
+            continue;
+        }
+
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let base_dir = path
+                .parent()
+                .and_then(|parent| parent.strip_prefix(root).ok())
+                .map(normalize_attr_base_dir)
+                .unwrap_or_default();
+            parse_gitattributes(&content, &base_dir, rules);
+        }
+    }
+}
+
+fn normalize_attr_base_dir(path: &Path) -> String {
+    let mut pieces = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => pieces.push(part.to_string_lossy().into_owned()),
+            std::path::Component::CurDir => {}
+            _ => {}
+        }
+    }
+    pieces.join("/")
+}
+
+fn parse_gitattributes(content: &str, base_dir: &str, rules: &mut Vec<AttrRule>) {
     for line in content.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -210,7 +288,11 @@ fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
         }
 
         if !attrs.is_empty() {
-            rules.push(AttrRule { pattern, attrs });
+            rules.push(AttrRule {
+                base_dir: base_dir.to_owned(),
+                pattern,
+                attrs,
+            });
         }
     }
 }
@@ -221,7 +303,7 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
 
     // Walk rules; last match wins for each attribute.
     for rule in rules {
-        if pattern_matches(&rule.pattern, rel_path) {
+        if pattern_matches(rule, rel_path) {
             for (name, value) in &rule.attrs {
                 match name.as_str() {
                     "text" => {
@@ -293,11 +375,24 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
 }
 
 /// Simple gitattributes pattern matching.
-fn pattern_matches(pattern: &str, path: &str) -> bool {
+fn pattern_matches(rule: &AttrRule, path: &str) -> bool {
+    let path = if rule.base_dir.is_empty() {
+        path
+    } else {
+        let prefix = format!("{}/", rule.base_dir);
+        let Some(stripped) = path.strip_prefix(&prefix) else {
+            return false;
+        };
+        stripped
+    };
+
+    let pattern = rule.pattern.as_str();
     if !pattern.contains('/') {
         // Match against basename only
         let basename = path.rsplit('/').next().unwrap_or(path);
         glob_matches(pattern, basename)
+    } else if let Some(stripped) = pattern.strip_prefix('/') {
+        glob_matches(stripped, path)
     } else {
         glob_matches(pattern, path)
     }
