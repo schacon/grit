@@ -499,6 +499,9 @@ pub fn diff_index_to_worktree(
         if ie.stage() != 0 {
             continue;
         }
+        if ie.skip_worktree() {
+            continue;
+        }
         // Use str slice directly to avoid allocation for path joining;
         // only allocate String if we need it for DiffEntry output.
         let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
@@ -761,11 +764,16 @@ pub fn diff_tree_to_worktree(
     let mut index_entries: std::collections::BTreeMap<&[u8], &IndexEntry> =
         std::collections::BTreeMap::new();
     let mut index_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut skip_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for ie in &index.entries {
         if ie.stage() != 0 {
             continue;
         }
         let path = String::from_utf8_lossy(&ie.path).to_string();
+        if ie.skip_worktree() {
+            skip_paths.insert(path);
+            continue;
+        }
         index_entries.insert(&ie.path, ie);
         index_paths.insert(path);
     }
@@ -778,6 +786,9 @@ pub fn diff_tree_to_worktree(
     let mut result = Vec::new();
 
     for path in &all_paths {
+        if skip_paths.contains(path) {
+            continue;
+        }
         let tree_entry = tree_map.get(path.as_str());
 
         // Gitlink entries (submodules) — compare HEAD commit, not file content.
