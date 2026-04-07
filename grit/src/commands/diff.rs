@@ -2459,9 +2459,9 @@ fn quote_c_style(name: &str) -> String {
 /// Format a rename/copy path for numstat: `{old_quoted}\t{new_quoted}` or
 /// `{old_quoted} => {new_quoted}` depending on format.
 fn format_rename_display(old: &str, new: &str) -> String {
-    let old_q = quote_c_style(old);
-    let new_q = quote_c_style(new);
-    format!("{old_q} => {new_q}")
+    // Use the pretty-print format with common prefix/suffix like c/{b/a => d/e}
+    let pretty = grit_lib::diff::format_rename_path(old, new);
+    quote_c_style(&pretty)
 }
 
 /// Write machine-readable numstat output: `{insertions}\t{deletions}\t{path}`.
