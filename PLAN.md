@@ -189,7 +189,7 @@ commit → check it off → move on.
 - [x] `t2019-checkout-ambiguous-ref` ████████████████████ 9/9 (0 left) — checkout handling of ambiguous (branch/tag) refs
 - [x] `t2206-add-submodule-ignored` ████████████████████ 8/8 (0 left) — git add respects submodule ignore=all and explicit pathspec
 - [x] `t2022-checkout-paths` ████████████████████ 5/5 (0 left) — checkout $tree -- $paths
-- [ ] `t2082-parallel-checkout-attributes` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — parallel-checkout: attributes
+- [x] `t2082-parallel-checkout-attributes` ████████████████████ 5/5 (0 left) — parallel-checkout: attributes
 
 - [ ] `t2103-update-index-ignore-missing` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — update-index with options
 - [ ] `t2000-conflict-when-checking-files-out` ████████████░░░░░░░░ 9/14 (5 left) — git conflicts when checking files out test.

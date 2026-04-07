@@ -268,6 +268,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => match_missing = true,
                 "--quiet" => quiet = true,
                 "--exit-code" => exit_code = true,
+                "--ignore-submodules" => {
+                    // Accepted for compatibility.
+                }
                 "--raw" => {}
                 "--abbrev" => abbrev = Some(7),
                 "-p" | "--patch" | "-u" => {
@@ -354,6 +357,9 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                         .parse::<usize>()
                         .with_context(|| format!("invalid --abbrev value: `{value}`"))?;
                     abbrev = Some(parsed);
+                }
+                _ if arg.starts_with("--ignore-submodules=") => {
+                    // Accepted for compatibility.
                 }
                 "--check" => { /* accepted for compatibility */ }
                 _ => bail!("unsupported option: {arg}"),
