@@ -211,7 +211,7 @@ t2107-update-index-basic	yes	10	5	5	ok	5	10	0
 t2108-update-index-refresh-racy	yes	6	0	6	ok	0	6	0
 t2200-add-update	yes	19	13	6	ok	13	19	0
 t2201-add-update-typechange	yes	6	1	5	ok	1	6	0
-t2202-add-addremove	yes	3	0	3	ok	0	3	0
+t2202-add-addremove	yes	3	3	0	ok	3	3	0
 t2203-add-intent	yes	19	4	15	ok	4	19	0
 t2204-add-ignored	yes	47	37	10	ok	37	47	0
 t2205-add-worktree-config	yes	13	3	10	ok	3	13	0

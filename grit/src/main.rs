@@ -1762,8 +1762,17 @@ struct GlobalOpts {
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
     config_overrides: Vec<String>,
+    pathspec_mode: Option<PathspecMode>,
+    icase_pathspecs: bool,
     bare: bool,
     no_advice: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PathspecMode {
+    Literal,
+    NoGlob,
+    Glob,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1830,6 +1839,28 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             if i < items.len() {
                 opts.config_overrides.push(items[i].clone());
             }
+            i += 1;
+            continue;
+        }
+
+        // Pathspec behavior globals
+        if arg == "--literal-pathspecs" {
+            opts.pathspec_mode = Some(PathspecMode::Literal);
+            i += 1;
+            continue;
+        }
+        if arg == "--noglob-pathspecs" {
+            opts.pathspec_mode = Some(PathspecMode::NoGlob);
+            i += 1;
+            continue;
+        }
+        if arg == "--glob-pathspecs" {
+            opts.pathspec_mode = Some(PathspecMode::Glob);
+            i += 1;
+            continue;
+        }
+        if arg == "--icase-pathspecs" {
+            opts.icase_pathspecs = true;
             i += 1;
             continue;
         }
@@ -1908,6 +1939,15 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
             .collect::<Vec<_>>()
             .join(" ");
         std::env::set_var("GIT_CONFIG_PARAMETERS", params);
+    }
+    match opts.pathspec_mode {
+        Some(PathspecMode::Literal) => std::env::set_var("GIT_LITERAL_PATHSPECS", "1"),
+        Some(PathspecMode::NoGlob) => std::env::set_var("GIT_NOGLOB_PATHSPECS", "1"),
+        Some(PathspecMode::Glob) => std::env::set_var("GIT_GLOB_PATHSPECS", "1"),
+        None => {}
+    }
+    if opts.icase_pathspecs {
+        std::env::set_var("GIT_ICASE_PATHSPECS", "1");
     }
     if opts.no_advice {
         std::env::set_var("GIT_ADVICE", "false");
@@ -2987,7 +3027,9 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 
     match subcmd {
         "add" => {
-            let use_native_add = discovered_repo_is_reftable();
+            let use_native_add = discovered_repo_is_reftable()
+                || rest.is_empty()
+                || rest.iter().any(|arg| arg == "--all");
             if use_native_add {
                 commands::add::run(parse_cmd_args(subcmd, rest))
             } else {

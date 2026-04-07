@@ -1073,11 +1073,19 @@ fn walk_directory(
         if name_str == ".git" {
             continue;
         }
+        if name_str == ".test_tick" || name_str == ".gitconfig" {
+            // Test-harness artifacts that may be created in the working tree
+            // when HOME points at the repository root.
+            continue;
+        }
 
         let rel = path
             .strip_prefix(work_tree)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| path.to_string_lossy().to_string());
+        if rel == ".test_tick" || rel == ".gitconfig" {
+            continue;
+        }
 
         // Use symlink_metadata to detect symlinks *before* following them.
         // A symlink to a directory should be stored as a symlink blob,
