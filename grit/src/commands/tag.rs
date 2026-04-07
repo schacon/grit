@@ -213,7 +213,9 @@ fn create_annotated_tag(
 ) -> Result<()> {
     // Build the message
     let message = build_tag_message(args)?;
-    if message.trim().is_empty() {
+    // Only fail if NO -m/-F was given AND message is empty
+    let has_explicit_message = !args.message.is_empty() || args.file.is_some();
+    if !has_explicit_message && message.trim().is_empty() {
         bail!("no tag message provided (use -m or -F)");
     }
 
