@@ -1009,6 +1009,33 @@ fn collect_worktrees(repo: &Repository) -> Result<Vec<WorktreeInfo>> {
     Ok(entries)
 }
 
+/// C-quote a path string when it contains non-ASCII characters (core.quotepath behavior).
+fn quote_path_if_needed(path: &str, quotepath: bool) -> String {
+    if !quotepath {
+        return path.to_string();
+    }
+    let needs_quoting = path.bytes().any(|b| b > 0x7f || b < 0x20);
+    if !needs_quoting {
+        return path.to_string();
+    }
+    let mut out = String::from('"');
+    for b in path.bytes() {
+        if b > 0x7f {
+            out.push_str(&format!("\\{:03o}", b));
+        } else if b < 0x20 {
+            match b {
+                b'\n' => out.push_str("\\n"),
+                b'\t' => out.push_str("\\t"),
+                _ => out.push_str(&format!("\\{:03o}", b)),
+            }
+        } else {
+            out.push(b as char);
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn cmd_list(args: ListArgs) -> Result<()> {
     let repo = Repository::discover(None)?;
     // -z requires --porcelain
@@ -1016,6 +1043,17 @@ fn cmd_list(args: ListArgs) -> Result<()> {
         bail!("--null requires --porcelain");
     }
     let entries = collect_worktrees(&repo)?;
+
+    // Read core.quotepath from config (default: true)
+    // Use common_dir so we find config from linked worktrees too
+    let quotepath = {
+        let common = common_dir(&repo.git_dir).unwrap_or(repo.git_dir.clone());
+        let cfg = grit_lib::config::ConfigSet::load(Some(&common), true).unwrap_or_default();
+        cfg.get_bool("core.quotepath")
+            .and_then(|r| r.ok())
+            .unwrap_or(true)
+    };
+
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
@@ -1072,10 +1110,15 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             out.write_all(entry_sep)?;
         }
     } else {
-        // Compute max path display width for column alignment (min 40, use char count not bytes)
+        // Compute max path display width for column alignment (min 40)
+        // Use quoted path length when quotepath is active
         let max_path_len = entries
             .iter()
-            .map(|e| e.path.display().to_string().chars().count())
+            .map(|e| {
+                quote_path_if_needed(&e.path.display().to_string(), quotepath)
+                    .chars()
+                    .count()
+            })
             .max()
             .unwrap_or(0)
             .max(40);
@@ -1121,7 +1164,7 @@ fn cmd_list(args: ListArgs) -> Result<()> {
             } else {
                 ""
             };
-            let path_str = entry.path.display().to_string();
+            let path_str = quote_path_if_needed(&entry.path.display().to_string(), quotepath);
             if entry.is_bare {
                 writeln!(
                     out,
