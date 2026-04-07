@@ -769,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn requested_v4_writes_a_compatible_index_format() {
+    fn requested_v4_preserves_requested_index_version() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("index");
 
@@ -782,7 +782,7 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+        assert_eq!(&data[4..8], &4u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
         assert_eq!(loaded.entries[0].path, b"one");
