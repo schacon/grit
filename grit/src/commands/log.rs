@@ -2171,9 +2171,14 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
     };
 
     // Use the original user-provided name for display (preserve full ref name if given)
-    let orig_r = &args.revisions[0];
+    let orig_r_owned = args
+        .revisions
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "HEAD".to_string());
+    let orig_r = orig_r_owned.as_str();
     let display_name = if orig_r.starts_with("refs/") {
-        orig_r.as_str()
+        orig_r
     } else if refname.starts_with("refs/heads/") {
         refname.strip_prefix("refs/heads/").unwrap_or(&refname)
     } else {
