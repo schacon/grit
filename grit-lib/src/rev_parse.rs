@@ -1193,17 +1193,8 @@ fn resolve_commit_message_search_from(
     start: ObjectId,
     pattern: &str,
 ) -> Result<ObjectId> {
-    // Handle negated pattern: !pattern = negate, !! = literal !
-    let (negate, effective) = if pattern.starts_with('!') {
-        if pattern.starts_with("!!") {
-            (false, &pattern[1..])
-        } else {
-            (true, &pattern[1..])
-        }
-    } else {
-        (false, pattern)
-    };
-    let regex = Regex::new(effective).ok();
+    // Note: ! negation is NOT supported in ^{/pattern} peel context (only in :/! prefix)
+    let regex = Regex::new(pattern).ok();
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(start);
@@ -1222,12 +1213,11 @@ fn resolve_commit_message_search_from(
             Err(_) => continue,
         };
 
-        let base_match = if let Some(re) = &regex {
+        let is_match = if let Some(re) = &regex {
             re.is_match(&commit.message)
         } else {
-            commit.message.contains(effective)
+            commit.message.contains(pattern)
         };
-        let is_match = if negate { !base_match } else { base_match };
         if is_match {
             return Ok(oid);
         }
