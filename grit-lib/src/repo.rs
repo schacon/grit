@@ -54,7 +54,9 @@ impl Repository {
 
         validate_repository_format(&git_dir)?;
 
-        if !git_dir.join("HEAD").exists() {
+        // Check HEAD exists or is a symlink (linked worktrees have a symlink HEAD)
+        let head_path = git_dir.join("HEAD");
+        if !head_path.exists() && !head_path.is_symlink() {
             return Err(Error::NotARepository(git_dir.display().to_string()));
         }
 

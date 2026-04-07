@@ -554,6 +554,20 @@ fn switch_branch(
         bail!("fatal: invalid HEAD - your HEAD file may be corrupt");
     }
 
+    // Check if already on this branch (must come BEFORE branch-in-use check)
+    if let HeadState::Branch { ref refname, .. } = head {
+        if refname == branch_ref {
+            checkout_eprintln!("Already on '{}'", branch_name);
+            if force {
+                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
+                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
+                let target_tree = commit_to_tree(repo, &target_oid)?;
+                return force_reset_to_tree(repo, &target_tree);
+            }
+            return Ok(());
+        }
+    }
+
     // Check if branch is already checked out in another worktree
     if !force {
         let common = refs::common_dir(&repo.git_dir).unwrap_or_else(|| repo.git_dir.clone());
@@ -591,21 +605,6 @@ fn switch_branch(
                     }
                 }
             }
-        }
-    }
-
-    // Check if already on this branch
-    if let HeadState::Branch { ref refname, .. } = head {
-        if refname == branch_ref {
-            checkout_eprintln!("Already on '{}'", branch_name);
-            if force {
-                // Force mode: reset working tree to match the branch
-                let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
-                    .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
-                let target_tree = commit_to_tree(repo, &target_oid)?;
-                return force_reset_to_tree(repo, &target_tree);
-            }
-            return Ok(());
         }
     }
 
