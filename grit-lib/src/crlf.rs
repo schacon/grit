@@ -64,6 +64,19 @@ pub enum EolAttr {
     Unspecified,
 }
 
+/// Legacy `crlf` gitattribute (deprecated in Git; still honored for EOL conversion).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CrlfLegacyAttr {
+    #[default]
+    Unspecified,
+    /// `-crlf` — disable CRLF conversion.
+    Unset,
+    /// `crlf=input` — normalize to LF in the object database; no CRLF on checkout.
+    Input,
+    /// Bare `crlf` (set) — force CRLF on checkout for text files.
+    Crlf,
+}
+
 /// Per-file merge attribute from .gitattributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeAttr {
@@ -91,6 +104,8 @@ pub struct FileAttrs {
     pub conflict_marker_size: Option<String>,
     /// Working tree encoding (e.g. "utf-16") — content is converted to UTF-8 on add.
     pub working_tree_encoding: Option<String>,
+    /// Legacy `crlf` / `-crlf` / `crlf=input` from `.gitattributes`.
+    pub crlf_legacy: CrlfLegacyAttr,
 }
 
 impl Default for FileAttrs {
@@ -106,6 +121,7 @@ impl Default for FileAttrs {
             merge: MergeAttr::Unspecified,
             conflict_marker_size: None,
             working_tree_encoding: None,
+            crlf_legacy: CrlfLegacyAttr::Unspecified,
         }
     }
 }
@@ -224,6 +240,18 @@ pub fn load_gitattributes_for_checkout(
     odb: &crate::odb::Odb,
 ) -> Vec<AttrRule> {
     let mut rules = load_gitattributes(work_tree);
+
+    // Root `.gitattributes` may exist only in the index while the worktree file
+    // is missing (e.g. t0020 in-tree attributes after `rm -rf .gitattributes`).
+    if !work_tree.join(".gitattributes").exists() {
+        if let Some(entry) = index.get(b".gitattributes", 0) {
+            if let Ok(obj) = odb.read(&entry.oid) {
+                if let Ok(content) = String::from_utf8(obj.data) {
+                    parse_gitattributes(&content, &mut rules);
+                }
+            }
+        }
+    }
 
     let path = Path::new(rel_path);
     if let Some(parent) = path.parent() {
@@ -363,6 +391,14 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             fa.working_tree_encoding = Some(value.clone());
                         }
                     }
+                    "crlf" => {
+                        fa.crlf_legacy = match value.as_str() {
+                            "unset" => CrlfLegacyAttr::Unset,
+                            "input" => CrlfLegacyAttr::Input,
+                            "set" => CrlfLegacyAttr::Crlf,
+                            _ => CrlfLegacyAttr::Unspecified,
+                        };
+                    }
                     _ => {}
                 }
             }
@@ -489,6 +525,26 @@ pub fn convert_to_git(
 /// Returns true if the file *would* be subject to conversion (even if no
 /// actual bytes need changing).
 fn would_convert_on_input(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8]) -> bool {
+    match attrs.crlf_legacy {
+        CrlfLegacyAttr::Unset => return false,
+        CrlfLegacyAttr::Input => {
+            if is_binary(data) {
+                return false;
+            }
+            return true;
+        }
+        CrlfLegacyAttr::Crlf => {
+            if attrs.text == TextAttr::Unset {
+                return false;
+            }
+            if is_binary(data) {
+                return false;
+            }
+            return true;
+        }
+        CrlfLegacyAttr::Unspecified => {}
+    }
+
     // If text is explicitly unset (-text or binary), never convert
     if attrs.text == TextAttr::Unset {
         return false;
@@ -684,6 +740,19 @@ pub fn convert_to_worktree(
 
 /// Decide whether to convert LF→CRLF on output.
 fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8]) -> bool {
+    match attrs.crlf_legacy {
+        CrlfLegacyAttr::Unset | CrlfLegacyAttr::Input => return false,
+        CrlfLegacyAttr::Crlf => {
+            if attrs.text == TextAttr::Unset {
+                return false;
+            }
+            // Legacy `crlf` (set) forces CRLF on checkout (even for paths Git
+            // would otherwise treat as binary; see t0020 "t* crlf" + `three`).
+            return true;
+        }
+        CrlfLegacyAttr::Unspecified => {}
+    }
+
     // If text is explicitly unset, never convert
     if attrs.text == TextAttr::Unset {
         return false;

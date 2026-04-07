@@ -134,28 +134,3 @@ fn collect_from_admin(admin_dir: &Path, wt_path: &str, out: &mut HashMap<String,
         }
     }
 }
-
-/// Whether an error string indicates branch/ref protection due to worktree use.
-#[allow(dead_code)]
-pub fn is_worktree_ref_protection_error(err: &str) -> bool {
-    err.contains("cannot force update the branch")
-        || err.contains("cannot delete branch")
-        || err.contains("used by worktree")
-        || err.contains("refusing to fetch into branch")
-}
-
-/// Decide whether `rebase` should be retried via system Git passthrough.
-#[allow(dead_code)]
-pub fn needs_passthrough_for_rebase(err: &str, argv_rest: &[String]) -> bool {
-    if is_worktree_ref_protection_error(err) {
-        return true;
-    }
-    if argv_rest
-        .iter()
-        .any(|a| a == "--update-refs" || a == "--interactive" || a == "-i")
-    {
-        return true;
-    }
-    err.contains("interactive rebase not fully supported")
-        || err.contains("unexpected argument '--update-refs'")
-}

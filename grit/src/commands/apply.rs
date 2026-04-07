@@ -1979,14 +1979,14 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
     };
     let work_tree = repo
         .work_tree
-        .as_deref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("bare repository"))?;
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
     let ctx = ApplyCrlfContext {
         repo,
-        work_tree: work_tree.to_path_buf(),
-        index: index.clone(),
+        work_tree,
+        index,
         config,
         conv,
     };
@@ -1995,7 +1995,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         if fp.is_new {
             if let Some(target) = fp.target_path() {
                 let adjusted = adjust_path(target, args.strip, args.directory.as_deref());
-                if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+                if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
                     let path = PathBuf::from(&adjusted);
                     if !path.exists() {
                         bail!("{adjusted}: does not match index");
@@ -2025,7 +2025,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         }
 
         // Get index entry
-        if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
+        if let Some(entry) = ctx.index.get(adjusted.as_bytes(), 0) {
             let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
             let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
             if wt_oid != entry.oid {
@@ -2056,13 +2056,6 @@ fn read_symlink_target_bytes(path: &Path) -> Result<Vec<u8>> {
     {
         Ok(target.to_string_lossy().into_owned().into_bytes())
     }
-}
-
-fn read_worktree_content_for_index(path: &Path, mode: u32) -> Result<Vec<u8>> {
-    if mode == grit_lib::index::MODE_SYMLINK {
-        return read_symlink_target_bytes(path);
-    }
-    fs::read(path).with_context(|| format!("failed to read {}", path.display()))
 }
 
 fn read_worktree_blob_as_text(path: &Path) -> io::Result<String> {
@@ -2124,6 +2117,8 @@ fn write_worktree_path(
     content: &str,
     mode: Option<&str>,
     source_exec_bit: Option<bool>,
+    crlf_ctx: Option<&ApplyCrlfContext>,
+    rel_path: &str,
 ) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -2152,8 +2147,23 @@ fn write_worktree_path(
         fs::remove_dir_all(path)
             .with_context(|| format!("failed to remove directory {}", path.display()))?;
     }
-    fs::write(path, content.as_bytes())
-        .with_context(|| format!("failed to write {}", path.display()))?;
+
+    let bytes: Cow<'_, [u8]> = if let Some(ctx) = crlf_ctx {
+        let rules = crlf::load_gitattributes_for_checkout(
+            &ctx.work_tree,
+            rel_path,
+            &ctx.index,
+            &ctx.repo.odb,
+        );
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &ctx.config);
+        Cow::Owned(
+            crlf::convert_to_worktree(content.as_bytes(), rel_path, &ctx.conv, &file_attrs, None)
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        )
+    } else {
+        Cow::Borrowed(content.as_bytes())
+    };
+    fs::write(path, &bytes).with_context(|| format!("failed to write {}", path.display()))?;
 
     #[cfg(unix)]
     {
@@ -2326,6 +2336,7 @@ fn apply_to_worktree(
     args: &Args,
     ws_mode: ApplyWhitespaceMode,
 ) -> Result<()> {
+    let crlf_ctx = ApplyCrlfContext::load();
     let mut had_rejects = false;
     // Snapshot source-side file contents used by cross-path rename/copy patches
     // so later modifications/removals do not affect subsequent patch sections.
@@ -2342,7 +2353,12 @@ fn apply_to_worktree(
         if source_adjusted == target_adjusted || source_snapshots.contains_key(&source_adjusted) {
             continue;
         }
-        if let Ok(content) = read_worktree_blob_as_text(Path::new(&source_adjusted)) {
+        let snap_ok = match &crlf_ctx {
+            Some(ctx) => ctx.normalized_text(Path::new(&source_adjusted), &source_adjusted),
+            None => read_worktree_blob_as_text(Path::new(&source_adjusted))
+                .map_err(|e| anyhow::anyhow!("{e}")),
+        };
+        if let Ok(content) = snap_ok {
             source_snapshots.insert(source_adjusted, content);
         }
     }
@@ -2380,7 +2396,14 @@ fn apply_to_worktree(
             let content = apply_hunks("", &fp.hunks, ws_mode).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
-            write_worktree_path(&path, &content, fp.new_mode.as_deref(), None)?;
+            write_worktree_path(
+                &path,
+                &content,
+                fp.new_mode.as_deref(),
+                None,
+                crlf_ctx.as_ref(),
+                &path_adjusted,
+            )?;
             continue;
         }
 
@@ -2394,17 +2417,26 @@ fn apply_to_worktree(
         let source_contains_target =
             fp.is_rename && read_path != path && target_is_inside_source(&path, &read_path);
         let load_old_content_from_disk = || -> Result<String> {
-            match read_worktree_blob_as_text(&read_path) {
-                Ok(content) => Ok(content),
-                Err(err)
-                    if err.kind() == std::io::ErrorKind::NotFound
-                        && can_apply_with_empty_preimage(fp) =>
-                {
-                    Ok(String::new())
+            match &crlf_ctx {
+                Some(ctx) => {
+                    if !read_path.exists() && can_apply_with_empty_preimage(fp) {
+                        Ok(String::new())
+                    } else {
+                        ctx.normalized_text(&read_path, &source_adjusted)
+                    }
                 }
-                Err(err) => {
-                    Err(err).with_context(|| format!("failed to read {}", read_path.display()))
-                }
+                None => match read_worktree_blob_as_text(&read_path) {
+                    Ok(content) => Ok(content),
+                    Err(err)
+                        if err.kind() == std::io::ErrorKind::NotFound
+                            && can_apply_with_empty_preimage(fp) =>
+                    {
+                        Ok(String::new())
+                    }
+                    Err(err) => {
+                        Err(err).with_context(|| format!("failed to read {}", read_path.display()))
+                    }
+                },
             }
         };
         let old_content = if source_adjusted != path_adjusted {
@@ -2473,7 +2505,14 @@ fn apply_to_worktree(
                 if source_contains_target {
                     remove_path_for_replacement(&read_path)?;
                 }
-                write_worktree_path(&path, &old_content, fp.new_mode.as_deref(), source_exec_bit)?;
+                write_worktree_path(
+                    &path,
+                    &old_content,
+                    fp.new_mode.as_deref(),
+                    source_exec_bit,
+                    crlf_ctx.as_ref(),
+                    &path_adjusted,
+                )?;
                 if fp.is_rename && read_path != path && !source_contains_target {
                     remove_path_for_replacement(&read_path)?;
                     if let Some(parent) = read_path.parent() {
@@ -2503,7 +2542,14 @@ fn apply_to_worktree(
         if source_contains_target {
             remove_path_for_replacement(&read_path)?;
         }
-        write_worktree_path(&path, &new_content, fp.new_mode.as_deref(), source_exec_bit)?;
+        write_worktree_path(
+            &path,
+            &new_content,
+            fp.new_mode.as_deref(),
+            source_exec_bit,
+            crlf_ctx.as_ref(),
+            &path_adjusted,
+        )?;
 
         if !rejected_hunks.is_empty() {
             had_rejects = true;
@@ -2808,11 +2854,13 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
 
 /// Check if patches apply cleanly without modifying anything.
 fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
+    let crlf_ctx = ApplyCrlfContext::load();
     for fp in patches {
         let path_str = fp
             .effective_path()
             .ok_or_else(|| anyhow::anyhow!("patch has no file path"))?;
-        let path = PathBuf::from(adjust_path(path_str, args.strip, args.directory.as_deref()));
+        let path_adjusted = adjust_path(path_str, args.strip, args.directory.as_deref());
+        let path = PathBuf::from(&path_adjusted);
 
         if fp.is_deleted {
             if !path.exists() {
@@ -2839,17 +2887,31 @@ fn check_patches(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMod
             .source_path()
             .map(|p| PathBuf::from(adjust_path(p, args.strip, args.directory.as_deref())))
             .unwrap_or_else(|| path.clone());
-        let old_content = match fs::read_to_string(&read_path) {
-            Ok(content) => content,
-            Err(err)
-                if err.kind() == std::io::ErrorKind::NotFound
-                    && can_apply_with_empty_preimage(fp) =>
-            {
-                String::new()
+        let source_adjusted = fp
+            .source_path()
+            .map(|p| adjust_path(p, args.strip, args.directory.as_deref()))
+            .unwrap_or_else(|| path_adjusted.clone());
+        let old_content = match &crlf_ctx {
+            Some(ctx) => {
+                if !read_path.exists() && can_apply_with_empty_preimage(fp) {
+                    String::new()
+                } else {
+                    ctx.normalized_text(&read_path, &source_adjusted)?
+                }
             }
-            Err(err) => {
-                return Err(err).with_context(|| format!("failed to read {}", read_path.display()))
-            }
+            None => match fs::read_to_string(&read_path) {
+                Ok(content) => content,
+                Err(err)
+                    if err.kind() == std::io::ErrorKind::NotFound
+                        && can_apply_with_empty_preimage(fp) =>
+                {
+                    String::new()
+                }
+                Err(err) => {
+                    return Err(err)
+                        .with_context(|| format!("failed to read {}", read_path.display()))
+                }
+            },
         };
         if let Some(expected_oid) = fp.old_oid.as_deref() {
             verify_old_oid_matches_content(expected_oid, &old_content)?;

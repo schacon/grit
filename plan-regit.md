@@ -51,7 +51,7 @@ These are intentional: child processes run the **same** `grit` binary for sub-op
 
 ### Gaps (still explicit errors or partial)
 
-- [ ] **`rm`** — **`..`** in pathspec; **`:^` / `:!`** exclusions; **conflicted** index edge case (`should_passthrough_conflicted_rm` names a Git behavior branch, not subprocess passthrough).
+- [ ] **`rm`** — Further pathspec parity (magic length limits, etc.). **Done in this pass:** **`..`** resolved lexically from cwd then under the worktree; **`:^` / `:!`** exclusions; **unmerged / conflicted** paths (all stages removed via `Index::remove`, matches deduped, gitlink detected across stages).
 - [ ] **`restore`** — **`--patch`** (interactive).
 - [ ] **`switch`** — Full flag parity with upstream `git switch` (currently `checkout` subset via `rest`).
 
@@ -65,10 +65,6 @@ These are intentional: child processes run the **same** `grit` binary for sub-op
 2. **`gc` / `repack`** — compose existing pack/prune pieces in `grit-lib` where they exist; add missing primitives incrementally.
 3. **`switch` parity** — builds on `checkout` and config.
 4. **`fast-import` / `fast-export`** — large surface area; schedule after core object workflows are solid.
-
-## Cleanup (optional)
-
-- [ ] **`worktree_refs::needs_passthrough_for_rebase`** — Dead code (`#[allow(dead_code)]`); name suggests old system-git retry path. Either wire into `rebase` error handling or delete when native rebase covers those cases.
 
 ## References
 

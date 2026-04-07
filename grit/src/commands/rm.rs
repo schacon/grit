@@ -17,7 +17,7 @@ use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The category of a safety-check failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -73,13 +73,6 @@ pub struct Args {
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if args
-        .pathspec
-        .iter()
-        .any(|spec| cwd_pathspec::has_parent_pathspec_component(spec))
-    {
-        bail!("not implemented: grit rm with '..' pathspec components");
-    }
 
     // Handle --pathspec-from-file / --pathspec-file-nul
     if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
@@ -126,18 +119,8 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(128);
     }
 
-    // Pathspec exclusion magic has nuanced semantics; not implemented yet.
-    if args
-        .pathspec
-        .iter()
-        .any(|spec| spec.starts_with(":^") || spec.starts_with(":!"))
-    {
-        bail!("not implemented: grit rm with exclusion pathspecs (:^ / :!)");
-    }
-
-    // Support exclude pathspec magic used by tests, e.g. ":^path" / ":!path".
-    // When only exclude pathspecs are provided, Git treats the include set as
-    // "all paths", then subtracts the exclusions.
+    // Exclude pathspec magic (`:^` / `:!`): include set defaults to "." when only
+    // exclusions are given; matches are then filtered (see loop over `matches` below).
     let mut include_specs: Vec<String> = Vec::new();
     let mut exclude_specs: Vec<String> = Vec::new();
     for spec in &args.pathspec {
@@ -167,10 +150,6 @@ pub fn run(mut args: Args) -> Result<()> {
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
-
-    if should_passthrough_conflicted_rm(&index, &include_specs) {
-        bail!("not implemented: grit rm for this conflicted index state");
-    }
 
     // Build a map of path → HEAD OID for safety checks.
     let head_tree_map = build_head_map(&repo)?;
@@ -226,6 +205,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 }
             })
             .map(|e| String::from_utf8_lossy(&e.path).into_owned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
             .collect();
 
         if !exclude_specs.is_empty() {
@@ -321,9 +302,10 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut removed_gitlinks: BTreeSet<String> = BTreeSet::new();
     for path_str in &to_remove {
         let removed_was_gitlink = index
-            .get(path_str.as_bytes(), 0)
-            .map(|e| e.mode == 0o160000)
-            .unwrap_or(false);
+            .entries
+            .iter()
+            .filter(|e| e.path == path_str.as_bytes())
+            .any(|e| e.mode == 0o160000);
         if removed_was_gitlink {
             removed_gitlinks.insert(path_str.clone());
         }
@@ -570,40 +552,96 @@ fn remove_empty_parents(file: &Path, work_tree: &Path) {
     }
 }
 
+/// Lexically normalize `.` / `..` components (no filesystem access).
+fn lexical_normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(_)
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                out.push(Path::new(c.as_os_str()));
+            }
+        }
+    }
+    out
+}
+
+/// Resolve `pathspec` relative to `cwd` (handles `..` per Git pathspec rules).
+fn lexical_resolve_under_cwd(pathspec: &str, cwd: &Path) -> PathBuf {
+    let mut out = cwd.to_path_buf();
+    for c in Path::new(pathspec).components() {
+        match c {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(_)
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
+                out.push(Path::new(c.as_os_str()));
+            }
+        }
+    }
+    out
+}
+
 /// Resolve a user-supplied pathspec to a worktree-relative path string.
 ///
 /// Handles paths supplied from outside the worktree by stripping the
-/// worktree prefix when present.
+/// worktree prefix when present, and `..` relative to the current directory.
 fn resolve_rel(pathspec: &str, work_tree: &Path) -> Result<String> {
     // Strip trailing slashes for matching purposes
     let pathspec_clean = pathspec.trim_end_matches('/');
 
+    let wt_canon = work_tree
+        .canonicalize()
+        .unwrap_or_else(|_| work_tree.to_path_buf());
+
     let p = Path::new(pathspec_clean);
     if p.is_absolute() {
-        let rel = p
-            .strip_prefix(work_tree)
+        let abs = p
+            .canonicalize()
+            .unwrap_or_else(|_| lexical_normalize_path(p));
+        let rel = abs
+            .strip_prefix(&wt_canon)
             .map_err(|_| anyhow::anyhow!("path '{}' is outside the work tree", pathspec))?;
         return Ok(rel.to_string_lossy().into_owned());
     }
 
     let cwd = std::env::current_dir()?;
-    let abs = cwd.join(pathspec_clean);
-    let wt_canon = work_tree
-        .canonicalize()
-        .unwrap_or_else(|_| work_tree.to_path_buf());
+    let cwd_canon = cwd.canonicalize().unwrap_or(cwd);
+    let abs = lexical_resolve_under_cwd(pathspec_clean, &cwd_canon);
+    let abs_resolved = abs.canonicalize().unwrap_or(abs);
 
-    if let Ok(rel) = abs.strip_prefix(&wt_canon) {
+    if let Ok(rel) = abs_resolved.strip_prefix(&wt_canon) {
         let s = rel.to_string_lossy().into_owned();
-        // "." or empty means "everything in worktree root"
         if s == "." || s.is_empty() {
             return Ok(String::new());
         }
         return Ok(s);
     }
 
-    // Fallback: already relative to worktree root.
+    // Pathspec relative to worktree root (e.g. when cwd is not under the repo).
+    let from_root = lexical_normalize_path(&wt_canon.join(pathspec_clean));
+    let from_root_resolved = from_root.canonicalize().unwrap_or(from_root);
+    if let Ok(rel) = from_root_resolved.strip_prefix(&wt_canon) {
+        let s = rel.to_string_lossy().into_owned();
+        if s == "." || s.is_empty() {
+            return Ok(String::new());
+        }
+        return Ok(s);
+    }
+
     if pathspec_clean == "." {
         return Ok(String::new());
+    }
+    if cwd_pathspec::has_parent_pathspec_component(pathspec_clean) {
+        bail!("pathspec '{}' resolved outside the work tree", pathspec);
     }
     Ok(pathspec_clean.to_owned())
 }
@@ -736,28 +774,6 @@ fn pathspec_matches(spec: &str, path: &str) -> bool {
         return glob_pathspec_matches(spec, path);
     }
     path == spec || path.starts_with(&format!("{spec}/"))
-}
-
-fn should_passthrough_conflicted_rm(index: &Index, include_specs: &[String]) -> bool {
-    if include_specs.is_empty() {
-        return false;
-    }
-
-    include_specs.iter().any(|spec| {
-        if has_glob_chars(spec) {
-            return index.entries.iter().any(|e| {
-                e.stage() != 0 && glob_pathspec_matches(spec, &String::from_utf8_lossy(&e.path))
-            });
-        }
-        let rel = spec.trim_end_matches('/');
-        let rel_bytes = rel.as_bytes();
-        index.entries.iter().any(|e| {
-            e.stage() != 0
-                && (e.path == rel_bytes
-                    || (e.path.starts_with(rel_bytes)
-                        && e.path.get(rel_bytes.len()) == Some(&b'/')))
-        })
-    })
 }
 
 fn remove_submodule_config_sections(

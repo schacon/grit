@@ -929,6 +929,8 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         .map(|e| e.path.clone())
         .collect();
     let old_stage0 = stage0_index_map(old_index);
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
 
     // Collect paths that have skip-worktree in the new index
     let new_skip_worktree: HashSet<Vec<u8>> = new_index
@@ -1001,14 +1003,9 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
                 .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
             std::os::unix::fs::symlink(target, &abs_path)?;
         } else {
-            // Apply CRLF / smudge conversion
-            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
-            let conv = crlf::ConversionConfig::from_config(&config);
-            // Load attrs from worktree first, fall back to index
-            let mut attrs = crlf::load_gitattributes(&work_tree);
-            if attrs.is_empty() {
-                attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
-            }
+            // Apply CRLF / smudge conversion (per-path rules: root + nested .gitattributes)
+            let attrs =
+                crlf::load_gitattributes_for_checkout(&work_tree, &path_str, new_index, &repo.odb);
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             let data =
