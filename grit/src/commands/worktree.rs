@@ -484,9 +484,10 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                     );
                     eprintln!("hint:");
                     if args.new_branch.is_some() {
+                        let hint_branch = args.new_branch.as_deref().unwrap_or(branch_n);
                         eprintln!(
                             "hint:     git worktree add --orphan -b {} {}",
-                            branch_n,
+                            hint_branch,
                             args.path.display()
                         );
                     } else {
