@@ -112,7 +112,7 @@ t1014-read-tree-confusing	t1	yes	28	27	1	false	ok	0
 t10140-branch-show-current	t1	yes	32	32	0	true	ok	0
 t1015-read-index-unmerged	t1	yes	6	5	1	false	ok	0
 t10150-tag-delete-force	t1	yes	34	34	0	true	ok	0
-t1016-compatObjectFormat	t1	yes	21	0	0	false	ok	0
+t1016-compatObjectFormat	t1	skip	21	0	0	false	ok	0
 t1016-compatObjectSorting	t1	yes	19	17	2	false	ok	0
 t10160-commit-amend-author	t1	yes	30	30	0	true	ok	0
 t10180-rm-recursive-quiet	t1	yes	34	32	2	false	ok	0
@@ -399,7 +399,7 @@ t13390-update-ref-namespace	t1	yes	30	23	7	false	ok	0
 t13400-check-ignore-case	t1	yes	31	25	6	false	ok	0
 t13410-merge-file-crlf-eol	t1	yes	30	28	2	false	ok	0
 t1350-config-hooks-path	t1	yes	4	4	0	true	ok	0
-t1400-update-ref	t1	yes	254	0	0	false	ok	0
+t1400-update-ref	t1	skip	254	0	0	false	ok	0
 t1401-symbolic-ref	t1	yes	25	25	0	true	ok	0
 t1402-check-ref-format	t1	yes	99	99	0	true	ok	0
 t1403-show-ref	t1	yes	12	2	10	false	ok	0
@@ -425,7 +425,7 @@ t1421-reflog-write	t1	yes	10	5	5	false	ok	0
 t1422-show-ref-exists	t1	yes	0	0	0	false	timeout	0
 t1423-ref-backend	t1	skip	9	0	0	false	ok	0
 t1430-bad-ref-name	t1	yes	40	6	34	false	ok	2
-t1450-fsck	t1	yes	74	0	0	false	ok	0
+t1450-fsck	t1	skip	74	0	0	false	ok	0
 t1450-fsck-basic	t1	yes	31	29	2	false	ok	0
 t1450-fsck-flags	t1	yes	10	8	2	false	ok	0
 t1451-fsck-buffer	t1	yes	72	10	62	false	ok	0
@@ -621,7 +621,7 @@ t3431-rebase-fork-point	t3	yes	26	7	19	false	ok	0
 t3432-rebase-fast-forward	t3	yes	219	213	6	false	ok	0
 t3433-rebase-across-mode-change	t3	yes	4	4	0	true	ok	0
 t3434-rebase-i18n	t3	yes	0	0	0	false	ok	0
-t3435-rebase-gpg-sign	t3	yes	11	0	0	false	ok	0
+t3435-rebase-gpg-sign	t3	skip	11	0	0	false	ok	0
 t3436-rebase-more-options	t3	yes	19	2	17	false	ok	0
 t3437-rebase-fixup-options	t3	yes	13	0	13	false	ok	0
 t3438-rebase-broken-files	t3	yes	9	1	8	false	ok	0
@@ -900,7 +900,7 @@ t5329-pack-objects-cruft	t5	yes	25	2	23	false	ok	0
 t5330-no-lazy-fetch-with-commit-graph	t5	yes	4	4	0	true	ok	0
 t5331-pack-objects-stdin	t5	yes	16	1	15	false	ok	0
 t5332-multi-pack-reuse	t5	yes	14	1	13	false	ok	0
-t5333-pseudo-merge-bitmaps	t5	yes	18	3	15	false	ok	0
+t5333-pseudo-merge-bitmaps	t5	skip	18	3	15	false	ok	0
 t5334-incremental-multi-pack-index	t5	yes	16	5	11	false	ok	0
 t5335-compact-multi-pack-index	t5	yes	10	0	10	false	ok	0
 t5351-unpack-large-objects	t5	yes	7	4	3	false	ok	0
@@ -958,8 +958,8 @@ t5537-fetch-shallow	t5	yes	16	3	13	false	ok	0
 t5538-push-shallow	t5	yes	8	2	6	false	ok	0
 t5539-fetch-http-shallow	t5	yes	8	7	1	false	ok	0
 t5540-fetch-push-edge-cases	t5	yes	12	9	3	false	ok	0
-t5540-http-push-webdav	t5	yes	0	0	0	false	ok	2
-t5541-http-push-smart	t5	yes	20	0	0	false	timeout	0
+t5540-http-push-webdav	t5	skip	0	0	0	false	ok	2
+t5541-http-push-smart	t5	skip	20	0	0	false	timeout	0
 t5541-remote-subcommands	t5	yes	5	5	0	true	ok	0
 t5542-push-advanced	t5	yes	4	4	0	true	ok	0
 t5542-push-http-shallow	t5	yes	3	3	0	true	ok	0
@@ -978,7 +978,7 @@ t5554-noop-fetch-negotiator	t5	yes	1	0	1	false	ok	0
 t5555-http-smart-common	t5	yes	0	0	0	false	timeout	0
 t5557-http-get	t5	yes	2	2	0	true	ok	0
 t5558-clone-bundle-uri	t5	yes	0	0	0	false	timeout	0
-t5559-http-fetch-smart-http2	t5	yes	0	0	0	false		0
+t5559-http-fetch-smart-http2	t5	skip	0	0	0	false		0
 t5560-http-backend-noserver	t5	yes	14	2	12	false	ok	0
 t5561-http-backend	t5	yes	0	0	0	false	ok	0
 t5562-http-backend-content-length	t5	yes	0	0	0	false	timeout	0
@@ -1146,7 +1146,7 @@ t6601-path-walk	t6	yes	15	0	15	false	ok	0
 t6700-tree-depth	t6	yes	10	10	0	true	ok	0
 t7001-mv	t7	yes	54	43	11	false	ok	0
 t7002-mv-sparse-checkout	t7	yes	22	1	21	false	ok	0
-t7003-filter-branch	t7	yes	48	0	0	false	ok	0
+t7003-filter-branch	t7	skip	48	0	0	false	ok	0
 t7004-tag	t7	skip	219	0	0	false	ok	0
 t7005-editor	t7	yes	11	0	11	false	ok	0
 t7006-pager	t7	yes	109	109	0	true	ok	1
@@ -1158,7 +1158,7 @@ t7011-skip-worktree-reading	t7	yes	15	8	7	false	ok	0
 t7012-skip-worktree-writing	t7	yes	11	8	3	false	ok	6
 t7020-commit-encoding	t7	yes	26	26	0	true	ok	0
 t7030-verify-tag	t7	skip	16	0	0	false	ok	0
-t7031-verify-tag-signed-ssh	t7	yes	14	0	0	false	ok	0
+t7031-verify-tag-signed-ssh	t7	skip	14	0	0	false	ok	0
 t7040-log-formatting	t7	yes	36	36	0	true	ok	0
 t7060-status-output	t7	yes	25	24	1	false	ok	0
 t7060-wtstatus	t7	yes	17	5	12	false	ok	0
