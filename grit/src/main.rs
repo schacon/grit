@@ -2652,119 +2652,64 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         return url.to_string();
     }
 
-    // Detect and preserve URL schemes in paths
-    let (scheme, path_part) = if let Some(scheme_end) = up_path.find("://") {
-        // Extract scheme+host portion
-        let scheme = &up_path[..scheme_end + 3]; // e.g. "file://"
-        let rest = &up_path[scheme_end + 3..]; // e.g. "/tmp/repo"
-        (scheme.to_string(), rest.to_string())
+    // Determine the base path (don't normalize - preserve .. components for fidelity)
+    let base = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
+        if up_path.is_empty() || up_path == "(null)" {
+            ".".to_string()
+        } else {
+            up_path.to_string()
+        }
+    } else if !up_path.is_empty() && up_path != "(null)" && up_path.starts_with('/') {
+        // Absolute up_path overrides
+        up_path.to_string()
+    } else if !up_path.is_empty() && up_path != "(null)" {
+        format!("{}/{}", remote_url.trim_end_matches('/'), up_path)
     } else {
-        ("".to_string(), up_path.to_string())
+        remote_url.trim_end_matches('/').to_string()
     };
 
-    /// Normalize path, preserving leading / or //
-    fn normalize_parts(s: &str) -> Vec<String> {
-        let double_slash = s.starts_with("//");
-        let is_abs = s.starts_with('/');
-        let mut parts: Vec<String> = Vec::new();
-        if double_slash {
-            parts.push("//".to_string());
-        } else if is_abs {
-            parts.push("/".to_string());
-        }
-        for p in s.split('/') {
-            match p {
-                ".." => {
-                    let min_len = if is_abs { 1 } else { 0 };
-                    if parts.len() <= min_len
-                        || parts.last().map(|s: &String| s.as_str()) == Some("..")
-                    {
-                        if !is_abs {
-                            parts.push("..".to_string());
-                        }
-                    } else {
-                        parts.pop();
-                    }
-                }
-                "." | "" => {}
-                other => parts.push(other.to_string()),
-            }
-        }
-        parts
-    }
-
-    fn parts_to_string(parts: &[String]) -> String {
-        if !parts.is_empty() && (parts[0] == "//" || parts[0] == "/") {
-            let sentinel = &parts[0];
-            if parts.len() == 1 {
-                sentinel.clone()
-            } else {
-                format!("{}{}", sentinel, parts[1..].join("/"))
-            }
-        } else {
-            parts.join("/")
-        }
-    }
-
-    // Compute base from remote_url and up_path
-    let base_parts = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
-        if path_part.is_empty() || path_part == "(null)" {
-            normalize_parts(".")
-        } else {
-            normalize_parts(&path_part)
-        }
-    } else if path_part.starts_with('/') || path_part.is_empty() {
-        normalize_parts(&path_part)
+    // Detect and preserve URL scheme
+    let (scheme, path_part): (String, String) = if let Some(pos) = base.find("://") {
+        let scheme = base[..pos + 3].to_string(); // "file://" or "helper:://"
+        let rest = base[pos + 3..].to_string();
+        (scheme, rest)
     } else {
-        let combined = format!("{}/{}", remote_url.trim_end_matches('/'), path_part);
-        normalize_parts(&combined)
+        ("".to_string(), base.clone())
     };
 
-    // Apply url navigation to base
-    let mut result = base_parts;
-    for part in url.split('/') {
-        match part {
+    // Split path into components WITHOUT normalizing
+    let mut parts: Vec<String> = path_part.split('/').map(|s| s.to_string()).collect();
+
+    // Detect if url ends with /. (directory marker to preserve)
+    let url_ends_with_dot = url.ends_with("/.");
+
+    // Apply url components to parts
+    for component in url.split('/') {
+        match component {
             ".." => {
-                let min_len = if result
-                    .first()
-                    .map(|s: &String| s.as_str())
-                    .map(|s| s.starts_with('/'))
-                    .unwrap_or(false)
-                {
-                    1
-                } else {
-                    0
-                };
-                if result.len() <= min_len
-                    || result.last().map(|s: &String| s.as_str()) == Some("..")
-                {
-                    if !result
-                        .first()
-                        .map(|s: &String| s.starts_with('/'))
-                        .unwrap_or(false)
-                    {
-                        result.push("..".to_string());
-                    }
-                } else {
-                    result.pop();
+                if !parts.is_empty() {
+                    parts.pop();
                 }
             }
             "." | "" => {}
-            other => result.push(other.to_string()),
+            other => parts.push(other.to_string()),
         }
     }
 
-    let path_result = parts_to_string(&result);
+    let path_result = parts.join("/");
 
-    // Restore URL scheme if present
-    let out = if scheme.is_empty() {
+    // Restore scheme
+    let mut out = if scheme.is_empty() {
         path_result
     } else {
         format!("{}{}", scheme, path_result)
     };
 
-    // Strip trailing slash
-    let out = out.trim_end_matches(|c: char| c == '/').to_string();
+    // Append /. when url ends with /.
+    if url_ends_with_dot && !out.ends_with("/.") {
+        out.push_str("/.");
+    }
+
     if out.is_empty() {
         ".".to_string()
     } else {
