@@ -1279,9 +1279,30 @@ fn global_config_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("GIT_CONFIG_GLOBAL") {
         return Some(PathBuf::from(p));
     }
-    std::env::var("HOME")
+    let home_config = std::env::var("HOME")
         .ok()
-        .map(|h| PathBuf::from(h).join(".gitconfig"))
+        .map(|h| PathBuf::from(h).join(".gitconfig"));
+    // If ~/.gitconfig exists, use it
+    if let Some(ref p) = home_config {
+        if p.exists() {
+            return home_config;
+        }
+    }
+    // Fall back to XDG config
+    let xdg_config = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        Some(PathBuf::from(xdg).join("git/config"))
+    } else {
+        std::env::var("HOME")
+            .ok()
+            .map(|h| PathBuf::from(h).join(".config/git/config"))
+    };
+    if let Some(ref p) = xdg_config {
+        if p.exists() {
+            return xdg_config;
+        }
+    }
+    // Return ~/.gitconfig as the default path for writing
+    home_config
 }
 
 /// Returns whether `--default` is valid for the selected operation.
