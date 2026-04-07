@@ -2395,7 +2395,13 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         } else {
             // Full format with Reflog headers
             writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-            writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
+            // Strip timestamp from identity for Reflog: line (git shows only Name <email>)
+            let ident_display = if let Some(email_end) = entry.identity.rfind('>') {
+                &entry.identity[..email_end + 1]
+            } else {
+                &entry.identity
+            };
+            writeln!(out, "Reflog: {} ({})", selector, ident_display)?;
             writeln!(out, "Reflog message: {}", entry.message)?;
             writeln!(
                 out,
