@@ -165,7 +165,7 @@ commit → check it off → move on.
 
 - [ ] `t1517-outside-repo` █████████░░░░░░░░░░░ 97/195 (98 left) — check random commands outside repo
 - [ ] `t1092-sparse-checkout-compatibility` ░░░░░░░░░░░░░░░░░░░░ 3/106 (103 left) — compare full workdir to sparse workdir
-- [ ] `t0450-txt-doc-vs-help` ██████████████░░░░░░ 401/554 (153 left) — assert (unbuilt) Documentation/*.adoc and -h output
+- [x] `t0450-txt-doc-vs-help` ████████████████████ 548/548 — assert (unbuilt) Documentation/*.adoc and -h output
 
 
 ## 3. Index/Checkout (50 files)

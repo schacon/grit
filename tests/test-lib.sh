@@ -50,6 +50,13 @@ if test -z "$TEST_DIRECTORY"
 then
 	TEST_DIRECTORY="$(cd "$(dirname "$0")" && pwd)"
 fi
+# Upstream Git manpage sources (t0450-txt-doc-vs-help, lib-gettext, etc.)
+if test -z "$GIT_SOURCE_DIR"
+then
+	_repo_root="$(cd "$(dirname "$TEST_DIRECTORY")" && pwd)"
+	GIT_SOURCE_DIR="$_repo_root/git"
+	export GIT_SOURCE_DIR
+fi
 # Use a per-test trash directory to avoid interference between tests.
 # Derive from the test script name (e.g., t4050-diff.sh -> trash.t4050-diff)
 _test_basename="$(basename "$0" .sh)"
