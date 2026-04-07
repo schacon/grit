@@ -586,7 +586,17 @@ fn switch_branch(
                         continue;
                     }
                     let wt_head = admin.join("HEAD");
-                    if let Ok(content) = std::fs::read_to_string(&wt_head) {
+                    // Read HEAD content, following symlinks properly
+                    let head_content = if wt_head.is_symlink() {
+                        // Symlink HEAD: the link target IS the branch ref string
+                        std::fs::read_link(&wt_head)
+                            .ok()
+                            .map(|t| format!("ref: {}", t.to_string_lossy()))
+                            .or_else(|| std::fs::read_to_string(&wt_head).ok())
+                    } else {
+                        std::fs::read_to_string(&wt_head).ok()
+                    };
+                    if let Some(content) = head_content {
                         let content = content.trim();
                         if let Some(refname) = content.strip_prefix("ref: ") {
                             if refname.trim() == branch_ref {
