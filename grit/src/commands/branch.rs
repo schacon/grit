@@ -65,12 +65,12 @@ pub struct Args {
     pub quiet: bool,
 
     /// Show branches containing this commit.
-    #[arg(long = "contains")]
-    pub contains: Option<String>,
+    #[arg(long = "contains", action = clap::ArgAction::Append)]
+    pub contains: Vec<String>,
 
     /// Show branches not containing this commit.
-    #[arg(long = "no-contains")]
-    pub no_contains: Option<String>,
+    #[arg(long = "no-contains", action = clap::ArgAction::Append)]
+    pub no_contains: Vec<String>,
 
     /// Show branches merged into this commit (default: HEAD).
     #[arg(long = "merged", num_args = 0..=1, default_missing_value = "")]
@@ -224,8 +224,8 @@ pub fn run(args: Args) -> Result<()> {
     // If a name is given and we're not listing/filtering, create a branch
     if let Some(ref name) = args.name {
         if !args.list
-            && args.contains.is_none()
-            && args.no_contains.is_none()
+            && args.contains.is_empty()
+            && args.no_contains.is_empty()
             && args.merged.is_none()
             && args.no_merged.is_none()
         {
@@ -350,14 +350,14 @@ fn list_branches(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         branches.retain(|b| !is_ancestor(repo, b.oid, target_oid).unwrap_or(true));
     }
 
-    // Apply --contains filter
-    if let Some(ref contains_rev) = args.contains {
+    // Apply --contains filter (all must match)
+    for contains_rev in &args.contains {
         let contains_oid = resolve_revision(repo, contains_rev)?;
         branches.retain(|b| is_ancestor(repo, contains_oid, b.oid).unwrap_or(false));
     }
 
     // Apply --no-contains filter
-    if let Some(ref no_contains_rev) = args.no_contains {
+    for no_contains_rev in &args.no_contains {
         let no_contains_oid = resolve_revision(repo, no_contains_rev)?;
         branches.retain(|b| !is_ancestor(repo, no_contains_oid, b.oid).unwrap_or(true));
     }
