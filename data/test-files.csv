@@ -313,7 +313,7 @@ t12550-diff-stat-summary-line	t1	yes	39	39	0	true	ok	0
 t12560-diff-index-worktree	t1	yes	36	36	0	true	ok	0
 t12570-status-rename-copy	t1	yes	38	36	2	false	ok	0
 t12580-log-oneline-all	t1	yes	31	28	3	false	ok	0
-t12590-log-format-tformat	t1	yes	33	33	0	true	ok	0
+t12590-log-format-tformat	t1	yes	33	32	1	false	ok	0
 t12600-rev-list-not-exclude	t1	yes	32	31	1	false	ok	0
 t12610-rev-list-all-branches	t1	yes	32	30	2	false	ok	0
 t12620-rev-parse-resolve-ref	t1	yes	32	31	1	false	ok	0
