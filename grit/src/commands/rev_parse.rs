@@ -51,6 +51,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowCdup,
         ShowGitDir,
         ShowAbsoluteGitDir,
+        ShowObjectFormat,
         ShowRefFormat,
         GitPath(String),
         All,
@@ -106,6 +107,8 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::ShowGitDir);
             } else if arg == "--absolute-git-dir" {
                 actions.push(Action::ShowAbsoluteGitDir);
+            } else if arg == "--show-object-format" {
+                actions.push(Action::ShowObjectFormat);
             } else if arg == "--git-path" {
                 i += 1;
                 let path_arg = args
@@ -377,6 +380,34 @@ pub fn run(args: Args) -> Result<()> {
                     bail!("not a git repository (or any of the parent directories)");
                 };
                 println!("{}", current.git_dir.display());
+            }
+            Action::ShowObjectFormat => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let config_path = current.git_dir.join("config");
+                let object_format = if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    let mut in_ext = false;
+                    let mut found = String::from("sha1");
+                    for line in content.lines() {
+                        let t = line.trim();
+                        if t.starts_with('[') {
+                            in_ext = t.eq_ignore_ascii_case("[extensions]");
+                            continue;
+                        }
+                        if in_ext {
+                            if let Some((k, v)) = t.split_once('=') {
+                                if k.trim().eq_ignore_ascii_case("objectformat") {
+                                    found = v.trim().to_lowercase();
+                                }
+                            }
+                        }
+                    }
+                    found
+                } else {
+                    "sha1".to_string()
+                };
+                println!("{object_format}");
             }
             Action::ShowRefFormat => {
                 let Some(current) = repo.as_ref() else {
