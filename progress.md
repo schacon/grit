@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    94 |
+| Completed   |    95 |
 | In progress |     0 |
-| Remaining   |   673 |
+| Remaining   |   672 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t7409-submodule-detached-work-tree` — 3/3 tests pass (submodule `clone --separate-git-dir` sets `core.worktree`; checkout populates work tree when index empty on same branch/detached OID; merge/checkout treat gitlinks as clean when submodule HEAD matches; nested grit subprocesses clear inherited `GIT_DIR`/`GIT_WORK_TREE`; harness clears those env vars per test)
 - `t5813-proto-disable-ssh` — 81/81 tests pass (`GIT_ALLOW_PROTOCOL` comma split, `protocol.*.allow=user` + `GIT_PROTOCOL_FROM_USER`, SSH URL validation, local SSH resolution via `TRASH_DIRECTORY` + absolute `ssh://` paths, pkt-line `upload-pack`/`receive-pack`, side-band pack streaming)
 - `t12730-switch-start-point` — 36/36 tests pass (`grit switch -c` with start-point, `--detach`, `--orphan`, tags, abbreviated hashes, `HEAD~N`; harness CSV refreshed)
 - `t1451-fsck-buffer` — 72/72 tests pass (`hash-object` now runs Git-style standalone fsck on commit/tag/tree buffers with matching `missingTree`/`badTree`/ident diagnostics and stderr ordering; new `grit_lib::fsck_standalone`)

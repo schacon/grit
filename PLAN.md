@@ -792,7 +792,7 @@ commit → check it off → move on.
 - [ ] `t7423-submodule-symlinks` █████████████░░░░░░░ 4/6 (2 left) — check that submodule operations do not follow symlinks
 - [ ] `t7606-merge-custom` ██████████░░░░░░░░░░ 2/4 (2 left) — git merge
 
-- [ ] `t7409-submodule-detached-work-tree` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Test submodules on detached working tree
+- [x] `t7409-submodule-detached-work-tree` — Test submodules on detached working tree (3/3 harness)
 
 - [ ] `t7420-submodule-set-url` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — Test submodules set-url subcommand
 
