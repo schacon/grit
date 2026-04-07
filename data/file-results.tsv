@@ -190,7 +190,7 @@ t2021-checkout-overwrite	yes	9	4	5	ok	4	9	0
 t2022-checkout-paths	yes	5	5	0	ok	5	5	0
 t2023-checkout-m	yes	5	5	0	ok	5	5	0
 t2024-checkout-dwim	yes	23	2	21	ok	2	23	0
-t2025-checkout-no-overlay	yes	6	1	5	ok	1	6	0
+t2025-checkout-no-overlay	yes	6	6	0	ok	6	6	0
 t2026-checkout-pathspec-file	yes	11	1	10	ok	1	11	0
 t2027-checkout-track	yes	5	5	0	ok	5	5	0
 t2030-unresolve-info	yes	14	2	12	ok	2	14	0

@@ -197,7 +197,7 @@ commit → check it off → move on.
 - [x] `t2107-update-index-basic` ████████████████████ 10/10 (0 left) — basic update-index tests
 
 - [ ] `t2021-checkout-overwrite` ████████░░░░░░░░░░░░ 4/9 (5 left) — checkout must not overwrite an untracked objects
-- [ ] `t2025-checkout-no-overlay` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — checkout --no-overlay <tree-ish> -- <pathspec>
+- [x] `t2025-checkout-no-overlay` ████████████████████ 6/6 (0 left) — checkout --no-overlay <tree-ish> -- <pathspec>
 - [ ] `t2201-add-update-typechange` ███░░░░░░░░░░░░░░░░░ 1/6 (5 left) — more git add -u
 - [ ] `t2200-add-update` █████████████░░░░░░░ 13/19 (6 left) — git add -u
 
