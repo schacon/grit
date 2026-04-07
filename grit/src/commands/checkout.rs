@@ -2826,7 +2826,7 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
     let mut star_si = 0;
 
     while si < path.len() {
-        if pi < pattern.len() && pattern[pi] == b'?' && path[si] != b'/' {
+        if pi < pattern.len() && pattern[pi] == b'?' {
             pi += 1;
             si += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
@@ -2890,8 +2890,8 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
         } else if pi < pattern.len() && pattern[pi] == path[si] {
             pi += 1;
             si += 1;
-        } else if star_pi != usize::MAX && path[si] != b'/' {
-            // Backtrack: '*' matches one more character (but not '/')
+        } else if star_pi != usize::MAX {
+            // Backtrack: '*' matches one more character (including '/')
             pi = star_pi + 1;
             star_si += 1;
             si = star_si;
