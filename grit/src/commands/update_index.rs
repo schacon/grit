@@ -92,9 +92,9 @@ pub struct Args {
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub cacheinfo: Vec<String>,
 
-    /// Set the execute bit on tracked files (+x or -x).
-    #[arg(long = "chmod", value_name = "MODE")]
-    pub chmod: Option<String>,
+    /// Set the execute bit on tracked files (+x or -x). Can be repeated.
+    #[arg(long = "chmod", value_name = "MODE", action = clap::ArgAction::Append)]
+    pub chmod: Vec<String>,
 
     /// Replace the entire index (used with --index-info).
     #[arg(long = "replace")]
@@ -237,6 +237,27 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    // Build per-file chmod override map by scanning raw args.
+    // Handles: --chmod=+x A --chmod=-x B (chmod applies to following file)
+    let mut per_file_chmod: std::collections::HashMap<PathBuf, String> =
+        std::collections::HashMap::new();
+    {
+        let raw: Vec<String> = std::env::args().collect();
+        let mut pending_chmod: Option<String> = None;
+        for tok in &raw {
+            if let Some(val) = tok.strip_prefix("--chmod=") {
+                pending_chmod = Some(val.to_owned());
+            } else if tok == "--chmod" {
+                // next token is the value — handled by checking if pending is set
+            } else if !tok.starts_with('-') {
+                if let Some(ref c) = pending_chmod {
+                    per_file_chmod.insert(PathBuf::from(tok), c.clone());
+                    // Don't reset — it may apply to multiple files if not overridden
+                }
+            }
+        }
+    }
+
     // Collect file paths (from args or stdin)
     let paths: Vec<PathBuf> = if args.null_terminated {
         read_paths_nul()?
@@ -317,7 +338,12 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
-        if let Some(ref chmod_val) = args.chmod {
+        // Per-file chmod (from interleaved args like --chmod=+x A --chmod=-x B) takes priority.
+        let effective_chmod = per_file_chmod
+            .get(&input_path)
+            .map(|s| s.as_str())
+            .or_else(|| args.chmod.last().map(|s| s.as_str()));
+        if let Some(ref chmod_val) = effective_chmod.map(|s| s.to_owned()) {
             if !args.add {
                 let new_mode = match chmod_val.as_str() {
                     "+x" => 0o100755u32,
@@ -328,6 +354,10 @@ pub fn run(args: Args) -> Result<()> {
                     e.mode = new_mode;
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
+                }
+                if args.verbose {
+                    println!("add '{}'", rel_path.display());
+                    println!("chmod {} '{}'", chmod_val, rel_path.display());
                 }
                 apply_chmod_to_worktree(&abs_path, chmod_val)?;
                 continue;
@@ -464,8 +494,13 @@ pub fn run(args: Args) -> Result<()> {
 
         index.add_or_replace(entry);
 
-        // Apply --chmod after adding the entry.
-        if let Some(ref chmod_val) = args.chmod {
+        // Apply --chmod after adding the entry (per-file takes priority over global).
+        let apply_chmod = per_file_chmod
+            .get(&input_path)
+            .map(|s| s.as_str())
+            .or_else(|| args.chmod.last().map(|s| s.as_str()))
+            .map(|s| s.to_owned());
+        if let Some(ref chmod_val) = apply_chmod {
             let new_mode = match chmod_val.as_str() {
                 "+x" => 0o100755u32,
                 "-x" => 0o100644u32,
@@ -473,6 +508,9 @@ pub fn run(args: Args) -> Result<()> {
             };
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
+            }
+            if args.verbose {
+                println!("chmod {} '{}'", chmod_val, rel_path.display());
             }
             apply_chmod_to_worktree(&abs_path, chmod_val)?;
         }
