@@ -15,7 +15,7 @@ use grit_lib::repo::Repository;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Arguments for `grit fsck`.
 #[derive(Debug, ClapArgs)]
@@ -84,6 +84,7 @@ pub fn run(args: Args) -> Result<()> {
     // In linked worktrees, object storage lives in the common gitdir, not
     // under `.git/worktrees/<name>/objects`.
     let objects_dir = repo.odb.objects_dir().to_path_buf();
+    validate_alternate_paths_exist(&objects_dir)?;
     let odb = Odb::new(&objects_dir);
 
     let show_dangling = !args.no_dangling;
@@ -566,6 +567,33 @@ fn name_tree_entries(
             }
         }
     }
+}
+
+/// Fail when `objects/info/alternates` lists paths that no longer exist.
+///
+/// Git reports `unable to normalize alternate object path` and exits non-zero;
+/// this catches clones that still point at a removed `--reference` repository.
+fn validate_alternate_paths_exist(objects_dir: &Path) -> Result<()> {
+    let alt_file = objects_dir.join("info/alternates");
+    let Ok(content) = fs::read_to_string(&alt_file) else {
+        return Ok(());
+    };
+    let mut bad = false;
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let path = PathBuf::from(line);
+        if !path.exists() {
+            eprintln!("error: unable to normalize alternate object path: {}", line);
+            bad = true;
+        }
+    }
+    if bad {
+        std::process::exit(2);
+    }
+    Ok(())
 }
 
 /// Collect all object IDs present in local pack indexes.

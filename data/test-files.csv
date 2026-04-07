@@ -998,7 +998,7 @@ t5600-clone-fail-cleanup	t5	yes	14	14	0	true	ok	0
 t5601-clone	t5	yes	115	21	94	false	ok	0
 t5602-clone-remote-exec	t5	yes	3	3	0	true	ok	0
 t5603-clone-dirname	t5	yes	47	1	46	false	ok	0
-t5604-clone-reference	t5	yes	34	19	15	false	ok	0
+t5604-clone-reference	t5	yes	34	34	0	true	ok	0
 t5605-clone-local	t5	yes	23	11	12	false	ok	0
 t5606-clone-options	t5	yes	21	6	15	false	ok	0
 t5607-clone-bundle	t5	yes	16	5	11	false	ok	0

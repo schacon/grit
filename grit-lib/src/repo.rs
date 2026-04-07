@@ -1081,6 +1081,21 @@ fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
     Ok(git_dir.to_path_buf())
 }
 
+/// Resolve a `.git` gitfile's contents to an absolute git directory.
+///
+/// # Parameters
+///
+/// - `content` — file contents (typically a single `gitdir: <path>` line).
+/// - `base` — directory containing the gitfile (used to resolve relative paths).
+///
+/// # Errors
+///
+/// Returns [`Error::NotARepository`] when the gitfile format is invalid or the
+/// target path does not exist.
+pub fn resolve_gitfile_path(content: &str, base: &Path) -> Result<PathBuf> {
+    parse_gitfile(content, base)
+}
+
 /// Parse a gitfile's `"gitdir: <path>"` line.
 fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
     for line in content.lines() {

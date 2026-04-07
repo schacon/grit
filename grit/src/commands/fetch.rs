@@ -10,6 +10,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::merge_base;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
+use grit_lib::odb::Odb;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
@@ -225,20 +226,20 @@ fn fetch_remote(
     let remote_heads = refs::list_refs(&remote_repo.git_dir, "refs/heads/")?;
     let remote_tags = refs::list_refs(&remote_repo.git_dir, "refs/tags/")?;
 
+    let tip_oids: Vec<ObjectId> = remote_heads
+        .iter()
+        .chain(remote_tags.iter())
+        .map(|(_, oid)| *oid)
+        .collect();
+    crate::trace_packet::trace_fetch_tip_availability(&git_dir.join("objects"), &tip_oids);
+
     // Copy objects from remote → local
     copy_objects(&remote_repo.git_dir, git_dir, args.refetch)
         .context("copying objects from remote")?;
 
     // Verify that all objects reachable from remote refs exist locally.
     // This catches incomplete remotes that are missing some objects.
-    {
-        let tip_oids: Vec<ObjectId> = remote_heads
-            .iter()
-            .chain(remote_tags.iter())
-            .map(|(_, oid)| *oid)
-            .collect();
-        check_connectivity(git_dir, &tip_oids)?;
-    }
+    check_connectivity(git_dir, &tip_oids)?;
 
     // Handle --depth / --deepen: write shallow graft info
     let effective_depth = args.depth.or(args.deepen);
@@ -1076,6 +1077,7 @@ pub fn copy_objects_for_pull(src_git_dir: &Path, dst_git_dir: &Path) -> Result<(
 fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result<()> {
     let src_objects = src_git_dir.join("objects");
     let dst_objects = dst_git_dir.join("objects");
+    let dst_odb = Odb::new(&dst_objects);
 
     // Copy loose objects (fan-out directories: 00..ff)
     if src_objects.is_dir() {
@@ -1098,11 +1100,21 @@ fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path, refetch: bool) -> Result
             for inner in fs::read_dir(entry.path())? {
                 let inner = inner?;
                 if inner.file_type()?.is_file() {
+                    let file_name = inner.file_name().to_string_lossy().to_string();
+                    if file_name.len() != 38 {
+                        continue;
+                    }
+                    let hex = format!("{name_str}{file_name}");
+                    let Ok(oid) = ObjectId::from_hex(&hex) else {
+                        continue;
+                    };
+                    if !refetch && dst_odb.exists(&oid) {
+                        continue;
+                    }
                     let dst_file = dst_dir.join(inner.file_name());
                     if refetch || !dst_file.exists() {
                         fs::create_dir_all(&dst_dir)?;
                         if refetch {
-                            // Force copy when refetching
                             fs::copy(inner.path(), &dst_file)?;
                         } else if fs::hard_link(inner.path(), &dst_file).is_err() {
                             fs::copy(inner.path(), &dst_file)?;

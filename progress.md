@@ -13,6 +13,7 @@
 
 ## Recently completed
 
+- `t5604-clone-reference` — 34/34 tests pass (clone `--reference`/alternates, `file://` + reference-only borrowing, `--dissociate`/`--no-hardlinks`, gitfile reference paths, fetch + `GIT_TRACE_PACKET` compat, `Odb::write` skips objects in alternates, `fsck` errors on missing alternate paths; harness CSV refreshed)
 - `t1451-fsck-buffer` — 72/72 tests pass (`hash-object` now runs Git-style standalone fsck on commit/tag/tree buffers with matching `missingTree`/`badTree`/ident diagnostics and stderr ordering; new `grit_lib::fsck_standalone`)
 - `t5405-send-pack-rewind` — 3/3 tests pass (`fetch --update-head-ok` now skips the “checked out branch” refusal when updating `refs/heads/*` destinations, matching Git; harness CSV refreshed)
 - `t6200-fmt-merge-msg-extra` — 23/23 tests pass (`fmt-merge-msg`: multi-branch/tag titles, remote URL suffix, `--into-name`, `-m` override, `--log`/`--no-log`, stdin vs `-F`, FETCH_HEAD edge cases; harness CSV refreshed)

@@ -74,6 +74,21 @@ impl Odb {
             .join(oid.loose_suffix())
     }
 
+    /// Whether `oid` exists in this repository's primary object directory only
+    /// (loose or pack under [`Self::objects_dir`]), ignoring alternates and
+    /// `GIT_ALTERNATE_OBJECT_DIRECTORIES`.
+    ///
+    /// This matches Git's notion of "local" loose object count for `count-objects`
+    /// and fetch copy decisions when alternates are configured.
+    #[must_use]
+    pub fn exists_in_primary_only(&self, oid: &ObjectId) -> bool {
+        const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        if oid.to_hex() == EMPTY_TREE {
+            return true;
+        }
+        self.exists_in_dir(&self.objects_dir, oid)
+    }
+
     /// Check whether an object exists in the loose store or any pack file.
     #[must_use]
     pub fn exists(&self, oid: &ObjectId) -> bool {
@@ -220,7 +235,7 @@ impl Odb {
         let oid = hash_bytes(&store_bytes);
 
         let path = self.object_path(&oid);
-        if path.exists() {
+        if path.exists() || self.exists(&oid) {
             return Ok(oid);
         }
 
@@ -259,7 +274,7 @@ impl Odb {
 
         let oid = hash_bytes(store_bytes);
         let path = self.object_path(&oid);
-        if path.exists() {
+        if path.exists() || self.exists(&oid) {
             return Ok(oid);
         }
 

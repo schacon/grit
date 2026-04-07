@@ -22,6 +22,8 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("failed to discover repository")?;
     let objects_dir = repo.git_dir.join("objects");
 
+    // Match Git: only count loose objects in this repository's primary object
+    // store, not objects reachable only via `info/alternates`.
     let (loose_count, loose_size, loose_ids) = scan_loose_objects(&objects_dir)?;
     if !args.verbose {
         println!("{} objects, {} kilobytes", loose_count, loose_size / 1024);

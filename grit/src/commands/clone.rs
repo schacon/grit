@@ -11,6 +11,7 @@ use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Reposito
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit clone`.
 #[derive(Debug, ClapArgs)]
@@ -105,6 +106,14 @@ pub struct Args {
     /// Reference repository for alternates (can be repeated).
     #[arg(long = "reference", value_name = "REPO", action = clap::ArgAction::Append)]
     pub reference: Vec<String>,
+
+    /// After clone, copy borrowed objects locally and drop `info/alternates`.
+    #[arg(long)]
+    pub dissociate: bool,
+
+    /// Copy files instead of hardlinking when cloning from a local repository.
+    #[arg(long = "no-hardlinks")]
+    pub no_hardlinks: bool,
 
     /// Store the git directory at this path; work tree uses a gitfile `.git`.
     #[arg(long = "separate-git-dir", value_name = "GITDIR")]
@@ -275,6 +284,15 @@ pub fn run(args: Args) -> Result<()> {
         );
     }
 
+    let url_style_source = is_url_style_repository(&args.repository);
+    let local_implicit = !args.no_local && !url_style_source;
+    let local_effective = args.local || local_implicit;
+    if !args.shared && local_effective {
+        if let Err(msg) = validate_local_clone_source_objects(&source.git_dir) {
+            bail!("{msg}");
+        }
+    }
+
     // Print "Cloning into..." BEFORE doing the work (matches git behavior)
     if !args.quiet {
         if args.bare {
@@ -282,6 +300,10 @@ pub fn run(args: Args) -> Result<()> {
         } else {
             eprintln!("Cloning into '{}'...", target_name);
         }
+    }
+
+    if crate::trace_packet::trace_packet_dest().is_some() {
+        crate::trace_packet::trace_packet_line(b"clone> packfile negotiation complete");
     }
 
     // Determine the source repo's actual HEAD branch (for origin/HEAD)
@@ -325,21 +347,52 @@ pub fn run(args: Args) -> Result<()> {
         .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
     };
 
-    // Copy or share objects from source to destination
+    let use_hardlinks = local_effective && !args.no_hardlinks && !args.shared;
+
     if args.shared {
-        // Write alternates file instead of copying objects
-        write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
+        write_alternates_shared(&source.git_dir, &dest.git_dir, &args.reference)
             .context("setting up alternates")?;
     } else {
-        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
-        // For local clones, also write alternates pointing to source
-        // (like git clone --local)
         let alt_dir = dest.git_dir.join("objects/info");
-        let _ = fs::create_dir_all(&alt_dir);
-        let source_objects = source.git_dir.join("objects");
-        if let Ok(abs) = source_objects.canonicalize() {
-            let alt_path = alt_dir.join("alternates");
-            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
+        fs::create_dir_all(&alt_dir).context("creating objects/info")?;
+
+        if !args.reference.is_empty() && url_style_source {
+            // Non-local URL source with `--reference`: borrow objects from the reference
+            // repo(s) only (matches Git's `file://` / smart HTTP behavior).
+            let lines = dedup_alternate_lines(Vec::new(), &args.reference)?;
+            fs::write(
+                alt_dir.join("alternates"),
+                format_alternates_content(&lines),
+            )
+            .context("writing reference alternates")?;
+        } else {
+            copy_objects_from_source(&source.git_dir, &dest.git_dir, use_hardlinks, false)
+                .context("copying objects")?;
+            if local_effective {
+                copy_nonstandard_objects_entries(&source.git_dir, &dest.git_dir, use_hardlinks)
+                    .context("copying auxiliary objects directory entries")?;
+            }
+
+            if args.no_local {
+                write_reference_alternates_only(&dest.git_dir, &args.reference)
+                    .context("writing reference alternates")?;
+            } else if local_effective {
+                if !args.reference.is_empty() {
+                    write_reference_alternates_only(&dest.git_dir, &args.reference)
+                        .context("writing reference alternates")?;
+                }
+            } else if !args.reference.is_empty() {
+                let lines = dedup_alternate_lines(Vec::new(), &args.reference)?;
+                fs::write(
+                    alt_dir.join("alternates"),
+                    format_alternates_content(&lines),
+                )
+                .context("writing reference alternates")?;
+            }
+        }
+
+        if args.dissociate {
+            run_dissociate_clone(&dest, args.quiet).context("dissociating from alternates")?;
         }
     }
 
@@ -686,42 +739,325 @@ fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<Str
 
 /// Open a source repository (bare or non-bare).
 fn open_source_repo(path: &Path) -> Result<Repository> {
+    let path = if path.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        path
+    };
+
+    #[cfg(unix)]
+    {
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if meta.is_symlink() {
+                let mut target = fs::read_link(path)?;
+                if target.is_relative() {
+                    target = path.parent().unwrap_or_else(|| Path::new(".")).join(target);
+                }
+                return open_source_repo(&target);
+            }
+        }
+    }
+
+    if path.is_file() {
+        let content = fs::read_to_string(path)?;
+        let base = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let git_dir = grit_lib::repo::resolve_gitfile_path(&content, base)?;
+        return Repository::open(&git_dir, None).map_err(Into::into);
+    }
+
     // Try as-is first (might be a bare repo or .git dir)
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
     // Try path/.git for non-bare repos
     let git_dir = path.join(".git");
+    if git_dir.is_file() {
+        let content = fs::read_to_string(&git_dir)?;
+        let git_dir = grit_lib::repo::resolve_gitfile_path(&content, path)?;
+        let work_tree = path.to_path_buf();
+        return Repository::open(&git_dir, Some(&work_tree)).map_err(Into::into);
+    }
     Repository::open(&git_dir, Some(path)).map_err(Into::into)
 }
 
-/// Write an alternates file pointing to the source and reference repos' object stores.
-/// This is used for `--shared` (`-s`) clones: instead of copying objects, the clone
-/// uses alternates to borrow them from the source (and any `--reference` repos).
-fn write_alternates(src_git_dir: &Path, dst_git_dir: &Path, references: &[String]) -> Result<()> {
+/// `file://`, `http(s)://`, `git://`, `ssh://`, and `host:/path` URLs are non-local for
+/// alternates purposes (matches Git: no auto-alternate to source for `file://`).
+fn is_url_style_repository(repository: &str) -> bool {
+    repository.starts_with("file://") || repository.contains("://") || is_ssh_url(repository)
+}
+
+fn write_alternates_shared(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    references: &[String],
+) -> Result<()> {
     let dst_info = dst_git_dir.join("objects/info");
     fs::create_dir_all(&dst_info)?;
-
-    let mut lines = Vec::new();
-
-    // Add source repo's objects directory
     let src_objects = src_git_dir.join("objects");
-    let src_objects_abs = src_objects.canonicalize().unwrap_or(src_objects);
-    lines.push(src_objects_abs.to_string_lossy().to_string());
+    let src_abs = fs::canonicalize(&src_objects).unwrap_or(src_objects);
+    let lines = dedup_alternate_lines(vec![src_abs.to_string_lossy().into_owned()], references)?;
+    fs::write(
+        dst_info.join("alternates"),
+        format_alternates_content(&lines),
+    )
+    .context("writing alternates for --shared")?;
+    Ok(())
+}
 
-    // Add each --reference repo's objects directory
+fn write_reference_alternates_only(dst_git_dir: &Path, references: &[String]) -> Result<()> {
+    if references.is_empty() {
+        return Ok(());
+    }
+    let lines = dedup_alternate_lines(Vec::new(), references)?;
+    fs::write(
+        dst_git_dir.join("objects/info/alternates"),
+        format_alternates_content(&lines),
+    )
+    .context("writing reference-only alternates")?;
+    Ok(())
+}
+
+fn dedup_alternate_lines(primary: Vec<String>, references: &[String]) -> Result<Vec<String>> {
+    let mut seen = HashSet::<String>::new();
+    let mut out = Vec::new();
+    for line in primary
+        .into_iter()
+        .chain(resolve_reference_object_dir_lines(references)?)
+    {
+        if seen.insert(line.clone()) {
+            out.push(line);
+        }
+    }
+    Ok(out)
+}
+
+fn resolve_reference_object_dir_lines(references: &[String]) -> Result<Vec<String>> {
+    let mut v = Vec::new();
     for reference in references {
         let ref_path = PathBuf::from(reference);
         let ref_repo = open_source_repo(&ref_path)
             .with_context(|| format!("cannot open reference repository '{}'", reference))?;
         let ref_objects = ref_repo.git_dir.join("objects");
-        let ref_objects_abs = ref_objects.canonicalize().unwrap_or(ref_objects);
-        lines.push(ref_objects_abs.to_string_lossy().to_string());
+        let abs = fs::canonicalize(&ref_objects).unwrap_or(ref_objects);
+        v.push(abs.to_string_lossy().into_owned());
+    }
+    Ok(v)
+}
+
+fn format_alternates_content(lines: &[String]) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
+fn validate_local_clone_source_objects(git_dir: &Path) -> Result<()> {
+    let objects = git_dir.join("objects");
+    let meta = fs::symlink_metadata(&objects)?;
+    #[cfg(unix)]
+    if meta.file_type().is_symlink() {
+        bail!(
+            "'{}' is a symlink, refusing to clone with --local",
+            objects.display()
+        );
+    }
+    if !objects.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&objects)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "info" || name == "pack" {
+            continue;
+        }
+        let path = entry.path();
+        let meta = fs::symlink_metadata(&path)?;
+        #[cfg(unix)]
+        if meta.file_type().is_symlink() {
+            bail!(
+                "symlink '{}' exists, refusing to clone with --local",
+                path.display()
+            );
+        }
+        if meta.is_dir() && name.len() == 2 {
+            for inner in fs::read_dir(&path)? {
+                let inner = inner?;
+                let ip = inner.path();
+                let im = fs::symlink_metadata(&ip)?;
+                #[cfg(unix)]
+                if im.file_type().is_symlink() {
+                    bail!(
+                        "symlink '{}' exists, refusing to clone with --local",
+                        ip.display()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn link_or_copy_file(src: &Path, dst: &Path, try_hardlink: bool) -> Result<()> {
+    if dst.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if try_hardlink && fs::hard_link(src, dst).is_ok() {
+        return Ok(());
+    }
+    fs::copy(src, dst)?;
+    Ok(())
+}
+
+fn copy_objects_from_source(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    use_hardlinks: bool,
+    _refetch: bool,
+) -> Result<()> {
+    let src_objects = src_git_dir.join("objects");
+    let dst_objects = dst_git_dir.join("objects");
+
+    if src_objects.is_dir() {
+        copy_loose_objects(&src_objects, &dst_objects, use_hardlinks)?;
     }
 
-    let content = lines.join("\n") + "\n";
-    fs::write(dst_info.join("alternates"), content)?;
+    let src_pack = src_objects.join("pack");
+    let dst_pack = dst_objects.join("pack");
+    if src_pack.is_dir() {
+        fs::create_dir_all(&dst_pack)?;
+        for entry in fs::read_dir(&src_pack)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                let src_file = entry.path();
+                let dst_file = dst_pack.join(entry.file_name());
+                link_or_copy_file(&src_file, &dst_file, use_hardlinks)?;
+            }
+        }
+    }
 
+    let src_info = src_objects.join("info");
+    let dst_info = dst_objects.join("info");
+    if src_info.is_dir() {
+        fs::create_dir_all(&dst_info)?;
+        for entry in fs::read_dir(&src_info)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                let name = entry.file_name();
+                if name == "alternates" {
+                    continue;
+                }
+                let dst_file = dst_info.join(&name);
+                link_or_copy_file(&entry.path(), &dst_file, use_hardlinks)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_loose_objects(src_objects: &Path, dst_objects: &Path, use_hardlinks: bool) -> Result<()> {
+    for entry in fs::read_dir(src_objects)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str == "info" || name_str == "pack" {
+            continue;
+        }
+        if !entry.file_type()?.is_dir() || name_str.len() != 2 {
+            continue;
+        }
+        let dst_dir = dst_objects.join(&*name);
+        fs::create_dir_all(&dst_dir)?;
+        for inner in fs::read_dir(entry.path())? {
+            let inner = inner?;
+            if inner.file_type()?.is_file() {
+                let dst_file = dst_dir.join(inner.file_name());
+                link_or_copy_file(&inner.path(), &dst_file, use_hardlinks)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_nonstandard_objects_entries(
+    src_git_dir: &Path,
+    dst_git_dir: &Path,
+    use_hardlinks: bool,
+) -> Result<()> {
+    let src_objects = src_git_dir.join("objects");
+    let dst_objects = dst_git_dir.join("objects");
+    if !src_objects.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&src_objects)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str == "info" || name_str == "pack" {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst_objects.join(&name);
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            if name_str.len() == 2 {
+                continue;
+            }
+            copy_tree_shallow(&src_path, &dst_path, use_hardlinks)?;
+        } else if ft.is_file() {
+            link_or_copy_file(&src_path, &dst_path, use_hardlinks)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_tree_shallow(src: &Path, dst: &Path, use_hardlinks: bool) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let sp = entry.path();
+        let dp = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_file() {
+            link_or_copy_file(&sp, &dp, use_hardlinks)?;
+        } else if ft.is_dir() {
+            copy_tree_shallow(&sp, &dp, use_hardlinks)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_dissociate_clone(repo: &Repository, quiet: bool) -> Result<()> {
+    let grit = crate::grit_exe::grit_executable();
+    let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
+    let work_dir_abs = fs::canonicalize(work_dir).unwrap_or_else(|_| work_dir.to_path_buf());
+    let git_dir_abs = fs::canonicalize(&repo.git_dir).unwrap_or_else(|_| repo.git_dir.clone());
+    let mut cmd = Command::new(&grit);
+    cmd.current_dir(work_dir_abs)
+        .arg("-C")
+        .arg(&git_dir_abs)
+        .arg("repack")
+        .arg("-d")
+        .arg("-a");
+    if quiet {
+        cmd.arg("-q");
+    }
+    cmd.stdout(Stdio::null());
+    if quiet {
+        cmd.stderr(Stdio::null());
+    }
+    let status = cmd.status().context("running repack for --dissociate")?;
+    if !status.success() {
+        bail!("repack failed during --dissociate");
+    }
+    let alt = repo.git_dir.join("objects/info/alternates");
+    let _ = fs::remove_file(&alt);
     Ok(())
 }
 
@@ -765,80 +1101,6 @@ fn write_shallow_boundary(repo: &Repository, depth: usize) -> Result<()> {
         fs::write(&shallow_path, content.join("\n") + "\n")?;
     }
 
-    Ok(())
-}
-
-/// Copy all objects (loose + packs) from source to destination.
-fn copy_objects(src_git_dir: &Path, dst_git_dir: &Path) -> Result<()> {
-    let src_objects = src_git_dir.join("objects");
-    let dst_objects = dst_git_dir.join("objects");
-
-    // Copy loose objects
-    if src_objects.is_dir() {
-        copy_dir_contents(&src_objects, &dst_objects, &["info", "pack"])?;
-    }
-
-    // Copy pack files
-    let src_pack = src_objects.join("pack");
-    let dst_pack = dst_objects.join("pack");
-    if src_pack.is_dir() {
-        fs::create_dir_all(&dst_pack)?;
-        for entry in fs::read_dir(&src_pack)? {
-            let entry = entry?;
-            let src_file = entry.path();
-            if src_file.is_file() {
-                let dst_file = dst_pack.join(entry.file_name());
-                // Try hardlink first, fall back to copy
-                if fs::hard_link(&src_file, &dst_file).is_err() {
-                    fs::copy(&src_file, &dst_file)?;
-                }
-            }
-        }
-    }
-
-    // Copy objects/info if it exists (alternates, packs list, etc.)
-    let src_info = src_objects.join("info");
-    let dst_info = dst_objects.join("info");
-    if src_info.is_dir() {
-        fs::create_dir_all(&dst_info)?;
-        for entry in fs::read_dir(&src_info)? {
-            let entry = entry?;
-            if entry.path().is_file() {
-                let dst_file = dst_info.join(entry.file_name());
-                fs::copy(entry.path(), &dst_file)?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Copy directory contents recursively, skipping named subdirectories.
-fn copy_dir_contents(src: &Path, dst: &Path, skip_dirs: &[&str]) -> Result<()> {
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        if entry.file_type()?.is_dir() {
-            if skip_dirs.contains(&name_str.as_ref()) {
-                continue;
-            }
-            // This is a loose object fan-out directory (2-char hex prefix)
-            let dst_dir = dst.join(&*name);
-            fs::create_dir_all(&dst_dir)?;
-            for inner in fs::read_dir(entry.path())? {
-                let inner = inner?;
-                if inner.file_type()?.is_file() {
-                    let dst_file = dst_dir.join(inner.file_name());
-                    // Try hardlink, fall back to copy
-                    if fs::hard_link(inner.path(), &dst_file).is_err() {
-                        fs::copy(inner.path(), &dst_file)?;
-                    }
-                }
-            }
-        }
-    }
     Ok(())
 }
 
