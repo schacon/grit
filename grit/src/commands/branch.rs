@@ -695,7 +695,8 @@ fn unset_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()
     let mut cs = ConfigSet::new();
     cs.merge(&config);
     if cs.get(&merge_key).is_none() {
-        bail!("branch '{branch_name}' has no upstream configuration");
+        eprintln!("fatal: branch '{branch_name}' has no upstream information");
+        std::process::exit(1);
     }
 
     let remote_key = format!("branch.{branch_name}.remote");
@@ -1019,7 +1020,8 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             .branch_name()
             .ok_or_else(|| {
                 if matches!(head, HeadState::Detached { .. }) {
-                    anyhow::anyhow!("fatal: cannot rename the current branch while not on any")
+                    eprintln!("fatal: cannot rename the current branch while not on any");
+                    std::process::exit(128);
                 } else {
                     anyhow::anyhow!("no current branch to rename")
                 }
@@ -1060,6 +1062,20 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
     let force = args.force_rename || args.force;
     if !force && grit_lib::refs::resolve_ref(&repo.git_dir, &new_ref).is_ok() {
         bail!("A branch named '{new_name}' already exists.");
+    }
+
+    // Check if the new name is checked out in any worktree (including main)
+    let new_branch_current = head.branch_name() == Some(new_name)
+        || branch_checked_out_in_other_worktree(repo, new_name).is_some();
+    if new_branch_current {
+        bail!(
+            "fatal: cannot force update the branch '{}' used by worktree at '{}'",
+            new_name,
+            repo.work_tree
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_owned())
+        );
     }
 
     // Delete the old ref FIRST to avoid d/f conflicts
@@ -1229,7 +1245,13 @@ fn copy_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     } else if let Some(n) = args.name.as_deref() {
         src_name_owned = head
             .branch_name()
-            .ok_or_else(|| anyhow::anyhow!("no current branch to copy"))?
+            .ok_or_else(|| {
+                if matches!(head, HeadState::Detached { .. }) {
+                    eprintln!("fatal: cannot copy the current branch while not on any");
+                    std::process::exit(128);
+                }
+                anyhow::anyhow!("no current branch to copy")
+            })?
             .to_owned();
         dst_name_owned = n.to_owned();
         src_name = &src_name_owned;
