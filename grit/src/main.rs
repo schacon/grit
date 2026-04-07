@@ -2313,27 +2313,75 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     }
 }
 
+/// Normalize a path (resolve . and ..) without requiring filesystem existence.
+/// Returns "++failed++" if path goes above root for relative paths.
+fn normalize_path_simple(path: &str) -> String {
+    use std::path::{Component, PathBuf};
+    let is_abs = path.starts_with('/');
+    // Track trailing slash
+    let trailing_slash = path.ends_with('/') && path.len() > 1;
+    let mut out: Vec<String> = Vec::new();
+    let mut failed = false;
+    for component in std::path::Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if out.is_empty() {
+                    if !is_abs {
+                        failed = true;
+                        break;
+                    }
+                    // at root, ignore ..
+                } else {
+                    out.pop();
+                }
+            }
+            Component::RootDir => {
+                out.push(String::new());
+            }
+            Component::Normal(s) => {
+                out.push(s.to_string_lossy().to_string());
+            }
+            Component::Prefix(_) => {}
+        }
+    }
+    if failed {
+        return "++failed++".to_string();
+    }
+    let mut result = if is_abs {
+        "/".to_string()
+            + &out
+                .iter()
+                .filter(|s| !s.is_empty())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("/")
+    } else {
+        out.join("/")
+    };
+    if result.is_empty() && !is_abs {
+        result = ".".to_string();
+    }
+    if trailing_slash && !result.ends_with('/') {
+        result.push('/');
+    }
+    result
+}
+
 /// Handle `test-tool path-utils` — path manipulation utilities.
 fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
     let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
     match subcmd {
         "normalize_path_copy" => {
-            // Normalize a path by resolving . and .. without filesystem access
             let path = rest
                 .get(1)
                 .ok_or_else(|| anyhow::anyhow!("normalize_path_copy: missing path"))?;
-            use std::path::{Component, PathBuf};
-            let mut out = PathBuf::new();
-            for component in std::path::Path::new(path).components() {
-                match component {
-                    Component::CurDir => {}
-                    Component::ParentDir => {
-                        out.pop();
-                    }
-                    other => out.push(other.as_os_str()),
-                }
-            }
-            println!("{}", out.display());
+            println!("{}", normalize_path_simple(path));
+            Ok(())
+        }
+        "print_path" => {
+            let path = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            println!("{path}");
             Ok(())
         }
         "real_path" => {
@@ -2346,8 +2394,158 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             println!("{}", p.display());
             Ok(())
         }
+        "absolute_path" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("absolute_path: missing path"))?;
+            let cwd = std::env::current_dir()?;
+            let abs = if std::path::Path::new(path).is_absolute() {
+                normalize_path_simple(path)
+            } else {
+                normalize_path_simple(&cwd.join(path).display().to_string())
+            };
+            println!("{abs}");
+            Ok(())
+        }
+        "basename" => {
+            for arg in &rest[1..] {
+                let p = std::path::Path::new(arg);
+                let b = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| arg.clone());
+                println!("{b}");
+            }
+            Ok(())
+        }
+        "dirname" => {
+            for arg in &rest[1..] {
+                let p = std::path::Path::new(arg);
+                let d = p
+                    .parent()
+                    .map(|n| n.display().to_string())
+                    .unwrap_or_else(|| ".".to_string());
+                let d = if d.is_empty() { ".".to_string() } else { d };
+                println!("{d}");
+            }
+            Ok(())
+        }
+        "strip_path_suffix" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("strip_path_suffix: missing path"))?;
+            let suffix = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+            if let Some(stripped) = path.strip_suffix(suffix) {
+                println!("{stripped}");
+            } else {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        "longest_ancestor_length" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("longest_ancestor_length: missing path"))?;
+            let prefixes_str = rest
+                .get(2)
+                .ok_or_else(|| anyhow::anyhow!("longest_ancestor_length: missing prefixes"))?;
+            let mut best: i64 = -1;
+            for prefix in prefixes_str.split(':') {
+                if path == prefix {
+                    best = prefix.len() as i64;
+                    break;
+                }
+                let with_slash = format!("{}/", prefix);
+                if path.starts_with(&with_slash) {
+                    let len = prefix.len() as i64;
+                    if len > best {
+                        best = len;
+                    }
+                }
+            }
+            println!("{best}");
+            Ok(())
+        }
+        "prefix_path" => {
+            let prefix = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("prefix_path: missing prefix"))?;
+            let path = rest
+                .get(2)
+                .ok_or_else(|| anyhow::anyhow!("prefix_path: missing path"))?;
+            let prefix_path = std::path::Path::new(prefix.as_str());
+            let path_path = std::path::Path::new(path.as_str());
+            if let Ok(rel) = path_path.strip_prefix(prefix_path) {
+                println!("{}", rel.display());
+            } else {
+                println!("{path}");
+            }
+            Ok(())
+        }
+        "relative_path" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("relative_path: missing path"))?;
+            let base = rest
+                .get(2)
+                .ok_or_else(|| anyhow::anyhow!("relative_path: missing base"))?;
+            let p = std::path::Path::new(path.as_str());
+            let b = std::path::Path::new(base.as_str());
+            let rel = make_relative_for_path_utils(p, b);
+            println!("{}", rel.display());
+            Ok(())
+        }
+        "is_dotgitattributes" | "is_dotgitignore" | "is_dotgitmodules" | "is_dotmailmap" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("{subcmd}: missing path"))?;
+            let fname = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let is_special = match subcmd {
+                "is_dotgitattributes" => fname.eq_ignore_ascii_case(".gitattributes"),
+                "is_dotgitignore" => fname.eq_ignore_ascii_case(".gitignore"),
+                "is_dotgitmodules" => fname.eq_ignore_ascii_case(".gitmodules"),
+                "is_dotmailmap" => fname.eq_ignore_ascii_case(".mailmap"),
+                _ => false,
+            };
+            if is_special {
+                println!("1");
+            } else {
+                println!("0");
+            }
+            Ok(())
+        }
         other => bail!("test-tool path-utils: unknown subcommand '{other}'"),
     }
+}
+
+fn make_relative_for_path_utils(
+    path: &std::path::Path,
+    base: &std::path::Path,
+) -> std::path::PathBuf {
+    let path_abs = path.canonicalize().unwrap_or(path.to_path_buf());
+    let base_abs = base.canonicalize().unwrap_or(base.to_path_buf());
+    let path_comps: Vec<_> = path_abs.components().collect();
+    let base_comps: Vec<_> = base_abs.components().collect();
+    let common_len = path_comps
+        .iter()
+        .zip(base_comps.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let up = base_comps.len() - common_len;
+    let mut result = std::path::PathBuf::new();
+    for _ in 0..up {
+        result.push("..");
+    }
+    for comp in &path_comps[common_len..] {
+        result.push(comp.as_os_str());
+    }
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+    result
 }
 
 /// Handle `test-tool chmtime` — get or set file modification times.
