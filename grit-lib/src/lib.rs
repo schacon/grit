@@ -46,6 +46,7 @@ pub mod rev_list;
 pub mod rev_parse;
 pub mod state;
 pub mod stripspace;
+pub mod submodule_gitdir;
 pub mod tree_path_follow;
 #[cfg(unix)]
 pub mod unix_process;
