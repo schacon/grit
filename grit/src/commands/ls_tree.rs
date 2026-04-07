@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -16,6 +17,7 @@ const EMPTY_TREE_OID: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Arguments for `grit ls-tree`.
 #[derive(Debug, ClapArgs)]
+#[command(args_override_self = true)]
 pub struct Args {
     /// Show only trees (not blobs).
     #[arg(short = 'd')]
@@ -49,20 +51,34 @@ pub struct Args {
     #[arg(short = 'z')]
     pub null_terminated: bool,
 
-    /// Abbreviate OIDs to this many hex chars.
-    #[arg(long, value_name = "N")]
-    pub abbrev: Option<usize>,
+    /// Abbreviate OIDs (Git: `--abbrev` or `--abbrev=<n>`; bare `--abbrev` defaults to 7).
+    #[arg(
+        long,
+        value_name = "N",
+        default_missing_value = "7",
+        num_args = 0..=1,
+        require_equals = true
+    )]
+    pub abbrev: Option<String>,
 
     /// Format string for output.
     #[arg(long)]
     pub format: Option<String>,
 
     /// Show full path names (even when called from a subdirectory).
-    #[arg(long = "full-name", overrides_with = "no_full_name")]
+    #[arg(
+        long = "full-name",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "no_full_name"
+    )]
     pub full_name: bool,
 
     /// Show relative path names (default; counterpart to --full-name).
-    #[arg(long = "no-full-name", overrides_with = "full_name")]
+    #[arg(
+        long = "no-full-name",
+        action = clap::ArgAction::SetTrue,
+        overrides_with = "full_name"
+    )]
     pub no_full_name: bool,
 
     /// Do not limit the listing to the current working tree.
@@ -73,7 +89,92 @@ pub struct Args {
     pub tree_ish: String,
 
     /// Paths to restrict listing.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub paths: Vec<String>,
+}
+
+fn ls_tree_abbrev_len(args: &Args) -> usize {
+    let Some(raw) = args.abbrev.as_deref() else {
+        return 40;
+    };
+    if raw.is_empty() {
+        return 7;
+    }
+    let n: usize = raw.parse().unwrap_or(7);
+    n.clamp(4, 40)
+}
+
+fn file_type_mask(mode: u32) -> u32 {
+    mode & 0o170000
+}
+
+/// True for blob-like entries (`git ls-tree -d` hides these, but keeps trees and submodules).
+fn is_blob_like_tree_entry(mode: u32) -> bool {
+    matches!(
+        file_type_mask(mode),
+        0o100000 | 0o120000 // regular / symlink
+    )
+}
+
+/// After `core.maxtreedepth` checks, match Git: `-d` together with `-r` implies `-t`.
+fn apply_ls_tree_implications(args: &mut Args) {
+    if args.only_trees && args.recursive {
+        args.show_trees = true;
+    }
+}
+
+/// Git rejects pathspecs that normalize outside the work tree when `--full-tree` is used.
+///
+/// With `--full-tree`, Git parses pathspecs with a `NULL` prefix (see `builtin/ls-tree.c`), so
+/// normalization behaves like `normalize_path_copy` on the raw string — e.g. `../` fails even
+/// though the process cwd is inside a subdirectory.
+fn ensure_full_tree_pathspecs_in_repo(repo: &Repository, paths: &[String]) -> Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let Some(wt) = repo.work_tree.as_ref() else {
+        return Ok(());
+    };
+    let wt_hint = wt.canonicalize().unwrap_or_else(|_| wt.to_path_buf());
+    let wt_display = wt_hint.display().to_string();
+
+    for spec in paths {
+        if spec.starts_with('/') {
+            bail!("fatal: '{spec}': absolute pathspec outside working tree");
+        }
+        let normalized = git_normalize_pathspec_no_prefix(spec).map_err(|_| {
+            anyhow::anyhow!("fatal: {spec}: '{spec}' is outside repository at '{wt_display}'")
+        })?;
+        let resolved = if normalized.is_empty() {
+            wt_hint.clone()
+        } else {
+            wt_hint.join(Path::new(&normalized))
+        };
+        let resolved = resolved.canonicalize().unwrap_or(resolved);
+        if !(resolved == wt_hint || resolved.starts_with(&wt_hint)) {
+            bail!("fatal: {spec}: '{spec}' is outside repository at '{wt_display}'");
+        }
+    }
+    Ok(())
+}
+
+/// Match Git's `normalize_path_copy` / `prefix_path_gently` behavior for a relative pathspec when
+/// the pathspec prefix is empty: leading `..` components that would strip past the root fail.
+fn git_normalize_pathspec_no_prefix(spec: &str) -> Result<String> {
+    let mut stack: Vec<&str> = Vec::new();
+    for part in spec.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            if stack.pop().is_none() {
+                bail!("pathspec escapes repository root");
+            }
+        } else {
+            stack.push(part);
+        }
+    }
+    Ok(stack.join("/"))
 }
 
 /// Run `grit ls-tree`.
@@ -118,9 +219,15 @@ pub fn run(mut args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let max_tree_depth = resolve_max_tree_depth(&config)?;
 
+    apply_ls_tree_implications(&mut args);
+
+    if args.full_tree && !args.paths.is_empty() {
+        ensure_full_tree_pathspecs_in_repo(&repo, &args.paths)?;
+    }
+
     // Resolve pathspecs relative to cwd within the work tree, then express
     // them as repo-root-relative paths so the tree walk can match correctly.
-    if !args.paths.is_empty() {
+    if !args.paths.is_empty() && !args.full_tree {
         if let Some(ref wt) = repo.work_tree {
             let cwd = std::env::current_dir().context("resolving cwd")?;
             let prefix = cwd.strip_prefix(wt).unwrap_or(std::path::Path::new(""));
@@ -143,6 +250,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 args.paths = resolved;
             }
         }
+    }
+
+    // `dir/../` from a subdirectory normalizes to `""`, which Git treats as "match everything".
+    if args.paths.iter().any(|p| p.is_empty()) {
+        args.paths.clear();
     }
 
     let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
@@ -173,9 +285,20 @@ pub fn run(mut args: Args) -> Result<()> {
     let mut out = stdout.lock();
     let term = if args.null_terminated { b'\0' } else { b'\n' };
 
+    // Match Git: at work tree root, paths are repo-root-relative; in a subdirectory, default is
+    // cwd-relative unless `--full-name` / `--full-tree`. `--no-full-name` only matters in a subdir.
+    let at_repo_root = repo.work_tree.as_ref().is_none_or(|wt| {
+        std::env::current_dir()
+            .ok()
+            .is_none_or(|cwd| match cwd.strip_prefix(wt) {
+                Ok(p) => p.as_os_str().is_empty(),
+                Err(_) => true,
+            })
+    });
+    let use_full_paths = args.full_name || args.full_tree || at_repo_root;
+
     // Compute cwd prefix for display path adjustment
-    let cwd_prefix = if args.full_name || args.full_tree {
-        // --full-name and --full-tree: show full paths from repo root
+    let cwd_prefix = if use_full_paths {
         None
     } else if let Some(ref wt) = repo.work_tree {
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -255,6 +378,7 @@ fn list_tree(
         };
 
         let is_tree = entry.mode == 0o040000;
+        let is_submodule = file_type_mask(entry.mode) == 0o160000;
 
         // Apply path filter
         if !args.paths.is_empty() {
@@ -298,13 +422,11 @@ fn list_tree(
             }
         }
 
-        if args.recursive && is_tree {
+        if args.recursive && is_tree && !is_submodule {
             if args.show_trees || args.only_trees {
-                // Show tree entry when -t or -d flag is set
                 let display_name = make_cwd_relative(&full_name, cwd_prefix);
                 print_entry(repo, entry, &display_name, args, out, term)?;
             }
-            // Recurse
             let sub_obj = repo.odb.read(&entry.oid)?;
             list_tree(
                 repo,
@@ -320,7 +442,7 @@ fn list_tree(
             continue;
         }
 
-        if args.only_trees && !is_tree {
+        if args.only_trees && is_blob_like_tree_entry(entry.mode) {
             continue;
         }
 
@@ -338,7 +460,7 @@ fn print_entry(
     out: &mut impl Write,
     term: u8,
 ) -> Result<()> {
-    let kind_str = match entry.mode & 0o170000 {
+    let kind_str = match file_type_mask(entry.mode) {
         0o160000 => "commit",
         0o040000 => "tree",
         _ => "blob",
@@ -361,8 +483,8 @@ fn print_entry(
         }
     } else if args.object_only {
         let hex = entry.oid.to_hex();
-        let abbrev = args.abbrev.unwrap_or(40).min(40);
-        write!(out, "{}", &hex[..abbrev])?;
+        let abbrev = ls_tree_abbrev_len(args);
+        write!(out, "{}", &hex[..abbrev.min(hex.len())])?;
     } else if args.long {
         let size_str = if kind_str == "blob" {
             match repo.odb.read(&entry.oid) {
@@ -373,8 +495,8 @@ fn print_entry(
             "      -".to_string()
         };
         let hex = entry.oid.to_hex();
-        let abbrev = args.abbrev.unwrap_or(40).min(40);
-        let oid_str = &hex[..abbrev];
+        let abbrev = ls_tree_abbrev_len(args);
+        let oid_str = &hex[..abbrev.min(hex.len())];
         write!(
             out,
             "{:06o} {kind_str} {oid_str} {size_str}\t{name}",
@@ -382,8 +504,8 @@ fn print_entry(
         )?;
     } else {
         let hex = entry.oid.to_hex();
-        let abbrev = args.abbrev.unwrap_or(40).min(40);
-        let oid_str = &hex[..abbrev];
+        let abbrev = ls_tree_abbrev_len(args);
+        let oid_str = &hex[..abbrev.min(hex.len())];
         write!(out, "{:06o} {kind_str} {oid_str}\t{name}", entry.mode)?;
     }
     out.write_all(&[term])?;
