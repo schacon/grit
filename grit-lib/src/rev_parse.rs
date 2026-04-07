@@ -1193,6 +1193,7 @@ fn resolve_commit_message_search_from(
     start: ObjectId,
     pattern: &str,
 ) -> Result<ObjectId> {
+    // Note: ! negation is NOT supported in ^{/pattern} peel context (only in :/! prefix)
     let regex = Regex::new(pattern).ok();
     let mut visited = std::collections::HashSet::new();
     let mut queue = std::collections::VecDeque::new();
@@ -1327,7 +1328,17 @@ fn resolve_commit_message_search(
     repo: &crate::repo::Repository,
     pattern: &str,
 ) -> Result<ObjectId> {
-    let regex = Regex::new(pattern).ok();
+    // Handle negated pattern: /! means negate; /!! means literal /!
+    let (negate, effective_pattern) = if pattern.starts_with('!') {
+        if pattern.starts_with("!!") {
+            (false, &pattern[1..]) // !! = literal !
+        } else {
+            (true, &pattern[1..]) // ! = negate
+        }
+    } else {
+        (false, pattern)
+    };
+    let regex = Regex::new(effective_pattern).ok();
     use crate::state::resolve_head;
     let head =
         resolve_head(&repo.git_dir).map_err(|_| Error::ObjectNotFound(format!(":/{pattern}")))?;
@@ -1356,11 +1367,12 @@ fn resolve_commit_message_search(
         };
 
         // Check if message matches pattern (regex, with literal fallback)
-        let is_match = if let Some(re) = &regex {
+        let base_match = if let Some(re) = &regex {
             re.is_match(&commit.message)
         } else {
-            commit.message.contains(pattern)
+            commit.message.contains(effective_pattern)
         };
+        let is_match = if negate { !base_match } else { base_match };
         if is_match {
             return Ok(oid);
         }

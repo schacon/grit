@@ -65,12 +65,12 @@ pub struct Args {
     pub unpack_unreachable: Option<String>,
 
     /// Window size for delta compression (accepted for compat).
-    #[arg(long = "window")]
-    pub window: Option<u32>,
+    #[arg(long = "window", allow_hyphen_values = true)]
+    pub window: Option<i64>,
 
     /// Depth for delta compression (accepted for compat).
-    #[arg(long = "depth")]
-    pub depth: Option<u32>,
+    #[arg(long = "depth", allow_hyphen_values = true)]
+    pub depth: Option<i64>,
 
     /// Honor pack-keep files (accepted for compat).
     #[arg(long = "honor-pack-keep")]
