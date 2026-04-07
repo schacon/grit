@@ -9,7 +9,7 @@
 - [ ] t10180-rm-recursive-quiet.sh
 - [ ] t10190-mv-directory-rename.sh
 - [ ] t1020-subdirectory.sh
-- [ ] t10200-switch-orphan-detach.sh
+- [x] t10200-switch-orphan-detach.sh
 - [ ] t10210-restore-staged-source.sh
 - [ ] t10230-cherry-pick-range.sh
 - [ ] t10300-for-each-ref-count-pattern.sh
