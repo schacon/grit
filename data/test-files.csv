@@ -141,7 +141,7 @@ t10430-diff-tree-commit-range	t1	yes	33	0	0	false		0
 t10440-diff-index-exit-code	t1	yes	36	0	0	false		0
 t10450-status-porcelain-staged	t1	yes	35	0	0	false		0
 t10460-log-format-author-committer	t1	yes	31	0	0	false		0
-t10460-status-ahead-behind	t1	yes	5	0	0	false		0
+t10460-status-ahead-behind	t1	yes	5	5	0	true	ok	0
 t10480-config-list-file	t1	yes	34	0	0	false		0
 t10490-init-quiet-branch	t1	yes	32	0	0	false		0
 t1050-large	t1	yes	29	13	16	false	ok	0
