@@ -70,6 +70,10 @@ pub struct Args {
     #[arg(long)]
     pub long: bool,
 
+    /// Format string for output (supports %(objectmode), %(objectname), %(stage), %(path)).
+    #[arg(long)]
+    pub format: Option<String>,
+
     /// Exclude pattern (e.g. --exclude='*.o').
     #[arg(short = 'x', long = "exclude", value_name = "PATTERN")]
     pub exclude: Vec<String>,
@@ -324,6 +328,30 @@ pub fn run(args: Args) -> Result<()> {
             };
 
             write!(out, "i/{index_eol} w/{wt_eol} attr/{attr_str}\t{name}")?;
+            out.write_all(&[term])?;
+        } else if let Some(ref fmt) = args.format {
+            // Custom format output
+            let display = if args.full_name {
+                &entry.path[..]
+            } else {
+                display_path_from_cwd(&entry.path, &cwd_prefix)
+            };
+            let name = String::from_utf8_lossy(display);
+            let hex = entry.oid.to_hex();
+            let line = fmt
+                .replace("%(objectmode)", &format!("{:06o}", entry.mode))
+                .replace("%(objectname)", &hex)
+                .replace(
+                    "%(objecttype)",
+                    if entry.mode & 0o170000 == 0o040000 {
+                        "tree"
+                    } else {
+                        "blob"
+                    },
+                )
+                .replace("%(stage)", &format!("{}", entry.stage()))
+                .replace("%(path)", &name);
+            write!(out, "{}", line)?;
             out.write_all(&[term])?;
         } else if show_stage {
             let display = if args.full_name {

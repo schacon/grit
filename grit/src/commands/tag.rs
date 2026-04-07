@@ -153,6 +153,8 @@ pub fn run(args: Args) -> Result<()> {
         || name.contains('*')
         || name.contains('[')
         || name.bytes().any(|b| b < 0x20 || b == 0x7f)
+        || name.contains(' ')
+    // spaces not allowed in tag names
     {
         bail!("'{}' is not a valid tag name.", name);
     }
@@ -211,7 +213,9 @@ fn create_annotated_tag(
 ) -> Result<()> {
     // Build the message
     let message = build_tag_message(args)?;
-    if message.trim().is_empty() {
+    // Only fail if NO -m/-F was given AND message is empty
+    let has_explicit_message = !args.message.is_empty() || args.file.is_some();
+    if !has_explicit_message && message.trim().is_empty() {
         bail!("no tag message provided (use -m or -F)");
     }
 
@@ -379,8 +383,12 @@ fn list_tags(
     for (name, oid) in &tags {
         if let Some(n) = lines {
             let annotation = get_tag_annotation(repo, oid, n);
+            // When -n is specified, always pad name to 15 chars (git behavior)
             if let Some(ann) = annotation {
-                writeln!(out, "{name:<15} {ann}")?;
+                writeln!(out, "{name:<15} {ann}")?
+            } else if n > 0 {
+                // No annotation but -n specified: pad name
+                writeln!(out, "{name:<15} ")?;
             } else {
                 writeln!(out, "{name}")?;
             }
@@ -432,10 +440,18 @@ fn get_tag_annotation(repo: &Repository, oid: &ObjectId, n: u32) -> Option<Strin
     }
     let obj = repo.odb.read(oid).ok()?;
     let tag = parse_tag(&obj.data).ok()?;
-    if tag.message.is_empty() {
+    if tag.message.trim().is_empty() {
         return None;
     }
-    let lines: Vec<&str> = tag.message.lines().take(n as usize).collect();
+    let lines: Vec<&str> = tag
+        .message
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(n as usize)
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
     Some(lines.join(" "))
 }
 
@@ -665,10 +681,46 @@ fn version_segments(s: &str) -> Vec<&str> {
 }
 
 /// Build the tag message from CLI args.
+/// Strip #comment lines from a message and normalize whitespace.
+/// Also: strip trailing whitespace from each line, collapse multiple blank lines to one.
+fn strip_comments(s: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for line in s.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        lines.push(line.trim_end().to_string());
+    }
+    // Remove leading blank lines
+    while lines.first().map(|l| l.is_empty()).unwrap_or(false) {
+        lines.remove(0);
+    }
+    // Remove trailing blank lines
+    while lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    // Collapse multiple consecutive blank lines to at most one
+    let mut result = Vec::new();
+    let mut last_blank = false;
+    for line in &lines {
+        let is_blank = line.is_empty();
+        if is_blank && last_blank {
+            continue; // skip extra blank lines
+        }
+        result.push(line.clone());
+        last_blank = is_blank;
+    }
+    result.join("\n") + "\n"
+}
+
 fn build_tag_message(args: &Args) -> Result<String> {
     if !args.message.is_empty() {
         let msg = args.message.join("\n\n");
-        return Ok(ensure_trailing_newline(&msg));
+        let stripped = strip_comments(&msg);
+        return Ok(stripped);
     }
 
     if let Some(ref file_path) = args.file {
@@ -680,7 +732,8 @@ fn build_tag_message(args: &Args) -> Result<String> {
         } else {
             fs::read_to_string(file_path)?
         };
-        return Ok(ensure_trailing_newline(&content));
+        let stripped = strip_comments(&content);
+        return Ok(stripped);
     }
 
     Ok(String::new())
