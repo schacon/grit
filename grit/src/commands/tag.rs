@@ -117,6 +117,13 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
+    // If annotated/signed without a name, fail
+    let is_annotated_mode =
+        args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
+    if name.is_none() && is_annotated_mode {
+        bail!("tag name required");
+    }
+
     // If no name is given (or -l is given), list tags
     if name.is_none() || args.list > 0 {
         let patterns: Vec<&str> = args.positional.iter().map(|s| s.as_str()).collect();
