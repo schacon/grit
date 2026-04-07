@@ -106,6 +106,7 @@ test_expect_success() {
 	_test_eval_result=0
 	_test_eval_inner() {
 		set -e
+		cd "$TRASH_DIRECTORY" || exit 1
 		eval "$1"
 	}
 	_twf_cmd=""
