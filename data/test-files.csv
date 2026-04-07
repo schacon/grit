@@ -1313,7 +1313,7 @@ t8100-tag-format	t8	yes	29	29	0	true	ok	0
 t8110-branch-merge-info	t8	yes	31	31	0	true	ok	0
 t8120-diff-tree-combined	t8	yes	30	30	0	true	ok	0
 t8130-show-ref-extra	t8	yes	31	26	5	false	ok	0
-t8150-config-multivar	t8	yes	29	28	1	false	ok	0
+t8150-config-multivar	t8	yes	29	29	0	true	ok	0
 t8160-config-section	t8	yes	27	27	0	true	ok	0
 t8170-init-reinitialize	t8	yes	35	35	0	true	ok	0
 t8180-add-chmod	t8	yes	29	29	0	true	ok	0

@@ -881,7 +881,16 @@ impl ConfigFile {
     ///
     /// If `value_pattern` is `None`, removes all entries with the given key.
     /// If `value_pattern` is `Some(pat)`, only removes entries whose value matches the regex.
-    pub fn unset_matching(&mut self, key: &str, value_pattern: Option<&str>) -> Result<usize> {
+    ///
+    /// When `preserve_empty_section_header` is `true`, a section header is kept even if the
+    /// section has no remaining keys (Git's `config unset --all`). When `false`, empty sections
+    /// are stripped (`config --unset`, `config --unset-all`, and value-pattern unsets).
+    pub fn unset_matching(
+        &mut self,
+        key: &str,
+        value_pattern: Option<&str>,
+        preserve_empty_section_header: bool,
+    ) -> Result<usize> {
         let canon = canonical_key(key)?;
         let re = match value_pattern {
             Some(pat) => Some(
@@ -914,8 +923,10 @@ impl ConfigFile {
         }
 
         if count > 0 {
-            // Remove empty section headers (sections with no remaining entries and no comments)
-            self.remove_empty_section_headers();
+            if !preserve_empty_section_header {
+                // Remove empty section headers (sections with no remaining entries and no comments)
+                self.remove_empty_section_headers();
+            }
 
             let content = self.raw_lines.join("\n");
             let reparsed = Self::parse(&self.path, &content, self.scope)?;

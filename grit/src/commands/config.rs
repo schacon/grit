@@ -313,7 +313,10 @@ pub fn run(args: Args) -> Result<()> {
             ConfigSubcommand::Get(get_args) => cmd_get(&args, get_args, git_dir.as_deref(), None),
             ConfigSubcommand::Set(set_args) => cmd_set(&args, set_args, scope, &file_path, None),
             ConfigSubcommand::Unset(unset_args) => {
-                cmd_unset(&args, unset_args, scope, &file_path, None)
+                cmd_unset(
+                    &args, unset_args, scope, &file_path, None,
+                    /* preserve_empty_section_header_on_unset_all */ true,
+                )
             }
             ConfigSubcommand::List(list_args) => {
                 // Merge list-level flags into top-level args
@@ -456,7 +459,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("usage: git config --unset <key>");
         }
         let unset_args = UnsetArgs { key, all: false };
-        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern, false);
     }
 
     if let Some(ref key_raw) = args.unset_all_key {
@@ -471,7 +474,7 @@ pub fn run(args: Args) -> Result<()> {
             bail!("usage: git config --unset-all <key>");
         }
         let unset_args = UnsetArgs { key, all: true };
-        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern);
+        return cmd_unset(&args, &unset_args, scope, &file_path, value_pattern, false);
     }
 
     if let Some(ref key) = args.add_key {
@@ -746,19 +749,21 @@ fn cmd_unset(
     scope: ConfigScope,
     file_path: &Path,
     value_pattern: Option<&str>,
+    preserve_empty_section_header_on_unset_all: bool,
 ) -> Result<()> {
     let mut config = ConfigFile::from_path(file_path, scope).context("reading config file")?;
 
     match config {
         Some(ref mut cfg) => {
             if unset_args.all {
-                let removed = cfg.unset_matching(&unset_args.key, value_pattern)?;
+                let preserve = preserve_empty_section_header_on_unset_all;
+                let removed = cfg.unset_matching(&unset_args.key, value_pattern, preserve)?;
                 if removed == 0 {
                     std::process::exit(5);
                 }
             } else if let Some(pattern) = value_pattern {
                 // --unset with value-pattern: remove only matching values
-                let removed = cfg.unset_matching(&unset_args.key, Some(pattern))?;
+                let removed = cfg.unset_matching(&unset_args.key, Some(pattern), false)?;
                 if removed == 0 {
                     std::process::exit(5);
                 }
@@ -772,7 +777,7 @@ fn cmd_unset(
                     eprintln!("warning: {}: has multiple values", unset_args.key);
                     std::process::exit(5);
                 }
-                let removed = cfg.unset_matching(&unset_args.key, None)?;
+                let removed = cfg.unset_matching(&unset_args.key, None, false)?;
                 if removed == 0 {
                     std::process::exit(5);
                 }
