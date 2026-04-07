@@ -805,19 +805,12 @@ fn parse_gitfile(content: &str, base: &Path) -> Result<PathBuf> {
 /// # Errors
 ///
 /// Returns [`Error::Io`] on filesystem failures.
-pub fn init_repository(
-    path: &Path,
+fn write_fresh_git_directory(
+    git_dir: &Path,
     bare: bool,
     initial_branch: &str,
     template_dir: Option<&Path>,
-) -> Result<Repository> {
-    let git_dir = if bare {
-        path.to_path_buf()
-    } else {
-        path.join(".git")
-    };
-
-    // Create directory structure
+) -> Result<()> {
     for sub in &[
         "objects",
         "objects/info",
@@ -831,18 +824,15 @@ pub fn init_repository(
         fs::create_dir_all(git_dir.join(sub))?;
     }
 
-    // Copy template files if a template dir was given
     if let Some(tmpl) = template_dir {
         if tmpl.is_dir() {
-            copy_template(tmpl, &git_dir)?;
+            copy_template(tmpl, git_dir)?;
         }
     }
 
-    // Write HEAD
     let head_content = format!("ref: refs/heads/{initial_branch}\n");
     fs::write(git_dir.join("HEAD"), head_content)?;
 
-    // Write config (minimal)
     let config_content = if bare {
         "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n"
     } else {
@@ -850,11 +840,57 @@ pub fn init_repository(
     };
     fs::write(git_dir.join("config"), config_content)?;
 
-    // Write description
     fs::write(
         git_dir.join("description"),
         "Unnamed repository; edit this file 'description' to name the repository.\n",
     )?;
+    Ok(())
+}
+
+/// Initialise a non-bare repository with the git directory at `git_dir` and the work tree at `work_tree`.
+///
+/// Creates `work_tree/.git` as a gitfile pointing at `git_dir` (absolute path). Matches `git clone
+/// --separate-git-dir` layout.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] on filesystem failures.
+pub fn init_repository_separate_git_dir(
+    work_tree: &Path,
+    git_dir: &Path,
+    initial_branch: &str,
+    template_dir: Option<&Path>,
+) -> Result<Repository> {
+    fs::create_dir_all(work_tree)?;
+    fs::create_dir_all(git_dir)?;
+    write_fresh_git_directory(git_dir, false, initial_branch, template_dir)?;
+
+    let git_dir_abs = git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| git_dir.to_path_buf());
+    let gitfile = work_tree.join(".git");
+    fs::write(gitfile, format!("gitdir: {}\n", git_dir_abs.display()))?;
+
+    Repository::open(git_dir, Some(work_tree))
+}
+
+pub fn init_repository(
+    path: &Path,
+    bare: bool,
+    initial_branch: &str,
+    template_dir: Option<&Path>,
+) -> Result<Repository> {
+    let git_dir = if bare {
+        path.to_path_buf()
+    } else {
+        path.join(".git")
+    };
+
+    if !bare {
+        fs::create_dir_all(path)?;
+    }
+    fs::create_dir_all(&git_dir)?;
+    write_fresh_git_directory(&git_dir, bare, initial_branch, template_dir)?;
 
     let work_tree = if bare { None } else { Some(path) };
     Repository::open(&git_dir, work_tree)

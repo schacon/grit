@@ -180,8 +180,10 @@ fn parse_options(args: &[String]) -> Result<LastModifiedOptions> {
                     let val = raw
                         .parse::<isize>()
                         .with_context(|| format!("invalid --max-depth value: {raw}"))?;
+                    if val < 0 {
+                        bail!("invalid --max-depth value: {raw}");
+                    }
                     opts.max_depth = Some(val);
-                    val < 0;
                     opts.recursive = true;
                 }
                 "-1" => opts.max_count = Some(1),
