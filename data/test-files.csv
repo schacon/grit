@@ -1528,7 +1528,7 @@ t9530-init-gitdir-structure	t9	yes	38	37	1	false	ok	0
 t9540-branch-rename-copy	t9	yes	38	34	4	false	ok	0
 t9550-tag-annotated-deref	t9	yes	37	35	2	false	ok	0
 t9560-commit-message-variants	t9	yes	33	31	2	false	ok	0
-t9580-rm-cached-worktree	t9	yes	40	38	2	false	ok	0
+t9580-rm-cached-worktree	t9	yes	40	40	0	true	ok	0
 t9590-mv-cross-directory	t9	yes	40	35	5	false	ok	0
 t9600-cvsimport	t9	skip	15	0	0	false	ok	0
 t9600-switch-branch-create	t9	yes	40	5	35	false	ok	0
