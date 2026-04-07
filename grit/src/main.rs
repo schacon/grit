@@ -2261,6 +2261,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "userdiff" => run_test_tool_userdiff(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
+                "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
@@ -2309,6 +2310,43 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 }
             }
         }
+    }
+}
+
+/// Handle `test-tool path-utils` — path manipulation utilities.
+fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
+    let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
+    match subcmd {
+        "normalize_path_copy" => {
+            // Normalize a path by resolving . and .. without filesystem access
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("normalize_path_copy: missing path"))?;
+            use std::path::{Component, PathBuf};
+            let mut out = PathBuf::new();
+            for component in std::path::Path::new(path).components() {
+                match component {
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        out.pop();
+                    }
+                    other => out.push(other.as_os_str()),
+                }
+            }
+            println!("{}", out.display());
+            Ok(())
+        }
+        "real_path" => {
+            let path = rest
+                .get(1)
+                .ok_or_else(|| anyhow::anyhow!("real_path: missing path"))?;
+            let p = std::path::Path::new(path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(path));
+            println!("{}", p.display());
+            Ok(())
+        }
+        other => bail!("test-tool path-utils: unknown subcommand '{other}'"),
     }
 }
 
