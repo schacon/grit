@@ -2938,6 +2938,29 @@ const KNOWN_COMMANDS: &[&str] = &[
     "write-tree",
 ];
 
+fn discovered_repo_is_reftable() -> bool {
+    Repository::discover(None)
+        .ok()
+        .is_some_and(|repo| grit_lib::reftable::is_reftable_repo(&repo.git_dir))
+}
+
+fn discovered_repo_is_partial_clone() -> bool {
+    let Ok(repo) = Repository::discover(None) else {
+        return false;
+    };
+    let config_path = repo.git_dir.join("config");
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return false;
+    };
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.starts_with("promisor")
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(_, v)| v.trim().eq_ignore_ascii_case("true"))
+    })
+}
+
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -2964,9 +2987,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 
     match subcmd {
         "add" => {
-            let use_native_add = Repository::discover(None)
-                .ok()
-                .is_some_and(|repo| grit_lib::reftable::is_reftable_repo(&repo.git_dir));
+            let use_native_add = discovered_repo_is_reftable();
             if use_native_add {
                 commands::add::run(parse_cmd_args(subcmd, rest))
             } else {
@@ -3019,9 +3040,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 .position(|arg| !arg.starts_with('-') && arg != "--")
                 .unwrap_or(usize::MAX);
             let pathspec_before_message = first_non_option < first_message_opt;
-            let use_native_commit = Repository::discover(None)
-                .ok()
-                .is_some_and(|repo| grit_lib::reftable::is_reftable_repo(&repo.git_dir));
+            let use_native_commit = discovered_repo_is_reftable();
             if use_native_commit {
                 commands::commit::run(parse_cmd_args(subcmd, rest))
             } else if interactive || has_message_flag || pathspec_before_message {
@@ -3181,7 +3200,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "pull" => commands::pull::run(parse_cmd_args(subcmd, rest)),
         "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
         "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
-        "read-tree" => commands::read_tree::run(parse_cmd_args(subcmd, rest)),
+        "read-tree" => {
+            if discovered_repo_is_partial_clone() {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::read_tree::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "rebase" => {
             if rest.iter().any(|arg| arg == "-i" || arg == "--interactive") {
                 commands::git_passthrough::run("rebase", rest)
