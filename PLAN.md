@@ -187,7 +187,7 @@ commit → check it off → move on.
 - [x] `t2006-checkout-index-basic` ████████████████████ 9/9 (0 left) — basic checkout-index tests
 
 - [x] `t2019-checkout-ambiguous-ref` ████████████████████ 9/9 (0 left) — checkout handling of ambiguous (branch/tag) refs
-- [ ] `t2206-add-submodule-ignored` ██████████░░░░░░░░░░ 4/8 (4 left) — git add respects submodule ignore=all and explicit pathspec
+- [x] `t2206-add-submodule-ignored` ████████████████████ 8/8 (0 left) — git add respects submodule ignore=all and explicit pathspec
 - [ ] `t2022-checkout-paths` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — checkout $tree -- $paths
 - [ ] `t2082-parallel-checkout-attributes` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — parallel-checkout: attributes
 

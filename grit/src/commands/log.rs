@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::diff::{
     count_changes, diff_trees, format_raw, format_stat_line, unified_diff, DiffEntry, DiffStatus,
 };
@@ -675,6 +676,11 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.cc;
 
     let notes_map = load_notes_map(&repo);
+    let ignored_submodules = repo
+        .work_tree
+        .as_deref()
+        .map(parse_gitmodules_ignore_all_paths)
+        .unwrap_or_default();
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -707,7 +713,7 @@ pub fn run(mut args: Args) -> Result<()> {
         )?;
 
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, &args, &ignored_submodules)?;
         }
     }
 
@@ -780,6 +786,11 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.name_status
         || args.raw
         || args.cc;
+    let ignored_submodules = repo
+        .work_tree
+        .as_deref()
+        .map(parse_gitmodules_ignore_all_paths)
+        .unwrap_or_default();
 
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
@@ -797,7 +808,7 @@ fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             &repo.odb,
         )?;
         if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, args)?;
+            write_commit_diff(&mut out, &repo.odb, commit_data, args, &ignored_submodules)?;
         }
     }
 
@@ -2744,6 +2755,48 @@ fn format_decoration_no_parens(
 
 // ── Diff output for log ──────────────────────────────────────────────
 
+fn is_submodule_diff_entry(entry: &DiffEntry) -> bool {
+    entry.old_mode == "160000" || entry.new_mode == "160000"
+}
+
+fn parse_gitmodules_ignore_all_paths(work_tree: &Path) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let gitmodules = work_tree.join(".gitmodules");
+    let Ok(content) = std::fs::read_to_string(&gitmodules) else {
+        return result;
+    };
+    let Ok(cfg) = ConfigFile::parse(&gitmodules, &content, ConfigScope::Local) else {
+        return result;
+    };
+
+    let mut name_to_path: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut name_ignore_all: HashSet<String> = HashSet::new();
+    for entry in &cfg.entries {
+        let Some(rest) = entry.key.strip_prefix("submodule.") else {
+            continue;
+        };
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(value) = &entry.value {
+                name_to_path.insert(name.to_owned(), value.trim().trim_end_matches('/').to_owned());
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if entry
+                .value
+                .as_deref()
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("all"))
+            {
+                name_ignore_all.insert(name.to_owned());
+            }
+        }
+    }
+    for (name, path) in name_to_path {
+        if name_ignore_all.contains(&name) {
+            result.insert(path);
+        }
+    }
+    result
+}
+
 /// Compute combined diff entries: only files that differ from ALL parents.
 fn compute_combined_diff_entries(odb: &Odb, info: &CommitInfo) -> Result<Vec<DiffEntry>> {
     use std::collections::HashSet;
@@ -2800,9 +2853,17 @@ fn write_commit_diff(
     odb: &Odb,
     info: &CommitInfo,
     args: &Args,
+    ignored_submodules: &HashSet<String>,
 ) -> Result<()> {
     let is_merge = info.parents.len() > 1;
     let mut entries = compute_commit_diff(odb, info)?;
+    if args.no_ext_diff {
+        entries.retain(|e| !is_submodule_diff_entry(e));
+    } else {
+        entries.retain(|e| {
+            !is_submodule_diff_entry(e) || !ignored_submodules.contains(e.path())
+        });
+    }
     if entries.is_empty() {
         return Ok(());
     }

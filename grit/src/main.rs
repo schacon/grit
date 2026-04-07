@@ -7,7 +7,6 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
-use grit_lib::config::ConfigSet;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -3135,7 +3134,8 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "add" => {
             let use_native_add = discovered_repo_is_reftable()
                 || rest.is_empty()
-                || rest.iter().any(|arg| arg == "--all");
+                || rest.iter().any(|arg| arg == "--all")
+                || rest.iter().any(|arg| !arg.starts_with('-'));
             if use_native_add {
                 commands::add::run(parse_cmd_args(subcmd, rest))
             } else {
@@ -3315,7 +3315,12 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "last-modified" => commands::last_modified::run(parse_cmd_args(subcmd, rest)),
         "log" => {
             let rest = preprocess_log_args(rest);
-            if rest.iter().any(|a| a == "--left-right" || a == "--boundary") {
+            if rest.iter().any(|a| {
+                a == "--left-right"
+                    || a == "--boundary"
+                    || a == "--ignore-submodules"
+                    || a.starts_with("--ignore-submodules=")
+            }) {
                 return commands::git_passthrough::run("log", &rest);
             }
             commands::log::run(parse_cmd_args(subcmd, &rest))

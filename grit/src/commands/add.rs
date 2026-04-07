@@ -5,7 +5,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::stat_matches;
 use grit_lib::ignore::IgnoreMatcher;
@@ -15,6 +15,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -203,6 +204,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     let conv = ConversionConfig::from_config(&config);
     let attrs = crlf::load_gitattributes(work_tree);
+    let submodule_ignore_all = parse_gitmodules_ignore_all_paths(work_tree);
 
     let add_cfg = AddConfig {
         core_filemode,
@@ -214,6 +216,7 @@ pub fn run(mut args: Args) -> Result<()> {
         conv,
         attrs,
         config: config.clone(),
+        submodule_ignore_all,
     };
 
     // --renormalize: re-apply clean conversion to tracked files
@@ -330,6 +333,7 @@ struct AddConfig {
     conv: ConversionConfig,
     attrs: GitAttributes,
     config: ConfigSet,
+    submodule_ignore_all: HashSet<String>,
 }
 
 #[allow(dead_code)]
@@ -516,11 +520,42 @@ fn add_all(
         args.force,
     )?;
 
-    // Build a set of worktree paths for fast deletion detection
-    let worktree_paths: std::collections::HashSet<&str> =
-        paths.iter().map(|s| s.as_str()).collect();
+    // Track existing gitlink entries so `git add .` doesn't recurse into
+    // submodule working trees.
+    let tracked_gitlinks: Vec<String> = index
+        .entries
+        .iter()
+        .filter(|ie| ie.stage() == 0 && ie.mode == 0o160000)
+        .filter_map(|ie| {
+            let path = String::from_utf8_lossy(&ie.path).to_string();
+            if let Some(p) = prefix {
+                if !path.starts_with(p) {
+                    return None;
+                }
+            }
+            Some(path)
+        })
+        .collect();
+
+    // Build a set of worktree paths for fast deletion detection.
+    let mut worktree_paths: std::collections::HashSet<String> = paths.iter().cloned().collect();
+
+    // Stage tracked gitlinks from submodule HEADs (unless ignored via ignore=all).
+    for gitlink_path in &tracked_gitlinks {
+        let abs = work_tree.join(gitlink_path);
+        if abs.exists() {
+            worktree_paths.insert(gitlink_path.clone());
+            let _ = stage_gitlink(odb, index, work_tree, gitlink_path, &abs, args, add_cfg);
+        }
+    }
 
     for rel_path in &paths {
+        if tracked_gitlinks
+            .iter()
+            .any(|g| rel_path == g || rel_path.starts_with(&format!("{g}/")))
+        {
+            continue;
+        }
         let abs_path = work_tree.join(rel_path);
         if let Err(e) = stage_file(odb, index, work_tree, rel_path, &abs_path, args, add_cfg) {
             if add_cfg.ignore_errors {
@@ -617,6 +652,15 @@ fn add_path(
     ignore_matcher: &mut Option<IgnoreMatcher>,
     add_cfg: &AddConfig,
 ) -> std::result::Result<(), AddPathError> {
+    let normalized = path
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_owned();
+    let path = if normalized.is_empty() {
+        path
+    } else {
+        normalized.as_str()
+    };
     let abs_path = work_tree.join(path);
 
     // Refuse to add a path inside a registered submodule (gitlink).
@@ -685,7 +729,7 @@ fn add_path(
         let embedded_git = abs_path.join(".git");
         if embedded_git.exists() {
             // This is an embedded repository — stage as a gitlink (160000)
-            return stage_gitlink(odb, index, work_tree, path, &abs_path, args)
+            return stage_gitlink(odb, index, work_tree, path, &abs_path, args, add_cfg)
                 .map_err(AddPathError::IoError);
         }
 
@@ -736,6 +780,47 @@ fn add_path(
     Ok(())
 }
 
+fn parse_gitmodules_ignore_all_paths(work_tree: &Path) -> HashSet<String> {
+    let mut result = HashSet::new();
+    let gitmodules = work_tree.join(".gitmodules");
+    let Ok(content) = fs::read_to_string(&gitmodules) else {
+        return result;
+    };
+    let Ok(cfg) = ConfigFile::parse(&gitmodules, &content, ConfigScope::Local) else {
+        return result;
+    };
+
+    let mut name_to_path: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut name_ignore_all: HashSet<String> = HashSet::new();
+
+    for entry in &cfg.entries {
+        let Some(rest) = entry.key.strip_prefix("submodule.") else {
+            continue;
+        };
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(value) = &entry.value {
+                name_to_path.insert(name.to_owned(), value.trim().trim_end_matches('/').to_owned());
+            }
+        } else if let Some(name) = rest.strip_suffix(".ignore") {
+            if entry
+                .value
+                .as_deref()
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("all"))
+            {
+                name_ignore_all.insert(name.to_owned());
+            }
+        }
+    }
+
+    for (name, path) in name_to_path {
+        if name_ignore_all.contains(&name) {
+            result.insert(path);
+        }
+    }
+
+    result
+}
+
 /// Stage an embedded repository as a gitlink (mode 160000) in the index.
 ///
 /// Reads the HEAD of the embedded repo to get the commit OID, and warns
@@ -748,28 +833,28 @@ fn stage_gitlink(
     rel_path: &str,
     abs_path: &Path,
     args: &Args,
+    add_cfg: &AddConfig,
 ) -> Result<()> {
-    // Read the embedded repo's HEAD to get the commit OID
-    let embedded_head_path = abs_path.join(".git/HEAD");
-    let head_content = fs::read_to_string(&embedded_head_path)
-        .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
-    let head_trimmed = head_content.trim();
+    let rel_path = rel_path.trim_start_matches("./").trim_end_matches('/');
+    if add_cfg.submodule_ignore_all.contains(rel_path) {
+        let explicitly_targeted = args.pathspec.iter().any(|ps| {
+            let trimmed = ps.trim_start_matches("./").trim_end_matches('/');
+            trimmed == rel_path
+        });
+        // With ignore=all, skip broad adds (`git add .`, `git add --all`,
+        // or `git add --force .`), but allow explicit `git add --force sub`.
+        if !(args.force && explicitly_targeted) {
+            if explicitly_targeted && !args.force {
+                eprintln!("Skipping submodule due to ignore=all: {rel_path}");
+            }
+            return Ok(());
+        }
+    }
 
-    // Resolve the HEAD
-    let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
-        let ref_path = abs_path.join(".git").join(refname);
-        fs::read_to_string(&ref_path)
-            .with_context(|| {
-                format!(
-                    "cannot resolve ref '{}' in embedded repo '{}'",
-                    refname, rel_path
-                )
-            })?
-            .trim()
-            .to_string()
-    } else {
-        head_trimmed.to_string()
-    };
+    // Read the embedded repo's HEAD to get the commit OID.
+    // Submodules usually have `.git` as a file pointing at
+    // `.git/modules/<name>`, so handle both file and directory forms.
+    let oid_hex = read_embedded_repo_head_oid(abs_path, rel_path)?;
 
     let oid = ObjectId::from_hex(&oid_hex)
         .with_context(|| format!("invalid HEAD OID in embedded repo '{}'", rel_path))?;
@@ -827,6 +912,44 @@ fn stage_gitlink(
     }
 
     Ok(())
+}
+
+fn read_embedded_repo_head_oid(abs_path: &Path, rel_path: &str) -> Result<String> {
+    let git_path = abs_path.join(".git");
+    let git_dir = if git_path.is_dir() {
+        git_path
+    } else {
+        let marker = fs::read_to_string(&git_path)
+            .with_context(|| format!("cannot read .git file for embedded repo '{}'", rel_path))?;
+        let target = marker
+            .trim()
+            .strip_prefix("gitdir:")
+            .ok_or_else(|| anyhow!("invalid .git file in embedded repo '{}'", rel_path))?
+            .trim();
+        let target_path = Path::new(target);
+        if target_path.is_absolute() {
+            target_path.to_path_buf()
+        } else {
+            abs_path.join(target_path)
+        }
+    };
+
+    let head_path = git_dir.join("HEAD");
+    let head_content = fs::read_to_string(&head_path)
+        .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
+    let head_trimmed = head_content.trim();
+    if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(refname);
+        let resolved = fs::read_to_string(&ref_path).with_context(|| {
+            format!(
+                "cannot resolve ref '{}' in embedded repo '{}'",
+                refname, rel_path
+            )
+        })?;
+        Ok(resolved.trim().to_string())
+    } else {
+        Ok(head_trimmed.to_string())
+    }
 }
 
 /// Stage a single file into the index.
