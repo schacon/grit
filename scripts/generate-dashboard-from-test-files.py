@@ -204,6 +204,17 @@ def generate_testfiles(rows: list[dict[str, str]]) -> str:
     in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
     skipped_rows = [r for r in rows if r.get("in_scope", "yes").strip().lower() == "skip"]
 
+    total_tests = 0
+    total_pass = 0
+    for r in in_scope:
+        try:
+            total_tests += int(r.get("tests_total") or 0)
+            total_pass += int(r.get("passed_last") or 0)
+        except ValueError:
+            continue
+    file_count = len(in_scope)
+    pass_rate = pct(total_pass, total_tests)
+
     groups_order = sorted({r.get("group") or "t?" for r in rows}, key=lambda x: (len(x), x))
 
     table_rows = ""
@@ -301,11 +312,40 @@ tr.row-skip td {{ opacity: 0.65; }}
 .badge.skip {{ background: #3d2f00; color: #d29922; border: 1px solid #6e4b0a; }}
 .badge.ok {{ background: #0d2818; color: #3fb950; border: 1px solid #238636; }}
 .hint {{ color: #7d8590; font-size: 0.82rem; margin-top: 1rem; }}
+.summary-cards {{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}}
+.summary-cards .card {{
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 1rem;
+  text-align: center;
+}}
+.summary-cards .card .n {{ font-size: 1.5rem; font-weight: 700; color: #f0f6fc; }}
+.summary-cards .card.accent .n {{ color: #3fb950; }}
+.summary-cards .card .lbl {{
+  font-size: 0.72rem;
+  color: #7d8590;
+  margin-top: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}}
 </style>
 </head>
 <body>
 <h1>Test files</h1>
 <p class="sub"><a href="index.html">Dashboard</a> · {html.escape(gen_time)} · {html.escape(sha)}</p>
+
+<div class="summary-cards" aria-label="Aggregate counts for in-scope test files">
+  <div class="card"><div class="n">{file_count:,}</div><div class="lbl">Files in scope</div></div>
+  <div class="card"><div class="n">{total_tests:,}</div><div class="lbl">Unskipped tests</div></div>
+  <div class="card accent"><div class="n">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
+  <div class="card accent"><div class="n">{pass_rate}%</div><div class="lbl">Pass rate</div></div>
+</div>
 
 <div class="toolbar">
   <label for="groupSel">Group</label>
@@ -331,7 +371,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 {table_rows}
 </tbody>
 </table>
-<p class="hint">Manually skipped files are marked and excluded from dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
+<p class="hint">Manually skipped files are marked and excluded from the aggregate counts above and from dashboard totals on the main page. Rows with <code>expect_failure</code> count known-breakage stubs in the harness.</p>
 
 <script>
 (function() {{
