@@ -504,8 +504,9 @@ fn read_blob_content_for_blame(
         &ctx.conversion,
         &attrs,
         Some(&oid_hex),
+        None,
     )
-    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?;
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     let converted = run_textconv_command(&command, &worktree_data)
         .or_else(|_| run_textconv_command(&command, &obj.data))?;
     Ok(String::from_utf8_lossy(&converted).into_owned())

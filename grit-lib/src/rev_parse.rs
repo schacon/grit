@@ -1531,6 +1531,108 @@ fn resolve_index_path(repo: &Repository, path: &str) -> Result<ObjectId> {
     resolve_index_path_at_stage(repo, path, 0)
 }
 
+/// Parsed `:path` / `:N:path` index revision syntax (leading colon, not `:/search`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexColonSpec<'a> {
+    /// Merge stage (`0` for normal entries, `1`–`3` for unmerged stages).
+    pub stage: u8,
+    /// Path segment before normalization against the work tree.
+    pub raw_path: &'a str,
+}
+
+/// If `spec` uses Git's index-only revision form (`:file`, `:0:file`, …), returns the stage and path segment.
+///
+/// Returns [`None`] for non-index forms such as `HEAD:file`, bare OIDs, or `:/message` search.
+#[must_use]
+pub fn parse_index_colon_spec(spec: &str) -> Option<IndexColonSpec<'_>> {
+    if !spec.starts_with(':') || spec.starts_with(":/") || spec.len() <= 1 {
+        return None;
+    }
+    let rest = &spec[1..];
+    if rest.is_empty() {
+        return None;
+    }
+    if rest.len() >= 3 && rest.as_bytes()[1] == b':' {
+        if let Some(stage_char) = rest.chars().next() {
+            if let Some(stage) = stage_char.to_digit(10) {
+                if stage <= 3 {
+                    return Some(IndexColonSpec {
+                        stage: stage as u8,
+                        raw_path: &rest[2..],
+                    });
+                }
+            }
+        }
+    }
+    Some(IndexColonSpec {
+        stage: 0,
+        raw_path: rest,
+    })
+}
+
+/// One index entry resolved from a `:path` / `:N:path` revision string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexPathEntry {
+    /// Repository-relative path using `/` separators (normalized from the spec).
+    pub path: String,
+    /// Blob OID stored for this index entry.
+    pub oid: ObjectId,
+    /// Index entry mode (e.g. `0o100644`).
+    pub mode: u32,
+}
+
+/// Resolve an index revision string (`:file` or `:N:file`) to the staged entry's path, OID, and mode.
+///
+/// # Returns
+///
+/// - `Ok(None)` if `spec` is not `:path` index syntax.
+/// - `Ok(Some(entry))` on success.
+/// - `Err` if the syntax matches but the path is invalid or missing from the index.
+pub fn resolve_index_path_entry(repo: &Repository, spec: &str) -> Result<Option<IndexPathEntry>> {
+    let Some(colon) = parse_index_colon_spec(spec) else {
+        return Ok(None);
+    };
+    let path = match normalize_colon_path_for_tree(repo, colon.raw_path) {
+        Ok(p) => p,
+        Err(Error::InvalidRef(msg)) if msg == "outside repository" => {
+            let wt = repo
+                .work_tree
+                .as_ref()
+                .and_then(|p| p.canonicalize().ok())
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            return Err(Error::Message(format!(
+                "fatal: '{}' is outside repository at '{wt}'",
+                colon.raw_path
+            )));
+        }
+        Err(e) => return Err(e),
+    };
+    let index_path = if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = std::path::PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    };
+    use crate::index::Index;
+    let index = Index::load_expand_sparse(&index_path, &repo.odb)
+        .map_err(|_| Error::ObjectNotFound(format!(":{}:{}", colon.stage, path)))?;
+    let entry = index
+        .get(path.as_bytes(), colon.stage)
+        .ok_or_else(|| Error::ObjectNotFound(format!(":{}:{}", colon.stage, path)))?;
+    Ok(Some(IndexPathEntry {
+        path,
+        oid: entry.oid,
+        mode: entry.mode,
+    }))
+}
+
 /// Look up a path in the index at a given stage and return its OID.
 fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Result<ObjectId> {
     use crate::index::Index;

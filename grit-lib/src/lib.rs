@@ -22,6 +22,7 @@ pub mod crlf;
 pub mod delta_encode;
 pub mod diff;
 pub mod error;
+pub mod filter_process;
 pub mod fmt_merge_msg;
 pub mod git_date;
 pub mod hooks;

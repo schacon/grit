@@ -1051,9 +1051,16 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
                 crlf::load_gitattributes_for_checkout(&work_tree, &path_str, new_index, &repo.odb);
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
-            let data =
-                crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?;
+            let smudge_meta = grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex);
+            let data = crlf::convert_to_worktree(
+                &obj.data,
+                &path_str,
+                &conv,
+                &file_attrs,
+                Some(&oid_hex),
+                Some(&smudge_meta),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             std::fs::write(&abs_path, &data)?;
             if entry.mode == MODE_EXECUTABLE {
                 use std::os::unix::fs::PermissionsExt;

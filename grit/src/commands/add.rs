@@ -1520,7 +1520,7 @@ fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
 }
 
 /// Convert file content from a working-tree encoding to UTF-8.
-fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec<u8>> {
+pub(crate) fn convert_from_working_tree_encoding(data: &[u8], encoding: &str) -> Result<Vec<u8>> {
     let enc_upper = encoding.to_uppercase().replace('-', "");
     match enc_upper.as_str() {
         "UTF16" | "UTF16LE" | "UTF16BE" => {

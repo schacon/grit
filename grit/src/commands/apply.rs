@@ -2157,8 +2157,15 @@ fn write_worktree_path(
         );
         let file_attrs = crlf::get_file_attrs(&rules, rel_path, &ctx.config);
         Cow::Owned(
-            crlf::convert_to_worktree(content.as_bytes(), rel_path, &ctx.conv, &file_attrs, None)
-                .map_err(|e| anyhow::anyhow!("{e}"))?,
+            crlf::convert_to_worktree(
+                content.as_bytes(),
+                rel_path,
+                &ctx.conv,
+                &file_attrs,
+                None,
+                None,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
         )
     } else {
         Cow::Borrowed(content.as_bytes())

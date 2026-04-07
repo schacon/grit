@@ -14,6 +14,7 @@ use std::path::Path;
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::filter_process;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -124,6 +125,10 @@ pub struct Args {
     /// Display progress.
     #[arg(long = "progress")]
     pub progress: bool,
+
+    /// Disable progress reporting (compatibility with `git checkout --no-progress`).
+    #[arg(long = "no-progress", hide = true)]
+    pub no_progress: bool,
 
     /// Guess branch name from remote tracking branches (default).
     #[arg(long = "guess")]
@@ -646,6 +651,12 @@ fn split_target_and_paths(
         return (None, vec![]);
     }
 
+    // `git checkout .` / `git checkout -- .` / `git checkout -f --no-progress .` — `.` is a
+    // pathspec (restore from index/HEAD), not a branch named ".".
+    if rest.len() == 1 && rest[0] == "." {
+        return (None, vec![".".to_string()]);
+    }
+
     // Look for an explicit `--` still present in the args (happens when
     // there is a target before `--`, e.g. `checkout main -- file`).
     if let Some(sep) = rest.iter().position(|a| a == "--") {
@@ -757,18 +768,7 @@ fn switch_branch(
     let target_oid = refs::resolve_ref(&repo.git_dir, branch_ref)
         .with_context(|| format!("cannot resolve branch '{branch_name}'"))?;
 
-    // If target commit is the same as current HEAD, just re-attach
-    // without touching the working tree or index (preserves dirty state).
-    // But with -f, always rebuild.
-    let already_at_target = head.oid() == Some(&target_oid);
-    if !already_at_target || force {
-        let target_tree = commit_to_tree(repo, &target_oid)?;
-
-        // Update working tree and index
-        switch_to_tree(repo, &head, &target_tree, force)?;
-    }
-
-    // Write reflog entries before updating HEAD
+    // Write reflog entries (before HEAD update; `head` is still the old position).
     let old_oid = head
         .oid()
         .copied()
@@ -781,8 +781,20 @@ fn switch_branch(
     let msg = format!("checkout: moving from {} to {}", from_desc, branch_name);
     write_checkout_reflog(repo, &head, &old_oid, &target_oid, &msg);
 
-    // Update HEAD to point to the branch
+    // Update HEAD before refreshing the work tree so filter smudge metadata (`ref=` / `treeish=`)
+    // matches Git (t0021 process filter expectations).
     std::fs::write(repo.git_dir.join("HEAD"), format!("ref: {branch_ref}\n"))?;
+
+    // If target commit is the same as current HEAD, just re-attach
+    // without touching the working tree or index (preserves dirty state).
+    // But with -f, always rebuild.
+    let already_at_target = head.oid() == Some(&target_oid);
+    if !already_at_target || force {
+        let target_tree = commit_to_tree(repo, &target_oid)?;
+        // Pass the pre-checkout `head` so staged-change preservation uses the old HEAD tree;
+        // smudge metadata comes from the on-disk HEAD (already updated above).
+        switch_to_tree(repo, &head, &target_tree, force)?;
+    }
 
     checkout_eprintln!("Switched to branch '{}'", branch_name);
     Ok(())
@@ -1089,7 +1101,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
         )?;
     }
 
@@ -1123,7 +1135,7 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(
-            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index, true,
         )?;
     }
 
@@ -1674,7 +1686,9 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
+                            write_blob_to_worktree(
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                            )?;
                             matched = true;
                         }
                     }
@@ -1696,11 +1710,15 @@ fn checkout_paths(
                             continue;
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
-                        write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
+                        write_blob_to_worktree(
+                            repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                        )?;
                     }
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
-                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode, &index)?;
+                    write_blob_to_worktree(
+                        repo, work_tree, &rel, &entry.oid, entry.mode, &index, false,
+                    )?;
                 } else if merge_mode {
                     let stage1 = index.get(path_bytes, 1).cloned();
                     let stage2 = index.get(path_bytes, 2).cloned();
@@ -1730,7 +1748,9 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
+                            write_blob_to_worktree(
+                                repo, work_tree, &p, &ie.oid, ie.mode, &index, false,
+                            )?;
                             matched = true;
                         }
                     }
@@ -1779,6 +1799,7 @@ fn checkout_paths(
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
+                            false,
                         )?;
                         index.add_or_replace(flat_entry.clone());
                         index_modified = true;
@@ -1863,6 +1884,7 @@ fn checkout_paths(
                             &flat_entry.oid,
                             flat_entry.mode,
                             &index,
+                            false,
                         )?;
                         index.add_or_replace(flat_entry.clone());
                         index_modified = true;
@@ -1933,7 +1955,7 @@ fn checkout_paths(
                     })?;
 
                     // Write to working tree with CRLF conversion
-                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index)?;
+                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index, false)?;
 
                     // Read blob size for index entry
                     let obj = repo
@@ -2752,7 +2774,7 @@ fn checkout_index_to_worktree(
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
         write_blob_to_worktree(
-            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index,
+            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index, true,
         )?;
     }
 
@@ -2760,6 +2782,9 @@ fn checkout_index_to_worktree(
 }
 
 /// Write a blob object to the working tree.
+///
+/// `full_smudge_meta`: when true, process smudge gets `ref=` / `treeish=` (branch/tree checkout).
+/// Path-only checkout passes blob id only.
 fn write_blob_to_worktree(
     repo: &Repository,
     work_tree: &std::path::Path,
@@ -2767,10 +2792,30 @@ fn write_blob_to_worktree(
     oid: &ObjectId,
     mode: u32,
     index: &Index,
+    full_smudge_meta: bool,
 ) -> Result<()> {
     let obj = repo.odb.read(oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob at '{rel_path}'");
+    }
+
+    // Path-only checkout: if the work tree already matches the index blob (clean pipeline agrees),
+    // skip smudge entirely — matches Git / t0021 filter log expectations.
+    if !full_smudge_meta && mode != MODE_SYMLINK {
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
+        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        if file_attrs.working_tree_encoding.is_none() {
+            let abs_path = work_tree.join(rel_path);
+            if let Ok(wt_raw) = std::fs::read(&abs_path) {
+                if let Ok(cleaned) = crlf::convert_to_git(&wt_raw, rel_path, &conv, &file_attrs) {
+                    if cleaned == obj.data {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     // Apply CRLF / smudge conversion for checkout
@@ -2780,8 +2825,20 @@ fn write_blob_to_worktree(
         let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
         let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
         let oid_hex = format!("{oid}");
-        crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
-            .map_err(|e| anyhow::anyhow!("smudge filter failed for {rel_path}: {e}"))?
+        let smudge_meta = if full_smudge_meta {
+            filter_process::smudge_meta_for_checkout(repo, &oid_hex)
+        } else {
+            filter_process::smudge_meta_blob_only(&oid_hex)
+        };
+        crlf::convert_to_worktree(
+            &obj.data,
+            rel_path,
+            &conv,
+            &file_attrs,
+            Some(&oid_hex),
+            Some(&smudge_meta),
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?
     } else {
         obj.data
     };

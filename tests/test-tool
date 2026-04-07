@@ -122,8 +122,8 @@ case "$1" in
   sha256)
     sha256sum | cut -d' ' -f1 ;;
   genrandom)
-    seed="$2"; count="${3:-0}"
-    dd if=/dev/urandom bs=1 count="$count" 2>/dev/null ;;
+    shift
+    exec "$SCRIPT_DIR/grit" test-tool genrandom "$@" ;;
   genzeros)
     count="${2:-0}"
     dd if=/dev/zero bs=1 count="$count" 2>/dev/null ;;
@@ -1316,6 +1316,17 @@ PY
   find-pack)
     shift
     exec "$SCRIPT_DIR/../target/release/grit" test-tool find-pack "$@" ;;
+  rot13-filter)
+    shift
+    _grit="${GUST_BIN:-$SCRIPT_DIR/grit}"
+    if [ ! -x "$_grit" ]; then
+      echo "test-tool rot13-filter: no grit binary (set GUST_BIN or build: tests/grit)" >&2
+      exit 1
+    fi
+    if [ -n "$global_c_dir" ]; then
+      exec "$_grit" -C "$global_c_dir" test-tool rot13-filter "$@"
+    fi
+    exec "$_grit" test-tool rot13-filter "$@" ;;
   *)
     exec git test-tool "$@" ;;
 esac

@@ -497,7 +497,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     index.sort();
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &index, None)?;
+        checkout_entries(repo, wt, &index, None, Some(&merge_oid))?;
     }
     repo.write_index(&mut index)?;
 
@@ -542,7 +542,7 @@ fn do_fast_forward(
     if let Some(ref wt) = repo.work_tree {
         // Remove files that existed in old HEAD but not in new
         remove_deleted_files(wt, &old_entries, &new_index)?;
-        checkout_entries(repo, wt, &new_index, None)?;
+        checkout_entries(repo, wt, &new_index, None, Some(&merge_oid))?;
     }
     repo.write_index(&mut new_index)?;
 
@@ -958,28 +958,40 @@ fn do_real_merge(
     // Write index
     repo.write_index(&mut merge_result.index)?;
 
-    // Update working tree
-    if let Some(ref wt) = repo.work_tree {
-        // Remove files that were in ours but are no longer in the merged index
-        remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
-        checkout_entries(repo, wt, &merge_result.index, Some(&ours_entries))?;
-        // Write conflict files to working tree (with CRLF conversion if needed)
-        let attr_rules = grit_lib::crlf::load_gitattributes(wt);
-        let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
-        for (path, content) in &merge_result.conflict_files {
-            let abs = wt.join(path);
-            if let Some(parent) = abs.parent() {
-                fs::create_dir_all(parent)?;
+    if merge_result.has_conflicts {
+        if let Some(ref wt) = repo.work_tree {
+            remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
+            checkout_entries(
+                repo,
+                wt,
+                &merge_result.index,
+                Some(&ours_entries),
+                Some(&merge_oid),
+            )?;
+            let attr_rules = grit_lib::crlf::load_gitattributes(wt);
+            let crlf_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+            for (path, content) in &merge_result.conflict_files {
+                let abs = wt.join(path);
+                if let Some(parent) = abs.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let output = if let Some(ref config) = crlf_config {
+                    let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, config);
+                    let conv = grit_lib::crlf::ConversionConfig::from_config(config);
+                    grit_lib::crlf::convert_to_worktree(
+                        content,
+                        path,
+                        &conv,
+                        &file_attrs,
+                        None,
+                        None,
+                    )
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                } else {
+                    content.clone()
+                };
+                fs::write(&abs, &output)?;
             }
-            let output = if let Some(ref config) = crlf_config {
-                let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, config);
-                let conv = grit_lib::crlf::ConversionConfig::from_config(config);
-                grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None)
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
-            } else {
-                content.clone()
-            };
-            fs::write(&abs, &output)?;
         }
     }
 
@@ -1106,6 +1118,17 @@ fn do_real_merge(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
     update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if let Some(ref wt) = repo.work_tree {
+        remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
+        checkout_entries(
+            repo,
+            wt,
+            &merge_result.index,
+            Some(&ours_entries),
+            Some(&merge_oid),
+        )?;
+    }
 
     if args.autostash && !autostash_entries.is_empty() {
         apply_autostash_entries(repo, &autostash_entries)?;
@@ -1648,7 +1671,7 @@ fn do_octopus_merge(
             orig_index.sort();
             repo.write_index(&mut orig_index)?;
             if let Some(ref wt) = repo.work_tree {
-                checkout_entries(repo, wt, &orig_index, None)?;
+                checkout_entries(repo, wt, &orig_index, None, Some(&head_oid))?;
             }
             let _ = fs::remove_file(repo.git_dir.join("MERGE_HEAD"));
             let _ = fs::remove_file(repo.git_dir.join("MERGE_MSG"));
@@ -1668,10 +1691,6 @@ fn do_octopus_merge(
     final_index.entries = current_tree_entries;
     final_index.sort();
     repo.write_index(&mut final_index)?;
-
-    if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &final_index, None)?;
-    }
 
     if args.squash {
         let msg = build_squash_msg(repo, head_oid, &merge_oids)?;
@@ -1725,6 +1744,10 @@ fn do_octopus_merge(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
     update_head(&repo.git_dir, head, &commit_oid)?;
+
+    if let Some(ref wt) = repo.work_tree {
+        checkout_entries(repo, wt, &final_index, None, Some(&commit_oid))?;
+    }
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -1961,7 +1984,7 @@ fn do_strategy_theirs(
         let old_tree = commit_tree(repo, head_oid)?;
         let old_entries = tree_to_map(tree_to_index_entries(repo, &old_tree, "")?);
         remove_deleted_files(wt, &old_entries, &new_index)?;
-        checkout_entries(repo, wt, &new_index, None)?;
+        checkout_entries(repo, wt, &new_index, None, Some(&merge_oid))?;
     }
     repo.write_index(&mut new_index)?;
 
@@ -2169,7 +2192,7 @@ fn do_squash(
     new_index.sort();
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(repo, wt, &new_index, None)?;
+        checkout_entries(repo, wt, &new_index, None, Some(&merge_oid))?;
     }
     repo.write_index(&mut new_index)?;
 
@@ -2237,7 +2260,7 @@ fn merge_abort() -> Result<()> {
     index.sort();
 
     if let Some(ref wt) = repo.work_tree {
-        checkout_entries(&repo, wt, &index, None)?;
+        checkout_entries(&repo, wt, &index, None, Some(&restore_oid))?;
     }
     repo.write_index(&mut index)?;
 
@@ -4527,11 +4550,16 @@ fn remove_deleted_files(
 }
 
 /// Checkout index entries to working tree.
+///
+/// When `smudge_treeish` is set, process smudge filters receive `treeish=` (and `blob=`) only,
+/// matching Git for merge/reset-style checkouts. When unset, metadata follows `HEAD` (`ref=` /
+/// `treeish=`) like a normal branch checkout.
 fn checkout_entries(
     repo: &Repository,
     work_tree: &Path,
     index: &Index,
     old_entries: Option<&HashMap<Vec<u8>, IndexEntry>>,
+    smudge_treeish: Option<&ObjectId>,
 ) -> Result<()> {
     // Load gitattributes and config for CRLF conversion
     let mut attr_rules = grit_lib::crlf::load_gitattributes(work_tree);
@@ -4589,8 +4617,21 @@ fn checkout_entries(
             // Apply CRLF conversion if configured
             let data = if let (Some(ref config), Some(ref conv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
-                grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, conv, &file_attrs, None)
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
+                let oid_hex = entry.oid.to_string();
+                let smudge_meta = if let Some(tip) = smudge_treeish {
+                    grit_lib::filter_process::smudge_meta_treeish_only(&tip.to_string(), &oid_hex)
+                } else {
+                    grit_lib::filter_process::smudge_meta_for_checkout(repo, &oid_hex)
+                };
+                grit_lib::crlf::convert_to_worktree(
+                    &obj.data,
+                    &path_str,
+                    conv,
+                    &file_attrs,
+                    None,
+                    Some(&smudge_meta),
+                )
+                .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 obj.data.clone()
             };

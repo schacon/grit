@@ -10,6 +10,7 @@ use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{
     convert_to_worktree, get_file_attrs, load_gitattributes, ConversionConfig, GitAttributes,
 };
+use grit_lib::filter_process;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -83,11 +84,12 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
     let tree_ish = args.tree_ish.as_deref().unwrap_or("");
-    let oid = resolve_tree_ish(&repo, tree_ish)?;
-    let obj = repo.odb.read(&oid)?;
+    let tip_oid = resolve_tree_ish(&repo, tree_ish)?;
+    let obj = repo.odb.read(&tip_oid)?;
+    let tip_is_commit = obj.kind == ObjectKind::Commit;
 
     // Dereference commits to their tree.
-    let tree_data = if obj.kind == ObjectKind::Commit {
+    let tree_data = if tip_is_commit {
         let commit = parse_commit(&obj.data).context("parsing commit")?;
         let tree_obj = repo.odb.read(&commit.tree).context("reading tree")?;
         tree_obj.data
@@ -124,6 +126,9 @@ pub fn run(args: Args) -> Result<()> {
         &conv,
         &attrs,
         &config,
+        tree_ish,
+        &tip_oid,
+        tip_is_commit,
         &mut entries,
     )?;
 
@@ -184,6 +189,9 @@ fn collect_entries(
     conv: &ConversionConfig,
     attrs: &GitAttributes,
     config: &ConfigSet,
+    archive_tree_ish: &str,
+    archive_tip_oid: &ObjectId,
+    archive_tip_is_commit: bool,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<()> {
     if depth > max_tree_depth {
@@ -235,6 +243,9 @@ fn collect_entries(
                 conv,
                 attrs,
                 config,
+                archive_tree_ish,
+                archive_tip_oid,
+                archive_tip_is_commit,
                 entries,
             )?;
         } else {
@@ -242,9 +253,22 @@ fn collect_entries(
             // Apply working-tree conversion (CRLF, ident, filters)
             let file_attrs = get_file_attrs(attrs, &full_path, config);
             let oid_hex = entry.oid.to_hex();
-            let converted =
-                convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex))
-                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {full_path}: {e}"))?;
+            let smudge_meta = filter_process::smudge_meta_for_archive(
+                repo,
+                archive_tree_ish,
+                archive_tip_oid,
+                archive_tip_is_commit,
+                &oid_hex,
+            );
+            let converted = convert_to_worktree(
+                &blob.data,
+                &full_path,
+                conv,
+                &file_attrs,
+                Some(&oid_hex),
+                Some(&smudge_meta),
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             entries.push(ArchiveEntry {
                 path: full_path,
                 mode: entry.mode,

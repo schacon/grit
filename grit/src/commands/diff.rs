@@ -24,7 +24,7 @@ use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_index_path_entry, resolve_revision, IndexPathEntry};
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
@@ -597,46 +597,62 @@ pub fn run(mut args: Args) -> Result<()> {
     // Get HEAD tree OID (None if unborn)
     let head_tree = get_head_tree(&repo)?;
 
+    // `git diff :path1 :path2` — compare two blobs staged at those index paths (not tree-to-tree).
+    let index_blob_pair = if !args.cached && revs.len() == 2 {
+        let left = resolve_index_path_entry(&repo, &revs[0])?;
+        let right = resolve_index_path_entry(&repo, &revs[1])?;
+        match (left, right) {
+            (Some(a), Some(b)) => Some((a, b)),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // Determine whether worktree is involved (for content fallback)
     let wt_for_content: Option<&Path> = match (args.cached, revs.len()) {
         (true, _) => None,       // --cached: index vs tree, no worktree
         (false, 0) => work_tree, // unstaged: index vs worktree
         (false, 1) => work_tree, // one rev: tree vs worktree
-        (_, 2) => None,          // two revs: tree vs tree
+        (_, 2) => None,          // two revs: tree vs tree (or index blob pair)
         _ => None,
     };
 
-    let entries: Vec<DiffEntry> = match (args.cached, revs.len()) {
-        (true, 0) => {
-            // --cached with no revision: index vs HEAD
-            diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
-        }
-        (true, 1) => {
-            // --cached with one revision: index vs that commit's tree
-            let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-            diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
-        }
-        (false, 0) => {
-            // No flags: unstaged changes (index vs worktree)
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_index_to_worktree(&repo.odb, &index, wt)?
-        }
-        (false, 1) => {
-            // One revision: tree vs worktree
-            let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
-            let wt = work_tree
-                .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-            diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
-        }
-        (_, 2) => {
-            // Two revisions: tree-to-tree diff
-            let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
-            let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
-            diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
-        }
-        _ => {
-            bail!("too many revisions");
+    let entries: Vec<DiffEntry> = if let Some((ref left, ref right)) = index_blob_pair {
+        diff_index_blob_pair(left, right)?
+    } else {
+        match (args.cached, revs.len()) {
+            (true, 0) => {
+                // --cached with no revision: index vs HEAD
+                diff_index_to_tree(&repo.odb, &index, head_tree.as_ref())?
+            }
+            (true, 1) => {
+                // --cached with one revision: index vs that commit's tree
+                let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
+                diff_index_to_tree(&repo.odb, &index, Some(&tree_oid))?
+            }
+            (false, 0) => {
+                // No flags: unstaged changes (index vs worktree)
+                let wt = work_tree
+                    .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+                diff_index_to_worktree(&repo.odb, &index, wt)?
+            }
+            (false, 1) => {
+                // One revision: tree vs worktree
+                let tree_oid = commit_or_tree_oid(&repo, &revs[0])?;
+                let wt = work_tree
+                    .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+                diff_tree_to_worktree(&repo.odb, Some(&tree_oid), wt, &index)?
+            }
+            (_, 2) => {
+                // Two revisions: tree-to-tree diff
+                let tree1 = commit_or_tree_oid(&repo, &revs[0])?;
+                let tree2 = commit_or_tree_oid(&repo, &revs[1])?;
+                diff_trees(&repo.odb, Some(&tree1), Some(&tree2), "")?
+            }
+            _ => {
+                bail!("too many revisions");
+            }
         }
     };
 
@@ -1516,6 +1532,29 @@ fn commit_or_tree_oid(repo: &Repository, spec: &str) -> Result<ObjectId> {
             _ => bail!("object '{}' does not name a tree or commit", oid),
         }
     }
+}
+
+/// Compare two index blobs (`git diff :a :b`). Raw path matches Git (first path).
+fn diff_index_blob_pair(left: &IndexPathEntry, right: &IndexPathEntry) -> Result<Vec<DiffEntry>> {
+    let mode_str = |m: u32| format!("{m:06o}");
+    if left.oid == right.oid && left.mode == right.mode {
+        return Ok(Vec::new());
+    }
+    let status = if left.oid == right.oid {
+        DiffStatus::TypeChanged
+    } else {
+        DiffStatus::Modified
+    };
+    Ok(vec![DiffEntry {
+        status,
+        old_path: Some(left.path.clone()),
+        new_path: Some(left.path.clone()),
+        old_mode: mode_str(left.mode),
+        new_mode: mode_str(right.mode),
+        old_oid: left.oid,
+        new_oid: right.oid,
+        score: None,
+    }])
 }
 
 /// Filter diff entries to only those matching the given pathspecs.
