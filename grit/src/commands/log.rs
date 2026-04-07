@@ -2160,6 +2160,25 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         let r = &args.revisions[0];
         if r == "HEAD" || r.starts_with("refs/") {
             r.clone()
+        } else if r.starts_with("@{") {
+            // Resolve @{-N} to the previous branch name
+            if let Some(n_str) = r.strip_prefix("@{").and_then(|s| s.strip_suffix('}')) {
+                if let Some(stripped) = n_str.strip_prefix('-') {
+                    if let Ok(n) = stripped.parse::<usize>() {
+                        if let Ok(branch) = grit_lib::refs::resolve_at_n_branch(&repo.git_dir, r) {
+                            format!("refs/heads/{branch}")
+                        } else {
+                            r.clone()
+                        }
+                    } else {
+                        r.clone()
+                    }
+                } else {
+                    r.clone()
+                }
+            } else {
+                r.clone()
+            }
         } else {
             let candidate = format!("refs/heads/{r}");
             if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
