@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 mod alias;
 mod commands;
 mod dotfile;
+mod explicit_exit;
 mod git_path;
 mod grit_exe;
 pub mod pathspec;
@@ -80,6 +81,9 @@ fn main() {
             if is_broken_pipe_error(&e) {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
+            } else if let Some(ex) = e.downcast_ref::<crate::explicit_exit::ExplicitExit>() {
+                eprintln!("error: {}", ex.message);
+                exit_code = ex.code;
             } else if let Some(msg) = verbatim_lib_error_message(&e) {
                 eprintln!("{msg}");
                 exit_code = 128;

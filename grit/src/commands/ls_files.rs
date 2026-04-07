@@ -394,8 +394,12 @@ pub fn run(args: Args) -> Result<()> {
             // Deduplicate: skip if same path as last printed.
             // With -t flag, don't deduplicate unmerged entries (stage != 0)
             // since they have distinct stage info that should be visible.
-            // Without -t, deduplicate all entries including unmerged.
-            if args.deduplicate && !(args.show_tag && entry.stage() != 0) {
+            // With -u/--unmerged, each stage must appear on its own line (t6402).
+            // Without -t/-u, deduplicate all entries including unmerged.
+            if args.deduplicate
+                && !(args.show_tag && entry.stage() != 0)
+                && !(args.unmerged && entry.stage() != 0)
+            {
                 if let Some(ref last) = last_dedup_path {
                     if last == &entry.path {
                         continue;
@@ -576,6 +580,12 @@ fn walk_worktree(
         // `ls-files -o` as part of assertions. Ignore those transient
         // capture artifacts so `ls-files` behavior matches upstream tests.
         if name_str.starts_with(".stdout.") || name_str.starts_with(".stderr.") {
+            continue;
+        }
+        // test-lib.sh stores `test_tick` / OID cache state in the trash directory;
+        // upstream tests expect `ls-files -o` not to list them (they are not
+        // untracked project files).
+        if name_str == ".test_tick" || name_str == ".test_oid_cache" {
             continue;
         }
 

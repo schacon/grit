@@ -74,6 +74,9 @@ pub fn run(args: Args) -> Result<()> {
             if let Some(parent) = abs.parent() {
                 std::fs::create_dir_all(parent)?;
             }
+            if abs.is_dir() {
+                std::fs::remove_dir_all(&abs)?;
+            }
             let output = if let Some(ref cfg) = config {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, cfg);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(cfg);
@@ -87,13 +90,20 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if merge_result.has_conflicts {
-        for (kind, path) in &merge_result.conflict_descriptions {
+        for ((kind, path), extras) in merge_result
+            .conflict_descriptions
+            .iter()
+            .zip(&merge_result.conflict_stdout_followups)
+        {
             if kind == "binary" {
                 println!("Cannot merge binary files: {path}");
             } else if kind == "rename/delete" || kind == "modify/delete" {
                 println!("CONFLICT ({kind}): {path}");
             } else {
                 println!("CONFLICT ({kind}): Merge conflict in {path}");
+            }
+            for line in extras {
+                println!("{line}");
             }
         }
         std::process::exit(1);

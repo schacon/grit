@@ -425,8 +425,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         }
 
         if path_mode == PathMode::AddRemoveCombo {
-            if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
-                if meta.is_dir() {
+            match std::fs::symlink_metadata(&abs_path) {
+                Ok(meta) if meta.is_dir() => {
                     if let Some(e) = index.get(&rel_bytes, 0) {
                         if e.mode != grit_lib::index::MODE_GITLINK && e.mode != 0o040000 {
                             index.remove(&rel_bytes);
@@ -434,6 +434,13 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                         }
                     }
                 }
+                // Git: `--add --remove` removes index entries for paths that no
+                // longer exist on disk (e.g. rename flow: `rm A && git update-index --add --remove A B`).
+                Err(_) => {
+                    let _ = index.remove(&rel_bytes);
+                    continue;
+                }
+                Ok(_) => {}
             }
             path_mode = PathMode::Add;
         }

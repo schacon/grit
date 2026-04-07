@@ -176,7 +176,18 @@ pub struct Args {
 }
 
 /// Run the `commit` command.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
+    // Tests and some scripts pass `-q` after `-m MSG`; if it lands in the
+    // trailing pathspec bucket, strip it so we match Git (quiet is already
+    // handled by the top-level flag).
+    while args
+        .pathspec
+        .last()
+        .is_some_and(|s| s == "-q" || s == "--quiet")
+    {
+        args.pathspec.pop();
+    }
+
     // Validate conflicting options
     let msg_source_count = [
         !args.message.is_empty(),

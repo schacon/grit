@@ -1099,7 +1099,7 @@ t6302-for-each-ref-filter	t6	skip	51	0	0	false	ok	0
 t6304-for-each-ref-detached-head	t6	yes	10	10	0	true	ok	0
 t6400-merge-df	t6	yes	7	7	0	true	ok	0
 t6401-merge-criss-cross	t6	yes	4	4	0	true	ok	0
-t6402-merge-rename	t6	yes	46	30	16	false	ok	0
+t6402-merge-rename	t6	yes	46	40	6	false	ok	0
 t6403-merge-file	t6	yes	39	37	2	false	ok	0
 t6404-recursive-merge	t6	yes	6	6	0	true	ok	0
 t6405-merge-symlinks	t6	yes	7	7	0	true	ok	0
