@@ -204,7 +204,7 @@ t2081-parallel-checkout-collisions	yes	6	6	0	ok	6	6	0
 t2082-parallel-checkout-attributes	yes	5	1	4	ok	1	5	0
 t2101-update-index-reupdate	yes	0	0	0	ok	0	0	0
 t2103-update-index-ignore-missing	yes	5	1	4	ok	1	5	0
-t2104-update-index-skip-worktree	yes	7	4	3	ok	4	7	0
+t2104-update-index-skip-worktree	yes	7	7	0	ok	7	7	0
 t2105-update-index-gitfile	yes	4	4	0	ok	4	4	0
 t2106-update-index-assume-unchanged	yes	2	2	0	ok	2	2	0
 t2107-update-index-basic	yes	10	5	5	ok	5	10	0
