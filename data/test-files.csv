@@ -364,7 +364,7 @@ t13050-reset-hard-untracked	t1	yes	30	30	0	true	ok	0
 t1306-xdg-files	t1	yes	21	20	1	false	ok	0
 t13060-cherry-pick-mainline	t1	yes	31	2	29	false	ok	0
 t1307-config-blob	t1	yes	13	11	2	false	ok	0
-t13070-for-each-ref-points-at	t1	yes	32	18	14	false	ok	0
+t13070-for-each-ref-points-at	t1	yes	32	32	0	true	ok	0
 t1308-config-set	t1	yes	39	12	27	false	ok	0
 t13080-show-ref-loose-packed	t1	yes	31	18	13	false	ok	0
 t1309-early-config	t1	yes	8	1	7	false	ok	2

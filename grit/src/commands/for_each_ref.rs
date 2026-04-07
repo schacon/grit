@@ -475,6 +475,12 @@ fn parse_packed_refs(git_dir: &Path) -> Result<Vec<(String, ObjectId)>> {
 fn apply_filters(repo: &Repository, opts: &Options, refs: &mut Vec<RefEntry>) -> Result<()> {
     if let Some(points_spec) = &opts.points_at {
         let points_oid = resolve_revision(repo, points_spec)?;
+        // `resolve_revision` accepts a full 40-hex OID even when the object is
+        // absent (matching `git rev-parse`). For `--points-at`, Grit requires
+        // the object to exist so invalid targets are rejected (see t13070).
+        repo.odb
+            .read(&points_oid)
+            .map_err(|_| anyhow::anyhow!("object {points_oid} not found"))?;
         refs.retain(|entry| {
             entry.oid == Some(points_oid)
                 || entry.oid.and_then(|oid| peel_to_non_tag(repo, oid).ok()) == Some(points_oid)
