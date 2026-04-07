@@ -46,7 +46,7 @@ t0067-parse_pathspec_file	t0	yes	8	8	0	true	ok	0
 t0068-for-each-repo	t0	yes	5	5	0	true	ok	0
 t0070-fundamental	t0	yes	11	11	0	true	ok	0
 t0071-sort	t0	yes	1	1	0	true	ok	0
-t0080-tree-hash	t0	yes	30	29	1	false	ok	0
+t0080-tree-hash	t0	yes	30	30	0	true	ok	0
 t0080-unit-test-output	t0	yes	1	1	0	true	ok	0
 t0081-find-pack	t0	yes	4	4	0	true	ok	0
 t0090-cache-tree	t0	yes	22	0	22	false	ok	0
