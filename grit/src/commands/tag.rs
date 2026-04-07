@@ -609,6 +609,12 @@ fn sort_tags(
             // Already sorted lexicographically from collect step
         }
         _ => {
+            // Unknown key — fail with error like git does
+            eprintln!("error: invalid sort key: '{key}'");
+            std::process::exit(129);
+        }
+        #[allow(unreachable_patterns)]
+        _unreachable => {
             // Unknown key — fallback to alphabetical
             if ignore_case {
                 tags.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
