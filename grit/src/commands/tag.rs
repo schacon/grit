@@ -127,11 +127,36 @@ pub fn run(args: Args) -> Result<()> {
     // If no name is given (or -l is given), list tags
     if name.is_none() || args.list > 0 {
         let patterns: Vec<&str> = args.positional.iter().map(|s| s.as_str()).collect();
+        // Read tag.sort from config when no --sort arg given
+        let config_sort = if args.sort.is_none() {
+            let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).ok();
+            cfg.and_then(|c| c.get("tag.sort"))
+        } else {
+            None
+        };
+        let effective_sort = args.sort.as_deref().or(config_sort.as_deref());
+        // Validate sort key if specified
+        if let Some(sort_key) = effective_sort {
+            let key = sort_key.trim_start_matches('-');
+            let valid_keys = [
+                "refname",
+                "version:refname",
+                "creatordate",
+                "taggerdate",
+                "committerdate",
+                "objecttype",
+                "",
+            ];
+            if !valid_keys.contains(&key) {
+                eprintln!("error: invalid sort key: '{sort_key}'");
+                std::process::exit(129);
+            }
+        }
         return list_tags(
             &repo,
             &patterns,
             args.lines,
-            args.sort.as_deref(),
+            effective_sort,
             args.ignore_case,
             args.contains.as_deref(),
             args.no_contains.as_deref(),
