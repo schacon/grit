@@ -1,8 +1,10 @@
-//! `grit switch` — switch branches (native implementation pending).
+//! `grit switch` — switch branches.
 //!
 //! Pre-checks: ambiguous remote-tracking branches and worktree conflicts.
+//! Delegates to [`crate::commands::checkout`] with the same argument tail.
 
-use anyhow::{bail, Result};
+use crate::commands::checkout;
+use anyhow::Result;
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 
@@ -10,7 +12,7 @@ use std::collections::BTreeSet;
 #[derive(Debug, ClapArgs)]
 #[command(about = "Switch branches")]
 pub struct Args {
-    /// Raw arguments (reserved for a future native `switch`).
+    /// Raw arguments forwarded to `checkout` (same tail as `git switch`).
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
 }
@@ -43,7 +45,10 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("fatal: {msg}");
         std::process::exit(128);
     }
-    bail!("not implemented: grit switch (full branch checkout/switch semantics)")
+    checkout::run(checkout::Args {
+        rest: args.args,
+        ..Default::default()
+    })
 }
 
 /// Parse the raw switch arguments to extract the target branch name and check

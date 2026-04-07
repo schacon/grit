@@ -10,7 +10,6 @@
 //!
 //! Subcommands: push, save, list, show, pop, apply, drop, clear, branch, create, store.
 
-use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use std::collections::BTreeSet;
@@ -219,12 +218,6 @@ pub enum StashCommand {
 
 /// Run `grit stash`.
 pub fn run(args: Args) -> Result<()> {
-    if let Ok(repo) = Repository::discover(None) {
-        if cwd_pathspec::should_passthrough_from_subdir(&repo) {
-            bail!("not implemented: grit stash from a subdirectory of the work tree");
-        }
-    }
-
     match args.command {
         None => {
             // Bare `grit stash` == `grit stash push`

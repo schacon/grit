@@ -6,6 +6,7 @@
 //! - `stop` — stop scheduled maintenance
 //! - `register` — register repo for maintenance
 
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
@@ -88,10 +89,10 @@ pub fn run(args: Args) -> Result<()> {
 
 fn run_maintenance(args: &RunArgs) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let git_bin = git_binary();
+    let grit_bin = grit_exe::grit_executable();
 
     if let Some(task) = &args.task {
-        run_task(&git_bin, task, &repo)?;
+        run_task(&grit_bin, task, &repo)?;
         return Ok(());
     }
 
@@ -109,29 +110,29 @@ fn run_maintenance(args: &RunArgs) -> Result<()> {
     };
 
     for task in &tasks {
-        run_task(&git_bin, task, &repo)?;
+        run_task(&grit_bin, task, &repo)?;
     }
 
     Ok(())
 }
 
-fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
+fn run_task(grit_bin: &std::path::Path, task: &str, repo: &Repository) -> Result<()> {
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
 
     match task {
         "gc" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .arg("gc")
                 .arg("--auto")
                 .current_dir(work_dir)
                 .status()
-                .context("failed to run git gc")?;
+                .context("failed to run grit gc")?;
             if !status.success() {
                 eprintln!("warning: gc returned non-zero status");
             }
         }
         "commit-graph" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .args(["commit-graph", "write", "--reachable", "--changed-paths"])
                 .current_dir(work_dir)
                 .status()
@@ -141,7 +142,7 @@ fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
             }
         }
         "prefetch" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .args(["fetch", "--all", "--quiet"])
                 .current_dir(work_dir)
                 .status()
@@ -151,7 +152,7 @@ fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
             }
         }
         "loose-objects" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .args(["repack", "-d", "-l"])
                 .current_dir(work_dir)
                 .status()
@@ -161,21 +162,21 @@ fn run_task(git_bin: &str, task: &str, repo: &Repository) -> Result<()> {
             }
         }
         "incremental-repack" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .args(["multi-pack-index", "repack", "--no-progress"])
                 .current_dir(work_dir)
                 .status();
             // multi-pack-index may not be available; silently ignore failure.
             if status.is_err() {
                 // Fallback: do a regular repack.
-                let _ = Command::new(git_bin)
+                let _ = Command::new(grit_bin)
                     .args(["repack", "-d"])
                     .current_dir(work_dir)
                     .status();
             }
         }
         "pack-refs" => {
-            let status = Command::new(git_bin)
+            let status = Command::new(grit_bin)
                 .args(["pack-refs", "--all"])
                 .current_dir(work_dir)
                 .status()
@@ -502,8 +503,4 @@ fn save_registered_repos(path: &std::path::Path, repos: &[String]) -> Result<()>
     let content = repos.join("\n") + "\n";
     fs::write(path, content).context("failed to write maintenance config")?;
     Ok(())
-}
-
-fn git_binary() -> String {
-    std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string())
 }

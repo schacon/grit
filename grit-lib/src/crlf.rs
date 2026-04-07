@@ -526,6 +526,20 @@ fn would_convert_on_input(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
     }
 }
 
+/// Git-compatible stderr when `core.safecrlf` is `warn` (clean direction, CRLF→LF).
+fn eprint_safecrlf_warn_crlf_to_lf(rel_path: &str) {
+    eprintln!(
+        "warning: in the working copy of '{rel_path}', CRLF will be replaced by LF the next time Git touches it"
+    );
+}
+
+/// Git-compatible stderr when `core.safecrlf` is `warn` (clean direction, LF→CRLF).
+fn eprint_safecrlf_warn_lf_to_crlf(rel_path: &str) {
+    eprintln!(
+        "warning: in the working copy of '{rel_path}', LF will be replaced by CRLF the next time Git touches it"
+    );
+}
+
 /// Check safecrlf constraints on input.
 fn check_safecrlf_input(
     conv: &ConversionConfig,
@@ -540,6 +554,28 @@ fn check_safecrlf_input(
         return Ok(());
     }
 
+    let mixed = has_crlf(data) && has_lone_lf(data);
+
+    // Mixed line endings: clean would change some lines; unsafe for both autocrlf modes.
+    if mixed {
+        if conv.autocrlf == AutoCrlf::Input {
+            let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
+            if conv.safecrlf == SafeCrlf::True {
+                return Err(msg);
+            }
+            eprint_safecrlf_warn_crlf_to_lf(rel_path);
+            return Ok(());
+        }
+        if conv.autocrlf == AutoCrlf::True {
+            let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
+            if conv.safecrlf == SafeCrlf::True {
+                return Err(msg);
+            }
+            eprint_safecrlf_warn_lf_to_crlf(rel_path);
+            return Ok(());
+        }
+    }
+
     // safecrlf with autocrlf=input: reject if file is all CRLF
     // (the conversion would be irreversible — CRLF→LF, but checkout won't
     // add CR back because autocrlf=input only strips on input)
@@ -548,7 +584,7 @@ fn check_safecrlf_input(
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!("warning: {msg}");
+        eprint_safecrlf_warn_crlf_to_lf(rel_path);
         return Ok(());
     }
 
@@ -559,7 +595,7 @@ fn check_safecrlf_input(
         if conv.safecrlf == SafeCrlf::True {
             return Err(msg);
         }
-        eprintln!("warning: {msg}");
+        eprint_safecrlf_warn_lf_to_crlf(rel_path);
         return Ok(());
     }
 

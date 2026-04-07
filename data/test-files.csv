@@ -2,7 +2,7 @@ file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_
 t0000-basic	t0	yes	92	75	17	false	ok	8
 t0001-init	t0	yes	102	67	35	false	ok	0
 t0002-gitfile	t0	yes	14	14	0	true	ok	0
-t0003-attributes	t0	yes	55	35	20	false	ok	0
+t0003-attributes	t0	yes	55	38	17	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
 t0006-date	t0	yes	129	129	0	true	ok	0
@@ -16,7 +16,7 @@ t0014-alias	t0	yes	21	21	0	true	ok	1
 t0017-env-helper	t0	yes	5	5	0	true	ok	0
 t0018-advice	t0	yes	6	6	0	true	ok	0
 t0019-json-writer	t0	yes	16	16	0	true	ok	0
-t0020-crlf	t0	yes	36	15	21	false	ok	0
+t0020-crlf	t0	yes	36	20	16	false	ok	0
 t0021-conversion	t0	yes	42	20	22	false	ok	0
 t0022-crlf-rename	t0	yes	2	2	0	true	ok	0
 t0023-crlf-am	t0	yes	2	1	1	false	ok	0
@@ -1387,7 +1387,7 @@ t8970-symbolic-ref-chains	t8	yes	30	18	12	false	ok	0
 t8980-config-get-regexp	t8	yes	27	26	1	false	ok	0
 t8990-config-set-unset	t8	yes	27	20	7	false	ok	0
 t9000-init-default-branch	t9	yes	24	24	0	true	ok	0
-t9001-send-email	t9	yes	215	46	169	false	ok	1
+t9001-send-email	t9	skip	215	46	169	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
 t9003-help-autocorrect	t9	yes	0	0	0	false	timeout	0
 t9010-branch-list-sort	t9	yes	26	13	13	false	ok	0

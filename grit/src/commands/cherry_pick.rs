@@ -6,7 +6,6 @@
 //!   - ours   = HEAD_tree    (current state)
 //!   - theirs = commit_tree  (the commit being picked)
 
-use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -136,9 +135,6 @@ pub fn run(args: Args) -> Result<()> {
 
 fn do_cherry_pick(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if cwd_pathspec::should_passthrough_from_subdir(&repo) {
-        bail!("not implemented: grit cherry-pick from a subdirectory of the work tree");
-    }
     let git_dir = &repo.git_dir;
 
     // Don't start a new cherry-pick sequence if one is already in progress.

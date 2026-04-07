@@ -25,6 +25,7 @@ use grit_lib::state::{resolve_head, HeadState};
 /// Arguments for `grit checkout`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Switch branches or restore working tree files")]
+#[derive(Default)]
 pub struct Args {
     /// Create a new branch and switch to it.
     #[arg(short = 'b')]

@@ -14,10 +14,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -1903,6 +1906,69 @@ fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path)
     Ok(())
 }
 
+/// Repository + index state for CRLF-aware apply (clean/smudge around unified diffs).
+struct ApplyCrlfContext {
+    repo: Repository,
+    work_tree: PathBuf,
+    index: Index,
+    config: ConfigSet,
+    conv: crlf::ConversionConfig,
+}
+
+impl ApplyCrlfContext {
+    fn load() -> Option<Self> {
+        let repo = Repository::discover(None).ok()?;
+        let work_tree = repo.work_tree.clone()?;
+        let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        Some(Self {
+            repo,
+            work_tree,
+            index,
+            config,
+            conv,
+        })
+    }
+
+    /// Bytes that hash to the same blob OID as `git add` / the index (clean direction).
+    fn blob_for_index_hash(&self, path: &Path, rel_path: &str, mode: u32) -> Result<Vec<u8>> {
+        if mode == grit_lib::index::MODE_SYMLINK {
+            return read_symlink_target_bytes(path);
+        }
+        let raw = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let rules = crlf::load_gitattributes_for_checkout(
+            &self.work_tree,
+            rel_path,
+            &self.index,
+            &self.repo.odb,
+        );
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &self.config);
+        crlf::convert_to_git(&raw, rel_path, &self.conv, &file_attrs)
+            .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+
+    /// Normalized LF text for unified-diff hunk matching (same pipeline as index blobs).
+    fn normalized_text(&self, path: &Path, rel_path: &str) -> Result<String> {
+        let meta = fs::symlink_metadata(path)?;
+        if meta.file_type().is_symlink() {
+            let b = read_symlink_target_bytes(path)?;
+            return Ok(String::from_utf8_lossy(&b).into_owned());
+        }
+        let raw = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let rules = crlf::load_gitattributes_for_checkout(
+            &self.work_tree,
+            rel_path,
+            &self.index,
+            &self.repo.odb,
+        );
+        let file_attrs = crlf::get_file_attrs(&rules, rel_path, &self.config);
+        let normalized = crlf::convert_to_git(&raw, rel_path, &self.conv, &file_attrs)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(String::from_utf8_lossy(&normalized).into_owned())
+    }
+}
+
 /// Apply patches to the working tree.
 /// Verify that working tree files match the index (required for --index mode).
 fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<()> {
@@ -1910,6 +1976,19 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
     let index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
         Err(_) => return Ok(()),
+    };
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("bare repository"))?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let ctx = ApplyCrlfContext {
+        repo,
+        work_tree: work_tree.to_path_buf(),
+        index: index.clone(),
+        config,
+        conv,
     };
 
     for fp in patches {
@@ -1921,7 +2000,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
                     if !path.exists() {
                         bail!("{adjusted}: does not match index");
                     }
-                    let wt_content = read_worktree_content_for_index(&path, entry.mode)?;
+                    let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
                     let wt_oid =
                         grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
                     if wt_oid != entry.oid {
@@ -1947,7 +2026,7 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
 
         // Get index entry
         if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
-            let wt_content = read_worktree_content_for_index(&path, entry.mode)?;
+            let wt_content = ctx.blob_for_index_hash(&path, &adjusted, entry.mode)?;
             let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
             if wt_oid != entry.oid {
                 bail!("{adjusted}: does not match index");

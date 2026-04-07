@@ -7,6 +7,7 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -132,6 +133,10 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
     let cwd = std::env::current_dir().context("resolving current directory")?;
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
 
     if args.show_index_version {
         println!("{}", index.version);
@@ -463,12 +468,16 @@ pub fn run(args: Args) -> Result<()> {
             mode = grit_lib::index::MODE_SYMLINK;
         }
 
+        let rel_str = String::from_utf8_lossy(&rel_bytes);
         let data = if meta.file_type().is_symlink() {
             let target = std::fs::read_link(&abs_path)?;
             target.to_string_lossy().into_owned().into_bytes()
         } else {
-            std::fs::read(&abs_path)
-                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
+            let raw = std::fs::read(&abs_path)
+                .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
+            let file_attrs = crlf::get_file_attrs(&attrs, rel_str.as_ref(), &config);
+            crlf::convert_to_git(&raw, rel_str.as_ref(), &conv, &file_attrs)
+                .map_err(|msg| anyhow::anyhow!("{msg}"))?
         };
 
         let oid = match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data) {
@@ -540,8 +549,21 @@ pub fn run(args: Args) -> Result<()> {
                         // If mtime or size changed, rehash and update
                         if idx_mtime != file_mtime || idx_size != file_size {
                             match std::fs::read(&abs_path) {
-                                Ok(data) => {
+                                Ok(raw) => {
                                     let mode = entry.mode;
+                                    let data = if mode == grit_lib::index::MODE_SYMLINK {
+                                        raw
+                                    } else {
+                                        let file_attrs =
+                                            crlf::get_file_attrs(&attrs, &rel_path, &config);
+                                        match crlf::convert_to_git(&raw, &rel_path, &conv, &file_attrs)
+                                        {
+                                            Ok(d) => d,
+                                            Err(e) => {
+                                                return Err(anyhow::anyhow!(e));
+                                            }
+                                        }
+                                    };
                                     match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data)
                                     {
                                         Ok(new_oid) => {

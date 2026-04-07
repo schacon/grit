@@ -3,12 +3,14 @@
 //! Supports: status, init, update, add, foreach.
 //! Reads `.gitmodules` and manages `.git/modules/` directory.
 
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::index::Index;
-use grit_lib::objects::ObjectKind;
+use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
+use grit_lib::state::resolve_head;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -292,31 +294,49 @@ fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<
 
 // ── Read recorded commit from the index ──────────────────────────────
 
-/// Read the commit OID recorded in the index for a submodule path.
-fn read_submodule_commit(git_dir: &Path, submodule_path: &str) -> Result<Option<String>> {
-    // Use git ls-tree HEAD to get the recorded commit for the submodule path.
-    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
-    let output = Command::new(&git_bin)
-        .arg("ls-tree")
-        .arg("HEAD")
-        .arg(submodule_path)
-        .current_dir(git_dir.parent().unwrap_or(git_dir))
-        .output()
-        .context("failed to run git ls-tree")?;
+/// Read the commit OID recorded in `HEAD`’s tree for a submodule path (gitlink).
+fn read_submodule_commit(repo: &Repository, submodule_path: &str) -> Result<Option<String>> {
+    let head = resolve_head(&repo.git_dir)?;
+    let commit_oid = match head.oid() {
+        Some(o) => *o,
+        None => return Ok(None),
+    };
+    let obj = repo.odb.read(&commit_oid).context("read HEAD commit")?;
+    let commit = parse_commit(&obj.data)?;
+    let mut current_tree = commit.tree;
 
-    if !output.status.success() {
+    let components: Vec<&str> = submodule_path
+        .split('/')
+        .filter(|c| !c.is_empty())
+        .collect();
+    if components.is_empty() {
         return Ok(None);
     }
 
-    let text = String::from_utf8_lossy(&output.stdout);
-    // Format: <mode> <type> <oid>\t<path>
-    for line in text.lines() {
-        let parts: Vec<&str> = line.splitn(4, [' ', '\t']).collect();
-        if parts.len() >= 3 && parts[1] == "commit" {
-            return Ok(Some(parts[2].to_string()));
+    for (i, name) in components.iter().enumerate() {
+        let tree_obj = repo.odb.read(&current_tree).context("read tree")?;
+        if tree_obj.kind != ObjectKind::Tree {
+            return Ok(None);
         }
+        let entries = parse_tree(&tree_obj.data)?;
+        let entry = entries
+            .iter()
+            .find(|e| e.name.as_slice() == name.as_bytes());
+        let Some(entry) = entry else {
+            return Ok(None);
+        };
+        let is_last = i + 1 == components.len();
+        if is_last {
+            if entry.mode == 0o160000 {
+                return Ok(Some(entry.oid.to_hex()));
+            }
+            return Ok(None);
+        }
+        if entry.mode != 0o040000 {
+            return Ok(None);
+        }
+        current_tree = entry.oid;
     }
-
     Ok(None)
 }
 
@@ -333,7 +353,7 @@ fn run_status(args: &StatusArgs) -> Result<()> {
 
     for m in selected {
         let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo.git_dir, &m.path)?;
+        let recorded = read_submodule_commit(&repo, &m.path)?;
 
         // Check if the submodule is checked out (has a .git file/dir in its path).
         let has_checkout = sub_path.join(".git").exists();
@@ -472,11 +492,11 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
     let modules = parse_gitmodules_with_repo(work_tree, Some(&repo))?;
     let selected = filter_submodules(&modules, &args.paths);
 
-    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+    let grit_bin = grit_exe::grit_executable();
 
     for m in selected {
         let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo.git_dir, &m.path)?;
+        let recorded = read_submodule_commit(&repo, &m.path)?;
         let recorded_oid = match &recorded {
             Some(oid) => oid.as_str(),
             None => {
@@ -513,7 +533,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 
         if needs_clone {
             if modules_dir.join("HEAD").exists() {
-                attach_existing_submodule_worktree(&git_bin, &modules_dir, &sub_path)?;
+                attach_existing_submodule_worktree(&grit_bin, &modules_dir, &sub_path)?;
             } else {
                 // Clone the submodule into .git/modules/<name> then checkout.
                 // Ensure parent of modules_dir exists but not modules_dir itself
@@ -547,7 +567,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     }
                 }
 
-                let status = Command::new(&git_bin)
+                let status = Command::new(&grit_bin)
                     .arg("clone")
                     .arg("--no-checkout")
                     .arg("--separate-git-dir")
@@ -567,7 +587,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         // Determine which commit to checkout.
         let checkout_oid = if args.remote {
             // Fetch from remote and use the remote tracking branch.
-            let fetch_status = Command::new(&git_bin)
+            let fetch_status = Command::new(&grit_bin)
                 .args(["fetch", "origin"])
                 .current_dir(&sub_path)
                 .status()
@@ -592,7 +612,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             };
 
             // Resolve origin/<branch> to an OID.
-            let output = Command::new(&git_bin)
+            let output = Command::new(&grit_bin)
                 .args(["rev-parse", &format!("origin/{branch}")])
                 .current_dir(&sub_path)
                 .output()
@@ -614,7 +634,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         }
 
         // Checkout the target commit.
-        let status = Command::new(&git_bin)
+        let status = Command::new(&grit_bin)
             .arg("checkout")
             .arg(&checkout_oid)
             .arg("--quiet")
@@ -641,7 +661,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 }
 
 fn attach_existing_submodule_worktree(
-    git_bin: &str,
+    grit_bin: &Path,
     modules_dir: &Path,
     sub_path: &Path,
 ) -> Result<()> {
@@ -650,7 +670,7 @@ fn attach_existing_submodule_worktree(
     }
     let gitfile = sub_path.join(".git");
     fs::write(&gitfile, format!("gitdir: {}\n", modules_dir.display()))?;
-    let _ = Command::new(git_bin)
+    let _ = Command::new(grit_bin)
         .arg("--git-dir")
         .arg(modules_dir)
         .arg("config")
@@ -681,7 +701,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
     let sub_path = work_tree.join(&path);
 
-    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+    let grit_bin = grit_exe::grit_executable();
 
     if sub_path.exists() {
         // If the path already exists and is a valid git repo, treat it like
@@ -700,7 +720,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
 
-        let status = Command::new(&git_bin)
+        let status = Command::new(&grit_bin)
             .arg("clone")
             .arg("--separate-git-dir")
             .arg(&modules_dir)
@@ -747,7 +767,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
     // Add the submodule path to the index.
     // Use --no-warn-embedded-repo so the add doesn't warn about the
     // embedded git repository we just cloned on purpose.
-    let status = Command::new(&git_bin)
+    let status = Command::new(&grit_bin)
         .arg("add")
         .arg("--no-warn-embedded-repo")
         .arg(".gitmodules")
@@ -1155,7 +1175,7 @@ fn run_summary(_args: &SummaryArgs) -> Result<()> {
 
     for m in &modules {
         let sub_path = work_tree.join(&m.path);
-        let recorded = read_submodule_commit(&repo.git_dir, &m.path)?;
+        let recorded = read_submodule_commit(&repo, &m.path)?;
         let oid = recorded.as_deref().unwrap_or("0000000");
         let short_oid = &oid[..oid.len().min(7)];
 

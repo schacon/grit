@@ -13,6 +13,7 @@
 //! - `reconfigure` — reconfigure scalar settings
 //! - `diagnose` — create a diagnostic bundle
 
+use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::IsTerminal;
@@ -126,14 +127,7 @@ fn print_usage() {
 }
 
 fn git_binary() -> PathBuf {
-    // Use the same binary as ourselves
-    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("git"))
-}
-
-fn real_git_binary() -> PathBuf {
-    std::env::var_os("REAL_GIT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/bin/git"))
+    grit_exe::grit_executable()
 }
 
 fn local_git_args(repo_dir: &Path, args: &[&str]) -> Vec<String> {
@@ -337,11 +331,9 @@ fn cmd_clone(args: &[String]) -> Result<()> {
     };
     let show_progress = std::io::stderr().is_terminal();
 
-    // Build clone command (use system git for partial-clone behavior).
-    let real_git = real_git_binary();
     let git = git_binary();
     run_git_clone_passthrough(
-        &real_git,
+        &git,
         &url,
         &repo_dir,
         single_branch,
@@ -454,9 +446,9 @@ fn run_git_clone_passthrough(
     cmd.arg(url);
     cmd.arg(repo_dir);
 
-    let status = cmd.status().context("failed to run git clone")?;
+    let status = cmd.status().context("failed to run clone")?;
     if !status.success() {
-        bail!("git clone failed");
+        bail!("clone failed");
     }
     Ok(())
 }

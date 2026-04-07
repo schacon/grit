@@ -73,9 +73,6 @@ pub struct Args {
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if cwd_pathspec::should_passthrough_from_subdir(&repo) {
-        bail!("not implemented: grit rm from a subdirectory of the work tree");
-    }
     if args
         .pathspec
         .iter()

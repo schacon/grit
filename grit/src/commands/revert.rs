@@ -11,7 +11,6 @@
 //!
 //! This three-way merge produces the revert of C's changes.
 
-use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -73,9 +72,6 @@ pub fn run(args: Args) -> Result<()> {
 
 fn do_revert(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if cwd_pathspec::should_passthrough_from_subdir(&repo) {
-        bail!("not implemented: grit revert from a subdirectory of the work tree");
-    }
     let git_dir = &repo.git_dir;
 
     // Don't start a new revert if one is already in progress.

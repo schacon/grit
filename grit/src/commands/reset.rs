@@ -15,7 +15,6 @@ use clap::Args as ClapArgs;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::commands::cwd_pathspec;
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -134,11 +133,6 @@ pub fn run(args: Args) -> Result<()> {
     let mode = parse_mode(&args)?;
 
     let repo = Repository::discover(None).context("not a git repository")?;
-    if matches!(mode, ResetMode::Hard | ResetMode::Keep | ResetMode::Merge)
-        && cwd_pathspec::should_passthrough_from_subdir(&repo)
-    {
-        bail!("not implemented: grit reset --hard/--merge/--keep from a subdirectory of the work tree");
-    }
 
     // Handle -p (patch mode) by delegating to `git checkout-index`-like interactive unstaging
     if args.patch {

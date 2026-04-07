@@ -16,6 +16,7 @@ mod alias;
 mod commands;
 mod dotfile;
 mod git_path;
+mod grit_exe;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
@@ -2249,7 +2250,6 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "rev-parse" => extract_options::<commands::rev_parse::Args>(show_all),
         "revert" => extract_options::<commands::revert::Args>(show_all),
         "rm" => extract_options::<commands::rm::Args>(show_all),
-        "send-email" => extract_options::<commands::send_email::Args>(show_all),
         "show" => extract_options::<commands::show::Args>(show_all),
         "show-ref" => extract_options::<commands::show_ref::Args>(show_all),
         "sparse-checkout" => extract_options::<commands::sparse_checkout::Args>(show_all),
@@ -2334,7 +2334,6 @@ fn print_list_cmds(categories: &str) {
         "remote",
         "repack",
         "replace",
-        "send-email",
         "show-branch",
         "whatchanged",
     ];
@@ -2445,7 +2444,6 @@ fn print_list_cmds(categories: &str) {
                     "rev-parse",
                     "revert",
                     "rm",
-                    "send-email",
                     "show",
                     "show-ref",
                     "sparse-checkout",
@@ -2731,7 +2729,6 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "revert",
     "rm",
     "scalar",
-    "send-email",
     "send-pack",
     "sh-i18n",
     "sh-setup",
@@ -2965,7 +2962,6 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
         "scalar" => commands::scalar::run(rest),
-        "send-email" => commands::send_email::run(parse_cmd_args(subcmd, rest)),
         "send-pack" => commands::send_pack::run(parse_cmd_args(subcmd, rest)),
         "serve-v2" => commands::serve_v2::run(parse_cmd_args(subcmd, rest)),
         "sh-i18n" => commands::sh_i18n::run(parse_cmd_args(subcmd, rest)),

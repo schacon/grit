@@ -89,7 +89,6 @@ Interacting with Others
    p4                      Import from and submit to Perforce repositories
    quiltimport             Applies a quilt patchset onto the current branch
    request-pull            Generates a summary of pending changes
-   send-email              Send a collection of patches as emails
    svn                     Bidirectional operation between a Subversion repository and Git
 
 Low-level Commands / Manipulators

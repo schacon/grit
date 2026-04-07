@@ -84,7 +84,13 @@ struct Config {
 }
 
 fn find_git_http_backend() -> PathBuf {
-    // Try common locations
+    if let Ok(exec_path) = std::env::var("GIT_EXEC_PATH") {
+        let candidate = Path::new(&exec_path).join("git-http-backend");
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+
     let candidates = [
         "/usr/lib/git-core/git-http-backend",
         "/usr/libexec/git-core/git-http-backend",
@@ -97,21 +103,6 @@ fn find_git_http_backend() -> PathBuf {
         }
     }
 
-    // Try git's exec path, which is the canonical location for git-http-backend
-    if let Ok(output) = std::process::Command::new("git")
-        .arg("--exec-path")
-        .output()
-    {
-        if output.status.success() {
-            let exec_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let candidate = Path::new(&exec_path).join("git-http-backend");
-            if candidate.exists() {
-                return candidate;
-            }
-        }
-    }
-
-    // Fallback: try PATH
     PathBuf::from("git-http-backend")
 }
 

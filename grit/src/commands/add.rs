@@ -840,6 +840,33 @@ fn add_path(
     Ok(())
 }
 
+/// Resolve the Git directory for an embedded repository work tree.
+///
+/// Supports a `.git` directory or a `.git` file with `gitdir:` (submodule-style layout).
+fn embedded_repository_git_dir(worktree: &Path) -> Result<PathBuf> {
+    let dot_git = worktree.join(".git");
+    let meta = fs::symlink_metadata(&dot_git)
+        .with_context(|| format!("cannot stat .git in embedded repo {}", worktree.display()))?;
+    if meta.file_type().is_dir() {
+        return Ok(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git)
+        .with_context(|| format!("cannot read .git file in {}", worktree.display()))?;
+    let line = content.lines().next().unwrap_or("").trim();
+    let rest = line.strip_prefix("gitdir:").map(str::trim).ok_or_else(|| {
+        anyhow!(
+            "invalid .git file in {} (expected gitdir:)",
+            worktree.display()
+        )
+    })?;
+    let p = Path::new(rest);
+    Ok(if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        worktree.join(p)
+    })
+}
+
 /// Stage an embedded repository as a gitlink (mode 160000) in the index.
 ///
 /// Reads the HEAD of the embedded repo to get the commit OID, and warns
@@ -853,15 +880,15 @@ fn stage_gitlink(
     abs_path: &Path,
     args: &Args,
 ) -> Result<()> {
-    // Read the embedded repo's HEAD to get the commit OID
-    let embedded_head_path = abs_path.join(".git/HEAD");
+    let git_dir = embedded_repository_git_dir(abs_path)?;
+    let embedded_head_path = git_dir.join("HEAD");
     let head_content = fs::read_to_string(&embedded_head_path)
         .with_context(|| format!("cannot read HEAD of embedded repo '{}'", rel_path))?;
     let head_trimmed = head_content.trim();
 
     // Resolve the HEAD
     let oid_hex = if let Some(refname) = head_trimmed.strip_prefix("ref: ") {
-        let ref_path = abs_path.join(".git").join(refname);
+        let ref_path = git_dir.join(refname);
         fs::read_to_string(&ref_path)
             .with_context(|| {
                 format!(

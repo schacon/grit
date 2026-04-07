@@ -892,6 +892,23 @@ fn sparse_glob_match(pattern: &str, text: &str) -> bool {
     pi == pat.len()
 }
 
+/// True if the working tree already has this index entry (blob/symlink) at `abs_path`.
+///
+/// When `read-tree -u` refreshes after files were removed from disk, the index may still
+/// match `HEAD`; we must not skip checkout solely because the blob OID is unchanged.
+fn checkout_entry_present_on_disk(abs_path: &std::path::Path, mode: u32) -> bool {
+    match std::fs::symlink_metadata(abs_path) {
+        Ok(meta) => {
+            if mode == MODE_SYMLINK {
+                meta.is_symlink()
+            } else {
+                meta.is_file()
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 /// Update working tree to match stage-0 entries in `new_index`.
 fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Index) -> Result<()> {
     let work_tree = match &repo.work_tree {
@@ -950,14 +967,15 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         if entry.skip_worktree() {
             continue;
         }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
         if old_stage0
             .get(&entry.path)
             .is_some_and(|old_entry| same_blob(old_entry, entry))
+            && checkout_entry_present_on_disk(&abs_path, entry.mode)
         {
             continue;
         }
-        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        let abs_path = work_tree.join(&path_str);
 
         if let Some(parent) = abs_path.parent() {
             std::fs::create_dir_all(parent)?;

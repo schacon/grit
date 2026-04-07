@@ -5,7 +5,6 @@
 //! removing *only* ignored files (`-X`), quiet mode (`-q`/`--quiet`),
 //! and pathspec filtering.
 
-use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -61,14 +60,6 @@ pub struct Args {
 /// Run the `clean` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if cwd_pathspec::should_passthrough_from_subdir(&repo)
-        || args
-            .pathspec
-            .iter()
-            .any(|p| p == "." || cwd_pathspec::has_parent_pathspec_component(p))
-    {
-        bail!("not implemented: grit clean from a subdirectory, or with '.' / '..' pathspecs");
-    }
     let work_tree = repo
         .work_tree
         .as_deref()

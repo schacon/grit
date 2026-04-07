@@ -478,7 +478,7 @@ fn run_ssh_clone(args: Args) -> Result<()> {
 ///
 /// Reads `.gitmodules` from the work tree, resolves each submodule's URL
 /// (relative paths are resolved against the parent repo's remote URL),
-/// and uses the system `git` to clone each submodule.
+/// and uses `grit clone` to clone each submodule.
 fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
     let gitmodules_path = work_tree.join(".gitmodules");
     if !gitmodules_path.exists() {
@@ -525,7 +525,7 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
         extract_remote_url(&config_content, "origin")
     };
 
-    let git_bin = std::env::var("REAL_GIT").unwrap_or_else(|_| "/usr/bin/git".to_string());
+    let grit_bin = crate::grit_exe::grit_executable();
 
     for (path, url) in &submodules {
         let sub_dest = work_tree.join(path);
@@ -552,7 +552,7 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
             let _ = fs::remove_dir_all(&sub_dest);
         }
 
-        let mut cmd = std::process::Command::new(&git_bin);
+        let mut cmd = std::process::Command::new(&grit_bin);
         cmd.arg("clone")
             .arg("-c")
             .arg("protocol.file.allow=always")

@@ -115,7 +115,6 @@ pub mod rev_parse;
 pub mod revert;
 pub mod rm;
 pub mod scalar;
-pub mod send_email;
 pub mod send_pack;
 pub mod serve_v2;
 pub mod sh_i18n;

@@ -2771,7 +2771,8 @@ test_expect_success 'symbolic-ref completes full ref names' '
 	EOF
 '
 
-test_expect_success PERL 'send-email' '
+# Prereq SEND_EMAIL is never set — skip until send-email exists in grit again.
+test_expect_success SEND_EMAIL 'send-email' '
 	test_completion "git send-email --cov" <<-\EOF &&
 	--cover-from-description=Z
 	--cover-letter Z

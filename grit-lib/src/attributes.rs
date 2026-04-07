@@ -195,66 +195,189 @@ fn parse_gitattributes_content_impl(
             ));
             continue;
         }
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        parse_one_line(line, line_no, display_path, from_blob, &mut out);
+        parse_one_line(raw_line, line_no, display_path, from_blob, &mut out);
     }
     out.warnings
         .extend(builtin_warnings_for_rules(&out.rules, display_path));
     out
 }
 
+/// Skip leading ASCII blanks only (matches Git's `blank` in `attr.c`).
+fn skip_ascii_blank(s: &str) -> &str {
+    s.trim_start_matches([' ', '\t', '\r', '\n'])
+}
+
+/// First whitespace-delimited token and the remainder (Git `strcspn` on `blank`).
+fn split_at_first_blank(s: &str) -> (&str, &str) {
+    let bytes = s.as_bytes();
+    let n = bytes
+        .iter()
+        .position(|&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        .unwrap_or(bytes.len());
+    s.split_at(n)
+}
+
+/// C-style unquote for a pattern that starts with `"` (see Git `unquote_c_style` in `quote.c`).
+fn unquote_c_style(quoted: &str) -> Result<(String, &str), ()> {
+    let b = quoted.as_bytes();
+    if b.is_empty() || b[0] != b'"' {
+        return Err(());
+    }
+    let mut q = &b[1..];
+    let mut out = Vec::new();
+    loop {
+        let len = q
+            .iter()
+            .position(|&c| c == b'"' || c == b'\\')
+            .unwrap_or(q.len());
+        out.extend_from_slice(&q[..len]);
+        q = &q[len..];
+        if q.is_empty() {
+            return Err(());
+        }
+        match q[0] {
+            b'"' => {
+                let rest = std::str::from_utf8(&q[1..]).map_err(|_| ())?;
+                return Ok((String::from_utf8(out).map_err(|_| ())?, rest));
+            }
+            b'\\' => {
+                q = &q[1..];
+                if q.is_empty() {
+                    return Err(());
+                }
+                let ch = q[0];
+                q = &q[1..];
+                match ch {
+                    b'a' => out.push(0x07),
+                    b'b' => out.push(0x08),
+                    b'f' => out.push(0x0c),
+                    b'n' => out.push(b'\n'),
+                    b'r' => out.push(b'\r'),
+                    b't' => out.push(b'\t'),
+                    b'v' => out.push(0x0b),
+                    b'\\' => out.push(b'\\'),
+                    b'"' => out.push(b'"'),
+                    b'0'..=b'3' => {
+                        let mut ac = u32::from(ch - b'0') << 6;
+                        if q.len() < 2 {
+                            return Err(());
+                        }
+                        let ch2 = q[0];
+                        let ch3 = q[1];
+                        if !(b'0'..=b'7').contains(&ch2) || !(b'0'..=b'7').contains(&ch3) {
+                            return Err(());
+                        }
+                        ac |= u32::from(ch2 - b'0') << 3;
+                        ac |= u32::from(ch3 - b'0');
+                        q = &q[2..];
+                        out.push(ac as u8);
+                    }
+                    _ => return Err(()),
+                }
+            }
+            _ => return Err(()),
+        }
+    }
+}
+
+/// One attribute assignment token (`parse_attr` in Git `attr.c`).
+fn parse_one_attr_token_git(s: &str) -> (&str, Option<&str>, &str) {
+    let bytes = s.as_bytes();
+    let token_end = bytes
+        .iter()
+        .position(|&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+        .unwrap_or(bytes.len());
+    let eq_pos = s.find('=');
+    let eq_in_token = eq_pos.filter(|&eq| eq < token_end);
+    let (name, val) = if let Some(eq) = eq_in_token {
+        (&s[..eq], Some(&s[eq + 1..token_end]))
+    } else {
+        (&s[..token_end], None)
+    };
+    let rest = skip_ascii_blank(&s[token_end..]);
+    (name, val, rest)
+}
+
+fn accumulate_attr_states(
+    mut states: &str,
+    attrs: &mut Vec<(String, AttrValue)>,
+    macros: &MacroTable,
+    in_macro_def: bool,
+) {
+    loop {
+        states = skip_ascii_blank(states);
+        if states.is_empty() {
+            break;
+        }
+        let (name, val, rest) = parse_one_attr_token_git(states);
+        states = rest;
+        let tok = match val {
+            Some(v) => format!("{name}={v}"),
+            None => name.to_string(),
+        };
+        push_attr_token(&tok, attrs, macros, in_macro_def);
+    }
+}
+
+const ATTR_MACRO_PREFIX: &str = "[attr]";
+
 fn parse_one_line(
-    line: &str,
+    raw_line: &str,
     line_no: usize,
     display_path: &str,
     from_blob: bool,
     out: &mut ParsedGitAttributes,
 ) {
-    let tokens = tokenize_attr_line(line);
-    if tokens.is_empty() {
+    let _ = display_path;
+    let _ = from_blob;
+    let cp = skip_ascii_blank(raw_line);
+    if cp.is_empty() || cp.starts_with('#') {
         return;
     }
-    let mut it = tokens.into_iter();
-    let first = it.next().unwrap_or_default();
-    if let Some(rest) = first.strip_prefix("[attr]") {
-        let macro_name = rest.to_string();
-        let mut attrs = Vec::new();
-        for t in it {
-            push_attr_token(&t, &mut attrs, &out.macros, true);
+
+    let (pattern_token, states) = if cp.as_bytes().first() == Some(&b'"') {
+        match unquote_c_style(cp) {
+            Ok((pat, rest)) => (pat, rest),
+            Err(()) => {
+                let (a, b) = split_at_first_blank(cp);
+                (a.to_string(), b)
+            }
         }
-        out.macros.defs.insert(macro_name, attrs);
+    } else {
+        let (a, b) = split_at_first_blank(cp);
+        (a.to_string(), b)
+    };
+
+    if pattern_token.len() > ATTR_MACRO_PREFIX.len() && pattern_token.starts_with(ATTR_MACRO_PREFIX)
+    {
+        let rest = skip_ascii_blank(&pattern_token[ATTR_MACRO_PREFIX.len()..]);
+        let (macro_name, leftover) = split_at_first_blank(rest);
+        if !leftover.is_empty() || macro_name.is_empty() {
+            return;
+        }
+        let mut attrs = Vec::new();
+        accumulate_attr_states(states, &mut attrs, &out.macros, true);
+        out.macros.defs.insert(macro_name.to_string(), attrs);
         return;
     }
-    let pattern = first;
-    if pattern.starts_with('!') && !pattern.starts_with("\\!") {
+
+    if pattern_token.starts_with('!') && !pattern_token.starts_with("\\!") {
         out.warnings
             .push("Negative patterns are ignored".to_string());
         return;
     }
-    let mut pattern = pattern.replace("\\!", "!");
-    if pattern.len() > 1 && pattern.starts_with(' ') && !pattern[1..].contains(' ') {
-        pattern = pattern.trim_start_matches(' ').to_string();
-    }
+    let pattern = pattern_token.replace("\\!", "!");
     let mut attrs = Vec::new();
-    for t in it {
-        push_attr_token(&t, &mut attrs, &out.macros, false);
-    }
+    accumulate_attr_states(states, &mut attrs, &out.macros, false);
     if attrs.is_empty() {
         return;
     }
-    let skip = false;
     out.rules.push(AttrRule {
         pattern,
-        skip,
+        skip: false,
         line: line_no,
         attrs,
     });
-    let _ = line_no;
-    let _ = display_path;
-    let _ = from_blob;
 }
 
 fn push_attr_token(
@@ -287,46 +410,6 @@ fn push_attr_token(
     attrs.push((tok.to_string(), AttrValue::Set));
 }
 
-/// Tokenize a line into space-separated tokens with double-quote support.
-fn tokenize_attr_line(line: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        if in_quotes {
-            if c == '\\' {
-                if let Some(n) = chars.next() {
-                    cur.push(n);
-                }
-                continue;
-            }
-            if c == '"' {
-                in_quotes = false;
-                continue;
-            }
-            cur.push(c);
-            continue;
-        }
-        if c.is_whitespace() {
-            if !cur.is_empty() {
-                out.push(cur.clone());
-                cur.clear();
-            }
-            continue;
-        }
-        if c == '"' {
-            in_quotes = true;
-            continue;
-        }
-        cur.push(c);
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
 /// Match a single gitattributes pattern against a repo-relative path.
 #[must_use]
 pub fn attr_pattern_matches(pattern: &str, rel_path: &str, icase: bool) -> bool {
@@ -347,8 +430,11 @@ pub fn attr_pattern_matches(pattern: &str, rel_path: &str, icase: bool) -> bool 
     }
 }
 
-/// Expand macros and `binary` for one rule's assignments into flat (name, value) pairs.
-fn expand_rule_attrs(rule: &AttrRule, macros: &MacroTable) -> HashMap<String, AttrValue> {
+/// Expand macros and `binary` for one rule's assignments into source-order operations.
+///
+/// These must be applied in order to the same map as later rules (not folded into a local map),
+/// so `!attr` / macro clears remove attributes set by earlier rules on the same path.
+fn expand_rule_attrs_flat(rule: &AttrRule, macros: &MacroTable) -> Vec<(String, AttrValue)> {
     let mut flat: Vec<(String, AttrValue)> = Vec::new();
     for (name, val) in &rule.attrs {
         if name == "binary" {
@@ -367,18 +453,7 @@ fn expand_rule_attrs(rule: &AttrRule, macros: &MacroTable) -> HashMap<String, At
             flat.push((name.clone(), val.clone()));
         }
     }
-    let mut map: HashMap<String, AttrValue> = HashMap::new();
-    for (n, v) in flat {
-        match v {
-            AttrValue::Clear => {
-                map.remove(&n);
-            }
-            _ => {
-                map.insert(n, v);
-            }
-        }
-    }
-    map
+    flat
 }
 
 /// Merge assignments: later rules override earlier; within one expanded rule, last wins.
@@ -396,8 +471,8 @@ pub fn collect_attrs_for_path(
         if !attr_pattern_matches(&rule.pattern, rel_path, icase) {
             continue;
         }
-        let expanded = expand_rule_attrs(rule, macros);
-        for (n, v) in expanded {
+        let ops = expand_rule_attrs_flat(rule, macros);
+        for (n, v) in ops {
             match v {
                 AttrValue::Clear => {
                     map.remove(&n);
@@ -777,6 +852,9 @@ pub fn load_gitattributes_from_index(
 }
 
 /// Return `builtin_objectmode` value for a path (working tree), or `None` if unavailable.
+///
+/// Submodule checkout directories (`.git` is a file containing `gitdir:`) report `160000`
+/// like Git, not `040000`.
 #[must_use]
 pub fn builtin_objectmode_worktree(repo: &Repository, rel_path: &str) -> Option<String> {
     let wt = repo.work_tree.as_ref()?;
@@ -787,6 +865,16 @@ pub fn builtin_objectmode_worktree(repo: &Repository, rel_path: &str) -> Option<
         return Some("120000".to_string());
     }
     if ft.is_dir() {
+        let git = p.join(".git");
+        if let Ok(git_meta) = fs::symlink_metadata(&git) {
+            if !git_meta.file_type().is_dir() {
+                if let Ok(content) = fs::read_to_string(&git) {
+                    if content.starts_with("gitdir:") {
+                        return Some("160000".to_string());
+                    }
+                }
+            }
+        }
         return Some("040000".to_string());
     }
     #[cfg(unix)]
@@ -824,4 +912,33 @@ pub fn builtin_objectmode_index(index: &Index, rel_path: &str) -> Option<String>
         return Some("100644".to_string());
     }
     Some(format!("{:06o}", m))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d_yes_rule_clears_test_after_d_star() {
+        let mut merged = ParsedGitAttributes::default();
+        let root = parse_gitattributes_file_content("[attr]notest !test\n", ".gitattributes");
+        merged.macros.defs.extend(root.macros.defs);
+        let ab = parse_gitattributes_file_content(
+            "h test=a/b/h\nd/* test=a/b/d/*\nd/yes notest\n",
+            "a/b/.gitattributes",
+        );
+        assert_eq!(ab.rules.len(), 3);
+        for mut r in ab.rules {
+            r.pattern = format!("a/b/{}", r.pattern);
+            merged.rules.push(r);
+        }
+        merged.macros.defs.extend(ab.macros.defs);
+        assert!(attr_pattern_matches("a/b/d/yes", "a/b/d/yes", false));
+        let m = collect_attrs_for_path(&merged.rules, &merged.macros, "a/b/d/yes", false);
+        assert!(
+            m.get("test").is_none(),
+            "expected test cleared by notest macro, got {:?}",
+            m.get("test")
+        );
+    }
 }
