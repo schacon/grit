@@ -136,12 +136,14 @@ pub fn write_multi_pack_index(pack_dir: &Path) -> Result<()> {
         (MIDX_CHUNKID_OBJECTOFFSETS, chunk_ooff),
     ];
 
-    let num_chunks: u8 = chunks.len().try_into().map_err(|_| {
-        Error::CorruptObject("too many MIDX chunks".to_owned())
-    })?;
+    let num_chunks: u8 = chunks
+        .len()
+        .try_into()
+        .map_err(|_| Error::CorruptObject("too many MIDX chunks".to_owned()))?;
 
     let mut body = Vec::new();
-    let mut cur_offset = MIDX_HEADER_SIZE as u64 + ((chunks.len() + 1) * CHUNK_TOC_ENTRY_SIZE) as u64;
+    let mut cur_offset =
+        MIDX_HEADER_SIZE as u64 + ((chunks.len() + 1) * CHUNK_TOC_ENTRY_SIZE) as u64;
 
     for (id, data) in &chunks {
         body.extend_from_slice(&id.to_be_bytes());

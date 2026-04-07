@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use std::process::Command;
 
+use crate::grit_exe;
 use grit_lib::config::canonical_key;
 use grit_lib::config::parse_path;
 use grit_lib::config::ConfigSet;
@@ -60,10 +61,9 @@ pub fn run(args: Args) -> Result<()> {
         std::process::exit(129);
     }
 
-    // git for-each-repo runs `git <command>` in each repo.
-    // Find our own binary path to use as the git executable.
-    let git_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("git"));
-    let cmd_name = git_exe.as_os_str();
+    // Git’s `for-each-repo` runs `git <command>` in each repo; grit runs itself.
+    let grit_bin = grit_exe::grit_executable();
+    let cmd_name = grit_bin.as_os_str();
     let cmd_args = &command[..];
 
     let mut result = 0;

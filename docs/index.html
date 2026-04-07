@@ -17,52 +17,86 @@ body {
 h1 { font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }
 .sub { color: #7d8590; font-size: 0.9rem; margin-bottom: 1.75rem; }
 .sub time.gen-time { color: inherit; }
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-}
-.overall-progress {
+.summary-hero {
   margin-bottom: 2rem;
 }
-.overall-progress-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0.75rem;
-  margin-bottom: 0.45rem;
-}
-.overall-progress-label {
-  font-size: 0.85rem;
-  color: #8b949e;
-}
-.overall-progress-pct {
-  font-size: 1rem;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-.overall-progress-pct.pct-red { color: #f85149; }
-.overall-progress-pct.pct-orange { color: #e3b341; }
-.overall-progress-pct.pct-blue { color: #79c0ff; }
-.overall-progress-pct.pct-green { color: #3fb950; }
-.overall-progress .bar-bg.overall-bar-bg { height: 14px; }
-.overall-progress .bar-fg { height: 100%; border-radius: 6px 0 0 6px; }
-.overall-progress .bar-fg.pct-red, .group-line2 .bar-fg.pct-red { background: linear-gradient(90deg, #8b2020, #da3633); }
-.overall-progress .bar-fg.pct-orange, .group-line2 .bar-fg.pct-orange { background: linear-gradient(90deg, #8b6914, #d29922); }
-.overall-progress .bar-fg.pct-blue, .group-line2 .bar-fg.pct-blue { background: linear-gradient(90deg, #1f4f8f, #58a6ff); }
-.overall-progress .bar-fg.pct-green, .group-line2 .bar-fg.pct-green { background: linear-gradient(90deg, #238636, #2ea043); }
-.card {
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  padding: 1rem;
+.summary-big {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem 1.5rem;
+  margin-bottom: 0.75rem;
   text-align: center;
 }
-.card .n { font-size: 1.65rem; font-weight: 700; color: #f0f6fc; }
-.card .lbl { font-size: 0.72rem; color: #7d8590; margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.04em; }
-.card.accent .n { color: #3fb950; }
-h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #f0f6fc; }
+.summary-big-val {
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: #f0f6fc;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.summary-big-val.pct-red { color: #f85149; }
+.summary-big-val.pct-orange { color: #e3b341; }
+.summary-big-val.pct-blue { color: #79c0ff; }
+.summary-big-val.pct-green { color: #3fb950; }
+.summary-big-lbl {
+  font-size: 0.72rem;
+  color: #7d8590;
+  margin-top: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.summary-bar-wrap {
+  margin-bottom: 0.85rem;
+}
+.summary-bar-bg {
+  height: 12px;
+  border-radius: 6px;
+  background: #21262d;
+  overflow: hidden;
+  border: 1px solid #30363d;
+}
+.summary-bar-fg {
+  height: 100%;
+  background: linear-gradient(90deg, #238636, #2ea043);
+  border-radius: 6px 0 0 6px;
+}
+.summary-meta {
+  font-size: 0.78rem;
+  color: #6e7681;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  justify-content: center;
+  align-items: baseline;
+}
+.summary-meta-sep {
+  color: #484f58;
+  user-select: none;
+}
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1rem;
+}
+.section-head h2 {
+  font-size: 1.1rem;
+  margin: 0;
+  color: #f0f6fc;
+  font-weight: 600;
+}
+.section-hint {
+  color: #7d8590;
+  font-size: 0.85rem;
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: min(100%, 12rem);
+}
+.group-line2 .bar-fg.pct-red { background: linear-gradient(90deg, #8b2020, #da3633); }
+.group-line2 .bar-fg.pct-orange { background: linear-gradient(90deg, #8b6914, #d29922); }
+.group-line2 .bar-fg.pct-blue { background: linear-gradient(90deg, #1f4f8f, #58a6ff); }
+.group-line2 .bar-fg.pct-green { background: linear-gradient(90deg, #238636, #2ea043); }
 .group-card {
   display: block;
   background: #161b22;
@@ -107,25 +141,39 @@ h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #f0f6fc; }
 </head>
 <body>
 <h1>Grit Project Progress</h1>
-<p class="sub">Generated <time datetime="2026-04-07T13:41:38+00:00" class="gen-time" title="2026-04-07 13:41 UTC">2026-04-07 13:41 UTC</time> · <a href="https://github.com/schacon/grit/commit/456be1040a36b1f31843f999014ef6f3166486b3" style="color:#58a6ff">456be10</a> · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
+<p class="sub">Generated <time datetime="2026-04-07T13:48:13+00:00" class="gen-time" title="2026-04-07 13:48 UTC">2026-04-07 13:48 UTC</time> · <a href="https://github.com/schacon/grit/commit/eec3143b15e2659ad4aaf78a231ccaaebe7807e2" style="color:#58a6ff">eec3143</a> · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
 
-<div class="cards">
-  <div class="card accent"><div class="n">28,600</div><div class="lbl">Tests passed</div></div>
-  <div class="card"><div class="n">43,879</div><div class="lbl">Tests (total)</div></div>
-  <div class="card"><div class="n">1,404</div><div class="lbl">Test files (in scope)</div></div>
-  <div class="card accent"><div class="n">495</div><div class="lbl">Files fully passing</div></div>
-  <div class="card"><div class="n">200</div><div class="lbl">Manually skipped files</div></div>
-</div>
-<div class="overall-progress" aria-label="Overall test pass rate">
-  <div class="overall-progress-head">
-    <span class="overall-progress-label">Tests passing (overall)</span>
-    <span class="overall-progress-pct pct-blue">65.2%</span>
+<section class="summary-hero" aria-label="Overall test progress">
+  <div class="summary-big">
+    <div class="summary-big-item">
+      <div class="summary-big-val pct-blue">65.2%</div>
+      <div class="summary-big-lbl">Passing</div>
+    </div>
+    <div class="summary-big-item">
+      <div class="summary-big-val">28,600</div>
+      <div class="summary-big-lbl">Tests passed</div>
+    </div>
+    <div class="summary-big-item">
+      <div class="summary-big-val">43,879</div>
+      <div class="summary-big-lbl">Total tests</div>
+    </div>
   </div>
-  <div class="bar-bg overall-bar-bg"><div class="bar-fg pct-blue" style="width:65.2%"></div></div>
-</div>
+  <div class="summary-bar-wrap" aria-hidden="true">
+    <div class="summary-bar-bg"><div class="summary-bar-fg" style="width:65.2%"></div></div>
+  </div>
+  <p class="summary-meta">
+    <span>1,404 test files (in scope)</span>
+    <span class="summary-meta-sep" aria-hidden="true">·</span>
+    <span>495 files fully passing</span>
+    <span class="summary-meta-sep" aria-hidden="true">·</span>
+    <span>200 skipped files</span>
+  </p>
+</section>
 
-<h2>Groups</h2>
-<p class="sub" style="margin-bottom:1rem">Click a group for per-file detail. Counts exclude manually skipped files.</p>
+<div class="section-head">
+  <h2>Git Testing Family Groups</h2>
+  <p class="section-hint">Click a group for per-file detail. Counts exclude manually skipped files.</p>
+</div>
 
     <a class="group-card" href="testfiles.html?group=t0">
       <div class="group-line1">

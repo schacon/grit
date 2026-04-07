@@ -81,7 +81,9 @@ fn cmd_repack(repo: &Repository, args: &RepackArgs) -> Result<()> {
     if args.no_progress {
         cmd.arg("-q");
     }
-    let status = cmd.status().context("failed to run grit repack for multi-pack-index")?;
+    let status = cmd
+        .status()
+        .context("failed to run grit repack for multi-pack-index")?;
     if !status.success() {
         bail!("repack failed with status {status}");
     }
