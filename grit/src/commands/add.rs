@@ -414,7 +414,11 @@ fn run_refresh(
                 }
             });
             if !found && !args.ignore_missing {
-                bail!("pathspec '{}' did not match any files", pathspec);
+                eprintln!(
+                    "fatal: pathspec '{}' did not match any file(s) known to git",
+                    pathspec
+                );
+                std::process::exit(128);
             }
         }
     }
@@ -611,7 +615,8 @@ fn update_tracked(
                         || p.starts_with(&format!("{spec}/"))
                 });
             if !matches_tracked {
-                bail!("error: pathspec '{spec}' did not match any file(s) known to git");
+                eprintln!("fatal: pathspec '{spec}' did not match any file(s) known to git");
+                std::process::exit(128);
             }
         }
     }
