@@ -69,7 +69,7 @@
 - [ ] t11180-tag-sign-verify.sh
 - [ ] t11260-cherry-pick-abort-continue.sh
 - [ ] t11280-show-ref-exclude.sh
-- [ ] t11290-update-ref-atomic-batch.sh
+- [x] t11290-update-ref-atomic-batch.sh
 - [ ] t11300-symbolic-ref-head-detach.sh
 - [ ] t11310-check-ignore-global.sh
 - [ ] t11380-log-graph-all.sh                                                                           - [ ] t11490-commit-fixup-squash.sh

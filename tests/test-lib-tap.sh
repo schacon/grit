@@ -228,6 +228,9 @@ test_must_fail_acceptable() {
 	git|__git*|grit|scalar|test-tool|test_terminal)
 		return 0
 		;;
+	*/git|*/grit|*/scalar)
+		return 0
+		;;
 	*)
 		return 1
 		;;

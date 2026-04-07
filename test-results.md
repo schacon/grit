@@ -2,7 +2,8 @@
 
 **Updated:** 2026-04-07
 
-- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 98/98 passing (2026-04-07).
+- `./scripts/run-tests.sh t11290-update-ref-atomic-batch.sh`: 33/33 passing (harness `test_must_fail` now allows absolute `git`/`grit`/`scalar` paths).
+- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 102/102 passing (2026-04-07).
 
 **Updated:** 2026-04-06
 
