@@ -6,7 +6,6 @@ use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
 use grit_lib::pack;
 use grit_lib::rev_list::{self, ObjectFilter};
-use grit_lib::tree_path_follow::{get_tree_entry_follow_symlinks, FollowPathFailure, FollowPathResult};
 use std::io::{self, BufRead, Read as _, Write};
 use std::path::{Path, PathBuf};
 
@@ -522,7 +521,10 @@ fn max_tree_depth_object_filter(repo: &Repository) -> Result<ObjectFilter> {
 }
 
 fn merged_cat_file_object_filter(repo: &Repository, user: ObjectFilter) -> Result<ObjectFilter> {
-    Ok(ObjectFilter::Combine(vec![max_tree_depth_object_filter(repo)?, user]))
+    Ok(ObjectFilter::Combine(vec![
+        max_tree_depth_object_filter(repo)?,
+        user,
+    ]))
 }
 
 fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
@@ -617,14 +619,6 @@ fn resolve_treeish_to_tree_oid(repo: &Repository, treeish: &str) -> Result<Objec
     }
 }
 
-#[derive(Clone, Copy)]
-struct BatchWriteOpts<'a> {
-    ignore_replace: bool,
-    follow_symlinks: bool,
-    batch_all_objects: bool,
-    objects_filter: Option<&'a ObjectFilter>,
-}
-
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -644,19 +638,15 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut app_buf: Vec<u8> = Vec::new();
 
-    let objects_filter: Option<ObjectFilter> =
-        if args.no_filter || args.filter.is_none() {
-            None
-        } else {
-            let spec = args
-                .filter
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
-            Some(
-                ObjectFilter::parse(spec)
-                    .map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?,
-            )
-        };
+    let objects_filter: Option<ObjectFilter> = if args.no_filter || args.filter.is_none() {
+        None
+    } else {
+        let spec = args
+            .filter
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
+        Some(ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?)
+    };
 
     let records: Vec<String> = if args.batch_all_objects {
         let mut oids: Vec<ObjectId> = if let Some(ref f) = objects_filter {
@@ -673,13 +663,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         oids.into_iter().map(|o| o.to_hex()).collect()
     } else {
         read_input_records(&stdin, nul_input)?
-    };
-
-    let write_opts = BatchWriteOpts {
-        ignore_replace: args.batch_all_objects,
-        follow_symlinks: args.follow_symlinks,
-        batch_all_objects: args.batch_all_objects,
-        objects_filter: objects_filter.as_ref(),
     };
 
     for line in &records {
@@ -710,7 +693,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -721,7 +703,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut stdout_lock,
                         )?;
                         stdout_lock.flush()?;
@@ -741,7 +722,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -752,7 +732,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut stdout_lock,
                         )?;
                         stdout_lock.flush()?;
@@ -787,7 +766,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 format,
                 nul_output,
                 packed_sizes.as_ref(),
-                write_opts,
                 &mut stdout_lock,
             )?;
             if !use_app_buffer {

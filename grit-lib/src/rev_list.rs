@@ -6,9 +6,9 @@
 //! output shaping (`--count`, `--parents`, `--format`).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
@@ -38,6 +38,15 @@ pub enum MissingAction {
     Allow,
 }
 
+/// Kind selector for `object:type=<kind>` filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterObjectKind {
+    Blob,
+    Tree,
+    Commit,
+    Tag,
+}
+
 /// Object filter specification for `--filter=`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectFilter {
@@ -47,6 +56,8 @@ pub enum ObjectFilter {
     BlobLimit(u64),
     /// `tree:<depth>` — omit trees deeper than `depth`.
     TreeDepth(u64),
+    /// `object:type=(blob|tree|commit|tag)` — keep only objects of that type.
+    ObjectType(FilterObjectKind),
     /// `combine:<filter>+<filter>+…` — apply multiple filters.
     Combine(Vec<ObjectFilter>),
 }
@@ -68,6 +79,17 @@ impl ObjectFilter {
                 .map_err(|_| format!("invalid tree depth: {rest}"))?;
             return Ok(ObjectFilter::TreeDepth(depth));
         }
+        if let Some(rest) = spec.strip_prefix("object:type=") {
+            let kind = match rest {
+                "blob" => FilterObjectKind::Blob,
+                "tree" => FilterObjectKind::Tree,
+                "commit" => FilterObjectKind::Commit,
+                "tag" => FilterObjectKind::Tag,
+                "" => return Err("invalid object type".to_owned()),
+                _ => return Err(format!("invalid object type: {rest}")),
+            };
+            return Ok(ObjectFilter::ObjectType(kind));
+        }
         if let Some(rest) = spec.strip_prefix("combine:") {
             let parts = split_combine(rest);
             let mut filters = Vec::new();
@@ -79,12 +101,34 @@ impl ObjectFilter {
         Err(format!("unsupported filter spec: {spec}"))
     }
 
+    /// Merge another `--filter` argument (Git joins multiple filters with AND).
+    #[must_use]
+    pub fn merge_with(self, other: Self) -> Self {
+        match (self, other) {
+            (ObjectFilter::Combine(mut a), ObjectFilter::Combine(mut b)) => {
+                a.append(&mut b);
+                ObjectFilter::Combine(a)
+            }
+            (ObjectFilter::Combine(mut a), b) => {
+                a.push(b);
+                ObjectFilter::Combine(a)
+            }
+            (a, ObjectFilter::Combine(mut b)) => {
+                let mut v = vec![a];
+                v.append(&mut b);
+                ObjectFilter::Combine(v)
+            }
+            (a, b) => ObjectFilter::Combine(vec![a, b]),
+        }
+    }
+
     /// Check if a blob should be included given its size.
     pub fn includes_blob(&self, size: u64) -> bool {
         match self {
             ObjectFilter::BlobNone => false,
             ObjectFilter::BlobLimit(limit) => size <= *limit,
             ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Blob,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_blob(size)),
         }
     }
@@ -95,9 +139,106 @@ impl ObjectFilter {
             ObjectFilter::BlobNone => true,
             ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
+            ObjectFilter::ObjectType(kind) => *kind == FilterObjectKind::Tree,
             ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tree(depth)),
         }
     }
+
+    /// Whether a commit or tag object should appear in a flat object scan (e.g. `cat-file --batch-all-objects`).
+    pub fn includes_commit_or_tag_object(&self, kind: ObjectKind) -> bool {
+        let expected = match kind {
+            ObjectKind::Commit => Some(FilterObjectKind::Commit),
+            ObjectKind::Tag => Some(FilterObjectKind::Tag),
+            _ => None,
+        };
+        match self {
+            ObjectFilter::BlobNone | ObjectFilter::BlobLimit(_) => true,
+            ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::ObjectType(t) => expected == Some(*t),
+            ObjectFilter::Combine(filters) => filters
+                .iter()
+                .all(|f| f.includes_commit_or_tag_object(kind)),
+        }
+    }
+
+    /// True if `kind` / `size` pass this filter when enumerating a single object (no tree path).
+    pub fn includes_loose_object(&self, kind: ObjectKind, size: u64) -> bool {
+        match kind {
+            ObjectKind::Blob => self.includes_blob(size),
+            ObjectKind::Tree => self.includes_tree(0),
+            ObjectKind::Commit | ObjectKind::Tag => self.includes_commit_or_tag_object(kind),
+        }
+    }
+}
+
+/// Every object id stored in the repository (loose and packed, including alternates), sorted for stable output.
+///
+/// When `filter` is set, only objects matching the filter are returned (same semantics as Git's
+/// `cat-file --batch-all-objects --filter`).
+pub fn object_ids_for_cat_file_filtered(
+    repo: &Repository,
+    filter: &ObjectFilter,
+) -> Result<Vec<ObjectId>> {
+    let mut oids = BTreeSet::new();
+    for objects_dir in cat_file_object_storage_dirs(repo)? {
+        collect_loose_object_ids_dir(&objects_dir, &mut oids)?;
+        collect_pack_object_ids_dir(&objects_dir, &mut oids)?;
+    }
+    Ok(oids
+        .into_iter()
+        .filter(|oid| {
+            let Ok(obj) = repo.odb.read(oid) else {
+                return false;
+            };
+            filter.includes_loose_object(obj.kind, obj.data.len() as u64)
+        })
+        .collect())
+}
+
+fn cat_file_object_storage_dirs(repo: &Repository) -> Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    let primary = repo.odb.objects_dir().to_path_buf();
+    dirs.push(primary.clone());
+    if let Ok(alts) = crate::pack::read_alternates_recursive(&primary) {
+        for alt in alts {
+            if !dirs.iter().any(|d| d == &alt) {
+                dirs.push(alt);
+            }
+        }
+    }
+    Ok(dirs)
+}
+
+fn collect_loose_object_ids_dir(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+    for prefix in 0..=255u8 {
+        let hex_prefix = format!("{prefix:02x}");
+        let dir = objects_dir.join(&hex_prefix);
+        if !dir.exists() {
+            continue;
+        }
+        let rd = fs::read_dir(&dir)?;
+        for entry in rd {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.len() == 38 {
+                let full_hex = format!("{hex_prefix}{name_str}");
+                if let Ok(oid) = ObjectId::from_hex(&full_hex) {
+                    oids.insert(oid);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_pack_object_ids_dir(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+    for idx in crate::pack::read_local_pack_indexes(objects_dir)? {
+        for e in idx.entries {
+            oids.insert(e.oid);
+        }
+    }
+    Ok(())
 }
 
 /// Parse a size with optional k/m/g suffix.
@@ -224,6 +365,8 @@ pub struct RevListOptions {
     pub sparse: bool,
     /// Object filter for `--filter=<spec>`.
     pub filter: Option<ObjectFilter>,
+    /// When set with `--filter`, explicitly given revision objects are filtered too.
+    pub filter_provided_objects: bool,
     /// Print omitted objects prefixed with `~`.
     pub filter_print_omitted: bool,
     /// Emit objects interleaved with their introducing commit.
@@ -265,6 +408,7 @@ impl Default for RevListOptions {
             full_history: false,
             sparse: false,
             filter: None,
+            filter_provided_objects: false,
             filter_print_omitted: false,
             in_commit_order: false,
             no_kept_objects: false,
@@ -512,6 +656,7 @@ pub fn rev_list(
 
     // Collect reachable objects if --objects
     let (objects, omitted_objects, missing_objects, per_commit_object_counts) = if options.objects {
+        let filter_provided = options.filter_provided_objects;
         let (mut objs, omit, miss, counts) = if options.in_commit_order {
             collect_reachable_objects_in_commit_order(
                 repo,
@@ -519,6 +664,7 @@ pub fn rev_list(
                 &ordered,
                 &object_roots,
                 options.filter.as_ref(),
+                filter_provided,
                 options.missing_action,
             )?
         } else {
@@ -528,6 +674,7 @@ pub fn rev_list(
                 &ordered,
                 &object_roots,
                 options.filter.as_ref(),
+                filter_provided,
                 options.missing_action,
             )?;
             (objs, omit, miss, Vec::new())
@@ -2226,6 +2373,7 @@ fn collect_reachable_objects(
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
+    filter_provided: bool,
     missing_action: MissingAction,
 ) -> Result<(Vec<(ObjectId, String)>, Vec<ObjectId>, Vec<ObjectId>)> {
     let mut seen = HashSet::new();
@@ -2249,12 +2397,14 @@ fn collect_reachable_objects(
             commit.tree,
             "",
             0,
+            false,
             &mut seen,
             &mut result,
             &mut omitted,
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided,
             missing_action,
         )?;
     }
@@ -2269,6 +2419,7 @@ fn collect_reachable_objects(
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided,
             missing_action,
         )?;
     }
@@ -2285,6 +2436,7 @@ fn collect_root_object(
     missing: &mut Vec<ObjectId>,
     missing_seen: &mut HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
+    filter_provided: bool,
     missing_action: MissingAction,
 ) -> Result<()> {
     let object = match repo.odb.read(&root.oid) {
@@ -2316,12 +2468,14 @@ fn collect_root_object(
                 commit.tree,
                 "",
                 0,
+                false,
                 seen,
                 result,
                 omitted,
                 missing,
                 missing_seen,
                 filter,
+                filter_provided,
                 missing_action,
             )?;
         }
@@ -2332,12 +2486,14 @@ fn collect_root_object(
                 root.oid,
                 "",
                 0,
+                true,
                 seen,
                 result,
                 omitted,
                 missing,
                 missing_seen,
                 filter,
+                filter_provided,
                 missing_action,
             )?;
         }
@@ -2345,7 +2501,16 @@ fn collect_root_object(
             if !seen.insert(root.oid) {
                 return Ok(());
             }
-            let blob_included = filter.is_none_or(|f| f.includes_blob(object.data.len() as u64));
+            let blob_included = match filter {
+                None => true,
+                Some(f) => {
+                    if !filter_provided {
+                        true
+                    } else {
+                        f.includes_blob(object.data.len() as u64)
+                    }
+                }
+            };
             if blob_included {
                 result.push((root.oid, String::new()));
             } else {
@@ -2375,6 +2540,7 @@ fn collect_root_object(
                 missing,
                 missing_seen,
                 filter,
+                filter_provided,
                 missing_action,
             )?;
         }
@@ -2389,12 +2555,14 @@ fn collect_tree_objects_filtered(
     tree_oid: ObjectId,
     prefix: &str,
     depth: u64,
+    explicit_root: bool,
     seen: &mut HashSet<ObjectId>,
     result: &mut Vec<(ObjectId, String)>,
     omitted: &mut Vec<ObjectId>,
     missing: &mut Vec<ObjectId>,
     missing_seen: &mut HashSet<ObjectId>,
     filter: Option<&ObjectFilter>,
+    filter_provided: bool,
     missing_action: MissingAction,
 ) -> Result<()> {
     if !seen.insert(tree_oid) {
@@ -2415,8 +2583,16 @@ fn collect_tree_objects_filtered(
             "object {tree_oid} is not a tree"
         )));
     }
-    // Check if this tree passes the filter
-    let tree_included = filter.is_none_or(|f| f.includes_tree(depth));
+    let tree_included = match filter {
+        None => true,
+        Some(f) => {
+            if explicit_root && !filter_provided {
+                true
+            } else {
+                f.includes_tree(depth)
+            }
+        }
+    };
     if tree_included {
         result.push((tree_oid, prefix.to_owned()));
     } else {
@@ -2462,12 +2638,14 @@ fn collect_tree_objects_filtered(
                 entry.oid,
                 &path,
                 depth + 1,
+                false,
                 seen,
                 result,
                 omitted,
                 missing,
                 missing_seen,
                 filter,
+                filter_provided,
                 missing_action,
             )?;
         } else {
@@ -2483,8 +2661,16 @@ fn collect_tree_objects_filtered(
             seen.insert(entry.oid);
 
             if child_obj.kind == ObjectKind::Blob {
-                let blob_included =
-                    filter.is_none_or(|f| f.includes_blob(child_obj.data.len() as u64));
+                let blob_included = match filter {
+                    None => true,
+                    Some(f) => {
+                        if explicit_root && !filter_provided {
+                            true
+                        } else {
+                            f.includes_blob(child_obj.data.len() as u64)
+                        }
+                    }
+                };
                 if blob_included {
                     result.push((entry.oid, path));
                 } else {
@@ -2510,6 +2696,7 @@ fn collect_reachable_objects_in_commit_order(
     commits: &[ObjectId],
     object_roots: &[RootObject],
     filter: Option<&ObjectFilter>,
+    filter_provided: bool,
     missing_action: MissingAction,
 ) -> Result<(
     Vec<(ObjectId, String)>,
@@ -2541,12 +2728,14 @@ fn collect_reachable_objects_in_commit_order(
             commit.tree,
             "",
             0,
+            false,
             &mut seen,
             &mut result,
             &mut omitted,
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided,
             missing_action,
         )?;
         counts.push(result.len() - before);
@@ -2562,6 +2751,7 @@ fn collect_reachable_objects_in_commit_order(
             &mut missing,
             &mut missing_seen,
             filter,
+            filter_provided,
             missing_action,
         )?;
     }

@@ -107,48 +107,52 @@ impl Repository {
     pub fn discover(start: Option<&Path>) -> Result<Self> {
         // GIT_DIR override
         if let Ok(dir) = env::var("GIT_DIR") {
-            let git_dir = PathBuf::from(&dir);
-            let work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
+            let cwd = env::current_dir()?;
+            let mut git_dir = PathBuf::from(&dir);
+            if git_dir.is_relative() {
+                git_dir = cwd.join(git_dir);
+            }
+            // `GIT_DIR` may name a gitfile (`.git` as a file); resolve like Git's `read_gitfile`.
+            git_dir = resolve_git_dir_env_path(&git_dir)?;
+            let work_tree = env::var("GIT_WORK_TREE").ok().map(|wt| {
+                let p = PathBuf::from(wt);
+                if p.is_absolute() {
+                    p
+                } else {
+                    cwd.join(p)
+                }
+            });
             if work_tree.is_some() {
                 let mut repo = Self::open(&git_dir, work_tree.as_deref())?;
                 repo.explicit_git_dir = true;
                 return Ok(repo);
             }
-            // When GIT_DIR is set without GIT_WORK_TREE, Git treats the
-            // current directory as the work tree for non-bare repositories.
-            let mut repo = Self::open(&git_dir, None)?;
-            if repo.work_tree.is_none() {
-                // Check core.bare config
-                let config_path = repo.git_dir.join("config");
-                let is_bare = if config_path.exists() {
-                    fs::read_to_string(&config_path)
-                        .ok()
-                        .and_then(|c| {
-                            c.lines()
-                                .find(|l| {
-                                    let trimmed = l.trim();
-                                    trimmed.starts_with("bare") && trimmed.contains("true")
-                                })
-                                .map(|_| true)
-                        })
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-                if !is_bare {
-                    let cwd = env::current_dir()?;
-                    repo.work_tree = Some(cwd.canonicalize().unwrap_or(cwd));
-                }
-            }
+            // `GIT_DIR` without `GIT_WORK_TREE`: honour `core.bare` / `core.worktree` like Git.
+            let (is_bare, core_wt) = read_core_bare_and_worktree(&git_dir)?;
+            let resolved_wt = if is_bare {
+                None
+            } else if let Some(raw) = core_wt {
+                Some(resolve_core_worktree_path(&git_dir, &raw)?)
+            } else {
+                Some(cwd.canonicalize().unwrap_or_else(|_| cwd.clone()))
+            };
+            let mut repo = Self::open(&git_dir, resolved_wt.as_deref())?;
             repo.explicit_git_dir = true;
             return Ok(repo);
         }
 
-        // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it
-        // after discovery.
-        let env_work_tree = env::var("GIT_WORK_TREE").ok().map(PathBuf::from);
-
         let cwd = env::current_dir()?;
+
+        // If GIT_WORK_TREE is set without GIT_DIR, we still need to honor it
+        // after discovery (path is relative to cwd, like Git).
+        let env_work_tree = env::var("GIT_WORK_TREE").ok().map(|wt| {
+            let p = PathBuf::from(wt);
+            if p.is_absolute() {
+                p
+            } else {
+                cwd.join(p)
+            }
+        });
         let start = start.unwrap_or(&cwd);
         let start = if start.is_absolute() {
             start.to_path_buf()
@@ -172,9 +176,15 @@ impl Repository {
             first = false;
 
             if let Some(mut repo) = try_open_at(current)? {
-                // Override work_tree with GIT_WORK_TREE env if set
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
+                } else {
+                    let (is_bare, core_wt) = read_core_bare_and_worktree(&repo.git_dir)?;
+                    if is_bare {
+                        repo.work_tree = None;
+                    } else if let Some(raw) = core_wt {
+                        repo.work_tree = Some(resolve_core_worktree_path(&repo.git_dir, &raw)?);
+                    }
                 }
                 repo.enforce_safe_directory()?;
                 return Ok(repo);
@@ -292,6 +302,170 @@ impl Repository {
             }
         }
         self.odb.read(oid)
+    }
+}
+
+/// If `GIT_TRACE_SETUP` is an absolute path, append `setup:` lines (Git test format).
+///
+/// Upstream tests grep `^setup: ` from the trace file; they do not use the timestamped
+/// `trace.c:` prefix that full Git tracing adds.
+pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
+    let Ok(path) = env::var("GIT_TRACE_SETUP") else {
+        return Ok(());
+    };
+    if path.is_empty() || path == "0" {
+        return Ok(());
+    }
+    let trace_path = Path::new(&path);
+    if !trace_path.is_absolute() {
+        return Ok(());
+    }
+
+    let actual_cwd = env::current_dir()?;
+    let actual_cwd = actual_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| actual_cwd.clone());
+
+    let (trace_cwd, prefix) = if let Some(ref wt) = repo.work_tree {
+        let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+        if actual_cwd.starts_with(&wt_canon) {
+            let rel = actual_cwd
+                .strip_prefix(&wt_canon)
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            let prefix = if rel.as_os_str().is_empty() {
+                "(null)".to_owned()
+            } else {
+                let mut s = rel.to_string_lossy().replace('\\', "/");
+                if !s.ends_with('/') {
+                    s.push('/');
+                }
+                s
+            };
+            (wt_canon, prefix)
+        } else {
+            (actual_cwd.clone(), "(null)".to_owned())
+        }
+    } else {
+        (actual_cwd.clone(), "(null)".to_owned())
+    };
+
+    let git_dir_display = display_git_dir_for_setup_trace(repo, &trace_cwd);
+    let common_display = display_common_dir_for_setup_trace(repo, &trace_cwd, &git_dir_display);
+    let worktree_display = repo
+        .work_tree
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "(null)".to_owned());
+
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(trace_path)?;
+    writeln!(f, "setup: git_dir: {git_dir_display}")?;
+    writeln!(f, "setup: git_common_dir: {common_display}")?;
+    writeln!(f, "setup: worktree: {worktree_display}")?;
+    writeln!(f, "setup: cwd: {}", trace_cwd.display())?;
+    writeln!(f, "setup: prefix: {prefix}")?;
+    Ok(())
+}
+
+/// Path from `base` to `target` using `..` segments when needed (matches Git setup traces).
+fn path_relative_to(target: &Path, base: &Path) -> Option<PathBuf> {
+    let t = target.canonicalize().ok()?;
+    let b = base.canonicalize().ok()?;
+    let tc: Vec<_> = t.components().collect();
+    let bc: Vec<_> = b.components().collect();
+    let mut i = 0usize;
+    while i < tc.len() && i < bc.len() && tc[i] == bc[i] {
+        i += 1;
+    }
+    let up = bc.len().saturating_sub(i);
+    let mut out = PathBuf::new();
+    for _ in 0..up {
+        out.push("..");
+    }
+    for comp in &tc[i..] {
+        out.push(comp.as_os_str());
+    }
+    Some(out)
+}
+
+fn rel_path_for_setup_trace(target: &Path, trace_cwd: &Path) -> String {
+    let t = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
+    let tc = trace_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| trace_cwd.to_path_buf());
+    if let Some(rel) = path_relative_to(&t, &tc) {
+        let s = rel.to_string_lossy().replace('\\', "/");
+        return if s.is_empty() || s == "." {
+            ".".to_owned()
+        } else {
+            s
+        };
+    }
+    t.display().to_string()
+}
+
+fn trace_cwd_strictly_inside_git_parent(trace_cwd: &Path, git_dir: &Path) -> bool {
+    let tc = trace_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| trace_cwd.to_path_buf());
+    let gd = git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| git_dir.to_path_buf());
+    let Some(parent) = gd.parent() else {
+        return false;
+    };
+    let parent = parent.to_path_buf();
+    if tc == parent {
+        return false;
+    }
+    tc.starts_with(&parent) && tc != parent
+}
+
+fn display_git_dir_for_setup_trace(repo: &Repository, trace_cwd: &Path) -> String {
+    let gd = repo
+        .git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| repo.git_dir.clone());
+    if let Some(wt) = &repo.work_tree {
+        let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+        let dot_git = wt.join(".git");
+        let dot_git = dot_git.canonicalize().unwrap_or(dot_git);
+        if gd == dot_git {
+            return ".git".to_owned();
+        }
+    }
+    if trace_cwd_strictly_inside_git_parent(trace_cwd, &gd) {
+        rel_path_for_setup_trace(&gd, trace_cwd)
+    } else {
+        gd.display().to_string()
+    }
+}
+
+fn display_common_dir_for_setup_trace(
+    repo: &Repository,
+    trace_cwd: &Path,
+    git_dir_display: &str,
+) -> String {
+    let gd = repo
+        .git_dir
+        .canonicalize()
+        .unwrap_or_else(|_| repo.git_dir.clone());
+    let Some(common) = resolve_common_dir(&gd) else {
+        return git_dir_display.to_owned();
+    };
+    let common = common.canonicalize().unwrap_or(common);
+    if common == gd {
+        return git_dir_display.to_owned();
+    }
+    if trace_cwd_strictly_inside_git_parent(trace_cwd, &common) {
+        rel_path_for_setup_trace(&common, trace_cwd)
+    } else {
+        common.display().to_string()
     }
 }
 
@@ -768,6 +942,65 @@ fn safe_directory_matches(config_value: &str, checked: &str) -> bool {
     }
 
     config_norm == checked_norm
+}
+
+fn read_core_bare_and_worktree(git_dir: &Path) -> Result<(bool, Option<String>)> {
+    let Some(config_path) = repository_config_path(git_dir) else {
+        return Ok((false, None));
+    };
+    let content = fs::read_to_string(&config_path).map_err(Error::Io)?;
+    let mut in_core = false;
+    let mut bare = false;
+    let mut worktree: Option<String> = None;
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') {
+            in_core = line.eq_ignore_ascii_case("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let key = k.trim();
+            let val = v.trim();
+            if key.eq_ignore_ascii_case("bare") {
+                bare = val.eq_ignore_ascii_case("true");
+            } else if key.eq_ignore_ascii_case("worktree") {
+                worktree = Some(val.to_owned());
+            }
+        }
+    }
+    Ok((bare, worktree))
+}
+
+fn resolve_core_worktree_path(git_dir: &Path, raw: &str) -> Result<PathBuf> {
+    let p = Path::new(raw);
+    if p.is_absolute() {
+        return Ok(p.canonicalize().unwrap_or_else(|_| p.to_path_buf()));
+    }
+    let old = env::current_dir().map_err(Error::Io)?;
+    env::set_current_dir(git_dir).map_err(Error::Io)?;
+    env::set_current_dir(raw).map_err(Error::Io)?;
+    let resolved = env::current_dir().map_err(Error::Io)?;
+    env::set_current_dir(&old).map_err(Error::Io)?;
+    Ok(resolved.canonicalize().unwrap_or(resolved))
+}
+
+/// When `GIT_DIR` names a gitfile, resolve to the real git directory.
+fn resolve_git_dir_env_path(git_dir: &Path) -> Result<PathBuf> {
+    if git_dir.is_file() {
+        let content =
+            fs::read_to_string(git_dir).map_err(|e| Error::NotARepository(e.to_string()))?;
+        let base = git_dir
+            .parent()
+            .ok_or_else(|| Error::NotARepository(git_dir.display().to_string()))?;
+        return parse_gitfile(&content, base);
+    }
+    Ok(git_dir.to_path_buf())
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

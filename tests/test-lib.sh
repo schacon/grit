@@ -825,6 +825,9 @@ test_lazy_prereq () {
 	fi
 }
 
+# Object ID tests that assume 40-hex SHA-1 (see t1512-rev-parse-disambiguation).
+test_lazy_prereq SHA1 'test "${test_hash_algo:-sha1}" = sha1'
+
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
 	{

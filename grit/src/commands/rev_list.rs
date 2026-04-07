@@ -8,8 +8,8 @@ use grit_lib::pack;
 use grit_lib::repo::Repository;
 use grit_lib::rev_list::{
     collect_revision_specs_with_stdin, is_symmetric_diff, merge_bases, render_commit,
-    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, MissingAction,
-    ObjectFilter, OrderingMode, OutputMode, RevListOptions,
+    render_commit_with_color, rev_list, split_symmetric_diff, tag_targets, FilterObjectKind,
+    MissingAction, ObjectFilter, OrderingMode, OutputMode, RevListOptions,
 };
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -17,6 +17,17 @@ use std::path::Path;
 
 /// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
+
+fn object_type_filter_commit_only(filter: Option<&ObjectFilter>) -> bool {
+    fn is_commit_only(f: &ObjectFilter) -> bool {
+        match f {
+            ObjectFilter::ObjectType(FilterObjectKind::Commit) => true,
+            ObjectFilter::Combine(parts) => parts.iter().all(is_commit_only),
+            _ => false,
+        }
+    }
+    filter.is_some_and(is_commit_only)
+}
 
 fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
     let depth = if let Some(raw) = config.get("core.maxtreedepth") {
@@ -317,6 +328,7 @@ pub fn run(args: Args) -> Result<()> {
                     options.ancestry_path_bottoms.push(oid);
                 }
                 "--filter-print-omitted" => options.filter_print_omitted = true,
+                "--filter-provided-objects" => options.filter_provided_objects = true,
                 "--no-commit-header" => no_commit_header = true,
                 "--commit-header" => no_commit_header = false,
                 "--color" => {
@@ -355,7 +367,10 @@ pub fn run(args: Args) -> Result<()> {
                 _ if arg.starts_with("--filter=") => {
                     let spec = arg.trim_start_matches("--filter=");
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
-                    options.filter = Some(filter);
+                    options.filter = Some(match options.filter.take() {
+                        Some(existing) => existing.merge_with(filter),
+                        None => filter,
+                    });
                 }
                 _ if arg.starts_with("--default") => {
                     // --default REV: use REV as default if no revisions given
@@ -547,6 +562,9 @@ pub fn run(args: Args) -> Result<()> {
 
     let graft_parents = load_graft_parents(&repo.git_dir);
     let included_commits: HashSet<ObjectId> = result.commits.iter().copied().collect();
+    let object_type_commit_oid_only = options.objects
+        && matches!(&options.output_mode, OutputMode::OidOnly)
+        && object_type_filter_commit_only(options.filter.as_ref());
     {
         let mut obj_offset = 0usize;
         for (ci, oid) in result.commits.iter().enumerate() {
@@ -567,62 +585,71 @@ pub fn run(args: Args) -> Result<()> {
                     prefix = "+".to_owned();
                 }
             }
-            match &options.output_mode {
-                OutputMode::Format(fmt) => {
-                    let is_oneline = fmt == "oneline";
-                    let is_named_format = matches!(
-                        fmt.as_str(),
-                        "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
-                    );
-                    if !no_commit_header && !is_oneline {
-                        let mut header = format!("commit {prefix}{oid}");
-                        if show_parents {
-                            let parents = visible_parents_for_output(
-                                &repo,
-                                *oid,
-                                &included_commits,
-                                &graft_parents,
-                            )?;
-                            for parent in parents {
-                                header.push(' ');
-                                header.push_str(&parent.to_hex());
+            if object_type_commit_oid_only && matches!(&options.output_mode, OutputMode::OidOnly) {
+                println!("{oid}");
+            } else {
+                match &options.output_mode {
+                    OutputMode::Format(fmt) => {
+                        let is_oneline = fmt == "oneline";
+                        let is_named_format = matches!(
+                            fmt.as_str(),
+                            "oneline" | "short" | "medium" | "full" | "fuller" | "email" | "raw"
+                        );
+                        if !no_commit_header && !is_oneline {
+                            let mut header = format!("commit {prefix}{oid}");
+                            if show_parents {
+                                let parents = visible_parents_for_output(
+                                    &repo,
+                                    *oid,
+                                    &included_commits,
+                                    &graft_parents,
+                                )?;
+                                for parent in parents {
+                                    header.push(' ');
+                                    header.push_str(&parent.to_hex());
+                                }
                             }
+                            println!("{header}");
                         }
-                        println!("{header}");
-                    }
-                    let rendered = render_commit_with_color(
-                        &repo,
-                        *oid,
-                        &options.output_mode,
-                        abbrev_len,
-                        use_color,
-                    )?;
-                    if is_named_format {
-                        print!("{rendered}");
-                        if !rendered.ends_with('\n') {
-                            println!();
+                        let rendered = render_commit_with_color(
+                            &repo,
+                            *oid,
+                            &options.output_mode,
+                            abbrev_len,
+                            use_color,
+                        )?;
+                        if is_named_format {
+                            print!("{rendered}");
+                            if !rendered.ends_with('\n') {
+                                println!();
+                            }
+                        } else {
+                            println!("{rendered}");
                         }
-                    } else {
-                        println!("{rendered}");
                     }
-                }
-                OutputMode::Parents => {
-                    let parents =
-                        visible_parents_for_output(&repo, *oid, &included_commits, &graft_parents)?;
-                    if parents.is_empty() {
-                        println!("{prefix}{oid}");
-                    } else {
-                        let rendered_parents = parents
-                            .iter()
-                            .map(ObjectId::to_hex)
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        println!("{prefix}{oid} {rendered_parents}");
+                    OutputMode::Parents => {
+                        let parents = visible_parents_for_output(
+                            &repo,
+                            *oid,
+                            &included_commits,
+                            &graft_parents,
+                        )?;
+                        if parents.is_empty() {
+                            println!("{prefix}{oid}");
+                        } else {
+                            let rendered_parents = parents
+                                .iter()
+                                .map(ObjectId::to_hex)
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            println!("{prefix}{oid} {rendered_parents}");
+                        }
                     }
-                }
-                _ => {
-                    let rendered = render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
-                    println!("{prefix}{rendered}");
+                    _ => {
+                        let rendered =
+                            render_commit(&repo, *oid, &options.output_mode, abbrev_len)?;
+                        println!("{prefix}{rendered}");
+                    }
                 }
             }
 
