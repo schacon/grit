@@ -1690,13 +1690,28 @@ fn checkout_paths(
                         );
                     }
                 } else {
-                    let (blob_oid, mode) =
-                        find_in_tree(repo, tree_oid, &rel)?.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "error: pathspec '{}' did not match any file(s) known to git",
-                                path_str
-                            )
-                        })?;
+                    let found_in_tree = find_in_tree(repo, tree_oid, &rel)?;
+                    if found_in_tree.is_none() && no_overlay {
+                        // With --no-overlay: delete the file (it's not in the target tree)
+                        let abs_path = work_tree.join(&rel);
+                        if abs_path.exists() || abs_path.is_symlink() {
+                            let _ = std::fs::remove_file(&abs_path);
+                            remove_empty_parent_dirs(work_tree, &abs_path);
+                        }
+                        // Remove from index
+                        if let Ok(mut idx) = Index::load(&repo.index_path()) {
+                            idx.entries
+                                .retain(|e| String::from_utf8_lossy(&e.path) != rel.as_str());
+                            let _ = idx.write(&repo.index_path());
+                        }
+                        continue;
+                    }
+                    let (blob_oid, mode) = found_in_tree.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "error: pathspec '{}' did not match any file(s) known to git",
+                            path_str
+                        )
+                    })?;
 
                     // Write to working tree with CRLF conversion
                     write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode)?;
