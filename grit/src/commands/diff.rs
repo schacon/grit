@@ -189,6 +189,10 @@ pub struct Args {
     #[arg(long = "binary")]
     pub binary: bool,
 
+    /// Reverse the diff (swap old and new).
+    #[arg(short = 'R')]
+    pub reverse: bool,
+
     /// Show a condensed summary of extended header info (renames, mode changes).
     #[arg(long = "summary")]
     pub summary: bool,
