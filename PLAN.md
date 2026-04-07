@@ -201,7 +201,7 @@ commit → check it off → move on.
 - [x] `t2201-add-update-typechange` ████████████████████ 6/6 (0 left) — more git add -u
 - [x] `t2200-add-update` ████████████████████ 19/19 (0 left) — git add -u
 
-- [ ] `t2500-untracked-overwriting` ████████░░░░░░░░░░░░ 4/10 (6 left) — Test handling of overwriting untracked files
+- [x] `t2500-untracked-overwriting` ████████████████████ 10/10 (0 left) — Test handling of overwriting untracked files
 - [x] `t2108-update-index-refresh-racy` ████████████████████ 6/6 (0 left) — update-index refresh tests related to racy timestamps
 - [ ] `t2017-checkout-orphan` █████████░░░░░░░░░░░ 6/13 (7 left) — git checkout --orphan
 

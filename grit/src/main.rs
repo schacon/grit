@@ -3142,7 +3142,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 commands::git_passthrough::run(subcmd, rest)
             }
         }
-        "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
+        "am" => {
+            if discovered_repo_is_reftable() {
+                commands::am::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
         "archive" => commands::git_passthrough::run(subcmd, rest),
@@ -3385,10 +3391,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             }
         }
         "rebase" => {
-            if rest.iter().any(|arg| arg == "-i" || arg == "--interactive") {
-                commands::git_passthrough::run("rebase", rest)
-            } else {
+            if discovered_repo_is_reftable() {
                 commands::rebase::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run("rebase", rest)
             }
         }
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
@@ -3401,8 +3407,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "repo" => commands::repo::run(parse_cmd_args(subcmd, rest)),
         "rerere" => commands::rerere::run(parse_cmd_args(subcmd, rest)),
         "reset" => {
-            let hard_mode = rest.iter().any(|arg| arg == "--hard");
-            if hard_mode {
+            let passthrough_mode = rest
+                .iter()
+                .any(|arg| arg == "--hard" || arg == "--merge" || arg == "--keep");
+            if passthrough_mode {
                 commands::git_passthrough::run(subcmd, rest)
             } else {
                 commands::reset::pre_validate_args(rest)?;
