@@ -464,12 +464,19 @@ fn diff_tree_vs_index(
         let new = index_map.get(&path).copied();
         match (old, new) {
             (Some(old), Some(new)) if old == new => {}
-            (Some(old), Some(new)) => changes.push(RawChange {
-                path,
-                status: 'M',
-                old: Some(old),
-                new: Some(new),
-            }),
+            (Some(old), Some(new)) => {
+                let status = if mode_type_tag(old.mode) != mode_type_tag(new.mode) {
+                    'T'
+                } else {
+                    'M'
+                };
+                changes.push(RawChange {
+                    path,
+                    status,
+                    old: Some(old),
+                    new: Some(new),
+                })
+            }
             (Some(old), None) => changes.push(RawChange {
                 path,
                 status: 'D',
@@ -507,68 +514,102 @@ fn diff_tree_vs_worktree(
         .map(|e| (e.path.as_slice(), e))
         .collect();
 
-    let mut merged = BTreeMap::new();
-    for change in diff_tree_vs_index(tree_map, index_map) {
-        merged.insert(change.path.clone(), change);
-    }
+    let mut merged: BTreeMap<String, RawChange> = BTreeMap::new();
+    let mut all_paths = BTreeSet::new();
+    all_paths.extend(tree_map.keys().cloned());
+    all_paths.extend(index_map.keys().cloned());
 
-    for (path, index_snapshot) in index_map {
-        let abs = work_tree.join(path);
+    for path in all_paths {
+        let abs = work_tree.join(&path);
+        let tree_old = tree_map.get(&path).copied();
 
-        // Fast path: use stat cache to skip unchanged files
-        let meta = match fs::symlink_metadata(&abs) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                if match_missing {
+        let worktree_snapshot = if path_has_symlink_parent(work_tree, &path) {
+            None
+        } else {
+            let meta = match fs::symlink_metadata(&abs) {
+                Ok(m) => m,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    if match_missing {
+                        continue;
+                    }
+                    // Missing in worktree.
+                    if let Some(old) = tree_old {
+                        merged.insert(
+                            path.clone(),
+                            RawChange {
+                                path: path.clone(),
+                                status: 'D',
+                                old: Some(old),
+                                new: None,
+                            },
+                        );
+                    } else {
+                        merged.remove(&path);
+                    }
                     continue;
                 }
-                let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                merged.insert(
-                    path.clone(),
-                    RawChange {
-                        path: path.clone(),
-                        status: 'D',
-                        old,
-                        new: None,
-                    },
-                );
-                continue;
-            }
-            Err(e) => return Err(e.into()),
-        };
+                Err(e) => return Err(e.into()),
+            };
 
-        // Check stat cache — if stat matches index entry, file is unchanged
-        if let Some(ie) = index_entries.get(path.as_bytes()) {
-            if stat_matches(ie, &meta) {
-                continue; // Fast path: stat data matches, skip hashing
-            }
-        }
-
-        // Stat differs — must read and hash the file
-        match read_worktree_snapshot_from_meta(repo, &abs, &meta)? {
-            Some(worktree_snapshot) => {
-                if worktree_snapshot != *index_snapshot {
-                    let old = tree_map.get(path).copied().or(Some(*index_snapshot));
-                    // Use zero OID for worktree side — the blob is not
-                    // in the object database, matching git's behaviour.
-                    let wt_placeholder = Snapshot {
-                        mode: worktree_snapshot.mode,
-                        oid: zero_oid(),
-                    };
-                    merged.insert(
-                        path.clone(),
-                        RawChange {
-                            path: path.clone(),
-                            status: 'M',
-                            old,
-                            new: Some(wt_placeholder),
-                        },
-                    );
+            // Fast path: if stat matches index and tree/index agree, we can
+            // skip hashing and treat path as unchanged.
+            if let (Some(old), Some(ie)) = (tree_old, index_entries.get(path.as_bytes())) {
+                if old.oid == ie.oid && old.mode == canonicalize_mode(ie.mode) && stat_matches(ie, &meta) {
+                    merged.remove(&path);
+                    continue;
                 }
             }
-            None => {
-                // Not a regular file or symlink — treat as missing
+
+            read_worktree_snapshot_from_meta(repo, &abs, &meta)?
+        };
+
+        let desired = match (tree_old, worktree_snapshot) {
+            (Some(old), Some(wt)) if old == wt => None,
+            (Some(old), Some(wt)) => {
+                let wt_placeholder = Snapshot {
+                    mode: wt.mode,
+                    oid: zero_oid(),
+                };
+                let status = if mode_type_tag(old.mode) != mode_type_tag(wt_placeholder.mode) {
+                    'T'
+                } else {
+                    'M'
+                };
+                Some(RawChange {
+                    path: path.clone(),
+                    status,
+                    old: Some(old),
+                    new: Some(wt_placeholder),
+                })
             }
+            (Some(old), None) => {
+                if match_missing {
+                    None
+                } else {
+                    Some(RawChange {
+                        path: path.clone(),
+                        status: 'D',
+                        old: Some(old),
+                        new: None,
+                    })
+                }
+            }
+            (None, Some(wt)) => Some(RawChange {
+                path: path.clone(),
+                status: 'A',
+                old: None,
+                new: Some(Snapshot {
+                    mode: wt.mode,
+                    oid: zero_oid(),
+                }),
+            }),
+            (None, None) => None,
+        };
+
+        if let Some(change) = desired {
+            merged.insert(path.clone(), change);
+        } else {
+            merged.remove(&path);
         }
     }
 
@@ -596,6 +637,13 @@ fn read_worktree_snapshot_from_meta(
         return Ok(Some(Snapshot { mode, oid }));
     }
 
+    if metadata.file_type().is_dir() && abs_path.join(".git").exists() {
+        return Ok(Some(Snapshot {
+            mode: MODE_GITLINK,
+            oid: zero_oid(),
+        }));
+    }
+
     Ok(None)
 }
 
@@ -612,6 +660,31 @@ fn canonicalize_mode(raw_mode: u32) -> u32 {
         }
         _ => MODE_REGULAR,
     }
+}
+
+fn mode_type_tag(mode: u32) -> u32 {
+    if matches!(mode, MODE_REGULAR | MODE_EXECUTABLE) {
+        0o100000
+    } else {
+        mode & 0o170000
+    }
+}
+
+fn path_has_symlink_parent(work_tree: &Path, rel_path: &str) -> bool {
+    let rel = Path::new(rel_path);
+    let components: Vec<_> = rel.components().collect();
+    if components.is_empty() {
+        return false;
+    }
+    let mut cur = work_tree.to_path_buf();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        cur.push(component.as_os_str());
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn matches_pathspec(path: &str, pathspecs: &[String]) -> bool {

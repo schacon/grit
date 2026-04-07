@@ -285,16 +285,21 @@ fn collect_changes(
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info_fast(repo, &abs, idx_entry)? {
+            match read_worktree_info_fast(repo, work_tree, path, &abs, idx_entry)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
                     if wt_oid != *idx_oid || wt_mode != idx_canonical {
+                        let status = if mode_type_tag(idx_canonical) != mode_type_tag(wt_mode) {
+                            'T'
+                        } else {
+                            'M'
+                        };
                         changes.insert(
                             path.clone(),
                             Change {
                                 path: path.clone(),
-                                status: 'M',
+                                status,
                                 old_mode: idx_canonical,
                                 new_mode: wt_mode,
                                 old_oid: *idx_oid,
@@ -341,14 +346,20 @@ fn collect_changes(
         // Stage-specific mode: compare requested stage entries against worktree.
         for (path, (idx_mode, idx_oid)) in &staged {
             let abs = work_tree.join(path);
-            match read_worktree_info(repo, &abs)? {
+            match read_worktree_info(repo, work_tree, path, &abs)? {
                 Some((wt_mode, _wt_oid)) => {
+                    let idx_canonical = canonicalize_mode(*idx_mode);
+                    let status = if mode_type_tag(idx_canonical) != mode_type_tag(wt_mode) {
+                        'T'
+                    } else {
+                        'M'
+                    };
                     changes.insert(
                         path.clone(),
                         Change {
                             path: path.clone(),
-                            status: 'M',
-                            old_mode: canonicalize_mode(*idx_mode),
+                            status,
+                            old_mode: idx_canonical,
                             new_mode: wt_mode,
                             old_oid: *idx_oid,
                         },
@@ -390,9 +401,15 @@ enum WorktreeStatus {
 /// info doesn't match.
 fn read_worktree_info_fast(
     repo: &Repository,
+    work_tree: &Path,
+    rel_path: &str,
     abs_path: &Path,
     index_entry: &IndexEntry,
 ) -> Result<WorktreeStatus> {
+    if path_has_symlink_parent(work_tree, rel_path) {
+        return Ok(WorktreeStatus::Missing);
+    }
+
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(WorktreeStatus::Missing),
@@ -446,6 +463,10 @@ fn read_worktree_info_fast(
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
 
+    if meta.file_type().is_dir() && abs_path.join(".git").exists() {
+        return Ok(WorktreeStatus::Modified(MODE_GITLINK, zero_oid()));
+    }
+
     Ok(WorktreeStatus::Missing)
 }
 
@@ -453,7 +474,16 @@ fn read_worktree_info_fast(
 ///
 /// The OID is computed by hashing the file content so we can detect
 /// modifications.  The mode is canonicalized to one of the four Git modes.
-fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32, ObjectId)>> {
+fn read_worktree_info(
+    repo: &Repository,
+    work_tree: &Path,
+    rel_path: &str,
+    abs_path: &Path,
+) -> Result<Option<(u32, ObjectId)>> {
+    if path_has_symlink_parent(work_tree, rel_path) {
+        return Ok(None);
+    }
+
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -493,6 +523,10 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         let data = crlf::convert_to_git(&raw, &rel_path, &conv_for_hash, &file_attrs).unwrap_or(raw);
         let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
         return Ok(Some((mode, oid)));
+    }
+
+    if meta.file_type().is_dir() && abs_path.join(".git").exists() {
+        return Ok(Some((MODE_GITLINK, zero_oid())));
     }
 
     Ok(None)
@@ -670,6 +704,31 @@ fn canonicalize_mode(raw_mode: u32) -> u32 {
         }
         _ => MODE_REGULAR,
     }
+}
+
+fn mode_type_tag(mode: u32) -> u32 {
+    if matches!(mode, MODE_REGULAR | MODE_EXECUTABLE) {
+        0o100000
+    } else {
+        mode & 0o170000
+    }
+}
+
+fn path_has_symlink_parent(work_tree: &Path, rel_path: &str) -> bool {
+    let rel = Path::new(rel_path);
+    let components: Vec<_> = rel.components().collect();
+    if components.is_empty() {
+        return false;
+    }
+    let mut cur = work_tree.to_path_buf();
+    for component in components.iter().take(components.len().saturating_sub(1)) {
+        cur.push(component.as_os_str());
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Return true if `path` matches any of the given pathspecs.

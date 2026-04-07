@@ -35,6 +35,11 @@ pub struct Args {
     #[arg(short = 'A', long = "all", alias = "no-ignore-removal")]
     pub all: bool,
 
+    /// Add, modify and remove index entries to match the working tree
+    /// (historical synonym for -u/--update).
+    #[arg(long = "no-all")]
+    pub no_all: bool,
+
     /// Record only the intent to add a path (placeholder entry).
     #[arg(short = 'N', long = "intent-to-add")]
     pub intent_to_add: bool,
@@ -94,6 +99,10 @@ pub struct Args {
 
 /// Run the `add` command.
 pub fn run(mut args: Args) -> Result<()> {
+    if args.no_all {
+        args.update = true;
+    }
+
     // --pathspec-from-file: read pathspecs from a file and append to pathspec list
     if let Some(ref file) = args.pathspec_from_file {
         let content = fs::read_to_string(file)
@@ -611,9 +620,10 @@ fn update_tracked(
     args: &Args,
     add_cfg: &AddConfig,
 ) -> Result<()> {
-    let tracked: Vec<(Vec<u8>, String)> = index
+    let mut stage0_paths: Vec<(Vec<u8>, String)> = index
         .entries
         .iter()
+        .filter(|ie| ie.stage() == 0)
         .filter(|ie| {
             let path_str = String::from_utf8_lossy(&ie.path);
             prefix.map(|p| path_str.starts_with(p)).unwrap_or(true)
@@ -623,22 +633,68 @@ fn update_tracked(
             (ie.path.clone(), path_str)
         })
         .collect();
+    stage0_paths.sort_by(|a, b| a.1.cmp(&b.1));
 
-    for (raw_path, path_str) in &tracked {
-        let abs_path = work_tree.join(path_str);
+    let tracked: Vec<(Vec<u8>, String)> = if args.pathspec.is_empty() {
+        // With no pathspec, `add -u` should also resolve unmerged paths by
+        // removing missing entries regardless of stage.
+        let mut all_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for ie in &index.entries {
+            let path_str = String::from_utf8_lossy(&ie.path).to_string();
+            if prefix.map(|p| path_str.starts_with(p)).unwrap_or(true) {
+                all_paths.insert(path_str);
+            }
+        }
+        all_paths
+            .into_iter()
+            .map(|p| (p.as_bytes().to_vec(), p))
+            .collect()
+    } else {
+        let resolved_specs: Vec<String> = args
+            .pathspec
+            .iter()
+            .map(|ps| resolve_pathspec(ps, work_tree, prefix))
+            .collect();
+
+        // Validate pathspecs first to keep operation atomic on failure.
+        for (orig, spec) in args.pathspec.iter().zip(resolved_specs.iter()) {
+            let matched = stage0_paths
+                .iter()
+                .any(|(_, p)| pathspec_matches_path(spec, p));
+            if !matched {
+                bail!("error: pathspec '{}' did not match any file(s) known to git", orig);
+            }
+        }
+
+        stage0_paths
+            .into_iter()
+            .filter(|(_, p)| resolved_specs.iter().any(|spec| pathspec_matches_path(spec, p)))
+            .collect()
+    };
+
+    for (raw_path, path_str) in tracked {
+        let abs_path = work_tree.join(&path_str);
         if abs_path.exists() {
-            stage_file(odb, index, work_tree, path_str, &abs_path, args, add_cfg)?;
+            stage_file(odb, index, work_tree, &path_str, &abs_path, args, add_cfg)?;
         } else {
             if args.verbose {
                 eprintln!("remove '{path_str}'");
             }
             if !args.dry_run {
-                index.remove(raw_path);
+                index.remove(&raw_path);
             }
         }
     }
 
     Ok(())
+}
+
+fn pathspec_matches_path(pathspec: &str, path: &str) -> bool {
+    if has_glob_chars(pathspec) {
+        glob_matches(pathspec, path)
+    } else {
+        path == pathspec || path.starts_with(&format!("{pathspec}/"))
+    }
 }
 
 /// Add a single pathspec (which may be a file or directory).

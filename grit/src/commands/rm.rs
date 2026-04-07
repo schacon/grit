@@ -162,6 +162,7 @@ pub fn run(mut args: Args) -> Result<()> {
         }
 
         // Collect matching index entries (by prefix for directories).
+        let is_glob = has_glob_chars(&rel);
         let matches: Vec<String> = index
             .entries
             .iter()
@@ -170,6 +171,8 @@ pub fn run(mut args: Args) -> Result<()> {
                 if rel.is_empty() {
                     // Empty rel means match everything (pathspec ".")
                     true
+                } else if is_glob {
+                    glob_match_pathspec(&rel, &p)
                 } else {
                     p == rel || p.starts_with(&format!("{rel}/"))
                 }
@@ -547,4 +550,42 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<std::path:
         }
     }
     None
+}
+
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
+fn glob_match_pathspec(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let mut pi = 0usize;
+    let mut ti = 0usize;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0usize;
+
+    while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == b'?' && txt[ti] != b'/' {
+            pi += 1;
+            ti += 1;
+        } else if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pat.len() && pat[pi] == txt[ti] {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            star_ti += 1;
+            ti = star_ti;
+            pi = star_pi + 1;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
