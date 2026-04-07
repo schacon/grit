@@ -2529,6 +2529,23 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 base.as_str()
             };
             let has_trailing = path.ends_with('/');
+            // If path is empty, result is ./
+            if path.is_empty() {
+                println!("./");
+                return Ok(());
+            }
+            // If path and base are on different roots (one abs, one rel), return path unchanged
+            let path_is_abs = path.starts_with('/');
+            let base_is_abs = base.starts_with('/');
+            if !base.is_empty() && (path_is_abs != base_is_abs) {
+                // Different root types — just return path as-is
+                let mut result = path.to_string();
+                if has_trailing && !result.ends_with('/') {
+                    result.push('/');
+                }
+                println!("{result}");
+                return Ok(());
+            }
             let norm_path = normalize_path_simple(path);
             let norm_base = normalize_path_simple(base.trim_end_matches('/'));
             let rel = make_relative_for_path_utils(
