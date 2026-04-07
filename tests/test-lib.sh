@@ -818,6 +818,9 @@ test_lazy_prereq () {
 	fi
 }
 
+# Matches git/t/test-lib.sh: subtests tagged EXPENSIVE run when GIT_TEST_LONG is set.
+test_lazy_prereq EXPENSIVE 'test -n "$GIT_TEST_LONG"'
+
 # write_script FILE [INTERPRETER] — write a script from stdin
 write_script () {
 	{
