@@ -762,6 +762,7 @@ commit → check it off → move on.
 - [ ] `t6007-rev-list-cherry-pick-file` ░░░░░░░░░░░░░░░░░░░░ 1/23 (22 left) — test git rev-list --cherry-pick -- file
 - [ ] `t6050-replace` ██████░░░░░░░░░░░░░░ 12/37 (25 left) — Tests replace refs functionality
 - [ ] `t6200-fmt-merge-msg` █████░░░░░░░░░░░░░░░ 11/37 (26 left) — fmt-merge-msg test
+- [x] `t6200-fmt-merge-msg-extra` — 23/23 tests pass (branches/tags/URLs, --into-name, -m, --log, mixed refs, FETCH_HEAD edge cases)
 - [ ] `t6430-merge-recursive` █████░░░░░░░░░░░░░░░ 10/36 (26 left) — merge-recursive backend test
 - [ ] `t6416-recursive-corner-cases` ██████░░░░░░░░░░░░░░ 12/40 (28 left) — recursive merge corner cases involving criss-cross merges
 - [ ] `t6017-rev-list-stdin` ████░░░░░░░░░░░░░░░░ 9/37 (28 left) — log family learns --stdin
