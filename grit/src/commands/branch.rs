@@ -1030,7 +1030,8 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         new_name = &new_name_owned;
     } else {
         // No args at all: dump usage
-        bail!("usage: git branch (-m | -M) [<old-branch>] <new-branch>");
+        eprintln!("error: branch name required");
+        std::process::exit(128);
     };
 
     // Renaming a branch to itself is a no-op
@@ -1113,13 +1114,20 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
             }
             parent = p.parent();
         }
-        // Write new reflog
-        if let Some(content) = log_content {
-            if let Some(parent) = new_log.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let _ = fs::write(&new_log, content);
+        // Write new reflog with existing entries + rename entry
+        if let Some(parent) = new_log.parent() {
+            let _ = fs::create_dir_all(parent);
         }
+        let ident = get_reflog_identity();
+        let rename_entry = format!(
+            "{oid} {oid} {ident}\tBranch: renamed {old_ref} to {new_ref}\n",
+            oid = old_oid
+        );
+        let old_content = log_content
+            .map(|c| String::from_utf8_lossy(&c).to_string())
+            .unwrap_or_default();
+        let new_content = format!("{}{rename_entry}", old_content);
+        let _ = fs::write(&new_log, new_content.as_bytes());
     }
 
     // Write HEAD reflog entry for branch rename
