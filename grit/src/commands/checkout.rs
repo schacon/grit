@@ -266,6 +266,29 @@ pub fn run(mut args: Args) -> Result<()> {
         args.rest = new_rest;
     }
 
+    // `git switch` forwards `--orphan`, `--detach`, and `-d` via positional `rest`;
+    // clap does not parse them there, so peel them off before treating `rest` as refs/paths.
+    {
+        let mut new_rest: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.rest.len() {
+            let s = &args.rest[i];
+            if s == "--orphan" && args.orphan.is_none() && i + 1 < args.rest.len() {
+                args.orphan = Some(args.rest[i + 1].clone());
+                i += 2;
+                continue;
+            }
+            if (s == "--detach" || s == "-d") && !args.detach {
+                args.detach = true;
+                i += 1;
+                continue;
+            }
+            new_rest.push(s.clone());
+            i += 1;
+        }
+        args.rest = new_rest;
+    }
+
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
     let raw_args: Vec<String> = std::env::args().collect();
@@ -1056,6 +1079,11 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
         new_index.sort();
         checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
         repo.write_index(&mut new_index).context("writing index")?;
+    } else if let Some(work_tree) = repo.work_tree.as_ref() {
+        let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
+        let new_index = Index::new();
+        checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
+        repo.write_index(&mut Index::new()).context("writing index")?;
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)
