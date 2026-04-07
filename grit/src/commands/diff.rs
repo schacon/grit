@@ -21,6 +21,7 @@ use grit_lib::diff::{
 };
 use grit_lib::error::Error;
 use grit_lib::index::Index;
+use grit_lib::merge_diff::format_worktree_conflict_combined;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -881,7 +882,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     // Apply -R: reverse the diff (swap old and new sides)
-    let entries = if args.reverse {
+    let mut entries = if args.reverse {
         entries
             .into_iter()
             .map(|mut e| {
@@ -904,7 +905,64 @@ pub fn run(mut args: Args) -> Result<()> {
         entries
     };
 
-    let has_diff = !entries.is_empty();
+    let merge_in_progress = std::fs::metadata(repo.git_dir.join("MERGE_HEAD")).is_ok();
+    let mut conflict_combined_patches: Vec<String> = Vec::new();
+    if merge_in_progress && !args.cached && revs.is_empty() && work_tree.is_some() {
+        let mut conflict_paths: Vec<String> = entries
+            .iter()
+            .filter(|e| e.status == DiffStatus::Unmerged)
+            .map(|e| e.path().to_string())
+            .collect();
+        conflict_paths.sort();
+        conflict_paths.dedup();
+        if !conflict_paths.is_empty() {
+            use grit_lib::config::ConfigSet;
+            let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let patch_abbrev = if args.full_index {
+                40usize
+            } else if let Some(n) = args.abbrev {
+                n.max(4).min(40)
+            } else {
+                7
+            };
+            if let Some(wt) = work_tree {
+                for path in &conflict_paths {
+                    let key = path.as_bytes();
+                    let Some(e1) = index.get(key, 1) else {
+                        continue;
+                    };
+                    let Some(e2) = index.get(key, 2) else {
+                        continue;
+                    };
+                    let Some(e3) = index.get(key, 3) else {
+                        continue;
+                    };
+                    let file_path = wt.join(path);
+                    let wt_bytes = std::fs::read(&file_path).unwrap_or_default();
+                    conflict_combined_patches.push(format_worktree_conflict_combined(
+                        &repo.git_dir,
+                        &config,
+                        &repo.odb,
+                        path,
+                        &e1.oid,
+                        &e2.oid,
+                        &e3.oid,
+                        &wt_bytes,
+                        patch_abbrev,
+                    ));
+                }
+            }
+            entries.retain(|e| {
+                if conflict_paths.iter().any(|p| p == e.path()) {
+                    e.status != DiffStatus::Unmerged && e.status != DiffStatus::Modified
+                } else {
+                    true
+                }
+            });
+        }
+    }
+
+    let has_diff = !entries.is_empty() || !conflict_combined_patches.is_empty();
 
     // Determine color mode
     let use_color = match args.color.as_deref() {
@@ -1012,6 +1070,9 @@ pub fn run(mut args: Args) -> Result<()> {
             } else {
                 7
             };
+            for patch in &conflict_combined_patches {
+                write!(out, "{patch}")?;
+            }
             write_patch_with_prefix(
                 &mut out,
                 &entries,

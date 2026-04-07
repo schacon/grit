@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    88 |
+| Completed   |    89 |
 | In progress |     0 |
-| Remaining   |   679 |
+| Remaining   |   678 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t4048-diff-combined-binary` — 14/14 tests pass (`show` merge diffs: default `--cc`, `-m`/`--format=%s` spacing, `-c`/`--cc` combined headers; `-diff`/binary attribute; `diff.<driver>.textconv` with stdin and trailing `<` stripped; `diff-tree -c -p` without textconv; `git diff` during merge emits `diff --cc` conflict hunks with textconv on stages)
 - `t3406-rebase-message` — 32/32 tests pass (rebase stdout messages, `--stat`/`rebase.stat`, `-C`/`--whitespace` early errors, interactive listing + verbose diffstat; merge-base commit collection + fast-forward; Git-style rebase reflog including `GIT_REFLOG_ACTION`; checkout only logs branch switches on `HEAD` reflog)
 - `t11490-commit-fixup-squash` — 33/33 tests pass (`commit` message sources, amend, allow-empty, `-a`, `--author`, `--date`, `-q`; harness CSV refreshed after clean run)
 - `t12590-log-format-tformat` — 33/33 tests pass (`log --format` with `%H`/`%h`/`%s`/`%an`/`%ae`/`%cn`/`%ce`/`%T`/`%t`/`%P`/`%p`/`%n`/`%%`, `format:` vs `tformat:` prefixes, `-n`/`--skip`/`--reverse`; verified clean harness run)

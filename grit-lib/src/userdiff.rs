@@ -4,7 +4,7 @@
 //! hunk-header function context extraction.
 
 use crate::config::ConfigSet;
-use crate::crlf::{get_file_attrs, AttrRule};
+use crate::crlf::{get_file_attrs, AttrRule, DiffAttr};
 use regex::{Regex, RegexBuilder};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -233,10 +233,10 @@ pub fn matcher_for_path(
     rel_path: &str,
 ) -> Result<Option<FuncnameMatcher>, String> {
     let attrs = get_file_attrs(rules, rel_path, config);
-    let Some(driver) = attrs.diff_driver else {
+    let DiffAttr::Driver(ref driver) = attrs.diff_attr else {
         return Ok(None);
     };
-    matcher_for_driver(config, &driver)
+    matcher_for_driver(config, driver)
 }
 
 /// Resolve a function-name matcher for a named diff driver.

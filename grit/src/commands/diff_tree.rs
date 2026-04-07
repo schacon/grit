@@ -8,15 +8,20 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     count_changes, detect_renames, diff_trees, diff_trees_show_tree_entries, format_raw,
     format_raw_abbrev, unified_diff, DiffEntry, DiffStatus,
+};
+use grit_lib::merge_diff::{
+    combined_diff_paths, format_combined_textconv_patch, is_binary_for_diff,
 };
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 /// Default maximum tree recursion depth when `core.maxtreedepth` is unset.
 const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
@@ -71,6 +76,10 @@ struct Options {
     binary: bool,
     /// Show diffs for merge commits in stdin mode (`-m`).
     show_merges: bool,
+    /// Combined diff for merge commits (`-c` / `--cc`, plumbing: no textconv).
+    combined_patch: bool,
+    /// Use `diff --cc` instead of `diff --combined` in combined mode.
+    combined_use_cc_word: bool,
     /// Output format.
     format: OutputFormat,
     /// Number of unified context lines for patch output.
@@ -119,6 +128,8 @@ impl Default for Options {
             suppress_diff: false,
             binary: false,
             show_merges: false,
+            combined_patch: false,
+            combined_use_cc_word: false,
             format: OutputFormat::Raw,
             context_lines: 3,
             abbrev: None,
@@ -167,6 +178,11 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-v" => opts.verbose = true,
                 "-s" => opts.suppress_diff = true,
                 "-m" => opts.show_merges = true,
+                "-c" => opts.combined_patch = true,
+                "--cc" => {
+                    opts.combined_patch = true;
+                    opts.combined_use_cc_word = true;
+                }
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
                 "--binary" => {
@@ -267,8 +283,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     }
                 }
                 // Silently accept common diff options that we do not implement.
-                "--no-rename-empty" | "--always" | "--diff-merges=off" | "-c" | "--cc"
-                | "--check" => {}
+                "--no-rename-empty" | "--always" | "--diff-merges=off" | "--check" => {}
                 _ if arg.starts_with("--diff-filter=")
                     || arg.starts_with("--diff-merges=")
                     || arg.starts_with("--format=")
@@ -369,7 +384,7 @@ fn run_two_trees(repo: &Repository, opts: &Options, out: &mut impl Write) -> Res
     let filtered = filter_entries(entries, opts);
     let has_diff = !filtered.is_empty();
     if !opts.quiet {
-        print_diff(out, &repo.odb, &filtered, opts, old_tree)?;
+        print_diff(out, &repo.odb, &filtered, opts, old_tree, &repo.git_dir)?;
     }
     Ok(has_diff)
 }
@@ -395,7 +410,44 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(out, &repo.odb, &filtered, opts, None)?;
+                        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
+                    }
+                }
+            } else if commit.parents.len() > 1
+                && opts.combined_patch
+                && opts.format == OutputFormat::Patch
+            {
+                let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let abbrev_len = if opts.full_index {
+                    40usize
+                } else {
+                    opts.abbrev.unwrap_or(7)
+                };
+                let paths = combined_diff_paths(&repo.odb, &commit.tree, &commit.parents);
+                has_diff = !paths.is_empty();
+                if !opts.quiet && (has_diff || opts.pretty.is_some()) {
+                    write_commit_header(out, &oid, &obj.data, opts)?;
+                    let mut parent_trees = Vec::with_capacity(commit.parents.len());
+                    for p in &commit.parents {
+                        parent_trees.push(commit_tree(&repo.odb, p)?);
+                    }
+                    if parent_trees.len() == 2 {
+                        for path in paths {
+                            if let Some(patch) = format_combined_textconv_patch(
+                                &repo.git_dir,
+                                &config,
+                                &repo.odb,
+                                &path,
+                                &parent_trees,
+                                &commit.tree,
+                                abbrev_len,
+                                opts.context_lines,
+                                opts.combined_use_cc_word,
+                                false,
+                            ) {
+                                write!(out, "{patch}")?;
+                            }
+                        }
                     }
                 }
             } else {
@@ -406,7 +458,14 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
-                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                    print_diff(
+                        out,
+                        &repo.odb,
+                        &filtered,
+                        opts,
+                        Some(&parent_tree),
+                        &repo.git_dir,
+                    )?;
                 }
             }
         }
@@ -521,7 +580,7 @@ fn process_stdin_commit(
             let entries = diff_with_opts(&repo.odb, None, Some(&commit.tree), opts)?;
             let filtered = filter_entries(entries, opts);
             let hd = !filtered.is_empty();
-            print_diff(out, &repo.odb, &filtered, opts, None)?;
+            print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
             hd
         } else {
             false
@@ -531,7 +590,7 @@ fn process_stdin_commit(
         let entries = diff_with_opts(&repo.odb, Some(&parent_tree), Some(&commit.tree), opts)?;
         let filtered = filter_entries(entries, opts);
         let hd = !filtered.is_empty();
-        print_diff(out, &repo.odb, &filtered, opts, None)?;
+        print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)?;
         hd
     };
 
@@ -559,7 +618,7 @@ fn process_stdin_two_trees(
 
     let entries = diff_with_opts(&repo.odb, Some(oid1), Some(&oid2), opts)?;
     let filtered = filter_entries(entries, opts);
-    print_diff(out, &repo.odb, &filtered, opts, None)
+    print_diff(out, &repo.odb, &filtered, opts, None, &repo.git_dir)
 }
 
 // ── Diff helpers ─────────────────────────────────────────────────────
@@ -877,6 +936,7 @@ fn print_diff(
     entries: &[DiffEntry],
     opts: &Options,
     old_tree_oid: Option<&ObjectId>,
+    git_dir: &Path,
 ) -> Result<bool> {
     // Apply rename detection if requested.
     let owned_entries;
@@ -958,6 +1018,7 @@ fn print_diff(
                     opts.context_lines,
                     opts.abbrev,
                     opts.full_index,
+                    git_dir,
                 )?;
             }
         }
@@ -1073,6 +1134,7 @@ fn write_patch_entry(
     context_lines: usize,
     abbrev: Option<usize>,
     full_index: bool,
+    git_dir: &Path,
 ) -> Result<bool> {
     let old_path = entry
         .old_path
@@ -1146,6 +1208,15 @@ fn write_patch_entry(
     } else {
         new_path
     };
+    let path_for_attrs = entry.path();
+    let old_raw = old_content.as_bytes();
+    let new_raw = new_content.as_bytes();
+    if is_binary_for_diff(git_dir, path_for_attrs, old_raw)
+        || is_binary_for_diff(git_dir, path_for_attrs, new_raw)
+    {
+        writeln!(out, "Binary files a/{new_path} and b/{new_path} differ")?;
+        return Ok(false);
+    }
     let patch = unified_diff(
         &old_content,
         &new_content,

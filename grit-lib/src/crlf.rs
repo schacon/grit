@@ -88,13 +88,24 @@ pub enum MergeAttr {
     Driver(String),
 }
 
+/// How the `diff` gitattribute affects diff output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffAttr {
+    /// No `diff` attribute (use heuristics / default).
+    Unspecified,
+    /// `-diff` / `diff=unset` / `binary` — treat as binary for diff purposes.
+    Unset,
+    /// `diff=<driver>` — use named driver (e.g. for textconv).
+    Driver(String),
+}
+
 /// Per-file attributes relevant to conversion.
 #[derive(Debug, Clone)]
 pub struct FileAttrs {
     pub text: TextAttr,
     pub eol: EolAttr,
-    /// Diff driver name from `diff=<driver>` attribute.
-    pub diff_driver: Option<String>,
+    /// Effect of the `diff` gitattribute on diff output.
+    pub diff_attr: DiffAttr,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
     /// Whether `filter.<name>.required` is set for the active smudge filter.
@@ -113,7 +124,7 @@ impl Default for FileAttrs {
         FileAttrs {
             text: TextAttr::Unspecified,
             eol: EolAttr::Unspecified,
-            diff_driver: None,
+            diff_attr: DiffAttr::Unspecified,
             filter_clean: None,
             filter_smudge: None,
             filter_smudge_required: false,
@@ -364,9 +375,9 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                     }
                     "diff" => {
                         if value == "unset" {
-                            fa.diff_driver = None;
+                            fa.diff_attr = DiffAttr::Unset;
                         } else if !value.is_empty() && value != "set" {
-                            fa.diff_driver = Some(value.clone());
+                            fa.diff_attr = DiffAttr::Driver(value.clone());
                         }
                     }
                     "ident" => {

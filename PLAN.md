@@ -479,7 +479,7 @@ commit → check it off → move on.
 
 - [ ] `t4215-log-skewed-merges` ░░░░░░░░░░░░░░░░░░░░ 0/10 (10 left) — git log --graph of skewed merges
 - [ ] `t4129-apply-samemode` ██████████░░░░░░░░░░ 12/23 (11 left) — applying patch with mode bits
-- [ ] `t4048-diff-combined-binary` ████░░░░░░░░░░░░░░░░ 3/14 (11 left) — combined and merge diff handle binary files and textconv
+- [x] `t4048-diff-combined-binary` ████████████████████ 14/14 (0 left) — combined and merge diff handle binary files and textconv
 - [ ] `t4012-diff-binary` ███░░░░░░░░░░░░░░░░░ 2/13 (11 left) — Binary diff and apply
 
 - [ ] `t4056-diff-order` ████████░░░░░░░░░░░░ 10/23 (13 left) — diff order & rotate

@@ -11,6 +11,10 @@ use grit_lib::config::ConfigSet;
 use grit_lib::diff::{
     anchored_unified_diff, detect_copies, detect_renames, diff_trees, unified_diff, DiffEntry,
 };
+use grit_lib::merge_diff::{
+    blob_oid_at_path, blob_text_for_diff, combined_diff_paths, format_combined_binary,
+    format_combined_textconv_patch, format_parent_patch, is_binary_for_diff, read_blob_at_path,
+};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -106,6 +110,14 @@ pub struct Args {
     #[arg(short = 'm')]
     pub diff_merges: bool,
 
+    /// Dense combined diff for merge commits (`diff --combined`).
+    #[arg(short = 'c')]
+    pub combined: bool,
+
+    /// Dense combined diff for merge commits (`diff --cc`).
+    #[arg(long = "cc")]
+    pub combined_cc: bool,
+
     /// Date format for display.
     #[arg(long = "date")]
     pub date: Option<String>,
@@ -175,10 +187,10 @@ pub fn run(args: Args) -> Result<()> {
 
         match obj.kind {
             ObjectKind::Commit => {
-                show_commit(&mut out, &repo.odb, &oid, &obj.data, &args, &notes_map)?;
+                show_commit(&mut out, &repo, &oid, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tag => {
-                show_tag(&mut out, &repo.odb, &obj.data, &args, &notes_map)?;
+                show_tag(&mut out, &repo, &obj.data, &args, &notes_map)?;
             }
             ObjectKind::Tree => {
                 show_tree(&mut out, &obj.data)?;
@@ -226,12 +238,13 @@ fn maybe_warn_deprecated_grafts(repo: &Repository) -> Result<()> {
 /// Show a commit object: header + diff.
 fn show_commit(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     oid: &ObjectId,
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
 ) -> Result<()> {
+    let odb = &repo.odb;
     let commit = parse_commit(data).context("parsing commit")?;
     let hex = oid.to_hex();
 
@@ -352,6 +365,16 @@ fn show_commit(
         return Ok(());
     }
 
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let abbrev_len = if args.no_abbrev {
+        40usize
+    } else {
+        args.abbrev
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(7)
+    };
+
     // Show diff: compare this commit's tree against its first parent (or empty tree for root).
     let new_tree = Some(&commit.tree);
     let old_tree = commit.parents.first().map(|parent_oid| {
@@ -370,6 +393,11 @@ fn show_commit(
 
     // Apply rename/copy detection if -M or -C flags are set.
     let diff_entries = apply_rename_copy_detection(odb, diff_entries, args, old_tree_oid.as_ref());
+
+    let is_merge = commit.parents.len() > 1;
+    let default_merge_patch = is_merge && !args.diff_merges && !args.combined && !args.combined_cc;
+    let use_combined_format = args.combined || args.combined_cc || default_merge_patch;
+    let combined_use_cc_word = args.combined_cc || default_merge_patch;
 
     // --name-only: just print file names
     if args.name_only {
@@ -495,7 +523,104 @@ fn show_commit(
         return Ok(());
     }
 
-    // Default: full unified diff
+    let use_textconv = !args.no_textconv;
+    let git_dir = &repo.git_dir;
+
+    if is_merge && (args.diff_merges || use_combined_format) {
+        if args.format.as_deref() == Some("%s") {
+            writeln!(out)?;
+        }
+        let parent_trees: Vec<ObjectId> = commit
+            .parents
+            .iter()
+            .filter_map(|p| {
+                odb.read(p)
+                    .ok()
+                    .and_then(|obj| parse_commit(&obj.data).ok())
+                    .map(|c| c.tree)
+            })
+            .collect();
+
+        if args.diff_merges {
+            let subject_isolated = args.format.as_deref() == Some("%s");
+            let subject = commit.message.lines().next().unwrap_or("");
+            for (pi, ptree) in parent_trees.iter().enumerate() {
+                for entry in &diff_entries {
+                    if let Some(patch) = format_parent_patch(
+                        git_dir,
+                        &config,
+                        odb,
+                        entry.path(),
+                        ptree,
+                        &commit.tree,
+                        abbrev_len,
+                        context,
+                        use_textconv,
+                    ) {
+                        write!(out, "{patch}")?;
+                    }
+                }
+                if subject_isolated && pi + 1 < parent_trees.len() {
+                    writeln!(out, "{subject}")?;
+                    writeln!(out)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if use_combined_format && parent_trees.len() == 2 {
+            let paths = combined_diff_paths(odb, &commit.tree, &commit.parents);
+            let ptrees = [parent_trees[0], parent_trees[1]];
+            for path in paths {
+                let Some(o0) = read_blob_at_path(odb, &ptrees[0], &path) else {
+                    continue;
+                };
+                let Some(o1) = read_blob_at_path(odb, &ptrees[1], &path) else {
+                    continue;
+                };
+                let Some(nr) = read_blob_at_path(odb, &commit.tree, &path) else {
+                    continue;
+                };
+                let binary = is_binary_for_diff(git_dir, &path, &o0)
+                    || is_binary_for_diff(git_dir, &path, &o1)
+                    || is_binary_for_diff(git_dir, &path, &nr);
+                if binary {
+                    let oid0 = blob_oid_at_path(odb, &ptrees[0], &path);
+                    let oid1 = blob_oid_at_path(odb, &ptrees[1], &path);
+                    let oidr = blob_oid_at_path(odb, &commit.tree, &path);
+                    if let (Some(a), Some(b), Some(c)) = (oid0, oid1, oidr) {
+                        write!(
+                            out,
+                            "{}",
+                            format_combined_binary(
+                                &path,
+                                &[a, b],
+                                &c,
+                                abbrev_len,
+                                combined_use_cc_word
+                            )
+                        )?;
+                    }
+                } else if let Some(patch) = format_combined_textconv_patch(
+                    git_dir,
+                    &config,
+                    odb,
+                    &path,
+                    &ptrees,
+                    &commit.tree,
+                    abbrev_len,
+                    context,
+                    combined_use_cc_word,
+                    use_textconv,
+                ) {
+                    write!(out, "{patch}")?;
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    // Default: full unified diff (first parent or root)
     for entry in &diff_entries {
         let old_path = entry.old_path.as_deref().unwrap_or("/dev/null");
         let new_path = entry.new_path.as_deref().unwrap_or("/dev/null");
@@ -511,23 +636,33 @@ fn show_commit(
             continue;
         }
 
-        let old_content = if entry.old_oid == grit_lib::diff::zero_oid() {
-            String::new()
+        let old_raw = if entry.old_oid == grit_lib::diff::zero_oid() {
+            Vec::new()
         } else {
-            match odb.read(&entry.old_oid) {
-                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-                Err(_) => String::new(),
-            }
+            odb.read(&entry.old_oid)
+                .map(|obj| obj.data)
+                .unwrap_or_default()
+        };
+        let new_raw = if entry.new_oid == grit_lib::diff::zero_oid() {
+            Vec::new()
+        } else {
+            odb.read(&entry.new_oid)
+                .map(|obj| obj.data)
+                .unwrap_or_default()
         };
 
-        let new_content = if entry.new_oid == grit_lib::diff::zero_oid() {
-            String::new()
-        } else {
-            match odb.read(&entry.new_oid) {
-                Ok(obj) => String::from_utf8_lossy(&obj.data).into_owned(),
-                Err(_) => String::new(),
-            }
-        };
+        let path_for_attrs = entry.path();
+        if is_binary_for_diff(git_dir, path_for_attrs, &old_raw)
+            || is_binary_for_diff(git_dir, path_for_attrs, &new_raw)
+        {
+            writeln!(out, "Binary files a/{new_path} and b/{new_path} differ")?;
+            continue;
+        }
+
+        let old_content =
+            blob_text_for_diff(git_dir, &config, path_for_attrs, &old_raw, use_textconv);
+        let new_content =
+            blob_text_for_diff(git_dir, &config, path_for_attrs, &new_raw, use_textconv);
 
         let patch = if !args.anchored.is_empty() {
             anchored_unified_diff(
@@ -777,11 +912,12 @@ fn write_diff_header(out: &mut impl Write, entry: &grit_lib::diff::DiffEntry) ->
 /// Show a tag object: tag header, then the tagged object.
 fn show_tag(
     out: &mut impl Write,
-    odb: &Odb,
+    repo: &Repository,
     data: &[u8],
     args: &Args,
     notes_map: &HashMap<ObjectId, Vec<u8>>,
 ) -> Result<()> {
+    let odb = &repo.odb;
     let tag = parse_tag(data).context("parsing tag")?;
 
     writeln!(out, "tag {}", tag.tag)?;
@@ -801,10 +937,10 @@ fn show_tag(
     let tagged_obj = odb.read(&tag.object).context("reading tagged object")?;
     match tagged_obj.kind {
         ObjectKind::Commit => {
-            show_commit(out, odb, &tag.object, &tagged_obj.data, args, notes_map)?;
+            show_commit(out, repo, &tag.object, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tag => {
-            show_tag(out, odb, &tagged_obj.data, args, notes_map)?;
+            show_tag(out, repo, &tagged_obj.data, args, notes_map)?;
         }
         ObjectKind::Tree => {
             show_tree(out, &tagged_obj.data)?;
