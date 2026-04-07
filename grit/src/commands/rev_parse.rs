@@ -614,9 +614,14 @@ pub fn run(args: Args) -> Result<()> {
                         }
                         result.display().to_string()
                     };
-                    // If the resolved path is under git_dir, use git_dir_rel + path_arg_out
+                    // If the resolved path is under git_dir, use git_dir_rel + path_arg_out.
+                    // When cwd is the bare repo root, `git_dir_rel` is empty; avoid a leading `/`.
                     let output = if resolved.starts_with(&current.git_dir) {
-                        format!("{}/{}", git_dir_rel, path_arg_out)
+                        if git_dir_rel.is_empty() {
+                            path_arg_out.clone()
+                        } else {
+                            format!("{git_dir_rel}/{path_arg_out}")
+                        }
                     } else if let Ok(rel) = resolved.strip_prefix(&cwd) {
                         rel.display().to_string()
                     } else {

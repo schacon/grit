@@ -139,21 +139,24 @@ test_expect_success '--hash output has no refnames' '
 test_expect_success '--hash=7 abbreviates to 7 characters' '
 	cd repo &&
 	grit show-ref --hash=7 main >actual &&
-	len=$(cat actual | tr -d "\n" | wc -c) &&
+	hex=$(cat actual | tr -d "\n") &&
+	len=${#hex} &&
 	test "$len" = "7"
 '
 
 test_expect_success '--hash=12 abbreviates to 12 characters' '
 	cd repo &&
 	grit show-ref --hash=12 main >actual &&
-	len=$(cat actual | tr -d "\n" | wc -c) &&
+	hex=$(cat actual | tr -d "\n") &&
+	len=${#hex} &&
 	test "$len" = "12"
 '
 
 test_expect_success '--hash with no abbreviation is 40 chars' '
 	cd repo &&
 	grit show-ref --hash main >actual &&
-	len=$(cat actual | tr -d "\n" | wc -c) &&
+	hex=$(cat actual | tr -d "\n") &&
+	len=${#hex} &&
 	test "$len" = "40"
 '
 
@@ -171,7 +174,7 @@ test_expect_success '--abbrev=8 produces 8-char SHA' '
 	cd repo &&
 	grit show-ref --abbrev=8 refs/heads/main >actual &&
 	sha=$(cut -d" " -f1 <actual) &&
-	len=$(printf "%s" "$sha" | wc -c) &&
+	len=${#sha} &&
 	test "$len" = "8"
 '
 
@@ -228,8 +231,8 @@ test_expect_success '--head adds exactly one extra line' '
 	cd repo &&
 	grit show-ref >without_head &&
 	grit show-ref --head >with_head &&
-	without=$(wc -l <without_head) &&
-	with=$(wc -l <with_head) &&
+	without=$(wc -l <without_head | tr -d "[:space:]") &&
+	with=$(wc -l <with_head | tr -d "[:space:]") &&
 	test "$with" = "$(($without + 1))"
 '
 
@@ -296,7 +299,7 @@ test_expect_success '-d --abbrev=10 abbreviates peeled entries' '
 	grit show-ref -d --abbrev=10 v1.0 >actual &&
 	grep "\\^{}$" actual >peeled &&
 	sha=$(cut -d" " -f1 <peeled) &&
-	len=$(printf "%s" "$sha" | wc -c) &&
+	len=${#sha} &&
 	test "$len" = "10"
 '
 

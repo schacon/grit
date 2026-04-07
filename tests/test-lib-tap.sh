@@ -225,7 +225,7 @@ test_must_fail_acceptable() {
 		shift
 	fi
 	case "$1" in
-	git|__git*|scalar|test-tool|test_terminal)
+	git|__git*|grit|scalar|test-tool|test_terminal)
 		return 0
 		;;
 	*)

@@ -179,7 +179,7 @@ fn check_or_clear_stale_gc_pid(pid_path: &Path) -> Result<()> {
             bail!("gc is already running on machine {locking_host}");
         }
         let _ = fs::remove_file(pid_path);
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     {

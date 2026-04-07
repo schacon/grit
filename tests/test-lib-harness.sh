@@ -257,3 +257,9 @@ test_cmp_fspath () {
 
 	test "x$(echo "$1" | tr A-Z a-z)" = "x$(echo "$2" | tr A-Z a-z)"
 }
+
+# File size in bytes (t1006, etc.) when `test-tool path-utils file-size` is unavailable.
+test_file_size () {
+	test "$#" -eq 1 || BUG "test_file_size needs 1 argument"
+	wc -c <"$1" | tr -d ' '
+}

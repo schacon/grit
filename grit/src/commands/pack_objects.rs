@@ -13,9 +13,11 @@ use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
 use std::process::{Command, Stdio};
 
+use grit_lib::delta_encode::encode_prefix_extension_delta;
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use std::collections::HashMap;
 
 /// Arguments for `grit pack-objects`.
 #[derive(Debug, ClapArgs)]
@@ -161,10 +163,21 @@ pub struct Args {
 }
 
 /// A pack entry to be written.
+#[derive(Clone)]
 struct PackEntry {
     oid: ObjectId,
     kind: ObjectKind,
     data: Vec<u8>,
+}
+
+/// One slot in a pack file (full object or `REF_DELTA`).
+enum PackWriteEntry {
+    Full(PackEntry),
+    RefDelta {
+        oid: ObjectId,
+        base_oid: ObjectId,
+        delta: Vec<u8>,
+    },
 }
 
 /// Run `grit pack-objects`.
@@ -202,8 +215,10 @@ pub fn run(args: Args) -> Result<()> {
         });
     }
 
+    let (write_entries, delta_count) = optimize_blob_deltas(entries)?;
+
     // Build pack bytes.
-    let pack_bytes = build_pack(&entries)?;
+    let pack_bytes = build_pack(&write_entries)?;
 
     if args.stdout {
         let stdout = io::stdout();
@@ -224,11 +239,15 @@ pub fn run(args: Args) -> Result<()> {
         std::fs::write(&pack_path, &pack_bytes)?;
 
         // Build and write idx.
-        let idx_bytes = build_idx_for_pack(&pack_bytes, &entries)?;
+        let idx_bytes = build_idx_for_pack(&pack_bytes, &write_entries)?;
         std::fs::write(&idx_path, &idx_bytes)?;
 
         println!("{pack_hash}");
-        eprintln!("Total {} (delta 0), reused 0 (delta 0)", entries.len());
+        eprintln!(
+            "Total {} (delta {}), reused 0 (delta 0)",
+            write_entries.len(),
+            delta_count
+        );
     }
 
     Ok(())
@@ -654,41 +673,105 @@ fn read_object_from_pack(
     }
 }
 
-/// Build a PACK v2 byte stream from entries (whole objects, no delta).
-fn build_pack(entries: &[PackEntry]) -> Result<Vec<u8>> {
+/// Prefer `REF_DELTA` when one blob is a strict prefix of another (same as Git's
+/// `create_delta` for the common “append bytes” case).
+fn optimize_blob_deltas(entries: Vec<PackEntry>) -> Result<(Vec<PackWriteEntry>, usize)> {
+    let blobs: Vec<&PackEntry> = entries
+        .iter()
+        .filter(|e| e.kind == ObjectKind::Blob)
+        .collect();
+    let mut delta_target_to_base: HashMap<ObjectId, ObjectId> = HashMap::new();
+    for t in &blobs {
+        let mut best_base: Option<&PackEntry> = None;
+        for b in &blobs {
+            if b.oid == t.oid {
+                continue;
+            }
+            if t.data.starts_with(&b.data) && t.data.len() > b.data.len()
+                && best_base.is_none_or(|bb| b.data.len() > bb.data.len()) {
+                    best_base = Some(b);
+                }
+        }
+        if let Some(base) = best_base {
+            delta_target_to_base.insert(t.oid, base.oid);
+        }
+    }
+
+    let mut out: Vec<PackWriteEntry> = Vec::with_capacity(entries.len());
+    for e in &entries {
+        if e.kind == ObjectKind::Blob && delta_target_to_base.contains_key(&e.oid) {
+            continue;
+        }
+        out.push(PackWriteEntry::Full(e.clone()));
+    }
+    let delta_count = delta_target_to_base.len();
+    for e in &entries {
+        if let Some(&base_oid) = delta_target_to_base.get(&e.oid) {
+            let base_entry = entries
+                .iter()
+                .find(|x| x.oid == base_oid)
+                .expect("delta base must exist");
+            let delta = encode_prefix_extension_delta(&base_entry.data, &e.data)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            out.push(PackWriteEntry::RefDelta {
+                oid: e.oid,
+                base_oid,
+                delta,
+            });
+        }
+    }
+    Ok((out, delta_count))
+}
+
+fn encode_pack_object_header(buf: &mut Vec<u8>, type_code: u8, payload_len: usize) {
+    let mut size = payload_len;
+    let first = ((type_code & 0x7) << 4) | (size & 0x0f) as u8;
+    size >>= 4;
+    if size > 0 {
+        buf.push(first | 0x80);
+        while size > 0 {
+            let b = (size & 0x7f) as u8;
+            size >>= 7;
+            buf.push(if size > 0 { b | 0x80 } else { b });
+        }
+    } else {
+        buf.push(first);
+    }
+}
+
+/// Build a PACK v2 byte stream (full objects and optional `REF_DELTA` blobs).
+fn build_pack(entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"PACK");
     buf.extend_from_slice(&2u32.to_be_bytes());
     buf.extend_from_slice(&(entries.len() as u32).to_be_bytes());
 
     for entry in entries {
-        let type_code: u8 = match entry.kind {
-            ObjectKind::Commit => 1,
-            ObjectKind::Tree => 2,
-            ObjectKind::Blob => 3,
-            ObjectKind::Tag => 4,
-        };
-
-        // Encode type+size header.
-        let mut size = entry.data.len();
-        let first = ((type_code & 0x7) << 4) | (size & 0x0f) as u8;
-        size >>= 4;
-        if size > 0 {
-            buf.push(first | 0x80);
-            while size > 0 {
-                let b = (size & 0x7f) as u8;
-                size >>= 7;
-                buf.push(if size > 0 { b | 0x80 } else { b });
+        match entry {
+            PackWriteEntry::Full(pe) => {
+                let type_code: u8 = match pe.kind {
+                    ObjectKind::Commit => 1,
+                    ObjectKind::Tree => 2,
+                    ObjectKind::Blob => 3,
+                    ObjectKind::Tag => 4,
+                };
+                encode_pack_object_header(&mut buf, type_code, pe.data.len());
+                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                enc.write_all(&pe.data)?;
+                let compressed = enc.finish()?;
+                buf.extend_from_slice(&compressed);
             }
-        } else {
-            buf.push(first);
+            PackWriteEntry::RefDelta {
+                base_oid, delta, ..
+            } => {
+                encode_pack_object_header(&mut buf, 7, delta.len());
+                buf.extend_from_slice(base_oid.as_bytes());
+                let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+                enc.write_all(delta)?;
+                let compressed = enc.finish()?;
+                buf.extend_from_slice(&compressed);
+            }
         }
-
-        // zlib-compress data.
-        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-        enc.write_all(&entry.data)?;
-        let compressed = enc.finish()?;
-        buf.extend_from_slice(&compressed);
     }
 
     // Trailing SHA-1 checksum.
@@ -701,7 +784,9 @@ fn build_pack(entries: &[PackEntry]) -> Result<Vec<u8>> {
 }
 
 /// Build idx v2 for a pack we just wrote.
-fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackEntry]) -> Result<Vec<u8>> {
+fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackWriteEntry]) -> Result<Vec<u8>> {
+    use grit_lib::pack::skip_one_pack_object;
+
     // We need offsets. Reparse the pack to get them.
     let nr = entries.len();
     let mut offsets = Vec::with_capacity(nr);
@@ -709,30 +794,23 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackEntry]) -> Result<Vec<u8
 
     for _entry in entries {
         offsets.push(pos as u64);
-        // Skip past the entry in the pack.
-        let c = pack_bytes[pos];
-        pos += 1;
-        let mut size = (c & 0x0f) as usize;
-        let mut shift = 4u32;
-        let mut cur = c;
-        while cur & 0x80 != 0 {
-            cur = pack_bytes[pos];
-            pos += 1;
-            size |= ((cur & 0x7f) as usize) << shift;
-            shift += 7;
-        }
-        // Skip compressed data.
-        use flate2::read::ZlibDecoder;
-        use std::io::Read;
-        let mut dec = ZlibDecoder::new(&pack_bytes[pos..]);
-        let mut tmp = Vec::with_capacity(size);
-        dec.read_to_end(&mut tmp)?;
-        pos += dec.total_in() as usize;
+        let start = pos as u64;
+        skip_one_pack_object(pack_bytes, &mut pos, start).map_err(|e| anyhow::anyhow!("{e}"))?;
     }
 
     // Build sorted index.
-    let mut sorted: Vec<(usize, &PackEntry)> = entries.iter().enumerate().collect();
-    sorted.sort_by_key(|(_, e)| *e.oid.as_bytes());
+    let mut sorted: Vec<(usize, ObjectId)> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let oid = match e {
+                PackWriteEntry::Full(pe) => pe.oid,
+                PackWriteEntry::RefDelta { oid, .. } => *oid,
+            };
+            (i, oid)
+        })
+        .collect();
+    sorted.sort_by_key(|(_, oid)| *oid.as_bytes());
 
     let mut buf = Vec::new();
     // Header.
@@ -741,8 +819,8 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackEntry]) -> Result<Vec<u8
 
     // Fanout.
     let mut fanout = [0u32; 256];
-    for (_, entry) in &sorted {
-        fanout[entry.oid.as_bytes()[0] as usize] += 1;
+    for (_, oid) in &sorted {
+        fanout[oid.as_bytes()[0] as usize] += 1;
     }
     for i in 1..256 {
         fanout[i] += fanout[i - 1];
@@ -752,8 +830,8 @@ fn build_idx_for_pack(pack_bytes: &[u8], entries: &[PackEntry]) -> Result<Vec<u8
     }
 
     // OID table.
-    for (_, entry) in &sorted {
-        buf.extend_from_slice(entry.oid.as_bytes());
+    for (_, oid) in &sorted {
+        buf.extend_from_slice(oid.as_bytes());
     }
 
     // CRC32 table: compute CRC32 for each entry's raw bytes in the pack.

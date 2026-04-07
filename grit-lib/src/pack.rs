@@ -816,6 +816,43 @@ fn parse_ofs_delta_base(bytes: &[u8], pos: &mut usize, this_offset: u64) -> Resu
         .ok_or_else(|| Error::CorruptObject("invalid ofs-delta base offset".to_owned()))
 }
 
+/// Advance `pos` past one packed object (including zlib payload).
+///
+/// `object_start_offset` is the byte offset of this object within the pack file
+/// (used for `OFS_DELTA` base resolution).
+pub fn skip_one_pack_object(bytes: &[u8], pos: &mut usize, object_start_offset: u64) -> Result<()> {
+    let (packed_type, size) = parse_pack_object_header(bytes, pos)?;
+    match packed_type {
+        PackedType::Commit | PackedType::Tree | PackedType::Blob | PackedType::Tag => {
+            let mut dec = ZlibDecoder::new(&bytes[*pos..]);
+            let mut tmp = Vec::with_capacity(size as usize);
+            dec.read_to_end(&mut tmp)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            *pos += dec.total_in() as usize;
+        }
+        PackedType::RefDelta => {
+            if *pos + 20 > bytes.len() {
+                return Err(Error::CorruptObject("truncated ref-delta base oid".into()));
+            }
+            *pos += 20;
+            let mut dec = ZlibDecoder::new(&bytes[*pos..]);
+            let mut tmp = Vec::with_capacity(size as usize);
+            dec.read_to_end(&mut tmp)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            *pos += dec.total_in() as usize;
+        }
+        PackedType::OfsDelta => {
+            let _base_off = parse_ofs_delta_base(bytes, pos, object_start_offset)?;
+            let mut dec = ZlibDecoder::new(&bytes[*pos..]);
+            let mut tmp = Vec::with_capacity(size as usize);
+            dec.read_to_end(&mut tmp)
+                .map_err(|e| Error::Zlib(e.to_string()))?;
+            *pos += dec.total_in() as usize;
+        }
+    }
+    Ok(())
+}
+
 fn read_u32_be(bytes: &[u8], pos: &mut usize) -> Result<u32> {
     if bytes.len() < *pos + 4 {
         return Err(Error::CorruptObject(

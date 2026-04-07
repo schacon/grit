@@ -123,7 +123,7 @@ pub fn run(args: Args) -> Result<()> {
     if name.is_none() && is_create_mode {
         bail!("tag name required");
     }
-    let is_annotated_mode =
+    let _is_annotated_mode =
         args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
 
     // If no name is given (or -l is given), list tags

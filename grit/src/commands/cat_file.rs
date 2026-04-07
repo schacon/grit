@@ -707,13 +707,20 @@ fn parse_batch_input<'a>(line: &'a str, format: &str) -> (&'a str, &'a str) {
         return ("", "");
     }
     // Only split object from rest when a custom format containing %(rest) is used.
-    // Otherwise the entire line is the object name (important for paths with spaces
-    // like "HEAD:path with spaces").
+    // Git splits on the first run of **two or more** whitespace characters so paths
+    // like `rev:path with spaces` stay intact (see t1006 `%(rest)` tests).
     if format.contains("%(rest)") {
-        if let Some(split_at) = trimmed.find(char::is_whitespace) {
-            let object = &trimmed[..split_at];
-            let rest = trimmed[split_at..].trim_start();
-            return (object, rest);
+        let bytes = trimmed.as_bytes();
+        for i in 0..bytes.len().saturating_sub(1) {
+            if bytes[i].is_ascii_whitespace() && bytes[i + 1].is_ascii_whitespace() {
+                let mut end = i;
+                while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+                    end += 1;
+                }
+                let object = trimmed[..i].trim_end();
+                let rest = trimmed[end..].trim_start();
+                return (object, rest);
+            }
         }
     }
     (trimmed, "")

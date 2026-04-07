@@ -19,6 +19,7 @@ pub mod attributes;
 pub mod check_ref_format;
 pub mod config;
 pub mod crlf;
+pub mod delta_encode;
 pub mod diff;
 pub mod error;
 pub mod fmt_merge_msg;
@@ -45,6 +46,7 @@ pub mod rev_list;
 pub mod rev_parse;
 pub mod state;
 pub mod stripspace;
+pub mod tree_path_follow;
 #[cfg(unix)]
 pub mod unix_process;
 pub mod unpack_objects;
