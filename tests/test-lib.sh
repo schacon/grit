@@ -213,6 +213,7 @@ fi
 
 test_path_is_file () { test -f "$1"; }
 test_path_is_dir  () { test -d "$1"; }
+test_path_is_symlink () { test -h "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 test_path_is_executable () { test -x "$1"; }
 
