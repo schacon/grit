@@ -228,6 +228,15 @@ TEST_COMMITTER_LOCALNAME=committer
 TEST_COMMITTER_DOMAIN=example.com
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
+export TEST_AUTHOR_LOCALNAME TEST_AUTHOR_DOMAIN TEST_COMMITTER_LOCALNAME TEST_COMMITTER_DOMAIN
+
+# Vendored Git.pm (t9700-perl-git, t0202, etc.); upstream sets GIT_TEST_GITPERLLIB.
+if test -z "$GITPERLLIB"
+then
+	_repo_root_for_perl="$(cd "$(dirname "$TEST_DIRECTORY")" && pwd)"
+	GITPERLLIB="$_repo_root_for_perl/git/perl"
+	export GITPERLLIB
+fi
 
 # Quiet git/grit unless TEST_VERBOSE is set
 if test -z "$TEST_VERBOSE"

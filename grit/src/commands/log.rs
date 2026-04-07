@@ -4155,8 +4155,20 @@ fn resolve_revision(repo: &Repository, rev: &str) -> Result<ObjectId> {
 
 /// Heuristic used for rev/pathspec DWIM when no `--` separator is present.
 fn is_likely_pathspec_during_rev_parse(token: &str) -> bool {
-    if token.contains("^{") || token.contains("@{") || token.contains("..") {
+    if token.contains("^{") || token.contains("@{") {
         return false;
+    }
+
+    // `..` in revision syntax is a range (e.g. `A..B`); single-token `..` is the parent dir pathspec.
+    if token == ".." {
+        return true;
+    }
+    if token.contains("..") {
+        return false;
+    }
+
+    if token == "." {
+        return true;
     }
 
     if let Some(rest) = token.strip_prefix(":/") {

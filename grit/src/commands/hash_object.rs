@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use std::io::Read;
+use std::io::{BufRead, Read};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -28,6 +28,10 @@ pub struct Args {
     /// Read file paths from stdin (one per line).
     #[arg(long = "stdin-paths")]
     pub stdin_paths: bool,
+
+    /// Skip clean/smudge filters (Git compatibility; Grit has no filter pipeline).
+    #[arg(long = "no-filters")]
+    pub no_filters: bool,
 
     /// Don't validate file content, just hash it (with --literally).
     #[arg(long)]
@@ -73,11 +77,14 @@ pub fn run(args: Args) -> Result<()> {
             println!("{file_oid}");
         }
     } else if args.stdin_paths {
-        let mut buf = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading stdin paths")?;
-        for line in buf.lines() {
+        // Read one path per line and emit one OID per line (matches Git; Git.pm keeps stdin
+        // open across multiple writes — must not block on full-stream EOF before first line).
+        let stdin = std::io::stdin().lock();
+        for line in stdin.lines() {
+            let line = line.context("reading stdin paths")?;
+            if line.is_empty() {
+                continue;
+            }
             let path = PathBuf::from(line);
             let data = std::fs::read(&path)
                 .with_context(|| format!("cannot read '{}'", path.display()))?;

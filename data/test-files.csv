@@ -1539,7 +1539,7 @@ t9604-cvsimport-timestamps	t9	skip	2	0	0	false	ok	0
 t9610-restore-staged-worktree	t9	yes	40	39	1	false	ok	0
 t9620-reset-path-commit	t9	yes	40	40	0	true	ok	0
 t9700-for-each-ref-sort-combined	t9	yes	37	37	0	true	ok	0
-t9700-perl-git	t9	yes	3	2	1	false	ok	0
+t9700-perl-git	t9	yes	3	3	0	true	ok	0
 t9710-show-ref-hash-abbrev	t9	yes	38	35	3	false	ok	0
 t9720-update-ref-create-verify	t9	yes	32	22	10	false	ok	0
 t9730-symbolic-ref-head	t9	yes	31	25	6	false	ok	0
