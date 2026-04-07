@@ -304,13 +304,21 @@ sane_unset () {
 }
 
 test_seq () {
+	local format="%d"
+	if test "${1:-}" = "-f"
+	then
+		format="$2"
+		shift 2
+	fi
 	local i="$1" end="${2:-}"
-	if test -z "$end"; then
+	if test -z "$end"
+	then
 		end=$i
 		i=1
 	fi
-	while test "$i" -le "$end"; do
-		echo "$i"
+	while test "$i" -le "$end"
+	do
+		printf "$format\n" "$i"
 		i=$(($i + 1))
 	done
 }

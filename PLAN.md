@@ -747,7 +747,7 @@ commit → check it off → move on.
 - [x] `t6601-path-walk` ████████████████████ 15/15 (0 left) — direct path-walk API tests
 - [x] `t6437-submodule-merge` ████████████████████ 22/22 (0 left) — merging with submodules
 - [x] `t6006-rev-list-format` ████████████████████ 80/80 (0 left) — git rev-list --pretty=format test
-- [ ] `t6422-merge-rename-corner-cases` ██████░░░░░░░░░░░░░░ 9/26 (17 left) — recursive merge corner cases w/ renames but not criss-crosses
+- [~] `t6422-merge-rename-corner-cases` ███████████░░░░░░░░░ 14/26 (12 left) — recursive merge corner cases w/ renames but not criss-crosses
 - [ ] `t6000-rev-list-misc` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — miscellaneous rev-list tests
 - [ ] `t6130-pathspec-noglob` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — test globbing (and noglob) of pathspec limiting
 - [ ] `t6424-merge-unrelated-index-changes` ██░░░░░░░░░░░░░░░░░░ 2/19 (17 left) — merges with unrelated index changes
