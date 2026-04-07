@@ -1283,6 +1283,28 @@ fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> S
     if pathspec == "." {
         return prefix.unwrap_or("").to_owned();
     }
+    // Normalize relative paths with .. by converting to absolute first
+    if pathspec.contains("../") || pathspec.starts_with("../") {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let abs = cwd.join(pathspec);
+        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
+        // Normalize abs without requiring existence
+        let mut parts: Vec<std::ffi::OsString> = Vec::new();
+        for component in abs.components() {
+            use std::path::Component;
+            match component {
+                Component::ParentDir => {
+                    parts.pop();
+                }
+                Component::CurDir => {}
+                other => parts.push(other.as_os_str().to_os_string()),
+            }
+        }
+        let abs_norm: std::path::PathBuf = parts.iter().collect();
+        if let Ok(rel) = abs_norm.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+    }
     // Handle absolute paths: make relative to work tree
     if std::path::Path::new(pathspec).is_absolute() {
         let abs = std::path::Path::new(pathspec);
