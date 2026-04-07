@@ -25,3 +25,4 @@ tests/status.iuc
 tests/status_uall.expect
 tests/trace.output
 tests/repo.git/
+.env

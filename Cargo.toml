@@ -1,5 +1,5 @@
 [workspace]
-members = ["grit", "grit-lib"]
+members = ["grit", "grit-lib", "git-cloud"]
 resolver = "2"
 
 [workspace.package]

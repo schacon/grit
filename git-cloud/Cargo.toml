@@ -1,0 +1,26 @@
+[package]
+name = "git-cloud"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "Orchestrate Cursor Cloud agents against grit harness test files"
+license = "MIT"
+
+[[bin]]
+name = "git-cloud"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+thiserror.workspace = true
+csv = "1"
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dotenvy = "0.15"
