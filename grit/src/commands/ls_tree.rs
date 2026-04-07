@@ -54,8 +54,12 @@ pub struct Args {
     pub format: Option<String>,
 
     /// Show full path names (even when called from a subdirectory).
-    #[arg(long = "full-name")]
+    #[arg(long = "full-name", overrides_with = "no_full_name")]
     pub full_name: bool,
+
+    /// Show relative path names (default; counterpart to --full-name).
+    #[arg(long = "no-full-name", overrides_with = "full_name")]
+    pub no_full_name: bool,
 
     /// Do not limit the listing to the current working tree.
     #[arg(long = "full-tree")]
@@ -195,20 +199,26 @@ pub fn run(mut args: Args) -> Result<()> {
 }
 
 /// Make a repo-root-relative path display-relative to the cwd prefix.
-/// E.g., if cwd_prefix is "aa" and path is "a[a]/three", return "../a[a]/three".
+/// If path is under cwd_prefix, strip the prefix. Otherwise prepend ../.
 fn make_cwd_relative(path: &str, cwd_prefix: Option<&str>) -> String {
     let prefix = match cwd_prefix {
         Some(p) if !p.is_empty() => p,
         _ => return path.to_string(),
     };
-    // Count depth of cwd_prefix
-    let depth = prefix.split('/').count();
-    let mut result = String::new();
-    for _ in 0..depth {
-        result.push_str("../");
+    let prefix_slash = format!("{}/", prefix);
+    if path.starts_with(&prefix_slash) {
+        // Path is inside our cwd: strip the prefix
+        path[prefix_slash.len()..].to_string()
+    } else {
+        // Path is outside our cwd: prepend ../
+        let depth = prefix.split('/').count();
+        let mut result = String::new();
+        for _ in 0..depth {
+            result.push_str("../");
+        }
+        result.push_str(path);
+        result
     }
-    result.push_str(path);
-    result
 }
 
 fn list_tree(
