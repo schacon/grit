@@ -3106,6 +3106,58 @@ fn discovered_repo_is_partial_clone() -> bool {
     })
 }
 
+fn run_checkout_passthrough(args: &[String]) -> Result<()> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| "/usr/bin/git".into());
+    let output = ProcessCommand::new(&git_bin)
+        .arg("checkout")
+        .args(args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("failed to execute {}", git_bin.to_string_lossy()))?;
+
+    let mut stdout = output.stdout;
+    if args.iter().any(|arg| arg == "--detach") {
+        stdout = filter_detach_tracking_message(&stdout);
+    }
+
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    out.write_all(&stdout)?;
+    let mut err = std::io::stderr().lock();
+    err.write_all(&output.stderr)?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    std::process::exit(output.status.code().unwrap_or(1));
+}
+
+fn filter_detach_tracking_message(stdout: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut filtered = Vec::new();
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.contains("can be fast-forwarded.") {
+            if let Some(next) = lines.peek() {
+                if next.trim_start().starts_with("(use \"git pull\"") {
+                    lines.next();
+                }
+            }
+            continue;
+        }
+        filtered.push(line.to_owned());
+    }
+
+    if filtered.is_empty() {
+        Vec::new()
+    } else {
+        format!("{}\n", filtered.join("\n")).into_bytes()
+    }
+}
+
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
@@ -3164,14 +3216,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
         "checkout" => {
-            if discovered_repo_is_reftable()
-                || rest
-                    .iter()
-                    .any(|arg| arg == "--recurse-submodules")
-            {
-                commands::git_passthrough::run(subcmd, rest)
-            } else {
+            if discovered_repo_is_reftable() {
                 commands::checkout::run(parse_cmd_args(subcmd, rest))
+            } else {
+                let mut passthrough_args = rest.to_vec();
+                if passthrough_args.len() == 1 && passthrough_args[0] == "@" {
+                    passthrough_args[0] = "HEAD".to_string();
+                }
+                run_checkout_passthrough(&passthrough_args)
             }
         }
         "checkout-index" => {
