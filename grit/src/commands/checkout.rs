@@ -2144,7 +2144,7 @@ fn print_detached_head_message_inner(
     let commit = parse_commit(&obj.data)?;
     let subject = commit.message.lines().next().unwrap_or("").trim();
     let abbrev =
-        abbreviate_object_id(repo, *oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_owned());
+        abbreviate_object_id(repo, *oid, 12).unwrap_or_else(|_| oid.to_hex()[..12].to_owned());
 
     // Print detached HEAD advice unless:
     // 1. advice.detachedHead is false
