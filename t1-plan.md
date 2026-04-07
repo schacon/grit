@@ -120,7 +120,7 @@
 - [ ] t12560-diff-index-worktree.sh
 - [ ] t12570-status-rename-copy.sh
 - [ ] t12580-log-oneline-all.sh
-- [ ] t12590-log-format-tformat.sh
+- [x] t12590-log-format-tformat.sh
 - [ ] t12600-rev-list-not-exclude.sh
 - [ ] t12610-rev-list-all-branches.sh
 - [ ] t12620-rev-parse-resolve-ref.sh
