@@ -2517,6 +2517,17 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let base = rest
                 .get(2)
                 .ok_or_else(|| anyhow::anyhow!("relative_path: missing base"))?;
+            // Handle <empty> and <null> as empty strings (test framework convention)
+            let path = if path == "<empty>" || path == "<null>" || path == "(null)" {
+                ""
+            } else {
+                path.as_str()
+            };
+            let base = if base == "<empty>" || base == "<null>" || base == "(null)" {
+                ""
+            } else {
+                base.as_str()
+            };
             let has_trailing = path.ends_with('/');
             let norm_path = normalize_path_simple(path);
             let norm_base = normalize_path_simple(base.trim_end_matches('/'));
@@ -2525,7 +2536,16 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 std::path::Path::new(&norm_base),
             );
             let mut rel_str = rel.display().to_string();
-            if has_trailing && !rel_str.ends_with('/') {
+            // Add trailing slash when path ends with / or result is pure navigation
+            let is_pure_nav = rel_str == "."
+                || rel_str == ".."
+                || rel_str.starts_with("../")
+                    && rel_str
+                        .trim_end_matches(|c| c == '.' || c == '/')
+                        .is_empty()
+                || rel_str.ends_with("/..")
+                || rel_str.chars().all(|c| c == '.' || c == '/');
+            if (has_trailing || is_pure_nav) && !rel_str.ends_with('/') {
                 rel_str.push('/');
             }
             println!("{rel_str}");
