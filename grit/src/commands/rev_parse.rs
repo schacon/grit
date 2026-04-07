@@ -57,6 +57,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowGitCommonDir,
         ShowAbsoluteGitDir,
         ShowRefFormat,
+        ShowObjectFormat(String),
         GitPath(String),
         All,
         Branches(Option<String>),
@@ -189,6 +190,10 @@ pub fn run(args: Args) -> Result<()> {
                 // (we don't have transfer.hideRefs support yet)
             } else if arg == "--show-ref-format" {
                 actions.push(Action::ShowRefFormat);
+            } else if let Some(mode) = arg.strip_prefix("--show-object-format=") {
+                actions.push(Action::ShowObjectFormat(mode.to_owned()));
+            } else if arg == "--show-object-format" {
+                actions.push(Action::ShowObjectFormat("storage".to_owned()));
             } else if arg == "--sq-quote" {
                 sq_quote = true;
             } else if arg == "--sq" {
@@ -459,6 +464,25 @@ pub fn run(args: Args) -> Result<()> {
                     "files".to_string()
                 };
                 println!("{format}");
+            }
+            Action::ShowObjectFormat(mode) => {
+                let Some(current) = repo.as_ref() else {
+                    bail!("not a git repository (or any of the parent directories)");
+                };
+                let (storage_fmt, compat_fmt) = read_object_format_from_config(&current.git_dir);
+                match mode.as_str() {
+                    "storage" | "input" | "output" => println!("{storage_fmt}"),
+                    "compat" => {
+                        if let Some(c) = compat_fmt {
+                            println!("{c}");
+                        } else {
+                            println!();
+                        }
+                    }
+                    other => {
+                        bail!("unknown mode for --show-object-format: {other}");
+                    }
+                }
             }
             Action::GitPath(path_arg) => {
                 if let Some(current) = repo.as_ref() {
@@ -1123,6 +1147,40 @@ fn run_parseopt(extra_args: &[String]) -> Result<()> {
 }
 
 /// Shell-escape a string for single-quote context.
+/// Read `extensions.objectformat` and `extensions.compatobjectformat` from `config`.
+///
+/// Returns `(storage, compat)` where `storage` defaults to `sha1` when unset, matching Git.
+fn read_object_format_from_config(git_dir: &std::path::Path) -> (String, Option<String>) {
+    let config_path = git_dir.join("config");
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return ("sha1".to_owned(), None);
+    };
+    let mut in_extensions = false;
+    let mut object_format: Option<String> = None;
+    let mut compat: Option<String> = None;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_extensions = t.eq_ignore_ascii_case("[extensions]");
+            continue;
+        }
+        if !in_extensions {
+            continue;
+        }
+        let Some((k, v)) = t.split_once('=') else {
+            continue;
+        };
+        let key = k.trim();
+        let val = v.trim().to_lowercase();
+        if key.eq_ignore_ascii_case("objectformat") {
+            object_format = Some(val);
+        } else if key.eq_ignore_ascii_case("compatobjectformat") {
+            compat = Some(val);
+        }
+    }
+    (object_format.unwrap_or_else(|| "sha1".to_owned()), compat)
+}
+
 fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\\''")
 }

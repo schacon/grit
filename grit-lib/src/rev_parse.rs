@@ -1135,10 +1135,7 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 }
             }
         }
-        Some("object") => {
-            // ^{object}: just return the OID as-is (any object)
-            Ok(oid)
-        }
+        Some("object") => Ok(oid),
         Some("tag") => {
             // ^{tag}: return if it's a tag object
             let obj = repo.odb.read(&oid)?;

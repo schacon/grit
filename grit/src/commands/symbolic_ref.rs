@@ -43,6 +43,7 @@ pub struct Args {
 /// Run `grit symbolic-ref`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let _ = grit_lib::repo::trace_repo_setup_if_requested(&repo);
 
     if matches!(args.message.as_deref(), Some("")) {
         bail!("Refusing to perform update with empty message");
