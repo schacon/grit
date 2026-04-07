@@ -248,7 +248,9 @@ fn resolve_ref(git_dir: &Path, refname: &str) -> Result<Option<ObjectId>> {
                             if let Some(target) = trimmed.strip_prefix("ref: ") {
                                 return resolve_ref(git_dir, target);
                             }
-                            if let Ok(oid) = ObjectId::from_hex(trimmed) { return Ok(Some(oid)) }
+                            if let Ok(oid) = ObjectId::from_hex(trimmed) {
+                                return Ok(Some(oid));
+                            }
                         }
                         Err(e2) if e2.kind() == std::io::ErrorKind::NotFound => {}
                         Err(e2)

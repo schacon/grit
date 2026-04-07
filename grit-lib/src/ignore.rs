@@ -41,8 +41,7 @@ struct IgnoreRule {
 }
 
 /// Engine used to evaluate ignore patterns against repository-relative paths.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct IgnoreMatcher {
     global_rules: Vec<IgnoreRule>,
     info_rules: Vec<IgnoreRule>,
@@ -50,7 +49,6 @@ pub struct IgnoreMatcher {
     /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
     pub warnings: Vec<String>,
 }
-
 
 impl IgnoreMatcher {
     /// Build a matcher from repository exclude sources.
@@ -385,6 +383,13 @@ fn refine_match_for_check_ignore_verbose(
 }
 
 fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
+    // Directory-only patterns containing `**` (e.g. `!data/**/`) only apply to directory paths,
+    // not to files inside those directories. Matching them against ancestor paths for files would
+    // incorrectly negate `data/**` for every file (see t0008 "directories and ** matches").
+    if rule.directory_only && rule.body.contains("**") && !is_dir {
+        return false;
+    }
+
     let Some(rel_to_base) = strip_base(&rule.base_dir, repo_rel_path) else {
         return false;
     };
@@ -513,9 +518,10 @@ pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<S
         if repo_rel_path.len() > p.len()
             && repo_rel_path.starts_with(p)
             && repo_rel_path.as_bytes().get(p.len()) == Some(&b'/')
-            && best.is_none_or(|b| p.len() > b.len()) {
-                best = Some(p);
-            }
+            && best.is_none_or(|b| p.len() > b.len())
+        {
+            best = Some(p);
+        }
     }
     best.map(std::string::ToString::to_string)
 }

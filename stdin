@@ -1,0 +1,17 @@
+../one
+../not-ignored
+one
+not-ignored
+b/on
+b/one
+b/one one
+"b/one two"
+"b/one\"three"
+b/two
+b/not-ignored
+b/twooo
+../globaltwo
+globaltwo
+b/globaltwo
+../b/globaltwo
+c/not-ignored

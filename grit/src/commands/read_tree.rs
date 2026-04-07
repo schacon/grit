@@ -562,8 +562,10 @@ fn three_way_merge(
                 // Added by them only
                 out.entries.push((*te).clone());
             }
-            (Some(_), None, None) => {
-                // Deleted by both: skip
+            (Some(be), None, None) => {
+                // Ancestor had the path; both other trees omit it (delete/delete vs base).
+                // Match git read-tree: keep stage 1 (ancestor blob) with no stages 2/3.
+                stage_entry(&mut out, be, 1);
             }
             (Some(be), None, Some(te)) => {
                 // Deleted by us, modified by them: conflict

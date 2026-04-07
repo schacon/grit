@@ -76,6 +76,7 @@ fn run_inner(args: Args) -> Result<()> {
                     &mut matcher,
                     &mut out,
                     &raw_path,
+                    false,
                 )?;
             }
         } else {
@@ -108,6 +109,7 @@ fn run_inner(args: Args) -> Result<()> {
                     &mut matcher,
                     &mut out,
                     &line,
+                    true,
                 )?;
             }
             if !any_line {
@@ -125,6 +127,7 @@ fn run_inner(args: Args) -> Result<()> {
                 &mut matcher,
                 &mut out,
                 raw_path,
+                false,
             )?;
         }
     }
@@ -147,9 +150,20 @@ fn process_one_path(
     matcher: &mut IgnoreMatcher,
     out: &mut dyn Write,
     raw_path: &str,
+    stdin_text_mode: bool,
 ) -> Result<usize> {
+    let path_for_match = if stdin_text_mode {
+        unquote_git_stdin_line(raw_path)
+    } else {
+        raw_path.to_string()
+    };
+    let output_path = if stdin_text_mode {
+        check_ignore_display_path(&path_for_match)
+    } else {
+        raw_path.to_string()
+    };
     let repo_rel =
-        normalize_repo_relative(repo, cwd, raw_path).map_err(|e| anyhow!(e.to_string()))?;
+        normalize_repo_relative(repo, cwd, &path_for_match).map_err(|e| anyhow!(e.to_string()))?;
     path_beyond_symlink(work_tree, &repo_rel, raw_path)?;
     if let Some(ix) = index_ref {
         if let Some(sm) = submodule_containing_path(&repo_rel, ix) {
@@ -188,15 +202,65 @@ fn process_one_path(
                 &matched_rule.source_display,
                 matched_rule.line_number,
                 &matched_rule.pattern_text,
-                raw_path,
+                &output_path,
             )?;
         } else if parsed.non_matching {
-            write_verbose_non_match(out, parsed.nul_terminated, raw_path)?;
+            write_verbose_non_match(out, parsed.nul_terminated, &output_path)?;
         }
     } else if ignored {
-        write_plain_record(out, parsed.nul_terminated, raw_path)?;
+        write_plain_record(out, parsed.nul_terminated, &output_path)?;
     }
     Ok(count)
+}
+
+fn unquote_git_stdin_line(line: &str) -> String {
+    let t = line.trim();
+    if !t.starts_with('"') {
+        return t.to_string();
+    }
+    let bytes = t.as_bytes();
+    let mut i = 1usize;
+    let mut out = String::new();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => break,
+            b'\\' => {
+                i += 1;
+                if i >= bytes.len() {
+                    break;
+                }
+                match bytes[i] {
+                    b'"' => out.push('"'),
+                    b'\\' => out.push('\\'),
+                    o => out.push(o as char),
+                }
+                i += 1;
+            }
+            o => {
+                out.push(o as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn check_ignore_display_path(path: &str) -> String {
+    if path.contains('"') || path.contains('\\') {
+        let mut s = String::new();
+        s.push('"');
+        for c in path.chars() {
+            match c {
+                '"' => s.push_str("\\\""),
+                '\\' => s.push_str("\\\\"),
+                c => s.push(c),
+            }
+        }
+        s.push('"');
+        s
+    } else {
+        path.to_string()
+    }
 }
 
 fn path_beyond_symlink(work_tree: &Path, repo_rel: &str, raw_path: &str) -> Result<()> {

@@ -86,7 +86,7 @@ pub struct Args {
     pub prefix: Option<String>,
 
     /// Write to temp files instead of actual paths.
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    #[arg(long = "temp", action = clap::ArgAction::SetTrue)]
     pub temp_explicit: bool,
 
     /// Do not write to temp files (cannot be combined with `--stage=all`).
@@ -359,7 +359,7 @@ fn checkout_stages_one_path(
         }
     }
     if did {
-        return Ok(Some(format_stage_all_line(&top, display_path)));
+        return Ok(Some(format_stage_all_line(&top, display_path, work_tree)));
     }
     if index_has_any_entry(index, path_bytes) {
         return Ok(None);
@@ -414,8 +414,11 @@ fn checkout_entry(
     }
 
     if use_temp {
-        let tmp_path = write_temp_blob(entry, &obj.data, args)?;
-        outcome.temp_output = Some(format!("{}\t{display_path}", tmp_path.display()));
+        let tmp_path = write_temp_blob(entry, &obj.data, args, work_tree)?;
+        outcome.temp_output = Some(format!(
+            "{}\t{display_path}",
+            display_temp_path_for_stdout(&tmp_path, work_tree)
+        ));
         return Ok(outcome);
     }
 
@@ -431,19 +434,18 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
-        let mut check = work_tree.to_path_buf();
-        if let Ok(rest) = parent.strip_prefix(work_tree) {
-            for component in rest.components() {
-                check.push(component);
-                if let Ok(meta) = std::fs::symlink_metadata(&check) {
-                    if meta.file_type().is_symlink() {
-                        let _ = std::fs::remove_file(&check);
-                        break;
-                    }
-                } else if check.is_file() {
-                    let _ = std::fs::remove_file(&check);
-                    break;
+        // Replace a symlink or file at the immediate parent path when we need a directory
+        // (matches Git: e.g. path1 -> path2 symlink, or tmp-path1 file blocking tmp-path1/file1).
+        // Preserve a leading symlink when it is the first path component of --prefix (e.g.
+        // tmp -> tmp1 with --prefix=tmp/orary- so checkout goes under tmp1/orary-path*).
+        let keep_symlink = should_keep_symlink_parent_for_prefix(parent, work_tree, prefix);
+        if let Ok(meta) = std::fs::symlink_metadata(parent) {
+            if meta.file_type().is_symlink() {
+                if !keep_symlink {
+                    let _ = std::fs::remove_file(parent);
                 }
+            } else if meta.is_file() {
+                let _ = std::fs::remove_file(parent);
             }
         }
         if !parent.exists() {
@@ -507,17 +509,30 @@ fn checkout_one_stage_to_temp_line(
     if obj.kind != ObjectKind::Blob {
         bail!("cannot checkout non-blob");
     }
-    write_temp_blob(entry, &obj.data, args)
+    write_temp_blob(entry, &obj.data, args, work_tree)
 }
 
-fn format_stage_all_line(top: &[Option<PathBuf>; 4], display_path: &str) -> String {
+fn display_temp_path_for_stdout(p: &std::path::Path, work_tree: &std::path::Path) -> String {
+    if let Ok(r) = p.strip_prefix(work_tree) {
+        let s = r.to_string_lossy().to_string();
+        return s.strip_prefix("./").map(String::from).unwrap_or(s);
+    }
+    let s = p.display().to_string();
+    s.strip_prefix("./").map(String::from).unwrap_or(s)
+}
+
+fn format_stage_all_line(
+    top: &[Option<PathBuf>; 4],
+    display_path: &str,
+    work_tree: &std::path::Path,
+) -> String {
     let mut s = String::new();
     for i in 1..4 {
         if i > 1 {
             s.push(' ');
         }
         match &top[i] {
-            Some(p) => s.push_str(&p.display().to_string()),
+            Some(p) => s.push_str(&display_temp_path_for_stdout(p, work_tree)),
             None => s.push('.'),
         }
     }
@@ -535,47 +550,43 @@ fn checkout_all_unmerged_stages(
     symlinks_enabled: bool,
     args: &Args,
 ) -> Result<()> {
-    use std::collections::HashSet;
-    let mut seen: HashSet<Vec<u8>> = HashSet::new();
-    for entry in &index.entries {
-        if entry.stage() == 0 || entry.stage() > 3 {
+    let mut i = 0usize;
+    while i < index.entries.len() {
+        let path = index.entries[i].path.clone();
+        let start = i;
+        while i < index.entries.len() && index.entries[i].path == path {
+            i += 1;
+        }
+        let group = &index.entries[start..i];
+        if !cwd_prefix.is_empty() && !path.starts_with(cwd_prefix) {
             continue;
         }
-        if !cwd_prefix.is_empty() && !entry.path.starts_with(cwd_prefix) {
-            continue;
-        }
-        if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
-            continue;
-        }
-        if seen.contains(&entry.path) {
-            continue;
-        }
-        seen.insert(entry.path.clone());
-
         let mut top: [Option<PathBuf>; 4] = [None, None, None, None];
         let mut any = false;
-        for st in 1u8..=3u8 {
-            if let Some(e) = index.get(&entry.path, st) {
-                if e.skip_worktree() && !args.ignore_skip_worktree_bits {
-                    continue;
-                }
-                any = true;
-                let p = checkout_one_stage_to_temp_line(
-                    repo,
-                    index,
-                    e,
-                    work_tree,
-                    prefix,
-                    symlinks_enabled,
-                    args,
-                    st,
-                )?;
-                top[st as usize] = Some(p);
+        for entry in group {
+            let st = entry.stage();
+            if st == 0 || st > 3 {
+                continue;
             }
+            if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
+                continue;
+            }
+            any = true;
+            let p = checkout_one_stage_to_temp_line(
+                repo,
+                index,
+                entry,
+                work_tree,
+                prefix,
+                symlinks_enabled,
+                args,
+                st,
+            )?;
+            top[st as usize] = Some(p);
         }
         if any {
-            let disp = display_path_for_index_entry(&entry.path, cwd_prefix);
-            println!("{}", format_stage_all_line(&top, &disp));
+            let disp = display_path_for_index_entry(&path, cwd_prefix);
+            println!("{}", format_stage_all_line(&top, &disp, work_tree));
         }
     }
     Ok(())
@@ -637,6 +648,7 @@ fn write_temp_blob(
     entry: &grit_lib::index::IndexEntry,
     data: &[u8],
     args: &Args,
+    work_tree: &std::path::Path,
 ) -> Result<PathBuf> {
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -647,7 +659,7 @@ fn write_temp_blob(
         .tmpdir
         .as_ref()
         .cloned()
-        .unwrap_or_else(|| PathBuf::from("."));
+        .unwrap_or_else(|| work_tree.to_path_buf());
     if !base_dir.exists() {
         std::fs::create_dir_all(&base_dir).with_context(|| {
             format!(
@@ -736,11 +748,37 @@ fn core_symlinks_enabled(repo: &Repository) -> bool {
     true
 }
 
+fn should_keep_symlink_parent_for_prefix(
+    parent: &std::path::Path,
+    work_tree: &std::path::Path,
+    prefix: &str,
+) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+    let Ok(rel) = parent.strip_prefix(work_tree) else {
+        return false;
+    };
+    let rel_s = rel.to_string_lossy();
+    let rel_s = rel_s.as_ref();
+    let p = prefix.trim_end_matches('/');
+    if p.is_empty() {
+        return false;
+    }
+    let first = p.split('/').next().unwrap_or("");
+    if first.is_empty() {
+        return false;
+    }
+    rel_s == first
+}
+
 fn worktree_relative_prefix_bytes(
     work_tree: &std::path::Path,
     cwd: &std::path::Path,
 ) -> Result<Vec<u8>> {
-    let rel = cwd.strip_prefix(work_tree).with_context(|| {
+    let wt = std::fs::canonicalize(work_tree).unwrap_or_else(|_| work_tree.to_path_buf());
+    let cw = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let rel = cw.strip_prefix(&wt).with_context(|| {
         format!(
             "current directory '{}' is outside repository work tree '{}'",
             cwd.display(),

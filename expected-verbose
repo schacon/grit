@@ -1,0 +1,13 @@
+.gitignore:1:one	../one
+.gitignore:1:one	one
+a/b/.gitignore:8:!on*	b/on
+a/b/.gitignore:8:!on*	b/one
+a/b/.gitignore:8:!on*	b/one one
+a/b/.gitignore:8:!on*	b/one two
+a/b/.gitignore:8:!on*	"b/one\"three"
+a/b/.gitignore:9:!two	b/two
+a/.gitignore:1:two*	b/twooo
+:2:!globaltwo	../globaltwo
+:2:!globaltwo	globaltwo
+:2:!globaltwo	b/globaltwo
+:2:!globaltwo	../b/globaltwo

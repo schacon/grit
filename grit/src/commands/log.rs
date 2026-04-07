@@ -18,7 +18,7 @@ use grit_lib::rev_list::{
 use grit_lib::state::{resolve_head, HeadState};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit log`.
@@ -1754,116 +1754,18 @@ pub fn run(mut args: Args) -> Result<()> {
     } else {
         &combined_pathspecs[..]
     };
-    let commits = walk_commits(
-        &repo.odb,
-        &repo.git_dir,
-        &start_oids,
-        if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
-        args.skip,
-        args.first_parent,
-        author_re.as_ref(),
-        committer_re.as_ref(),
-        grep_re.as_ref(),
-        args.no_merges,
-        args.merges,
-        effective_pathspecs,
-        &excluded_set,
-    )?;
 
-    // Apply --follow: filter commits and track renames
-    let commits = if args.follow && !combined_pathspecs.is_empty() {
-        follow_filter(&repo.odb, commits, &combined_pathspecs[0], args.max_count)?
+    let find_oid = if let Some(ref find_obj_rev) = args.find_object {
+        Some(resolve_revision(&repo, find_obj_rev)?)
     } else {
-        commits
+        None
     };
+    let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
+    let since_threshold = since_str.and_then(parse_date_to_epoch);
+    let until_threshold = args.until.as_ref().and_then(parse_date_to_epoch);
+    let diff_filter_str = args.diff_filter.as_deref();
 
-    // Apply --diff-filter
-    let commits = if let Some(ref filter) = args.diff_filter {
-        // Lowercase = exclude, uppercase = include
-        let include_chars: Vec<char> = filter.chars().filter(|c| c.is_uppercase()).collect();
-        let exclude_chars: Vec<char> = filter
-            .chars()
-            .filter(|c| c.is_lowercase())
-            .map(|c| c.to_uppercase().next().unwrap_or(c))
-            .collect();
-        commits
-            .into_iter()
-            .filter(|(_oid, info)| {
-                if !include_chars.is_empty() {
-                    commit_has_diff_status(&repo.odb, info, &include_chars).unwrap_or(true)
-                } else if !exclude_chars.is_empty() {
-                    // Include if NOT in exclude list
-                    commit_has_diff_status_not_in(&repo.odb, info, &exclude_chars).unwrap_or(true)
-                } else {
-                    true
-                }
-            })
-            .collect::<Vec<_>>()
-    } else {
-        commits
-    };
-
-    // Apply --find-object: only show commits that introduce or remove the given object
-    let commits = if let Some(ref find_obj_rev) = args.find_object {
-        let find_oid = resolve_revision(&repo, find_obj_rev)?;
-        commits
-            .into_iter()
-            .filter(|(_oid, info)| {
-                commit_has_object(&repo.odb, info, &find_oid).unwrap_or_default()
-            })
-            .collect::<Vec<_>>()
-    } else {
-        commits
-    };
-
-    // Apply --simplify-by-decoration: only show commits with decorations
-    let commits = if args.simplify_by_decoration {
-        match &decorations {
-            Some(dec_map) => commits
-                .into_iter()
-                .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
-                .collect::<Vec<_>>(),
-            None => commits,
-        }
-    } else {
-        commits
-    };
-
-    // Apply --since-as-filter / --since
-    let commits = {
-        let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
-        if let Some(s) = since_str {
-            if let Some(threshold) = parse_date_to_epoch(s) {
-                commits
-                    .into_iter()
-                    .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) >= threshold)
-                    .collect::<Vec<_>>()
-            } else {
-                commits
-            }
-        } else {
-            commits
-        }
-    };
-    // Apply --until
-    let commits = if let Some(ref s) = args.until {
-        if let Some(threshold) = parse_date_to_epoch(s) {
-            commits
-                .into_iter()
-                .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)
-                .collect::<Vec<_>>()
-        } else {
-            commits
-        }
-    } else {
-        commits
-    };
-
-    let commits = if args.reverse {
-        commits.into_iter().rev().collect::<Vec<_>>()
-    } else {
-        commits
-    };
+    let use_streaming_log = !args.reverse && !(args.follow && !combined_pathspecs.is_empty());
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -1883,40 +1785,224 @@ pub fn run(mut args: Args) -> Result<()> {
         || args.raw
         || args.cc;
 
-    let notes_map = load_notes_map(&repo);
+    let mut notes_cache = NotesMapCache::new(&repo);
+    let flush_each = out.is_terminal();
 
-    for (i, (oid, commit_data)) in commits.iter().enumerate() {
-        if is_format_separator && i > 0 {
-            if args.null_terminator {
-                write!(out, "\0")?;
-            } else {
-                writeln!(out)?;
-            }
-        }
-        // Show --source annotation if available
-        if args.source {
-            if let Some(src) = source_map.get(oid) {
-                let short_src = src
-                    .strip_prefix("refs/heads/")
-                    .or_else(|| src.strip_prefix("refs/tags/"))
-                    .or_else(|| src.strip_prefix("refs/remotes/"))
-                    .unwrap_or(src);
-                write!(out, "{}\t", short_src)?;
-            }
-        }
-        format_commit(
-            &mut out,
-            oid,
-            commit_data,
-            &args,
-            decorations.as_ref(),
-            use_color,
-            &notes_map,
+    if use_streaming_log {
+        let mut iter = WalkCommitsIter::new(
             &repo.odb,
+            &repo.git_dir,
+            &start_oids,
+            if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
+            args.skip,
+            args.first_parent,
+            author_re.as_ref(),
+            committer_re.as_ref(),
+            grep_re.as_ref(),
+            args.no_merges,
+            args.merges,
+            effective_pathspecs,
+            &excluded_set,
+        );
+        let mut shown = 0usize;
+        while let Some((oid, commit_data)) = iter.next_commit()? {
+            if !commit_passes_post_walk_filters(
+                &repo.odb,
+                &oid,
+                &commit_data,
+                &args,
+                diff_filter_str,
+                find_oid,
+                decorations.as_ref(),
+                since_threshold,
+                until_threshold,
+            )? {
+                continue;
+            }
+            if is_format_separator && shown > 0 {
+                if args.null_terminator {
+                    write!(out, "\0")?;
+                } else {
+                    writeln!(out)?;
+                }
+            }
+            if args.source {
+                if let Some(src) = source_map.get(&oid) {
+                    let short_src = src
+                        .strip_prefix("refs/heads/")
+                        .or_else(|| src.strip_prefix("refs/tags/"))
+                        .or_else(|| src.strip_prefix("refs/remotes/"))
+                        .unwrap_or(src);
+                    write!(out, "{}\t", short_src)?;
+                }
+            }
+            format_commit(
+                &mut out,
+                &oid,
+                &commit_data,
+                &args,
+                decorations.as_ref(),
+                use_color,
+                &mut notes_cache,
+                &repo.odb,
+            )?;
+
+            if show_diff {
+                write_commit_diff(&mut out, &repo.odb, &commit_data, &args)?;
+            }
+            if flush_each {
+                out.flush()?;
+            }
+            shown += 1;
+        }
+    } else {
+        let commits = walk_commits(
+            &repo.odb,
+            &repo.git_dir,
+            &start_oids,
+            if args.follow { None } else { args.max_count }, // follow needs full walk for rename tracking
+            args.skip,
+            args.first_parent,
+            author_re.as_ref(),
+            committer_re.as_ref(),
+            grep_re.as_ref(),
+            args.no_merges,
+            args.merges,
+            effective_pathspecs,
+            &excluded_set,
         )?;
 
-        if show_diff {
-            write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+        // Apply --follow: filter commits and track renames
+        let commits = if args.follow && !combined_pathspecs.is_empty() {
+            follow_filter(&repo.odb, commits, &combined_pathspecs[0], args.max_count)?
+        } else {
+            commits
+        };
+
+        // Apply --diff-filter
+        let commits = if let Some(ref filter) = args.diff_filter {
+            // Lowercase = exclude, uppercase = include
+            let include_chars: Vec<char> = filter.chars().filter(|c| c.is_uppercase()).collect();
+            let exclude_chars: Vec<char> = filter
+                .chars()
+                .filter(|c| c.is_lowercase())
+                .map(|c| c.to_uppercase().next().unwrap_or(c))
+                .collect();
+            commits
+                .into_iter()
+                .filter(|(_oid, info)| {
+                    if !include_chars.is_empty() {
+                        commit_has_diff_status(&repo.odb, info, &include_chars).unwrap_or(true)
+                    } else if !exclude_chars.is_empty() {
+                        // Include if NOT in exclude list
+                        commit_has_diff_status_not_in(&repo.odb, info, &exclude_chars)
+                            .unwrap_or(true)
+                    } else {
+                        true
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            commits
+        };
+
+        // Apply --find-object: only show commits that introduce or remove the given object
+        let commits = if let Some(ref find_obj_rev) = args.find_object {
+            let find_oid_buf = resolve_revision(&repo, find_obj_rev)?;
+            commits
+                .into_iter()
+                .filter(|(_oid, info)| {
+                    commit_has_object(&repo.odb, info, &find_oid_buf).unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            commits
+        };
+
+        // Apply --simplify-by-decoration: only show commits with decorations
+        let commits = if args.simplify_by_decoration {
+            match &decorations {
+                Some(dec_map) => commits
+                    .into_iter()
+                    .filter(|(oid, _)| dec_map.contains_key(&oid.to_hex()))
+                    .collect::<Vec<_>>(),
+                None => commits,
+            }
+        } else {
+            commits
+        };
+
+        // Apply --since-as-filter / --since
+        let commits = {
+            let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
+            if let Some(s) = since_str {
+                if let Some(threshold) = parse_date_to_epoch(s) {
+                    commits
+                        .into_iter()
+                        .filter(|(_oid, info)| {
+                            extract_epoch_from_ident(&info.committer) >= threshold
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    commits
+                }
+            } else {
+                commits
+            }
+        };
+        // Apply --until
+        let commits = if let Some(ref s) = args.until {
+            if let Some(threshold) = parse_date_to_epoch(s) {
+                commits
+                    .into_iter()
+                    .filter(|(_oid, info)| extract_epoch_from_ident(&info.committer) <= threshold)
+                    .collect::<Vec<_>>()
+            } else {
+                commits
+            }
+        } else {
+            commits
+        };
+
+        let commits = if args.reverse {
+            commits.into_iter().rev().collect::<Vec<_>>()
+        } else {
+            commits
+        };
+
+        for (i, (oid, commit_data)) in commits.iter().enumerate() {
+            if is_format_separator && i > 0 {
+                if args.null_terminator {
+                    write!(out, "\0")?;
+                } else {
+                    writeln!(out)?;
+                }
+            }
+            // Show --source annotation if available
+            if args.source {
+                if let Some(src) = source_map.get(oid) {
+                    let short_src = src
+                        .strip_prefix("refs/heads/")
+                        .or_else(|| src.strip_prefix("refs/tags/"))
+                        .or_else(|| src.strip_prefix("refs/remotes/"))
+                        .unwrap_or(src);
+                    write!(out, "{}\t", short_src)?;
+                }
+            }
+            format_commit(
+                &mut out,
+                oid,
+                commit_data,
+                &args,
+                decorations.as_ref(),
+                use_color,
+                &mut notes_cache,
+                &repo.odb,
+            )?;
+
+            if show_diff {
+                write_commit_diff(&mut out, &repo.odb, commit_data, &args)?;
+            }
         }
     }
 
@@ -2143,11 +2229,12 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
         || args.raw
         || args.cc;
 
+    let mut notes_cache = NotesMapCache::new(repo);
+
     for (i, (oid, commit_data)) in commits.iter().enumerate() {
         if is_format_separator && i > 0 {
             writeln!(out)?;
         }
-        let notes_map = load_notes_map(repo);
         format_commit(
             &mut out,
             oid,
@@ -2155,7 +2242,7 @@ pub fn run_no_walk(repo: &Repository, args: &Args) -> Result<()> {
             args,
             decorations.as_ref(),
             false,
-            &notes_map,
+            &mut notes_cache,
             &repo.odb,
         )?;
         if show_diff {
@@ -2595,6 +2682,150 @@ struct CommitInfo {
     message: String,
 }
 
+/// Incremental commit walk matching [`walk_commits`] output order (date-ordered heap).
+///
+/// Used by `grit log` to print commits as they are discovered instead of buffering
+/// the full history in a `Vec` first.
+struct WalkCommitsIter<'a> {
+    odb: &'a Odb,
+    shallow_boundaries: HashSet<ObjectId>,
+    visited: HashSet<ObjectId>,
+    queue: std::collections::BinaryHeap<(i64, ObjectId)>,
+    skipped: usize,
+    skip_n: usize,
+    max_count: Option<usize>,
+    first_parent: bool,
+    author_re: Option<&'a Regex>,
+    committer_re: Option<&'a Regex>,
+    grep_re: Option<&'a Regex>,
+    no_merges: bool,
+    merges_only: bool,
+    pathspecs: &'a [String],
+    accepted_count: usize,
+}
+
+impl<'a> WalkCommitsIter<'a> {
+    fn new(
+        odb: &'a Odb,
+        git_dir: &Path,
+        start: &[ObjectId],
+        max_count: Option<usize>,
+        skip: Option<usize>,
+        first_parent: bool,
+        author_re: Option<&'a Regex>,
+        committer_re: Option<&'a Regex>,
+        grep_re: Option<&'a Regex>,
+        no_merges: bool,
+        merges_only: bool,
+        pathspecs: &'a [String],
+        excluded: &HashSet<ObjectId>,
+    ) -> Self {
+        let shallow_boundaries = load_shallow_boundaries(git_dir);
+        let mut visited: HashSet<ObjectId> = excluded.clone();
+        let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
+            std::collections::BinaryHeap::new();
+        for oid in start {
+            let ts = read_commit_timestamp(odb, oid);
+            queue.push((ts, *oid));
+        }
+        Self {
+            odb,
+            shallow_boundaries,
+            visited,
+            queue,
+            skipped: 0,
+            skip_n: skip.unwrap_or(0),
+            max_count,
+            first_parent,
+            author_re,
+            committer_re,
+            grep_re,
+            no_merges,
+            merges_only,
+            pathspecs,
+            accepted_count: 0,
+        }
+    }
+
+    fn next_commit(&mut self) -> Result<Option<(ObjectId, CommitInfo)>> {
+        if self.max_count == Some(0) {
+            return Ok(None);
+        }
+        if let Some(max) = self.max_count {
+            if self.accepted_count >= max {
+                return Ok(None);
+            }
+        }
+        while let Some((_ts, oid)) = self.queue.pop() {
+            if !self.visited.insert(oid) {
+                continue;
+            }
+
+            let obj = self.odb.read(&oid)?;
+            let commit = parse_commit(&obj.data)?;
+
+            let info = CommitInfo {
+                tree: commit.tree,
+                parents: commit.parents.clone(),
+                author: commit.author.clone(),
+                committer: commit.committer.clone(),
+                message: commit.message.clone(),
+            };
+
+            if !self.shallow_boundaries.contains(&oid) {
+                if self.first_parent {
+                    if let Some(parent) = commit.parents.first() {
+                        let ts = read_commit_timestamp(self.odb, parent);
+                        self.queue.push((ts, *parent));
+                    }
+                } else {
+                    for parent in &commit.parents {
+                        if !self.visited.contains(parent) {
+                            let ts = read_commit_timestamp(self.odb, parent);
+                            self.queue.push((ts, *parent));
+                        }
+                    }
+                }
+            }
+
+            let is_merge = info.parents.len() > 1;
+            if self.no_merges && is_merge {
+                continue;
+            }
+            if self.merges_only && !is_merge {
+                continue;
+            }
+            if let Some(re) = self.author_re {
+                if !re.is_match(&info.author) {
+                    continue;
+                }
+            }
+            if let Some(re) = self.committer_re {
+                if !re.is_match(&info.committer) {
+                    continue;
+                }
+            }
+            if let Some(re) = self.grep_re {
+                if !re.is_match(&info.message) {
+                    continue;
+                }
+            }
+            if !self.pathspecs.is_empty() && !commit_touches_paths(self.odb, &info, self.pathspecs)?
+            {
+                continue;
+            }
+
+            if self.skipped < self.skip_n {
+                self.skipped += 1;
+            } else {
+                self.accepted_count += 1;
+                return Ok(Some((oid, info)));
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// Walk the commit graph in reverse chronological order.
 /// Collect all OIDs reachable from the given starting points.
 fn collect_reachable(odb: &Odb, starts: &[ObjectId]) -> Result<HashSet<ObjectId>> {
@@ -2632,101 +2863,28 @@ fn walk_commits(
     pathspecs: &[String],
     excluded: &HashSet<ObjectId>,
 ) -> Result<Vec<(ObjectId, CommitInfo)>> {
-    // Short-circuit: if max_count is explicitly 0, return nothing.
     if max_count == Some(0) {
         return Ok(Vec::new());
     }
-
-    let shallow_boundaries = load_shallow_boundaries(git_dir);
-
-    let mut visited: HashSet<ObjectId> = excluded.clone();
-    // Use a priority queue sorted by commit date (descending) for correct traversal order.
-    // Each entry is (timestamp, oid) so BinaryHeap gives us highest timestamp first.
-    let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
-        std::collections::BinaryHeap::new();
-    for oid in start {
-        let ts = read_commit_timestamp(odb, oid);
-        queue.push((ts, *oid));
-    }
+    let mut iter = WalkCommitsIter::new(
+        odb,
+        git_dir,
+        start,
+        max_count,
+        skip,
+        first_parent,
+        author_re,
+        committer_re,
+        grep_re,
+        no_merges,
+        merges_only,
+        pathspecs,
+        excluded,
+    );
     let mut result = Vec::new();
-    let mut skipped = 0;
-    let skip_n = skip.unwrap_or(0);
-
-    while let Some((_ts, oid)) = queue.pop() {
-        if !visited.insert(oid) {
-            continue;
-        }
-
-        let obj = odb.read(&oid)?;
-        let commit = parse_commit(&obj.data)?;
-
-        let info = CommitInfo {
-            tree: commit.tree,
-            parents: commit.parents.clone(),
-            author: commit.author.clone(),
-            committer: commit.committer.clone(),
-            message: commit.message.clone(),
-        };
-
-        // Add parents to queue before filtering (we always walk).
-        // Shallow boundary commits have their parents cut off.
-        if !shallow_boundaries.contains(&oid) {
-            if first_parent {
-                if let Some(parent) = commit.parents.first() {
-                    let ts = read_commit_timestamp(odb, parent);
-                    queue.push((ts, *parent));
-                }
-            } else {
-                for parent in &commit.parents {
-                    if !visited.contains(parent) {
-                        let ts = read_commit_timestamp(odb, parent);
-                        queue.push((ts, *parent));
-                    }
-                }
-            }
-        }
-
-        // Apply filters
-        let is_merge = info.parents.len() > 1;
-        if no_merges && is_merge {
-            continue;
-        }
-        if merges_only && !is_merge {
-            continue;
-        }
-        if let Some(re) = author_re {
-            if !re.is_match(&info.author) {
-                continue;
-            }
-        }
-        if let Some(re) = committer_re {
-            if !re.is_match(&info.committer) {
-                continue;
-            }
-        }
-        if let Some(re) = grep_re {
-            if !re.is_match(&info.message) {
-                continue;
-            }
-        }
-        if !pathspecs.is_empty() && !commit_touches_paths(odb, &info, pathspecs)? {
-            continue;
-        }
-
-        if skipped < skip_n {
-            skipped += 1;
-        } else {
-            result.push((oid, info));
-            if let Some(max) = max_count {
-                if result.len() >= max {
-                    break;
-                }
-            }
-        }
+    while let Some(c) = iter.next_commit()? {
+        result.push(c);
     }
-
-    // Results are already in correct order from the priority queue walk.
-
     Ok(result)
 }
 
@@ -2793,6 +2951,26 @@ fn parse_tz_offset(offset: &str) -> i64 {
     let hours: i64 = offset[1..3].parse().unwrap_or(0);
     let minutes: i64 = offset[3..5].parse().unwrap_or(0);
     sign * (hours * 3600 + minutes * 60)
+}
+
+/// Lazily loads the git-notes map on first use so `grit log` does not read every
+/// note before printing the first commit (e.g. oneline output never touches notes).
+struct NotesMapCache<'a> {
+    repo: &'a Repository,
+    map: Option<std::collections::HashMap<ObjectId, Vec<u8>>>,
+}
+
+impl<'a> NotesMapCache<'a> {
+    fn new(repo: &'a Repository) -> Self {
+        Self { repo, map: None }
+    }
+
+    fn map(&mut self) -> &std::collections::HashMap<ObjectId, Vec<u8>> {
+        if self.map.is_none() {
+            self.map = Some(load_notes_map(self.repo));
+        }
+        self.map.as_ref().unwrap()
+    }
 }
 
 /// Load notes from the configured notes ref (or `refs/notes/commits` default).
@@ -2862,9 +3040,10 @@ fn load_notes_map(repo: &Repository) -> std::collections::HashMap<ObjectId, Vec<
 fn write_notes(
     out: &mut impl Write,
     oid: &ObjectId,
-    notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
+    notes_cache: &mut NotesMapCache<'_>,
     _odb: &Odb,
 ) -> Result<()> {
+    let notes_map = notes_cache.map();
     if let Some(note_data) = notes_map.get(oid) {
         let note_text = String::from_utf8_lossy(note_data);
         writeln!(out)?;
@@ -2876,6 +3055,61 @@ fn write_notes(
     Ok(())
 }
 
+/// Post-walk filters applied after [`walk_commits`] (diff-filter, find-object, decoration, dates).
+fn commit_passes_post_walk_filters(
+    odb: &Odb,
+    oid: &ObjectId,
+    info: &CommitInfo,
+    args: &Args,
+    diff_filter: Option<&str>,
+    find_oid: Option<ObjectId>,
+    decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
+    since_threshold: Option<i64>,
+    until_threshold: Option<i64>,
+) -> Result<bool> {
+    if let Some(filter) = diff_filter {
+        let include_chars: Vec<char> = filter.chars().filter(|c| c.is_uppercase()).collect();
+        let exclude_chars: Vec<char> = filter
+            .chars()
+            .filter(|c| c.is_lowercase())
+            .map(|c| c.to_uppercase().next().unwrap_or(c))
+            .collect();
+        let passes = if !include_chars.is_empty() {
+            commit_has_diff_status(odb, info, &include_chars).unwrap_or(true)
+        } else if !exclude_chars.is_empty() {
+            commit_has_diff_status_not_in(odb, info, &exclude_chars).unwrap_or(true)
+        } else {
+            true
+        };
+        if !passes {
+            return Ok(false);
+        }
+    }
+    if let Some(fo) = find_oid {
+        if !commit_has_object(odb, info, &fo).unwrap_or_default() {
+            return Ok(false);
+        }
+    }
+    if args.simplify_by_decoration {
+        if let Some(dec_map) = decorations {
+            if !dec_map.contains_key(&oid.to_hex()) {
+                return Ok(false);
+            }
+        }
+    }
+    if let Some(t) = since_threshold {
+        if extract_epoch_from_ident(&info.committer) < t {
+            return Ok(false);
+        }
+    }
+    if let Some(t) = until_threshold {
+        if extract_epoch_from_ident(&info.committer) > t {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Format and print a single commit.
 fn format_commit(
     out: &mut impl Write,
@@ -2884,7 +3118,7 @@ fn format_commit(
     args: &Args,
     decorations: Option<&std::collections::HashMap<String, Vec<String>>>,
     use_color: bool,
-    notes_map: &std::collections::HashMap<ObjectId, Vec<u8>>,
+    notes_cache: &mut NotesMapCache<'_>,
     odb: &Odb,
 ) -> Result<()> {
     let hex = oid.to_hex();
@@ -2983,7 +3217,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_map, odb)?;
+            write_notes(out, oid, notes_cache, odb)?;
             writeln!(out)?;
         }
         Some("full") => {
@@ -3006,7 +3240,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_map, odb)?;
+            write_notes(out, oid, notes_cache, odb)?;
             writeln!(out)?;
         }
         Some("fuller") => {
@@ -3039,7 +3273,7 @@ fn format_commit(
             for line in info.message.lines() {
                 writeln!(out, "    {line}")?;
             }
-            write_notes(out, oid, notes_map, odb)?;
+            write_notes(out, oid, notes_cache, odb)?;
             writeln!(out)?;
         }
         Some(other) => {
