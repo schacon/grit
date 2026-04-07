@@ -28,10 +28,14 @@ pub fn tm_to_time_t(tm: &tm) -> time_t {
     if tm.tm_hour < 0 || tm.tm_min < 0 || tm.tm_sec < 0 {
         return -1;
     }
-    let secs = (year * 365 + (year + 1) / 4 + MDAYS[month as usize] + day) * 24 * 60 * 60
-        + tm.tm_hour * 60 * 60
-        + tm.tm_min * 60
-        + tm.tm_sec;
+    let secs =
+        (year as i64 * 365 + (year as i64 + 1) / 4 + MDAYS[month as usize] as i64 + day as i64)
+            * 24
+            * 60
+            * 60
+            + tm.tm_hour as i64 * 60 * 60
+            + tm.tm_min as i64 * 60
+            + tm.tm_sec as i64;
     secs as time_t
 }
 
