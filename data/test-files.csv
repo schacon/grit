@@ -2,62 +2,62 @@ file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_
 t0000-basic	t0	yes	92	75	17	false	ok	8
 t0001-init	t0	yes	102	67	35	false	ok	0
 t0002-gitfile	t0	yes	14	14	0	true	ok	0
-t0003-attributes	t0	yes	55	20	35	false	ok	0
+t0003-attributes	t0	yes	55	19	36	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
 t0006-date	t0	yes	129	129	0	true	ok	0
-t0007-git-var	t0	yes	27	26	1	false	ok	0
+t0007-git-var	t0	yes	27	27	0	true	ok	0
 t0008-ignores	t0	yes	398	394	4	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
 t0010-racy-git	t0	yes	10	10	0	true	ok	0
-t0012-help	t0	yes	124	124	0	true	ok	0
-t0013-sha1dc	t0	yes	0	0	0	false	ok	0
-t0014-alias	t0	yes	21	3	18	false	ok	1
+t0012-help	t0	yes	22	0	0	false	ok	0
+t0013-sha1dc	t0	yes	1	0	0	false	ok	0
+t0014-alias	t0	yes	22	0	0	false	ok	1
 t0017-env-helper	t0	yes	5	5	0	true	ok	0
 t0018-advice	t0	yes	6	6	0	true	ok	0
 t0019-json-writer	t0	yes	16	16	0	true	ok	0
-t0020-crlf	t0	yes	36	15	21	false	ok	0
-t0021-conversion	t0	yes	42	20	22	false	ok	0
+t0020-crlf	t0	yes	36	0	0	false	ok	0
+t0021-conversion	t0	yes	37	0	0	false	ok	0
 t0022-crlf-rename	t0	yes	2	2	0	true	ok	0
 t0023-crlf-am	t0	yes	2	1	1	false	ok	0
 t0024-crlf-archive	t0	yes	3	3	0	true	ok	0
 t0025-crlf-renormalize	t0	yes	3	3	0	true	ok	0
 t0026-eol-config	t0	yes	6	2	4	false	ok	0
-t0027-auto-crlf	t0	skip	2600	1238	1362	false	ok	0
-t0028-working-tree-encoding	t0	yes	0	0	0	false	ok	0
+t0027-auto-crlf	t0	yes	2600	1238	1362	false	ok	0
+t0028-working-tree-encoding	t0	yes	13	0	0	false	ok	0
 t0029-core-unsetenvvars	t0	skip	2	0	0	false	ok	0
 t0030-stripspace	t0	yes	30	30	0	true	ok	0
 t0031-lockfile-pid	t0	yes	7	7	0	true	ok	0
 t0033-safe-directory	t0	yes	22	20	2	false	ok	0
-t0034-root-safe-directory	t0	yes	0	0	0	false	ok	0
-t0035-safe-bare-repository	t0	yes	12	8	4	false	ok	0
-t0040-parse-options	t0	yes	94	73	21	false	ok	0
-t0041-usage	t0	yes	16	14	2	false	ok	0
+t0034-root-safe-directory	t0	yes	8	0	0	false	ok	0
+t0035-safe-bare-repository	t0	yes	12	0	0	false	ok	0
+t0040-parse-options	t0	yes	93	0	0	false	ok	0
+t0041-usage	t0	yes	16	16	0	true	ok	0
 t0050-filesystem	t0	yes	13	9	4	false	ok	2
 t0051-windows-named-pipe	t0	skip	1	0	0	false	ok	0
-t0052-simple-ipc	t0	yes	0	0	0	false	ok	0
+t0052-simple-ipc	t0	yes	9	0	0	false	ok	0
 t0055-beyond-symlinks	t0	yes	3	3	0	true	ok	0
 t0056-git-C	t0	yes	11	11	0	true	ok	0
-t0060-path-utils	t0	yes	219	216	3	false	ok	0
-t0061-run-command	t0	yes	24	4	20	false	ok	0
+t0060-path-utils	t0	yes	30	0	0	false	ok	0
+t0061-run-command	t0	yes	24	0	0	false	ok	0
 t0062-revision-walking	t0	yes	2	2	0	true	ok	0
 t0066-dir-iterator	t0	yes	10	10	0	true	ok	0
 t0067-parse_pathspec_file	t0	yes	8	8	0	true	ok	0
 t0068-for-each-repo	t0	yes	5	5	0	true	ok	0
 t0070-fundamental	t0	yes	11	11	0	true	ok	0
 t0071-sort	t0	yes	1	1	0	true	ok	0
-t0080-tree-hash	t0	yes	30	3	27	false	ok	0
+t0080-tree-hash	t0	yes	30	0	0	false		0
 t0080-unit-test-output	t0	yes	1	1	0	true	ok	0
 t0081-find-pack	t0	yes	4	4	0	true	ok	0
 t0090-cache-tree	t0	yes	22	0	22	false	ok	0
-t0091-bugreport	t0	yes	13	11	2	false	ok	0
+t0091-bugreport	t0	yes	13	13	0	true	ok	0
 t0092-diagnose	t0	yes	4	4	0	true	ok	0
 t0095-bloom	t0	yes	11	11	0	true	ok	0
-t0100-previous	t0	yes	6	6	0	true	ok	0
+t0100-previous	t0	yes	6	3	3	false	ok	0
 t0101-at-syntax	t0	yes	8	8	0	true	ok	0
-t0110-environment	t0	yes	31	8	23	false	ok	0
-t0120-dot-git-dir	t0	yes	32	8	24	false	ok	0
-t0130-sha1-validation	t0	yes	30	1	29	false	ok	0
+t0110-environment	t0	yes	31	0	0	false		0
+t0120-dot-git-dir	t0	yes	32	0	0	false		0
+t0130-sha1-validation	t0	yes	30	0	0	false		0
 t0200-gettext-basic	t0	skip	16	0	0	false	ok	0
 t0201-gettext-fallbacks	t0	skip	8	0	0	false	ok	0
 t0202-gettext-perl	t0	skip	1	0	0	false	ok	0
@@ -71,48 +71,48 @@ t0300-credentials	t0	skip	56	0	0	false	ok	0
 t0301-credential-cache	t0	skip	52	6	46	false	ok	0
 t0302-credential-store	t0	skip	65	5	60	false	ok	0
 t0303-credential-external	t0	skip	23	23	0	true	ok	0
-t0410-partial-clone	t0	yes	38	12	26	false	ok	0
+t0410-partial-clone	t0	yes	38	0	0	false	ok	0
 t0411-clone-from-partial	t0	yes	7	2	5	false	ok	0
-t0450-txt-doc-vs-help	t0	skip	554	401	153	false	ok	0
+t0450-txt-doc-vs-help	t0	yes	554	401	153	false	ok	0
 t0500-progress-display	t0	yes	16	0	16	false	ok	0
-t0600-reffiles-backend	t0	yes	33	11	22	false	ok	0
-t0601-reffiles-pack-refs	t0	yes	0	0	0	false	ok	0
+t0600-reffiles-backend	t0	yes	33	0	0	false	ok	0
+t0601-reffiles-pack-refs	t0	yes	0	0	0	false		0
 t0602-reffiles-fsck	t0	yes	23	4	19	false	ok	0
 t0610-reftable-basics	t0	skip	73	0	0	false	ok	0
 t0611-reftable-httpd	t0	skip	1	0	1	false	ok	0
 t0612-reftable-jgit-compatibility	t0	skip	4	0	0	false	ok	0
 t0613-reftable-write-options	t0	skip	11	0	11	false	ok	0
 t0614-reftable-fsck	t0	skip	7	1	6	false	ok	0
-t1000-read-tree-m-3way	t1	yes	83	83	0	true	ok	0
-t10000-for-each-ref-merged	t1	yes	32	1	31	false	ok	0
-t1001-read-tree-m-2way	t1	yes	29	16	13	false	ok	0
-t10010-show-ref-dereference	t1	yes	37	1	36	false	ok	0
+t1000-read-tree-m-3way	t1	yes	39	0	0	false	ok	0
+t10000-for-each-ref-merged	t1	yes	32	32	0	true	ok	0
+t1001-read-tree-m-2way	t1	yes	29	0	0	false	ok	0
+t10010-show-ref-dereference	t1	yes	37	0	0	false		0
 t1002-read-tree-m-u-2way	t1	yes	22	8	14	false	ok	0
-t10020-update-ref-stdin-batch	t1	yes	33	1	32	false	ok	0
+t10020-update-ref-stdin-batch	t1	yes	33	0	0	false		0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	14	3	false	ok	0
 t1005-read-tree-reset	t1	yes	7	1	6	false	ok	0
 t1006-cat-file	t1	yes	290	239	51	false	ok	1
-t10060-hash-object-determinism	t1	yes	34	1	33	false	ok	0
-t1007-hash-object	t1	yes	40	31	9	false	ok	0
-t10070-cat-file-batch-format	t1	yes	33	1	32	false	ok	0
+t10060-hash-object-determinism	t1	yes	34	0	0	false		0
+t1007-hash-object	t1	yes	31	0	0	false	ok	0
+t10070-cat-file-batch-format	t1	yes	33	0	0	false		0
 t1008-read-tree-overlay	t1	yes	2	2	0	true	ok	0
-t10080-mktree-sorting	t1	yes	33	1	32	false	ok	0
+t10080-mktree-sorting	t1	yes	33	0	0	false		0
 t1009-read-tree-new-index	t1	yes	3	3	0	true	ok	0
-t10090-write-tree-idempotent	t1	yes	34	1	33	false	ok	0
+t10090-write-tree-idempotent	t1	yes	34	0	0	false		0
 t1010-mktree	t1	yes	8	8	0	true	ok	0
-t10100-ls-tree-long-format	t1	yes	36	1	35	false	ok	0
+t10100-ls-tree-long-format	t1	yes	36	0	0	false		0
 t1011-read-tree-sparse-checkout	t1	yes	23	10	13	false	ok	0
-t10110-ls-files-pathspec-filter	t1	yes	37	1	36	false	ok	0
+t10110-ls-files-pathspec-filter	t1	yes	37	0	0	false		0
 t1012-read-tree-df	t1	yes	5	5	0	true	ok	0
-t10120-config-unset-all	t1	yes	33	1	32	false	ok	0
-t1013-read-tree-submodule	t1	yes	58	0	58	false	ok	0
-t10130-init-bare-reinit	t1	yes	32	32	0	true	ok	0
+t10120-config-unset-all	t1	yes	33	0	0	false		0
+t1013-read-tree-submodule	t1	yes	0	0	0	false		0
+t10130-init-bare-reinit	t1	yes	32	0	0	false		0
 t1014-read-tree-confusing	t1	yes	28	27	1	false	ok	0
-t10140-branch-show-current	t1	yes	32	1	31	false	ok	0
+t10140-branch-show-current	t1	yes	32	0	0	false		0
 t1015-read-index-unmerged	t1	yes	6	5	1	false	ok	0
-t10150-tag-delete-force	t1	yes	34	1	33	false	ok	0
-t1016-compatObjectFormat	t1	skip	21	0	0	false	ok	0
+t10150-tag-delete-force	t1	yes	34	0	0	false		0
+t1016-compatObjectFormat	t1	yes	21	0	0	false	ok	0
 t1016-compatObjectSorting	t1	yes	19	0	0	false		0
 t10160-commit-amend-author	t1	yes	30	0	0	false		0
 t10180-rm-recursive-quiet	t1	yes	34	0	0	false		0
@@ -135,7 +135,7 @@ t10370-cat-file-type-errors	t1	yes	37	0	0	false		0
 t10380-mktree-batch-missing	t1	yes	31	0	0	false		0
 t10390-write-tree-after-modify	t1	yes	32	0	0	false		0
 t10400-ls-tree-name-only-z	t1	yes	33	0	0	false		0
-t10410-ls-files-nul-output	t1	yes	31	31	0	true	ok	0
+t10410-ls-files-nul-output	t1	yes	31	0	0	false		0
 t10420-diff-stat-numstat	t1	yes	35	0	0	false		0
 t10430-diff-tree-commit-range	t1	yes	33	0	0	false		0
 t10440-diff-index-exit-code	t1	yes	36	0	0	false		0
