@@ -166,7 +166,7 @@ t1700-split-index	yes	28	2	26	ok	2	28	0
 t1701-racy-split-index	yes	31	1	30	ok	1	31	0
 t1800-hook	yes	44	5	39	ok	5	44	0
 t1900-repo-info	yes	37	9	28	ok	9	37	0
-t1901-repo-structure	yes	4	2	2	ok	2	4	0
+t1901-repo-structure	yes	4	4	0	ok	4	4	0
 t2000-conflict-when-checking-files-out	yes	14	9	5	ok	9	14	0
 t2003-checkout-cache-mkdir	yes	10	3	7	ok	3	10	0
 t2004-checkout-cache-temp	yes	23	7	16	ok	7	23	0
