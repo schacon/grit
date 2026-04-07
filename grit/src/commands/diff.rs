@@ -2617,6 +2617,20 @@ fn check_whitespace_errors(
                 ChangeTag::Insert => {
                     line_no += 1;
                     let line = change.value();
+                    // Check for conflict markers
+                    let bare = line.trim_end_matches('\n').trim_end_matches('\r');
+                    if bare.starts_with("<<<<<<< ")
+                        || bare.starts_with(">>>>>>> ")
+                        || bare == "======="
+                        || bare.starts_with("=======")
+                    {
+                        writeln!(out, "{}:{}: leftover conflict marker", path, line_no)?;
+                        write!(out, "+{}", line)?;
+                        if !line.ends_with('\n') {
+                            writeln!(out)?;
+                        }
+                        has_errors = true;
+                    }
                     // Check for trailing whitespace
                     let trimmed = line.trim_end_matches('\n').trim_end_matches('\r');
                     if trimmed != trimmed.trim_end() {
