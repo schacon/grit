@@ -325,7 +325,7 @@ t12670-branch-force-delete	t1	yes	32	30	2	false	ok	0
 t12700-add-edit-intent	t1	yes	37	31	6	false	ok	0
 t12710-rm-staged-conflict	t1	yes	37	37	0	true	ok	0
 t12720-mv-cross-directory	t1	yes	37	37	0	true	ok	0
-t12730-switch-start-point	t1	yes	36	17	19	false	ok	0
+t12730-switch-start-point	t1	yes	36	36	0	true	ok	0
 t12740-restore-deleted-paths	t1	yes	35	35	0	true	ok	0
 t12750-reset-mixed-paths	t1	yes	34	34	0	true	ok	0
 t12760-cherry-pick-multi-range	t1	yes	34	33	1	false	ok	0

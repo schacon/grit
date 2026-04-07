@@ -131,7 +131,7 @@
 - [ ] t12700-add-edit-intent.sh
 - [ ] t12710-rm-staged-conflict.sh
 - [ ] t12720-mv-cross-directory.sh
-- [ ] t12730-switch-start-point.sh
+- [x] t12730-switch-start-point.sh
 - [ ] t12740-restore-deleted-paths.sh
 - [ ] t12760-cherry-pick-multi-range.sh
 - [ ] t12770-for-each-ref-perl-format.sh
