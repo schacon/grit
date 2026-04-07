@@ -1354,7 +1354,7 @@ t8600-update-ref-symref	t8	yes	28	20	8	false	ok	0
 t8610-checkout-index-modes	t8	yes	27	25	2	false	ok	0
 t8630-ls-tree-format	t8	yes	29	29	0	true	ok	0
 t8640-ls-files-stage-unmerged	t8	yes	31	18	13	false	ok	0
-t8650-cat-file-batch-extra	t8	yes	27	26	1	false	ok	0
+t8650-cat-file-batch-extra	t8	yes	27	27	0	true	ok	0
 t8660-mktree-ls-tree-modes	t8	yes	26	26	0	true	ok	0
 t8670-write-tree-index	t8	yes	27	27	0	true	ok	0
 t8680-commit-tree-verify	t8	yes	26	26	0	true	ok	0
