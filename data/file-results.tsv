@@ -175,7 +175,7 @@ t2006-checkout-index-basic	yes	9	5	4	ok	5	9	0
 t2007-checkout-symlink	yes	4	4	0	ok	4	4	0
 t2008-checkout-subdir	yes	9	9	0	ok	9	9	0
 t2009-checkout-statinfo	yes	3	3	0	ok	3	3	0
-t2010-checkout-ambiguous	yes	10	7	3	ok	7	10	0
+t2010-checkout-ambiguous	yes	10	10	0	ok	10	10	0
 t2011-checkout-invalid-head	yes	10	5	5	ok	5	10	0
 t2012-checkout-last	yes	22	22	0	ok	22	22	0
 t2013-checkout-submodule	yes	74	14	60	ok	14	74	0
