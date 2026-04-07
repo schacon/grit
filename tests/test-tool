@@ -24,18 +24,112 @@ git_with_global_c() {
 case "$1" in
   chmtime)
     shift
-    # Parse =<epoch> or +N/-N syntax
-    case "$1" in
-      =*) epoch="${1#=}"; shift; touch -d "@$epoch" "$@" ;;
-      +*|-*) 
-        offset="$1"; shift
-        for f in "$@"; do
-          cur=$(stat -c %Y "$f" 2>/dev/null || echo 0)
-          new=$((cur + offset))
-          touch -d "@$new" "$f"
-        done ;;
-      *) echo "test-tool chmtime: unknown format: $1" >&2; exit 1 ;;
-    esac ;;
+    # Compat with upstream test-tool chmtime:
+    #   test-tool chmtime [--get|-g|--verbose|-v] [ (+|=|=+|=-|-)<seconds> ] <file>...
+    chmtime_usage() {
+      echo "usage: test-tool chmtime (-v|--verbose|-g|--get) (+|=|=+|=-|-)<seconds> <file>..." >&2
+    }
+
+    chmtime_mode=""
+    case "${1-}" in
+      --get|-g)
+        chmtime_mode="get"
+        shift
+        ;;
+      --verbose|-v)
+        chmtime_mode="verbose"
+        shift
+        ;;
+    esac
+
+    [ $# -gt 0 ] || { chmtime_usage; exit 1; }
+
+    chmtime_timespec=""
+    chmtime_set_eq=0
+    chmtime_set_time=0
+    chmtime_now=""
+
+    chmtime_parse_timespec() {
+      spec="$1"
+      set_eq=0
+      rest="$spec"
+      if [ "${rest#=}" != "$rest" ]; then
+        set_eq=1
+        rest="${rest#=}"
+        if [ "${rest#+}" != "$rest" ]; then
+          # =+N means relative to current time.
+          set_eq=2
+          rest="${rest#+}"
+        fi
+      fi
+
+      case "$rest" in
+        ''|*[!0-9-]*|--*|-)
+          return 1
+          ;;
+      esac
+
+      set_time="$rest"
+      if [ "$set_eq" -eq 2 ] || { [ "$set_eq" -ne 0 ] && [ "$set_time" -lt 0 ]; }; then
+        [ -n "$chmtime_now" ] || chmtime_now="$(date +%s)"
+        set_time=$((chmtime_now + set_time))
+      fi
+
+      chmtime_set_eq="$set_eq"
+      chmtime_set_time="$set_time"
+      return 0
+    }
+
+    if chmtime_parse_timespec "$1"; then
+      chmtime_timespec="$1"
+      shift
+    else
+      if [ -z "$chmtime_mode" ]; then
+        echo "test-tool chmtime: unknown format: $1" >&2
+        chmtime_usage
+        exit 1
+      fi
+      # No timespec with --get/--verbose means print current mtimes.
+      chmtime_set_eq=0
+      chmtime_set_time=0
+    fi
+
+    [ $# -gt 0 ] || { chmtime_usage; exit 1; }
+
+    for f in "$@"; do
+      cur="$(stat -c %Y "$f" 2>/dev/null)" || {
+        echo "Failed to stat $f: $?. Skipping" >&2
+        continue
+      }
+
+      if [ "$chmtime_set_eq" -ne 0 ]; then
+        new="$chmtime_set_time"
+      else
+        new=$((cur + chmtime_set_time))
+      fi
+      if [ "$new" -lt 0 ]; then
+        out_mtime=0
+      else
+        out_mtime="$new"
+      fi
+
+      case "$chmtime_mode" in
+        get)
+          printf '%s\n' "$out_mtime"
+          ;;
+        verbose)
+          printf '%s\t%s\n' "$out_mtime" "$f"
+          ;;
+      esac
+
+      if [ "$new" -ne "$cur" ]; then
+        touch -d "@$new" "$f" || {
+          echo "Failed to modify time on $f" >&2
+          exit 1
+        }
+      fi
+    done
+    ;;
   sha1)
     sha1sum | cut -d' ' -f1 ;;
   sha256)
