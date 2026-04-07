@@ -2672,8 +2672,18 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
     }
 
     // Compute base: navigate from remote_url along up_path
-    let base_parts = if up_path.is_empty() || up_path == "(null)" {
+    let base_parts = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
+        // No remote_url — use up_path directly as starting point
+        if up_path.is_empty() || up_path == "(null)" {
+            normalize(".")
+        } else {
+            normalize(up_path)
+        }
+    } else if up_path.is_empty() || up_path == "(null)" {
         normalize(remote_url.trim_end_matches('/'))
+    } else if up_path.starts_with('/') {
+        // Absolute up_path overrides remote_url
+        normalize(up_path)
     } else {
         let combined = format!("{}/{}", remote_url.trim_end_matches('/'), up_path);
         normalize(&combined)
