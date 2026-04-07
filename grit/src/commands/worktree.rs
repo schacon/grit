@@ -1440,6 +1440,14 @@ fn walk_for_untracked(
             continue;
         }
         if path.is_dir() {
+            // Skip submodule directories (tracked as gitlinks in the index)
+            if let Ok(rel) = path.strip_prefix(base) {
+                let rel_bytes = rel.to_string_lossy().as_bytes().to_vec();
+                if staged.contains(&rel_bytes) {
+                    // This dir is a gitlink entry — skip it (submodule)
+                    continue;
+                }
+            }
             if walk_for_untracked(base, &path, staged) {
                 return true;
             }
@@ -1463,6 +1471,10 @@ fn has_dirty_files(
 ) -> bool {
     for entry in &index.entries {
         if entry.stage() != 0 {
+            continue;
+        }
+        // Skip gitlinks (submodules) — they have special handling
+        if entry.mode == 0o160000 {
             continue;
         }
         let rel = String::from_utf8_lossy(&entry.path);
