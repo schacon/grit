@@ -3038,11 +3038,27 @@ fn write_checkout_reflog(
     let identity = resolve_checkout_identity(repo);
 
     // Write reflog for HEAD
-    let _ = append_reflog(&repo.git_dir, "HEAD", old_oid, new_oid, &identity, message);
+    let _ = append_reflog(
+        &repo.git_dir,
+        "HEAD",
+        old_oid,
+        new_oid,
+        &identity,
+        message,
+        false,
+    );
 
     // Write reflog for the branch ref if on a branch
     if let HeadState::Branch { refname, .. } = head {
-        let _ = append_reflog(&repo.git_dir, refname, old_oid, new_oid, &identity, message);
+        let _ = append_reflog(
+            &repo.git_dir,
+            refname,
+            old_oid,
+            new_oid,
+            &identity,
+            message,
+            false,
+        );
     }
 }
 

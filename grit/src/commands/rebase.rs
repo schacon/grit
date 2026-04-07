@@ -360,8 +360,8 @@ fn do_rebase(args: Args) -> Result<()> {
         if let HeadState::Branch { refname, .. } = &head {
             let msg = format!("rebase (no-ff): checkout {}", onto_oid.to_hex());
             let ident = "grit <grit> 0 +0000";
-            let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, ident, &msg);
-            let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, ident, &msg);
+            let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, ident, &msg, false);
+            let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, ident, &msg, false);
         }
         return Ok(());
     }
@@ -511,7 +511,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                 // Add reflog entry for HEAD
                 let msg = format!("rebase: {}", subject);
                 let ident = "grit <grit> 0 +0000";
-                let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, ident, &msg);
+                let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, ident, &msg, false);
 
                 // Run --exec command if present
                 if let Ok(exec_cmd) = fs::read_to_string(rb_dir.join("exec")) {

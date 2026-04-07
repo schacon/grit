@@ -1966,6 +1966,7 @@ fn update_stash_ref(repo: &Repository, stash_oid: &ObjectId, message: &str) -> R
         stash_oid,
         &identity,
         message,
+        true,
     )?;
 
     Ok(())

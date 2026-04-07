@@ -471,6 +471,7 @@ pub fn run(args: Args) -> Result<()> {
             &commit_oid,
             &commit_data.committer,
             &msg,
+            false,
         );
         // Write to branch reflog if on a branch
         if let HeadState::Branch { refname, .. } = &head {
@@ -481,6 +482,7 @@ pub fn run(args: Args) -> Result<()> {
                 &commit_oid,
                 &commit_data.committer,
                 &msg,
+                false,
             );
         }
     }

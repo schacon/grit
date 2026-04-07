@@ -225,6 +225,9 @@ pub fn delete_ref(git_dir: &Path, refname: &str) -> Result<()> {
     // Also remove the entry from packed-refs if present
     remove_packed_ref(&storage_dir, refname)?;
 
+    let log_path = storage_dir.join("logs").join(refname);
+    let _ = fs::remove_file(&log_path);
+
     Ok(())
 }
 
@@ -338,6 +341,114 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
     }
 }
 
+/// Core `logAllRefUpdates` modes (after config lookup), matching Git's `log_refs_config`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogRefsConfig {
+    /// `core.logAllRefUpdates` not set; resolved per-repo (bare vs non-bare).
+    Unset,
+    /// Explicitly disabled.
+    None,
+    /// `true` — log branch-like refs only (see [`should_autocreate_reflog`]).
+    Normal,
+    /// `always` — log updates to any ref.
+    Always,
+}
+
+/// Read `[core] logAllRefUpdates` from the repository config.
+///
+/// Returns [`LogRefsConfig::Unset`] when the key is absent.
+pub fn read_log_refs_config(git_dir: &Path) -> LogRefsConfig {
+    let config_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let config_path = config_dir.join("config");
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(_) => return LogRefsConfig::Unset,
+    };
+
+    let mut in_core = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_core = trimmed.to_ascii_lowercase().starts_with("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim().to_ascii_lowercase() != "logallrefupdates" {
+            continue;
+        }
+        let v = value.trim();
+        let lower = v.to_ascii_lowercase();
+        return match lower.as_str() {
+            "always" => LogRefsConfig::Always,
+            "1" | "true" | "yes" | "on" => LogRefsConfig::Normal,
+            "0" | "false" | "no" | "off" | "never" => LogRefsConfig::None,
+            _ => LogRefsConfig::Unset,
+        };
+    }
+    LogRefsConfig::Unset
+}
+
+fn read_core_bare(git_dir: &Path) -> bool {
+    let config_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
+    let config_path = config_dir.join("config");
+    let Ok(content) = fs::read_to_string(config_path) else {
+        return false;
+    };
+    let mut in_core = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_core = trimmed.to_ascii_lowercase().starts_with("[core]");
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim().to_ascii_lowercase() == "bare" {
+            let v = value.trim().to_ascii_lowercase();
+            return matches!(v.as_str(), "1" | "true" | "yes" | "on");
+        }
+    }
+    false
+}
+
+/// Effective `logAllRefUpdates` after applying Git's `LOG_REFS_UNSET` rule.
+pub fn effective_log_refs_config(git_dir: &Path) -> LogRefsConfig {
+    match read_log_refs_config(git_dir) {
+        LogRefsConfig::Unset => {
+            if read_core_bare(git_dir) {
+                LogRefsConfig::None
+            } else {
+                LogRefsConfig::Normal
+            }
+        }
+        other => other,
+    }
+}
+
+/// Whether a new reflog file may be auto-created for `refname` (Git `should_autocreate_reflog`).
+#[must_use]
+pub fn should_autocreate_reflog(git_dir: &Path, refname: &str) -> bool {
+    match effective_log_refs_config(git_dir) {
+        LogRefsConfig::Always => true,
+        LogRefsConfig::Normal => {
+            refname == "HEAD"
+                || refname.starts_with("refs/heads/")
+                || refname.starts_with("refs/remotes/")
+                || refname.starts_with("refs/notes/")
+        }
+        LogRefsConfig::None | LogRefsConfig::Unset => false,
+    }
+}
+
 /// Write a reflog entry.
 ///
 /// Dispatches to the reftable backend when `extensions.refStorage = reftable`.
@@ -350,6 +461,7 @@ pub fn read_symbolic_ref(git_dir: &Path, refname: &str) -> Result<Option<String>
 /// - `new_oid` — new OID.
 /// - `identity` — `"Name <email> <timestamp> <tz>"` formatted string.
 /// - `message` — short log message.
+/// - `force_create` — if true, create the log file even when [`should_autocreate_reflog`] would not.
 ///
 /// # Errors
 ///
@@ -361,22 +473,34 @@ pub fn append_reflog(
     new_oid: &ObjectId,
     identity: &str,
     message: &str,
+    force_create: bool,
 ) -> Result<()> {
     if crate::reftable::is_reftable_repo(git_dir) {
         return crate::reftable::reftable_append_reflog(
-            git_dir, refname, old_oid, new_oid, identity, message,
+            git_dir,
+            refname,
+            old_oid,
+            new_oid,
+            identity,
+            message,
+            force_create,
         );
     }
     let storage_dir = ref_storage_dir(git_dir, refname);
     let log_path = storage_dir.join("logs").join(refname);
-    let auto_create = refname == "HEAD" || reflog_auto_create_enabled(git_dir);
-    if !auto_create && !log_path.exists() {
+    let may_write =
+        force_create || should_autocreate_reflog(git_dir, refname) || !message.is_empty();
+    if !may_write && !log_path.exists() {
         return Ok(());
     }
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let line = format!("{old_oid} {new_oid} {identity}\t{message}\n");
+    let line = if message.is_empty() {
+        format!("{old_oid} {new_oid} {identity}\n")
+    } else {
+        format!("{old_oid} {new_oid} {identity}\t{message}\n")
+    };
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -391,56 +515,6 @@ fn ref_storage_dir(git_dir: &Path, refname: &str) -> PathBuf {
         return git_dir.to_path_buf();
     }
     common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf())
-}
-
-/// Determine whether missing reflog files should be auto-created.
-///
-/// This follows Git's core.logAllRefUpdates behavior:
-/// - explicit true/always/on/1 => create logs
-/// - explicit false/never/off/0 => do not auto-create
-/// - unset => true for non-bare repos, false for bare repos
-fn reflog_auto_create_enabled(git_dir: &Path) -> bool {
-    let config_dir = common_dir(git_dir).unwrap_or_else(|| git_dir.to_path_buf());
-    let config_path = config_dir.join("config");
-    let content = match fs::read_to_string(config_path) {
-        Ok(c) => c,
-        Err(_) => return true,
-    };
-
-    let mut in_core = false;
-    let mut log_all_ref_updates: Option<bool> = None;
-    let mut bare = false;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_core = trimmed.to_ascii_lowercase().starts_with("[core]");
-            continue;
-        }
-        if !in_core {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let key = key.trim().to_ascii_lowercase();
-        let value = value.trim().to_ascii_lowercase();
-        match key.as_str() {
-            "logallrefupdates" => {
-                log_all_ref_updates = match value.as_str() {
-                    "1" | "true" | "yes" | "on" | "always" => Some(true),
-                    "0" | "false" | "no" | "off" | "never" => Some(false),
-                    _ => None,
-                };
-            }
-            "bare" => {
-                bare = matches!(value.as_str(), "1" | "true" | "yes" | "on");
-            }
-            _ => {}
-        }
-    }
-
-    log_all_ref_updates.unwrap_or(!bare)
 }
 
 /// List all refs under a given prefix (e.g. `"refs/heads/"`).

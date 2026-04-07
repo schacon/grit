@@ -434,6 +434,7 @@ fn run_write(args: WriteArgs) -> Result<()> {
         &new_oid,
         &identity,
         &message,
+        true,
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 

@@ -271,6 +271,7 @@ fn write_symref_reflog(
         new_oid,
         "grit <grit> 0 +0000",
         message,
+        false,
     )?;
     Ok(())
 }

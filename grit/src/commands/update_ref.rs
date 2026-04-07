@@ -8,8 +8,12 @@ use time::OffsetDateTime;
 
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::ObjectId;
-use grit_lib::refs::{append_reflog, delete_ref, read_symbolic_ref, resolve_ref, write_ref};
+use grit_lib::refs::{
+    append_reflog, delete_ref, read_head, read_symbolic_ref, resolve_ref, should_autocreate_reflog,
+    write_ref,
+};
 use grit_lib::repo::Repository;
+use std::collections::HashSet;
 
 /// Arguments for `grit update-ref`.
 #[derive(Debug, ClapArgs)]
@@ -34,6 +38,10 @@ pub struct Args {
     #[arg(long = "create-reflog")]
     pub create_reflog: bool,
 
+    /// Do not create a reflog unless `--create-reflog` or `-m` is given.
+    #[arg(long = "no-create-reflog")]
+    pub no_create_reflog: bool,
+
     /// Log message for reflog.
     #[arg(short = 'm', long = "message")]
     pub log_message: Option<String>,
@@ -50,6 +58,10 @@ pub struct Args {
 
 /// Run `grit update-ref`.
 pub fn run(args: Args) -> Result<()> {
+    if args.null_terminated && !args.stdin {
+        bail!("-z requires --stdin");
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
 
     if args.stdin {
@@ -69,6 +81,9 @@ pub fn run(args: Args) -> Result<()> {
             verify_expected_old(&repo, &target_refname, exp)?;
         }
 
+        let old_oid_for_reflog =
+            resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
+
         let hook_update = HookUpdate {
             old_value: hook_old_value_from_expectation(expected),
             new_value: zero_oid_hex().to_owned(),
@@ -77,6 +92,18 @@ pub fn run(args: Args) -> Result<()> {
         run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
         run_ref_transaction_committed(&repo, &[hook_update]);
+
+        if let Some(msg) = args.log_message.as_deref() {
+            let _ = append_reflog(
+                &repo.git_dir,
+                &reflog_ref_for_delete(&repo.git_dir, refname, &target_refname),
+                &old_oid_for_reflog,
+                &zero_oid(),
+                &resolve_reflog_identity(&repo),
+                msg,
+                args.create_reflog,
+            );
+        }
         return Ok(());
     }
 
@@ -99,19 +126,19 @@ pub fn run(args: Args) -> Result<()> {
         refname: target_refname.clone(),
     };
 
-    // Zero OID means delete
     if new_oid == zero_oid() {
         run_ref_transaction_prepare(&repo, &[hook_update.clone()])?;
         delete_ref(&repo.git_dir, &target_refname).context("deleting ref")?;
         run_ref_transaction_committed(&repo, &[hook_update]);
-        if let Some(msg) = &args.log_message {
+        if let Some(msg) = args.log_message.as_deref() {
             let _ = append_reflog(
                 &repo.git_dir,
-                &target_refname,
+                &reflog_ref_for_delete(&repo.git_dir, refname, &target_refname),
                 &old_oid_for_reflog,
-                &new_oid,
-                "grit <grit> 0 +0000",
+                &zero_oid(),
+                &resolve_reflog_identity(&repo),
                 msg,
+                args.create_reflog,
             );
         }
         return Ok(());
@@ -122,9 +149,8 @@ pub fn run(args: Args) -> Result<()> {
     write_ref(&repo.git_dir, &target_refname, &new_oid).context("writing ref")?;
     run_ref_transaction_committed(&repo, &[hook_update]);
 
-    // Reflog — write when -m is given or when --create-reflog is set
     let msg = args.log_message.as_deref().unwrap_or("");
-    if !msg.is_empty() || args.create_reflog {
+    if should_write_update_reflog(&repo, &args, &target_refname, msg) {
         let identity = resolve_reflog_identity(&repo);
         let _ = append_reflog(
             &repo.git_dir,
@@ -133,35 +159,75 @@ pub fn run(args: Args) -> Result<()> {
             &new_oid,
             &identity,
             msg,
+            args.create_reflog,
         );
     }
 
     Ok(())
 }
 
+fn should_write_update_reflog(
+    repo: &Repository,
+    args: &Args,
+    reflog_refname: &str,
+    msg: &str,
+) -> bool {
+    if args.no_create_reflog {
+        return args.create_reflog || !msg.is_empty();
+    }
+    if args.create_reflog || !msg.is_empty() {
+        return true;
+    }
+    should_autocreate_reflog(&repo.git_dir, reflog_refname)
+}
+
+fn reflog_ref_for_delete(git_dir: &std::path::Path, user_arg: &str, leaf_ref: &str) -> String {
+    if user_arg.eq_ignore_ascii_case("HEAD") {
+        return "HEAD".to_owned();
+    }
+    match read_head(git_dir).ok().flatten() {
+        Some(t) if t == leaf_ref => "HEAD".to_owned(),
+        _ => leaf_ref.to_owned(),
+    }
+}
+
+fn take_batch_no_deref(args: &Args, pending_option: &mut bool) -> bool {
+    let nd = args.no_deref || *pending_option;
+    *pending_option = false;
+    nd
+}
+
 /// Process `--stdin` batch commands.
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input)?;
+    let mut input = Vec::new();
+    io::stdin().read_to_end(&mut input)?;
+    if args.null_terminated {
+        return run_batch_nul(repo, args, &input);
+    }
 
-    let records: Vec<&str> = if args.null_terminated {
-        input.split('\0').collect()
-    } else {
-        input.lines().collect()
-    };
+    let text = String::from_utf8_lossy(&input);
+    let records: Vec<&str> = text.lines().collect();
 
     let mut transaction_active = false;
     let mut transaction_prepared = false;
-    let mut staged: Vec<BatchOp> = Vec::new();
+    let mut staged: Vec<(bool, BatchOp)> = Vec::new();
+    let mut pending_option_no_deref = false;
 
     for line in records {
+        if line.trim().is_empty() {
+            bail!("empty command in input");
+        }
+        if line.chars().next().is_some_and(|c| c.is_whitespace()) {
+            bail!("whitespace before command: {line}");
+        }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
-            continue;
+            bail!("empty command in input");
         }
 
         match parts[0] {
             "update" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 3 {
                     bail!("update requires ref and new-value");
                 }
@@ -170,9 +236,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     new_oid: resolve_oid_or_ref(repo, parts[2])?,
                     expected_old: parse_old_expectation(parts.get(3).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "create" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 3 {
                     bail!("create requires ref and new-value");
                 }
@@ -180,9 +247,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     new_oid: resolve_oid_or_ref(repo, parts[2])?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "delete" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 2 {
                     bail!("delete requires ref");
                 }
@@ -190,9 +258,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old: parse_old_expectation(parts.get(2).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "verify" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 2 {
                     bail!("verify requires ref");
                 }
@@ -200,9 +269,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old: parse_old_expectation(parts.get(2).copied())?,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "symref-update" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 3 {
                     bail!("symref-update requires ref and new-target");
                 }
@@ -228,9 +298,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     new_target: parts[2].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "symref-create" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 3 {
                     bail!("symref-create requires ref and new-target");
                 }
@@ -238,9 +309,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     new_target: parts[2].to_owned(),
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "symref-delete" => {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
                 if parts.len() < 2 {
                     bail!("symref-delete requires ref");
                 }
@@ -251,10 +323,11 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
             }
             "symref-verify" => {
-                if !args.no_deref {
+                let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+                if !nd {
                     bail!("symref-verify can only be used in no-deref mode");
                 }
                 if parts.len() < 2 {
@@ -268,7 +341,14 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     refname: parts[1].to_owned(),
                     expected_old,
                 };
-                queue_or_apply(repo, args, transaction_active, &mut staged, op)?;
+                queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            }
+            "option" => {
+                if parts.len() == 2 && parts[1] == "no-deref" {
+                    pending_option_no_deref = true;
+                } else {
+                    bail!("option unknown: {}", parts.get(1).copied().unwrap_or(""));
+                }
             }
             "start" => {
                 if transaction_active {
@@ -286,6 +366,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 let hook_updates = hook_updates_for_ops(&staged)?;
                 run_ref_transaction_prepare(repo, &hook_updates)?;
                 transaction_prepared = true;
+                println!("prepare: ok");
             }
             "commit" => {
                 if !transaction_active {
@@ -296,8 +377,8 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 if !transaction_prepared {
                     run_ref_transaction_prepare(repo, &hook_updates)?;
                 }
-                for op in staged.drain(..) {
-                    apply_batch_op(repo, args, op)?;
+                for (nd, op) in staged.drain(..) {
+                    apply_batch_op(repo, args, nd, op)?;
                 }
                 run_ref_transaction_committed(repo, &hook_updates);
                 transaction_active = false;
@@ -314,8 +395,275 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 staged.clear();
                 transaction_active = false;
                 transaction_prepared = false;
+                println!("abort: ok");
             }
             other => bail!("unknown batch command: {other}"),
+        }
+    }
+
+    if transaction_active {
+        let hook_updates = hook_updates_for_ops(&staged)?;
+        if !hook_updates.is_empty() {
+            run_ref_transaction_aborted(repo, &hook_updates);
+        }
+    }
+
+    Ok(())
+}
+
+fn read_nul_field<'a>(input: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    if *cursor >= input.len() {
+        return None;
+    }
+    let start = *cursor;
+    while *cursor < input.len() && input[*cursor] != 0 {
+        *cursor += 1;
+    }
+    let slice = &input[start..*cursor];
+    if *cursor < input.len() {
+        *cursor += 1;
+    }
+    Some(slice)
+}
+
+fn run_batch_nul(repo: &Repository, args: &Args, input: &[u8]) -> Result<()> {
+    let mut transaction_active = false;
+    let mut transaction_prepared = false;
+    let mut staged: Vec<(bool, BatchOp)> = Vec::new();
+    let mut pending_option_no_deref = false;
+    let mut cursor = 0usize;
+
+    while cursor < input.len() {
+        let first = read_nul_field(input, &mut cursor)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("unexpected end of stdin"))?;
+        let first_s = std::str::from_utf8(first).context("invalid utf-8 in stdin")?;
+
+        if first_s == "start" {
+            if transaction_active {
+                bail!("transaction already started");
+            }
+            transaction_active = true;
+            transaction_prepared = false;
+            staged.clear();
+            println!("start: ok");
+            continue;
+        }
+        if first_s == "prepare" {
+            if !transaction_active {
+                bail!("no transaction started");
+            }
+            let hook_updates = hook_updates_for_ops(&staged)?;
+            run_ref_transaction_prepare(repo, &hook_updates)?;
+            transaction_prepared = true;
+            println!("prepare: ok");
+            continue;
+        }
+        if first_s == "commit" {
+            if !transaction_active {
+                bail!("no transaction started");
+            }
+            let hook_updates = hook_updates_for_ops(&staged)?;
+            if !transaction_prepared {
+                run_ref_transaction_prepare(repo, &hook_updates)?;
+            }
+            for (nd, op) in staged.drain(..) {
+                apply_batch_op(repo, args, nd, op)?;
+            }
+            run_ref_transaction_committed(repo, &hook_updates);
+            transaction_active = false;
+            transaction_prepared = false;
+            println!("commit: ok");
+            continue;
+        }
+        if first_s == "abort" {
+            if transaction_active {
+                let hook_updates = hook_updates_for_ops(&staged)?;
+                if !hook_updates.is_empty() {
+                    run_ref_transaction_aborted(repo, &hook_updates);
+                }
+            }
+            staged.clear();
+            transaction_active = false;
+            transaction_prepared = false;
+            println!("abort: ok");
+            continue;
+        }
+        if first_s == "option no-deref" {
+            pending_option_no_deref = true;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("update ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let new_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("update {rest}: missing <new-oid>"))?;
+            let old_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("update {rest}: missing <old-oid>"))?;
+            let new_s = std::str::from_utf8(new_b).context("invalid utf-8")?;
+            let old_s = std::str::from_utf8(old_b).context("invalid utf-8")?;
+            let new_oid = if new_s.is_empty() {
+                zero_oid()
+            } else {
+                resolve_oid_or_ref(repo, new_s)?
+            };
+            let expected_old = if old_s.is_empty() {
+                None
+            } else {
+                parse_old_expectation(Some(old_s))?
+            };
+            let op = BatchOp::UpdateOid {
+                refname: rest.to_owned(),
+                new_oid,
+                expected_old,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("create ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let new_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("create {rest}: missing <new-oid>"))?;
+            let new_s = std::str::from_utf8(new_b).context("invalid utf-8")?;
+            let new_oid = resolve_oid_or_ref(repo, new_s)?;
+            let op = BatchOp::CreateOid {
+                refname: rest.to_owned(),
+                new_oid,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("delete ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let old_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("delete {rest}: missing <old-oid>"))?;
+            let old_s = std::str::from_utf8(old_b).context("invalid utf-8")?;
+            let expected_old = if old_s.is_empty() {
+                None
+            } else {
+                parse_old_expectation(Some(old_s))?
+            };
+            let op = BatchOp::DeleteOid {
+                refname: rest.to_owned(),
+                expected_old,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("verify ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let old_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("verify {rest}: missing <old-oid>"))?;
+            let old_s = std::str::from_utf8(old_b).context("invalid utf-8")?;
+            let expected_old = if old_s.is_empty() {
+                Some(OldExpectation::MustNotExist)
+            } else {
+                parse_old_expectation(Some(old_s))?
+            };
+            let op = BatchOp::VerifyOid {
+                refname: rest.to_owned(),
+                expected_old,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("symref-update ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let new_target_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("symref-update {rest}: missing <new-target>"))?;
+            let new_target = std::str::from_utf8(new_target_b)
+                .context("invalid utf-8")?
+                .to_owned();
+            let old_arg_b = read_nul_field(input, &mut cursor);
+            let expected_old = if let Some(oa) = old_arg_b.filter(|b| !b.is_empty()) {
+                let oa_s = std::str::from_utf8(oa).context("invalid utf-8")?;
+                let kind = oa_s;
+                let val_b = read_nul_field(input, &mut cursor)
+                    .ok_or_else(|| anyhow::anyhow!("symref-update {rest}: expected old value"))?;
+                let val = std::str::from_utf8(val_b).context("invalid utf-8")?;
+                match kind {
+                    "ref" => Some(SymrefOldExpectation::MustTarget(val.to_owned())),
+                    "oid" => Some(SymrefOldExpectation::MustOid(
+                        val.parse::<ObjectId>()
+                            .with_context(|| format!("symref-update {rest}: invalid oid: {val}"))?,
+                    )),
+                    _ => bail!("symref-update {rest}: invalid arg '{kind}' for old value"),
+                }
+            } else {
+                None
+            };
+            let op = BatchOp::UpdateSymref {
+                refname: rest.to_owned(),
+                new_target,
+                expected_old,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("symref-create ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let new_target_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("symref-create {rest}: missing <new-target>"))?;
+            let new_target = std::str::from_utf8(new_target_b)
+                .context("invalid utf-8")?
+                .to_owned();
+            let op = BatchOp::CreateSymref {
+                refname: rest.to_owned(),
+                new_target,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("symref-delete ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            let old_target_b = read_nul_field(input, &mut cursor)
+                .ok_or_else(|| anyhow::anyhow!("symref-delete {rest}: missing <old-target>"))?;
+            let old_target = std::str::from_utf8(old_target_b)
+                .context("invalid utf-8")?
+                .to_owned();
+            let op = BatchOp::DeleteSymref {
+                refname: rest.to_owned(),
+                expected_old: Some(SymrefOldExpectation::MustTarget(old_target)),
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        if let Some(rest) = first_s.strip_prefix("symref-verify ") {
+            let nd = take_batch_no_deref(args, &mut pending_option_no_deref);
+            if !nd {
+                bail!("symref-verify can only be used in no-deref mode");
+            }
+            let old_target_b = read_nul_field(input, &mut cursor);
+            let expected_old = match old_target_b {
+                None => SymrefOldExpectation::MustNotExist,
+                Some(b) if b.is_empty() => SymrefOldExpectation::MustNotExist,
+                Some(b) => {
+                    let t = std::str::from_utf8(b).context("invalid utf-8")?;
+                    SymrefOldExpectation::MustTarget(t.to_owned())
+                }
+            };
+            let op = BatchOp::VerifySymref {
+                refname: rest.to_owned(),
+                expected_old,
+            };
+            queue_or_apply(repo, args, nd, transaction_active, &mut staged, op)?;
+            continue;
+        }
+
+        bail!("unknown command: {first_s}");
+    }
+
+    if transaction_active {
+        let hook_updates = hook_updates_for_ops(&staged)?;
+        if !hook_updates.is_empty() {
+            run_ref_transaction_aborted(repo, &hook_updates);
         }
     }
 
@@ -395,37 +743,39 @@ enum BatchOp {
 fn queue_or_apply(
     repo: &Repository,
     args: &Args,
+    no_deref: bool,
     transaction_active: bool,
-    staged: &mut Vec<BatchOp>,
+    staged: &mut Vec<(bool, BatchOp)>,
     op: BatchOp,
 ) -> Result<()> {
     if transaction_active {
-        staged.push(op);
+        staged.push((no_deref, op));
         Ok(())
     } else {
         let hook_update = hook_update_for_op(&op)?;
         run_ref_transaction_prepare(repo, std::slice::from_ref(&hook_update))?;
-        apply_batch_op(repo, args, op)?;
+        apply_batch_op(repo, args, no_deref, op)?;
         run_ref_transaction_committed(repo, &[hook_update]);
         Ok(())
     }
 }
 
-fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
+fn apply_batch_op(repo: &Repository, args: &Args, no_deref: bool, op: BatchOp) -> Result<()> {
     match op {
         BatchOp::UpdateOid {
             refname,
             new_oid,
             expected_old,
         } => {
-            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            let target_refname = effective_refname(repo, &refname, no_deref)?;
             if let Some(expected) = expected_old {
                 verify_expected_old(repo, &target_refname, expected)?;
             }
             let old_oid =
                 resolve_ref(&repo.git_dir, &target_refname).unwrap_or_else(|_| zero_oid());
             write_ref(&repo.git_dir, &target_refname, &new_oid)?;
-            if let Some(msg) = &args.log_message {
+            let msg = args.log_message.as_deref().unwrap_or("");
+            if should_write_update_reflog(repo, args, &target_refname, msg) {
                 let _ = append_reflog(
                     &repo.git_dir,
                     &target_refname,
@@ -433,11 +783,12 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
                     &new_oid,
                     &resolve_reflog_identity(repo),
                     msg,
+                    args.create_reflog,
                 );
             }
         }
         BatchOp::CreateOid { refname, new_oid } => {
-            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            let target_refname = effective_refname(repo, &refname, no_deref)?;
             if resolve_ref(&repo.git_dir, &target_refname).is_ok() {
                 bail!("ref '{target_refname}' already exists");
             }
@@ -447,7 +798,7 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
             refname,
             expected_old,
         } => {
-            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            let target_refname = effective_refname(repo, &refname, no_deref)?;
             if let Some(expected) = expected_old {
                 verify_expected_old(repo, &target_refname, expected)?;
             }
@@ -457,7 +808,7 @@ fn apply_batch_op(repo: &Repository, args: &Args, op: BatchOp) -> Result<()> {
             refname,
             expected_old,
         } => {
-            let target_refname = effective_refname(repo, &refname, args.no_deref)?;
+            let target_refname = effective_refname(repo, &refname, no_deref)?;
             if let Some(expected) = expected_old {
                 verify_expected_old(repo, &target_refname, expected)?;
             } else if resolve_ref(&repo.git_dir, &target_refname).is_err() {
@@ -505,17 +856,27 @@ fn effective_refname(repo: &Repository, refname: &str, no_deref: bool) -> Result
     if no_deref {
         return Ok(refname.to_owned());
     }
-    if let Some(target) = read_symbolic_ref(&repo.git_dir, refname)? {
-        Ok(target)
-    } else {
-        Ok(refname.to_owned())
+    let mut current = refname.to_owned();
+    let mut seen = HashSet::new();
+    for _ in 0..64 {
+        if !seen.insert(current.clone()) {
+            bail!("symref cycle involving '{refname}'");
+        }
+        match read_symbolic_ref(&repo.git_dir, &current)? {
+            Some(target) => current = target,
+            None => return Ok(current),
+        }
     }
+    bail!("symref chain depth exceeded for '{refname}'");
 }
 
 fn parse_old_expectation(raw: Option<&str>) -> Result<Option<OldExpectation>> {
     let Some(old) = raw else {
         return Ok(None);
     };
+    if old.is_empty() {
+        return Ok(None);
+    }
     let expected: ObjectId = old.parse().context("invalid old-value OID")?;
     if is_zero_oid(&expected) {
         Ok(Some(OldExpectation::MustNotExist))
@@ -630,9 +991,9 @@ fn hook_update_for_op(op: &BatchOp) -> Result<HookUpdate> {
     Ok(update)
 }
 
-fn hook_updates_for_ops(ops: &[BatchOp]) -> Result<Vec<HookUpdate>> {
+fn hook_updates_for_ops(ops: &[(bool, BatchOp)]) -> Result<Vec<HookUpdate>> {
     let mut updates = Vec::with_capacity(ops.len());
-    for op in ops {
+    for (_, op) in ops {
         updates.push(hook_update_for_op(op)?);
     }
     Ok(updates)
@@ -705,6 +1066,9 @@ fn resolve_reflog_identity(repo: &Repository) -> String {
         .or_else(|| std::env::var("GIT_AUTHOR_DATE").ok());
 
     if let Some(date) = date_str {
+        if let Ok(canonical) = grit_lib::git_date::parse::parse_date(&date) {
+            return format!("{name} <{email}> {canonical}");
+        }
         return format!("{name} <{email}> {date}");
     }
 

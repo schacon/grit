@@ -1593,7 +1593,16 @@ pub fn reftable_append_reflog(
     new_oid: &ObjectId,
     identity: &str,
     message: &str,
+    force_create: bool,
 ) -> Result<()> {
+    use crate::refs::should_autocreate_reflog;
+    if !force_create
+        && !should_autocreate_reflog(git_dir, refname)
+        && message.is_empty()
+        && !reftable_reflog_exists(git_dir, refname)
+    {
+        return Ok(());
+    }
     let (name, email, time_secs, tz) = parse_identity_string(identity);
     let mut stack = ReftableStack::open(git_dir)?;
     let update_index = stack.max_update_index()? + 1;
