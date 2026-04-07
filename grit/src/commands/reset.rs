@@ -540,7 +540,10 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     new_index.sort();
 
     if mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge {
-        // Hard/Keep: also update working tree.
+        // Hard/Keep/Merge require a working tree
+        if repo.work_tree.is_none() {
+            bail!("fatal: this operation must be run in a work tree");
+        }
         if repo.work_tree.is_some() {
             if mode == ResetMode::Merge || mode == ResetMode::Keep {
                 let obstruction = find_untracked_obstruction(
