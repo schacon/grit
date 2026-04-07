@@ -695,7 +695,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     if use_app_buffer {
                         print_batch_entry(
                             repo,
-                            trimmed,
+                            obj_str,
                             obj_str,
                             true,
                             format,
@@ -707,7 +707,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     } else {
                         print_batch_entry(
                             repo,
-                            trimmed,
+                            obj_str,
                             obj_str,
                             true,
                             format,
@@ -730,7 +730,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     if use_app_buffer {
                         print_batch_entry(
                             repo,
-                            trimmed,
+                            obj_str,
                             obj_str,
                             false,
                             format,
@@ -742,7 +742,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                     } else {
                         print_batch_entry(
                             repo,
-                            trimmed,
+                            obj_str,
                             obj_str,
                             false,
                             format,
@@ -797,7 +797,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     };
 
     if args.batch_all_objects {
-        let mut oids: Vec<ObjectId> = if let Some(ref f) = objects_filter {
+        let mut oids: Vec<ObjectId> = if args.no_filter {
+            let f = max_tree_depth_object_filter(repo)?;
+            rev_list::object_ids_for_cat_file_filtered(repo, &f)?
+        } else if let Some(ref f) = objects_filter {
             let merged = merged_cat_file_object_filter(repo, f.clone())?;
             rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
         } else {
@@ -981,16 +984,34 @@ fn print_batch_follow_symlinks(
     match get_tree_entry_follow_symlinks(&repo.odb, &tree_oid, path)? {
         Ok(FollowPathResult::Found { oid, mode }) => {
             if mode == 0o160000 {
-                write_submodule_batch_line(
-                    out,
-                    format,
-                    &oid.to_hex(),
-                    rest,
-                    packed_sizes,
-                    repo,
-                    oid,
-                    nul_output,
-                )?;
+                match read_batch_object(repo, &oid, opts.ignore_replace) {
+                    Ok(obj) if obj.kind == ObjectKind::Commit => {
+                        emit_batch_object_lines(
+                            repo,
+                            oid,
+                            &obj,
+                            Some(0o160000),
+                            include_content,
+                            format,
+                            nul_output,
+                            packed_sizes,
+                            rest,
+                            out,
+                        )?;
+                    }
+                    Ok(_) | Err(_) => {
+                        write_submodule_batch_line(
+                            out,
+                            format,
+                            &oid.to_hex(),
+                            rest,
+                            packed_sizes,
+                            repo,
+                            oid,
+                            nul_output,
+                        )?;
+                    }
+                }
                 return Ok(());
             }
             let obj = match read_batch_object(repo, &oid, opts.ignore_replace) {
@@ -1120,16 +1141,34 @@ fn print_batch_entry(
             out.write_all(eol)?;
         }
         Ok((oid, Some(0o160000))) => {
-            write_submodule_batch_line(
-                out,
-                format,
-                &oid.to_hex(),
-                rest,
-                packed_sizes,
-                repo,
-                oid,
-                nul_output,
-            )?;
+            match read_batch_object(repo, &oid, opts.ignore_replace) {
+                Ok(obj) if obj.kind == ObjectKind::Commit => {
+                    emit_batch_object_lines(
+                        repo,
+                        oid,
+                        &obj,
+                        Some(0o160000),
+                        include_content,
+                        format,
+                        nul_output,
+                        packed_sizes,
+                        rest,
+                        out,
+                    )?;
+                }
+                Ok(_) | Err(_) => {
+                    write_submodule_batch_line(
+                        out,
+                        format,
+                        &oid.to_hex(),
+                        rest,
+                        packed_sizes,
+                        repo,
+                        oid,
+                        nul_output,
+                    )?;
+                }
+            }
         }
         Ok((oid, mode)) => match read_batch_object(repo, &oid, opts.ignore_replace) {
             Err(e) => match e {

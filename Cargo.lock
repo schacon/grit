@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "grit-lib"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "flate2",
  "hex",
@@ -274,7 +274,7 @@ dependencies = [
 
 [[package]]
 name = "grit-rs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",

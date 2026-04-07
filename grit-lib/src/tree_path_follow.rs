@@ -89,6 +89,7 @@ pub fn get_tree_entry_follow_symlinks(
                 }));
             }
             stack.pop();
+            followed_symlink_blobs.clear();
             path_buf = rest.unwrap_or_default();
             continue;
         }
