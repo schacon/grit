@@ -49,6 +49,10 @@ pub struct Args {
     #[arg(short = 'z')]
     pub null_terminated: bool,
 
+    /// Abbreviate OIDs to this many hex chars.
+    #[arg(long, value_name = "N")]
+    pub abbrev: Option<usize>,
+
     /// Format string for output.
     #[arg(long)]
     pub format: Option<String>,
@@ -356,7 +360,9 @@ fn print_entry(
             write!(out, "{}", quote_path_name(name))?;
         }
     } else if args.object_only {
-        write!(out, "{}", entry.oid)?;
+        let hex = entry.oid.to_hex();
+        let abbrev = args.abbrev.unwrap_or(40).min(40);
+        write!(out, "{}", &hex[..abbrev])?;
     } else if args.long {
         let size_str = if kind_str == "blob" {
             match repo.odb.read(&entry.oid) {
@@ -366,13 +372,19 @@ fn print_entry(
         } else {
             "      -".to_string()
         };
+        let hex = entry.oid.to_hex();
+        let abbrev = args.abbrev.unwrap_or(40).min(40);
+        let oid_str = &hex[..abbrev];
         write!(
             out,
-            "{:06o} {kind_str} {} {size_str}\t{name}",
-            entry.mode, entry.oid
+            "{:06o} {kind_str} {oid_str} {size_str}\t{name}",
+            entry.mode
         )?;
     } else {
-        write!(out, "{:06o} {kind_str} {}\t{name}", entry.mode, entry.oid)?;
+        let hex = entry.oid.to_hex();
+        let abbrev = args.abbrev.unwrap_or(40).min(40);
+        let oid_str = &hex[..abbrev];
+        write!(out, "{:06o} {kind_str} {oid_str}\t{name}", entry.mode)?;
     }
     out.write_all(&[term])?;
     Ok(())
