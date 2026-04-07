@@ -738,7 +738,7 @@ t6417-merge-ours-theirs	yes	7	7	0	ok	7	7	0
 t6418-merge-text-auto	yes	11	11	0	ok	11	11	0
 t6419-merge-ignorecase	yes	0	0	0	ok	0	0	0
 t6421-merge-partial-clone	yes	3	3	0	ok	3	3	0
-t6422-merge-rename-corner-cases	yes	26	14	12	ok	8	20	6
+t6422-merge-rename-corner-cases	yes	26	15	11	ok	9	20	6
 t6423-merge-rename-directories	yes	82	11	71	ok	9	80	2
 t6424-merge-unrelated-index-changes	yes	19	2	17	ok	2	19	0
 t6425-merge-rename-delete	yes	1	1	0	ok	1	1	0

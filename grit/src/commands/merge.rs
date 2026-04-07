@@ -3466,6 +3466,47 @@ fn merge_trees(
                         resolved_entry_at_new = Some(oe.clone());
                     }
                 } else {
+                    if let Some(te_at_new) = theirs_entries.get(ours_new_path) {
+                        if !base.contains_key(ours_new_path) {
+                            has_conflicts = true;
+                            has_conflict_at_new = true;
+                            let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                            stage_entry(&mut index, oe, 2);
+                            stage_entry(&mut index, te_at_new, 3);
+                            let conflict_content = match try_content_merge_add_add(
+                                repo,
+                                &path_str,
+                                oe,
+                                te_at_new,
+                                ours_label,
+                                their_name,
+                                MergeFavor::None,
+                                diff_algorithm,
+                                merge_renormalize,
+                                ignore_all_space,
+                                ignore_space_change,
+                                ignore_space_at_eol,
+                                ignore_cr_at_eol,
+                            )? {
+                                ContentMergeResult::Clean(merged_oid, _) => {
+                                    repo.odb.read(&merged_oid)?.data
+                                }
+                                ContentMergeResult::Conflict(content)
+                                | ContentMergeResult::BinaryConflict(content) => content,
+                            };
+                            conflict_files.push((path_str.clone(), conflict_content));
+                            conflict_descriptions.push(("rename/add".to_string(), path_str));
+                            let base_path_str = String::from_utf8_lossy(base_path).to_string();
+                            let new_path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                            conflict_descriptions.push((
+                                "rename/delete".to_string(),
+                                format!(
+                                    "{base_path_str} deleted in {their_name} and renamed to {new_path_str} in {ours_label}. Version {ours_label} of {new_path_str} left in tree."
+                                ),
+                            ));
+                            continue;
+                        }
+                    }
                     // Theirs deleted the original — ours renamed it → rename/delete conflict
                     has_conflicts = true;
                     has_conflict_at_new = true;
