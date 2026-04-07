@@ -2984,7 +2984,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "tag" => commands::tag::run(parse_cmd_args(subcmd, rest)),
         "unpack-file" => commands::unpack_file::run(parse_cmd_args(subcmd, rest)),
         "unpack-objects" => commands::unpack_objects::run(parse_cmd_args(subcmd, rest)),
-        "update-index" => commands::update_index::run(parse_cmd_args(subcmd, rest)),
+        "update-index" => commands::update_index::run(parse_cmd_args(subcmd, rest), rest),
         "update-ref" => commands::update_ref::run(parse_cmd_args(subcmd, rest)),
         "update-server-info" => commands::update_server_info::run(parse_cmd_args(subcmd, rest)),
         "upload-archive" => commands::upload_archive::run(parse_cmd_args(subcmd, rest)),

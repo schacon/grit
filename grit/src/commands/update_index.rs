@@ -121,8 +121,141 @@ pub struct Args {
     pub files: Vec<PathBuf>,
 }
 
+/// Per-path operation mode for `update-index`.
+///
+/// Git uses sticky flags: each `--add`, `--remove`, or `--force-remove` applies to
+/// following path arguments until another mode flag appears.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathMode {
+    /// Update an existing index entry only (no `--add`).
+    Update,
+    /// `--add`
+    Add,
+    /// `--remove`
+    Remove,
+    /// `--force-remove`
+    ForceRemove,
+    /// Both `--add` and `--remove` are set: Git enables both and `process_path` decides
+    /// (e.g. removing a file from the index when a directory replaced it on disk).
+    AddRemoveCombo,
+}
+
+fn global_path_mode(args: &Args) -> PathMode {
+    if args.force_remove {
+        PathMode::ForceRemove
+    } else if args.add && args.remove {
+        PathMode::AddRemoveCombo
+    } else if args.remove {
+        PathMode::Remove
+    } else if args.add {
+        PathMode::Add
+    } else {
+        PathMode::Update
+    }
+}
+
+fn skip_one_update_index_arg(rest: &[String], i: usize) -> usize {
+    let tok = &rest[i];
+    if tok == "--cacheinfo" {
+        if i + 1 < rest.len() {
+            let next = &rest[i + 1];
+            if next.contains(',') {
+                return i + 2;
+            }
+            if i + 3 < rest.len() {
+                return i + 4;
+            }
+        }
+        return (i + 1).min(rest.len());
+    }
+    if tok == "--chmod" && i + 1 < rest.len() && !rest[i + 1].starts_with('-') {
+        return i + 2;
+    }
+    if tok.starts_with("--chmod=") {
+        return i + 1;
+    }
+    if tok == "--index-version" && i + 1 < rest.len() {
+        return i + 2;
+    }
+    (i + 1).min(rest.len())
+}
+
+fn sticky_path_modes_for_paths(rest: &[String], files: &[PathBuf]) -> Result<Vec<PathMode>> {
+    let mut modes = Vec::with_capacity(files.len());
+    let mut file_idx = 0usize;
+    let mut mode = PathMode::Update;
+    let mut i = 0usize;
+    while i < rest.len() {
+        let tok = &rest[i];
+        match tok.as_str() {
+            "--add" => {
+                mode = PathMode::Add;
+                i += 1;
+            }
+            "--remove" => {
+                mode = PathMode::Remove;
+                i += 1;
+            }
+            "--force-remove" => {
+                mode = PathMode::ForceRemove;
+                i += 1;
+            }
+            "--" => {
+                i += 1;
+                while i < rest.len() {
+                    if file_idx >= files.len() {
+                        bail!("unexpected extra path after '--'");
+                    }
+                    if !paths_equal(files.get(file_idx), &rest[i]) {
+                        bail!(
+                            "path order mismatch at '{}': expected '{}'",
+                            rest[i],
+                            files[file_idx].display()
+                        );
+                    }
+                    modes.push(mode);
+                    file_idx += 1;
+                    i += 1;
+                }
+            }
+            t if t.starts_with('-') => {
+                i = skip_one_update_index_arg(rest, i);
+            }
+            _ => {
+                if file_idx >= files.len() {
+                    bail!("unexpected path argument '{tok}'");
+                }
+                if !paths_equal(files.get(file_idx), tok) {
+                    bail!(
+                        "path order mismatch at '{tok}': expected '{}'",
+                        files[file_idx].display()
+                    );
+                }
+                modes.push(mode);
+                file_idx += 1;
+                i += 1;
+            }
+        }
+    }
+    if file_idx != files.len() {
+        bail!(
+            "path modes: expected {} paths, got {}",
+            files.len(),
+            file_idx
+        );
+    }
+    Ok(modes)
+}
+
+fn paths_equal(expected: Option<&PathBuf>, actual: &str) -> bool {
+    let Some(exp) = expected else {
+        return false;
+    };
+    exp.as_path() == Path::new(actual)
+}
+
 /// Run `grit update-index`.
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
@@ -270,8 +403,17 @@ pub fn run(args: Args) -> Result<()> {
         args.files.clone()
     };
 
-    for input_path in paths {
-        let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
+    let path_modes: Vec<PathMode> = if args.null_terminated {
+        vec![global_path_mode(&args); paths.len()]
+    } else if args.force_remove && args.add {
+        sticky_path_modes_for_paths(raw_rest, &paths)?
+    } else {
+        vec![global_path_mode(&args); paths.len()]
+    };
+
+    for (input_path, path_mode_orig) in paths.iter().zip(path_modes.iter()) {
+        let mut path_mode = *path_mode_orig;
+        let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
 
         // Refuse to add a path that traverses through a symbolic link.
@@ -280,7 +422,21 @@ pub fn run(args: Args) -> Result<()> {
             bail!("'{}' is beyond a symbolic link", input_path.display());
         }
 
-        if args.force_remove {
+        if path_mode == PathMode::AddRemoveCombo {
+            if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                if meta.is_dir() {
+                    if let Some(e) = index.get(&rel_bytes, 0) {
+                        if e.mode != grit_lib::index::MODE_GITLINK && e.mode != 0o040000 {
+                            index.remove(&rel_bytes);
+                            continue;
+                        }
+                    }
+                }
+            }
+            path_mode = PathMode::Add;
+        }
+
+        if path_mode == PathMode::ForceRemove {
             // --force-remove silently succeeds even if the entry is absent
             index.remove(&rel_bytes);
             continue;
@@ -290,7 +446,7 @@ pub fn run(args: Args) -> Result<()> {
         // that replaced it), remove the entry from the index.  If the file
         // *does* exist on disk, fall through to the normal update/add logic
         // so the index entry gets refreshed.
-        if args.remove {
+        if path_mode == PathMode::Remove {
             // --ignore-skip-worktree-entries: skip entries with skip-worktree bit
             if args.ignore_skip_worktree_entries {
                 if let Some(e) = index.get(&rel_bytes, 0) {
@@ -345,11 +501,11 @@ pub fn run(args: Args) -> Result<()> {
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
         // Per-file chmod (from interleaved args like --chmod=+x A --chmod=-x B) takes priority.
         let effective_chmod = per_file_chmod
-            .get(&input_path)
+            .get(input_path)
             .map(|s| s.as_str())
             .or_else(|| args.chmod.last().map(|s| s.as_str()));
         if let Some(ref chmod_val) = effective_chmod.map(|s| s.to_owned()) {
-            if !args.add {
+            if path_mode != PathMode::Add {
                 let new_mode = match chmod_val.as_str() {
                     "+x" => 0o100755u32,
                     "-x" => 0o100644u32,
@@ -386,7 +542,7 @@ pub fn run(args: Args) -> Result<()> {
         // Check for D/F conflicts in the index before adding.
         // Skip for gitlinks (submodule directories).
         let is_gitlink = meta.file_type().is_dir() && abs_path.join(".git").exists();
-        if args.add && !is_gitlink {
+        if path_mode == PathMode::Add && !is_gitlink {
             let rel_str = String::from_utf8_lossy(&rel_bytes);
             // Check if any ancestor path is already a file in the index
             let mut prefix = rel_str.as_ref();
@@ -408,7 +564,7 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // Without --add, reject files not yet in the index.
-        if !args.add && index.get(&rel_bytes, 0).is_none() {
+        if path_mode != PathMode::Add && index.get(&rel_bytes, 0).is_none() {
             if args.ignore_missing {
                 continue;
             }
@@ -505,7 +661,7 @@ pub fn run(args: Args) -> Result<()> {
 
         // Apply --chmod after adding the entry (per-file takes priority over global).
         let apply_chmod = per_file_chmod
-            .get(&input_path)
+            .get(input_path)
             .map(|s| s.as_str())
             .or_else(|| args.chmod.last().map(|s| s.as_str()))
             .map(|s| s.to_owned());

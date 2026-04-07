@@ -55,6 +55,10 @@ pub struct Args {
     #[arg(long = "empty")]
     pub empty: bool,
 
+    /// Set a path prefix for the work tree (used with `-u` validation messages).
+    #[arg(long = "super-prefix")]
+    pub super_prefix: Option<String>,
+
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
 }
@@ -282,7 +286,7 @@ pub fn run(args: Args) -> Result<()> {
             2 => {
                 let old_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
                 let new_tree = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "", prot)?);
-                new_index = two_way_merge(&old_index, &old_tree, &new_tree)?;
+                new_index = two_way_merge(&repo, &old_index, &old_tree, &new_tree)?;
             }
             3 => {
                 let base = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
@@ -306,7 +310,13 @@ pub fn run(args: Args) -> Result<()> {
     apply_sparse_checkout(&repo.git_dir, &mut new_index)?;
 
     if args.update {
-        validate_worktree_updates(&repo, &old_index, &new_index, allow_ignored_overwrite)?;
+        validate_worktree_updates(
+            &repo,
+            &old_index,
+            &new_index,
+            allow_ignored_overwrite,
+            args.super_prefix.as_deref(),
+        )?;
     }
     if !dry_run && args.update {
         checkout_index_entries(&repo, &old_index, &new_index)?;
@@ -433,6 +443,7 @@ fn same_blob(a: &IndexEntry, b: &IndexEntry) -> bool {
 }
 
 fn two_way_merge(
+    repo: &Repository,
     current_index: &Index,
     old_tree: &HashMap<Vec<u8>, IndexEntry>,
     new_tree: &HashMap<Vec<u8>, IndexEntry>,
@@ -470,6 +481,7 @@ fn two_way_merge(
                     result.remove(&path);
                 }
                 Some(c) if same_blob(c, o) => {
+                    require_uptodate(repo, c)?;
                     result.remove(&path);
                 }
                 Some(_) => conflicts.push(String::from_utf8_lossy(&path).into_owned()),
@@ -480,6 +492,9 @@ fn two_way_merge(
                     result.insert(path.clone(), n.clone());
                 }
                 Some(c) if same_blob(c, o) => {
+                    if !same_blob(o, n) {
+                        require_uptodate(repo, c)?;
+                    }
                     result.insert(path.clone(), n.clone());
                 }
                 Some(c) if same_blob(c, n) => {
@@ -1028,6 +1043,7 @@ fn validate_worktree_updates(
     old_index: &Index,
     new_index: &Index,
     allow_ignored_overwrite: bool,
+    super_prefix: Option<&str>,
 ) -> Result<()> {
     let work_tree = match &repo.work_tree {
         Some(p) => p.clone(),
@@ -1079,6 +1095,24 @@ fn validate_worktree_updates(
                         }
                     }
                 }
+                if let Ok(meta) = std::fs::symlink_metadata(&abs_path) {
+                    if meta.is_dir() {
+                        if worktree_has_untracked_under_path(&work_tree, old_index, &rel_path)? {
+                            if let Some(p) = super_prefix {
+                                bail!(
+                                    "Updating '{}{}' would lose untracked files in it",
+                                    p,
+                                    rel_path
+                                );
+                            }
+                            bail!(
+                                "untracked working tree file '{}' would be overwritten by merge",
+                                rel_path
+                            );
+                        }
+                        continue;
+                    }
+                }
                 bail!(
                     "untracked working tree file '{}' would be overwritten by merge",
                     rel_path
@@ -1097,6 +1131,40 @@ fn validate_worktree_updates(
     }
 
     Ok(())
+}
+
+/// Returns true if `rel_path` is a directory in the work tree that contains a file not
+/// listed in `old_index` (stage 0). Used when a merge wants to add a file at `rel_path`
+/// but a directory is in the way.
+fn worktree_has_untracked_under_path(
+    work_tree: &Path,
+    old_index: &Index,
+    rel_path: &str,
+) -> Result<bool> {
+    let base = work_tree.join(rel_path);
+    fn walk(base: &Path, work_tree: &Path, old_index: &Index) -> Result<bool> {
+        let entries = match std::fs::read_dir(base) {
+            Ok(e) => e,
+            Err(_) => return Ok(false),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            let rel = path.strip_prefix(work_tree).unwrap();
+            let rel_s = rel.to_string_lossy();
+            let ft = entry.file_type()?;
+            if ft.is_file() || ft.is_symlink() {
+                if old_index.get(rel_s.as_bytes(), 0).is_none() {
+                    return Ok(true);
+                }
+            } else if ft.is_dir()
+                && walk(&path, work_tree, old_index)? {
+                    return Ok(true);
+                }
+        }
+        Ok(false)
+    }
+    walk(&base, work_tree, old_index)
 }
 
 fn worktree_matches_entry(repo: &Repository, entry: &IndexEntry, abs_path: &Path) -> Result<bool> {

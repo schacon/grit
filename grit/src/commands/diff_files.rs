@@ -13,6 +13,8 @@ use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::abbreviate_object_id;
+#[cfg(unix)]
+use libc;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -450,6 +452,19 @@ enum WorktreeStatus {
 /// Fast worktree probe: uses stat() data from the index to skip hashing
 /// when the file hasn't changed.  Falls back to full read+hash if stat
 /// info doesn't match.
+fn path_component_is_not_directory(err: &std::io::Error) -> bool {
+    if err.kind() == std::io::ErrorKind::NotADirectory {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        if err.raw_os_error() == Some(libc::ENOTDIR) {
+            return true;
+        }
+    }
+    false
+}
+
 fn read_worktree_info_fast(
     repo: &Repository,
     abs_path: &Path,
@@ -458,6 +473,7 @@ fn read_worktree_info_fast(
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(WorktreeStatus::Missing),
+        Err(e) if path_component_is_not_directory(&e) => return Ok(WorktreeStatus::Missing),
         Err(e) => return Err(e.into()),
     };
 
@@ -532,6 +548,7 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if path_component_is_not_directory(&e) => return Ok(None),
         Err(e) => return Err(e.into()),
     };
 
