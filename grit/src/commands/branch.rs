@@ -1063,6 +1063,20 @@ fn rename_branch(repo: &Repository, head: &HeadState, args: &Args) -> Result<()>
         bail!("A branch named '{new_name}' already exists.");
     }
 
+    // Check if the new name is checked out in any worktree (including main)
+    let new_branch_current = head.branch_name() == Some(new_name)
+        || branch_checked_out_in_other_worktree(repo, new_name).is_some();
+    if new_branch_current {
+        bail!(
+            "fatal: cannot force update the branch '{}' used by worktree at '{}'",
+            new_name,
+            repo.work_tree
+                .as_deref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| ".".to_owned())
+        );
+    }
+
     // Delete the old ref FIRST to avoid d/f conflicts
     // (e.g., renaming m to m/m needs to remove refs/heads/m file before
     // creating refs/heads/m/ directory, or n/n to n needs to remove refs/heads/n/
