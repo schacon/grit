@@ -117,12 +117,14 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    // If annotated/signed without a name, fail
-    let is_annotated_mode =
-        args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
-    if name.is_none() && is_annotated_mode {
+    // If annotated/signed/force without a name, fail
+    let is_create_mode =
+        args.annotate || args.sign || !args.message.is_empty() || args.file.is_some() || args.force;
+    if name.is_none() && is_create_mode {
         bail!("tag name required");
     }
+    let is_annotated_mode =
+        args.annotate || args.sign || !args.message.is_empty() || args.file.is_some();
 
     // If no name is given (or -l is given), list tags
     if name.is_none() || args.list > 0 {
