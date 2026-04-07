@@ -216,7 +216,7 @@ t11270-for-each-ref-merged	t1	yes	35	35	0	true	ok	0
 t11280-show-ref-exclude	t1	yes	34	28	6	false	ok	0
 t11290-update-ref-atomic-batch	t1	yes	33	33	0	true	ok	0
 t11300-symbolic-ref-head-detach	t1	yes	32	25	7	false	ok	0
-t11310-check-ignore-global	t1	yes	34	29	5	false	ok	0
+t11310-check-ignore-global	t1	yes	34	34	0	true	ok	0
 t11320-diff-no-index-exit	t1	yes	36	36	0	true	ok	0
 t11330-diff-cached-color	t1	yes	37	37	0	true	ok	0
 t11340-diff-tree-root-commit	t1	yes	30	30	0	true	ok	0
