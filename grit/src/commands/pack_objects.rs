@@ -687,10 +687,12 @@ fn optimize_blob_deltas(entries: Vec<PackEntry>) -> Result<(Vec<PackWriteEntry>,
             if b.oid == t.oid {
                 continue;
             }
-            if t.data.starts_with(&b.data) && t.data.len() > b.data.len()
-                && best_base.is_none_or(|bb| b.data.len() > bb.data.len()) {
-                    best_base = Some(b);
-                }
+            if t.data.starts_with(&b.data)
+                && t.data.len() > b.data.len()
+                && best_base.is_none_or(|bb| b.data.len() > bb.data.len())
+            {
+                best_base = Some(b);
+            }
         }
         if let Some(base) = best_base {
             delta_target_to_base.insert(t.oid, base.oid);

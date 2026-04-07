@@ -1157,10 +1157,9 @@ fn worktree_has_untracked_under_path(
                 if old_index.get(rel_s.as_bytes(), 0).is_none() {
                     return Ok(true);
                 }
-            } else if ft.is_dir()
-                && walk(&path, work_tree, old_index)? {
-                    return Ok(true);
-                }
+            } else if ft.is_dir() && walk(&path, work_tree, old_index)? {
+                return Ok(true);
+            }
         }
         Ok(false)
     }

@@ -2,15 +2,18 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
 use grit_lib::pack;
+use grit_lib::rev_list::{self, ObjectFilter};
+use grit_lib::tree_path_follow::{get_tree_entry_follow_symlinks, FollowPathFailure, FollowPathResult};
 use std::io::{self, BufRead, Read as _, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Arguments for `grit cat-file`.
 #[derive(Debug, ClapArgs)]
@@ -106,6 +109,18 @@ pub struct Args {
     /// Show filtered content.
     #[arg(long = "filters")]
     pub filters: bool,
+
+    /// Object filter for batch-all-objects (and stdin batch exclusion reporting).
+    #[arg(long = "filter", value_name = "spec")]
+    pub filter: Option<String>,
+
+    /// Disable object filter.
+    #[arg(long = "no-filter")]
+    pub no_filter: bool,
+
+    /// Emit objects in undefined order (only with --batch-all-objects).
+    #[arg(long)]
+    pub unordered: bool,
 
     /// Either `<type>` (when followed by `<object>`) or `<object>`.
     pub type_or_object: Option<String>,
@@ -446,7 +461,168 @@ fn validate_args(args: &Args) -> Result<()> {
         usage_error("fatal: batch modes take no arguments");
     }
 
+    if args.unordered && !args.batch_all_objects {
+        usage_error("error: --unordered can only be used with --batch-all-objects");
+    }
+
+    if args.filter.is_some() && args.no_filter {
+        usage_error("fatal: --filter and --no-filter cannot be used together");
+    }
+
+    if args.filter.is_some() && !is_batch {
+        usage_error("fatal: '--filter' requires a batch mode");
+    }
+
+    if args.no_filter && !is_batch {
+        usage_error("fatal: '--no-filter' requires a batch mode");
+    }
+
+    if let Some(spec) = args.filter.as_deref() {
+        check_cat_file_filter_prefixes(spec);
+        if ObjectFilter::parse(spec).is_err() {
+            eprintln!("fatal: invalid filter-spec '{spec}'");
+            std::process::exit(128);
+        }
+    }
+
     Ok(())
+}
+
+fn check_cat_file_filter_prefixes(spec: &str) {
+    if spec.starts_with("tree:") {
+        eprintln!("usage: objects filter not supported: 'tree'");
+        std::process::exit(129);
+    }
+    if spec.starts_with("sparse:oid=") {
+        eprintln!("usage: objects filter not supported: 'sparse:oid'");
+        std::process::exit(129);
+    }
+    if let Some(rest) = spec.strip_prefix("sparse:") {
+        if rest.starts_with("path=") {
+            eprintln!("fatal: sparse:path filters support has been dropped");
+            std::process::exit(128);
+        }
+        let name = spec.split('=').next().unwrap_or(spec);
+        eprintln!("usage: objects filter not supported: '{name}'");
+        std::process::exit(129);
+    }
+}
+
+const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
+
+fn max_tree_depth_object_filter(repo: &Repository) -> Result<ObjectFilter> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
+        raw.parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
+    } else {
+        DEFAULT_MAX_TREE_DEPTH
+    };
+    Ok(ObjectFilter::TreeDepth(depth as u64))
+}
+
+fn merged_cat_file_object_filter(repo: &Repository, user: ObjectFilter) -> Result<ObjectFilter> {
+    Ok(ObjectFilter::Combine(vec![max_tree_depth_object_filter(repo)?, user]))
+}
+
+fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+    for prefix in 0..=255u8 {
+        let hex_prefix = format!("{prefix:02x}");
+        let dir = objects_dir.join(&hex_prefix);
+        if !dir.exists() {
+            continue;
+        }
+        let rd = std::fs::read_dir(&dir)?;
+        for entry in rd {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.len() == 38 {
+                let full_hex = format!("{hex_prefix}{name_str}");
+                if let Ok(oid) = ObjectId::from_hex(&full_hex) {
+                    oids.insert(oid);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_pack_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
+    for idx in pack::read_local_pack_indexes(objects_dir)? {
+        for e in idx.entries {
+            oids.insert(e.oid);
+        }
+    }
+    Ok(())
+}
+
+fn object_storage_dirs_for_repo(repo: &Repository) -> Result<Vec<PathBuf>> {
+    let mut dirs = Vec::new();
+    let primary = repo.odb.objects_dir().to_path_buf();
+    dirs.push(primary.clone());
+    if let Ok(alts) = pack::read_alternates_recursive(&primary) {
+        for alt in alts {
+            if !dirs.iter().any(|d| d == &alt) {
+                dirs.push(alt);
+            }
+        }
+    }
+    Ok(dirs)
+}
+
+fn collect_all_object_ids(repo: &Repository) -> Result<Vec<ObjectId>> {
+    let mut oids = BTreeSet::new();
+    for d in object_storage_dirs_for_repo(repo)? {
+        collect_all_loose_object_ids(&d, &mut oids)?;
+        collect_pack_object_ids(&d, &mut oids)?;
+    }
+    Ok(oids.into_iter().collect())
+}
+
+fn read_batch_object(
+    repo: &Repository,
+    oid: &ObjectId,
+    ignore_replace: bool,
+) -> std::result::Result<grit_lib::objects::Object, LibError> {
+    if ignore_replace {
+        repo.odb.read(oid)
+    } else {
+        repo.read_replaced(oid)
+    }
+}
+
+fn write_two_line_status(
+    out: &mut impl Write,
+    tag: &str,
+    second_line: &[u8],
+    nul_output: bool,
+) -> Result<()> {
+    let eol: &[u8] = if nul_output { b"\0" } else { b"\n" };
+    let len = second_line.len();
+    write!(out, "{tag} {len}")?;
+    out.write_all(eol)?;
+    out.write_all(second_line)?;
+    out.write_all(eol)?;
+    Ok(())
+}
+
+fn resolve_treeish_to_tree_oid(repo: &Repository, treeish: &str) -> Result<ObjectId> {
+    let oid = rev_parse::resolve_revision(repo, treeish)?;
+    let object = repo.odb.read(&oid)?;
+    match object.kind {
+        ObjectKind::Commit => Ok(parse_commit(&object.data)?.tree),
+        ObjectKind::Tree => Ok(oid),
+        _ => bail!("not a tree-ish"),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BatchWriteOpts<'a> {
+    ignore_replace: bool,
+    follow_symlinks: bool,
+    batch_all_objects: bool,
+    objects_filter: Option<&'a ObjectFilter>,
 }
 
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
@@ -464,30 +640,60 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let nul_output = args.nul_both;
     let use_app_buffer = args.buffer && args.batch_command.is_some();
 
-    // Check if we should suppress the final flush (for testing --buffer behavior)
     let no_flush_on_exit = std::env::var("GIT_TEST_CAT_FILE_NO_FLUSH_ON_EXIT").is_ok();
 
-    // In --buffer mode for --batch-command, accumulate output in an
-    // application-level buffer and only write to stdout on `flush` commands.
     let mut app_buf: Vec<u8> = Vec::new();
 
-    let records = read_input_records(&stdin, nul_input)?;
+    let objects_filter: Option<ObjectFilter> =
+        if args.no_filter || args.filter.is_none() {
+            None
+        } else {
+            let spec = args
+                .filter
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
+            Some(
+                ObjectFilter::parse(spec)
+                    .map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?,
+            )
+        };
+
+    let records: Vec<String> = if args.batch_all_objects {
+        let mut oids: Vec<ObjectId> = if let Some(ref f) = objects_filter {
+            let merged = merged_cat_file_object_filter(repo, f.clone())?;
+            rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
+        } else {
+            collect_all_object_ids(repo)?
+        };
+        if args.unordered {
+            oids.reverse();
+        } else {
+            oids.sort();
+        }
+        oids.into_iter().map(|o| o.to_hex()).collect()
+    } else {
+        read_input_records(&stdin, nul_input)?
+    };
+
+    let write_opts = BatchWriteOpts {
+        ignore_replace: args.batch_all_objects,
+        follow_symlinks: args.follow_symlinks,
+        batch_all_objects: args.batch_all_objects,
+        objects_filter: objects_filter.as_ref(),
+    };
 
     for line in &records {
         let trimmed = line.trim();
 
         if args.batch_command.is_some() {
-            // Empty command
             if trimmed.is_empty() {
                 eprintln!("fatal: empty command in input");
                 std::process::exit(128);
             }
-            // Whitespace before command
             if line.starts_with(' ') || line.starts_with('\t') {
                 eprintln!("fatal: whitespace before command: '{}'", trimmed);
                 std::process::exit(128);
             }
-            // <command> <args>
             let mut parts = trimmed.splitn(2, ' ');
             match parts.next() {
                 Some("contents") => {
@@ -504,6 +710,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -514,8 +721,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            write_opts,
                             &mut stdout_lock,
                         )?;
+                        stdout_lock.flush()?;
                     }
                 }
                 Some("info") => {
@@ -532,6 +741,7 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -542,8 +752,10 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
+                            write_opts,
                             &mut stdout_lock,
                         )?;
+                        stdout_lock.flush()?;
                     }
                 }
                 Some("flush") => {
@@ -575,17 +787,18 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 format,
                 nul_output,
                 packed_sizes.as_ref(),
+                write_opts,
                 &mut stdout_lock,
             )?;
+            if !use_app_buffer {
+                stdout_lock.flush()?;
+            }
         }
     }
 
     if no_flush_on_exit && use_app_buffer {
-        // Discard the application buffer — the test verifies that --buffer
-        // mode holds output until an explicit flush command.
         return Ok(());
     }
-    // Flush any remaining buffered data.
     if use_app_buffer {
         stdout_lock.write_all(&app_buf)?;
     }

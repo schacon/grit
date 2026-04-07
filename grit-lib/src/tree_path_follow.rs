@@ -115,7 +115,10 @@ pub fn get_tree_entry_follow_symlinks(
 
         if git_mode_is_dir(mode) {
             if rest.is_none() {
-                return Ok(Ok(FollowPathResult::Found { oid: entry_oid, mode }));
+                return Ok(Ok(FollowPathResult::Found {
+                    oid: entry_oid,
+                    mode,
+                }));
             }
             stack.push(entry_oid);
             path_buf = rest.unwrap();
@@ -124,7 +127,10 @@ pub fn get_tree_entry_follow_symlinks(
 
         if git_mode_is_blob(mode) {
             if rest.is_none() {
-                return Ok(Ok(FollowPathResult::Found { oid: entry_oid, mode }));
+                return Ok(Ok(FollowPathResult::Found {
+                    oid: entry_oid,
+                    mode,
+                }));
             }
             return Ok(Err(FollowPathFailure::NotDir));
         }
@@ -160,7 +166,10 @@ pub fn get_tree_entry_follow_symlinks(
 
         // Submodule (gitlink) or other.
         if rest.is_none() {
-            return Ok(Ok(FollowPathResult::Found { oid: entry_oid, mode }));
+            return Ok(Ok(FollowPathResult::Found {
+                oid: entry_oid,
+                mode,
+            }));
         }
         return Ok(Err(FollowPathFailure::NotDir));
     }
