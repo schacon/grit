@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::attributes::{parse_gitattributes_file_content, validate_rules_for_add};
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::stat_matches;
@@ -932,6 +933,12 @@ fn stage_gitlink(
     Ok(())
 }
 
+fn path_is_symlink(abs_path: &Path) -> bool {
+    fs::symlink_metadata(abs_path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
 /// Stage a single file into the index.
 fn stage_file(
     odb: &Odb,
@@ -949,6 +956,16 @@ fn stage_file(
         }
         println!("add '{rel_path}'");
         return Ok(());
+    }
+
+    if rel_path.ends_with(".gitattributes") && !path_is_symlink(abs_path) {
+        let content = fs::read_to_string(abs_path).unwrap_or_default();
+        let parsed = parse_gitattributes_file_content(&content, rel_path);
+        if let Err(msg) = validate_rules_for_add(&parsed.rules, rel_path) {
+            eprintln!("{msg}");
+            // Do not stage invalid gitattributes; match Git behavior (exit 0, message on stderr).
+            return Ok(());
+        }
     }
 
     let meta = fs::symlink_metadata(abs_path)?;

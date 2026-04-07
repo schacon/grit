@@ -1,13 +1,8 @@
-//! `grit switch` — passthrough to the system Git binary.
+//! `grit switch` — switch branches (native implementation pending).
 //!
-//! Branch creation, switching, and orphan-branch operations are forwarded to
-//! the real `git switch` so that the complete set of semantics is available.
-//! Before delegating, we check whether the target branch is already checked
-//! out in another worktree (a check that older system `git` versions omit
-//! for `-C`/`-c`).
+//! Pre-checks: ambiguous remote-tracking branches and worktree conflicts.
 
-use crate::commands::system_git;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 use std::collections::BTreeSet;
 
@@ -15,12 +10,12 @@ use std::collections::BTreeSet;
 #[derive(Debug, ClapArgs)]
 #[command(about = "Switch branches")]
 pub struct Args {
-    /// Raw arguments forwarded to the system Git binary.
+    /// Raw arguments (reserved for a future native `switch`).
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
     pub args: Vec<String>,
 }
 
-/// Run `grit switch` by delegating to the system Git binary.
+/// Run `grit switch`.
 pub fn run(args: Args) -> Result<()> {
     if let Some(ambiguous) =
         detect_ambiguous_remote_tracking(&args.args).map_err(|e| anyhow::anyhow!(e))?
@@ -48,7 +43,7 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("fatal: {msg}");
         std::process::exit(128);
     }
-    system_git::run("switch", &args.args)
+    bail!("not implemented: grit switch (full branch checkout/switch semantics)")
 }
 
 /// Parse the raw switch arguments to extract the target branch name and check

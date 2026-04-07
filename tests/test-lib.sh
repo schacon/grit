@@ -911,7 +911,7 @@ test_commit () {
 		git add "$file" &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
 		if test -n "$tag"; then
-			git tag "$message"
+			git tag "${1:-$message}"
 		fi
 	)
 }

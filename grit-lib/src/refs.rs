@@ -378,7 +378,7 @@ pub fn read_log_refs_config(git_dir: &Path) -> LogRefsConfig {
         let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        if key.trim().to_ascii_lowercase() != "logallrefupdates" {
+        if !key.trim().eq_ignore_ascii_case("logallrefupdates") {
             continue;
         }
         let v = value.trim();
@@ -412,7 +412,7 @@ fn read_core_bare(git_dir: &Path) -> bool {
         let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        if key.trim().to_ascii_lowercase() == "bare" {
+        if key.trim().eq_ignore_ascii_case("bare") {
             let v = value.trim().to_ascii_lowercase();
             return matches!(v.as_str(), "1" | "true" | "yes" | "on");
         }

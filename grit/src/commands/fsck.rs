@@ -5,8 +5,7 @@
 //! checks each object for valid SHA, correct type header, and parseable
 //! content. Reports dangling, unreachable, missing, and broken objects.
 
-use crate::commands::git_passthrough;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
@@ -81,10 +80,6 @@ enum Issue {
 
 /// Run `grit fsck`.
 pub fn run(args: Args) -> Result<()> {
-    if args.unreachable {
-        return passthrough_current_fsck_invocation();
-    }
-
     let repo = Repository::discover(None).context("failed to discover repository")?;
     // In linked worktrees, object storage lives in the common gitdir, not
     // under `.git/worktrees/<name>/objects`.
@@ -583,13 +578,4 @@ fn collect_packed_ids(objects_dir: &Path) -> Result<HashSet<ObjectId>> {
         }
     }
     Ok(ids)
-}
-
-fn passthrough_current_fsck_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "fsck") else {
-        bail!("failed to determine fsck arguments");
-    };
-    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
-    git_passthrough::run("fsck", &passthrough_args)
 }

@@ -673,7 +673,7 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
 }
 
 /// Remove upstream tracking configuration.
-fn unset_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
+fn unset_upstream(repo: &Repository, _head: &HeadState, args: &Args) -> Result<()> {
     let branch_name = match args.name.as_deref() {
         Some(n) => n.to_owned(),
         None => {

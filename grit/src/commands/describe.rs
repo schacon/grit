@@ -6,14 +6,17 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::diff::{diff_index_to_tree, diff_index_to_worktree};
+use grit_lib::error::Error;
+use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tag, ObjectId, ObjectKind};
 use grit_lib::refs::list_refs;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
+use grit_lib::state::resolve_head;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 /// Arguments for `grit describe`.
 #[derive(Debug, ClapArgs)]
@@ -257,23 +260,36 @@ fn ancestor_depth(repo: &Repository, descendant: &ObjectId, ancestor: &ObjectId)
 }
 
 fn is_worktree_dirty(repo: &Repository) -> bool {
-    // Use `git diff-index --quiet HEAD` approach:
-    // Check if there are any modified/added/deleted files in the index or working tree.
-    // We run diff-index via our own status-like check on the workdir.
     let workdir = match &repo.work_tree {
         Some(d) => d,
-        None => return false, // bare repo
+        None => return false,
     };
-    // Simple approach: run `git status --porcelain` via Command
-    // to detect dirty state, falling back to checking index.
-    let output = Command::new("git")
-        .args(["diff-index", "--quiet", "HEAD", "--"])
-        .current_dir(workdir)
-        .output();
-    match output {
-        Ok(o) => !o.status.success(), // non-zero exit = dirty
-        Err(_) => false,
+    let head = match resolve_head(&repo.git_dir) {
+        Ok(h) => h,
+        Err(_) => return true,
+    };
+    let index = match Index::load(&repo.index_path()) {
+        Ok(idx) => idx,
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
+        Err(_) => return true,
+    };
+    let head_tree = match head.oid() {
+        Some(oid) => match repo.odb.read(oid) {
+            Ok(obj) => match parse_commit(&obj.data) {
+                Ok(c) => Some(c.tree),
+                Err(_) => return true,
+            },
+            Err(_) => return true,
+        },
+        None => None,
+    };
+    let staged = diff_index_to_tree(&repo.odb, &index, head_tree.as_ref()).unwrap_or_default();
+    if !staged.is_empty() {
+        return true;
     }
+    diff_index_to_worktree(&repo.odb, &index, workdir)
+        .map(|u| !u.is_empty())
+        .unwrap_or(true)
 }
 
 /// Build a map from commit OID → ref display name for all qualifying refs.

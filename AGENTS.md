@@ -34,10 +34,8 @@ Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`
 
 **Flow:**
 
-1. **`scripts/generate-test-files-catalog.py`** — At the start of every `run-tests.sh` invocation, refreshes the catalog: discovers `tests/t*.sh`, assigns **`group`** (`t0`–`t9` from the first digit after `t`, per **`git/t/README`** families), counts test markers, merges with existing rows so **`in_scope`** and prior results are preserved.
-2. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
-3. **`scripts/apply-test-run-results.py`** — Merges the batch output into **`data/test-files.csv`**.
-4. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** and **`docs/testfiles.html`**.
+1. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
+2. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** and **`docs/testfiles.html`**.
 
 To skip a file manually, set **`in_scope`** to **`skip`** on its row in `data/test-files.csv`. Skipped files are omitted from runs and from aggregate counts on the main dashboard.
 
@@ -81,6 +79,7 @@ Within each category: files closest to fully passing first (quick wins).
 
 ```bash
 cargo fmt
+cargo check # fix warnings
 cargo clippy --fix --allow-dirty   # ensure no warnings remain
 cargo test -p grit-lib --lib       # unit tests must pass
 ```
@@ -135,20 +134,6 @@ grit/
 └── TESTING.md             # Full testing strategy
 ```
 
-## Data flow (harness)
-
-```
-                    ┌─ generate-test-files-catalog.py
-                    │       (merge catalog: files, groups, markers; keep in_scope)
-                    ↓
-              data/test-files.csv  ←── apply-test-run-results.py ← run-tests.sh
-                    │
-                    └─ generate-dashboard-from-test-files.py → docs/index.html
-                                                                  docs/testfiles.html
-```
-
-There is no separate `file-results.tsv`, `test-results.tsv`, or command-level TSV; **`data/test-files.csv`** is the only harness results store.
-
 ## Rust Style and Idioms
 
 - Use traits for behaviour boundaries.
@@ -168,7 +153,7 @@ There is no separate `file-results.tsv`, `test-results.tsv`, or command-level TS
 ## Dependencies
 
 - **Do not use `gix` (gitoxide) or `git2` (libgit2).** This should be a clean reimplementation of Git and not rely on any other existing libraries.
-- Do not shell out to the `git` binary. Everything should be reimplemented entirely in Rust.
+- Do not ever shell out to the `git` binary. Everything should be reimplemented entirely in Rust.
 - You may introduce any other stable Rust libraries that improve the process (such as for SHA1 hashing or command line parsing).
 
 ## Architecture and Design
@@ -208,10 +193,6 @@ The Git-compatible engine should live in a **library crate** (`grit-lib`); the *
 - As tests in `git/t/` are being implemented, copy them to `./tests` and run them from there with `grit` aliased to `git` for the purposes of the tests.
 - Do not write or run tests that are not from this directory.
 - **Never run tests inside the main repo** — always use `/tmp/` scratch directories to avoid corrupting the working tree, index, or refs.
-- Run upstream test suite: `bash scripts/run-upstream-tests.sh` (runs all `git/t/` tests against grit in an isolated `/tmp/` directory)
-- Aggregate results: `bash scripts/aggregate-upstream.sh`
-- Run our own tests: `bash tests/harness/run-all-count.sh`
-- Run benchmarks: `bash bench/run.sh`
 - Dashboards refresh automatically after `./scripts/run-tests.sh`; or run `python3 scripts/generate-dashboard-from-test-files.py`
 
 ## Do Not

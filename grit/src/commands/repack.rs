@@ -1,7 +1,6 @@
 //! `grit repack` command.
 
-use crate::commands::system_git;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Args as ClapArgs;
 
 /// Arguments for `grit repack`.
@@ -13,6 +12,6 @@ pub struct Args {
 }
 
 /// Run `grit repack`.
-pub fn run(args: Args) -> Result<()> {
-    system_git::run("repack", &args.args)
+pub fn run(_args: Args) -> Result<()> {
+    bail!("not implemented: grit repack")
 }

@@ -1142,7 +1142,8 @@ fn detach_head_explicit(repo: &Repository, oid: &ObjectId, force: bool) -> Resul
     detach_head_inner(repo, oid, force, true)
 }
 
-fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
+/// Detach HEAD at `oid` (used by `bisect` and `checkout`).
+pub(crate) fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     detach_head_inner(repo, oid, force, false)
 }
 

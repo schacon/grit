@@ -5,7 +5,7 @@
 //! removing *only* ignored files (`-X`), quiet mode (`-q`/`--quiet`),
 //! and pathspec filtering.
 
-use crate::commands::git_passthrough;
+use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -61,13 +61,13 @@ pub struct Args {
 /// Run the `clean` command.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if git_passthrough::should_passthrough_from_subdir(&repo)
+    if cwd_pathspec::should_passthrough_from_subdir(&repo)
         || args
             .pathspec
             .iter()
-            .any(|p| p == "." || git_passthrough::has_parent_pathspec_component(p))
+            .any(|p| p == "." || cwd_pathspec::has_parent_pathspec_component(p))
     {
-        return passthrough_current_clean_invocation();
+        bail!("not implemented: grit clean from a subdirectory, or with '.' / '..' pathspecs");
     }
     let work_tree = repo
         .work_tree
@@ -186,10 +186,6 @@ fn check_require_force(repo: &Repository) -> bool {
         Some(Ok(val)) => val,
         _ => true, // default is true
     }
-}
-
-fn passthrough_current_clean_invocation() -> Result<()> {
-    git_passthrough::run_current_invocation("clean")
 }
 
 /// Walk the working tree collecting untracked files/directories.

@@ -369,6 +369,8 @@ mod tests {
     fn basic_match() {
         assert!(wildmatch(b"foo", b"foo", 0));
         assert!(!wildmatch(b"foo", b"bar", 0));
+        assert!(!wildmatch(b"e", b"e\"", WM_PATHNAME));
+        assert!(wildmatch(b"e\"", b"e\"", WM_PATHNAME));
     }
 
     #[test]

@@ -158,8 +158,7 @@ fn parse_subcommand_inner(argv: &[String], flags: u32) -> Result<i32, ParseOptio
         }
 
         let body = &arg[1..];
-        if body.starts_with('o') {
-            let rest = &body[1..];
+        if let Some(rest) = body.strip_prefix('o') {
             if rest.is_empty() {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {

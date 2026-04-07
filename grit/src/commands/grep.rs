@@ -11,7 +11,7 @@ use grit_lib::index::{Index, MODE_GITLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{discover_optional, resolve_revision};
 use grit_lib::wildmatch::wildmatch;
 
 /// Arguments for `grit grep`.
@@ -264,6 +264,16 @@ impl Args {
 
 /// Run `grit grep`.
 pub fn run(mut args: Args) -> Result<()> {
+    let has_attr_src = std::env::var("GIT_ATTR_SOURCE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_some();
+    if has_attr_src {
+        let repo_opt = discover_optional(None)?;
+        if repo_opt.is_none() {
+            bail!("fatal: cannot use --attr-source or GIT_ATTR_SOURCE without repo");
+        }
+    }
     let repo = Repository::discover(None).context("not a git repository")?;
 
     // Apply grep config settings

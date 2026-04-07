@@ -15,6 +15,7 @@
 //! - [`ignore`] — ignore/exclude pattern matching for check-ignore
 //! - [`refs`] — reference storage (files backend)
 
+pub mod attributes;
 pub mod check_ref_format;
 pub mod config;
 pub mod crlf;

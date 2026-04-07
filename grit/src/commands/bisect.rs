@@ -16,6 +16,7 @@
 //! - `.git/refs/bisect/good-*` — the good commits
 //! - `.git/refs/bisect/skip-*` — the skipped commits
 
+use crate::commands::checkout::detach_head;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
@@ -540,20 +541,7 @@ fn bisect_next(repo: &Repository) -> Result<()> {
     // Write BISECT_EXPECTED_REV so status knows what we expect.
     fs::write(git_dir.join("BISECT_EXPECTED_REV"), format!("{mid_oid}\n"))?;
 
-    // Checkout the midpoint using git.
-    let status = std::process::Command::new(
-        std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git")),
-    )
-    .arg("checkout")
-    .arg(mid_oid.to_hex())
-    .arg("--detach")
-    .stderr(std::process::Stdio::null())
-    .status()
-    .context("failed to run git checkout")?;
-
-    if !status.success() {
-        bail!("git checkout {} failed", mid_oid);
-    }
+    detach_head(repo, &mid_oid, false).with_context(|| format!("checkout {}", mid_oid.to_hex()))?;
 
     let remaining = unskipped.len() - 1; // excluding the midpoint itself
     let steps = if remaining == 0 {

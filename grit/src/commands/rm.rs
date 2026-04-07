@@ -4,7 +4,7 @@
 //! removal (`-r`), forced removal of modified files (`-f`/`--force`),
 //! dry-run mode (`-n`/`--dry-run`), and quiet mode (`-q`/`--quiet`).
 
-use crate::commands::git_passthrough;
+use crate::commands::cwd_pathspec;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
@@ -73,15 +73,15 @@ pub struct Args {
 /// Run the `rm` command.
 pub fn run(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    if git_passthrough::should_passthrough_from_subdir(&repo) {
-        return passthrough_current_rm_invocation();
+    if cwd_pathspec::should_passthrough_from_subdir(&repo) {
+        bail!("not implemented: grit rm from a subdirectory of the work tree");
     }
     if args
         .pathspec
         .iter()
-        .any(|spec| git_passthrough::has_parent_pathspec_component(spec))
+        .any(|spec| cwd_pathspec::has_parent_pathspec_component(spec))
     {
-        return passthrough_current_rm_invocation();
+        bail!("not implemented: grit rm with '..' pathspec components");
     }
 
     // Handle --pathspec-from-file / --pathspec-file-nul
@@ -129,14 +129,13 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(128);
     }
 
-    // Pathspec exclusion magic has nuanced semantics across include/exclude
-    // combinations; delegate these invocations to system Git for parity.
+    // Pathspec exclusion magic has nuanced semantics; not implemented yet.
     if args
         .pathspec
         .iter()
         .any(|spec| spec.starts_with(":^") || spec.starts_with(":!"))
     {
-        return passthrough_current_rm_invocation();
+        bail!("not implemented: grit rm with exclusion pathspecs (:^ / :!)");
     }
 
     // Support exclude pathspec magic used by tests, e.g. ":^path" / ":!path".
@@ -173,7 +172,7 @@ pub fn run(mut args: Args) -> Result<()> {
     };
 
     if should_passthrough_conflicted_rm(&index, &include_specs) {
-        return passthrough_current_rm_invocation();
+        bail!("not implemented: grit rm for this conflicted index state");
     }
 
     // Build a map of path → HEAD OID for safety checks.
@@ -808,8 +807,4 @@ fn parse_submodule_section_name(header: &str) -> Option<String> {
     let trimmed = header.trim();
     let name = trimmed.strip_prefix("[submodule \"")?.strip_suffix("\"]")?;
     Some(name.to_string())
-}
-
-fn passthrough_current_rm_invocation() -> Result<()> {
-    git_passthrough::run_current_invocation("rm")
 }

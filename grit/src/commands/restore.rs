@@ -4,7 +4,6 @@
 //! source (index, HEAD, or an explicit tree-ish).  Unlike `reset`, this
 //! command does **not** move `HEAD`.
 
-use crate::commands::git_passthrough;
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
@@ -82,7 +81,7 @@ pub fn run(args: Args) -> Result<()> {
         bail!("options '--pathspec-from-file' and '--patch' cannot be used together");
     }
     if args.patch {
-        return passthrough_patch_restore_invocation();
+        bail!("not implemented: grit restore --patch");
     }
     if (args.ours || args.theirs || args.merge || args.conflict.is_some())
         && (args.staged || args.source.is_some())
@@ -920,23 +919,4 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
         pi += 1;
     }
     pi == pattern.len()
-}
-
-fn passthrough_patch_restore_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "restore") else {
-        bail!("failed to determine restore arguments");
-    };
-
-    let mut passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
-
-    for arg in &mut passthrough_args {
-        if arg == "@" {
-            *arg = "HEAD".to_string();
-        } else if arg == "--source=@" {
-            *arg = "--source=HEAD".to_string();
-        }
-    }
-
-    git_passthrough::run("restore", &passthrough_args)
 }

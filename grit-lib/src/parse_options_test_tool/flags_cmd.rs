@@ -151,8 +151,7 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
 
         // short options: -o, -oN, -h, -u2, ...
         let body = &arg[1..];
-        if body.starts_with('o') {
-            let rest = &body[1..];
+        if let Some(rest) = body.strip_prefix('o') {
             if rest.is_empty() {
                 i += 1;
                 let v = argv.get(i).ok_or_else(|| {
@@ -166,10 +165,8 @@ fn parse_flags_cmd_inner(argv: &[String], flags: u32) -> Result<i32, ParseOption
             }
             continue;
         }
-        if body == "h" || (internal_help && body.starts_with('h')) {
-            if internal_help {
-                return Err(ParseOptionsToolError::Help);
-            }
+        if (body == "h" || (internal_help && body.starts_with('h'))) && internal_help {
+            return Err(ParseOptionsToolError::Help);
         }
         if no_internal_help && (body == "h" || body.starts_with('h')) {
             if keep_unknown {

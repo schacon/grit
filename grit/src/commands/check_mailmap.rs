@@ -10,11 +10,12 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
+use grit_lib::rev_parse::resolve_revision;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// Arguments for `grit check-mailmap`.
 #[derive(Debug, ClapArgs)]
@@ -250,18 +251,17 @@ fn read_optional_mailmap_file(path: &Path) -> Result<String> {
     }
 }
 
-fn read_mailmap_blob(spec: &str) -> Result<String> {
-    let git = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("git"));
-    let out = Command::new(git)
-        .arg("cat-file")
-        .arg("blob")
-        .arg(spec)
-        .output()
+fn read_mailmap_blob(repo: &Repository, spec: &str) -> Result<String> {
+    let oid =
+        resolve_revision(repo, spec).with_context(|| format!("resolving mailmap blob '{spec}'"))?;
+    let obj = repo
+        .odb
+        .read(&oid)
         .with_context(|| format!("reading mailmap blob '{spec}'"))?;
-    if !out.status.success() {
-        bail!("unable to read mailmap blob '{}'", spec);
+    if obj.kind != ObjectKind::Blob {
+        bail!("mailmap.blob '{}' does not resolve to a blob object", spec);
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&obj.data).into_owned())
 }
 
 /// Run the `check-mailmap` command.
@@ -294,7 +294,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
     if let Some(blob) = config.get("mailmap.blob") {
-        mailmap_content.push_str(&read_mailmap_blob(&blob)?);
+        mailmap_content.push_str(&read_mailmap_blob(&repo, &blob)?);
         if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
             mailmap_content.push('\n');
         }
@@ -310,7 +310,7 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
     if let Some(ref blob) = args.mailmap_blob {
-        mailmap_content.push_str(&read_mailmap_blob(blob)?);
+        mailmap_content.push_str(&read_mailmap_blob(&repo, blob)?);
         if !mailmap_content.ends_with('\n') && !mailmap_content.is_empty() {
             mailmap_content.push('\n');
         }

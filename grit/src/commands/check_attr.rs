@@ -1,292 +1,226 @@
 //! `grit check-attr` — display gitattributes information.
-//!
-//! Reads `.gitattributes` files and displays the value of the requested
-//! attribute(s) for the given path(s).
-//!
-//! Usage: `grit check-attr <attr> -- <pathname>...`
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{parse_path, ConfigSet};
+use grit_lib::attributes::{
+    builtin_objectmode_index, builtin_objectmode_worktree, collect_attrs_for_path,
+    load_gitattributes_bare, load_gitattributes_from_index, load_gitattributes_from_tree,
+    load_gitattributes_stack, normalize_rel_path, path_relative_to_worktree,
+    quote_path_for_check_attr, resolve_attr_treeish, resolve_tree_oid, ParsedGitAttributes,
+};
+use grit_lib::config::ConfigSet;
+use grit_lib::index::Index;
 use grit_lib::repo::Repository;
-use std::fs;
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 /// Arguments for `grit check-attr`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Display gitattributes information")]
 pub struct Args {
-    /// Attribute name(s) and pathnames.
-    ///
-    /// Usage: `grit check-attr <attr> [<attr>...] -- <pathname>...`
-    /// or with `-a`: `grit check-attr -a -- <pathname>...`
-    #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
-    pub args: Vec<String>,
-
     /// Report all attributes set for each file.
     #[arg(short = 'a', long = "all")]
     pub all: bool,
+
+    /// Read paths from stdin (one per line).
+    #[arg(long = "stdin")]
+    pub stdin: bool,
+
+    /// Use .gitattributes from the index only.
+    #[arg(long = "cached")]
+    pub cached: bool,
+
+    /// Read attributes from the given tree-ish.
+    #[arg(long = "source", value_name = "TREEISH")]
+    pub source: Option<String>,
+
+    /// Use NUL as delimiter with --stdin / output.
+    #[arg(short = 'Z')]
+    pub nul: bool,
+
+    /// Attribute names and pathnames (after `--`).
+    #[arg(required = true, allow_hyphen_values = true, trailing_var_arg = true)]
+    pub args: Vec<String>,
 }
 
-/// A parsed gitattributes rule.
-struct AttrRule {
-    pattern: String,
-    attrs: Vec<(String, AttrValue)>,
-}
-
-/// Possible attribute values.
-#[derive(Clone)]
-enum AttrValue {
-    Set,           // attr
-    Unset,         // -attr
-    Value(String), // attr=value
-}
-
-impl std::fmt::Display for AttrValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AttrValue::Set => write!(f, "set"),
-            AttrValue::Unset => write!(f, "unset"),
-            AttrValue::Value(v) => write!(f, "{v}"),
+fn parse_attrs_paths(args: &Args) -> (Vec<String>, Vec<String>) {
+    if args.all {
+        let mut paths = Vec::new();
+        for a in &args.args {
+            if a == "--" {
+                continue;
+            }
+            paths.push(a.clone());
+        }
+        return (Vec::new(), paths);
+    }
+    let mut attrs = Vec::new();
+    let mut paths = Vec::new();
+    let mut after = false;
+    for a in &args.args {
+        if a == "--" {
+            after = true;
+            continue;
+        }
+        if after {
+            paths.push(a.clone());
+        } else {
+            attrs.push(a.clone());
         }
     }
+    if !after && attrs.len() > 1 {
+        paths.push(attrs.pop().unwrap_or_default());
+    } else if !after && attrs.len() == 1 && paths.is_empty() {
+        paths.push(attrs.remove(0));
+    }
+    (attrs, paths)
+}
+
+fn validate_cli(attrs: &[String], paths: &[String], args: &Args) -> Result<()> {
+    if args.stdin {
+        if attrs.is_empty() && !args.all {
+            bail!("usage: missing attribute name");
+        }
+        if !paths.is_empty() {
+            bail!("usage: pathspec with --stdin");
+        }
+        return Ok(());
+    }
+    if attrs.is_empty() && !args.all {
+        bail!("usage: missing attribute name");
+    }
+    if paths.is_empty() {
+        bail!("usage: missing pathspec");
+    }
+    for a in attrs {
+        if a.is_empty() {
+            bail!("usage: empty attribute name");
+        }
+    }
+    Ok(())
+}
+
+fn load_parsed_for_run(repo: &Repository, args: &Args) -> Result<ParsedGitAttributes> {
+    let treeish = resolve_attr_treeish(repo, args.source.as_deref())?;
+
+    if let Some(spec) = treeish.filter(|s| !s.is_empty()) {
+        let oid = resolve_tree_oid(repo, &spec)
+            .map_err(|_| anyhow::anyhow!("fatal: bad --attr-source or GIT_ATTR_SOURCE"))?;
+        return load_gitattributes_from_tree(&repo.odb, &oid).context("load tree attributes");
+    }
+
+    if args.cached {
+        let index_path = std::env::var("GIT_INDEX_FILE")
+            .ok()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| repo.index_path());
+        let index = Index::load(&index_path).context("read index")?;
+        let wt = repo.work_tree.as_deref().unwrap_or_else(|| Path::new("."));
+        return load_gitattributes_from_index(&index, &repo.odb, wt).context("index attributes");
+    }
+
+    if repo.work_tree.is_none() {
+        return load_gitattributes_bare(repo).context("bare attributes");
+    }
+
+    let wt = repo.work_tree.as_ref().unwrap();
+    load_gitattributes_stack(repo, wt).context("work tree attributes")
 }
 
 /// Run the `check-attr` command.
 pub fn run(args: Args) -> Result<()> {
+    let (attrs, mut paths) = parse_attrs_paths(&args);
+    validate_cli(&attrs, &paths, &args)?;
+
+    if args.stdin {
+        let mut stdin = io::stdin().lock();
+        let mut line = String::new();
+        while stdin.read_line(&mut line)? > 0 {
+            let p = line.trim_end_matches(['\r', '\n']);
+            if !p.is_empty() {
+                paths.push(p.to_string());
+            }
+            line.clear();
+        }
+    }
+
     let repo = Repository::discover(None).context("not a git repository")?;
-    let work_tree = repo
-        .work_tree
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("bare repository — no work tree"))?;
 
-    // Parse args: split on "--" into attrs and paths
-    let (attrs, paths) = if args.all {
-        // -a mode: everything after "--" is paths
-        let mut paths = Vec::new();
-        let mut after_sep = false;
-        for arg in &args.args {
-            if arg == "--" {
-                after_sep = true;
-                continue;
-            }
-            if after_sep {
-                paths.push(arg.clone());
-            } else {
-                paths.push(arg.clone());
-            }
-        }
-        (Vec::<String>::new(), paths)
-    } else {
-        let mut attrs = Vec::new();
-        let mut paths = Vec::new();
-        let mut after_sep = false;
-        for arg in &args.args {
-            if arg == "--" {
-                after_sep = true;
-                continue;
-            }
-            if after_sep {
-                paths.push(arg.clone());
-            } else {
-                attrs.push(arg.clone());
-            }
-        }
-        // If no separator was found, last arg is the path, rest are attrs
-        if !after_sep && attrs.len() > 1 {
-            let path = attrs.pop().unwrap_or_default();
-            paths.push(path);
-        } else if !after_sep && attrs.len() == 1 {
-            // Single arg with no separator — treat as path with no attrs
-            paths.push(attrs.remove(0));
-        }
-        (attrs, paths)
-    };
+    let parsed = load_parsed_for_run(&repo, &args)?;
 
-    // Load gitattributes
-    let rules = load_gitattributes(&repo, work_tree)?;
+    for w in &parsed.warnings {
+        eprintln!("{w}");
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
+    let ignore_case = config
+        .get("core.ignorecase")
+        .is_some_and(|v| v == "true" || v == "1" || v == "yes");
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
-    for path in &paths {
+    let index_path = std::env::var("GIT_INDEX_FILE")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo.index_path());
+    let index_cached = Index::load(&index_path).ok();
+
+    for raw_path in &paths {
+        let rel = if repo.work_tree.is_some() {
+            path_relative_to_worktree(&repo, raw_path)
+                .unwrap_or_else(|_| normalize_rel_path(raw_path))
+        } else {
+            normalize_rel_path(raw_path)
+        };
+        let rel = normalize_rel_path(&rel);
+        let path_out = quote_path_for_check_attr(raw_path);
+
+        let map = collect_attrs_for_path(&parsed.rules, &parsed.macros, &rel, ignore_case);
+
         if args.all {
-            // Report all attributes
-            let matched = find_all_attrs(&rules, path);
-            if matched.is_empty() {
-                // Nothing to report
-            } else {
-                for (attr_name, value) in &matched {
-                    writeln!(out, "{path}: {attr_name}: {value}")?;
+            let mut names: Vec<String> = map.keys().cloned().collect();
+            names.sort();
+            for name in names {
+                if let Some(v) = map.get(&name) {
+                    let disp = v.display();
+                    if disp != "unspecified" {
+                        write_line(&mut out, &path_out, &name, disp, args.nul)?;
+                    }
                 }
             }
-        } else {
-            for attr in &attrs {
-                let value = find_attr(&rules, path, attr);
-                let display = match value {
-                    Some(v) => v.to_string(),
-                    None => "unspecified".to_owned(),
-                };
-                writeln!(out, "{path}: {attr}: {display}")?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Load `.gitattributes` from the work tree root and any nested directories.
-fn load_gitattributes(repo: &Repository, work_tree: &Path) -> Result<Vec<AttrRule>> {
-    let mut rules = Vec::new();
-
-    // Load global attributes first (lowest precedence), so local files can
-    // override them.
-    if let Some(path) = global_attributes_path(repo)? {
-        if path.exists() {
-            parse_gitattributes_file(&path, "", &mut rules)?;
-        }
-    }
-
-    // Load root .gitattributes
-    let root_attrs = work_tree.join(".gitattributes");
-    if root_attrs.exists() {
-        parse_gitattributes_file(&root_attrs, "", &mut rules)?;
-    }
-
-    // Load info/attributes from .git
-    let info_attrs = work_tree.join(".git/info/attributes");
-    if info_attrs.exists() {
-        parse_gitattributes_file(&info_attrs, "", &mut rules)?;
-    }
-
-    Ok(rules)
-}
-
-fn global_attributes_path(repo: &Repository) -> Result<Option<PathBuf>> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
-    if let Some(path) = config.get("core.attributesfile") {
-        return Ok(Some(PathBuf::from(parse_path(&path))));
-    }
-    Ok(default_global_attributes_path())
-}
-
-fn default_global_attributes_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("git/attributes"));
-        }
-    }
-    Some(PathBuf::from(home).join(".config/git/attributes"))
-}
-
-/// Parse a single .gitattributes file.
-fn parse_gitattributes_file(path: &Path, prefix: &str, rules: &mut Vec<AttrRule>) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
             continue;
         }
 
-        let mut parts = line.split_whitespace();
-        let pattern = match parts.next() {
-            Some(p) => {
-                if prefix.is_empty() {
-                    p.to_owned()
+        for a in &attrs {
+            if a == "builtin_objectmode" {
+                let mode = if args.cached {
+                    index_cached
+                        .as_ref()
+                        .and_then(|i| builtin_objectmode_index(i, &rel))
                 } else {
-                    format!("{prefix}/{p}")
-                }
+                    builtin_objectmode_worktree(&repo, &rel)
+                };
+                let val = mode.unwrap_or_else(|| "unspecified".to_string());
+                write_line(&mut out, &path_out, a, &val, args.nul)?;
+                continue;
             }
-            None => continue,
-        };
-
-        let mut attrs = Vec::new();
-        for part in parts {
-            if let Some(rest) = part.strip_prefix('-') {
-                attrs.push((rest.to_owned(), AttrValue::Unset));
-            } else if let Some((key, val)) = part.split_once('=') {
-                attrs.push((key.to_owned(), AttrValue::Value(val.to_owned())));
-            } else {
-                attrs.push((part.to_owned(), AttrValue::Set));
-            }
-        }
-
-        if !attrs.is_empty() {
-            rules.push(AttrRule { pattern, attrs });
+            let val = match map.get(a) {
+                Some(v) => v.display().to_string(),
+                None => "unspecified".to_string(),
+            };
+            write_line(&mut out, &path_out, a, &val, args.nul)?;
         }
     }
 
     Ok(())
 }
 
-/// Find the value of a specific attribute for a path.
-fn find_attr(rules: &[AttrRule], path: &str, attr: &str) -> Option<AttrValue> {
-    // Last matching rule wins
-    let mut result = None;
-    for rule in rules {
-        if pattern_matches(&rule.pattern, path) {
-            for (name, value) in &rule.attrs {
-                if name == attr {
-                    result = Some(value.clone());
-                }
-            }
-        }
+fn write_line(out: &mut dyn Write, path_out: &str, attr: &str, val: &str, nul: bool) -> Result<()> {
+    if nul {
+        write!(out, "{path_out}\0{attr}\0{val}\0")?;
+    } else {
+        writeln!(out, "{path_out}: {attr}: {val}")?;
     }
-    result
-}
-
-/// Find all attributes set for a path.
-fn find_all_attrs(rules: &[AttrRule], path: &str) -> Vec<(String, AttrValue)> {
-    let mut map: std::collections::BTreeMap<String, AttrValue> = std::collections::BTreeMap::new();
-    for rule in rules {
-        if pattern_matches(&rule.pattern, path) {
-            for (name, value) in &rule.attrs {
-                map.insert(name.clone(), value.clone());
-            }
-        }
-    }
-    map.into_iter().collect()
-}
-
-/// Match a gitattributes pattern against a path.
-///
-/// Supports basic glob: `*` matches within a component, `**` not yet.
-fn pattern_matches(pattern: &str, path: &str) -> bool {
-    // If pattern has no slash, match against basename only
-    if !pattern.contains('/') {
-        let basename = path.rsplit('/').next().unwrap_or(path);
-        return glob_matches(pattern, basename);
-    }
-    glob_matches(pattern, path)
-}
-
-/// Simple glob matcher supporting `*` and `?`.
-fn glob_matches(pattern: &str, text: &str) -> bool {
-    glob_match_bytes(pattern.as_bytes(), text.as_bytes())
-}
-
-fn glob_match_bytes(pat: &[u8], text: &[u8]) -> bool {
-    match (pat.first(), text.first()) {
-        (None, None) => true,
-        (Some(&b'*'), _) => {
-            let pat_rest = pat
-                .iter()
-                .position(|&b| b != b'*')
-                .map_or(&pat[pat.len()..], |i| &pat[i..]);
-            if pat_rest.is_empty() {
-                return true;
-            }
-            for i in 0..=text.len() {
-                if glob_match_bytes(pat_rest, &text[i..]) {
-                    return true;
-                }
-            }
-            false
-        }
-        (Some(&b'?'), Some(_)) => glob_match_bytes(&pat[1..], &text[1..]),
-        (Some(p), Some(t)) if p == t => glob_match_bytes(&pat[1..], &text[1..]),
-        _ => false,
-    }
+    Ok(())
 }
