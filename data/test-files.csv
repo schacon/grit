@@ -174,7 +174,7 @@ t10710-ls-files-deduplicate	t1	yes	36	36	0	true	ok	0
 t10720-diff-stat-summary	t1	yes	38	38	0	true	ok	0
 t10730-diff-tree-recursive-stat	t1	yes	37	37	0	true	ok	0
 t10740-diff-index-name-status	t1	yes	43	43	0	true	ok	0
-t10750-status-deleted-renamed	t1	yes	40	39	1	false	ok	0
+t10750-status-deleted-renamed	t1	yes	40	40	0	true	ok	0
 t10780-config-rename-section	t1	yes	33	33	0	true	ok	0
 t10790-init-reinit-structure	t1	yes	33	33	0	true	ok	0
 t10800-branch-merged-contains	t1	yes	32	32	0	true	ok	0

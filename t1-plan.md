@@ -38,7 +38,7 @@
 - [ ] t10650-merge-file-zdiff3.sh
 - [ ] t10670-cat-file-commit-tree.sh
 - [ ] t10740-diff-index-name-status.sh
-- [ ] t10750-status-deleted-renamed.sh
+- [x] t10750-status-deleted-renamed.sh
 - [ ] t10780-config-rename-section.sh
 - [ ] t10790-init-reinit-structure.sh                                                                   - [ ] t10800-branch-merged-contains.sh
 - [ ] t10810-tag-sort-contains.sh

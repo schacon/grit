@@ -2,6 +2,7 @@
 
 **Updated:** 2026-04-07
 
+- `./scripts/run-tests.sh t10750-status-deleted-renamed.sh`: 40/40 passing (short status shows `old -> new` for renames; `-z` emits NUL-separated new then old path).
 - `./scripts/run-tests.sh t11290-update-ref-atomic-batch.sh`: 33/33 passing (harness `test_must_fail` now allows absolute `git`/`grit`/`scalar` paths).
 - Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 102/102 passing (2026-04-07).
 - `./scripts/run-tests.sh t1092-sparse-checkout-compatibility.sh`: 39/106 passing (65 failing; 2 `test_expect_failure`); sparse-index plumbing in progress.
