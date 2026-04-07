@@ -392,7 +392,30 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         let oid = if let Some(ref start_spec) = args.branch {
             resolve_commitish(&repo, start_spec)?
         } else {
-            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
+            match head_oid {
+                Some(oid) => oid,
+                None => {
+                    // HEAD is on an unborn branch — show orphan hint
+                    let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
+                        .unwrap_or_default()
+                        .is_empty();
+                    if !has_remotes || args.no_guess_remote {
+                        eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
+                        eprintln!(
+                            "hint: named '{}', use the option '--orphan' as follows:",
+                            new_b
+                        );
+                        eprintln!("hint:");
+                        eprintln!(
+                            "hint:     git worktree add --orphan -b {} {}",
+                            new_b,
+                            args.path.display()
+                        );
+                        bail!("invalid reference: HEAD");
+                    }
+                    bail!("HEAD does not point to a valid commit");
+                }
+            }
         };
         (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref new_b) = args.new_branch {
@@ -400,7 +423,30 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         let oid = if let Some(ref start_spec) = args.branch {
             resolve_commitish(&repo, start_spec)?
         } else {
-            head_oid.ok_or_else(|| anyhow::anyhow!("HEAD does not point to a valid commit"))?
+            match head_oid {
+                Some(oid) => oid,
+                None => {
+                    // HEAD is on an unborn branch — show orphan hint
+                    let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
+                        .unwrap_or_default()
+                        .is_empty();
+                    if !has_remotes || args.no_guess_remote {
+                        eprintln!("hint: If you meant to create a worktree containing a new unborn branch");
+                        eprintln!(
+                            "hint: named '{}', use the option '--orphan' as follows:",
+                            new_b
+                        );
+                        eprintln!("hint:");
+                        eprintln!(
+                            "hint:     git worktree add --orphan -b {} {}",
+                            new_b,
+                            args.path.display()
+                        );
+                        bail!("invalid reference: HEAD");
+                    }
+                    bail!("HEAD does not point to a valid commit");
+                }
+            }
         };
         (Some(new_b.clone()), Some(oid), false)
     } else if let Some(ref spec) = args.branch {
