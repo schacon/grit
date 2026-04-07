@@ -207,6 +207,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                     opts.pretty = Some(val.to_string());
                 }
                 "--abbrev" => opts.abbrev = Some(7),
+                "--no-abbrev" => opts.abbrev = Some(40),
                 _ if arg.starts_with("--abbrev=") => {
                     let val = &arg["--abbrev=".len()..];
                     opts.abbrev = Some(
