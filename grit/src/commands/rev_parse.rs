@@ -49,6 +49,7 @@ pub fn run(args: Args) -> Result<()> {
         ShowIsInsideWorkTree,
         ShowIsInsideGitDir,
         ShowIsBare,
+        ShowIsShallow,
         ShowToplevel,
         ShowPrefix,
         ShowCdup,
@@ -103,6 +104,8 @@ pub fn run(args: Args) -> Result<()> {
                 actions.push(Action::ShowIsInsideWorkTree);
             } else if arg == "--is-inside-git-dir" {
                 actions.push(Action::ShowIsInsideGitDir);
+            } else if arg == "--is-shallow-repository" {
+                actions.push(Action::ShowIsShallow);
             } else if arg == "--is-bare-repository" {
                 actions.push(Action::ShowIsBare);
             } else if arg == "--show-toplevel" {
@@ -336,6 +339,13 @@ pub fn run(args: Args) -> Result<()> {
                     .map(|current| is_inside_git_dir(current, &cwd))
                     .unwrap_or(false);
                 println!("{}", if inside { "true" } else { "false" });
+            }
+            Action::ShowIsShallow => {
+                let is_shallow = repo
+                    .as_ref()
+                    .map(|r| r.git_dir.join("shallow").exists())
+                    .unwrap_or(false);
+                println!("{}", if is_shallow { "true" } else { "false" });
             }
             Action::ShowIsBare => {
                 let bare = repo
