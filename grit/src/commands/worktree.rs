@@ -189,6 +189,12 @@ pub struct MoveArgs {
 
 #[derive(Debug, ClapArgs)]
 pub struct RepairArgs {
+    /// Use relative paths when repairing gitfiles.
+    #[arg(long = "relative-paths")]
+    pub relative_paths: bool,
+    /// Use absolute paths when repairing gitfiles.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
     /// Paths to repair (defaults to all linked worktrees).
     pub paths: Vec<PathBuf>,
 }
@@ -1918,7 +1924,33 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
                                 } else {
                                     "gitdir incorrect"
                                 };
-                                let new_content = format!("{}\n", new_gitdir_path.display());
+                                let use_rel = if args.relative_paths {
+                                    true
+                                } else if args.no_relative_paths {
+                                    false
+                                } else {
+                                    let cfg =
+                                        grit_lib::config::ConfigSet::load(Some(&common), true)
+                                            .unwrap_or_default();
+                                    cfg.get_bool("worktree.useRelativePaths")
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or(false)
+                                };
+                                let new_content = if use_rel {
+                                    let admin_parent =
+                                        old_gitdir_file.parent().unwrap_or(&old_gitdir_file);
+                                    let rel = make_relative_path(admin_parent, &new_gitdir_path);
+                                    format!("{}\n", rel.display())
+                                } else {
+                                    format!("{}\n", new_gitdir_path.display())
+                                };
+                                // Also update the worktree's .git file to use relative path if requested
+                                if use_rel {
+                                    let rel_back = make_relative_path(&abs, &admin_dir);
+                                    let dotgit_content =
+                                        format!("gitdir: {}\n", rel_back.display());
+                                    let _ = fs::write(&dotgit, dotgit_content);
+                                }
                                 fs::write(&old_gitdir_file, &new_content)?;
                                 eprintln!(
                                     "repair: {}: {reason}: {}",
@@ -1946,7 +1978,13 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
         }
 
         let raw = fs::read_to_string(&gitdir_file).unwrap_or_default();
-        let recorded = PathBuf::from(raw.trim());
+        let recorded_raw = PathBuf::from(raw.trim());
+        // Resolve relative paths in gitdir against the admin dir
+        let recorded = if recorded_raw.is_relative() {
+            normalize_path(&admin.join(&recorded_raw))
+        } else {
+            recorded_raw
+        };
         // gitdir points to <worktree>/.git
         let wt_dotgit = &recorded;
         let wt_path = recorded.parent().unwrap_or(&recorded);
@@ -2020,7 +2058,24 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
                     eprintln!("error: {}: .git is not a file", wt_path.display());
                     std::process::exit(1);
                 }
-                let dotgit_content = format!("gitdir: {}\n", admin.display());
+                // Determine if we should use relative paths
+                let use_relative = if args.relative_paths {
+                    true
+                } else if args.no_relative_paths {
+                    false
+                } else {
+                    let cfg =
+                        grit_lib::config::ConfigSet::load(Some(&common), true).unwrap_or_default();
+                    cfg.get_bool("worktree.useRelativePaths")
+                        .and_then(|r| r.ok())
+                        .unwrap_or(false)
+                };
+                let dotgit_content = if use_relative {
+                    let rel = make_relative_path(wt_path, &admin);
+                    format!("gitdir: {}\n", rel.display())
+                } else {
+                    format!("gitdir: {}\n", admin.display())
+                };
                 fs::write(&dotgit_path, &dotgit_content)?;
                 eprintln!(
                     "repair: {wt_path}: {reason}; recreated gitfile",
