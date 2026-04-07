@@ -208,7 +208,7 @@ t2104-update-index-skip-worktree	yes	7	7	0	ok	7	7	0
 t2105-update-index-gitfile	yes	4	4	0	ok	4	4	0
 t2106-update-index-assume-unchanged	yes	2	2	0	ok	2	2	0
 t2107-update-index-basic	yes	10	10	0	ok	10	10	0
-t2108-update-index-refresh-racy	yes	6	0	6	ok	0	6	0
+t2108-update-index-refresh-racy	yes	6	6	0	ok	6	6	0
 t2200-add-update	yes	19	19	0	ok	19	19	0
 t2201-add-update-typechange	yes	6	6	0	ok	6	6	0
 t2202-add-addremove	yes	3	3	0	ok	3	3	0
@@ -224,7 +224,7 @@ t2404-worktree-config	yes	12	4	8	ok	4	12	0
 t2405-worktree-submodule	yes	11	3	8	ok	2	10	1
 t2406-worktree-repair	yes	24	4	20	ok	4	24	0
 t2407-worktree-heads	yes	12	1	11	ok	1	12	0
-t2500-untracked-overwriting	yes	10	4	6	ok	2	8	2
+t2500-untracked-overwriting	yes	10	5	5	ok	3	8	2
 t2501-cwd-empty	yes	24	3	21	ok	3	24	0
 t3000-ls-files-others	yes	15	6	9	ok	6	15	0
 t3001-ls-files-others-exclude	yes	27	11	16	ok	11	27	0

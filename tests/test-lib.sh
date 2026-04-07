@@ -217,6 +217,39 @@ test_path_is_symlink () { test -h "$1"; }
 test_path_is_missing () { ! test -e "$1"; }
 test_path_is_executable () { test -x "$1"; }
 
+# Set mtime to a fixed "magic" timestamp (plus optional increment).
+test_set_magic_mtime () {
+	local inc="${2:-0}" &&
+	local mtime=$((1234567890 + inc)) &&
+	test-tool chmtime "=$mtime" "$1" &&
+	test_is_magic_mtime "$1" "$inc"
+}
+
+# Verify a path has the fixed "magic" mtime (plus optional increment).
+test_is_magic_mtime () {
+	local inc="${2:-0}" &&
+	local mtime=$((1234567890 + inc)) &&
+	echo "$mtime" >.git/test-mtime-expect &&
+	test-tool chmtime --get "$1" >.git/test-mtime-actual &&
+	test_cmp .git/test-mtime-expect .git/test-mtime-actual
+	local ret=$?
+	rm -f .git/test-mtime-expect .git/test-mtime-actual
+	return $ret
+}
+test_set_magic_mtime () {
+	local inc="${2:-0}" &&
+	local mtime=$((1234567890 + $inc)) &&
+	test-tool chmtime ="$mtime" "$1" &&
+	test_is_magic_mtime "$1" "$inc"
+}
+test_is_magic_mtime () {
+	local inc="${2:-0}" &&
+	local mtime=$((1234567890 + $inc)) &&
+	echo "$mtime" >.git/test-mtime-expect &&
+	test-tool chmtime --get "$1" >.git/test-mtime-actual &&
+	test_cmp .git/test-mtime-expect .git/test-mtime-actual
+}
+
 test_grep () {
 	local negate=""
 	local invert=""

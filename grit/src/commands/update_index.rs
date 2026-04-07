@@ -477,9 +477,10 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let mut refresh_had_issues = false;
+    let mut refresh_had_metadata_changes = false;
     if args.refresh || args.really_refresh || args.again {
         // Re-stat all entries, reporting paths that are not up-to-date.
-        refresh_had_issues = refresh_index(
+        let (had_issues, had_metadata_changes) = refresh_index(
             &mut index,
             work_tree,
             &repo.odb,
@@ -491,9 +492,32 @@ pub fn run(args: Args) -> Result<()> {
             args.ignore_submodules,
             args.quiet,
         )?;
+        refresh_had_issues = had_issues;
+        refresh_had_metadata_changes = had_metadata_changes;
     }
 
-    index.write(&index_path).context("writing index")?;
+    let only_refresh_like = (args.refresh || args.really_refresh || args.again)
+        && args.files.is_empty()
+        && args.cacheinfo.is_empty()
+        && !args.assume_unchanged
+        && !args.no_assume_unchanged
+        && !args.skip_worktree
+        && !args.no_skip_worktree
+        && !args.add
+        && !args.remove
+        && !args.force_remove
+        && !args.info_only
+        && !args.unresolve
+        && !args.index_info
+        && args.index_version.is_none()
+        && !args.replace
+        && !args.split_index
+        && !args.no_split_index
+        && args.chmod.is_empty();
+
+    if refresh_had_metadata_changes || !only_refresh_like {
+        index.write(&index_path).context("writing index")?;
+    }
     if refresh_had_issues && !args.quiet {
         std::process::exit(1);
     }
@@ -624,10 +648,14 @@ fn refresh_index(
     allow_unmerged: bool,
     ignore_submodules: bool,
     quiet: bool,
-) -> Result<bool> {
+) -> Result<(bool, bool)> {
     use std::os::unix::fs::MetadataExt;
 
     let mut problems = BTreeSet::new();
+    let index_mtime = std::fs::metadata(work_tree.join(".git/index"))
+        .ok()
+        .map(|m| (m.mtime() as i64, m.mtime_nsec() as i64));
+    let mut touched_entries = false;
 
     for entry in &mut index.entries {
         let path = std::str::from_utf8(&entry.path)
@@ -698,11 +726,25 @@ fn refresh_index(
             continue;
         }
 
+        // For racily-clean entries (file mtime >= index mtime), force a
+        // refresh rewrite so future checks are reliable.
+        let is_racy = index_mtime
+            .map(|(idx_sec, idx_nsec)| {
+                let file_sec = meta.mtime() as i64;
+                let file_nsec = meta.mtime_nsec() as i64;
+                file_sec > idx_sec || (file_sec == idx_sec && file_nsec >= idx_nsec)
+            })
+            .unwrap_or(false);
+        if !is_racy {
+            continue;
+        }
+
         entry.ctime_sec = meta.ctime() as u32;
         entry.ctime_nsec = meta.ctime_nsec() as u32;
         entry.mtime_sec = meta.mtime() as u32;
         entry.mtime_nsec = meta.mtime_nsec() as u32;
         entry.size = meta.size() as u32;
+        touched_entries = true;
     }
 
     if !quiet {
@@ -710,7 +752,7 @@ fn refresh_index(
             println!("{path}");
         }
     }
-    Ok(!problems.is_empty())
+    Ok((!problems.is_empty(), touched_entries))
 }
 
 fn read_gitlink_head_oid(submodule_path: &Path) -> Result<ObjectId> {
