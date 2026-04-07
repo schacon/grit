@@ -1543,7 +1543,7 @@ t9700-perl-git	t9	yes	3	2	1	false	ok	0
 t9710-show-ref-hash-abbrev	t9	yes	38	35	3	false	ok	0
 t9720-update-ref-create-verify	t9	yes	32	22	10	false	ok	0
 t9730-symbolic-ref-head	t9	yes	31	25	6	false	ok	0
-t9740-check-ref-format-normalize	t9	yes	51	27	24	false	ok	0
+t9740-check-ref-format-normalize	t9	yes	51	51	0	true	ok	0
 t9750-merge-base-octopus	t9	yes	35	32	3	false	ok	0
 t9760-hash-object-blob-tree	t9	yes	32	30	2	false	ok	0
 t9770-cat-file-type-size	t9	yes	32	28	4	false	ok	0
