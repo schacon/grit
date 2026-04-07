@@ -1050,8 +1050,19 @@ fn run_no_index(args: &Args) -> Result<()> {
         return run_no_index_dirs(args, path_a, path_b);
     }
 
-    let data_a = std::fs::read(path_a).with_context(|| format!("could not read '{}'", paths[0]))?;
-    let data_b = std::fs::read(path_b).with_context(|| format!("could not read '{}'", paths[1]))?;
+    // Read file or symlink target (for symlinks, read the target path as content)
+    let read_path_or_symlink = |p: &Path, name: &str| -> Result<Vec<u8>> {
+        if let Ok(meta) = std::fs::symlink_metadata(p) {
+            if meta.file_type().is_symlink() {
+                return std::fs::read_link(p)
+                    .map(|target| target.to_string_lossy().into_owned().into_bytes())
+                    .with_context(|| format!("could not read symlink '{}'", name));
+            }
+        }
+        std::fs::read(p).with_context(|| format!("could not read '{}'", name))
+    };
+    let data_a = read_path_or_symlink(path_a, paths[0])?;
+    let data_b = read_path_or_symlink(path_b, paths[1])?;
 
     if data_a == data_b {
         return Ok(());
