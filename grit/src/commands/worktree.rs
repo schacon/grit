@@ -103,6 +103,14 @@ pub struct AddArgs {
     #[arg(long)]
     pub no_track: bool,
 
+    /// Store paths as relative to the main worktree.
+    #[arg(long)]
+    pub relative_paths: bool,
+
+    /// Store paths as absolute.
+    #[arg(long = "no-relative-paths")]
+    pub no_relative_paths: bool,
+
     /// Create a new branch with -B (reset if exists).
     #[arg(short = 'B')]
     pub force_new_branch: Option<String>,
