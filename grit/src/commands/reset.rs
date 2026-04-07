@@ -567,6 +567,31 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         print_unstaged_changes(repo, &new_index)?;
     }
 
+    // Refresh stat info after hard/merge/keep checkout to prevent false diff-files hits
+    if (mode == ResetMode::Hard || mode == ResetMode::Keep || mode == ResetMode::Merge)
+        && repo.work_tree.is_some()
+    {
+        if let Some(ref wt) = repo.work_tree {
+            for entry in &mut new_index.entries {
+                if entry.stage() != 0 {
+                    continue;
+                }
+                let path_str = String::from_utf8_lossy(&entry.path);
+                let abs = wt.join(path_str.as_ref());
+                if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+                    use std::os::unix::fs::MetadataExt as _;
+                    entry.ctime_sec = meta.ctime() as u32;
+                    entry.ctime_nsec = meta.ctime_nsec() as u32;
+                    entry.mtime_sec = meta.mtime() as u32;
+                    entry.mtime_nsec = meta.mtime_nsec() as u32;
+                    entry.dev = meta.dev() as u32;
+                    entry.ino = meta.ino() as u32;
+                    entry.size = meta.size() as u32;
+                }
+            }
+        }
+    }
+
     new_index.write(&index_path).context("writing index")?;
     Ok(())
 }

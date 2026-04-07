@@ -137,7 +137,7 @@ pub struct Args {
     pub pathspec_from_file: Option<String>,
 
     /// Remaining positional arguments: `[<branch|commit>] [--] [<paths>...]`
-    #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub rest: Vec<String>,
 }
 
@@ -183,6 +183,35 @@ pub fn run(mut args: Args) -> Result<()> {
         args.rest.extend(pathspecs);
     }
     let switch_force = args.force || args.merge;
+
+    // Post-process rest: extract -b/-B/--new-branch/--force-new-branch that
+    // appeared after a positional arg (e.g. `checkout <rev> -b <branch>`).
+    // clap's trailing_var_arg consumes these as raw strings when allow_hyphen_values=true.
+    {
+        let mut new_rest: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.rest.len() {
+            let s = &args.rest[i];
+            if (s == "-b" || s == "--new-branch" || s == "-B" || s == "--force-new-branch")
+                && args.new_branch.is_none()
+                && args.force_branch.is_none()
+            {
+                if i + 1 < args.rest.len() {
+                    let bname = args.rest[i + 1].clone();
+                    if s == "-B" || s == "--force-new-branch" {
+                        args.force_branch = Some(bname);
+                    } else {
+                        args.new_branch = Some(bname);
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+            new_rest.push(s.clone());
+            i += 1;
+        }
+        args.rest = new_rest;
+    }
 
     // Detect if `--` was used in the original command line. Clap strips a
     // leading `--` from trailing_var_arg, so we check the raw args.
@@ -694,8 +723,15 @@ fn create_and_switch_branch(
 
     let target_tree = commit_to_tree(repo, &start_oid)?;
 
-    // Update working tree if start point differs from current HEAD, or if force
-    if head.oid() != Some(&start_oid) || force {
+    // Update working tree if start point differs from current HEAD, or if force,
+    // or if the worktree is empty (e.g. after clone --no-checkout)
+    let worktree_is_empty = if let Some(ref wt) = repo.work_tree {
+        let old_idx = grit_lib::index::Index::load(&repo.index_path()).unwrap_or_default();
+        old_idx.entries.is_empty()
+    } else {
+        false
+    };
+    if head.oid() != Some(&start_oid) || force || worktree_is_empty {
         switch_to_tree(repo, &head, &target_tree, force)?;
     }
 
