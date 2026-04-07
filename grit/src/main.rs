@@ -2262,6 +2262,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "find-pack" => run_test_tool_find_pack(rest),
                 "ref-store" => run_test_tool_ref_store(rest),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
+                "submodule" => run_test_tool_submodule(&rest[1..]),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
@@ -2618,6 +2619,83 @@ fn make_relative_for_path_utils(
         result.push(".");
     }
     result
+}
+
+/// Handle `test-tool submodule` subcommands.
+fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
+    let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
+    match subcmd {
+        "resolve-relative-url" => {
+            // resolve-relative-url <remote_url> <submodule_ref> <relative_url>
+            // Computes the absolute URL of a submodule from relative references.
+            let remote_url = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let submodule_ref = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+            let relative_url = rest.get(3).map(|s| s.as_str()).unwrap_or("");
+            let result = resolve_submodule_relative_url(remote_url, submodule_ref, relative_url);
+            println!("{result}");
+            Ok(())
+        }
+        other => bail!("test-tool submodule: unknown subcommand '{other}'"),
+    }
+}
+
+/// Resolve a submodule's relative URL against its parent's remote URL.
+/// `remote_url`: the remote URL template (e.g., `../`)
+/// `submodule_ref`: the actual remote URL of the parent repo
+/// `relative_url`: the submodule's relative URL from .gitmodules
+fn resolve_submodule_relative_url(
+    remote_url: &str,
+    submodule_ref: &str,
+    relative_url: &str,
+) -> String {
+    // If relative_url is an absolute URL or path, return it directly
+    if relative_url.contains("://") || relative_url.starts_with('/') {
+        return relative_url.to_string();
+    }
+    // If relative_url doesn't start with "./" or "../", return it
+    if !relative_url.starts_with("./") && !relative_url.starts_with("../") {
+        return relative_url.to_string();
+    }
+    // Use submodule_ref as the base, but compute relative to remote_url's meaning
+    // The effective base is: submodule_ref (the actual remote) with remote_url relationship
+    let base = if submodule_ref.is_empty() || submodule_ref == "(null)" {
+        // No parent remote — use relative_url relative to nothing
+        "".to_string()
+    } else {
+        // Navigate from submodule_ref using relative_url
+        // submodule_ref is something like ../foo or /abs/path
+        let base_parts: Vec<&str> = submodule_ref
+            .trim_end_matches('/')
+            .rsplitn(2, '/')
+            .collect();
+        if relative_url.starts_with("./") {
+            // Same directory
+            if base_parts.len() >= 2 {
+                format!("{}/{}", base_parts[1], &relative_url[2..])
+            } else {
+                relative_url[2..].to_string()
+            }
+        } else {
+            // "../" navigation
+            let mut parts: Vec<&str> = submodule_ref.trim_end_matches('/').split('/').collect();
+            let mut rel = relative_url;
+            while let Some(rest_rel) = rel.strip_prefix("../") {
+                if !parts.is_empty() {
+                    parts.pop();
+                }
+                rel = rest_rel;
+            }
+            if rel.starts_with("./") {
+                rel = &rel[2..];
+            }
+            if parts.is_empty() {
+                format!("../{}", rel)
+            } else {
+                format!("{}/{}", parts.join("/"), rel)
+            }
+        }
+    };
+    base
 }
 
 /// Handle `test-tool chmtime` — get or set file modification times.

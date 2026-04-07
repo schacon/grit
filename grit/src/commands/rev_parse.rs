@@ -441,8 +441,8 @@ pub fn run(args: Args) -> Result<()> {
             }
             Action::GitPath(path_arg) => {
                 if let Some(current) = repo.as_ref() {
-                    // Normalize the path argument (remove double slashes)
-                    let path_arg_normalized = {
+                    // Use original path_arg for output, normalized for matching
+                    let path_arg_for_match = {
                         let mut s = path_arg.clone();
                         while s.contains("//") {
                             s = s.replace("//", "/");
@@ -450,7 +450,8 @@ pub fn run(args: Args) -> Result<()> {
                         s = s.trim_start_matches('/').to_owned();
                         s
                     };
-                    let path_arg = &path_arg_normalized;
+                    let path_arg_out = &*path_arg; // original for output
+                    let path_arg = &path_arg_for_match; // normalized for matching
 
                     // Check GIT_COMMON_DIR: certain paths are relative to common dir
                     // Worktree-local paths (NOT common):
@@ -500,7 +501,7 @@ pub fn run(args: Args) -> Result<()> {
                                 .iter()
                                 .any(|p| path_arg == p || path_arg.starts_with(&format!("{}/", p)));
                             if is_common {
-                                println!("{}/{}", common_dir, path_arg);
+                                println!("{}/{}", common_dir, path_arg_out);
                                 continue;
                             }
                         }
