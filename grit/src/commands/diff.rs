@@ -2270,19 +2270,33 @@ fn write_stat(
     let mut total_del = 0usize;
     let mut files_changed = 0usize;
 
+    let mut is_binary_file: Vec<bool> = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
-        let old_content = read_content(odb, &entry.old_oid, None, entry.path());
-        let new_content = read_content(odb, &entry.new_oid, work_tree, entry.path());
-        let (ins, del) = count_changes(&old_content, &new_content);
-        file_stats.push((&display_paths[i], ins, del));
-        total_ins += ins;
-        total_del += del;
+        let old_raw = read_content_raw(odb, &entry.old_oid);
+        let new_raw = read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, entry.path());
+        let binary = is_binary(&old_raw) || is_binary(&new_raw);
+        is_binary_file.push(binary);
+        if binary {
+            file_stats.push((&display_paths[i], 0, 0));
+            // Binary files don't count towards insertions/deletions in summary
+        } else {
+            let old_content = String::from_utf8_lossy(&old_raw).into_owned();
+            let new_content = String::from_utf8_lossy(&new_raw).into_owned();
+            let (ins, del) = count_changes(&old_content, &new_content);
+            file_stats.push((&display_paths[i], ins, del));
+            total_ins += ins;
+            total_del += del;
+        }
         files_changed += 1;
     }
 
     // Compute the width for the count column (like git does)
     let max_count = file_stats.iter().map(|(_, i, d)| i + d).max().unwrap_or(0);
-    let count_width = format!("{}", max_count).len();
+    // If any binary files are present, count column must be at least 3 (len("Bin"))
+    let has_binary = is_binary_file.iter().any(|&b| b);
+    let count_width = format!("{}", max_count)
+        .len()
+        .max(if has_binary { 3 } else { 0 });
 
     // Compute layout widths from total width, like git.
     // Line format: " {name:<N} | {count:>C} {bar}"
@@ -2314,7 +2328,8 @@ fn write_stat(
     } else {
         &file_stats
     };
-    for (path, ins, del) in display_stats {
+    for (i, (path, ins, del)) in display_stats.iter().enumerate() {
+        let (path, ins, del) = (path, ins, del);
         // Truncate path if its display width exceeds max_path_len
         let path_width = UnicodeWidthStr::width(*path);
         let display_path: std::borrow::Cow<str> = if path_width > max_path_len {
@@ -2336,15 +2351,21 @@ fn write_stat(
         } else {
             std::borrow::Cow::Borrowed(*path)
         };
-        let line = format_stat_line_git(
-            &display_path,
-            *ins,
-            *del,
-            max_path_len,
-            count_width,
-            max_count,
-            max_bar,
-        );
+        let binary = is_binary_file.get(i).copied().unwrap_or(false);
+        let line = if binary {
+            // Binary files show "Bin" in stat
+            format!(" {:<width$} | Bin", display_path, width = max_path_len)
+        } else {
+            format_stat_line_git(
+                &display_path,
+                *ins,
+                *del,
+                max_path_len,
+                count_width,
+                max_count,
+                max_bar,
+            )
+        };
         writeln!(out, "{line}")?;
     }
     if let Some(limit) = stat_count {
