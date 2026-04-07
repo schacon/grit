@@ -198,8 +198,8 @@ pub fn run(args: Args) -> Result<()> {
     if tree_oids.is_empty() {
         bail!("at least one tree required");
     }
-    if tree_oids.len() > 3 {
-        bail!("too many trees (max 3)");
+    if tree_oids.len() > 4 {
+        bail!("too many trees (max 4)");
     }
 
     if let Some(prefix) = &args.prefix {
@@ -288,7 +288,15 @@ pub fn run(args: Args) -> Result<()> {
                 let base = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
                 let ours = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "", prot)?);
                 let theirs = tree_to_map(tree_to_index_entries(&repo, &tree_oids[2], "", prot)?);
-                new_index = three_way_merge(&old_index, &base, &ours, &theirs);
+                new_index = three_way_merge(&repo, &old_index, &base, &ours, &theirs)?;
+            }
+            4 => {
+                if tree_oids[0] != tree_oids[3] || tree_oids[1] != tree_oids[2] {
+                    bail!("read-tree: unsupported 4-tree merge layout");
+                }
+                let t0 = tree_to_map(tree_to_index_entries(&repo, &tree_oids[0], "", prot)?);
+                let t1 = tree_to_map(tree_to_index_entries(&repo, &tree_oids[1], "", prot)?);
+                new_index = four_tree_symmetric_merge(&repo, &old_index, &t0, &t1)?;
             }
             _ => unreachable!("tree count validated above"),
         }
@@ -497,25 +505,112 @@ fn two_way_merge(
     Ok(out)
 }
 
-fn three_way_merge(
+/// When the index matches tree A (ours), Git also requires the working tree file to match
+/// the index for cases marked "up-to-date" in `t1000-read-tree-m-3way.sh`.
+fn require_uptodate(repo: &Repository, entry: &IndexEntry) -> Result<()> {
+    let Some(wt) = &repo.work_tree else {
+        return Ok(());
+    };
+    let rel = String::from_utf8_lossy(&entry.path);
+    let abs = wt.join(rel.as_ref());
+    if !worktree_matches_entry(repo, entry, &abs)? {
+        bail!("read-tree: local changes would be overwritten by merge");
+    }
+    Ok(())
+}
+
+fn validate_three_way_index_stage0(
+    repo: &Repository,
     current_index: &Index,
     base: &HashMap<Vec<u8>, IndexEntry>,
     ours: &HashMap<Vec<u8>, IndexEntry>,
     theirs: &HashMap<Vec<u8>, IndexEntry>,
-) -> Index {
+) -> Result<()> {
+    for e in &current_index.entries {
+        if e.stage() != 0 {
+            continue;
+        }
+        let path = &e.path;
+        let b = base.get(path);
+        let o = ours.get(path);
+        let t = theirs.get(path);
+
+        match (b, o, t) {
+            (None, None, None) => {
+                bail!("read-tree: would lose untracked local changes");
+            }
+            (None, None, Some(te)) => {
+                if !same_blob(e, te) {
+                    bail!("read-tree: local changes would be overwritten by merge");
+                }
+            }
+            (None, Some(oe), None) => {
+                if !same_blob(e, oe) {
+                    bail!("read-tree: local changes would be overwritten by merge");
+                }
+            }
+            (None, Some(oe), Some(te)) => {
+                if !same_blob(oe, te) {
+                    if !same_blob(e, oe) {
+                        bail!("read-tree: local changes would be overwritten by merge");
+                    }
+                    require_uptodate(repo, e)?;
+                } else if !same_blob(e, oe) {
+                    bail!("read-tree: local changes would be overwritten by merge");
+                }
+            }
+            (Some(_be), None, None) => {
+                bail!("read-tree: would lose untracked local changes");
+            }
+            (Some(_be), None, Some(_te)) => {
+                bail!("read-tree: would lose untracked local changes");
+            }
+            (Some(_be), Some(oe), None) => {
+                if !same_blob(e, oe) {
+                    bail!("read-tree: local changes would be overwritten by merge");
+                }
+                require_uptodate(repo, e)?;
+            }
+            (Some(be), Some(oe), Some(te)) => {
+                let o_eq_b = same_blob(oe, be);
+                let b_eq_t = same_blob(be, te);
+                let o_eq_t = same_blob(oe, te);
+
+                if o_eq_b && !b_eq_t {
+                    if same_blob(e, oe) {
+                        require_uptodate(repo, e)?;
+                    } else if !same_blob(e, te) {
+                        bail!("read-tree: local changes would be overwritten by merge");
+                    }
+                } else if !o_eq_b && !b_eq_t && !o_eq_t {
+                    if !same_blob(e, oe) {
+                        bail!("read-tree: local changes would be overwritten by merge");
+                    }
+                    require_uptodate(repo, e)?;
+                } else if !same_blob(e, oe) {
+                    bail!("read-tree: local changes would be overwritten by merge");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn three_way_merge(
+    repo: &Repository,
+    current_index: &Index,
+    base: &HashMap<Vec<u8>, IndexEntry>,
+    ours: &HashMap<Vec<u8>, IndexEntry>,
+    theirs: &HashMap<Vec<u8>, IndexEntry>,
+) -> Result<Index> {
+    validate_three_way_index_stage0(repo, current_index, base, ours, theirs)?;
+
     let mut all_paths = BTreeSet::new();
     all_paths.extend(base.keys().cloned());
     all_paths.extend(ours.keys().cloned());
     all_paths.extend(theirs.keys().cloned());
 
     let mut out = Index::new();
-    // Preserve unrelated current stage-0 paths that are outside merge inputs.
-    let merge_paths: HashSet<Vec<u8>> = all_paths.iter().cloned().collect();
-    for e in &current_index.entries {
-        if e.stage() == 0 && !merge_paths.contains(&e.path) {
-            out.entries.push(e.clone());
-        }
-    }
     let df_roots = detect_df_conflict_roots(&all_paths);
 
     for path in all_paths {
@@ -592,8 +687,57 @@ fn three_way_merge(
         }
     }
 
+    for e in &current_index.entries {
+        if e.stage() != 0 {
+            out.entries.push(e.clone());
+        }
+    }
+
     out.sort();
-    out
+    Ok(out)
+}
+
+/// `read-tree -m T0 T1 T1 T0` (case #16 in `t1000-read-tree-m-3way.sh`).
+/// Git still uses `threeway_merge` with `head_idx = stage - 2`, producing stages 2 and 3 when `T0` and `T1` disagree.
+fn four_tree_symmetric_merge(
+    _repo: &Repository,
+    current_index: &Index,
+    t0: &HashMap<Vec<u8>, IndexEntry>,
+    t1: &HashMap<Vec<u8>, IndexEntry>,
+) -> Result<Index> {
+    if current_index.entries.iter().any(|e| e.stage() != 0) {
+        bail!("read-tree: unmerged entries in index");
+    }
+
+    let mut all_paths = BTreeSet::new();
+    all_paths.extend(t0.keys().cloned());
+    all_paths.extend(t1.keys().cloned());
+
+    let mut out = Index::new();
+
+    for path in all_paths {
+        let e0 = t0.get(&path);
+        let e1 = t1.get(&path);
+        match (e0, e1) {
+            (Some(a), Some(b)) if same_blob(a, b) => {
+                out.entries.push(a.clone());
+            }
+            (Some(a), Some(b)) => {
+                stage_entry(&mut out, b, 2);
+                stage_entry(&mut out, a, 3);
+            }
+            (Some(a), None) => {
+                out.entries.push(a.clone());
+            }
+            (None, Some(b)) => {
+                out.entries.push(b.clone());
+            }
+            (None, None) => {}
+        }
+    }
+
+    out.sort();
+    Ok(out)
 }
 
 fn detect_df_conflict_roots(all_paths: &BTreeSet<Vec<u8>>) -> HashSet<Vec<u8>> {

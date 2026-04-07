@@ -149,7 +149,7 @@ commit → check it off → move on.
 - [ ] `t1410-reflog` █░░░░░░░░░░░░░░░░░░░ 4/41 (37 left) — Test prune and reflog expiration
 - [ ] `t1308-config-set` ░░░░░░░░░░░░░░░░░░░░ 1/39 (38 left) — Test git config-set API in different settings
 - [ ] `t1404-update-ref-errors` ░░░░░░░░░░░░░░░░░░░░ 0/38 (38 left) — Test git update-ref error handling
-- [ ] `t1000-read-tree-m-3way` ██████████░░░░░░░░░░ 44/83 (39 left) — Three way merge with read-tree -m
+- [x] `t1000-read-tree-m-3way` ████████████████████ 83/83 (0 left) — Three way merge with read-tree -m
 
 - [ ] `t1800-hook` ██░░░░░░░░░░░░░░░░░░ 5/44 (39 left) — git-hook command and config-managed multihooks
 - [ ] `t1500-rev-parse` █████████░░░░░░░░░░░ 38/81 (43 left) — test git rev-parse
