@@ -1977,15 +1977,16 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         Ok(idx) => idx,
         Err(_) => return Ok(()),
     };
-    let work_tree = repo
+    let work_tree_path = repo
         .work_tree
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("bare repository"))?;
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("bare repository"))?
+        .to_path_buf();
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let conv = crlf::ConversionConfig::from_config(&config);
     let ctx = ApplyCrlfContext {
         repo,
-        work_tree: work_tree.to_path_buf(),
+        work_tree: work_tree_path,
         index: index.clone(),
         config,
         conv,

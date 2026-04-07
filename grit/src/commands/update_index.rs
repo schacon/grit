@@ -556,8 +556,12 @@ pub fn run(args: Args) -> Result<()> {
                                     } else {
                                         let file_attrs =
                                             crlf::get_file_attrs(&attrs, &rel_path, &config);
-                                        match crlf::convert_to_git(&raw, &rel_path, &conv, &file_attrs)
-                                        {
+                                        match crlf::convert_to_git(
+                                            &raw,
+                                            &rel_path,
+                                            &conv,
+                                            &file_attrs,
+                                        ) {
                                             Ok(d) => d,
                                             Err(e) => {
                                                 return Err(anyhow::anyhow!(e));

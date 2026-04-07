@@ -1032,8 +1032,8 @@ fn split_treeish_colon(spec: &str) -> Option<(&str, &str)> {
         if bytes[i] == b':' && i > 0 {
             let before = &spec[..i];
             let after = &spec[i + 1..];
-            if !before.is_empty() && !after.is_empty() {
-                return Some((before, after));
+            if !before.is_empty() {
+                return Some((before, after)); // after may be empty ("HEAD:" = root tree)
             }
         }
         i += 1;
