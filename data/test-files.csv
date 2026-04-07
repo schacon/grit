@@ -84,7 +84,7 @@ t0612-reftable-jgit-compatibility	t0	skip	4	0	0	false	ok	0
 t0613-reftable-write-options	t0	skip	11	0	11	false	ok	0
 t0614-reftable-fsck	t0	skip	7	1	6	false	ok	0
 t1000-read-tree-m-3way	t1	yes	39	0	0	false	ok	0
-t10000-for-each-ref-merged	t1	yes	32	0	0	false		0
+t10000-for-each-ref-merged	t1	yes	32	32	0	true	ok	0
 t1001-read-tree-m-2way	t1	yes	29	0	0	false	ok	0
 t10010-show-ref-dereference	t1	yes	37	0	0	false		0
 t1002-read-tree-m-u-2way	t1	yes	22	8	14	false	ok	0

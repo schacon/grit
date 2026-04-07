@@ -110,6 +110,12 @@ test_expect_success() {
 	}
 	_twf_cmd=""
 	test -z "$verbose" || say "expecting success of $TEST_NUMBER.$test_count '$description': $commands"
+	# Each block assumes cwd is the trash root (like upstream git tests). A prior
+	# block may have left the shell in a subdirectory (e.g. setup ends in `repo/`).
+	if test -n "$TRASH_DIRECTORY"
+	then
+		cd "$TRASH_DIRECTORY" || exit 1
+	fi
 	_test_eval_inner "$commands" </dev/null 2>&1 || _test_eval_result=$?
 	result=$_test_eval_result
 	set +e
