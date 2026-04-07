@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
-use grit_lib::repo::{init_repository, Repository};
+use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -105,6 +105,10 @@ pub struct Args {
     /// Reference repository for alternates (can be repeated).
     #[arg(long = "reference", value_name = "REPO", action = clap::ArgAction::Append)]
     pub reference: Vec<String>,
+
+    /// Store the git directory at this path; work tree uses a gitfile `.git`.
+    #[arg(long = "separate-git-dir", value_name = "GITDIR")]
+    pub separate_git_dir: Option<PathBuf>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -116,6 +120,22 @@ pub fn run(args: Args) -> Result<()> {
     }
     if args.revision.is_some() && args.mirror {
         bail!("--revision and --mirror are mutually exclusive");
+    }
+    if args.separate_git_dir.is_some() && args.bare {
+        bail!("options '--separate-git-dir' and '--bare' cannot be used together");
+    }
+    if args.separate_git_dir.is_some() {
+        let repo = args.repository.as_str();
+        if repo.starts_with("ext::")
+            || is_ssh_url(repo)
+            || repo.starts_with("ssh://")
+            || repo.starts_with("git://")
+            || repo.starts_with("http://")
+            || repo.starts_with("https://")
+            || is_bundle_file(repo)
+        {
+            bail!("--separate-git-dir is only supported for local repository clones");
+        }
     }
 
     // Detect ext:: transport
@@ -269,8 +289,36 @@ pub fn run(args: Args) -> Result<()> {
     fs::create_dir_all(&target_path)
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
 
-    let dest = init_repository(&target_path, args.bare, initial_branch, None)
-        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?;
+    let template_dir = args.template.as_ref().map(|s| PathBuf::from(s));
+
+    let dest = if let Some(ref sep_git) = args.separate_git_dir {
+        if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
+            bail!(
+                "destination path '{}' already exists and is not an empty directory",
+                sep_git.display()
+            );
+        }
+        init_repository_separate_git_dir(
+            &target_path,
+            sep_git,
+            initial_branch,
+            template_dir.as_deref(),
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize separate git dir '{}'",
+                sep_git.display()
+            )
+        })?
+    } else {
+        init_repository(
+            &target_path,
+            args.bare,
+            initial_branch,
+            template_dir.as_deref(),
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    };
 
     // Copy or share objects from source to destination
     if args.shared {

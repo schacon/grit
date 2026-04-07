@@ -2,11 +2,9 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
 use grit_lib::pack;
-use grit_lib::rev_list::{self, ObjectFilter};
-use grit_lib::tree_path_follow::{get_tree_entry_follow_symlinks, FollowPathFailure, FollowPathResult};
+use grit_lib::rev_list::ObjectFilter;
 use std::io::{self, BufRead, Read as _, Write};
 use std::path::{Path, PathBuf};
 
@@ -508,23 +506,6 @@ fn check_cat_file_filter_prefixes(spec: &str) {
     }
 }
 
-const DEFAULT_MAX_TREE_DEPTH: usize = 2048;
-
-fn max_tree_depth_object_filter(repo: &Repository) -> Result<ObjectFilter> {
-    let config = ConfigSet::load(Some(&repo.git_dir), true)?;
-    let depth = if let Some(raw) = config.get("core.maxtreedepth") {
-        raw.parse::<usize>()
-            .map_err(|_| anyhow::anyhow!("invalid core.maxtreedepth: '{raw}'"))?
-    } else {
-        DEFAULT_MAX_TREE_DEPTH
-    };
-    Ok(ObjectFilter::TreeDepth(depth as u64))
-}
-
-fn merged_cat_file_object_filter(repo: &Repository, user: ObjectFilter) -> Result<ObjectFilter> {
-    Ok(ObjectFilter::Combine(vec![max_tree_depth_object_filter(repo)?, user]))
-}
-
 fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
     for prefix in 0..=255u8 {
         let hex_prefix = format!("{prefix:02x}");
@@ -620,7 +601,6 @@ fn resolve_treeish_to_tree_oid(repo: &Repository, treeish: &str) -> Result<Objec
 #[derive(Clone, Copy)]
 struct BatchWriteOpts<'a> {
     ignore_replace: bool,
-    follow_symlinks: bool,
     batch_all_objects: bool,
     objects_filter: Option<&'a ObjectFilter>,
 }
@@ -644,27 +624,18 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut app_buf: Vec<u8> = Vec::new();
 
-    let objects_filter: Option<ObjectFilter> =
-        if args.no_filter || args.filter.is_none() {
-            None
-        } else {
-            let spec = args
-                .filter
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
-            Some(
-                ObjectFilter::parse(spec)
-                    .map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?,
-            )
-        };
+    let objects_filter: Option<ObjectFilter> = if args.no_filter || args.filter.is_none() {
+        None
+    } else {
+        let spec = args
+            .filter
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
+        Some(ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?)
+    };
 
     let records: Vec<String> = if args.batch_all_objects {
-        let mut oids: Vec<ObjectId> = if let Some(ref f) = objects_filter {
-            let merged = merged_cat_file_object_filter(repo, f.clone())?;
-            rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
-        } else {
-            collect_all_object_ids(repo)?
-        };
+        let mut oids: Vec<ObjectId> = collect_all_object_ids(repo)?;
         if args.unordered {
             oids.reverse();
         } else {
@@ -677,7 +648,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     let write_opts = BatchWriteOpts {
         ignore_replace: args.batch_all_objects,
-        follow_symlinks: args.follow_symlinks,
         batch_all_objects: args.batch_all_objects,
         objects_filter: objects_filter.as_ref(),
     };
@@ -839,6 +809,7 @@ fn print_batch_entry(
     format: &str,
     nul_output: bool,
     packed_sizes: Option<&HashMap<ObjectId, u64>>,
+    opts: BatchWriteOpts<'_>,
     out: &mut impl Write,
 ) -> Result<()> {
     let (obj_str, rest) = parse_batch_input(input, format);
@@ -856,7 +827,7 @@ fn print_batch_entry(
             write!(out, "{obj_str} missing")?;
             out.write_all(eol)?;
         }
-        Ok((oid, mode)) => match repo.read_replaced(&oid) {
+        Ok((oid, mode)) => match read_batch_object(repo, &oid, opts.ignore_replace) {
             Err(e) => match e {
                 LibError::UnknownObjectType(_) => {
                     eprintln!("fatal: invalid object type");
@@ -868,6 +839,25 @@ fn print_batch_entry(
                 }
             },
             Ok(obj) => {
+                if let Some(filter) = opts.objects_filter {
+                    let excluded = match obj.kind {
+                        ObjectKind::Blob => {
+                            let size = obj.data.len() as u64;
+                            !filter.includes_blob(size)
+                        }
+                        ObjectKind::Tree => !filter.includes_tree(0),
+                        _ => false,
+                    };
+                    if excluded {
+                        if opts.batch_all_objects {
+                            return Ok(());
+                        }
+                        write!(out, "{obj_str} excluded")?;
+                        out.write_all(eol)?;
+                        return Ok(());
+                    }
+                }
+
                 let oid_str = oid.to_string();
                 let kind_str = obj.kind.to_string();
                 let size = obj.data.len();

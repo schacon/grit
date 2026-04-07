@@ -722,6 +722,7 @@ fn run_add(args: &AddArgs) -> Result<()> {
 
         let status = Command::new(&grit_bin)
             .arg("clone")
+            .arg("--no-checkout")
             .arg("--separate-git-dir")
             .arg(&modules_dir)
             .arg(&args.url)

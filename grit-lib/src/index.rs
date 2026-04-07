@@ -143,8 +143,10 @@ pub struct Index {
     pub entries: Vec<IndexEntry>,
 }
 
-/// Default index version when `GIT_INDEX_VERSION` is unset or invalid.
-const INDEX_FORMAT_DEFAULT: u32 = 3;
+/// Version used after an invalid `GIT_INDEX_VERSION` value (matches Git stderr: "Using version 3").
+const INDEX_ENV_INVALID_FALLBACK: u32 = 3;
+/// Version used after an invalid `index.version` config value (same message as env).
+const INDEX_CONFIG_INVALID_FALLBACK: u32 = 3;
 /// Minimum supported index version.
 const INDEX_FORMAT_LB: u32 = 2;
 /// Maximum supported index version (version 4 requests are accepted and
@@ -166,9 +168,9 @@ pub fn get_index_format_from_env() -> Option<u32> {
         _ => {
             eprintln!(
                 "warning: GIT_INDEX_VERSION set, but the value is invalid.\n\
-                 Using version {INDEX_FORMAT_DEFAULT}"
+                 Using version {INDEX_ENV_INVALID_FALLBACK}"
             );
-            Some(INDEX_FORMAT_DEFAULT)
+            Some(INDEX_ENV_INVALID_FALLBACK)
         }
     }
 }
@@ -188,51 +190,85 @@ impl Index {
 
     /// Create a new empty index, respecting config values for version.
     ///
-    /// Priority: GIT_INDEX_VERSION env > index.version config > feature.manyFiles config > default (2).
+    /// Priority matches Git's `prepare_repo_settings`: `GIT_INDEX_VERSION` env, then
+    /// `feature.manyFiles` (implies version 4), then `index.version` (overrides version).
     pub fn new_with_config(
         config_index_version: Option<&str>,
         config_many_files: Option<&str>,
     ) -> Self {
-        // Env var takes highest priority
         if let Some(v) = get_index_format_from_env() {
             return Self {
                 version: v,
                 entries: Vec::new(),
             };
         }
-        // Config index.version
+
+        let many_files = config_truthy(config_many_files);
+        let mut version = if many_files { 4 } else { 2 };
+
         if let Some(val) = config_index_version {
-            if let Ok(v) = val.parse::<u32>() {
-                if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) {
-                    return Self {
-                        version: v,
-                        entries: Vec::new(),
-                    };
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(v) if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) => {
+                        version = v;
+                    }
+                    _ => {
+                        eprintln!(
+                            "warning: index.version set, but the value is invalid.\n\
+                             Using version {INDEX_CONFIG_INVALID_FALLBACK}"
+                        );
+                        version = INDEX_CONFIG_INVALID_FALLBACK;
+                    }
                 }
             }
-            // Invalid config value
-            eprintln!(
-                "warning: index.version set, but the value is invalid.\n\
-                 Using version {INDEX_FORMAT_DEFAULT}"
-            );
+        }
+
+        Self {
+            version,
+            entries: Vec::new(),
+        }
+    }
+
+    /// New empty index using a loaded [`ConfigSet`] (includes `-c` / `GIT_CONFIG_PARAMETERS`).
+    ///
+    /// Same precedence as [`Self::new_with_config`], but reads `feature.manyFiles` and
+    /// `index.version` from `config`.
+    #[must_use]
+    pub fn new_from_config(config: &ConfigSet) -> Self {
+        if let Some(v) = get_index_format_from_env() {
             return Self {
-                version: INDEX_FORMAT_DEFAULT,
+                version: v,
                 entries: Vec::new(),
             };
         }
-        // feature.manyFiles implies version 4
-        if let Some(val) = config_many_files {
-            let lowered = val.to_lowercase();
-            let enabled = matches!(lowered.as_str(), "true" | "yes" | "1" | "on");
-            if enabled {
-                return Self {
-                    version: 4,
-                    entries: Vec::new(),
-                };
+
+        let many_files = config
+            .get_bool("feature.manyFiles")
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
+        let mut version = if many_files { 4 } else { 2 };
+
+        if let Some(val) = config.get("index.version") {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(v) if (INDEX_FORMAT_LB..=INDEX_FORMAT_UB).contains(&v) => {
+                        version = v;
+                    }
+                    _ => {
+                        eprintln!(
+                            "warning: index.version set, but the value is invalid.\n\
+                             Using version {INDEX_CONFIG_INVALID_FALLBACK}"
+                        );
+                        version = INDEX_CONFIG_INVALID_FALLBACK;
+                    }
+                }
             }
         }
+
         Self {
-            version: 2,
+            version,
             entries: Vec::new(),
         }
     }
@@ -262,13 +298,16 @@ impl Index {
             return Err(Error::IndexError("file too short".to_owned()));
         }
 
-        // Verify trailing SHA-1 checksum
+        // Trailing SHA-1: normal index is a hash of the body; Git may write all zeros when
+        // `index.skipHash` / `feature.manyFiles` skips computing the checksum.
         let (body, checksum) = data.split_at(data.len() - 20);
-        let mut hasher = Sha1::new();
-        hasher.update(body);
-        let computed = hasher.finalize();
-        if computed.as_slice() != checksum {
-            return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
+        if !checksum.iter().all(|&b| b == 0) {
+            let mut hasher = Sha1::new();
+            hasher.update(body);
+            let computed = hasher.finalize();
+            if computed.as_slice() != checksum {
+                return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
+            }
         }
 
         // Header
@@ -312,12 +351,22 @@ impl Index {
     ///
     /// Returns [`Error::Io`] on filesystem errors.
     pub fn write(&self, path: &Path) -> Result<()> {
-        let mut body = Vec::new();
-        self.serialize_into(&mut body)?;
+        let mut sorted = self.clone();
+        sorted.sort();
 
-        let mut hasher = Sha1::new();
-        hasher.update(&body);
-        let checksum = hasher.finalize();
+        let mut body = Vec::new();
+        sorted.serialize_into(&mut body)?;
+
+        let git_dir = path.parent();
+        let config = git_dir.and_then(|d| ConfigSet::load(Some(d), true).ok());
+        let skip_hash = index_skip_hash_for_write(config.as_ref());
+        let checksum: [u8; 20] = if skip_hash {
+            [0u8; 20]
+        } else {
+            let mut hasher = Sha1::new();
+            hasher.update(&body);
+            hasher.finalize().into()
+        };
 
         let tmp_path = path.with_extension("lock");
         let pid_path = pid_path_for_lock(&tmp_path);
@@ -377,12 +426,13 @@ impl Index {
     }
 
     /// Serialise the index body (without trailing checksum) into `out`.
+    ///
+    /// Callers must have sorted entries when using format 4 (path compression depends on order).
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
-        // Determine which version to write.
-        // Version 4 requires path compression, which we do not implement yet.
-        // Downgrade to the newest format we can serialize correctly.
         let has_extended_flags = self.entries.iter().any(|e| e.flags_extended.is_some());
-        let write_version = if has_extended_flags {
+        let write_version = if self.version >= 4 {
+            4
+        } else if has_extended_flags {
             3
         } else if self.version >= 3 {
             2
@@ -394,8 +444,15 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
-        for entry in &self.entries {
-            serialize_entry(entry, write_version, out);
+        if write_version == 4 {
+            let mut previous_path: Vec<u8> = Vec::new();
+            for entry in &self.entries {
+                serialize_entry_v4(entry, &mut previous_path, out);
+            }
+        } else {
+            for entry in &self.entries {
+                serialize_entry(entry, write_version, out);
+            }
         }
         Ok(())
     }
@@ -463,6 +520,43 @@ impl Index {
             .iter_mut()
             .find(|e| e.path == path && e.stage() == stage)
     }
+}
+
+fn config_truthy(raw: Option<&str>) -> bool {
+    let Some(val) = raw else {
+        return false;
+    };
+    let lowered = val.trim().to_lowercase();
+    matches!(lowered.as_str(), "true" | "yes" | "1" | "on")
+}
+
+/// Whether to write 20 zero bytes instead of the SHA-1 of the index body.
+///
+/// Mirrors Git `prepare_repo_settings`: `feature.manyFiles` enables skip-hash unless
+/// `index.skipHash` / `index.skiphash` is explicitly false; otherwise honor true `index.skipHash`.
+fn index_skip_hash_for_write(config: Option<&ConfigSet>) -> bool {
+    let Some(config) = config else {
+        return false;
+    };
+    let many_files = config
+        .get_bool("feature.manyFiles")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    if many_files {
+        if let Some(Ok(false)) = config.get_bool("index.skipHash") {
+            return false;
+        }
+        if let Some(Ok(false)) = config.get_bool("index.skiphash") {
+            return false;
+        }
+        return true;
+    }
+    for key in ["index.skipHash", "index.skiphash"] {
+        if let Some(Ok(true)) = config.get_bool(key) {
+            return true;
+        }
+    }
+    false
 }
 
 fn lockfile_pid_enabled(index_path: &Path) -> bool {
@@ -657,6 +751,20 @@ fn parse_entry(data: &[u8], version: u32, prev_path: &[u8]) -> Result<(IndexEntr
 /// Serialise a single index entry into `out`.
 /// Read a variable-length integer (git's index v4 varint encoding).
 /// Returns (value, bytes_consumed).
+fn write_varint(out: &mut Vec<u8>, mut value: usize) {
+    loop {
+        let mut b = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            b |= 0x80;
+        }
+        out.push(b);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
 fn read_varint(data: &[u8]) -> (usize, usize) {
     let mut value: usize = 0;
     let mut shift = 0usize;
@@ -678,6 +786,49 @@ fn read_varint(data: &[u8]) -> (usize, usize) {
         }
     }
     (value, pos)
+}
+
+fn serialize_entry_v4(entry: &IndexEntry, previous_path: &mut Vec<u8>, out: &mut Vec<u8>) {
+    let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
+
+    write_u32(out, entry.ctime_sec);
+    write_u32(out, entry.ctime_nsec);
+    write_u32(out, entry.mtime_sec);
+    write_u32(out, entry.mtime_nsec);
+    write_u32(out, entry.dev);
+    write_u32(out, entry.ino);
+    write_u32(out, entry.mode);
+    write_u32(out, entry.uid);
+    write_u32(out, entry.gid);
+    write_u32(out, entry.size);
+    out.extend_from_slice(entry.oid.as_bytes());
+
+    let mut flags = entry.flags;
+    if entry.flags_extended.is_some() {
+        flags |= 0x4000;
+    } else {
+        flags &= !0x4000;
+    }
+    let path_len = entry.path.len().min(0xFFF) as u16;
+    flags = (flags & 0xF000) | path_len;
+    out.extend_from_slice(&flags.to_be_bytes());
+
+    if let Some(fe) = entry.flags_extended {
+        out.extend_from_slice(&fe.to_be_bytes());
+    }
+
+    let common = previous_path
+        .iter()
+        .zip(entry.path.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let to_remove = previous_path.len().saturating_sub(common);
+    write_varint(out, to_remove);
+    out.extend_from_slice(&entry.path[common..]);
+    out.push(0);
+
+    previous_path.clear();
+    previous_path.extend_from_slice(&entry.path);
 }
 
 fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
@@ -868,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn requested_v4_writes_a_compatible_index_format() {
+    fn requested_v4_writes_v4_on_disk() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("index");
 
@@ -881,9 +1032,10 @@ mod tests {
         idx.write(&path).unwrap();
 
         let data = fs::read(&path).unwrap();
-        assert_eq!(&data[4..8], &2u32.to_be_bytes());
+        assert_eq!(&data[4..8], &4u32.to_be_bytes());
 
         let loaded = Index::load(&path).unwrap();
+        assert_eq!(loaded.version, 4);
         assert_eq!(loaded.entries[0].path, b"one");
         assert_eq!(loaded.entries[1].path, b"two/one");
     }

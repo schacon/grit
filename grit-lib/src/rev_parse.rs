@@ -1083,7 +1083,7 @@ fn resolve_treeish_path(repo: &Repository, treeish: ObjectId, path: &str) -> Res
 
 fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Result<ObjectId> {
     match peel {
-        None | Some("object") => Ok(oid),
+        None => Ok(oid),
         Some(search) if search.starts_with('/') => {
             let pattern = &search[1..];
             if pattern.is_empty() {
