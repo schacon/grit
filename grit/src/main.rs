@@ -2279,6 +2279,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "ref-store" => run_test_tool_ref_store(rest),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
+                "config" => run_test_tool_config(&rest[1..]),
                 "genzeros" => {
                     // Generate N zero bytes
                     let n: usize = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -2851,4 +2852,65 @@ fn run_test_tool_chmtime(rest: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Handle `test-tool config` — config API test helper.
+fn run_test_tool_config(rest: &[String]) -> Result<()> {
+    let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
+    let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+
+    // Load config from current git repo
+    let repo = grit_lib::repo::Repository::discover(None).ok();
+    let git_dir = repo.as_ref().map(|r| r.git_dir.as_path());
+    let cfg = grit_lib::config::ConfigSet::load(git_dir, true).unwrap_or_default();
+
+    match subcmd {
+        "get_value" | "get" => match cfg.get(key) {
+            Some(val) => {
+                println!("{val}");
+                Ok(())
+            }
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        "get_value_multi" | "get_all" => {
+            // Get all values for a key
+            let values = cfg.get_all(key);
+            if values.is_empty() {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+            for v in values {
+                println!("{v}");
+            }
+            Ok(())
+        }
+        "get_int" => match cfg.get(key) {
+            Some(val) => match val.parse::<i64>() {
+                Ok(n) => {
+                    println!("{n}");
+                    Ok(())
+                }
+                Err(_) => bail!("bad numeric config value '{}'", val),
+            },
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        "get_bool" => match cfg.get_bool(key) {
+            Some(Ok(b)) => {
+                println!("{}", if b { "true" } else { "false" });
+                Ok(())
+            }
+            Some(Err(e)) => bail!("bad boolean config value: {}", e),
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        _ => bail!("test-tool config: unknown subcommand '{subcmd}'"),
+    }
 }
