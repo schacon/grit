@@ -1979,8 +1979,10 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
                     );
                     std::process::exit(1);
                 } else if !target.exists() && !target_str.is_empty() {
-                    eprintln!("error: '{}': .git file broken", abs.display());
-                    std::process::exit(1);
+                    // .git file points to non-existent location — this is what repair should fix
+                    // Don't error; let the repair loop handle it
+                    // eprintln!("error: '{}': .git file broken", abs.display());
+                    // std::process::exit(1);
                 }
             }
         }
@@ -2022,13 +2024,29 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
                     let dotgit = abs.join(".git");
                     if let Ok(content) = fs::read_to_string(&dotgit) {
                         if let Some(admin_path) = content.trim().strip_prefix("gitdir: ") {
-                            let admin = PathBuf::from(admin_path);
-                            let admin_dir = if admin.is_absolute() {
+                            let admin_raw = PathBuf::from(admin_path);
+                            let admin = if admin_raw.is_absolute() {
+                                admin_raw.clone()
+                            } else {
+                                abs.join(&admin_raw)
+                            };
+                            let admin = normalize_path(&admin);
+                            // Try to find the admin dir: either at the exact path or mapped to new worktrees_dir
+                            let admin_dir = if admin.starts_with(&worktrees_dir) {
                                 admin.clone()
                             } else {
-                                abs.join(&admin)
+                                // The main repo was also moved — try to remap via worktree name
+                                if let Some(wt_name) = admin.file_name() {
+                                    let remapped = worktrees_dir.join(wt_name);
+                                    if remapped.is_dir() {
+                                        remapped
+                                    } else {
+                                        admin.canonicalize().unwrap_or(admin.clone())
+                                    }
+                                } else {
+                                    admin.canonicalize().unwrap_or(admin.clone())
+                                }
                             };
-                            let admin_dir = admin_dir.canonicalize().unwrap_or(admin_dir);
                             // Check that this admin dir is under our worktrees_dir
                             if admin_dir.starts_with(&worktrees_dir) {
                                 // The worktree was moved — update admin's gitdir
