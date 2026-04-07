@@ -17,7 +17,6 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
@@ -273,7 +272,7 @@ fn do_rebase(args: Args) -> Result<()> {
             .work_tree
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
-        let idx = Index::load(&repo.index_path()).context("failed to read index")?;
+        let idx = repo.load_index().context("failed to read index")?;
         let head_tree = resolve_head(git_dir)?.oid().and_then(|oid| {
             let obj = repo.odb.read(oid).ok()?;
             parse_commit(&obj.data).ok().map(|c| c.tree)
@@ -623,13 +622,13 @@ fn cherry_pick_for_rebase(
         &theirs_entries,
         &conflict_ctx,
     )?;
-    let merged_index = merge_result.index;
+    let mut merged_index = merge_result.index;
 
     let has_conflicts = merged_index.entries.iter().any(|e| e.stage() != 0);
 
     // Write index
     let old_index = load_index(repo)?;
-    merged_index.write(&repo.index_path())?;
+    repo.write_index(&mut merged_index)?;
 
     // Update worktree
     if let Some(wt) = &repo.work_tree {
@@ -809,7 +808,7 @@ fn do_skip() -> Result<()> {
         index.entries = entries;
         index.sort();
         let old_index = load_index(&repo)?;
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
         if let Some(wt) = &repo.work_tree {
             checkout_merged_index(&repo, wt, &old_index, &index)?;
         }
@@ -869,7 +868,7 @@ fn do_abort() -> Result<()> {
     index.sort();
 
     let old_index = load_index(&repo)?;
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
 
     if let Some(wt) = &repo.work_tree {
         checkout_merged_index(&repo, wt, &old_index, &index)?;
@@ -923,12 +922,7 @@ fn cleanup_rebase_state(git_dir: &Path) {
 // ── Helpers (mirrored from revert.rs) ───────────────────────────────
 
 fn load_index(repo: &Repository) -> Result<Index> {
-    let index_path = repo.index_path();
-    match Index::load(&index_path) {
-        Ok(idx) => Ok(idx),
-        Err(GritError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(Index::new()),
-        Err(e) => Err(e.into()),
-    }
+    Ok(repo.load_index()?)
 }
 
 fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> {

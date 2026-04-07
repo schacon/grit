@@ -8,7 +8,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::{detect_renames, diff_index_to_tree, diff_index_to_worktree, DiffStatus};
 use grit_lib::error::Error;
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_TREE};
 use grit_lib::objects::{parse_commit, ObjectId};
 use grit_lib::repo::Repository;
 use grit_lib::state::{detect_in_progress, resolve_head, HeadState};
@@ -173,12 +173,15 @@ pub fn run(mut args: Args) -> Result<()> {
         _ => "normal",
     };
 
-    // Load index
-    let index = match Index::load(&repo.index_path()) {
+    // Load index: remember sparse-index on disk, then expand placeholders for diffs.
+    let index_path = repo.index_path();
+    let mut index = match grit_lib::index::Index::load(&index_path) {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
     };
+    let index_sparse_on_disk = index.sparse_directories;
+    let _ = index.expand_sparse_directory_placeholders(&repo.odb);
 
     // Get HEAD tree OID
     let head_tree = match head.oid() {
@@ -301,6 +304,8 @@ pub fn run(mut args: Args) -> Result<()> {
             &config,
             &args,
             &in_progress,
+            &index,
+            index_sparse_on_disk,
             &staged,
             &unstaged,
             &untracked,
@@ -491,6 +496,42 @@ fn format_short(
 /// Helper: write a line with optional comment prefix.
 /// Git's comment prefix behavior:
 ///   "# text" for normal text, "#" for empty lines, "#\tfile" for tab-indented lines.
+/// Message shown after in-progress state, matching `wt-status.c` sparse checkout hints.
+fn sparse_checkout_banner(
+    config: &ConfigSet,
+    expanded_index: &Index,
+    index_sparse_on_disk: bool,
+) -> Option<String> {
+    let sparse_enabled = config
+        .get("core.sparseCheckout")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !sparse_enabled || expanded_index.entries.is_empty() {
+        return None;
+    }
+    if index_sparse_on_disk {
+        return Some("You are in a sparse checkout.".to_owned());
+    }
+    let mut skip = 0usize;
+    let mut total = 0usize;
+    for e in &expanded_index.entries {
+        if e.stage() != 0 || e.mode == MODE_TREE {
+            continue;
+        }
+        total += 1;
+        if e.skip_worktree() {
+            skip += 1;
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    let pct = 100 - (100 * skip) / total;
+    Some(format!(
+        "You are in a sparse checkout with {pct}% of tracked files present."
+    ))
+}
+
 fn cpw(out: &mut impl Write, prefix: &str, line: &str) -> Result<()> {
     if prefix.is_empty() {
         writeln!(out, "{line}")?;
@@ -514,6 +555,8 @@ fn format_long(
     config: &ConfigSet,
     args: &Args,
     in_progress: &[grit_lib::state::InProgressOperation],
+    expanded_index: &Index,
+    index_sparse_on_disk: bool,
     staged: &[grit_lib::diff::DiffEntry],
     unstaged: &[grit_lib::diff::DiffEntry],
     untracked: &[String],
@@ -627,6 +670,12 @@ fn format_long(
         cpw(out, cp, "")?;
         cpw(out, cp, &format!("You are currently {}.", op.description()))?;
         cpw(out, cp, &format!("  ({})", op.hint()))?;
+    }
+
+    if let Some(msg) = sparse_checkout_banner(config, expanded_index, index_sparse_on_disk) {
+        cpw(out, cp, "")?;
+        cpw(out, cp, &msg)?;
+        cpw(out, cp, "")?;
     }
 
     // Track whether we've printed any section (to know if we need a separator)

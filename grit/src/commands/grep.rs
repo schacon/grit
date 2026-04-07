@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::index::{Index, MODE_GITLINK};
+use grit_lib::index::MODE_GITLINK;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::refs::resolve_ref;
 use grit_lib::repo::Repository;
@@ -505,7 +505,7 @@ fn grep_cached(
     out: &mut (impl Write + ?Sized),
     all_match: bool,
 ) -> Result<bool> {
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index = repo.load_index().context("loading index")?;
     // Load diff attrs from index (for --cached, use index attrs) or worktree
     let diff_attrs = if let Some(ref wt) = repo.work_tree {
         // Try worktree first, fallback to index
@@ -638,7 +638,7 @@ fn grep_worktree(
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot grep in bare repository"))?;
 
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index = repo.load_index().context("loading index")?;
     let diff_attrs = load_diff_attrs(work_tree);
     let mut seen = std::collections::HashSet::new();
     let mut found_any = false;
@@ -848,7 +848,7 @@ fn load_diff_attrs(work_tree: &Path) -> Vec<DiffAttrRule> {
 /// Load diff attribute rules from .gitattributes in the index.
 fn load_diff_attrs_from_index(repo: &Repository) -> Vec<DiffAttrRule> {
     let mut rules = Vec::new();
-    if let Ok(index) = Index::load(&repo.index_path()) {
+    if let Ok(index) = repo.load_index() {
         if let Some(entry) = index.entries.iter().find(|e| e.path == b".gitattributes") {
             if let Ok(obj) = repo.odb.read(&entry.oid) {
                 if let Ok(content) = String::from_utf8(obj.data) {

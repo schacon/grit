@@ -24,7 +24,10 @@ pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<O
         .entries
         .iter()
         .filter(|entry| {
-            entry.stage() == 0 && !entry.intent_to_add() && entry.path.starts_with(prefix_bytes)
+            entry.stage() == 0
+                && !entry.intent_to_add()
+                && entry.mode != MODE_TREE
+                && entry.path.starts_with(prefix_bytes)
         })
         .collect();
     entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));

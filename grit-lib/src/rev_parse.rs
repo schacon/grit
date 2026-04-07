@@ -1546,8 +1546,8 @@ fn resolve_index_path_at_stage(repo: &Repository, path: &str, stage: u8) -> Resu
     } else {
         repo.index_path()
     };
-    let index =
-        Index::load(&index_path).map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
+    let index = Index::load_expand_sparse(&index_path, &repo.odb)
+        .map_err(|_| Error::ObjectNotFound(format!(":{stage}:{path}")))?;
     match index.get(path.as_bytes(), stage) {
         Some(entry) => Ok(entry.oid),
         None => Err(Error::ObjectNotFound(format!(":{stage}:{path}"))),

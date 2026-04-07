@@ -41,7 +41,7 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     let index_path = effective_index_path(&repo)?;
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
 
     let changes = collect_changes(&repo, &index, &work_tree, &options)?;
 

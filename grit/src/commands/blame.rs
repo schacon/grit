@@ -7,7 +7,6 @@ use grit_lib::crlf::{
     convert_to_git, get_file_attrs, load_gitattributes, load_gitattributes_from_index,
     ConversionConfig, GitAttributes,
 };
-use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, CommitData, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
@@ -331,7 +330,7 @@ fn load_attr_rules(repo: &Repository) -> GitAttributes {
         }
     }
 
-    if let Ok(index) = Index::load(&repo.index_path()) {
+    if let Ok(index) = repo.load_index() {
         return load_gitattributes_from_index(&index, &repo.odb);
     }
 
@@ -347,7 +346,7 @@ fn load_diff_attr_rules(repo: &Repository) -> Vec<DiffAttrRule> {
     }
 
     if rules.is_empty() {
-        if let Ok(index) = Index::load(&repo.index_path()) {
+        if let Ok(index) = repo.load_index() {
             if let Some(entry) = index.get(b".gitattributes", 0) {
                 if let Ok(obj) = repo.odb.read(&entry.oid) {
                     if let Ok(content) = String::from_utf8(obj.data) {
@@ -1816,8 +1815,7 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Read file content from index conflict stages (for blame during merge conflicts).
 fn read_from_index_conflict(repo: &Repository, odb: &Odb, file_path: &str) -> Result<String> {
-    use grit_lib::index::Index;
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index = repo.load_index().context("loading index")?;
     let path_bytes = file_path.as_bytes();
     // Find the highest-stage entry for this path (prefer stage 3, then 2, then 1)
     let mut best: Option<&grit_lib::index::IndexEntry> = None;

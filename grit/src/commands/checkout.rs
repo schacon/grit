@@ -833,7 +833,7 @@ fn create_and_switch_branch(
     // Update working tree if start point differs from current HEAD, or if force,
     // or if the worktree is empty (e.g. after clone --no-checkout)
     let worktree_is_empty = if let Some(ref _wt) = repo.work_tree {
-        let old_idx = grit_lib::index::Index::load(&repo.index_path()).unwrap_or_default();
+        let old_idx = repo.load_index().unwrap_or_default();
         old_idx.entries.is_empty()
     } else {
         false
@@ -1009,7 +1009,7 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
     // If a start point is given, populate the index/worktree from it
     // But first check for local changes that would be overwritten
     if start_point.is_some() {
-        let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let index = repo.load_index().unwrap_or_else(|_| Index::new());
         let work_tree = repo.work_tree.as_ref();
         if let Some(wt) = work_tree {
             let mut dirty_files = Vec::new();
@@ -1049,15 +1049,13 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
             .work_tree
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("not a work tree"))?;
-        let old_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
         let new_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
         let mut new_index = Index::new();
         new_index.entries = new_entries;
         new_index.sort();
         checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
-        new_index
-            .write(&repo.index_path())
-            .context("writing index")?;
+        repo.write_index(&mut new_index).context("writing index")?;
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)
@@ -1075,7 +1073,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         None => bail!("this operation must be run in a work tree"),
     };
 
-    let old_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
     let new_entries = tree_to_flat_entries(repo, target_tree, "")?;
     let mut new_index = Index::new();
     new_index.entries = new_entries;
@@ -1095,9 +1093,7 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
         )?;
     }
 
-    new_index
-        .write(&repo.index_path())
-        .context("writing index")?;
+    repo.write_index(&mut new_index).context("writing index")?;
     Ok(())
 }
 
@@ -1152,7 +1148,8 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 
     // Write the new index
     let index_path = repo.index_path();
-    new_index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut new_index)
+        .context("writing index")?;
 
     // Print current branch/commit info
     match &head {
@@ -1226,7 +1223,7 @@ fn switch_to_tree(
     };
 
     let index_path = repo.index_path();
-    let old_index = Index::load(&index_path).context("loading index")?;
+    let old_index = repo.load_index_at(&index_path).context("loading index")?;
 
     // Build the new index from the target tree
     let new_entries = tree_to_flat_entries(repo, target_tree_oid, "")?;
@@ -1324,7 +1321,8 @@ fn switch_to_tree(
     }
 
     // Write the new index
-    new_index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut new_index)
+        .context("writing index")?;
 
     Ok(())
 }
@@ -1661,7 +1659,7 @@ fn checkout_paths(
         None => {
             // checkout -- <paths>: restore from index
             let index_path = repo.index_path();
-            let index = Index::load(&index_path).context("loading index")?;
+            let index = repo.load_index_at(&index_path).context("loading index")?;
 
             for path_str in paths {
                 let rel = resolve_pathspec(path_str, work_tree, &cwd);
@@ -1751,7 +1749,7 @@ fn checkout_paths(
             let tree_oid = commit_to_tree(repo, &source_oid)?;
 
             let index_path = repo.index_path();
-            let mut index = Index::load(&index_path).context("loading index")?;
+            let mut index = repo.load_index_at(&index_path).context("loading index")?;
             let mut index_modified = false;
 
             for path_str in paths {
@@ -1920,10 +1918,10 @@ fn checkout_paths(
                             remove_empty_parent_dirs(work_tree, &abs_path);
                         }
                         // Remove from index
-                        if let Ok(mut idx) = Index::load(&repo.index_path()) {
+                        if let Ok(mut idx) = repo.load_index() {
                             idx.entries
                                 .retain(|e| String::from_utf8_lossy(&e.path) != rel.as_str());
-                            let _ = idx.write(&repo.index_path());
+                            let _ = repo.write_index(&mut idx);
                         }
                         continue;
                     }
@@ -1983,7 +1981,8 @@ fn checkout_paths(
             }
 
             if index_modified {
-                index.write(&index_path).context("writing index")?;
+                repo.write_index_at(&index_path, &mut index)
+                    .context("writing index")?;
             }
         }
     }
@@ -2015,7 +2014,7 @@ pub(crate) fn checkout_patch(
 
     let cwd = std::env::current_dir().context("resolving cwd")?;
     let index_path = repo.index_path();
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
 
     // Determine which files to consider
     let filter_paths: Vec<String> = paths

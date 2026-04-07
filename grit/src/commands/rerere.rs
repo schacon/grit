@@ -337,7 +337,7 @@ fn find_conflict_files(repo: &Repository) -> Result<Vec<String>> {
         return Ok(Vec::new());
     }
 
-    let index = grit_lib::index::Index::load(&index_path)?;
+    let index = repo.load_index_at(&index_path)?;
     let mut conflict_paths = Vec::new();
 
     for entry in &index.entries {
@@ -496,7 +496,7 @@ pub fn auto_rerere_worktree(repo: &Repository) -> Result<bool> {
     // Scan worktree for files with conflict markers
     let index_path = repo.git_dir.join("index");
     let index = if index_path.exists() {
-        grit_lib::index::Index::load(&index_path)?
+        repo.load_index_at(&index_path)?
     } else {
         return Ok(false);
     };

@@ -8,7 +8,7 @@ use std::path::Component;
 use std::path::PathBuf;
 
 use grit_lib::ignore::IgnoreMatcher;
-use grit_lib::index::{Index, IndexEntry};
+use grit_lib::index::IndexEntry;
 use grit_lib::repo::Repository;
 
 /// Arguments for `grit ls-files`.
@@ -69,6 +69,10 @@ pub struct Args {
     /// Show verbose long format.
     #[arg(long)]
     pub long: bool,
+
+    /// Show sparse directory placeholders in the index (do not expand sparse index).
+    #[arg(long)]
+    pub sparse: bool,
 
     /// Format string for output (supports %(objectmode), %(objectname), %(stage), %(path)).
     #[arg(long)]
@@ -142,7 +146,11 @@ pub fn run(args: Args) -> Result<()> {
     };
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let index_path = repo.index_path();
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = if args.sparse {
+        grit_lib::index::Index::load(&index_path).context("loading index")?
+    } else {
+        repo.load_index_at(&index_path).context("loading index")?
+    };
 
     let stdout = io::stdout();
     let mut out = stdout.lock();

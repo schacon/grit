@@ -37,7 +37,7 @@ pub fn run(args: Args) -> Result<()> {
     collect_tree_entries(&repo, &tree_oid, "", &mut tree_map)?;
 
     let index_path = effective_index_path(&repo)?;
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
     let mut index_map = BTreeMap::new();
     for entry in &index.entries {
         if entry.stage() != 0 {
@@ -1321,7 +1321,7 @@ pub fn index_cached_differs_from_head(repo: &Repository) -> Result<bool> {
     let mut tree_map = BTreeMap::new();
     collect_tree_entries(repo, &tree_oid, "", &mut tree_map)?;
     let index_path = effective_index_path(repo)?;
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
     let mut index_map = BTreeMap::new();
     for entry in &index.entries {
         if entry.stage() != 0 {

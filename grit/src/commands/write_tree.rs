@@ -23,7 +23,7 @@ pub struct Args {
 /// Run `grit write-tree`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index = repo.load_index().context("loading index")?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
     let oid = match write_tree_from_index(&repo.odb, &index, prefix, args.missing_ok)

@@ -9,7 +9,6 @@ use grit_lib::attributes::{
     quote_path_for_check_attr, resolve_attr_treeish, resolve_tree_oid, ParsedGitAttributes,
 };
 use grit_lib::config::ConfigSet;
-use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -114,7 +113,7 @@ fn load_parsed_for_run(repo: &Repository, args: &Args) -> Result<ParsedGitAttrib
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| repo.index_path());
-        let index = Index::load(&index_path).context("read index")?;
+        let index = repo.load_index_at(&index_path).context("read index")?;
         let wt = repo.work_tree.as_deref().unwrap_or_else(|| Path::new("."));
         return load_gitattributes_from_index(&index, &repo.odb, wt).context("index attributes");
     }
@@ -164,7 +163,7 @@ pub fn run(args: Args) -> Result<()> {
         .ok()
         .map(PathBuf::from)
         .unwrap_or_else(|| repo.index_path());
-    let index_cached = Index::load(&index_path).ok();
+    let index_cached = repo.load_index_at(&index_path).ok();
 
     for raw_path in &paths {
         let rel = if repo.work_tree.is_some() {

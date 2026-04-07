@@ -15,6 +15,7 @@
 //! See `Documentation/technical/index-format.txt` in the Git source tree for
 //! the authoritative format specification.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -23,7 +24,8 @@ use sha1::{Digest, Sha1};
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
-use crate::objects::ObjectId;
+use crate::objects::{parse_tree, ObjectId, ObjectKind};
+use crate::odb::Odb;
 
 /// File mode for a regular (non-executable) file.
 pub const MODE_REGULAR: u32 = 0o100644;
@@ -35,6 +37,9 @@ pub const MODE_SYMLINK: u32 = 0o120000;
 pub const MODE_GITLINK: u32 = 0o160000;
 /// File mode for a directory (tree) entry — only used in tree objects, not index.
 pub const MODE_TREE: u32 = 0o040000;
+
+/// Git index extension signature `sdir` (sparse directory entries present).
+const INDEX_EXT_SPARSE_DIRECTORIES: u32 = u32::from_be_bytes(*b"sdir");
 
 /// A single entry in the Git index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +137,12 @@ impl IndexEntry {
             }
         }
     }
+
+    /// Sparse-index placeholder: tree mode, stage 0, and `SKIP_WORKTREE` set.
+    #[must_use]
+    pub fn is_sparse_directory_placeholder(&self) -> bool {
+        self.mode == MODE_TREE && self.stage() == 0 && self.skip_worktree()
+    }
 }
 
 /// The in-memory representation of the Git index file.
@@ -141,6 +152,23 @@ pub struct Index {
     pub version: u32,
     /// Index entries, sorted by (path, stage).
     pub entries: Vec<IndexEntry>,
+    /// When true, the on-disk index includes the `sdir` extension (sparse index).
+    pub sparse_directories: bool,
+}
+
+/// Options for loading an index from disk.
+#[derive(Debug, Clone, Copy)]
+pub struct IndexLoadOptions {
+    /// If the index contains sparse directory placeholders, expand them to full file entries.
+    pub expand_sparse_directories: bool,
+}
+
+impl Default for IndexLoadOptions {
+    fn default() -> Self {
+        Self {
+            expand_sparse_directories: true,
+        }
+    }
 }
 
 /// Version used after an invalid `GIT_INDEX_VERSION` value (matches Git stderr: "Using version 3").
@@ -185,6 +213,7 @@ impl Index {
         Self {
             version,
             entries: Vec::new(),
+            sparse_directories: false,
         }
     }
 
@@ -200,6 +229,7 @@ impl Index {
             return Self {
                 version: v,
                 entries: Vec::new(),
+                sparse_directories: false,
             };
         }
 
@@ -227,6 +257,7 @@ impl Index {
         Self {
             version,
             entries: Vec::new(),
+            sparse_directories: false,
         }
     }
 
@@ -240,6 +271,7 @@ impl Index {
             return Self {
                 version: v,
                 entries: Vec::new(),
+                sparse_directories: false,
             };
         }
 
@@ -270,10 +302,11 @@ impl Index {
         Self {
             version,
             entries: Vec::new(),
+            sparse_directories: false,
         }
     }
 
-    /// Load an index from the given file path.
+    /// Load an index from the given file path without expanding sparse-directory placeholders.
     ///
     /// Returns an empty index if the file does not exist.
     ///
@@ -283,9 +316,181 @@ impl Index {
     pub fn load(path: &Path) -> Result<Self> {
         match fs::read(path) {
             Ok(data) => Self::parse(&data),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self::new()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Self {
+                sparse_directories: false,
+                ..Self::new()
+            }),
             Err(e) => Err(Error::Io(e)),
         }
+    }
+
+    /// Load an index and expand sparse-directory placeholders using the object database.
+    ///
+    /// After a successful return, [`Index::sparse_directories`] is cleared and every
+    /// placeholder is replaced by the blob entries from the referenced tree.
+    pub fn load_expand_sparse(path: &Path, odb: &Odb) -> Result<Self> {
+        let mut idx = Self::load(path)?;
+        idx.expand_sparse_directory_placeholders(odb)?;
+        Ok(idx)
+    }
+
+    /// Like [`Index::load_expand_sparse`], but treats a missing index or Git's
+    /// `"file too short"` placeholder as an empty index.
+    pub fn load_expand_sparse_optional(path: &Path, odb: &Odb) -> Result<Self> {
+        let mut idx = match fs::read(path) {
+            Ok(data) => Self::parse(&data).or_else(|e| match e {
+                Error::IndexError(msg) if msg == "file too short" => Ok(Self::new()),
+                other => Err(other),
+            })?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Self::new(),
+            Err(e) => return Err(Error::Io(e)),
+        };
+        idx.expand_sparse_directory_placeholders(odb)?;
+        Ok(idx)
+    }
+
+    /// Returns true if the index contains sparse-index tree placeholders (`MODE_TREE` + skip-worktree).
+    #[must_use]
+    pub fn has_sparse_directory_placeholders(&self) -> bool {
+        self.entries
+            .iter()
+            .any(IndexEntry::is_sparse_directory_placeholder)
+    }
+
+    /// Replace sparse-directory placeholder entries with all blob paths from their trees.
+    ///
+    /// Each placeholder must reference a tree object. New entries are marked skip-worktree like Git's
+    /// expanded index, except we keep `sparse_directories` false in memory after expansion.
+    pub fn expand_sparse_directory_placeholders(&mut self, odb: &Odb) -> Result<()> {
+        if !self.has_sparse_directory_placeholders() {
+            return Ok(());
+        }
+        let mut out: Vec<IndexEntry> = Vec::with_capacity(self.entries.len());
+        for entry in self.entries.drain(..) {
+            if entry.is_sparse_directory_placeholder() {
+                let prefix = trim_trailing_slash_bytes(&entry.path);
+                let blobs = flatten_tree_blobs(odb, &entry.oid, prefix)?;
+                out.extend(blobs);
+            } else {
+                out.push(entry);
+            }
+        }
+        self.entries = out;
+        self.sparse_directories = false;
+        self.sort();
+        Ok(())
+    }
+
+    /// Collapse consecutive skip-worktree subtrees into sparse-directory placeholders when
+    /// `cone_mode` is true and each directory is outside the sparse cone.
+    ///
+    /// `head_tree` is the tree OID at `HEAD`. When `enable_sparse_index` is false, clears
+    /// [`Index::sparse_directories`] and returns without collapsing.
+    pub fn try_collapse_sparse_directories(
+        &mut self,
+        odb: &Odb,
+        head_tree: &ObjectId,
+        patterns: &[String],
+        cone_mode: bool,
+        enable_sparse_index: bool,
+    ) -> Result<()> {
+        if !enable_sparse_index || !cone_mode {
+            self.sparse_directories = false;
+            return Ok(());
+        }
+
+        let mut prefixes = BTreeSet::<Vec<u8>>::new();
+        for e in &self.entries {
+            if e.stage() != 0 || e.mode == MODE_TREE || !e.skip_worktree() {
+                continue;
+            }
+            collect_directory_prefixes(&e.path, &mut prefixes);
+        }
+
+        let mut collapsed_any = false;
+        // Deepest prefixes first so nested dirs collapse before parents.
+        let mut ordered: Vec<Vec<u8>> = prefixes.into_iter().collect();
+        ordered.sort_by_key(|p| std::cmp::Reverse(p.len()));
+
+        for pref in ordered {
+            let pref_str = String::from_utf8_lossy(&pref);
+            if directory_in_cone(&pref_str, patterns) {
+                continue;
+            }
+            let Some(subtree_oid) = tree_oid_for_prefix(odb, head_tree, &pref)? else {
+                continue;
+            };
+            let expected = collect_sparse_aware_expected_blobs(
+                odb,
+                &subtree_oid,
+                &pref,
+                patterns,
+                cone_mode,
+                &self.entries,
+            )?;
+            if expected.is_empty() {
+                continue;
+            }
+            let mut matched = Vec::new();
+            for e in &self.entries {
+                if e.stage() != 0 {
+                    continue;
+                }
+                if path_under_prefix(&e.path, &pref) && e.mode != MODE_TREE {
+                    matched.push(e.clone());
+                }
+            }
+            if matched.len() != expected.len() {
+                continue;
+            }
+            matched.sort_by(|a, b| a.path.cmp(&b.path));
+            let mut exp_sorted = expected;
+            exp_sorted.sort_by(|a, b| a.path.cmp(&b.path));
+            if !matched
+                .iter()
+                .zip(exp_sorted.iter())
+                .all(|(a, b)| a.path == b.path && a.oid == b.oid && a.mode == b.mode)
+            {
+                continue;
+            }
+            if !matched.iter().all(|e| e.skip_worktree()) {
+                continue;
+            }
+
+            let mut path_with_slash = pref.clone();
+            if !path_with_slash.ends_with(b"/") {
+                path_with_slash.push(b'/');
+            }
+            self.entries
+                .retain(|e| e.stage() != 0 || !path_under_prefix(&e.path, &pref));
+            let mut placeholder = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: MODE_TREE,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: subtree_oid,
+                flags: path_with_slash.len().min(0xFFF) as u16,
+                flags_extended: Some(0),
+                path: path_with_slash,
+            };
+            placeholder.set_skip_worktree(true);
+            self.add_or_replace(placeholder);
+            collapsed_any = true;
+        }
+
+        if collapsed_any {
+            self.sort();
+            self.sparse_directories = true;
+        } else {
+            self.sparse_directories = false;
+        }
+        Ok(())
     }
 
     /// Parse index bytes (the whole file including trailing SHA-1).
@@ -342,7 +547,38 @@ impl Index {
             pos += consumed;
         }
 
-        Ok(Self { version, entries })
+        let mut sparse_directories = false;
+        while pos + 8 <= body.len() {
+            let sig = u32::from_be_bytes(
+                body[pos..pos + 4]
+                    .try_into()
+                    .map_err(|_| Error::IndexError("truncated extension sig".to_owned()))?,
+            );
+            let ext_sz = u32::from_be_bytes(
+                body[pos + 4..pos + 8]
+                    .try_into()
+                    .map_err(|_| Error::IndexError("truncated extension size".to_owned()))?,
+            ) as usize;
+            pos += 8;
+            if pos + ext_sz > body.len() {
+                return Err(Error::IndexError(
+                    "extension overruns index body".to_owned(),
+                ));
+            }
+            if sig == INDEX_EXT_SPARSE_DIRECTORIES {
+                sparse_directories = true;
+            }
+            pos += ext_sz;
+        }
+        if pos != body.len() {
+            return Err(Error::IndexError("junk after index extensions".to_owned()));
+        }
+
+        Ok(Self {
+            version,
+            entries,
+            sparse_directories,
+        })
     }
 
     /// Write the index to a file, computing and appending the trailing SHA-1.
@@ -454,6 +690,10 @@ impl Index {
                 serialize_entry(entry, write_version, out);
             }
         }
+        if self.sparse_directories {
+            out.extend_from_slice(&INDEX_EXT_SPARSE_DIRECTORIES.to_be_bytes());
+            out.extend_from_slice(&0u32.to_be_bytes());
+        }
         Ok(())
     }
 
@@ -557,6 +797,221 @@ fn index_skip_hash_for_write(config: Option<&ConfigSet>) -> bool {
         }
     }
     false
+}
+
+fn trim_trailing_slash_bytes(path: &[u8]) -> &[u8] {
+    path.strip_suffix(b"/").unwrap_or(path)
+}
+
+fn path_under_prefix(path: &[u8], prefix: &[u8]) -> bool {
+    if path == prefix {
+        return true;
+    }
+    if prefix.is_empty() {
+        return true;
+    }
+    path.len() > prefix.len() && path.starts_with(prefix) && path[prefix.len()] == b'/'
+}
+
+fn directory_in_cone(dir_path: &str, patterns: &[String]) -> bool {
+    for pattern in patterns {
+        let prefix = pattern.trim_end_matches('/');
+        if prefix.is_empty() {
+            continue;
+        }
+        if dir_path == prefix {
+            return true;
+        }
+        if dir_path.starts_with(prefix) && dir_path.as_bytes().get(prefix.len()) == Some(&b'/') {
+            return true;
+        }
+        if prefix.starts_with(dir_path) && prefix.as_bytes().get(dir_path.len()) == Some(&b'/') {
+            return true;
+        }
+    }
+    false
+}
+
+fn collect_directory_prefixes(path: &[u8], out: &mut BTreeSet<Vec<u8>>) {
+    for (i, &b) in path.iter().enumerate() {
+        if b == b'/' {
+            out.insert(path[..i].to_vec());
+        }
+    }
+}
+
+fn tree_oid_for_prefix(odb: &Odb, root_tree: &ObjectId, prefix: &[u8]) -> Result<Option<ObjectId>> {
+    if prefix.is_empty() {
+        return Ok(Some(*root_tree));
+    }
+    let pref_str = String::from_utf8_lossy(prefix);
+    let components: Vec<&str> = pref_str.split('/').filter(|c| !c.is_empty()).collect();
+    let mut current = *root_tree;
+    for comp in components {
+        let obj = odb.read(&current)?;
+        if obj.kind != ObjectKind::Tree {
+            return Ok(None);
+        }
+        let entries = parse_tree(&obj.data)?;
+        let mut next = None;
+        for e in entries {
+            if e.name == comp.as_bytes() {
+                if e.mode == MODE_TREE {
+                    next = Some(e.oid);
+                }
+                break;
+            }
+        }
+        current = match next {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+    }
+    Ok(Some(current))
+}
+
+/// Build the list of blob index entries under `prefix` that match `HEAD` at `tree_oid`,
+/// treating existing sparse-directory placeholders in `entries` as opaque subtrees (like Git).
+fn collect_sparse_aware_expected_blobs(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &[u8],
+    patterns: &[String],
+    cone_mode: bool,
+    entries: &[IndexEntry],
+) -> Result<Vec<IndexEntry>> {
+    let mut out = Vec::new();
+    walk_sparse_aware(
+        odb, tree_oid, prefix, patterns, cone_mode, entries, &mut out,
+    )?;
+    Ok(out)
+}
+
+fn walk_sparse_aware(
+    odb: &Odb,
+    tree_oid: &ObjectId,
+    prefix: &[u8],
+    patterns: &[String],
+    cone_mode: bool,
+    entries: &[IndexEntry],
+    out: &mut Vec<IndexEntry>,
+) -> Result<()> {
+    let obj = odb.read(tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        return Err(Error::IndexError(format!("expected tree at {}", tree_oid)));
+    }
+    let tree_entries = parse_tree(&obj.data)?;
+    for te in tree_entries {
+        let path = if prefix.is_empty() {
+            te.name.clone()
+        } else {
+            let mut p = prefix.to_vec();
+            p.push(b'/');
+            p.extend_from_slice(&te.name);
+            p
+        };
+        if te.mode == MODE_TREE {
+            let path_slash = {
+                let mut p = path.clone();
+                p.push(b'/');
+                p
+            };
+            if entries.iter().any(|e| {
+                e.stage() == 0
+                    && e.is_sparse_directory_placeholder()
+                    && e.path == path_slash
+                    && e.oid == te.oid
+            }) {
+                continue;
+            }
+            walk_sparse_aware(odb, &te.oid, &path, patterns, cone_mode, entries, out)?;
+        } else {
+            let path_len = path.len().min(0xFFF) as u16;
+            let path_str = String::from_utf8_lossy(&path);
+            if cone_mode && path_matches_cone_sparse(&path_str, patterns) {
+                continue;
+            }
+            let mut e = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: te.mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: te.oid,
+                flags: path_len,
+                flags_extended: Some(0),
+                path,
+            };
+            e.set_skip_worktree(true);
+            out.push(e);
+        }
+    }
+    Ok(())
+}
+
+fn path_matches_cone_sparse(path: &str, patterns: &[String]) -> bool {
+    if !path.contains('/') {
+        return true;
+    }
+    for pattern in patterns {
+        let prefix = pattern.trim_end_matches('/');
+        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
+            return true;
+        }
+        if path == prefix {
+            return true;
+        }
+    }
+    false
+}
+
+fn flatten_tree_blobs(odb: &Odb, tree_oid: &ObjectId, prefix: &[u8]) -> Result<Vec<IndexEntry>> {
+    let obj = odb.read(tree_oid)?;
+    if obj.kind != ObjectKind::Tree {
+        return Err(Error::IndexError(format!("expected tree at {}", tree_oid)));
+    }
+    let entries = parse_tree(&obj.data)?;
+    let mut out = Vec::new();
+    for te in entries {
+        let path = if prefix.is_empty() {
+            te.name.clone()
+        } else {
+            let mut p = prefix.to_vec();
+            p.push(b'/');
+            p.extend_from_slice(&te.name);
+            p
+        };
+        if te.mode == MODE_TREE {
+            let sub = flatten_tree_blobs(odb, &te.oid, &path)?;
+            out.extend(sub);
+        } else {
+            let path_len = path.len().min(0xFFF) as u16;
+            let mut e = IndexEntry {
+                ctime_sec: 0,
+                ctime_nsec: 0,
+                mtime_sec: 0,
+                mtime_nsec: 0,
+                dev: 0,
+                ino: 0,
+                mode: te.mode,
+                uid: 0,
+                gid: 0,
+                size: 0,
+                oid: te.oid,
+                flags: path_len,
+                flags_extended: Some(0),
+                path,
+            };
+            e.set_skip_worktree(true);
+            out.push(e);
+        }
+    }
+    Ok(out)
 }
 
 fn lockfile_pid_enabled(index_path: &Path) -> bool {

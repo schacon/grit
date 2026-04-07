@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
-use grit_lib::error::Error as GustError;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
@@ -189,9 +188,8 @@ pub fn run(args: Args) -> Result<()> {
     // Handle --empty: clear the index
     if args.empty {
         if !dry_run {
-            let empty_index = Index::new();
-            empty_index
-                .write(&index_path)
+            let mut empty_index = Index::new();
+            repo.write_index_at(&index_path, &mut empty_index)
                 .context("writing empty index")?;
         }
         return Ok(());
@@ -237,7 +235,7 @@ pub fn run(args: Args) -> Result<()> {
 
     if args.reset {
         // Reset mode is a hard replacement by the final tree argument.
-        let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
+        let old_index = repo.load_index_at(&index_path).context("loading index")?;
         let mut new_index = Index::new();
         new_index.entries =
             tree_to_index_entries(&repo, &tree_oids[tree_oids.len() - 1], "", prot)?;
@@ -246,7 +244,8 @@ pub fn run(args: Args) -> Result<()> {
             checkout_index_entries(&repo, &old_index, &new_index)?;
         }
         if !dry_run {
-            new_index.write(&index_path).context("writing index")?;
+            repo.write_index_at(&index_path, &mut new_index)
+                .context("writing index")?;
         }
         if args.update && args.recurse_submodules && !dry_run {
             submodule_update_after_read_tree(&repo)?;
@@ -254,7 +253,7 @@ pub fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let old_index = load_index_for_read_tree(&index_path).context("loading index")?;
+    let old_index = repo.load_index_at(&index_path).context("loading index")?;
     let mut new_index = old_index.clone();
 
     if let Some(prefix) = &args.prefix {
@@ -329,7 +328,8 @@ pub fn run(args: Args) -> Result<()> {
         checkout_index_entries(&repo, &old_index, &new_index)?;
     }
     if !dry_run {
-        new_index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut new_index)
+            .context("writing index")?;
     }
 
     if args.update && args.recurse_submodules && !dry_run {
@@ -1245,14 +1245,6 @@ fn effective_index_path(repo: &Repository) -> Result<PathBuf> {
         return Ok(cwd.join(p));
     }
     Ok(repo.index_path())
-}
-
-fn load_index_for_read_tree(path: &Path) -> Result<Index> {
-    match Index::load(path) {
-        Ok(index) => Ok(index),
-        Err(GustError::IndexError(msg)) if msg == "file too short" => Ok(Index::new()),
-        Err(err) => Err(err.into()),
-    }
 }
 
 fn maybe_write_trace_packet_done() {

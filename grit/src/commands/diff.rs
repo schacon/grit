@@ -588,7 +588,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let work_tree = repo.work_tree.as_deref();
 
     // Load index (empty if not found)
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),

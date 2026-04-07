@@ -18,7 +18,6 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeInput};
 use grit_lib::objects::{
@@ -259,7 +258,7 @@ fn revert_one_commit(
     let ours_entries = tree_to_map(tree_to_index_entries(repo, &head_tree_oid, "")?);
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
 
-    let merged_index =
+    let mut merged_index =
         three_way_merge_with_content(repo, &base_entries, &ours_entries, &theirs_entries)?;
 
     // Check for conflicts (any entry with stage != 0).
@@ -286,7 +285,8 @@ fn revert_one_commit(
 
     // Write index.
     let index_path = repo.index_path();
-    merged_index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut merged_index)
+        .context("writing index")?;
 
     // Update working tree.
     let work_tree = repo
@@ -444,7 +444,7 @@ fn do_abort() -> Result<()> {
         index.entries = entries;
         index.sort();
         let index_path = repo.index_path();
-        index.write(&index_path)?;
+        repo.write_index_at(&index_path, &mut index)?;
 
         if let Some(wt) = &repo.work_tree {
             checkout_merged_index(&repo, wt, &old_idx, &index)?;
@@ -479,12 +479,7 @@ fn cleanup_revert_state(git_dir: &Path) {
 }
 
 fn load_index(repo: &Repository) -> Result<Index> {
-    let index_path = repo.index_path();
-    match Index::load(&index_path) {
-        Ok(idx) => Ok(idx),
-        Err(GritError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(Index::new()),
-        Err(e) => Err(e.into()),
-    }
+    Ok(repo.load_index()?)
 }
 
 fn create_revert_commit(

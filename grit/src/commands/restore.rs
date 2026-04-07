@@ -130,7 +130,7 @@ pub fn run(args: Args) -> Result<()> {
     let restore_worktree = args.worktree || !args.staged;
 
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
     let cwd = std::env::current_dir().context("resolving cwd")?;
 
@@ -232,7 +232,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if index_modified {
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
     }
 
     Ok(())

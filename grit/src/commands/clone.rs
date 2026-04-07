@@ -1304,7 +1304,8 @@ fn write_index_from_tree(repo: &Repository, tree_oid: &ObjectId) -> Result<()> {
         &mut index,
         repo.work_tree.as_deref(),
     )?;
-    index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing index")?;
 
     Ok(())
 }

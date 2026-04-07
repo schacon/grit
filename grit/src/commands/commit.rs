@@ -222,7 +222,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     // Load index
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -733,7 +733,7 @@ fn walk_untracked(
 
 /// Stage specific files given as pathspec arguments to `commit`.
 fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String]) -> Result<()> {
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -783,13 +783,13 @@ fn stage_pathspec_files(repo: &Repository, work_tree: &Path, pathspecs: &[String
         }
     }
 
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
     Ok(())
 }
 
 /// Auto-stage tracked files (for `commit -a`).
 fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
@@ -869,7 +869,7 @@ fn auto_stage_tracked(repo: &Repository, work_tree: &Path) -> Result<()> {
     }
 
     if changed {
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
     }
 
     Ok(())

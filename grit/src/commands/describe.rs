@@ -268,7 +268,7 @@ fn is_worktree_dirty(repo: &Repository) -> bool {
         Ok(h) => h,
         Err(_) => return true,
     };
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(_) => return true,
