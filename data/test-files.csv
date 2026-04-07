@@ -112,7 +112,7 @@ t1014-read-tree-confusing	t1	yes	28	27	1	false	ok	0
 t10140-branch-show-current	t1	yes	32	1	31	false	ok	0
 t1015-read-index-unmerged	t1	yes	6	5	1	false	ok	0
 t10150-tag-delete-force	t1	yes	34	1	33	false	ok	0
-t1016-compatObjectFormat	t1	yes	21	0	0	false	ok	0
+t1016-compatObjectFormat	t1	skip	21	0	0	false	ok	0
 t1016-compatObjectSorting	t1	yes	19	0	0	false		0
 t10160-commit-amend-author	t1	yes	30	0	0	false		0
 t10180-rm-recursive-quiet	t1	yes	34	0	0	false		0

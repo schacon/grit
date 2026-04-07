@@ -461,7 +461,7 @@ pub fn run(args: Args) -> Result<()> {
                         s = s.trim_start_matches('/').to_owned();
                         s
                     };
-                    let path_arg_out = &*path_arg; // original for output
+                    let path_arg_out = path_arg; // original for output
                     let path_arg = &path_arg_for_match; // normalized for matching
 
                     // Check GIT_COMMON_DIR: certain paths are relative to common dir
@@ -524,9 +524,8 @@ pub fn run(args: Args) -> Result<()> {
                         std::env::var("GIT_INDEX_FILE").ok()
                     } else if path_arg == "objects" {
                         std::env::var("GIT_OBJECT_DIRECTORY").ok()
-                    } else if path_arg.starts_with("objects/") {
+                    } else if let Some(remainder) = path_arg.strip_prefix("objects/") {
                         if let Ok(obj_dir) = std::env::var("GIT_OBJECT_DIRECTORY") {
-                            let remainder = &path_arg["objects/".len()..];
                             Some(format!("{obj_dir}/{remainder}"))
                         } else {
                             None

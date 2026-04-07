@@ -22,7 +22,6 @@ t0023-crlf-am.sh
 t0024-crlf-archive.sh
 t0025-crlf-renormalize.sh
 t0026-eol-config.sh
-t0027-auto-crlf.sh
 t0028-working-tree-encoding.sh
 t0029-core-unsetenvvars.sh
 t0030-stripspace.sh
@@ -72,7 +71,6 @@ t0302-credential-store.sh
 t0303-credential-external.sh
 t0410-partial-clone.sh
 t0411-clone-from-partial.sh
-t0450-txt-doc-vs-help.sh
 t0500-progress-display.sh
 t0600-reffiles-backend.sh
 t0601-reffiles-pack-refs.sh

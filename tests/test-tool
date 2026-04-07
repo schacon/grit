@@ -962,10 +962,17 @@ PY
     ;;
   path-utils)
     shift
-    case "$1" in
-      normalize_path_copy) echo "$2" ;;
-      *) echo "$@" ;;
-    esac ;;
+    _grit="${GUST_BIN:-$SCRIPT_DIR/grit}"
+    if [ ! -x "$_grit" ]; then
+      echo "test-tool path-utils: no grit binary (set GUST_BIN or build: tests/grit)" >&2
+      exit 1
+    fi
+    if [ -n "$global_c_dir" ]; then
+      exec "$_grit" -C "$global_c_dir" test-tool path-utils "$@"
+    else
+      exec "$_grit" test-tool path-utils "$@"
+    fi
+    ;;
   pkt-line)
     shift
     case "$1" in

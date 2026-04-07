@@ -207,7 +207,7 @@ pub fn run(mut args: Args) -> Result<()> {
         let sep = if args.pathspec_file_nul { b'\0' } else { b'\n' };
         let pathspecs_raw: Vec<String> = content
             .split(|c: char| c as u8 == sep)
-            .map(|s| s.trim_end_matches(|c: char| c == '\r').to_string())
+            .map(|s| s.trim_end_matches('\r').to_string())
             .filter(|s| !s.is_empty())
             .collect();
         // With --pathspec-file-nul, C-quoting is incompatible — fail if quoted
@@ -242,17 +242,16 @@ pub fn run(mut args: Args) -> Result<()> {
             if (s == "-b" || s == "--new-branch" || s == "-B" || s == "--force-new-branch")
                 && args.new_branch.is_none()
                 && args.force_branch.is_none()
+                && i + 1 < args.rest.len()
             {
-                if i + 1 < args.rest.len() {
-                    let bname = args.rest[i + 1].clone();
-                    if s == "-B" || s == "--force-new-branch" {
-                        args.force_branch = Some(bname);
-                    } else {
-                        args.new_branch = Some(bname);
-                    }
-                    i += 2;
-                    continue;
+                let bname = args.rest[i + 1].clone();
+                if s == "-B" || s == "--force-new-branch" {
+                    args.force_branch = Some(bname);
+                } else {
+                    args.new_branch = Some(bname);
                 }
+                i += 2;
+                continue;
             }
             new_rest.push(s.clone());
             i += 1;
@@ -515,7 +514,7 @@ pub fn run(mut args: Args) -> Result<()> {
             let oid = matching[0].1;
             // Extract remote name from refs/remotes/<remote>/<branch>
             let remote_part = remote_ref.trim_start_matches(remote_prefix);
-            let remote_name = remote_part.splitn(2, '/').next().unwrap_or("");
+            let remote_name = remote_part.split('/').next().unwrap_or("");
             // Create the local branch tracking the remote
             let new_branch_ref = format!("refs/heads/{target}");
             refs::write_ref(&repo.git_dir, &new_branch_ref, &oid)?;
@@ -607,7 +606,7 @@ fn unquote_c_pathspec(s: &str) -> String {
                 let mut val = d as u32 - '0' as u32;
                 for _ in 0..2 {
                     if let Some(&next) = chars.peek() {
-                        if next >= '0' && next <= '7' {
+                        if ('0'..='7').contains(&next) {
                             val = val * 8 + (next as u32 - '0' as u32);
                             chars.next();
                         } else {

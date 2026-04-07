@@ -1822,10 +1822,11 @@ fn read_from_index_conflict(repo: &Repository, odb: &Odb, file_path: &str) -> Re
     // Find the highest-stage entry for this path (prefer stage 3, then 2, then 1)
     let mut best: Option<&grit_lib::index::IndexEntry> = None;
     for entry in &index.entries {
-        if entry.path == path_bytes && entry.stage() > 0 {
-            if best.is_none() || entry.stage() > best.unwrap().stage() {
-                best = Some(entry);
-            }
+        if entry.path == path_bytes
+            && entry.stage() > 0
+            && (best.is_none() || entry.stage() > best.unwrap().stage())
+        {
+            best = Some(entry);
         }
     }
     let entry = best.ok_or_else(|| anyhow::anyhow!("file not in index"))?;
@@ -2455,7 +2456,7 @@ fn write_default(
                 format!("^{}", &hex[..hash_len.min(hex.len())])
             } else {
                 // Extra char width to align with ^ prefix lines
-                format!("{}", &hex[..(hash_len + 1).min(hex.len())])
+                hex[..(hash_len + 1).min(hex.len())].to_string()
             }
         } else {
             hex[..hash_len.min(hex.len())].to_string()

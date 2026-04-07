@@ -9,6 +9,7 @@
 # Options:
 #   --timeout N    per-file timeout (default: 120)
 #   --quiet        minimal output
+#   --from NAME    resume: skip tests before NAME (stem or .sh; first match in run order)
 #
 # Skipped files (in_scope=skip in data/test-files.csv) are never run.
 # After each test file finishes, its row in data/test-files.csv is updated;
@@ -35,12 +36,21 @@ else
 fi
 QUIET=false
 TARGET=""
+FROM=""
 POS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --timeout) TIMEOUT="$2"; shift 2 ;;
         --quiet) QUIET=true; shift ;;
+        --from)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --from requires a test name (e.g. t1017-foo or t1017-foo.sh)"
+                exit 1
+            fi
+            FROM="$2"
+            shift 2
+            ;;
         --) shift; POS+=("$@"); break ;;
         -*) echo "Unknown option: $1"; exit 1 ;;
         *) POS+=("$1"); shift ;;
@@ -70,10 +80,12 @@ if [[ ! -f "$CSV" ]]; then
 fi
 
 # Build list of files to run: skip in_scope=skip
-mapfile -t FILES < <(python3 - "$CSV" "$TARGET" "$TESTS_DIR" <<'PY'
+mapfile -t FILES < <(python3 - "$CSV" "$TARGET" "$TESTS_DIR" "$FROM" <<'PY'
 import csv, os, sys, glob, re
 
-csv_path, target, tests_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+csv_path, target, tests_dir, from_stem = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+if from_stem.endswith(".sh"):
+    from_stem = from_stem[:-3]
 
 rows = []
 with open(csv_path, newline="") as f:
@@ -110,6 +122,23 @@ else:
         p = os.path.join(tests_dir, fn)
         if os.path.isfile(p):
             candidates.append(fn)
+
+if from_stem:
+    idx = None
+    for i, c in enumerate(candidates):
+        base = os.path.basename(c)
+        stem = base[:-3] if base.endswith(".sh") else base
+        if stem == from_stem:
+            idx = i
+            break
+    if idx is None:
+        print(
+            "ERROR: --from %r: that test is not in this run list (wrong name, skipped, or no match)."
+            % (from_stem,),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    candidates = candidates[idx:]
 
 for c in candidates:
     print(c)

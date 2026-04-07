@@ -13,6 +13,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod commands;
+mod dotfile;
+mod git_path;
 pub mod pathspec;
 pub mod pkt_line;
 pub mod protocol;
@@ -1186,7 +1188,7 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
     let mut saw_root = false;
 
     for raw_line in input.lines() {
-        let line = raw_line.trim().trim_end_matches(|c| c == ' ' || c == '\t');
+        let line = raw_line.trim().trim_end_matches([' ', '\t']);
         if line.is_empty() {
             continue;
         }
@@ -1680,7 +1682,7 @@ fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
             if rest.len() < 3 {
                 bail!("usage: test-tool bloom generate_filter <string> [<string>...]");
             }
-            let len = (TEST_BLOOM_SETTINGS.bits_per_entry + 7) / 8;
+            let len = TEST_BLOOM_SETTINGS.bits_per_entry.div_ceil(8);
             let mut filter = vec![0u8; len];
             for item in rest.iter().skip(2) {
                 let hashes = bloom_key_hashes(item.as_bytes(), TEST_BLOOM_SETTINGS);
@@ -1739,7 +1741,7 @@ fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
                 vec![0xff]
             } else {
                 let bit_count = changed_paths.len() * TEST_BLOOM_SETTINGS.bits_per_entry;
-                let mut len = (bit_count + 7) / 8;
+                let mut len = bit_count.div_ceil(8);
                 if len == 0 {
                     len = 1;
                 }
@@ -1987,10 +1989,8 @@ fn apply_globals(opts: &GlobalOpts) -> Result<()> {
     Ok(())
 }
 
-/// Wrapper to parse a clap `Args` struct as if it were a top-level `Parser`.
-///
-/// Each subcommand's Args struct derives `clap::Args`, not `clap::Parser`.
-/// This wrapper lets us parse it standalone from a slice of arguments.
+// Wrapper to parse a clap `Args` struct standalone (must not use doc comments here
+// or clap uses them as the command `about` text in --help output).
 #[derive(Debug, Parser)]
 #[command(name = "grit", disable_help_subcommand = true)]
 struct ArgsWrapper<T: Args> {
@@ -2008,9 +2008,18 @@ fn parse_cmd_args<T: Args + FromArgMatches>(subcmd: &str, rest: &[String]) -> T 
     match ArgsWrapper::<T>::try_parse_from(&argv) {
         Ok(wrapper) => wrapper.inner,
         Err(e) => {
-            let _ = e.print();
-            if matches!(subcmd, "tag" | "branch" | "bugreport") {
-                eprintln!("usage: git {subcmd}");
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                    | clap::error::ErrorKind::DisplayVersion
+            ) {
+                // Git prints lowercase "usage:"; clap uses "Usage:". Tests grep for "usage".
+                let mut msg = e.render().to_string();
+                msg = msg.replace("Usage:", "usage:");
+                print!("{msg}");
+            } else {
+                let _ = e.print();
             }
             match e.kind() {
                 clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
@@ -2034,8 +2043,7 @@ fn run() -> Result<()> {
     let subcmd = match subcmd {
         Some(s) => s,
         None => {
-            eprintln!("grit: a Git plumbing reimplementation in Rust");
-            eprintln!("usage: grit <command> [<args>]");
+            commands::help::print_common_help();
             std::process::exit(1);
         }
     };
@@ -2678,7 +2686,7 @@ fn strsim_distance(a: &str, b: &str) -> usize {
     dp[m][n]
 }
 
-const KNOWN_COMMANDS: &[&str] = &[
+pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "add",
     "am",
     "annotate",
@@ -2886,6 +2894,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "get-tar-commit-id" => commands::get_tar_commit_id::run(parse_cmd_args(subcmd, rest)),
         "grep" => {
             // Git grep uses -h for --no-filename, conflicting with clap's -h for help.
+            // A lone `git grep -h` is Git's short help (exit 129); do not rewrite to --no-filename.
+            if rest.len() == 1 && rest[0] == "-h" {
+                return commands::grep::run(parse_cmd_args(subcmd, &["--help".to_string()]));
+            }
             // Also implement last-flag-wins for -G/-E/-F/-P pattern type flags.
             // Rewrite -h to --no-filename. Handle both standalone "-h" and
             // combined flags like "-ah" (split into "-a" + "--no-filename").
@@ -3114,6 +3126,54 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
                 "config" => run_test_tool_config(&rest[1..]),
+                "parse-options" => {
+                    let args = preprocess_test_tool_args(rest)?;
+                    use grit_lib::parse_options_test_tool::ParseOptionsToolError;
+                    match grit_lib::parse_options_test_tool::run_parse_options(&args) {
+                        Ok(code) => std::process::exit(code),
+                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Err(ParseOptionsToolError::Fatal(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(129);
+                        }
+                        Err(ParseOptionsToolError::Bug(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(99);
+                        }
+                    }
+                }
+                "parse-options-flags" => {
+                    let args = preprocess_test_tool_args(rest)?;
+                    use grit_lib::parse_options_test_tool::ParseOptionsToolError;
+                    match grit_lib::parse_options_test_tool::run_parse_options_flags(&args) {
+                        Ok(code) => std::process::exit(code),
+                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Err(ParseOptionsToolError::Fatal(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(129);
+                        }
+                        Err(ParseOptionsToolError::Bug(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(99);
+                        }
+                    }
+                }
+                "parse-subcommand" => {
+                    let args = preprocess_test_tool_args(rest)?;
+                    use grit_lib::parse_options_test_tool::ParseOptionsToolError;
+                    match grit_lib::parse_options_test_tool::run_parse_subcommand(&args) {
+                        Ok(code) => std::process::exit(code),
+                        Err(ParseOptionsToolError::Help) => std::process::exit(129),
+                        Err(ParseOptionsToolError::Fatal(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(129);
+                        }
+                        Err(ParseOptionsToolError::Bug(s)) => {
+                            eprint!("{s}");
+                            std::process::exit(99);
+                        }
+                    }
+                }
                 "date" => match grit_lib::git_date::test_tool_date(&rest[1..]) {
                     Ok(grit_lib::git_date::TestToolDateResult::Output(lines)) => {
                         for line in lines {
@@ -3176,6 +3236,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             Ok(())
         }
         _ => {
+            if rest.len() == 1 && (rest[0] == "--help" || rest[0] == "-h") {
+                eprintln!("git: '{subcmd}' is not a git command. See 'git --help'.");
+                std::process::exit(1);
+            }
             let commands = KNOWN_COMMANDS;
             // Find similar commands using edit distance
             let mut suggestions: Vec<&str> = commands
@@ -3205,7 +3269,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 _ => {
                     // Try external command: look for git-<subcmd> in exec-path
                     let ext_cmd = format!("git-{}", subcmd);
-                    let exec_path = opts.exec_path.as_ref().map(|p| p.clone()).or_else(|| {
+                    let exec_path = opts.exec_path.clone().or_else(|| {
                         std::env::current_exe()
                             .ok()
                             .and_then(|e| e.parent().map(|p| p.to_path_buf()))
@@ -3238,64 +3302,63 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 /// Normalize a path (resolve . and ..) without requiring filesystem existence.
 /// Returns "++failed++" if path goes above root for relative paths.
 fn normalize_path_simple(path: &str) -> String {
-    use std::path::Component;
-    let is_abs = path.starts_with('/');
-    // Track trailing slash: if input ends with '/', '/.', '/..', or similar
-    // that resolves to a directory reference
-    let raw_ends_dir = {
-        let stripped = path.trim_end_matches('/');
-        stripped.ends_with("/.")
-            || stripped.ends_with("/..")
-            || path.ends_with('/')
-            || path == "."
-            || path == ".."
-    };
-    let trailing_slash = raw_ends_dir && !path.is_empty();
-    let mut out: Vec<String> = Vec::new();
-    let mut failed = false;
-    for component in std::path::Path::new(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if out.is_empty() {
-                    failed = true;
-                    break;
-                } else if out.len() == 1 && is_abs {
-                    // Trying to go above root — fail
-                    failed = true;
-                    break;
-                } else {
-                    out.pop();
-                }
-            }
-            Component::RootDir => {
-                out.push(String::new());
-            }
-            Component::Normal(s) => {
-                out.push(s.to_string_lossy().to_string());
-            }
-            Component::Prefix(_) => {}
-        }
+    match git_path::normalize_path_copy(path) {
+        Ok(s) => s,
+        Err(()) => "++failed++".to_string(),
     }
-    if failed {
-        return "++failed++".to_string();
+}
+
+/// POSIX `basename(3)` (matches libc used by Git's test-tool path-utils).
+fn posix_basename(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_string();
     }
-    let mut result = if is_abs {
-        "/".to_string()
-            + &out
-                .iter()
-                .filter(|s| !s.is_empty())
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("/")
+    let mut end = path.len();
+    while end > 0 && path.as_bytes()[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return "/".to_string();
+    }
+    let path = &path[..end];
+    if let Some(i) = path.rfind('/') {
+        path[i + 1..].to_string()
     } else {
-        out.join("/")
-    };
-    // Don't add "." for empty relative paths — git returns empty string for "."
-    if trailing_slash && !result.is_empty() && !result.ends_with('/') {
-        result.push('/');
+        path.to_string()
     }
-    result
+}
+
+/// POSIX `dirname(3)` (matches libc used by Git's test-tool path-utils).
+fn posix_dirname(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_string();
+    }
+    let mut end = path.len();
+    while end > 0 && path.as_bytes()[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return "/".to_string();
+    }
+    let mut len = end;
+    while len > 0 && path.as_bytes()[len - 1] != b'/' {
+        len -= 1;
+    }
+    if len == 0 {
+        if path.as_bytes()[0] == b'/' {
+            return "/".to_string();
+        }
+        return ".".to_string();
+    }
+    let mut d_end = len;
+    while d_end > 0 && path.as_bytes()[d_end - 1] == b'/' {
+        d_end -= 1;
+    }
+    if d_end == 0 {
+        "/".to_string()
+    } else {
+        path[..d_end].to_string()
+    }
 }
 
 /// Handle `test-tool path-utils` — path manipulation utilities.
@@ -3321,9 +3384,7 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             if path.is_empty() {
                 bail!("The empty string is not a valid path");
             }
-            let p = std::path::Path::new(path)
-                .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(normalize_path_simple(path)));
+            let p = git_path::real_path_resolving(path);
             println!("{}", p.display());
             Ok(())
         }
@@ -3345,24 +3406,13 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
         }
         "basename" => {
             for arg in &rest[1..] {
-                let p = std::path::Path::new(arg);
-                let b = p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| arg.clone());
-                println!("{b}");
+                println!("{}", posix_basename(arg));
             }
             Ok(())
         }
         "dirname" => {
             for arg in &rest[1..] {
-                let p = std::path::Path::new(arg);
-                let d = p
-                    .parent()
-                    .map(|n| n.display().to_string())
-                    .unwrap_or_else(|| ".".to_string());
-                let d = if d.is_empty() { ".".to_string() } else { d };
-                println!("{d}");
+                println!("{}", posix_dirname(arg));
             }
             Ok(())
         }
@@ -3371,16 +3421,10 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 .get(1)
                 .ok_or_else(|| anyhow::anyhow!("strip_path_suffix: missing path"))?;
             let suffix = rest.get(2).map(|s| s.as_str()).unwrap_or("");
-            // Normalize double slashes before comparing
-            let norm_path = path.replace("//", "/");
-            let norm_suffix = suffix.replace("//", "/");
-            let stripped = if norm_path.ends_with(&*norm_suffix) {
-                let new_len = norm_path.len() - norm_suffix.len();
-                norm_path[..new_len].trim_end_matches('/').to_string()
-            } else {
-                std::process::exit(1);
-            };
-            println!("{stripped}");
+            match git_path::strip_path_suffix(path, suffix) {
+                Some(p) => println!("{p}"),
+                None => std::process::exit(1),
+            }
             Ok(())
         }
         "longest_ancestor_length" => {
@@ -3390,29 +3434,10 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let prefixes_str = rest
                 .get(2)
                 .ok_or_else(|| anyhow::anyhow!("longest_ancestor_length: missing prefixes"))?;
-            let mut best: i64 = -1;
-            for prefix in prefixes_str.split(':') {
-                if prefix.is_empty() {
-                    continue;
-                }
-                if prefix == "/" {
-                    // "/" is ancestor of any absolute path with len > 1, result length is 0
-                    if path.starts_with('/') && path.len() > 1 {
-                        if 0 > best {
-                            best = 0;
-                        }
-                    }
-                    continue;
-                }
-                let with_slash = format!("{}/", prefix);
-                if path.starts_with(&with_slash) {
-                    let len = prefix.len() as i64;
-                    if len > best {
-                        best = len;
-                    }
-                }
-            }
-            println!("{best}");
+            let len = git_path::longest_ancestor_length(path, prefixes_str).map_err(|_| {
+                anyhow::anyhow!("longest_ancestor_length: could not normalize path")
+            })?;
+            println!("{len}");
             Ok(())
         }
         "prefix_path" => {
@@ -3422,12 +3447,14 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let path = rest
                 .get(2)
                 .ok_or_else(|| anyhow::anyhow!("prefix_path: missing path"))?;
-            let prefix_path = std::path::Path::new(prefix.as_str());
-            let path_path = std::path::Path::new(path.as_str());
-            if let Ok(rel) = path_path.strip_prefix(prefix_path) {
-                println!("{}", rel.display());
-            } else {
-                println!("{path}");
+            let repo = grit_lib::repo::Repository::discover(None)
+                .map_err(|_| anyhow::anyhow!("prefix_path: not a git repository"))?;
+            let Some(wt) = repo.work_tree.as_ref() else {
+                bail!("prefix_path: bare repository");
+            };
+            match git_path::prefix_path_gently(prefix, path, wt.as_path()) {
+                Some(p) => println!("{p}"),
+                None => bail!("prefix_path: path outside repository"),
             }
             Ok(())
         }
@@ -3438,7 +3465,6 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let base = rest
                 .get(2)
                 .ok_or_else(|| anyhow::anyhow!("relative_path: missing base"))?;
-            // Handle <empty> and <null> as empty strings (test framework convention)
             let path = if path == "<empty>" || path == "<null>" || path == "(null)" {
                 ""
             } else {
@@ -3449,96 +3475,32 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             } else {
                 base.as_str()
             };
-            let has_trailing = path.ends_with('/');
-            // If path is empty, result is ./
-            if path.is_empty() {
-                println!("./");
-                return Ok(());
+            let mut sb = String::new();
+            let rel = git_path::relative_path(path, base, &mut sb);
+            match rel {
+                None => println!("(null)"),
+                Some(s) if s.is_empty() => println!("(empty)"),
+                Some(s) => println!("{s}"),
             }
-            // If path and base are on different roots (one abs, one rel), return path unchanged
-            let path_is_abs = path.starts_with('/');
-            let base_is_abs = base.starts_with('/');
-            if !base.is_empty() && (path_is_abs != base_is_abs) {
-                // Different root types — just return path as-is
-                let mut result = path.to_string();
-                if has_trailing && !result.ends_with('/') {
-                    result.push('/');
-                }
-                println!("{result}");
-                return Ok(());
-            }
-            let norm_path = normalize_path_simple(path);
-            let norm_base = normalize_path_simple(base.trim_end_matches('/'));
-            let rel = make_relative_for_path_utils(
-                std::path::Path::new(&norm_path),
-                std::path::Path::new(&norm_base),
-            );
-            let mut rel_str = rel.display().to_string();
-            // Add trailing slash when path ends with / or result is pure navigation
-            let is_pure_nav = rel_str == "."
-                || rel_str == ".."
-                || rel_str.starts_with("../")
-                    && rel_str
-                        .trim_end_matches(|c| c == '.' || c == '/')
-                        .is_empty()
-                || rel_str.ends_with("/..")
-                || rel_str.chars().all(|c| c == '.' || c == '/');
-            if (has_trailing || is_pure_nav) && !rel_str.ends_with('/') {
-                rel_str.push('/');
-            }
-            println!("{rel_str}");
             Ok(())
         }
         "is_dotgitattributes" | "is_dotgitignore" | "is_dotgitmodules" | "is_dotmailmap" => {
-            let path = rest
-                .get(1)
-                .ok_or_else(|| anyhow::anyhow!("{subcmd}: missing path"))?;
-            let fname = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            let is_special = match subcmd {
-                "is_dotgitattributes" => fname.eq_ignore_ascii_case(".gitattributes"),
-                "is_dotgitignore" => fname.eq_ignore_ascii_case(".gitignore"),
-                "is_dotgitmodules" => fname.eq_ignore_ascii_case(".gitmodules"),
-                "is_dotmailmap" => fname.eq_ignore_ascii_case(".mailmap"),
-                _ => false,
-            };
-            if is_special {
-                println!("1");
-            } else {
-                println!("0");
+            let mut res = 0;
+            let mut expect = 1;
+            for arg in &rest[1..] {
+                if arg == "--not" {
+                    expect = 0;
+                    continue;
+                }
+                let hit = dotfile::dotfile_matches(subcmd, arg);
+                if expect != (hit as i32) {
+                    res = 1;
+                }
             }
-            Ok(())
+            std::process::exit(res);
         }
         other => bail!("test-tool path-utils: unknown subcommand '{other}'"),
     }
-}
-
-fn make_relative_for_path_utils(
-    path: &std::path::Path,
-    base: &std::path::Path,
-) -> std::path::PathBuf {
-    // Don't use canonicalize (paths may not exist); use components directly
-    let path_comps: Vec<_> = path.components().collect();
-    let base_comps: Vec<_> = base.components().collect();
-    let common_len = path_comps
-        .iter()
-        .zip(base_comps.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let up = base_comps.len() - common_len;
-    let mut result = std::path::PathBuf::new();
-    for _ in 0..up {
-        result.push("..");
-    }
-    for comp in &path_comps[common_len..] {
-        result.push(comp.as_os_str());
-    }
-    if result.as_os_str().is_empty() {
-        result.push(".");
-    }
-    result
 }
 
 /// Handle `test-tool submodule` subcommands.
@@ -3546,118 +3508,21 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
     let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
     match subcmd {
         "resolve-relative-url" => {
-            // resolve-relative-url <remote_url> <submodule_ref> <relative_url>
-            // Computes the absolute URL of a submodule from relative references.
-            let remote_url = rest.get(1).map(|s| s.as_str()).unwrap_or("");
-            let submodule_ref = rest.get(2).map(|s| s.as_str()).unwrap_or("");
-            let relative_url = rest.get(3).map(|s| s.as_str()).unwrap_or("");
-            let result = resolve_submodule_relative_url(remote_url, submodule_ref, relative_url);
+            // resolve-relative-url <up_path> <remoteurl> <url> — see git/t/helper/test-submodule.c
+            let up_path = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+            let remote_url = rest.get(2).map(|s| s.as_str()).unwrap_or("");
+            let url = rest.get(3).map(|s| s.as_str()).unwrap_or("");
+            let up = if up_path == "(null)" {
+                None
+            } else {
+                Some(up_path)
+            };
+            let result = git_path::relative_url(remote_url, url, up)
+                .map_err(|_| anyhow::anyhow!("resolve-relative-url: invalid remote_url"))?;
             println!("{result}");
             Ok(())
         }
         other => bail!("test-tool submodule: unknown subcommand '{other}'"),
-    }
-}
-
-/// Resolve a submodule's relative URL against its parent's remote URL.
-/// `remote_url`: the remote URL of the parent repo  
-/// `up_path`: path from parent repo root to working tree (navigation from remote)
-/// `url`: the submodule's relative URL from .gitmodules
-fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) -> String {
-    // If url is absolute or has a scheme, return as-is
-    if url.contains("://") || url.starts_with('/') {
-        return url.to_string();
-    }
-    if !url.starts_with("./") && !url.starts_with("../") {
-        return url.to_string();
-    }
-
-    // Determine the base path (don't normalize - preserve .. components for fidelity)
-    let base = if remote_url.is_empty() || remote_url == "(null)" || remote_url == "null" {
-        if up_path.is_empty() || up_path == "(null)" {
-            ".".to_string()
-        } else {
-            up_path.to_string()
-        }
-    } else if !up_path.is_empty() && up_path != "(null)" && up_path.starts_with('/') {
-        // Absolute up_path overrides
-        up_path.to_string()
-    } else if !up_path.is_empty() && up_path != "(null)" {
-        format!("{}/{}", remote_url.trim_end_matches('/'), up_path)
-    } else {
-        remote_url.trim_end_matches('/').to_string()
-    };
-
-    // Detect and preserve URL scheme
-    let (scheme, path_part): (String, String) = if let Some(pos) = base.find("://") {
-        let scheme = base[..pos + 3].to_string(); // "file://" or "helper:://"
-        let rest = base[pos + 3..].to_string();
-        (scheme, rest)
-    } else {
-        ("".to_string(), base.clone())
-    };
-
-    // Split path into components (keep all including dots; only strip empty except leading / or //)
-    let double_leading = path_part.starts_with("//");
-    let leading_slash = path_part.starts_with('/');
-    let mut parts: Vec<String> = path_part
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    if double_leading {
-        parts.insert(0, String::new()); // //<...> = two slashes
-        parts.insert(0, String::new());
-    } else if leading_slash {
-        parts.insert(0, String::new()); // empty = leading /
-    }
-
-    // Detect if url ends with /. (directory marker to preserve)
-    let url_ends_with_dot = url.ends_with("/.");
-
-    // Before applying url, normalize single dots from the base
-    // (but keep the last component as-is for directory markers)
-    let mut clean_parts: Vec<String> = Vec::new();
-    for (i, p) in parts.iter().enumerate() {
-        if p == "." && i + 1 < parts.len() {
-            // Skip intermediate dots
-        } else {
-            clean_parts.push(p.clone());
-        }
-    }
-    parts = clean_parts;
-
-    // Apply url components to parts
-    for component in url.split('/') {
-        match component {
-            ".." => {
-                if !parts.is_empty() {
-                    parts.pop();
-                }
-            }
-            "." | "" => {}
-            other => parts.push(other.to_string()),
-        }
-    }
-
-    let path_result = parts.join("/");
-
-    // Restore scheme
-    let mut out = if scheme.is_empty() {
-        path_result
-    } else {
-        format!("{}{}", scheme, path_result)
-    };
-
-    // Append /. when url ends with /.
-    if url_ends_with_dot && !out.ends_with("/.") {
-        out.push_str("/.");
-    }
-
-    if out.is_empty() {
-        ".".to_string()
-    } else {
-        out
     }
 }
 

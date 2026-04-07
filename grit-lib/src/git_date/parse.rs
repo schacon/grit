@@ -632,7 +632,7 @@ fn match_alpha(date: &[u8], tm: &mut tm, offset: &mut i32) -> usize {
     }
 
     if match_string(date, "AM") == 2 {
-        tm.tm_hour = ((tm.tm_hour % 12));
+        tm.tm_hour = (tm.tm_hour % 12);
         return 2;
     }
 

@@ -32,6 +32,7 @@ pub mod name_rev;
 pub mod objects;
 pub mod odb;
 pub mod pack;
+pub mod parse_options_test_tool;
 pub mod patch_ids;
 pub mod prune_packed;
 pub mod reflog;

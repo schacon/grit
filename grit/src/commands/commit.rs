@@ -269,7 +269,7 @@ pub fn run(args: Args) -> Result<()> {
     if !args.allow_empty && parents.is_empty() {
         let empty_tree =
             grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
-                .unwrap_or_else(|_| tree_oid);
+                .unwrap_or(tree_oid);
         if tree_oid == empty_tree {
             bail!("nothing to commit");
         }

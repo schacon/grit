@@ -489,7 +489,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
                         let remote_name = matching[0]
                             .0
                             .trim_start_matches("refs/remotes/")
-                            .splitn(2, '/')
+                            .split('/')
                             .next()
                             .unwrap_or("origin")
                             .to_owned();
@@ -1066,7 +1066,7 @@ fn quote_path_if_needed(path: &str, quotepath: bool) -> String {
     if !quotepath {
         return path.to_string();
     }
-    let needs_quoting = path.bytes().any(|b| b > 0x7f || b < 0x20);
+    let needs_quoting = path.bytes().any(|b| !(0x20..=0x7f).contains(&b));
     if !needs_quoting {
         return path.to_string();
     }
@@ -1405,10 +1405,11 @@ fn walk_for_submodule(base: &Path, dir: &Path) -> bool {
                 // Found a .git directory that's NOT the worktree's own .git
                 return true;
             }
-        } else if path.is_dir() && path.file_name().map(|n| n != ".git").unwrap_or(true) {
-            if walk_for_submodule(base, &path) {
-                return true;
-            }
+        } else if path.is_dir()
+            && path.file_name().map(|n| n != ".git").unwrap_or(true)
+            && walk_for_submodule(base, &path)
+        {
+            return true;
         }
     }
     false
@@ -1813,10 +1814,8 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
     }
 
     // Check for initialized submodules (cannot move a worktree with active submodules)
-    if args.force < 1 {
-        if has_initialized_submodule(&src_path) {
-            bail!("cannot move a working tree containing an initialized submodule");
-        }
+    if args.force < 1 && has_initialized_submodule(&src_path) {
+        bail!("cannot move a working tree containing an initialized submodule");
     }
 
     // Move the working tree directory
