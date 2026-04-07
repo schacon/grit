@@ -163,8 +163,35 @@ pub fn run(mut args: Args) -> Result<()> {
     QUIET.with(|q| q.set(args.quiet));
     let repo = Repository::discover(None).context("not a git repository")?;
 
+    // Validate --pathspec-file-nul requires --pathspec-from-file
+    if args.pathspec_file_nul && args.pathspec_from_file.is_none() {
+        bail!("the option '--pathspec-file-nul' requires '--pathspec-from-file'");
+    }
+
     // Read pathspecs from file if --pathspec-from-file is given
-    if let Some(ref file) = args.pathspec_from_file {
+    if let Some(ref file) = args.pathspec_from_file.clone() {
+        // Conflict checks
+        if args.detach {
+            bail!("options '--pathspec-from-file' and '--detach' cannot be used together");
+        }
+        if args.patch {
+            bail!("options '--pathspec-from-file' and '--patch' cannot be used together");
+        }
+        // Check for explicit pathspec arguments (after -- separator or if has_separator already)
+        // We detect this by checking the raw args for an explicit -- followed by paths
+        {
+            let raw_check: Vec<String> = std::env::args().collect();
+            let has_sep = raw_check.iter().any(|a| a == "--");
+            if has_sep {
+                let sep_idx = raw_check
+                    .iter()
+                    .position(|a| a == "--")
+                    .unwrap_or(raw_check.len());
+                if sep_idx + 1 < raw_check.len() {
+                    bail!("'--pathspec-from-file' and pathspec arguments cannot be used together");
+                }
+            }
+        }
         let content = if file == "-" {
             let mut s = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut s)
@@ -174,11 +201,27 @@ pub fn run(mut args: Args) -> Result<()> {
             std::fs::read_to_string(file).with_context(|| format!("reading {file}"))?
         };
         let sep = if args.pathspec_file_nul { b'\0' } else { b'\n' };
-        let pathspecs: Vec<String> = content
+        let pathspecs_raw: Vec<String> = content
             .split(|c: char| c as u8 == sep)
             .map(|s| s.trim_end_matches(|c: char| c == '\r').to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        // With --pathspec-file-nul, C-quoting is incompatible — fail if quoted
+        if args.pathspec_file_nul {
+            for p in &pathspecs_raw {
+                if p.trim().starts_with('"') {
+                    bail!("pathspec-from-file: line is not NUL terminated: {}", p);
+                }
+            }
+        }
+        let pathspecs: Vec<String> = if args.pathspec_file_nul {
+            pathspecs_raw
+        } else {
+            pathspecs_raw
+                .into_iter()
+                .map(|s| unquote_c_pathspec(&s))
+                .collect()
+        };
         // Append to existing rest args
         args.rest.extend(pathspecs);
     }
@@ -530,6 +573,60 @@ pub fn run(mut args: Args) -> Result<()> {
 /// Clap strips the leading `--` when it is the first trailing arg, so we
 /// need this external signal to distinguish `checkout -- file` from
 /// `checkout file`.
+/// C-unquote a pathspec entry from --pathspec-from-file.
+/// Handles \ooo octal, \n, \t, etc. and strips surrounding quotes.
+fn unquote_c_pathspec(s: &str) -> String {
+    let s = s.trim();
+    if !s.starts_with('"') {
+        return s.to_string();
+    }
+    let inner = s
+        .strip_prefix('"')
+        .unwrap_or(s)
+        .strip_suffix('"')
+        .unwrap_or(s.strip_prefix('"').unwrap_or(s));
+    let mut out = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some(d @ '0'..='7') => {
+                // Octal escape: up to 3 digits
+                let mut val = d as u32 - '0' as u32;
+                for _ in 0..2 {
+                    if let Some(&next) = chars.peek() {
+                        if next >= '0' && next <= '7' {
+                            val = val * 8 + (next as u32 - '0' as u32);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                if let Some(ch) = char::from_u32(val) {
+                    out.push(ch);
+                }
+            }
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => {
+                out.push('\\');
+            }
+        }
+    }
+    out
+}
+
 fn split_target_and_paths(
     rest: &[String],
     has_separator: bool,
