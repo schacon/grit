@@ -707,7 +707,7 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         let commit_oid = commit_oid.ok_or_else(|| {
             anyhow::anyhow!("HEAD does not point to a valid commit; specify a branch")
         })?;
-        populate_worktree(&repo.odb, &common, &commit_oid, &wt_path, &wt_admin)?;
+        populate_worktree(&repo, &commit_oid, &wt_path, &wt_admin)?;
     }
 
     Ok(())
@@ -780,13 +780,13 @@ fn setup_unborn_worktree(
 
 /// Populate a worktree directory with files from a commit.
 fn populate_worktree(
-    odb: &grit_lib::odb::Odb,
-    _common_dir: &Path,
+    repo: &grit_lib::repo::Repository,
     commit_oid: &ObjectId,
     wt_path: &Path,
     admin_dir: &Path,
 ) -> Result<()> {
     use grit_lib::objects::parse_commit;
+    let odb = &repo.odb;
     // Read the commit to get its tree
     let obj = odb.read(commit_oid).context("reading commit")?;
     let commit = parse_commit(&obj.data).context("parsing commit")?;
@@ -799,7 +799,8 @@ fn populate_worktree(
     let index_path = admin_dir.join("index");
     let mut index = Index::new();
     add_worktree_tree_to_index(odb, &tree_oid, "", &mut index, Some(wt_path))?;
-    index.write(&index_path).context("writing worktree index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing worktree index")?;
 
     Ok(())
 }
@@ -1299,7 +1300,7 @@ fn cmd_remove(args: RemoveArgs) -> Result<()> {
         // Load the linked worktree's index (stored in the admin directory)
         let index_path = admin.join("index");
         if index_path.exists() {
-            if let Ok(index) = grit_lib::index::Index::load(&index_path) {
+            if let Ok(index) = repo.load_index_at(&index_path) {
                 // Check for untracked files
                 if has_untracked_files(&wt_path, &index) {
                     bail!("worktree '{}' contains modified or untracked files; use --force to delete it", wt_path.display());

@@ -273,7 +273,7 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
 
     let head = resolve_head(&repo.git_dir)?;
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
     // Get HEAD tree entries (empty if unborn)
     let tree_entries = if let Some(oid) = head.oid() {
@@ -342,7 +342,8 @@ fn reset_patch(repo: &Repository, _rest: &[String]) -> Result<()> {
         }
     }
 
-    index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing index")?;
     Ok(())
 }
 
@@ -384,7 +385,7 @@ fn reset_paths(
     }
 
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
     for path_str in paths {
         let path_bytes = path_str.as_bytes().to_vec();
@@ -435,7 +436,8 @@ fn reset_paths(
         // If not in tree and no -N, path is removed from index (staged deletion).
     }
 
-    index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing index")?;
     Ok(())
 }
 
@@ -455,7 +457,7 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
             bail!("Cannot do a soft reset in the middle of a revert.");
         }
         let index_path = repo.index_path();
-        let index = Index::load(&index_path).context("loading index")?;
+        let index = repo.load_index_at(&index_path).context("loading index")?;
         if index.entries.iter().any(|e| e.stage() != 0) {
             bail!("Cannot do a soft reset in the middle of a merge.");
         }
@@ -473,22 +475,24 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
                 ResetMode::Mixed => {
                     // Mixed on unborn: clear the index
                     let index_path = repo.index_path();
-                    let new_index = Index::new();
-                    new_index.write(&index_path).context("writing index")?;
+                    let mut new_index = Index::new();
+                    repo.write_index_at(&index_path, &mut new_index)
+                        .context("writing index")?;
                     return Ok(());
                 }
                 ResetMode::Hard | ResetMode::Merge => {
                     // Unborn branch: reset --hard just clears the index and working tree
                     let index_path = repo.index_path();
-                    let old_index = match Index::load(&index_path) {
+                    let old_index = match repo.load_index_at(&index_path) {
                         Ok(idx) => idx,
                         Err(_) => Index::new(),
                     };
-                    let new_index = Index::new();
+                    let mut new_index = Index::new();
                     if let Some(_wt) = &repo.work_tree {
                         checkout_index_to_worktree(repo, &old_index, &mut new_index.clone())?;
                     }
-                    new_index.write(&index_path).context("writing index")?;
+                    repo.write_index_at(&index_path, &mut new_index)
+                        .context("writing index")?;
                     return Ok(());
                 }
                 ResetMode::Keep => {
@@ -537,7 +541,9 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
     let tree_entries = tree_to_flat_entries(repo, &tree_oid, "")?;
 
     let index_path = repo.index_path();
-    let old_index = Index::load(&index_path).context("loading old index")?;
+    let old_index = repo
+        .load_index_at(&index_path)
+        .context("loading old index")?;
     let mut new_index = Index::new();
     new_index.entries = tree_entries;
     new_index.sort();
@@ -598,7 +604,8 @@ fn reset_commit(repo: &Repository, commit_spec: &str, mode: ResetMode, quiet: bo
         }
     }
 
-    new_index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut new_index)
+        .context("writing index")?;
     Ok(())
 }
 
@@ -653,7 +660,7 @@ fn check_keep_safety(repo: &Repository, head: &HeadState, target_oid: &ObjectId)
     // Check if any of these changed paths have local modifications in the
     // working tree or index that differ from HEAD.
     let index_path = repo.index_path();
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
     let index_map: HashMap<Vec<u8>, &IndexEntry> = index
         .entries
         .iter()

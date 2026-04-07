@@ -2,7 +2,9 @@
 
 **Updated:** 2026-04-07
 
-- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 98/98 passing (2026-04-07).
+- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 102/102 passing (2026-04-07).
+- `./scripts/run-tests.sh t1092-sparse-checkout-compatibility.sh`: 39/106 passing (65 failing; 2 `test_expect_failure`); sparse-index plumbing in progress.
+- `cargo test --workspace`: not run for this change set.
 
 **Updated:** 2026-04-06
 

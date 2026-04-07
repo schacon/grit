@@ -870,25 +870,53 @@ test_hook () {
 	write_script "$hook_dir/$1"
 }
 
-# test_cmp_config [--default DEFAULT] EXPECTED [KEY...]
-test_cmp_config () {
-	local default=""
-	if test "$1" = "--default"
+# Look for trace2 region enter/leave in a trace file (from GIT_TRACE2_EVENT).
+#	test_region [!] <category> <label> <tracefile>
+#
+# If the first parameter is !, the region must not appear.
+test_region () {
+	local expect_exit=0
+	if test "$1" = "!"
 	then
-		default="$2"
-		shift 2
+		expect_exit=1
+		shift
 	fi
-	local expect="$1"
-	shift
-	local actual
-	actual=$(git config "$@" 2>/dev/null) || actual="$default"
-	if test "$expect" = "$actual"
+
+	grep -e	'"region_enter".*"category":"'"$1"'","label":"'"$2"\" "$3"
+	exitcode=$?
+
+	if test $exitcode != $expect_exit
 	then
-		return 0
-	else
-		echo >&2 "test_cmp_config: expected '$expect', got '$actual'"
 		return 1
 	fi
+
+	grep -e	'"region_leave".*"category":"'"$1"'","label":"'"$2"\" "$3"
+	exitcode=$?
+
+	if test $exitcode != $expect_exit
+	then
+		return 1
+	fi
+
+	return 0
+}
+
+# Check that the given config key has the expected value.
+#
+#    test_cmp_config [-C <dir>] <expected-value>
+#                    [<git-config-options>...] <config-key>
+test_cmp_config () {
+	local GD &&
+	if test "$1" = "-C"
+	then
+		shift &&
+		GD="-C $1" &&
+		shift
+	fi &&
+	printf "%s\n" "$1" >expect.config &&
+	shift &&
+	git $GD config "$@" >actual.config &&
+	test_cmp expect.config actual.config
 }
 
 test_commit () {

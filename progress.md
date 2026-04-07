@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    84 |
-| In progress |     0 |
-| Remaining   |   683 |
+| Completed   |   217 |
+| In progress |     2 |
+| Remaining   |   548 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t1092-sparse-checkout-compatibility` — in progress (~39/106 passing): sparse index (`sdir`), expand/collapse, `sparse-checkout` CLI flags, `ls-files --sparse`, status sparse banner, index write finalization across commands; see `logs/2026-04-07_sparse-index-t1092-progress.md`
 - `t0450-txt-doc-vs-help` — 548/548 tests pass (`-h` synopsis generated from vendored `git/Documentation/*.adoc` at build time; harness sets `GIT_SOURCE_DIR`; trimmed `adoc-help-mismatches` to builtins Grit does not ship)
 - `t6426-merge-skip-unneeded-updates` — 13/13 tests pass (fixed merge output channels so successful merge-commit summaries no longer pollute stderr checks while keeping conflict diagnostics on stdout; expanded `tests/test-tool chmtime` compatibility so `--get` supports optional offset specs used by mtime assertions; merge tree orchestration now preserves pre-merge dirty worktree files by skipping checkout when index OIDs are unchanged and only refreshing paths whose index content changed; resolved rename/add handling to drop stale stage-0 entries, emit conflict-marker worktree content, and correctly keep the renamed-side blob as stage-3 in 1to1 rename+add-source cases)
 - `t6406-merge-attr` — 13/13 tests pass (merge core now honors gitattributes merge attributes: `-merge`/binary paths, `merge=union`, and custom `merge=<driver>` with `%O/%A/%B/%P/%S/%X/%Y` placeholder expansion and proper signal-failure handling; merge conflict marker size now respects `conflict-marker-size` with Git-compatible warning for invalid values; `checkout -m <path>` now reconstructs conflicted files from index stages and applies `conflict-marker-size`, enabling conflict re-materialization checks)
@@ -74,4 +75,4 @@
 
 ## What Remains
 
-684 test files still pending. See `plan.md` for the full prioritized list.
+550 test-tracked items still open (548 `[ ]` + 2 `[~]`). See `PLAN.md` for the full prioritized list.

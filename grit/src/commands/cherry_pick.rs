@@ -13,7 +13,6 @@ use std::fs;
 use std::path::Path;
 
 use grit_lib::config::ConfigSet;
-use grit_lib::error::Error as GritError;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::merge_file::{merge, MergeFavor, MergeInput};
 use grit_lib::objects::{
@@ -296,9 +295,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
             let mut new_index = Index::new();
             new_index.entries = entries;
             new_index.sort();
-            new_index
-                .write(&repo.index_path())
-                .context("writing index")?;
+            repo.write_index(&mut new_index).context("writing index")?;
             if let Some(wt) = &repo.work_tree {
                 checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
             }
@@ -370,7 +367,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     let theirs_entries = tree_to_map(tree_to_index_entries(repo, &commit_tree_oid, "")?);
 
     let (favor, ws_opts) = parse_strategy_options(&args.strategy_option);
-    let merge_result = three_way_merge_with_content(
+    let mut merge_result = three_way_merge_with_content(
         repo,
         &base_entries,
         &ours_entries,
@@ -397,9 +394,7 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
     }
 
     let old_index = load_index(repo)?;
-    merge_result
-        .index
-        .write(&repo.index_path())
+    repo.write_index(&mut merge_result.index)
         .context("writing index")?;
 
     let work_tree = repo
@@ -598,7 +593,7 @@ fn do_abort() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
 
         if let Some(wt) = &repo.work_tree {
             checkout_merged_index(&repo, wt, &old_idx, &index, &BTreeMap::new())?;
@@ -635,7 +630,7 @@ fn do_skip(args: &Args) -> Result<()> {
         let mut new_index = Index::new();
         new_index.entries = entries;
         new_index.sort();
-        new_index.write(&repo.index_path())?;
+        repo.write_index(&mut new_index)?;
 
         if let Some(wt) = &repo.work_tree {
             checkout_merged_index(&repo, wt, &old_index, &new_index, &BTreeMap::new())?;
@@ -783,12 +778,7 @@ fn cleanup_cherry_pick_state(git_dir: &Path) {
 }
 
 fn load_index(repo: &Repository) -> Result<Index> {
-    let index_path = repo.index_path();
-    match Index::load(&index_path) {
-        Ok(idx) => Ok(idx),
-        Err(GritError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(Index::new()),
-        Err(e) => Err(e.into()),
-    }
+    Ok(repo.load_index()?)
 }
 
 fn create_cherry_pick_commit(

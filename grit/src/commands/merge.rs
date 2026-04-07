@@ -499,7 +499,7 @@ fn merge_unborn(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &index, None)?;
     }
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
 
     if !args.quiet {
         eprintln!("Updating to {}", &merge_oid.to_hex()[..7]);
@@ -544,7 +544,7 @@ fn do_fast_forward(
         remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index, None)?;
     }
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
 
     if !args.quiet {
         println!(
@@ -923,7 +923,7 @@ fn do_real_merge(
     maybe_simulate_partial_clone_fetch(repo, &args.commits[0])?;
 
     // Merge trees
-    let merge_result = merge_trees(
+    let mut merge_result = merge_trees(
         repo,
         &base_entries,
         &ours_entries,
@@ -956,7 +956,7 @@ fn do_real_merge(
     }
 
     // Write index
-    merge_result.index.write(&repo.index_path())?;
+    repo.write_index(&mut merge_result.index)?;
 
     // Update working tree
     if let Some(ref wt) = repo.work_tree {
@@ -1020,7 +1020,7 @@ fn do_real_merge(
     }
 
     if args.squash {
-        return do_squash_from_merge(repo, &merge_result.index, head, head_oid, merge_oid, args);
+        return do_squash_from_merge(repo, merge_result.index, head, head_oid, merge_oid, args);
     }
 
     if args.no_commit {
@@ -1145,7 +1145,7 @@ fn bail_if_merge_would_overwrite_local_changes(
     let Some(work_tree) = repo.work_tree.as_deref() else {
         return Ok(());
     };
-    let current_index = Index::load(&repo.index_path())?;
+    let current_index = repo.load_index()?;
 
     let new_map: HashMap<&[u8], &IndexEntry> = new_index
         .entries
@@ -1466,7 +1466,7 @@ fn bail_if_merge_touches_present_skip_worktree(
     let Some(work_tree) = repo.work_tree.as_deref() else {
         return Ok(());
     };
-    let index = Index::load(&repo.index_path())?;
+    let index = repo.load_index()?;
 
     for entry in &index.entries {
         if entry.stage() != 0 || !entry.skip_worktree() {
@@ -1646,7 +1646,7 @@ fn do_octopus_merge(
             let mut orig_index = Index::new();
             orig_index.entries = orig_entries;
             orig_index.sort();
-            orig_index.write(&repo.index_path())?;
+            repo.write_index(&mut orig_index)?;
             if let Some(ref wt) = repo.work_tree {
                 checkout_entries(repo, wt, &orig_index, None)?;
             }
@@ -1667,7 +1667,7 @@ fn do_octopus_merge(
     let mut final_index = Index::new();
     final_index.entries = current_tree_entries;
     final_index.sort();
-    final_index.write(&repo.index_path())?;
+    repo.write_index(&mut final_index)?;
 
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &final_index, None)?;
@@ -1963,7 +1963,7 @@ fn do_strategy_theirs(
         remove_deleted_files(wt, &old_entries, &new_index)?;
         checkout_entries(repo, wt, &new_index, None)?;
     }
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
 
     if !args.quiet {
         let short = &commit_oid.to_hex()[..7];
@@ -2171,7 +2171,7 @@ fn do_squash(
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(repo, wt, &new_index, None)?;
     }
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
 
     // Write SQUASH_MSG
     let msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
@@ -2191,13 +2191,13 @@ fn do_squash(
 /// Squash from a three-way merge result.
 fn do_squash_from_merge(
     repo: &Repository,
-    index: &Index,
+    mut index: Index,
     _head: &HeadState,
     head_oid: ObjectId,
     merge_oid: ObjectId,
     args: &Args,
 ) -> Result<()> {
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
 
     let msg = build_squash_msg(repo, head_oid, &[merge_oid])?;
     fs::write(repo.git_dir.join("SQUASH_MSG"), &msg)?;
@@ -2239,7 +2239,7 @@ fn merge_abort() -> Result<()> {
     if let Some(ref wt) = repo.work_tree {
         checkout_entries(&repo, wt, &index, None)?;
     }
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
 
     // Clean up merge state files
     let _ = fs::remove_file(git_dir.join("MERGE_HEAD"));
@@ -2274,7 +2274,7 @@ fn merge_continue(message: Option<String>) -> Result<()> {
     }
 
     // Check that index has no unmerged entries
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(e) => bail!("cannot load index: {}", e),
     };
@@ -4395,7 +4395,7 @@ fn capture_dirty_tracked_entries(repo: &Repository) -> Result<Vec<AutoStashEntry
     let Some(work_tree) = repo.work_tree.as_deref() else {
         return Ok(Vec::new());
     };
-    let index = Index::load(&repo.index_path())?;
+    let index = repo.load_index()?;
     let mut entries = Vec::new();
     for entry in &index.entries {
         if entry.stage() != 0 {

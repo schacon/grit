@@ -164,7 +164,7 @@ commit → check it off → move on.
 - [ ] `t1510-repo-setup` ██░░░░░░░░░░░░░░░░░░ 12/109 (97 left) — Tests of cwd/prefix/worktree/gitdir setup in all cases
 
 - [ ] `t1517-outside-repo` █████████░░░░░░░░░░░ 97/195 (98 left) — check random commands outside repo
-- [ ] `t1092-sparse-checkout-compatibility` ░░░░░░░░░░░░░░░░░░░░ 3/106 (103 left) — compare full workdir to sparse workdir
+- [~] `t1092-sparse-checkout-compatibility` ░░░░░░░░░░░░░░░░░░░░ 39/106 (67 left) — compare full workdir to sparse workdir
 - [x] `t0450-txt-doc-vs-help` ████████████████████ 548/548 — assert (unbuilt) Documentation/*.adoc and -h output
 
 

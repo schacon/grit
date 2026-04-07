@@ -9,7 +9,6 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::diff::{diff_index_to_worktree, DiffEntry, DiffStatus};
 use grit_lib::error::Error;
-use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::io::{self, Write};
@@ -52,7 +51,7 @@ pub fn run(args: Args) -> Result<()> {
         .or_else(|| config.get("diff.tool"))
         .unwrap_or_else(|| "vimdiff".to_string());
 
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok(());

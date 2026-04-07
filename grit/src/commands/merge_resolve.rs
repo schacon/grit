@@ -2,7 +2,6 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 
 use crate::commands::{diff_index, merge_index, read_tree, update_index, write_tree};
@@ -38,7 +37,7 @@ pub fn run(args: Args) -> Result<()> {
         trees: vec![base, head, remote],
     })?;
 
-    let index = Index::load(&repo.index_path()).context("loading index")?;
+    let index = repo.load_index().context("loading index")?;
     if write_tree::write_tree_from_index(&repo.odb, &index, "", false).is_ok() {
         return Ok(());
     }

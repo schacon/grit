@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error;
-use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::path::Path;
@@ -75,7 +74,7 @@ pub fn run(args: Args) -> Result<()> {
 
             // Index info
             report.push_str("[Index]\n");
-            match Index::load(&repo.index_path()) {
+            match repo.load_index() {
                 Ok(index) => {
                     let entries = &index.entries;
                     report.push_str(&format!("entries: {}\n", entries.len()));

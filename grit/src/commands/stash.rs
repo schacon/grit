@@ -429,7 +429,7 @@ fn do_push(opts: PushOpts) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("cannot stash on an unborn branch"))?;
 
     // Load index
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -717,7 +717,7 @@ fn do_push_pathspec(
         }
     }
 
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
 
     if !opts.quiet {
         eprintln!("Saved working directory and index state {stash_msg}");
@@ -822,8 +822,8 @@ fn do_push_staged(
         }
     }
 
-    let new_index = build_index_from_tree(&repo.odb, &head_tree_entries)?;
-    new_index.write(&repo.index_path())?;
+    let mut new_index = build_index_from_tree(&repo.odb, &head_tree_entries)?;
+    repo.write_index(&mut new_index)?;
 
     if !opts.quiet {
         eprintln!("Saved working directory and index state {stash_msg}");
@@ -849,7 +849,7 @@ fn do_create(message: Option<String>) -> Result<()> {
         .oid()
         .ok_or_else(|| anyhow::anyhow!("cannot stash on an unborn branch"))?;
 
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -1308,7 +1308,7 @@ fn apply_stash_impl(
     let index_commit_oid = &stash_commit.parents[1];
 
     // Load current index
-    let current_index = match Index::load(&repo.index_path()) {
+    let current_index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -1640,7 +1640,7 @@ fn apply_stash_impl(
     if has_conflicts {
         new_index.sort();
     }
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
 
     // Apply untracked files if present (3rd parent)
     if stash_commit.parents.len() >= 3 {
@@ -2644,7 +2644,7 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
     let head_commit = parse_commit(&head_obj.data)?;
 
     let tree_entries = flatten_tree_full(&repo.odb, &head_commit.tree, "")?;
-    let new_index = build_index_from_tree(&repo.odb, &tree_entries)?;
+    let mut new_index = build_index_from_tree(&repo.odb, &tree_entries)?;
 
     // First pass: remove worktree files that are not in HEAD tree
     // (handles type changes like file→directory)
@@ -2682,7 +2682,7 @@ fn reset_to_head(repo: &Repository, head_oid: &ObjectId, work_tree: &Path) -> Re
         }
     }
 
-    new_index.write(&repo.index_path())?;
+    repo.write_index(&mut new_index)?;
     Ok(())
 }
 

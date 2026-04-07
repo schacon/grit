@@ -145,7 +145,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .and_then(|r| r.ok())
         .unwrap_or(true);
 
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -342,7 +342,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if !args.dry_run && !to_remove.is_empty() {
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
     }
     if !args.dry_run && !args.cached && !removed_gitlinks.is_empty() {
         remove_submodule_config_sections(&repo.git_dir, &removed_gitlinks)?;

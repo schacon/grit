@@ -68,7 +68,7 @@ pub fn run(args: Args) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
 
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Index::new(),
         Err(e) => return Err(e.into()),
@@ -345,7 +345,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if !args.dry_run {
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
     }
 
     Ok(())

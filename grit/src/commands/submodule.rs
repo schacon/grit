@@ -7,7 +7,6 @@ use crate::grit_exe;
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
 use grit_lib::config::{ConfigFile, ConfigScope};
-use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
@@ -231,7 +230,7 @@ fn parse_gitmodules_with_repo(
         fs::read_to_string(&gitmodules_path).context("failed to read .gitmodules")?
     } else if let Some(repo) = repo {
         // Fallback: read .gitmodules from the index (e.g. sparse checkout)
-        let index = Index::load(&repo.index_path()).context("failed to load index")?;
+        let index = repo.load_index().context("failed to load index")?;
         if let Some(ie) = index.get(b".gitmodules", 0) {
             let obj = repo
                 .odb

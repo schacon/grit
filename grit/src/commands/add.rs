@@ -150,7 +150,7 @@ pub fn run(mut args: Args) -> Result<()> {
     let _cfg_ver = config.get("index.version");
     let _cfg_many = config.get("feature.manyFiles");
     let mut index = if idx_exists {
-        Index::load(&index_path)?
+        repo.load_index_at(&index_path)?
     } else {
         Index::new_with_config(
             config.get("index.version").as_deref(),
@@ -195,7 +195,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // --chmod with no pathspecs: do nothing (don't error, just return)
     if args.chmod.is_some() && args.pathspec.is_empty() {
         if !args.dry_run {
-            write_index_or_lock_err(&index, &repo.index_path())?;
+            write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
         }
         return Ok(());
     }
@@ -225,6 +225,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // --renormalize: re-apply clean conversion to tracked files
     if args.renormalize {
         return run_renormalize(
+            &repo,
             odb,
             &mut index,
             work_tree,
@@ -315,13 +316,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
         if had_ignored {
             if !args.dry_run {
-                write_index_or_lock_err(&index, &repo.index_path())?;
+                write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
             }
             bail!("some ignored files could not be added");
         }
         if had_errors {
             if !args.dry_run {
-                write_index_or_lock_err(&index, &repo.index_path())?;
+                write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
             }
             if !add_cfg.ignore_errors {
                 bail!("adding files failed");
@@ -333,7 +334,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if !args.dry_run {
-        write_index_or_lock_err(&index, &repo.index_path())?;
+        write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
     }
 
     Ok(())
@@ -425,7 +426,7 @@ fn run_refresh(
     }
 
     if !args.dry_run {
-        write_index_or_lock_err(index, &repo.index_path())?;
+        write_index_or_lock_err(repo, index, &repo.index_path())?;
     }
 
     Ok(())
@@ -433,6 +434,7 @@ fn run_refresh(
 
 /// Re-apply clean conversion (CRLF normalization) to tracked files.
 fn run_renormalize(
+    repo: &Repository,
     odb: &Odb,
     index: &mut Index,
     work_tree: &Path,
@@ -491,8 +493,8 @@ fn run_renormalize(
     }
 
     if !args.dry_run {
-        let index_path = work_tree.join(".git/index");
-        write_index_or_lock_err(index, &index_path)?;
+        let index_path = repo.index_path();
+        write_index_or_lock_err(repo, index, &index_path)?;
     }
 
     Ok(())
@@ -1164,8 +1166,8 @@ fn is_unwritable_lock_error(err: &grit_lib::error::Error) -> bool {
     )
 }
 
-fn write_index_or_lock_err(index: &Index, index_path: &Path) -> Result<()> {
-    index.write(index_path).map_err(|e| {
+fn write_index_or_lock_err(repo: &Repository, index: &mut Index, index_path: &Path) -> Result<()> {
+    repo.write_index_at(index_path, index).map_err(|e| {
         if is_unwritable_lock_error(&e) {
             let mut msg = format!(
                 "Unable to create '{}': File exists.",

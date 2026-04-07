@@ -258,7 +258,7 @@ fn paths_equal(expected: Option<&PathBuf>, actual: &str) -> bool {
 pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let symlinks_enabled = core_symlinks_enabled(&repo);
 
     let work_tree = repo
@@ -282,12 +282,13 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             println!("index-version: was {old_ver}, set to {ver}");
         }
         index.version = ver;
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
         return Ok(());
     }
 
     if args.index_info {
-        return run_index_info(&mut index, &index_path, &repo.odb);
+        return run_index_info(&repo, &mut index, &index_path);
     }
 
     if args.unresolve {
@@ -295,7 +296,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         // Accept the flag silently so scripts that pass it don't hard-fail.
         // If paths are given, just succeed; real git re-creates stage 1/2/3 entries.
         eprintln!("warning: --unresolve is not yet fully implemented");
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
         return Ok(());
     }
 
@@ -760,7 +762,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
                 }
             }
         }
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
         if needs_update {
             std::process::exit(1);
         }
@@ -777,7 +780,8 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
             args.ignore_missing,
             args.ignore_submodules,
         )?;
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
         // -q (quiet) suppresses the error exit; otherwise exit 1 if files need updating
         if !uptodate && !args.quiet {
             std::process::exit(1);
@@ -785,12 +789,17 @@ pub fn run(args: Args, raw_rest: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing index")?;
     Ok(())
 }
 
 /// Process `--index-info` stdin: lines of `"<mode> <oid>\t<path>"`.
-fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -> Result<()> {
+fn run_index_info(
+    repo: &grit_lib::repo::Repository,
+    index: &mut Index,
+    index_path: &std::path::Path,
+) -> Result<()> {
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let line = line?;
@@ -867,7 +876,8 @@ fn run_index_info(index: &mut Index, index_path: &std::path::Path, _odb: &Odb) -
         index.add_or_replace(entry);
     }
 
-    index.write(index_path).context("writing index")?;
+    repo.write_index_at(index_path, index)
+        .context("writing index")?;
     Ok(())
 }
 
@@ -1126,12 +1136,13 @@ fn core_symlinks_enabled(repo: &Repository) -> bool {
 /// Non-CLI: `update-index -q --refresh` — refresh stat cache without exiting when entries are stale.
 pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
     let work_tree = repo
         .work_tree
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
     let (_uptodate, _) = refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
-    index.write(&index_path).context("writing index")?;
+    repo.write_index_at(&index_path, &mut index)
+        .context("writing index")?;
     Ok(())
 }

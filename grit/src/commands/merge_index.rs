@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-use grit_lib::index::Index;
 use grit_lib::objects::ObjectId;
 use grit_lib::repo::Repository;
 
@@ -52,7 +51,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let repo = Repository::discover(None)?;
     let index_path = effective_index_path(&repo)?;
-    let index = Index::load(&index_path).context("loading index")?;
+    let index = repo.load_index_at(&index_path).context("loading index")?;
 
     // Collect unmerged entries by path
     let mut unmerged: BTreeMap<Vec<u8>, UnmergedEntry> = BTreeMap::new();

@@ -43,7 +43,7 @@ fn run_inner(args: Args) -> Result<()> {
     let index = if parsed.no_index {
         None
     } else {
-        Some(Index::load(&repo.index_path()).context("failed to read index")?)
+        Some(repo.load_index().context("failed to read index")?)
     };
     let index_ref = index.as_ref();
 

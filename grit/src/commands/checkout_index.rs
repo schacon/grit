@@ -143,7 +143,7 @@ pub fn run(args: Args) -> Result<()> {
         .to_path_buf();
 
     let index_path = repo.index_path();
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
@@ -248,7 +248,8 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     if index_needs_write {
-        index.write(&index_path).context("writing index")?;
+        repo.write_index_at(&index_path, &mut index)
+            .context("writing index")?;
     }
 
     if has_errors || has_conflicts {

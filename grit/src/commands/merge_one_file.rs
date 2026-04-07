@@ -11,7 +11,7 @@ use clap::Args as ClapArgs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use grit_lib::index::{Index, IndexEntry, MODE_REGULAR};
+use grit_lib::index::{IndexEntry, MODE_REGULAR};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -91,7 +91,7 @@ fn update_index_with_merged_blob(
     preferred_mode: u32,
 ) -> Result<()> {
     let index_path = effective_index_path(repo)?;
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
 
     let template = index
         .entries
@@ -127,7 +127,7 @@ fn update_index_with_merged_blob(
     merged_entry.flags &= 0x0FFF;
     index.entries.push(merged_entry);
     index.sort();
-    index.write(&index_path)?;
+    repo.write_index_at(&index_path, &mut index)?;
     Ok(())
 }
 
@@ -241,10 +241,10 @@ fn run_delete_merge_case(repo: &Repository, work_tree: &Path, args: &Args) -> Re
 
     if !ours_nonempty {
         let index_path = effective_index_path(repo)?;
-        let mut index = Index::load(&index_path).context("loading index")?;
+        let mut index = repo.load_index_at(&index_path).context("loading index")?;
         index.entries.retain(|e| e.path != path_bytes);
         index.sort();
-        index.write(&index_path)?;
+        repo.write_index_at(&index_path, &mut index)?;
         return Ok(());
     }
 
@@ -257,10 +257,10 @@ fn run_delete_merge_case(repo: &Repository, work_tree: &Path, args: &Args) -> Re
     }
 
     let index_path = effective_index_path(repo)?;
-    let mut index = Index::load(&index_path).context("loading index")?;
+    let mut index = repo.load_index_at(&index_path).context("loading index")?;
     index.entries.retain(|e| e.path != path_bytes);
     index.sort();
-    index.write(&index_path)?;
+    repo.write_index_at(&index_path, &mut index)?;
     Ok(())
 }
 

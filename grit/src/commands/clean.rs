@@ -82,7 +82,7 @@ pub fn run(args: Args) -> Result<()> {
         bail!("-x and -X cannot be used together");
     }
 
-    let index = Index::load(&repo.index_path()).context("failed to read index")?;
+    let index = repo.load_index().context("failed to read index")?;
     let mut matcher =
         IgnoreMatcher::from_repository(&repo).context("failed to load ignore rules")?;
 

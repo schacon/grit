@@ -16,7 +16,6 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 
 use grit_lib::config::{parse_bool, ConfigSet};
-use grit_lib::error::Error as GritError;
 use grit_lib::index::Index;
 use grit_lib::objects::{parse_commit, serialize_commit, CommitData, ObjectId, ObjectKind};
 use grit_lib::repo::Repository;
@@ -1329,7 +1328,7 @@ fn stage_affected_files(repo: &Repository, affected_paths: &[String]) -> Result<
     }
 
     index.sort();
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
     Ok(())
 }
 
@@ -1524,7 +1523,7 @@ fn do_skip() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
 
         if let Some(wt) = &repo.work_tree {
             checkout_index_to_worktree(&repo, wt, &index)?;
@@ -1652,7 +1651,7 @@ fn do_abort() -> Result<()> {
         let mut index = Index::new();
         index.entries = entries;
         index.sort();
-        index.write(&repo.index_path())?;
+        repo.write_index(&mut index)?;
 
         if let Some(wt) = &repo.work_tree {
             checkout_index_to_worktree(&repo, wt, &index)?;
@@ -3203,12 +3202,7 @@ fn apply_hunks(old_content: &str, hunks: &[Hunk]) -> Result<String> {
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn load_index(repo: &Repository) -> Result<Index> {
-    let index_path = repo.index_path();
-    match Index::load(&index_path) {
-        Ok(idx) => Ok(idx),
-        Err(GritError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(Index::new()),
-        Err(e) => Err(e.into()),
-    }
+    Ok(repo.load_index()?)
 }
 
 fn resolve_identity(config: &ConfigSet, kind: &str) -> Result<(String, String)> {

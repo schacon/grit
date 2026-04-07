@@ -22,8 +22,25 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::config::ConfigSet;
 use crate::error::{Error, Result};
+use crate::index::Index;
+use crate::objects::parse_commit;
 use crate::odb::Odb;
+use crate::state::resolve_head;
+
+fn read_sparse_checkout_patterns(git_dir: &Path) -> Vec<String> {
+    let path = git_dir.join("info").join("sparse-checkout");
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect()
+}
 
 /// A handle to an open Git repository.
 #[derive(Debug)]
@@ -192,6 +209,67 @@ impl Repository {
     #[must_use]
     pub fn index_path(&self) -> PathBuf {
         self.git_dir.join("index")
+    }
+
+    /// Load the index, expanding sparse-directory placeholders from the object database.
+    ///
+    /// Commands that operate on individual paths should use this instead of [`Index::load`].
+    pub fn load_index(&self) -> Result<Index> {
+        let path = self.index_path();
+        self.load_index_at(&path)
+    }
+
+    /// Like [`Repository::load_index`], but reads from an explicit index file path
+    /// (e.g. `GIT_INDEX_FILE` or a worktree-specific index).
+    pub fn load_index_at(&self, path: &std::path::Path) -> Result<Index> {
+        Index::load_expand_sparse_optional(path, &self.odb)
+    }
+
+    /// Write the index to the default path after optionally collapsing skip-worktree
+    /// subtrees into sparse-directory placeholders (when sparse index is enabled).
+    pub fn write_index(&self, index: &mut Index) -> Result<()> {
+        self.write_index_at(&self.index_path(), index)
+    }
+
+    /// Like [`Repository::write_index`], but writes to an explicit index file path.
+    pub fn write_index_at(&self, path: &std::path::Path, index: &mut Index) -> Result<()> {
+        self.finalize_sparse_index_if_needed(index)?;
+        index.write(path)
+    }
+
+    fn finalize_sparse_index_if_needed(&self, index: &mut Index) -> Result<()> {
+        let cfg = ConfigSet::load(Some(&self.git_dir), true).unwrap_or_default();
+        let sparse_enabled = cfg
+            .get("core.sparseCheckout")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        if !sparse_enabled {
+            index.sparse_directories = false;
+            return Ok(());
+        }
+        let cone = cfg
+            .get("core.sparseCheckoutCone")
+            .and_then(|v| v.parse::<bool>().ok())
+            .unwrap_or(true);
+        let sparse_ix = cfg
+            .get("index.sparse")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let patterns = read_sparse_checkout_patterns(&self.git_dir);
+        let head = resolve_head(&self.git_dir)?;
+        let tree_oid = if let Some(oid) = head.oid() {
+            let obj = self.odb.read(oid)?;
+            let commit = parse_commit(&obj.data)?;
+            Some(commit.tree)
+        } else {
+            None
+        };
+        if let Some(t) = tree_oid {
+            index.try_collapse_sparse_directories(&self.odb, &t, &patterns, cone, sparse_ix)?;
+        } else {
+            index.sparse_directories = false;
+        }
+        Ok(())
     }
 
     /// Path to the `refs/` directory.

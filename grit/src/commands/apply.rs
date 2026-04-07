@@ -1846,7 +1846,7 @@ pub fn run(args: Args) -> Result<()> {
 /// This implements `git apply --build-fake-ancestor=<file>` behavior.
 fn build_fake_ancestor_file(patches: &[FilePatch], args: &Args, out_path: &Path) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let current_index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+    let current_index = repo.load_index().unwrap_or_else(|_| Index::new());
     let mut fake = Index::new();
 
     for fp in patches {
@@ -1919,7 +1919,7 @@ impl ApplyCrlfContext {
     fn load() -> Option<Self> {
         let repo = Repository::discover(None).ok()?;
         let work_tree = repo.work_tree.clone()?;
-        let index = Index::load(&repo.index_path()).unwrap_or_else(|_| Index::new());
+        let index = repo.load_index().unwrap_or_else(|_| Index::new());
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
         Some(Self {
@@ -1973,7 +1973,7 @@ impl ApplyCrlfContext {
 /// Verify that working tree files match the index (required for --index mode).
 fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let index = match Index::load(&repo.index_path()) {
+    let index = match repo.load_index() {
         Ok(idx) => idx,
         Err(_) => return Ok(()),
     };
@@ -2575,7 +2575,7 @@ fn apply_to_worktree(
 /// Apply patches to the index only (--cached).
 fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMode) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
@@ -2772,7 +2772,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args, ws_mode: ApplyWhitespaceMo
         index.add_or_replace(entry);
     }
 
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
     Ok(())
 }
 
@@ -2790,7 +2790,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
         Ok(repo) => repo,
         Err(_) => return Ok(()),
     };
-    let mut index = match Index::load(&repo.index_path()) {
+    let mut index = match repo.load_index() {
         Ok(idx) => idx,
         Err(_) => Index::new(),
     };
@@ -2848,7 +2848,7 @@ fn apply_intent_to_add_entries(patches: &[FilePatch], args: &Args) -> Result<()>
         index.add_or_replace(entry);
     }
 
-    index.write(&repo.index_path())?;
+    repo.write_index(&mut index)?;
     Ok(())
 }
 

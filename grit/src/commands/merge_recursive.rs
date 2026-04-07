@@ -46,7 +46,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let their_name = positional[2].clone();
     let base_label = positional[0].clone();
-    let merge_result = merge_trees_for_replay(
+    let mut merge_result = merge_trees_for_replay(
         &repo,
         &base_entries,
         &ours_entries,
@@ -63,7 +63,7 @@ pub fn run(args: Args) -> Result<()> {
         MergeDirectoryRenamesMode::FromConfig,
     )?;
 
-    merge_result.index.write(&repo.index_path())?;
+    repo.write_index(&mut merge_result.index)?;
     if let Some(ref wt) = repo.work_tree {
         remove_deleted_files(wt, &ours_entries, &merge_result.index)?;
         checkout_entries(&repo, wt, &merge_result.index)?;
