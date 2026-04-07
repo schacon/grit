@@ -3091,6 +3091,32 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
                 "config" => run_test_tool_config(&rest[1..]),
+                "genrandom" => {
+                    // Generate N random bytes
+                    use std::io::Write;
+                    let seed = rest.get(1).map(|s| s.as_str()).unwrap_or("0");
+                    let n: usize = rest.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    // Simple LCG random
+                    let mut state: u64 = seed
+                        .bytes()
+                        .fold(0u64, |a, b| a.wrapping_mul(31).wrapping_add(b as u64));
+                    let stdout = std::io::stdout();
+                    let mut out = stdout.lock();
+                    let mut buf = vec![0u8; 8192];
+                    let mut remaining = n;
+                    while remaining > 0 {
+                        let chunk = remaining.min(8192);
+                        for b in &mut buf[..chunk] {
+                            state = state
+                                .wrapping_mul(6364136223846793005)
+                                .wrapping_add(1442695040888963407);
+                            *b = ((state >> 33) ^ state) as u8;
+                        }
+                        out.write_all(&buf[..chunk])?;
+                        remaining -= chunk;
+                    }
+                    Ok(())
+                }
                 "genzeros" => {
                     // Generate N zero bytes
                     let n: usize = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);

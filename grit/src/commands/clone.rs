@@ -50,6 +50,10 @@ pub struct Args {
     #[arg(long, value_name = "REV")]
     pub revision: Option<String>,
 
+    /// Template directory for the clone.
+    #[arg(long = "template")]
+    pub template: Option<String>,
+
     /// Create a mirror clone.
     #[arg(long)]
     pub mirror: bool,

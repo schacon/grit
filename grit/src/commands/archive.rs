@@ -61,6 +61,10 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
     if args.list {
+        // --list with extra params should fail
+        if args.tree_ish.is_some() || !args.paths.is_empty() {
+            bail!("extra parameter to git archive --list");
+        }
         // Print supported formats
         println!("tar");
         println!("zip");
