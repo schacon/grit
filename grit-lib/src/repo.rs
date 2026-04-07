@@ -15,12 +15,13 @@
 //! - `work_tree` — `Some(path)` for non-bare repos, `None` for bare.
 //! - [`Odb`] — the loose object database.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::env;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::config::ConfigSet;
 use crate::error::{Error, Result};
@@ -55,6 +56,13 @@ pub struct Repository {
     ///
     /// This suppresses safe.bareRepository implicit checks.
     pub explicit_git_dir: bool,
+    /// When the repo was found by walking from a directory containing `.git` / a gitfile,
+    /// that directory (matches Git's setup trace using `.git` for the default git-dir).
+    pub discovery_root: Option<PathBuf>,
+    /// `GIT_WORK_TREE` was set without `GIT_DIR` and applied after discovery (t1510 #1, #5, …).
+    pub work_tree_from_env: bool,
+    /// `.git` was a gitfile (not a directory) when the repo was discovered.
+    pub discovery_via_gitfile: bool,
 }
 
 impl Repository {
@@ -92,10 +100,20 @@ impl Repository {
         }
 
         let work_tree = match work_tree {
-            Some(p) => Some(
-                p.canonicalize()
-                    .map_err(|_| Error::PathError(p.display().to_string()))?,
-            ),
+            Some(p) => {
+                let cwd = env::current_dir().map_err(Error::Io)?;
+                let mut resolved = if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    cwd.join(p)
+                };
+                if resolved.exists() {
+                    resolved = resolved
+                        .canonicalize()
+                        .map_err(|_| Error::PathError(p.display().to_string()))?;
+                }
+                Some(resolved)
+            }
             None => None,
         };
 
@@ -110,6 +128,9 @@ impl Repository {
             work_tree,
             odb,
             explicit_git_dir: false,
+            discovery_root: None,
+            work_tree_from_env: false,
+            discovery_via_gitfile: false,
         })
     }
 
@@ -142,10 +163,16 @@ impl Repository {
             if work_tree.is_some() {
                 let mut repo = Self::open(&git_dir, work_tree.as_deref())?;
                 repo.explicit_git_dir = true;
+                repo.discovery_root = None;
+                repo.work_tree_from_env = false;
+                repo.discovery_via_gitfile = false;
                 return Ok(repo);
             }
             // `GIT_DIR` without `GIT_WORK_TREE`: honour `core.bare` / `core.worktree` like Git.
             let (is_bare, core_wt) = read_core_bare_and_worktree(&git_dir)?;
+            if is_bare && core_wt.is_some() {
+                warn_core_bare_worktree_conflict(&git_dir);
+            }
             let resolved_wt = if is_bare {
                 None
             } else if let Some(raw) = core_wt {
@@ -155,6 +182,9 @@ impl Repository {
             };
             let mut repo = Self::open(&git_dir, resolved_wt.as_deref())?;
             repo.explicit_git_dir = true;
+            repo.discovery_root = None;
+            repo.work_tree_from_env = false;
+            repo.discovery_via_gitfile = false;
             return Ok(repo);
         }
 
@@ -195,7 +225,9 @@ impl Repository {
             if let Some(mut repo) = try_open_at(current)? {
                 if let Some(ref wt) = env_work_tree {
                     repo.work_tree = Some(wt.canonicalize().unwrap_or_else(|_| wt.clone()));
+                    repo.work_tree_from_env = true;
                 } else {
+                    repo.work_tree_from_env = false;
                     let (is_bare, core_wt) = read_core_bare_and_worktree(&repo.git_dir)?;
                     if is_bare {
                         repo.work_tree = None;
@@ -404,6 +436,8 @@ pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| actual_cwd.clone());
 
+    // After setup, Git's traced `cwd` is the worktree root when the process cwd started inside
+    // the worktree, but stays at the real cwd when outside (t1510 nephew cases).
     let (trace_cwd, prefix) = if let Some(ref wt) = repo.work_tree {
         let wt_canon = wt.canonicalize().unwrap_or_else(|_| wt.clone());
         if actual_cwd.starts_with(&wt_canon) {
@@ -428,12 +462,24 @@ pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
         (actual_cwd.clone(), "(null)".to_owned())
     };
 
-    let git_dir_display = display_git_dir_for_setup_trace(repo, &trace_cwd);
-    let common_display = display_common_dir_for_setup_trace(repo, &trace_cwd, &git_dir_display);
+    let git_dir_display =
+        display_git_dir_for_setup_trace(repo, &trace_cwd, &actual_cwd, prefix.as_str());
+    let common_display = display_common_dir_for_setup_trace(
+        repo,
+        &trace_cwd,
+        &actual_cwd,
+        prefix.as_str(),
+        &git_dir_display,
+    );
     let worktree_display = repo
         .work_tree
         .as_ref()
-        .map(|p| p.display().to_string())
+        .map(|p| {
+            p.canonicalize()
+                .unwrap_or_else(|_| lexical_normalize_path(p))
+                .display()
+                .to_string()
+        })
         .unwrap_or_else(|| "(null)".to_owned());
 
     let mut f = OpenOptions::new()
@@ -446,6 +492,37 @@ pub fn trace_repo_setup_if_requested(repo: &Repository) -> std::io::Result<()> {
     writeln!(f, "setup: cwd: {}", trace_cwd.display())?;
     writeln!(f, "setup: prefix: {prefix}")?;
     Ok(())
+}
+
+/// Collapse `.` / `..` in a path for display when `canonicalize()` fails (e.g. non-existent `..` segments).
+fn lexical_normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    let mut absolute = false;
+    for c in path.components() {
+        match c {
+            Component::Prefix(p) => {
+                out.push(p.as_os_str());
+            }
+            Component::RootDir => {
+                absolute = true;
+                out.push(c.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if absolute {
+                    let _ = out.pop();
+                } else if !out.pop() {
+                    out.push("..");
+                }
+            }
+            Component::Normal(s) => out.push(s),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
+    }
 }
 
 /// Path from `base` to `target` using `..` segments when needed (matches Git setup traces).
@@ -504,19 +581,189 @@ fn trace_cwd_strictly_inside_git_parent(trace_cwd: &Path, git_dir: &Path) -> boo
     tc.starts_with(&parent) && tc != parent
 }
 
-fn display_git_dir_for_setup_trace(repo: &Repository, trace_cwd: &Path) -> String {
+fn display_git_dir_for_setup_trace(
+    repo: &Repository,
+    trace_cwd: &Path,
+    actual_cwd: &Path,
+    setup_prefix: &str,
+) -> String {
     let gd = repo
         .git_dir
         .canonicalize()
         .unwrap_or_else(|_| repo.git_dir.clone());
-    if let Some(wt) = &repo.work_tree {
-        let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
-        let dot_git = wt.join(".git");
-        let dot_git = dot_git.canonicalize().unwrap_or(dot_git);
-        if gd == dot_git {
-            return ".git".to_owned();
+    let tc = trace_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| trace_cwd.to_path_buf());
+    let ac = actual_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| actual_cwd.to_path_buf());
+
+    // Bare repo discovered without `GIT_DIR`: cwd inside the git directory (t1510 #16).
+    // Trace uses `.` at the git-dir root and the absolute git-dir path from subdirectories.
+    if repo.work_tree.is_none() && !repo.explicit_git_dir {
+        if ac == gd {
+            return ".".to_owned();
+        }
+        if ac.starts_with(&gd) && ac != gd {
+            return gd.display().to_string();
         }
     }
+
+    // Non-bare repo with `core.worktree` while cwd is inside the git-dir (t1510 #20a).
+    if !repo.explicit_git_dir {
+        if let Some(wt) = &repo.work_tree {
+            let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            if ac.starts_with(&gd) && ac != wt {
+                return gd.display().to_string();
+            }
+        }
+    }
+
+    // `GIT_DIR` set: Git's `set_git_dir(gitdirenv, make_realpath)` keeps a relative
+    // `gitdirenv` only when cwd is at the worktree root or outside the worktree; from a
+    // subdirectory it realpath()s to an absolute path (see `setup.c` / t1510).
+    if repo.explicit_git_dir {
+        if repo.work_tree.is_none() {
+            if let Ok(raw) = env::var("GIT_DIR") {
+                let p = Path::new(raw.trim());
+                if p.is_absolute() {
+                    return gd.display().to_string();
+                }
+                let joined = ac.join(p);
+                if joined.is_file() {
+                    return gd.display().to_string();
+                }
+                if let Some(rel) = path_relative_to(&gd, &tc) {
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    return if s.is_empty() || s == "." {
+                        ".".to_owned()
+                    } else {
+                        s
+                    };
+                }
+            }
+            return gd.display().to_string();
+        }
+        if let Some(wt) = &repo.work_tree {
+            let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            let strictly_inside_wt = ac.starts_with(&wt) && ac != wt;
+            if strictly_inside_wt {
+                return gd.display().to_string();
+            }
+            if let Ok(raw) = env::var("GIT_DIR") {
+                let p = Path::new(raw.trim());
+                if p.is_relative() {
+                    let joined = ac.join(p);
+                    if joined.is_file() {
+                        // `GIT_DIR` points at a gitfile; trace shows the resolved git dir.
+                        return gd.display().to_string();
+                    }
+                    if let Some(rel) = path_relative_to(&gd, &tc) {
+                        let s = rel.to_string_lossy().replace('\\', "/");
+                        return if s.is_empty() || s == "." {
+                            ".".to_owned()
+                        } else {
+                            s
+                        };
+                    }
+                }
+                return gd.display().to_string();
+            }
+        }
+        if trace_cwd_strictly_inside_git_parent(trace_cwd, &gd) {
+            return rel_path_for_setup_trace(&gd, trace_cwd);
+        }
+        return gd.display().to_string();
+    }
+
+    let work_relocated = match (&repo.discovery_root, &repo.work_tree) {
+        (Some(root), Some(wt)) if !repo.work_tree_from_env => {
+            let r = root.canonicalize().unwrap_or_else(|_| root.clone());
+            let w = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            r != w
+        }
+        _ => false,
+    };
+
+    if repo.work_tree_from_env {
+        if !repo.discovery_via_gitfile {
+            if setup_prefix == "(null)" {
+                if let (Some(root), Some(wt)) = (&repo.discovery_root, &repo.work_tree) {
+                    let r = root.canonicalize().unwrap_or_else(|_| root.clone());
+                    let w = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+                    if r == w {
+                        let dot_git = r.join(".git");
+                        let dot_git = dot_git.canonicalize().unwrap_or(dot_git);
+                        if gd == dot_git {
+                            return ".git".to_owned();
+                        }
+                    }
+                }
+            }
+            if trace_cwd_strictly_inside_git_parent(trace_cwd, &gd) {
+                return rel_path_for_setup_trace(&gd, trace_cwd);
+            }
+        }
+        return gd.display().to_string();
+    }
+
+    if work_relocated {
+        if let Some(wt) = &repo.work_tree {
+            let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            if ac == wt {
+                return gd.display().to_string();
+            }
+            let inside_wt = ac.starts_with(&wt) && ac != wt;
+            if inside_wt {
+                if let Some(rel) = path_relative_to(&gd, &ac) {
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    return if s.is_empty() || s == "." {
+                        ".".to_owned()
+                    } else {
+                        s
+                    };
+                }
+            }
+        }
+    }
+    if repo.work_tree.is_some() {
+        if let Some(root) = &repo.discovery_root {
+            let r = root.canonicalize().unwrap_or_else(|_| root.clone());
+            let dot_git = r.join(".git");
+            let dot_git = dot_git.canonicalize().unwrap_or(dot_git);
+            if gd == dot_git {
+                return ".git".to_owned();
+            }
+        } else if let Some(wt) = &repo.work_tree {
+            let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            let dot_git = wt.join(".git");
+            let dot_git = dot_git.canonicalize().unwrap_or(dot_git);
+            if gd == dot_git {
+                return ".git".to_owned();
+            }
+        }
+    }
+
+    if repo.discovery_via_gitfile && !repo.explicit_git_dir {
+        return gd.display().to_string();
+    }
+
+    // Bare repo whose git-dir is `parent/.git`: at `parent` the trace shows `.git`; from a
+    // subdirectory of `parent` that is still outside `.git`, Git uses the absolute git-dir (t1510
+    // #16c sub/ case — not `../.git`).
+    if repo.work_tree.is_none() && !repo.explicit_git_dir {
+        if let Some(gp) = gd.parent() {
+            let gp = gp.canonicalize().unwrap_or_else(|_| gp.to_path_buf());
+            let gdc = gd.canonicalize().unwrap_or_else(|_| gd.clone());
+            if tc.starts_with(&gp) && tc != gp && !tc.starts_with(&gdc) {
+                return gdc.display().to_string();
+            }
+            if tc == gp {
+                return rel_path_for_setup_trace(&gd, trace_cwd);
+            }
+        }
+    }
+
     if trace_cwd_strictly_inside_git_parent(trace_cwd, &gd) {
         rel_path_for_setup_trace(&gd, trace_cwd)
     } else {
@@ -527,6 +774,8 @@ fn display_git_dir_for_setup_trace(repo: &Repository, trace_cwd: &Path) -> Strin
 fn display_common_dir_for_setup_trace(
     repo: &Repository,
     trace_cwd: &Path,
+    actual_cwd: &Path,
+    _setup_prefix: &str,
     git_dir_display: &str,
 ) -> String {
     let gd = repo
@@ -540,6 +789,67 @@ fn display_common_dir_for_setup_trace(
     if common == gd {
         return git_dir_display.to_owned();
     }
+
+    let ac = actual_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| actual_cwd.to_path_buf());
+    if repo.work_tree.is_none() && !repo.explicit_git_dir {
+        if ac == common {
+            return ".".to_owned();
+        }
+        if ac.starts_with(&common) && ac != common {
+            return common.display().to_string();
+        }
+    }
+
+    let work_relocated = match (&repo.discovery_root, &repo.work_tree) {
+        (Some(root), Some(wt)) if !repo.work_tree_from_env => {
+            let r = root.canonicalize().unwrap_or_else(|_| root.clone());
+            let w = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            r != w
+        }
+        _ => false,
+    };
+    if work_relocated {
+        if let Some(wt) = &repo.work_tree {
+            let wt = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+            if ac == wt {
+                return common.display().to_string();
+            }
+            let inside_wt = ac.starts_with(&wt) && ac != wt;
+            if inside_wt {
+                if let Some(rel) = path_relative_to(&common, &ac) {
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    return if s.is_empty() || s == "." {
+                        ".".to_owned()
+                    } else {
+                        s
+                    };
+                }
+            }
+        }
+    }
+
+    if repo.discovery_via_gitfile && !repo.explicit_git_dir {
+        return common.display().to_string();
+    }
+
+    if repo.work_tree.is_none() && !repo.explicit_git_dir {
+        let tc = trace_cwd
+            .canonicalize()
+            .unwrap_or_else(|_| trace_cwd.to_path_buf());
+        if let Some(cp) = common.parent() {
+            let cp = cp.canonicalize().unwrap_or_else(|_| cp.to_path_buf());
+            let comc = common.canonicalize().unwrap_or_else(|_| common.clone());
+            if tc.starts_with(&cp) && tc != cp && !tc.starts_with(&comc) {
+                return comc.display().to_string();
+            }
+            if tc == cp {
+                return rel_path_for_setup_trace(&common, trace_cwd);
+            }
+        }
+    }
+
     if trace_cwd_strictly_inside_git_parent(trace_cwd, &common) {
         rel_path_for_setup_trace(&common, trace_cwd)
     } else {
@@ -727,7 +1037,15 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         let content =
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
-        let repo = Repository::open(&git_dir, Some(dir))?;
+        let mut repo = Repository::open(&git_dir, Some(dir))?;
+        let root = if dir.is_absolute() {
+            dir.to_path_buf()
+        } else {
+            env::current_dir().map_err(Error::Io)?.join(dir)
+        };
+        repo.discovery_root = Some(root.canonicalize().unwrap_or(root));
+        repo.discovery_via_gitfile = true;
+        warn_core_bare_worktree_conflict(&git_dir);
         return Ok(Some(repo));
     }
 
@@ -755,6 +1073,13 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                     };
                     repo.git_dir = abs_dot_git;
                 }
+                let root = if dir.is_absolute() {
+                    dir.to_path_buf()
+                } else {
+                    env::current_dir().map_err(Error::Io)?.join(dir)
+                };
+                repo.discovery_root = Some(root.canonicalize().unwrap_or(root));
+                repo.discovery_via_gitfile = false;
                 return Ok(Some(repo));
             }
             Err(Error::NotARepository(_)) => return Ok(None),
@@ -767,6 +1092,7 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     if dir.join("HEAD").is_file() && dir.join("commondir").is_file() {
         maybe_trace_implicit_bare_repository(dir);
         let repo = Repository::open(dir, None)?;
+        warn_core_bare_worktree_conflict(dir);
         return Ok(Some(repo));
     }
 
@@ -786,6 +1112,7 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             }
         }
         let repo = Repository::open(dir, None)?;
+        warn_core_bare_worktree_conflict(dir);
         return Ok(Some(repo));
     }
 
@@ -1020,6 +1347,31 @@ fn safe_directory_matches(config_value: &str, checked: &str) -> bool {
     }
 
     config_norm == checked_norm
+}
+
+fn warn_core_bare_worktree_conflict(git_dir: &Path) {
+    if env::var("GIT_WORK_TREE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .is_some()
+    {
+        return;
+    }
+    static WARNED_DIRS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+    if let Ok((bare, wt)) = read_core_bare_and_worktree(git_dir) {
+        if bare && wt.is_some() {
+            let key = git_dir
+                .canonicalize()
+                .unwrap_or_else(|_| git_dir.to_path_buf())
+                .to_string_lossy()
+                .to_string();
+            let mut guard = WARNED_DIRS.lock().unwrap_or_else(|e| e.into_inner());
+            let set = guard.get_or_insert_with(HashSet::new);
+            if set.insert(key) {
+                eprintln!("warning: core.bare and core.worktree do not make sense");
+            }
+        }
+    }
 }
 
 fn read_core_bare_and_worktree(git_dir: &Path) -> Result<(bool, Option<String>)> {
