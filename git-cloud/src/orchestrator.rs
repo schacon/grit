@@ -41,6 +41,7 @@ pub fn init_db(repo: &Path, force: bool) -> Result<()> {
 
     let conn = db::open_db(&gd)?;
     db::init_schema(&conn)?;
+    db::migrate_schema(&conn)?;
 
     let rows = harness::read_test_files_csv(repo)?;
     let mut inserted = 0usize;
@@ -77,6 +78,8 @@ pub fn sync_completed_from_csv(repo: &Path) -> Result<()> {
     }
 
     let conn = db::open_db(&gd)?;
+    db::init_schema(&conn)?;
+    db::migrate_schema(&conn)?;
     let rows = harness::read_test_files_csv(repo)?;
     let mut rows_updated = 0usize;
     for r in rows {
@@ -122,6 +125,8 @@ pub fn run_loop(repo: &Path) -> Result<()> {
     }
 
     let mut conn = db::open_db(&gd)?;
+    db::init_schema(&conn)?;
+    db::migrate_schema(&conn)?;
     cursor::verify_auth()?;
 
     let poll_secs = std::env::var("GIT_CLOUD_POLL_SECS")
@@ -142,7 +147,7 @@ pub fn run_loop(repo: &Path) -> Result<()> {
     loop {
         let (files_left, tests_left) = db::remaining_files_and_tests(&conn)?;
         println!(
-            "{}Left to run:{} {} test file(s), ~{} test case(s) remaining (non-completed tasks){}",
+            "{}Left to run:{} {} test file(s), ~{} test case(s) remaining (pending + running){}",
             BOLD, CYAN, files_left, tests_left, RESET
         );
         process_running(&mut conn, repo)?;
@@ -193,18 +198,48 @@ fn process_running(conn: &mut Connection, repo: &Path) -> Result<()> {
                         "{}merge/test pipeline failed for {}: {}{}",
                         RED, t.filename, e, RESET
                     );
-                    db::set_pending_reset_cloud(conn, t.id)?;
+                    db::set_failed(conn, t.id)?;
                 }
             }
+        } else if info.status.eq_ignore_ascii_case("CANCELLED") {
+            println!(
+                "{}Agent cancelled {} — marking sqlite cancelled (not retried){}",
+                YELLOW, t.filename, RESET
+            );
+            db::set_cancelled(conn, t.id)?;
         } else {
             println!(
-                "{}Agent ended with status {} for {} — resetting to pending{}\n{}",
-                YELLOW, info.status, t.filename, RESET, DIM
+                "{}Agent failed ({}) for {} — marking sqlite failed (not retried){}",
+                YELLOW, info.status, t.filename, RESET
             );
-            db::set_pending_reset_cloud(conn, t.id)?;
+            db::set_failed(conn, t.id)?;
         }
     }
     Ok(())
+}
+
+fn branch_name_for_merge(info: &cursor::AgentInfo) -> Result<String> {
+    info.target
+        .branch_name
+        .clone()
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "cloud agent did not report target.branchName; merge manually or re-run the task"
+            )
+        })
+}
+
+fn merge_via_origin_branch(repo: &Path, branch: &str) -> Result<bool> {
+    if !git_ops::origin_branch_exists(repo, branch) {
+        git_ops::fetch_origin(repo)?;
+    }
+    if !git_ops::origin_branch_exists(repo, branch) {
+        anyhow::bail!(
+            "remote branch origin/{branch} not found after fetch — check the cloud agent push"
+        );
+    }
+    git_ops::merge_origin_branch(repo, branch)
 }
 
 fn finish_success(
@@ -213,28 +248,34 @@ fn finish_success(
     task: &TaskRow,
     info: &cursor::AgentInfo,
 ) -> Result<()> {
-    let branch = match &info.target.branch_name {
-        Some(b) if !b.is_empty() => b.clone(),
-        _ => {
-            anyhow::bail!(
-                "cloud agent did not report target.branchName; merge manually or re-run the task"
-            );
-        }
-    };
-
     git_ops::fetch_origin(repo)?;
     git_ops::checkout_and_pull_main(repo)?;
 
-    if !git_ops::origin_branch_exists(repo, &branch) {
-        git_ops::fetch_origin(repo)?;
-    }
-    if !git_ops::origin_branch_exists(repo, &branch) {
-        anyhow::bail!(
-            "remote branch origin/{branch} not found after fetch — check the cloud agent push"
-        );
-    }
+    let pr_num = info
+        .target
+        .pr_url
+        .as_deref()
+        .and_then(git_ops::parse_github_pr_number);
 
-    let merged = git_ops::merge_origin_branch(repo, &branch)?;
+    let merged = if let Some(pr) = pr_num {
+        println!("{}Integrating GitHub PR #{} (auto-PR){}", BLUE, pr, RESET);
+        match git_ops::merge_github_pr_head(repo, pr) {
+            Ok(m) => m,
+            Err(e) => {
+                git_ops::try_delete_pr_branch(repo, pr);
+                println!(
+                    "{}Could not fetch/merge PR #{}: {}{}\n{}Falling back to origin branch…{}",
+                    YELLOW, pr, e, RESET, DIM, RESET
+                );
+                let branch = branch_name_for_merge(info)?;
+                merge_via_origin_branch(repo, &branch)?
+            }
+        }
+    } else {
+        let branch = branch_name_for_merge(info)?;
+        merge_via_origin_branch(repo, &branch)?
+    };
+
     if !merged {
         println!(
             "{}merge conflict — running merge agent ({}){}\n",
@@ -248,6 +289,10 @@ fn finish_success(
             anyhow::bail!("merge conflicts remain after merge agent; aborted merge");
         }
         git_ops::conclude_merge_if_needed(repo)?;
+    }
+
+    if let Some(pr) = pr_num {
+        git_ops::try_delete_pr_branch(repo, pr);
     }
 
     let test_sh = format!("{}.sh", task.filename);
@@ -367,10 +412,10 @@ fn spawn_pending(conn: &mut Connection, repo: &Path, git_ref: &str, mut slots: i
 }
 
 fn print_summary(conn: &Connection) -> Result<()> {
-    let (pending, running, completed) = db::summary_counts(conn)?;
+    let (pending, running, completed, failed, cancelled) = db::summary_counts(conn)?;
     println!(
-        "{}Status:{} pending={} running={} completed={}{}",
-        BOLD, CYAN, pending, running, completed, RESET
+        "{}Status:{} pending={} running={} completed={} failed={} cancelled={}{}",
+        BOLD, CYAN, pending, running, completed, failed, cancelled, RESET
     );
     let active = db::list_running_with_cloud_id(conn)?;
     for t in active {

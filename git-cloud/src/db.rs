@@ -22,6 +22,8 @@ pub enum TaskStatus {
     Pending,
     Running,
     Completed,
+    Failed,
+    Cancelled,
 }
 
 impl TaskStatus {
@@ -30,6 +32,8 @@ impl TaskStatus {
             TaskStatus::Pending => "pending",
             TaskStatus::Running => "running",
             TaskStatus::Completed => "completed",
+            TaskStatus::Failed => "failed",
+            TaskStatus::Cancelled => "cancelled",
         }
     }
 
@@ -38,6 +42,8 @@ impl TaskStatus {
             "pending" => Some(TaskStatus::Pending),
             "running" => Some(TaskStatus::Running),
             "completed" => Some(TaskStatus::Completed),
+            "failed" => Some(TaskStatus::Failed),
+            "cancelled" => Some(TaskStatus::Cancelled),
             _ => None,
         }
     }
@@ -58,13 +64,50 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             tests_total INTEGER NOT NULL,
             tests_passing INTEGER NOT NULL,
             cloud_id TEXT,
-            status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed'))
+            status TEXT NOT NULL CHECK (status IN (
+                'pending', 'running', 'completed', 'failed', 'cancelled'
+            ))
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
         CREATE INDEX IF NOT EXISTS idx_tasks_cloud ON tasks(cloud_id);
         ",
     )
     .context("create tasks schema")?;
+    Ok(())
+}
+
+/// Upgrades legacy DBs (only `pending`/`running`/`completed`) to allow `failed` / `cancelled`.
+pub fn migrate_schema(conn: &Connection) -> Result<()> {
+    let v: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
+    if v >= 2 {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r"
+        BEGIN;
+        CREATE TABLE tasks__m (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL UNIQUE,
+            family TEXT NOT NULL,
+            tests_total INTEGER NOT NULL,
+            tests_passing INTEGER NOT NULL,
+            cloud_id TEXT,
+            status TEXT NOT NULL CHECK (status IN (
+                'pending', 'running', 'completed', 'failed', 'cancelled'
+            ))
+        );
+        INSERT INTO tasks__m SELECT * FROM tasks;
+        DROP TABLE tasks;
+        ALTER TABLE tasks__m RENAME TO tasks;
+        CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_tasks_cloud ON tasks(cloud_id);
+        PRAGMA user_version = 2;
+        COMMIT;
+        ",
+    )
+    .context("migrate tasks schema to v2")?;
     Ok(())
 }
 
@@ -126,11 +169,12 @@ pub fn list_running_with_cloud_id(conn: &Connection) -> Result<Vec<TaskRow>> {
     Ok(out)
 }
 
+/// Picks one pending task uniformly at random (SQLite `ORDER BY RANDOM() LIMIT 1`).
 pub fn take_next_pending(conn: &Connection) -> Result<Option<TaskRow>> {
     let mut stmt = conn
         .prepare(
             r"SELECT id, filename, family, tests_total, tests_passing, cloud_id, status
-              FROM tasks WHERE status = 'pending' ORDER BY filename LIMIT 1",
+              FROM tasks WHERE status = 'pending' ORDER BY RANDOM() LIMIT 1",
         )
         .context("prepare next pending")?;
     let row = stmt
@@ -161,12 +205,21 @@ pub fn set_running(conn: &Connection, id: i64, cloud_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn set_pending_reset_cloud(conn: &Connection, id: i64) -> Result<()> {
+pub fn set_failed(conn: &Connection, id: i64) -> Result<()> {
     conn.execute(
-        "UPDATE tasks SET status = 'pending', cloud_id = NULL WHERE id = ?1",
+        "UPDATE tasks SET status = 'failed', cloud_id = NULL WHERE id = ?1",
         params![id],
     )
-    .context("reset pending")?;
+    .context("set failed")?;
+    Ok(())
+}
+
+pub fn set_cancelled(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE tasks SET status = 'cancelled', cloud_id = NULL WHERE id = ?1",
+        params![id],
+    )
+    .context("set cancelled")?;
     Ok(())
 }
 
@@ -193,7 +246,7 @@ pub fn update_tests_for_file(
     Ok(())
 }
 
-pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64)> {
+pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64)> {
     let pending: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE status = 'pending'",
@@ -215,14 +268,28 @@ pub fn summary_counts(conn: &Connection) -> Result<(i64, i64, i64)> {
             |row| row.get(0),
         )
         .unwrap_or(0);
-    Ok((pending, running, completed))
+    let failed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'failed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let cancelled: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'cancelled'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok((pending, running, completed, failed, cancelled))
 }
 
-/// Non-completed task count and sum of per-file `(tests_total - tests_passing)` (at least 0).
+/// Pending + running tasks only (`failed` / `cancelled` / `completed` are excluded).
 pub fn remaining_files_and_tests(conn: &Connection) -> Result<(i64, i64)> {
     let files: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE status != 'completed'",
+            r"SELECT COUNT(*) FROM tasks WHERE status IN ('pending', 'running')",
             [],
             |row| row.get(0),
         )
@@ -231,7 +298,7 @@ pub fn remaining_files_and_tests(conn: &Connection) -> Result<(i64, i64)> {
         .query_row(
             r"SELECT COALESCE(SUM(CASE WHEN tests_total > tests_passing
                 THEN tests_total - tests_passing ELSE 0 END), 0)
-              FROM tasks WHERE status != 'completed'",
+              FROM tasks WHERE status IN ('pending', 'running')",
             [],
             |row| row.get(0),
         )

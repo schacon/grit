@@ -78,8 +78,8 @@ pub struct AgentTarget {
     #[serde(default)]
     #[allow(dead_code)]
     pub url: Option<String>,
+    /// When auto-PR is enabled, GitHub PR URL (used to merge `pull/<n>/head` locally).
     #[serde(default)]
-    #[allow(dead_code)]
     pub pr_url: Option<String>,
 }
 

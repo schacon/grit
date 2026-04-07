@@ -81,19 +81,25 @@ pub fn checkout_and_pull_main(repo: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Merges `origin/<branch>` into the current branch.
-/// Returns `Ok(true)` on success, `Ok(false)` if merge stopped with conflicts.
-pub fn merge_origin_branch(repo: &Path, branch: &str) -> Result<bool> {
-    let spec = format!("origin/{branch}");
+/// Parses a GitHub pull-request URL and returns the PR number (e.g. `…/pull/42` → `42`).
+pub fn parse_github_pr_number(url: &str) -> Option<u32> {
+    let url = url.trim();
+    let needle = "/pull/";
+    let idx = url.find(needle)?;
+    let rest = &url[idx + needle.len()..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    if end == 0 {
+        return None;
+    }
+    rest[..end].parse().ok()
+}
+
+fn merge_ref(repo: &Path, spec: &str, message: &str) -> Result<bool> {
     let out = Command::new("git")
         .current_dir(repo)
-        .args([
-            "merge",
-            &spec,
-            "--no-edit",
-            "-m",
-            &format!("merge: integrate cloud branch {branch}"),
-        ])
+        .args(["merge", spec, "--no-edit", "-m", message])
         .output()
         .with_context(|| format!("git merge {spec}"))?;
     if out.status.success() {
@@ -103,6 +109,36 @@ pub fn merge_origin_branch(repo: &Path, branch: &str) -> Result<bool> {
         return Ok(false);
     }
     anyhow::bail!("git merge failed: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// Merges `origin/<branch>` into the current branch.
+/// Returns `Ok(true)` on success, `Ok(false)` if merge stopped with conflicts.
+pub fn merge_origin_branch(repo: &Path, branch: &str) -> Result<bool> {
+    merge_ref(
+        repo,
+        &format!("origin/{branch}"),
+        &format!("merge: integrate cloud branch {branch}"),
+    )
+}
+
+/// Fetches `pull/<pr>/head` from `origin` into `git-cloud-pr-<pr>` and merges it into `HEAD`.
+///
+/// Requires `origin` to point at GitHub (same repo the PR targets). Returns `Err` if fetch fails.
+/// Returns `Ok(false)` if the merge stopped with conflicts.
+pub fn merge_github_pr_head(repo: &Path, pr: u32) -> Result<bool> {
+    let local = format!("git-cloud-pr-{pr}");
+    let refspec = format!("pull/{pr}/head:{local}");
+    git_stdout(repo, &["fetch", "origin", refspec.as_str()])?;
+    merge_ref(repo, &local, &format!("merge: integrate GitHub PR #{pr}"))
+}
+
+/// Best-effort delete of the local ref created by [`merge_github_pr_head`].
+pub fn try_delete_pr_branch(repo: &Path, pr: u32) {
+    let local = format!("git-cloud-pr-{pr}");
+    let _ = Command::new("git")
+        .current_dir(repo)
+        .args(["branch", "-d", &local])
+        .status();
 }
 
 /// True when a merge is in progress (`MERGE_HEAD` exists).
