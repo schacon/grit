@@ -153,6 +153,8 @@ pub fn run(args: Args) -> Result<()> {
         || name.contains('*')
         || name.contains('[')
         || name.bytes().any(|b| b < 0x20 || b == 0x7f)
+        || name.contains(' ')
+    // spaces not allowed in tag names
     {
         bail!("'{}' is not a valid tag name.", name);
     }
