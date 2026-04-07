@@ -464,8 +464,32 @@ fn cmd_add(args: AddArgs) -> Result<()> {
         match head_oid {
             Some(oid) => (Some(wt_name.clone()), Some(oid), false),
             None => {
-                inferred_orphan = true;
-                (Some(wt_name.clone()), None, false)
+                // Check if there are remote branches we can DWIM from
+                let has_remotes = !grit_lib::refs::list_refs(&common, "refs/remotes/")
+                    .unwrap_or_default()
+                    .is_empty();
+                if has_remotes && !args.no_guess_remote {
+                    // DWIM: infer --orphan when remotes exist
+                    inferred_orphan = true;
+                    (Some(wt_name.clone()), None, false)
+                } else {
+                    // No remotes, no way to branch — fail with hint
+                    let branch_n = &wt_name;
+                    eprintln!(
+                        "hint: If you meant to create a worktree containing a new orphan branch"
+                    );
+                    eprintln!(
+                        "hint: named '{}', use the option '--orphan' as follows:",
+                        branch_n
+                    );
+                    eprintln!("hint:");
+                    eprintln!(
+                        "hint:     git worktree add --orphan -b {} {}",
+                        branch_n,
+                        args.path.display()
+                    );
+                    bail!("fatal: invalid reference: HEAD");
+                }
             }
         }
     };
