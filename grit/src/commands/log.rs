@@ -2170,7 +2170,11 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         }
     };
 
-    let display_name = if refname.starts_with("refs/heads/") {
+    // Use the original user-provided name for display (preserve full ref name if given)
+    let orig_r = &args.revisions[0];
+    let display_name = if orig_r.starts_with("refs/") {
+        orig_r.as_str()
+    } else if refname.starts_with("refs/heads/") {
         refname.strip_prefix("refs/heads/").unwrap_or(&refname)
     } else {
         &refname
@@ -2362,7 +2366,14 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
             }
         } else if args.oneline {
-            let abbrev = &entry.new_oid.to_hex()[..7];
+            let abbrev_len = args
+                .abbrev
+                .as_deref()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(7)
+                .min(40);
+            let full_hex = entry.new_oid.to_hex();
+            let abbrev = &full_hex[..abbrev_len.min(full_hex.len())];
             if args.null_terminator {
                 write!(
                     out,
