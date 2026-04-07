@@ -1761,8 +1761,8 @@ pub fn run(mut args: Args) -> Result<()> {
         None
     };
     let since_str = args.since_as_filter.as_ref().or(args.since.as_ref());
-    let since_threshold = since_str.and_then(parse_date_to_epoch);
-    let until_threshold = args.until.as_ref().and_then(parse_date_to_epoch);
+    let since_threshold = since_str.and_then(|s| parse_date_to_epoch(s));
+    let until_threshold = args.until.as_ref().and_then(|s| parse_date_to_epoch(s));
     let diff_filter_str = args.diff_filter.as_deref();
 
     let use_streaming_log = !args.reverse && !(args.follow && !combined_pathspecs.is_empty());
@@ -2266,7 +2266,7 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
             // Resolve @{-N} to the previous branch name
             if let Some(n_str) = r.strip_prefix("@{").and_then(|s| s.strip_suffix('}')) {
                 if let Some(stripped) = n_str.strip_prefix('-') {
-                    if let Ok(n) = stripped.parse::<usize>() {
+                    if let Ok(_n) = stripped.parse::<usize>() {
                         if let Ok(branch) = grit_lib::refs::resolve_at_n_branch(&repo.git_dir, r) {
                             format!("refs/heads/{branch}")
                         } else {
@@ -2721,7 +2721,7 @@ impl<'a> WalkCommitsIter<'a> {
         excluded: &HashSet<ObjectId>,
     ) -> Self {
         let shallow_boundaries = load_shallow_boundaries(git_dir);
-        let mut visited: HashSet<ObjectId> = excluded.clone();
+        let visited: HashSet<ObjectId> = excluded.clone();
         let mut queue: std::collections::BinaryHeap<(i64, ObjectId)> =
             std::collections::BinaryHeap::new();
         for oid in start {

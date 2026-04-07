@@ -1467,7 +1467,7 @@ fn walk_for_untracked(
 fn has_dirty_files(
     work_tree: &Path,
     index: &grit_lib::index::Index,
-    repo: &grit_lib::repo::Repository,
+    _repo: &grit_lib::repo::Repository,
 ) -> bool {
     for entry in &index.entries {
         if entry.stage() != 0 {

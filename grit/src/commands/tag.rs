@@ -774,15 +774,6 @@ fn format_git_timestamp(dt: OffsetDateTime) -> String {
     format!("{epoch} {hours:+03}{minutes:02}")
 }
 
-/// Ensure a string ends with exactly one newline.
-fn ensure_trailing_newline(s: &str) -> String {
-    if s.ends_with('\n') {
-        s.to_owned()
-    } else {
-        format!("{s}\n")
-    }
-}
-
 fn pseudo_tag_signature_payload(format: &str, key: &str, unsigned_tag: &[u8]) -> String {
     use sha1::{Digest, Sha1};
     let mut hasher = Sha1::new();

@@ -5,6 +5,8 @@
 //! --work-tree, -c) are extracted from argv by hand, then only the specific
 //! subcommand's clap `Args` struct is parsed.
 
+#![allow(dead_code)] // test-tool and harness helpers not fully wired through dispatch
+
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
 use std::io::Read;
@@ -3112,6 +3114,18 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
                 "config" => run_test_tool_config(&rest[1..]),
+                "date" => match grit_lib::git_date::test_tool_date(&rest[1..]) {
+                    Ok(grit_lib::git_date::TestToolDateResult::Output(lines)) => {
+                        for line in lines {
+                            println!("{line}");
+                        }
+                        Ok(())
+                    }
+                    Ok(grit_lib::git_date::TestToolDateResult::Exit(code)) => {
+                        std::process::exit(code);
+                    }
+                    Err(e) => bail!("{e}"),
+                },
                 "genrandom" => {
                     // Generate N random bytes
                     use std::io::Write;
@@ -3224,7 +3238,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 /// Normalize a path (resolve . and ..) without requiring filesystem existence.
 /// Returns "++failed++" if path goes above root for relative paths.
 fn normalize_path_simple(path: &str) -> String {
-    use std::path::{Component, PathBuf};
+    use std::path::Component;
     let is_abs = path.starts_with('/');
     // Track trailing slash: if input ends with '/', '/.', '/..', or similar
     // that resolves to a directory reference
@@ -3365,7 +3379,6 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 norm_path[..new_len].trim_end_matches('/').to_string()
             } else {
                 std::process::exit(1);
-                unreachable!()
             };
             println!("{stripped}");
             Ok(())

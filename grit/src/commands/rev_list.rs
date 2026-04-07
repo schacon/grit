@@ -723,6 +723,7 @@ fn validate_tree_depth_limit(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn commit_touches_paths_for_show(
     repo: &Repository,
     oid: ObjectId,
@@ -777,6 +778,7 @@ fn commit_touches_paths_for_show(
     Ok(differs_any)
 }
 
+#[allow(dead_code)]
 fn path_differs_for_specs_for_show(
     current: &HashMap<String, ObjectId>,
     parent: &HashMap<String, ObjectId>,
@@ -800,6 +802,7 @@ fn path_differs_for_specs_for_show(
     false
 }
 
+#[allow(dead_code)]
 fn pathspec_matches_for_show(spec: &str, path: &str) -> bool {
     let normalized = spec.strip_prefix("./").unwrap_or(spec);
     if normalized == "." || normalized.is_empty() {
@@ -818,6 +821,7 @@ fn pathspec_matches_for_show(spec: &str, path: &str) -> bool {
     path == normalized || path.starts_with(&format!("{normalized}/"))
 }
 
+#[allow(dead_code)]
 fn flatten_tree_for_show(
     repo: &Repository,
     tree_oid: ObjectId,

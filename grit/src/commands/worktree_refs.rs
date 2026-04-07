@@ -136,6 +136,7 @@ fn collect_from_admin(admin_dir: &Path, wt_path: &str, out: &mut HashMap<String,
 }
 
 /// Whether an error string indicates branch/ref protection due to worktree use.
+#[allow(dead_code)]
 pub fn is_worktree_ref_protection_error(err: &str) -> bool {
     err.contains("cannot force update the branch")
         || err.contains("cannot delete branch")
@@ -144,6 +145,7 @@ pub fn is_worktree_ref_protection_error(err: &str) -> bool {
 }
 
 /// Decide whether `rebase` should be retried via system Git passthrough.
+#[allow(dead_code)]
 pub fn needs_passthrough_for_rebase(err: &str, argv_rest: &[String]) -> bool {
     if is_worktree_ref_protection_error(err) {
         return true;

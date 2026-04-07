@@ -1,5 +1,7 @@
 //! `grit test-tool ref-store` support used by upstream ref-store tests.
 
+#![allow(dead_code)] // ref-store harness not yet dispatched from main
+
 use anyhow::{bail, Context, Result};
 use grit_lib::objects::ObjectId;
 use grit_lib::refs::{read_ref_file, Ref};

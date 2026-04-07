@@ -223,10 +223,8 @@ PY
     exit 0 ;;
   date)
     shift
-    case "$1" in
-      is64bit) exit 0 ;;
-      *) date "$@" ;;
-    esac ;;
+    exec "$GUST_BIN" test-tool date "$@"
+    ;;
   env-helper)
     shift
     env_helper_usage() {

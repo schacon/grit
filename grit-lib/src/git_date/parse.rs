@@ -236,7 +236,7 @@ const TIMEZONE_NAMES: &[TzName] = &[
     },
 ];
 
-const MONTH_NAMES: [&str; 12] = [
+pub(crate) const MONTH_NAMES: [&str; 12] = [
     "January",
     "February",
     "March",
@@ -251,7 +251,7 @@ const MONTH_NAMES: [&str; 12] = [
     "December",
 ];
 
-const WEEKDAY_NAMES: [&str; 7] = [
+pub(crate) const WEEKDAY_NAMES: [&str; 7] = [
     "Sundays",
     "Mondays",
     "Tuesdays",
@@ -504,7 +504,7 @@ fn set_time(hour: i64, minute: i64, second: i64, tm: &mut tm) -> i32 {
 }
 
 /// Git `match_multi_number` — `sep_i` is index of separator in `date`; returns bytes consumed from `date` start.
-fn match_multi_number(num: u64, date: &[u8], sep_i: usize, tm: &mut tm, now_in: i64) -> usize {
+pub(crate) fn match_multi_number(num: u64, date: &[u8], sep_i: usize, tm: &mut tm, now_in: i64) -> usize {
     let Some(&c) = date.get(sep_i) else {
         return 0;
     };

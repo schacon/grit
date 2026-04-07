@@ -826,7 +826,7 @@ fn create_and_switch_branch(
 
     // Update working tree if start point differs from current HEAD, or if force,
     // or if the worktree is empty (e.g. after clone --no-checkout)
-    let worktree_is_empty = if let Some(ref wt) = repo.work_tree {
+    let worktree_is_empty = if let Some(ref _wt) = repo.work_tree {
         let old_idx = grit_lib::index::Index::load(&repo.index_path()).unwrap_or_default();
         old_idx.entries.is_empty()
     } else {

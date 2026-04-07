@@ -2804,6 +2804,7 @@ pub(crate) enum MergeDirectoryRenamesMode {
     /// Use repository config (merge.directoryRenames).
     FromConfig,
     /// Force directory rename handling on.
+    #[allow(dead_code)]
     Enabled,
     /// Force directory rename handling off.
     Disabled,

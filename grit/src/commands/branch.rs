@@ -241,19 +241,6 @@ pub fn run(args: Args) -> Result<()> {
     list_branches(&repo, &head, &args)
 }
 
-fn should_passthrough_to_system_git(args: &Args) -> bool {
-    args.force || args.delete || args.force_delete || args.rename || args.force_rename
-}
-
-fn passthrough_current_branch_invocation() -> Result<()> {
-    let argv: Vec<String> = std::env::args().collect();
-    let Some(idx) = argv.iter().position(|arg| arg == "branch") else {
-        bail!("failed to determine branch arguments");
-    };
-    let passthrough_args = argv.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
-    crate::commands::git_passthrough::run("branch", &passthrough_args)
-}
-
 /// Info about a branch for listing.
 struct BranchInfo {
     name: String,
