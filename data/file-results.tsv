@@ -182,7 +182,7 @@ t2013-checkout-submodule	yes	74	14	60	ok	14	74	0
 t2014-checkout-switch	yes	4	4	0	ok	4	4	0
 t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
 t2016-checkout-patch	yes	19	7	12	ok	7	19	0
-t2017-checkout-orphan	yes	13	6	7	ok	6	13	0
+t2017-checkout-orphan	yes	13	13	0	ok	13	13	0
 t2018-checkout-branch	yes	25	25	0	ok	25	25	0
 t2019-checkout-ambiguous-ref	yes	9	9	0	ok	9	9	0
 t2020-checkout-detach	yes	26	17	9	ok	17	26	0
