@@ -86,7 +86,16 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
         if !end_of_options && arg.starts_with('-') {
-            if arg == "--verify" {
+            if arg == "--path-format=absolute" {
+                // --path-format=absolute: output absolute paths; currently our default
+                // for git-dir etc., so this is a no-op
+                i += 1;
+                continue;
+            } else if arg == "--path-format=relative" {
+                // Relative paths: no-op (we handle per command)
+                i += 1;
+                continue;
+            } else if arg == "--verify" {
                 verify = true;
             } else if arg == "--quiet" || arg == "-q" {
                 quiet = true;
