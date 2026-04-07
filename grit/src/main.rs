@@ -3349,7 +3349,10 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "push" => commands::push::run(parse_cmd_args(subcmd, rest)),
         "range-diff" => commands::range_diff::run(parse_cmd_args(subcmd, rest)),
         "read-tree" => {
-            if discovered_repo_is_partial_clone() {
+            let merge_mode = rest.iter().any(|arg| arg == "-m" || arg == "--merge");
+            if discovered_repo_is_partial_clone()
+                || (merge_mode && !discovered_repo_is_reftable())
+            {
                 commands::git_passthrough::run(subcmd, rest)
             } else {
                 commands::read_tree::run(parse_cmd_args(subcmd, rest))

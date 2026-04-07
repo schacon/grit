@@ -90,7 +90,7 @@ commit → check it off → move on.
 - [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
 
 - [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
-- [ ] `t1012-read-tree-df` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — read-tree D/F conflict corner cases
+- [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
 - [ ] `t0411-clone-from-partial` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — check that local clone does not fetch from promisor remotes
 - [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
 - [ ] `t1302-repo-version` █████████████░░░░░░░ 12/18 (6 left) — Test repository version check
