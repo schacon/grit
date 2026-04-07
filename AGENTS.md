@@ -16,16 +16,16 @@ The goal: pass the entire upstream Git test suite.
 
 ```bash
 # Build
-cargo build --release
+cargo build --release -p grit-rs
 
 # Run a single test file
 ./scripts/run-tests.sh t3200-branch.sh
 
-# Run a category
+# Run one group (e.g. t1xxx)
 ./scripts/run-tests.sh t1
 
-# See what's failing
-./scripts/run-tests.sh --failing
+# Full harness (in-scope files only)
+./scripts/run-tests.sh
 ```
 
 ## The One Rule
@@ -114,7 +114,7 @@ grit/
 ├── grit-lib/src/          # Core library (repo, index, diff, merge, etc.)
 ├── tests/                 # Ported upstream test files + test-lib.sh
 ├── git/t/                 # Upstream Git test suite (reference only)
-├── data/                  # Test results TSVs (updated by run-tests.sh)
+├── data/                  # test-files.csv (updated by run-tests.sh)
 ├── docs/                  # Dashboard HTML files
 ├── scripts/               # Test runner and dashboard generators
 └── TESTING.md             # Full testing strategy
@@ -123,12 +123,10 @@ grit/
 ## Data Flow
 
 ```
-run-tests.sh → data/file-results.tsv (source of truth)
+generate-test-files-catalog.py → data/test-files.csv (merge / refresh)
+run-tests.sh → merge results → data/test-files.csv
                     ↓
-         extract-and-test.py → test-results.tsv + command-status.tsv
-                    ↓
-         generate-progress-html.py → docs/index.html
-         generate-testfiles-html.py → docs/testfiles.html
+         generate-dashboard-from-test-files.py → docs/index.html + docs/testfiles.html
 ```
 
 ## Rust Style and Idioms
@@ -194,7 +192,7 @@ The Git-compatible engine should live in a **library crate** (`grit-lib`); the *
 - Aggregate results: `bash scripts/aggregate-upstream.sh`
 - Run our own tests: `bash tests/harness/run-all-count.sh`
 - Run benchmarks: `bash bench/run.sh`
-- Update dashboard after test runs: `bash scripts/update-dashboard.sh`
+- Dashboards refresh automatically after `./scripts/run-tests.sh`; or run `python3 scripts/generate-dashboard-from-test-files.py`
 
 ## Do Not
 
@@ -209,7 +207,7 @@ The Git-compatible engine should live in a **library crate** (`grit-lib`); the *
 - Commit after every subagent completes its scoped task: stage the files that subagent changed, write a clear message describing that work, then `git commit`.
 - **After every successful commit** that concludes a subagent handoff, run **`git push origin main`** so the remote stays backed up (skip only if `origin` is missing or push is impossible—then say so in the log).
 - Before committing, always run `cargo fmt` and `cargo clippy --fix --allow-dirty` and ensure no warnings remain.
-- After running passing tests, run scripts/update-dashboard.sh
+- After running passing harness tests, dashboards are updated by `run-tests.sh` (or run `python3 scripts/generate-dashboard-from-test-files.py`)
 
 ## Parallel Agent Workflow
 
@@ -221,7 +219,7 @@ When running multiple subagents in parallel:
    ```
 2. **Set CARGO_TARGET_DIR** per worktree so builds don't fight over the same target directory:
    ```bash
-   CARGO_TARGET_DIR=/tmp/grit-build-<agent-name> cargo build --release -p grit
+   CARGO_TARGET_DIR=/tmp/grit-build-<agent-name> cargo build --release -p grit-rs
    ```
 3. **Merge back to main** when each agent finishes:
    ```bash

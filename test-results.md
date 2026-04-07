@@ -1,5 +1,9 @@
 # Test Results
 
+**Updated:** 2026-04-07
+
+- Test pipeline: `data/test-files.csv` + `scripts/generate-dashboard-from-test-files.py`; `./scripts/run-tests.sh` updates CSV and `docs/index.html` / `docs/testfiles.html`. `cargo test -p grit-lib --lib`: 98/98 passing (2026-04-07).
+
 **Updated:** 2026-04-06
 
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6426-merge-skip-unneeded-updates.sh`: 13/13 passing (direct validation after merge skip-update fixes for unchanged-path checkout suppression, stderr-clean merge success output, chmtime helper compatibility, and rename/add conflict staging/content behavior).
