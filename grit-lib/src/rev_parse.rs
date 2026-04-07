@@ -881,11 +881,49 @@ fn parse_reflog_entry_timestamp(entry: &crate::reflog::ReflogEntry) -> Option<i6
 /// Simple approximate date parser for reflog date lookups.
 /// Handles formats like "2001-09-17", "3.hot.dogs.on.2001-09-17", etc.
 fn approxidate(s: &str) -> Option<i64> {
-    if s.trim_start().to_ascii_lowercase().starts_with("now") {
-        return std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .map(|d| d.as_secs() as i64);
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let lower = s.trim().to_ascii_lowercase();
+    if lower == "now" {
+        return Some(now_ts);
+    }
+    // Handle relative time: "N.unit.ago" or "N unit ago"
+    // e.g. "1.year.ago", "2.weeks.ago", "3 hours ago"
+    let relative = lower.replace('.', " ");
+    let parts: Vec<&str> = relative.split_whitespace().collect();
+    if parts.len() >= 2 {
+        // Try to parse "N unit ago" or just "N unit"
+        let (n_str, unit, is_ago) = if parts.len() >= 3 && parts[2] == "ago" {
+            (parts[0], parts[1], true)
+        } else if parts.len() == 2 {
+            (parts[0], parts[1], false)
+        } else {
+            ("", "", false)
+        };
+        if !n_str.is_empty() {
+            if let Ok(n) = n_str.parse::<i64>() {
+                let secs: Option<i64> = match unit.trim_end_matches('s') {
+                    "second" => Some(n),
+                    "minute" => Some(n * 60),
+                    "hour" => Some(n * 3600),
+                    "day" => Some(n * 86400),
+                    "week" => Some(n * 604800),
+                    "month" => Some(n * 2592000),
+                    "year" => Some(n * 31536000),
+                    _ => None,
+                };
+                if let Some(s) = secs {
+                    return Some(if is_ago || true {
+                        now_ts - s
+                    } else {
+                        now_ts + s
+                    });
+                }
+            }
+        }
     }
     // Try to extract a YYYY-MM-DD pattern from the string
     let re_like = |input: &str| -> Option<i64> {
