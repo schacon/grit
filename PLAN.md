@@ -49,7 +49,7 @@ commit → check it off → move on.
 - [ ] `t0090-cache-tree` ░░░░░░░░░░░░░░░░░░░░ 0/22 (22 left) — Test whether cache-tree is properly updated
 
 - [ ] `t0021-conversion` ████████░░░░░░░░░░░░ 18/42 (24 left) — blob conversion via gitattributes
-- [ ] `t0003-attributes` █████░░░░░░░░░░░░░░░ 15/55 (40 left) — 
+- [x] `t0003-attributes` ████████████████████ 55/55 (0 left) — gitattributes / check-attr (pattern bases, nested scope, CLI, attr.tree fallback, bare clone layout)
 - [ ] `t0001-init` ██████████░░░░░░░░░░ 54/102 (48 left) — git init
 - [ ] `t0000-basic` █████░░░░░░░░░░░░░░░ 23/92 (69 left) — Test the very basics part #1.
 

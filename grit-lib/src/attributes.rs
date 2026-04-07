@@ -20,12 +20,14 @@ use crate::odb::Odb;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-/// Maximum length of a single `.gitattributes` line (bytes), matching Git.
+/// Maximum length of a single `.gitattributes` line (bytes), matching Git (`ATTR_MAX_LINE_LENGTH`).
+/// Lines of this length or longer are ignored with a warning.
 pub const MAX_ATTR_LINE_BYTES: usize = 2048;
 
 /// Maximum `.gitattributes` file size (bytes) before Git ignores the file.
@@ -55,11 +57,66 @@ impl AttrValue {
     }
 }
 
+/// Pattern flags after Git `parse_path_pattern` (`dir.c`).
+const PAT_NODIR: u32 = 1;
+const PAT_MUSTBEDIR: u32 = 2;
+const PAT_ENDSWITH: u32 = 4;
+
+#[inline]
+fn is_glob_special_attr(c: u8) -> bool {
+    matches!(c, b'*' | b'?' | b'[' | b'\\')
+}
+
+/// Length of initial literal segment before the first glob special (Git `simple_length`).
+fn simple_length_pat(s: &str) -> usize {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if is_glob_special_attr(b[i]) {
+            return i;
+        }
+        i += 1;
+    }
+    i
+}
+
+/// Parse pattern text like Git `parse_path_pattern` (after `!` and unquoting are handled).
+fn parse_attr_pattern_fields(pat: &str) -> (String, u32, usize) {
+    let mut flags = 0u32;
+    let mut len = pat.len();
+    if len > 0 && pat.as_bytes()[len - 1] == b'/' {
+        len -= 1;
+        flags |= PAT_MUSTBEDIR;
+    }
+    let p = &pat[..len];
+    let has_slash = p.as_bytes().contains(&b'/');
+    if !has_slash {
+        flags |= PAT_NODIR;
+    }
+    if let Some(rest) = p.strip_prefix('*') {
+        if !rest.is_empty() && simple_length_pat(rest) == rest.len() {
+            flags |= PAT_ENDSWITH;
+        }
+    }
+    let mut nowild = simple_length_pat(p);
+    if nowild > len {
+        nowild = len;
+    }
+    (p.to_string(), flags, nowild)
+}
+
 /// One line in a gitattributes file.
 #[derive(Debug, Clone)]
 pub struct AttrRule {
-    /// Normalized pattern (repo-relative, `/` separators).
+    /// Directory of the `.gitattributes` file that defined this rule (repo-relative, `/`,
+    /// no trailing slash). Empty for the repository root file.
+    pub attr_base: String,
+    /// Pattern body (no leading `!`; trailing `/` stripped; same as Git after `parse_path_pattern` prep).
     pub pattern: String,
+    /// From `parse_path_pattern`: basename-only match vs full path under `attr_base`.
+    pub pattern_flags: u32,
+    /// Length of leading literal segment before first wildcard (Git `nowildcardlen`).
+    pub nowildcardlen: usize,
     /// If true, this rule was discarded (negative pattern) after emitting a warning.
     pub skip: bool,
     /// 1-based line number in the source file.
@@ -175,27 +232,60 @@ fn read_gitattributes_maybe_symlink(
     fs::read_to_string(path).ok()
 }
 
-/// Parse one gitattributes file from disk (follows symlinks only when reading global/info).
+/// Parse one gitattributes file from disk (patterns are relative to `attr_base`, the directory
+/// containing the file — use `""` for the repository root file).
 pub fn parse_gitattributes_file_content(content: &str, display_path: &str) -> ParsedGitAttributes {
-    parse_gitattributes_content_impl(content, display_path, false)
+    parse_gitattributes_content_impl(content, display_path, false, "")
+}
+
+/// Parse attributes defined in a `.gitattributes` file located in `attr_base` (repo-relative,
+/// `/` separators, no trailing slash; empty string for the repository root).
+pub fn parse_gitattributes_file_content_with_base(
+    content: &str,
+    display_path: &str,
+    attr_base: &str,
+) -> ParsedGitAttributes {
+    parse_gitattributes_content_impl(content, display_path, false, attr_base)
+}
+
+fn preprocess_gitattributes_blob_text(content: &str) -> Cow<'_, str> {
+    if !content.contains("\\n") {
+        return Cow::Borrowed(content);
+    }
+    Cow::Owned(content.replace("\\n", "\n"))
 }
 
 fn parse_gitattributes_content_impl(
     content: &str,
     display_path: &str,
     from_blob: bool,
+    attr_base: &str,
 ) -> ParsedGitAttributes {
+    let preprocessed = if from_blob {
+        preprocess_gitattributes_blob_text(content)
+    } else {
+        Cow::Borrowed(content)
+    };
+    let content = preprocessed.as_ref();
+
     let mut out = ParsedGitAttributes::default();
     for (idx, raw_line) in content.lines().enumerate() {
         let line_no = idx + 1;
         let line_bytes = raw_line.as_bytes();
-        if line_bytes.len() > MAX_ATTR_LINE_BYTES {
+        if line_bytes.len() >= MAX_ATTR_LINE_BYTES {
             out.warnings.push(format!(
                 "warning: ignoring overly long attributes line {line_no}"
             ));
             continue;
         }
-        parse_one_line(raw_line, line_no, display_path, from_blob, &mut out);
+        parse_one_line(
+            raw_line,
+            line_no,
+            display_path,
+            from_blob,
+            attr_base,
+            &mut out,
+        );
     }
     out.warnings
         .extend(builtin_warnings_for_rules(&out.rules, display_path));
@@ -326,6 +416,7 @@ fn parse_one_line(
     line_no: usize,
     display_path: &str,
     from_blob: bool,
+    attr_base: &str,
     out: &mut ParsedGitAttributes,
 ) {
     let _ = display_path;
@@ -366,14 +457,18 @@ fn parse_one_line(
             .push("Negative patterns are ignored".to_string());
         return;
     }
-    let pattern = pattern_token.replace("\\!", "!");
+    let pattern_raw = pattern_token.replace("\\!", "!");
+    let (pattern, pattern_flags, nowildcardlen) = parse_attr_pattern_fields(&pattern_raw);
     let mut attrs = Vec::new();
     accumulate_attr_states(states, &mut attrs, &out.macros, false);
     if attrs.is_empty() {
         return;
     }
     out.rules.push(AttrRule {
+        attr_base: attr_base.to_string(),
         pattern,
+        pattern_flags,
+        nowildcardlen,
         skip: false,
         line: line_no,
         attrs,
@@ -404,30 +499,200 @@ fn push_attr_token(
         return;
     }
     if let Some((k, v)) = tok.split_once('=') {
+        let v = v.trim_end_matches(|c: char| {
+            matches!(c, ' ' | '\t' | '\r' | '\n') || c == '\u{000b}' || c == '\u{000c}'
+        });
         attrs.push((k.to_string(), AttrValue::Value(v.to_string())));
         return;
     }
     attrs.push((tok.to_string(), AttrValue::Set));
 }
 
-/// Match a single gitattributes pattern against a repo-relative path.
-#[must_use]
-pub fn attr_pattern_matches(pattern: &str, rel_path: &str, icase: bool) -> bool {
-    let flags_base = if icase { WM_CASEFOLD } else { 0 };
-    if !pattern.contains('/') {
-        let basename = rel_path.rsplit('/').next().unwrap_or(rel_path);
-        wildmatch(
-            pattern.as_bytes(),
-            basename.as_bytes(),
-            flags_base | WM_PATHNAME,
-        )
-    } else {
-        wildmatch(
-            pattern.as_bytes(),
-            rel_path.as_bytes(),
-            flags_base | WM_PATHNAME,
-        )
+fn fspathncmp(a: &[u8], b: &[u8], count: usize, icase: bool) -> bool {
+    if a.len() < count || b.len() < count {
+        return false;
     }
+    if icase {
+        a[..count]
+            .iter()
+            .zip(&b[..count])
+            .all(|(x, y)| x.eq_ignore_ascii_case(y))
+    } else {
+        a[..count] == b[..count]
+    }
+}
+
+/// Git `match_basename` (`dir.c`) for attribute patterns.
+fn match_basename_git(
+    basename: &[u8],
+    pattern: &[u8],
+    prefix: usize,
+    patternlen: usize,
+    pat_flags: u32,
+    icase: bool,
+) -> bool {
+    let basenamelen = basename.len();
+    let wm_flags = if icase { WM_CASEFOLD } else { 0 };
+    if prefix == patternlen {
+        return patternlen == basenamelen && fspathncmp(pattern, basename, basenamelen, icase);
+    }
+    if (pat_flags & PAT_ENDSWITH) != 0 {
+        if patternlen <= 1 {
+            return false;
+        }
+        let lit_len = patternlen - 1;
+        if lit_len > basenamelen {
+            return false;
+        }
+        return fspathncmp(
+            &pattern[1..patternlen],
+            &basename[basenamelen - lit_len..],
+            lit_len,
+            icase,
+        );
+    }
+    wildmatch(&pattern[..patternlen], basename, wm_flags)
+}
+
+/// Git `match_pathname` (`dir.c`) for attribute patterns.
+#[allow(clippy::too_many_arguments)]
+fn match_pathname_git(
+    pathname: &[u8],
+    pathlen: usize,
+    base: &[u8],
+    baselen: usize,
+    mut pattern: &[u8],
+    mut prefix: usize,
+    mut patternlen: usize,
+    icase: bool,
+) -> bool {
+    let pathname = &pathname[..pathlen.min(pathname.len())];
+
+    if !pattern.is_empty() && pattern[0] == b'/' {
+        pattern = &pattern[1..];
+        patternlen -= 1;
+        prefix = prefix.saturating_sub(1);
+    }
+
+    if pathlen < baselen + 1 {
+        return false;
+    }
+    if baselen > 0 && pathname[baselen] != b'/' {
+        return false;
+    }
+    if !fspathncmp(pathname, base, baselen, icase) {
+        return false;
+    }
+
+    let namelen = if baselen == 0 {
+        pathlen
+    } else {
+        pathlen - baselen - 1
+    };
+    let name = &pathname[pathlen - namelen..];
+
+    if prefix > 0 {
+        if prefix > namelen {
+            return false;
+        }
+        if !fspathncmp(pattern, name, prefix, icase) {
+            return false;
+        }
+        if patternlen == prefix && namelen == prefix {
+            return true;
+        }
+        let advance = prefix - 1;
+        pattern = &pattern[advance..];
+        patternlen -= advance;
+        let name = &name[advance..];
+        let wm_flags = WM_PATHNAME | if icase { WM_CASEFOLD } else { 0 };
+        return wildmatch(&pattern[..patternlen], name, wm_flags);
+    }
+
+    let wm_flags = WM_PATHNAME | if icase { WM_CASEFOLD } else { 0 };
+    wildmatch(&pattern[..patternlen], name, wm_flags)
+}
+
+/// Directory prefix of `rel_path` (no trailing slash), or `""` for a top-level file.
+fn path_dir_prefix(rel_path: &str) -> &str {
+    match rel_path.rfind('/') {
+        Some(i) => &rel_path[..i],
+        None => "",
+    }
+}
+
+/// Whether a rule from `dir/.gitattributes` may apply to `rel_path` (Git `prepare_attr_stack`).
+///
+/// Rules from nested attribute files only affect paths inside that directory tree.
+#[must_use]
+pub fn attr_rule_applies_to_path(attr_base: &str, rel_path: &str, icase: bool) -> bool {
+    if attr_base.is_empty() {
+        return true;
+    }
+    let dir = path_dir_prefix(rel_path);
+    if dir.is_empty() {
+        return false;
+    }
+    let prefix_eq = |d: &str, b: &str| {
+        if icase {
+            d.eq_ignore_ascii_case(b)
+        } else {
+            d == b
+        }
+    };
+    if prefix_eq(dir, attr_base) {
+        return true;
+    }
+    let bl = attr_base.len();
+    if dir.len() > bl && dir.as_bytes()[bl] == b'/' && prefix_eq(&dir[..bl], attr_base) {
+        return true;
+    }
+    false
+}
+
+/// Match one parsed rule against a repo-relative path (Git `path_matches` / `attr.c`).
+#[must_use]
+pub fn attr_rule_matches(rule: &AttrRule, rel_path: &str, icase: bool) -> bool {
+    if !attr_rule_applies_to_path(&rule.attr_base, rel_path, icase) {
+        return false;
+    }
+    let pathname = rel_path.as_bytes();
+    let pathlen = pathname.len();
+    let isdir = pathlen > 0 && pathname[pathlen - 1] == b'/';
+
+    if (rule.pattern_flags & PAT_MUSTBEDIR) != 0 && !isdir {
+        return false;
+    }
+
+    let eff_pathlen = if isdir { pathlen - 1 } else { pathlen };
+    let pathname_trim = &pathname[..eff_pathlen];
+
+    let basename_offset = pathname_trim
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+
+    let pat = rule.pattern.as_bytes();
+    let prefix = rule.nowildcardlen.min(pat.len());
+    let patternlen = pat.len();
+
+    if (rule.pattern_flags & PAT_NODIR) != 0 {
+        let bn = &pathname_trim[basename_offset..];
+        return match_basename_git(bn, pat, prefix, patternlen, rule.pattern_flags, icase);
+    }
+
+    let base = rule.attr_base.as_bytes();
+    match_pathname_git(
+        pathname_trim,
+        eff_pathlen,
+        base,
+        base.len(),
+        pat,
+        prefix,
+        patternlen,
+        icase,
+    )
 }
 
 /// Expand macros and `binary` for one rule's assignments into source-order operations.
@@ -468,7 +733,7 @@ pub fn collect_attrs_for_path(
         if rule.skip {
             continue;
         }
-        if !attr_pattern_matches(&rule.pattern, rel_path, icase) {
+        if !attr_rule_matches(rule, rel_path, icase) {
             continue;
         }
         let ops = expand_rule_attrs_flat(rule, macros);
@@ -527,7 +792,26 @@ pub fn normalize_rel_path(path: &str) -> String {
     stack.join("/")
 }
 
+fn lexical_normalize_path(path: PathBuf) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::Prefix(prefix) => out.push(prefix.as_os_str()),
+            Component::RootDir => out.push(c),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = out.pop();
+            }
+            Component::Normal(_) => out.push(c),
+        }
+    }
+    out
+}
+
 /// Resolve a user path to a repo-relative path (forward slashes).
+///
+/// Uses [`std::fs::canonicalize`] when the target exists; otherwise resolves `..` lexically from the
+/// current directory so paths like `../f` work for missing files (Git `prefix_path`, t0003).
 pub fn path_relative_to_worktree(
     repo: &Repository,
     path_str: &str,
@@ -538,15 +822,26 @@ pub fn path_relative_to_worktree(
         .ok_or_else(|| "bare repository — no work tree".to_string())?;
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let p = Path::new(path_str);
-    let abs = if p.is_absolute() {
+    let combined = if p.is_absolute() {
         p.to_path_buf()
     } else {
         cwd.join(p)
     };
-    let abs = abs.canonicalize().map_err(|e| e.to_string())?;
-    let wt = wt.canonicalize().map_err(|e| e.to_string())?;
-    let rel = abs
-        .strip_prefix(&wt)
+
+    let wt_canon = wt.canonicalize().map_err(|e| e.to_string())?;
+
+    if let Ok(abs) = combined.canonicalize() {
+        let rel = abs
+            .strip_prefix(&wt_canon)
+            .map_err(|_| format!("path outside repository: {}", path_str))?;
+        return Ok(normalize_rel_path(
+            rel.to_str().ok_or_else(|| "invalid path".to_string())?,
+        ));
+    }
+
+    let abs_lex = lexical_normalize_path(combined);
+    let rel = abs_lex
+        .strip_prefix(&wt_canon)
         .map_err(|_| format!("path outside repository: {}", path_str))?;
     Ok(normalize_rel_path(
         rel.to_str().ok_or_else(|| "invalid path".to_string())?,
@@ -590,12 +885,7 @@ pub fn load_gitattributes_stack(
     let mut merged = ParsedGitAttributes::default();
 
     if let Some(g) = global_attributes_path(repo)? {
-        if g.exists()
-            && !g
-                .symlink_metadata()
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false)
-        {
+        if g.exists() {
             if let Ok(content) = fs::read_to_string(&g) {
                 if content.len() <= MAX_ATTR_FILE_BYTES {
                     let mut p =
@@ -644,13 +934,12 @@ pub fn load_gitattributes_stack(
                 continue;
             }
             let prefix = rel.to_string_lossy().replace('\\', "/");
-            let mut p = parse_gitattributes_file_content(&content, &ga.to_string_lossy());
-            for mut r in p.rules.drain(..) {
-                if !prefix.is_empty() {
-                    r.pattern = format!("{prefix}/{}", r.pattern);
-                }
-                merged.rules.push(r);
-            }
+            let mut p = parse_gitattributes_file_content_with_base(
+                &content,
+                &ga.to_string_lossy(),
+                &prefix,
+            );
+            merged.rules.append(&mut p.rules);
             merged.macros.defs.extend(p.macros.defs.drain());
             merged.warnings.append(&mut p.warnings);
         }
@@ -749,17 +1038,13 @@ fn walk_tree_attrs(
                         }
                         let content = String::from_utf8_lossy(&blob.data).into_owned();
                         let display = format!("{path} (tree)");
-                        let mut p = parse_gitattributes_content_impl(&content, &display, true);
-                        let parent = Path::new(&path)
+                        let attr_base = Path::new(&path)
                             .parent()
                             .map(|p| p.to_string_lossy().replace('\\', "/"))
-                            .filter(|s| !s.is_empty());
-                        for mut r in p.rules.drain(..) {
-                            if let Some(ref pre) = parent {
-                                r.pattern = format!("{pre}/{}", r.pattern);
-                            }
-                            merged.rules.push(r);
-                        }
+                            .unwrap_or_default();
+                        let mut p =
+                            parse_gitattributes_content_impl(&content, &display, true, &attr_base);
+                        merged.rules.append(&mut p.rules);
                         merged.macros.defs.extend(p.macros.defs.drain());
                         merged.warnings.append(&mut p.warnings);
                     }
@@ -772,17 +1057,29 @@ fn walk_tree_attrs(
 }
 
 /// Resolve `attr.tree`, `GIT_ATTR_SOURCE`, `--source` precedence for check-attr.
+///
+/// The second return value is `ignore_bad_resolution`: when true (only for `attr.tree` from
+/// config), an unresolvable tree-ish falls back to reading `.gitattributes` from the work tree
+/// or index instead of erroring (matches Git `compute_default_attr_source`).
 pub fn resolve_attr_treeish(
     repo: &Repository,
     source_arg: Option<&str>,
-) -> std::result::Result<Option<String>, crate::error::Error> {
+) -> std::result::Result<(Option<String>, bool), crate::error::Error> {
     let env_src = std::env::var("GIT_ATTR_SOURCE")
         .ok()
         .filter(|s| !s.is_empty());
     let config = ConfigSet::load(Some(&repo.git_dir), true)?;
     let cfg_tree = config.get("attr.tree");
-    let chosen = source_arg.map(|s| s.to_string()).or(env_src).or(cfg_tree);
-    Ok(chosen)
+    if let Some(s) = source_arg.map(|s| s.to_string()) {
+        return Ok((Some(s), false));
+    }
+    if let Some(s) = env_src {
+        return Ok((Some(s), false));
+    }
+    if let Some(s) = cfg_tree {
+        return Ok((Some(s), true));
+    }
+    Ok((None, false))
 }
 
 /// Parse a revision to a tree OID for attribute loading.
@@ -829,21 +1126,12 @@ pub fn load_gitattributes_from_index(
             continue;
         }
         let content = String::from_utf8_lossy(&obj.data);
-        let mut p = parse_gitattributes_content_impl(&content, rel, true);
-        let parent = Path::new(rel).parent().and_then(|p| {
-            let s = p.to_str()?;
-            if s.is_empty() {
-                None
-            } else {
-                Some(s.replace('\\', "/"))
-            }
-        });
-        for mut r in p.rules.drain(..) {
-            if let Some(ref pre) = parent {
-                r.pattern = format!("{pre}/{}", r.pattern);
-            }
-            merged.rules.push(r);
-        }
+        let attr_base = Path::new(rel)
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let mut p = parse_gitattributes_content_impl(&content, rel, true, &attr_base);
+        merged.rules.append(&mut p.rules);
         merged.macros.defs.extend(p.macros.defs.drain());
         merged.warnings.append(&mut p.warnings);
     }
@@ -923,17 +1211,20 @@ mod tests {
         let mut merged = ParsedGitAttributes::default();
         let root = parse_gitattributes_file_content("[attr]notest !test\n", ".gitattributes");
         merged.macros.defs.extend(root.macros.defs);
-        let ab = parse_gitattributes_file_content(
+        let mut ab = parse_gitattributes_file_content_with_base(
             "h test=a/b/h\nd/* test=a/b/d/*\nd/yes notest\n",
             "a/b/.gitattributes",
+            "a/b",
         );
         assert_eq!(ab.rules.len(), 3);
-        for mut r in ab.rules {
-            r.pattern = format!("a/b/{}", r.pattern);
-            merged.rules.push(r);
-        }
+        merged.rules.append(&mut ab.rules);
         merged.macros.defs.extend(ab.macros.defs);
-        assert!(attr_pattern_matches("a/b/d/yes", "a/b/d/yes", false));
+        let d_yes = merged
+            .rules
+            .iter()
+            .find(|r| r.pattern == "d/yes")
+            .expect("d/yes rule");
+        assert!(attr_rule_matches(d_yes, "a/b/d/yes", false));
         let m = collect_attrs_for_path(&merged.rules, &merged.macros, "a/b/d/yes", false);
         assert!(
             m.get("test").is_none(),

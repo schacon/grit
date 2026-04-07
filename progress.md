@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    85 |
-| In progress |     0 |
-| Remaining   |   682 |
+| Completed   |   218 |
+| In progress |     2 |
+| Remaining   |   547 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0003-attributes` — 55/55 tests pass (Git-style attribute matching with per-directory bases and stack scoping; manual `check-attr` argv parsing; `attr.tree` bad-ref fallback; bare `init_repository`/`clone` omit top-level `info`/`hooks`; blob `.gitattributes` `\\n` normalization for grit-stored trees; `core.attributesFile` symlink follow; path resolution for missing files)
 - `t11290-update-ref-atomic-batch` — 33/33 tests pass (`test_must_fail` in `test-lib-tap.sh` now accepts absolute paths to `git`/`grit`/`scalar`, so `test_must_fail "$GUST_BIN"` and `test_must_fail "$REAL_GIT"` work under the harness)
 - `t1092-sparse-checkout-compatibility` — in progress (~39/106 passing): sparse index (`sdir`), expand/collapse, `sparse-checkout` CLI flags, `ls-files --sparse`, status sparse banner, index write finalization across commands; see `logs/2026-04-07_sparse-index-t1092-progress.md`
 - `t0450-txt-doc-vs-help` — 548/548 tests pass (`-h` synopsis generated from vendored `git/Documentation/*.adoc` at build time; harness sets `GIT_SOURCE_DIR`; trimmed `adoc-help-mismatches` to builtins Grit does not ship)
