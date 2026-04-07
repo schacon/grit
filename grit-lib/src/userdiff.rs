@@ -11,7 +11,148 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-const USERDIFF_SOURCE: &str = include_str!("../../git/userdiff.c");
+/// Built-in diff driver funcname patterns (same strings as Git's userdiff builtin drivers).
+const BUILTIN_PATTERN_DEFS: &[(&str, &str, bool)] = &[
+    (
+        "ada",
+        r"!^(.*[ 	])?(is[ 	]+new|renames|is[ 	]+separate)([ 	].*)?$
+!^[ 	]*with[ 	].*$
+^[ 	]*((procedure|function)[ 	]+.*)$
+^[ 	]*((package|protected|task)[ 	]+.*)$",
+        true,
+    ),
+    (
+        "bash",
+        r"^[ 	]*((([a-zA-Z_][a-zA-Z0-9_]*[ 	]*\([ 	]*\))|(function[ 	]+[a-zA-Z_][a-zA-Z0-9_]*(([ 	]*\([ 	]*\))|([ 	]+)))).*$)",
+        false,
+    ),
+    (
+        "bibtex",
+        r#"(@[a-zA-Z]{1,}[ 	]*\{{0,1}[ 	]*[^ 	"@',\#}{~%]*).*$"#,
+        false,
+    ),
+    (
+        "cpp",
+        r"!^[ 	]*[A-Za-z_][A-Za-z_0-9]*:[[:space:]]*($|/[/*])
+^((::[[:space:]]*)?[A-Za-z_].*)$",
+        false,
+    ),
+    (
+        "csharp",
+        r"!(^|[ 	]+)(do|while|for|foreach|if|else|new|default|return|switch|case|throw|catch|using|lock|fixed)([ 	(]+|$)
+^[ 	]*(([][[:alnum:]@_.](<[][[:alnum:]@_, 	<>]+>)?)+([ 	]+([][[:alnum:]@_.](<[][[:alnum:]@_, 	<>]+>)?)+)+[ 	]*\([^;]*)$
+^[ 	]*(([][[:alnum:]@_.](<[][[:alnum:]@_, 	<>]+>)?)+([ 	]+([][[:alnum:]@_.](<[][[:alnum:]@_, 	<>]+>)?)+)+[^;=:,()]*)$
+^[ 	]*(((static|public|internal|private|protected|new|unsafe|sealed|abstract|partial)[ 	]+)*(class|enum|interface|struct|record)[ 	]+.*)$
+^[ 	]*(namespace[ 	]+.*)$",
+        false,
+    ),
+    (
+        "css",
+        r"![:;][[:space:]]*$
+^[:[@.#]?[_a-z0-9].*$",
+        true,
+    ),
+    (
+        "dts",
+        r"!;
+!=
+^[ 	]*((/[ 	]*\{|&?[a-zA-Z_]).*)",
+        false,
+    ),
+    (
+        "elixir",
+        r"^[ 	]*((def(macro|module|impl|protocol|p)?|test)[ 	].*)$",
+        false,
+    ),
+    (
+        "fortran",
+        r#"!^([C*]|[ 	]*!)
+!^[ 	]*MODULE[ 	]+PROCEDURE[ 	]
+^[ 	]*((END[ 	]+)?(PROGRAM|MODULE|BLOCK[ 	]+DATA|([^!'" 	]+[ 	]+)*(SUBROUTINE|FUNCTION))[ 	]+[A-Z].*)$"#,
+        true,
+    ),
+    (
+        "fountain",
+        r"^((\.[^.]|(int|ext|est|int\.?/ext|i/e)[. ]).*)$",
+        true,
+    ),
+    (
+        "golang",
+        r"^[ 	]*(func[ 	]*.*(\{[ 	]*)?)
+^[ 	]*(type[ 	].*(struct|interface)[ 	]*(\{[ 	]*)?)",
+        false,
+    ),
+    ("html", r"^[ 	]*(<[Hh][1-6]([ 	].*)?>.*)$", false),
+    ("ini", r"^[ 	]*\[[^]]+\]", false),
+    (
+        "java",
+        r"!^[ 	]*(catch|do|for|if|instanceof|new|return|switch|throw|while)
+^[ 	]*(([a-z-]+[ 	]+)*(class|enum|interface|record)[ 	]+.*)$
+^[ 	]*(([A-Za-z_<>&][][?&<>.,A-Za-z_0-9]*[ 	]+)+[A-Za-z_][A-Za-z_0-9]*[ 	]*\([^;]*)$",
+        false,
+    ),
+    (
+        "kotlin",
+        r"^[ 	]*(([a-z]+[ 	]+)*(fun|class|interface)[ 	]+.*)$",
+        false,
+    ),
+    ("markdown", r"^ {0,3}#{1,6}[ 	].*", false),
+    (
+        "matlab",
+        r"^[[:space:]]*((classdef|function)[[:space:]].*)$|^(%%%?|##)[[:space:]].*$",
+        false,
+    ),
+    (
+        "objc",
+        r"!^[ 	]*(do|for|if|else|return|switch|while)
+^[ 	]*([-+][ 	]*\([ 	]*[A-Za-z_][A-Za-z_0-9* 	]*\)[ 	]*[A-Za-z_].*)$
+^[ 	]*(([A-Za-z_][A-Za-z_0-9]*[ 	]+)+[A-Za-z_][A-Za-z_0-9]*[ 	]*\([^;]*)$
+^(@(implementation|interface|protocol)[ 	].*)$",
+        false,
+    ),
+    (
+        "pascal",
+        r"^(((class[ 	]+)?(procedure|function)|constructor|destructor|interface|implementation|initialization|finalization)[ 	]*.*)$
+^(.*=[ 	]*(class|record).*)$",
+        false,
+    ),
+    (
+        "perl",
+        r"^package .*
+^sub [[:alnum:]_':]+[ 	]*(\([^)]*\)[ 	]*)?(:[^;#]*)?(\{[ 	]*)?(#.*)?$
+^(BEGIN|END|INIT|CHECK|UNITCHECK|AUTOLOAD|DESTROY)[ 	]*(\{[ 	]*)?(#.*)?$
+^=head[0-9] .*",
+        false,
+    ),
+    (
+        "php",
+        r"^[	 ]*(((public|protected|private|static|abstract|final)[	 ]+)*function.*)$
+^[	 ]*((((final|abstract)[	 ]+)?class|enum|interface|trait).*)$",
+        false,
+    ),
+    ("python", r"^[ 	]*((class|(async[ 	]+)?def)[ 	].*)$", false),
+    (
+        "r",
+        r"^[ 	]*([a-zA-z][a-zA-Z0-9_.]*[ 	]*(<-|=)[ 	]*function.*)$",
+        false,
+    ),
+    ("ruby", r"^[ 	]*((class|module|def)[ 	].*)$", false),
+    (
+        "rust",
+        r#"^[	 ]*((pub(\([^\)]+\))?[	 ]+)?((async|const|unsafe|extern([	 ]+"[^"]+"))[	 ]+)?(struct|enum|union|mod|trait|fn|impl|macro_rules!)[< 	]+[^;]*)$"#,
+        false,
+    ),
+    (
+        "scheme",
+        r"^[	 ]*(\(((define|def(struct|syntax|class|method|rules|record|proto|alias)?)[-*/ 	]|(library|module|struct|class)[*+ 	]).*)$",
+        false,
+    ),
+    (
+        "tex",
+        r"^(\\((sub)*section|chapter|part)\*{0,1}\{.*)$",
+        false,
+    ),
+];
 
 #[derive(Debug, Clone)]
 struct FuncRule {
@@ -173,280 +314,19 @@ fn builtin_patterns() -> &'static BTreeMap<String, BuiltinPattern> {
 }
 
 fn parse_builtin_patterns() -> BTreeMap<String, BuiltinPattern> {
-    let mut map = BTreeMap::new();
-    let mut offset = 0usize;
-    while let Some((is_ipattern, macro_start, args_start)) = find_next_macro(offset) {
-        let Some((args, end_offset)) = parse_macro_args(args_start) else {
-            break;
-        };
-        offset = end_offset.max(macro_start + 1);
-        if args.len() < 2 {
-            continue;
-        }
-
-        let Some(name) = decode_concat_c_strings(&args[0]) else {
-            continue;
-        };
-        if name.is_empty() || name == "default" {
-            continue;
-        }
-        let Some(pattern) = decode_concat_c_strings(&args[1]) else {
-            continue;
-        };
-
-        map.insert(
-            name,
-            BuiltinPattern {
-                pattern,
-                ignore_case: is_ipattern,
-            },
-        );
-    }
-    map
-}
-
-fn find_next_macro(offset: usize) -> Option<(bool, usize, usize)> {
-    let src = USERDIFF_SOURCE.as_bytes();
-    let mut i = offset;
-    while i < src.len() {
-        if src[i].is_ascii_alphabetic() || src[i] == b'_' {
-            let start = i;
-            i += 1;
-            while i < src.len() && (src[i].is_ascii_alphanumeric() || src[i] == b'_') {
-                i += 1;
-            }
-            let ident = &USERDIFF_SOURCE[start..i];
-            if (ident == "PATTERNS" || ident == "IPATTERN")
-                && i < src.len()
-                && src[i] == b'('
-                && start > 0
-                && !src[start - 1].is_ascii_alphanumeric()
-                && src[start - 1] != b'_'
-            {
-                return Some((ident == "IPATTERN", start, i + 1));
-            }
-        } else {
-            i += 1;
-        }
-    }
-    None
-}
-
-fn parse_macro_args(mut i: usize) -> Option<(Vec<String>, usize)> {
-    let src = USERDIFF_SOURCE.as_bytes();
-    let mut depth = 1usize;
-    let mut args: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-
-    while i < src.len() {
-        let ch = src[i] as char;
-        let next = src.get(i + 1).copied().map(char::from);
-
-        if in_string {
-            current.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_line_comment {
-            current.push(ch);
-            if ch == '\n' {
-                in_line_comment = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_block_comment {
-            current.push(ch);
-            if ch == '*' && next == Some('/') {
-                current.push('/');
-                i += 2;
-                in_block_comment = false;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-
-        if ch == '/' && next == Some('/') {
-            current.push('/');
-            current.push('/');
-            i += 2;
-            in_line_comment = true;
-            continue;
-        }
-        if ch == '/' && next == Some('*') {
-            current.push('/');
-            current.push('*');
-            i += 2;
-            in_block_comment = true;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            current.push(ch);
-            i += 1;
-            continue;
-        }
-        if ch == '(' {
-            depth += 1;
-            current.push(ch);
-            i += 1;
-            continue;
-        }
-        if ch == ')' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                args.push(current.trim().to_owned());
-                return Some((args, i + 1));
-            }
-            current.push(ch);
-            i += 1;
-            continue;
-        }
-        if ch == ',' && depth == 1 {
-            args.push(current.trim().to_owned());
-            current.clear();
-            i += 1;
-            continue;
-        }
-
-        current.push(ch);
-        i += 1;
-    }
-
-    None
-}
-
-fn decode_concat_c_strings(expr: &str) -> Option<String> {
-    let bytes = expr.as_bytes();
-    let mut i = 0usize;
-    let mut out = String::new();
-    let mut found = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-
-    while i < bytes.len() {
-        if in_line_comment {
-            if bytes[i] == b'\n' {
-                in_line_comment = false;
-            }
-            i += 1;
-            continue;
-        }
-        if in_block_comment {
-            if bytes[i] == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                in_block_comment = false;
-                i += 2;
-            } else {
-                i += 1;
-            }
-            continue;
-        }
-        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-            in_line_comment = true;
-            i += 2;
-            continue;
-        }
-        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            in_block_comment = true;
-            i += 2;
-            continue;
-        }
-        if bytes[i] != b'"' {
-            i += 1;
-            continue;
-        }
-
-        found = true;
-        i += 1;
-        while i < bytes.len() {
-            let ch = bytes[i] as char;
-            if ch == '"' {
-                i += 1;
-                break;
-            }
-            if ch != '\\' {
-                out.push(ch);
-                i += 1;
-                continue;
-            }
-            i += 1;
-            if i >= bytes.len() {
-                break;
-            }
-            let esc = bytes[i] as char;
-            match esc {
-                'a' => out.push('\u{0007}'),
-                'b' => out.push('\u{0008}'),
-                'f' => out.push('\u{000c}'),
-                'n' => out.push('\n'),
-                'r' => out.push('\r'),
-                't' => out.push('\t'),
-                'v' => out.push('\u{000b}'),
-                '\\' => out.push('\\'),
-                '"' => out.push('"'),
-                '\'' => out.push('\''),
-                '?' => out.push('?'),
-                'x' => {
-                    i += 1;
-                    let mut value: u32 = 0;
-                    let mut consumed = 0usize;
-                    while i < bytes.len() {
-                        let ch = bytes[i] as char;
-                        let Some(d) = ch.to_digit(16) else {
-                            break;
-                        };
-                        value = value.saturating_mul(16).saturating_add(d);
-                        consumed += 1;
-                        i += 1;
-                    }
-                    if consumed > 0 {
-                        if let Some(decoded) = char::from_u32(value) {
-                            out.push(decoded);
-                        }
-                        i = i.saturating_sub(1);
-                    } else {
-                        out.push('x');
-                    }
-                }
-                '0'..='7' => {
-                    let mut value = esc.to_digit(8).unwrap_or_default();
-                    let mut consumed = 0usize;
-                    while consumed < 2 && i + 1 < bytes.len() {
-                        let ch = bytes[i + 1] as char;
-                        let Some(d) = ch.to_digit(8) else {
-                            break;
-                        };
-                        value = value.saturating_mul(8).saturating_add(d);
-                        consumed += 1;
-                        i += 1;
-                    }
-                    if let Some(decoded) = char::from_u32(value) {
-                        out.push(decoded);
-                    }
-                }
-                other => out.push(other),
-            }
-            i += 1;
-        }
-    }
-
-    if found {
-        Some(out)
-    } else {
-        None
-    }
+    BUILTIN_PATTERN_DEFS
+        .iter()
+        .filter(|(name, _, _)| !name.is_empty() && *name != "default")
+        .map(|(name, pattern, ignore_case)| {
+            (
+                (*name).to_owned(),
+                BuiltinPattern {
+                    pattern: (*pattern).to_owned(),
+                    ignore_case: *ignore_case,
+                },
+            )
+        })
+        .collect()
 }
 
 fn bre_to_ere(pattern: &str) -> String {

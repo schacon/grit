@@ -1140,36 +1140,34 @@ fn print_batch_entry(
             write!(out, "{display_spec} missing")?;
             out.write_all(eol)?;
         }
-        Ok((oid, Some(0o160000))) => {
-            match read_batch_object(repo, &oid, opts.ignore_replace) {
-                Ok(obj) if obj.kind == ObjectKind::Commit => {
-                    emit_batch_object_lines(
-                        repo,
-                        oid,
-                        &obj,
-                        Some(0o160000),
-                        include_content,
-                        format,
-                        nul_output,
-                        packed_sizes,
-                        rest,
-                        out,
-                    )?;
-                }
-                Ok(_) | Err(_) => {
-                    write_submodule_batch_line(
-                        out,
-                        format,
-                        &oid.to_hex(),
-                        rest,
-                        packed_sizes,
-                        repo,
-                        oid,
-                        nul_output,
-                    )?;
-                }
+        Ok((oid, Some(0o160000))) => match read_batch_object(repo, &oid, opts.ignore_replace) {
+            Ok(obj) if obj.kind == ObjectKind::Commit => {
+                emit_batch_object_lines(
+                    repo,
+                    oid,
+                    &obj,
+                    Some(0o160000),
+                    include_content,
+                    format,
+                    nul_output,
+                    packed_sizes,
+                    rest,
+                    out,
+                )?;
             }
-        }
+            Ok(_) | Err(_) => {
+                write_submodule_batch_line(
+                    out,
+                    format,
+                    &oid.to_hex(),
+                    rest,
+                    packed_sizes,
+                    repo,
+                    oid,
+                    nul_output,
+                )?;
+            }
+        },
         Ok((oid, mode)) => match read_batch_object(repo, &oid, opts.ignore_replace) {
             Err(e) => match e {
                 LibError::UnknownObjectType(_) => {
