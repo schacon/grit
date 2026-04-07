@@ -1,8 +1,36 @@
 //! Pathspec matching utilities shared across commands.
 
-/// Check if a string contains glob meta-characters.
+use grit_lib::wildmatch::{wildmatch, WM_CASEFOLD};
+use std::path::{Path, PathBuf};
+
+/// True if `c` is glob-special in Git's pathspec rules (`*`, `?`, `[`, `\`).
+#[inline]
+fn is_glob_special_byte(c: u8) -> bool {
+    matches!(c, b'*' | b'?' | b'[' | b'\\')
+}
+
+/// Length of the literal prefix before the first glob-special byte (Git's `simple_length`).
+///
+/// Backslash is glob-special: in `f\*` the prefix length is `1` (`f`), and the wildcard
+/// tail `\*` is matched with [`wildmatch`]. A lone `\` at the end is treated as a literal
+/// backslash (no glob tail).
+#[must_use]
+pub fn simple_length(pattern: &str) -> usize {
+    let b = pattern.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        if is_glob_special_byte(b[i]) {
+            return i;
+        }
+        i += 1;
+    }
+    i
+}
+
+/// Whether the pattern uses wildcards after Git pathspec escaping rules.
+#[must_use]
 pub fn has_glob_chars(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[')
+    simple_length(s) < s.len()
 }
 
 /// Simple glob matching for git pathspecs.
@@ -117,22 +145,42 @@ pub fn pathspec_matches(spec: &str, path: &str) -> bool {
         return true;
     }
 
-    if magic.icase {
-        let pattern_folded = pattern.to_ascii_lowercase();
-        let path_folded = path.to_ascii_lowercase();
-        if has_glob_chars(pattern) {
-            glob_match(&pattern_folded, &path_folded)
-        } else if let Some(prefix) = pattern_folded.strip_suffix('/') {
-            path_folded == prefix || path_folded.starts_with(&format!("{prefix}/"))
+    let wm_flags = if magic.icase { WM_CASEFOLD } else { 0 };
+    let nwl = simple_length(pattern);
+
+    if nwl == pattern.len() {
+        if magic.icase {
+            let pattern_folded = pattern.to_ascii_lowercase();
+            let path_folded = path.to_ascii_lowercase();
+            if let Some(prefix) = pattern_folded.strip_suffix('/') {
+                path_folded == prefix || path_folded.starts_with(&format!("{prefix}/"))
+            } else {
+                path_folded == pattern_folded
+                    || path_folded.starts_with(&format!("{pattern_folded}/"))
+            }
+        } else if let Some(prefix) = pattern.strip_suffix('/') {
+            path == prefix || path.starts_with(&format!("{prefix}/"))
         } else {
-            path_folded == pattern_folded || path_folded.starts_with(&format!("{pattern_folded}/"))
+            path == pattern || path.starts_with(&format!("{pattern}/"))
         }
-    } else if has_glob_chars(pattern) {
-        glob_match(pattern, path)
-    } else if let Some(prefix) = pattern.strip_suffix('/') {
-        path == prefix || path.starts_with(&format!("{prefix}/"))
     } else {
-        path == pattern || path.starts_with(&format!("{pattern}/"))
+        let lit = &pattern.as_bytes()[..nwl];
+        let path_b = path.as_bytes();
+        if path_b.len() < nwl {
+            return false;
+        }
+        let path_lit = &path_b[..nwl];
+        let same = if magic.icase {
+            path_lit.eq_ignore_ascii_case(lit)
+        } else {
+            path_lit == lit
+        };
+        if !same {
+            return false;
+        }
+        let pat_rest = &pattern[nwl..];
+        let path_rest = &path[nwl..];
+        wildmatch(pat_rest.as_bytes(), path_rest.as_bytes(), wm_flags)
     }
 }
 
@@ -255,4 +303,85 @@ fn normalize_relative_path_str(path: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// Current directory relative to `work_tree`, or `None` if cwd is the work tree root.
+#[must_use]
+pub fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
+    let cwd_canon = cwd.canonicalize().ok()?;
+    let wt_canon = work_tree.canonicalize().ok()?;
+
+    if cwd_canon == wt_canon {
+        return None;
+    }
+
+    cwd_canon
+        .strip_prefix(&wt_canon)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+/// Resolve a pathspec string to a path relative to the repository work tree.
+///
+/// `prefix` is the current directory relative to the work tree (no trailing slash),
+/// or `None` when cwd is the work tree root.
+#[must_use]
+pub fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
+    if pathspec == "." {
+        return prefix.unwrap_or("").to_owned();
+    }
+    if pathspec.contains("../") || pathspec.starts_with("../") {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let abs = cwd.join(pathspec);
+        let wt_canon = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+        let mut parts: Vec<std::ffi::OsString> = Vec::new();
+        for component in abs.components() {
+            use std::path::Component;
+            match component {
+                Component::ParentDir => {
+                    parts.pop();
+                }
+                Component::CurDir => {}
+                other => parts.push(other.as_os_str().to_os_string()),
+            }
+        }
+        let abs_norm: PathBuf = parts.iter().collect();
+        if let Ok(rel) = abs_norm.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+    }
+    if Path::new(pathspec).is_absolute() {
+        let abs = Path::new(pathspec);
+        let wt_canon = work_tree
+            .canonicalize()
+            .unwrap_or_else(|_| work_tree.to_path_buf());
+        let abs_canon = abs.canonicalize().unwrap_or_else(|_| abs.to_path_buf());
+        if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+        return pathspec.to_owned();
+    }
+
+    if pathspec.starts_with(':') {
+        if let Some(rest) = pathspec.strip_prefix(":/") {
+            return rest.to_owned();
+        }
+        if pathspec.len() > 1 && pathspec.as_bytes()[1] == b'(' {
+            if let Some(close) = pathspec[2..].find(')') {
+                let pattern = &pathspec[close + 3..];
+                return pattern.to_owned();
+            }
+        }
+        return pathspec.to_owned();
+    }
+
+    match prefix {
+        Some(p) if !p.is_empty() => PathBuf::from(p)
+            .join(pathspec)
+            .to_string_lossy()
+            .to_string(),
+        _ => pathspec.to_owned(),
+    }
 }

@@ -1088,7 +1088,7 @@ t6135-pathspec-with-attrs	t6	yes	37	5	32	false	ok	0
 t6135-rev-list-merge-order	t6	yes	31	31	0	true	ok	0
 t6136-pathspec-in-bare	t6	yes	3	3	0	true	ok	0
 t6136-rev-list-date-range	t6	yes	31	31	0	true	ok	0
-t6137-pathspec-wildcards-literal	t6	yes	25	7	18	false	ok	0
+t6137-pathspec-wildcards-literal	t6	yes	25	25	0	true	ok	0
 t6137-rev-parse-misc	t6	yes	34	31	3	false	ok	0
 t6138-rev-list-boundary	t6	yes	29	29	0	true	ok	0
 t6200-fmt-merge-msg	t6	skip	37	0	0	false	ok	0

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    92 |
+| Completed   |    93 |
 | In progress |     0 |
-| Remaining   |   675 |
+| Remaining   |   674 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6137-pathspec-wildcards-literal` — 25/25 tests pass (Git-style pathspec glob boundaries with `\` escapes; `add`/`commit` pathspec expansion uses `wildmatch`, ignores `.git` for `*`/`**`, bracket patterns also pick up a literal `[abc]` file; `commit` with pathspec builds partial trees: merge with `HEAD^{tree}` or subset tree on root commit)
 - `t1451-fsck-buffer` — 72/72 tests pass (`hash-object` now runs Git-style standalone fsck on commit/tag/tree buffers with matching `missingTree`/`badTree`/ident diagnostics and stderr ordering; new `grit_lib::fsck_standalone`)
 - `t5405-send-pack-rewind` — 3/3 tests pass (`fetch --update-head-ok` now skips the “checked out branch” refusal when updating `refs/heads/*` destinations, matching Git; harness CSV refreshed)
 - `t6200-fmt-merge-msg-extra` — 23/23 tests pass (`fmt-merge-msg`: multi-branch/tag titles, remote URL suffix, `--into-name`, `-m` override, `--log`/`--no-log`, stdin vs `-F`, FETCH_HEAD edge cases; harness CSV refreshed)

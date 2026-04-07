@@ -6,12 +6,36 @@ use crate::error::Result;
 use crate::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK, MODE_TREE,
 };
-use crate::objects::{serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
+use crate::objects::{parse_tree, serialize_tree, tree_entry_cmp, ObjectId, ObjectKind, TreeEntry};
 use crate::odb::Odb;
 
 /// Build and write tree object(s) from index entries and return the tree OID.
 ///
 /// The `prefix` argument optionally limits the write to a subtree path.
+/// Like [`write_tree_from_index`], but only index entries whose path is listed in `paths`
+/// (repository-relative, as stored in the index) are included in the tree.
+pub fn write_tree_from_index_subset(
+    odb: &Odb,
+    index: &Index,
+    paths: &std::collections::HashSet<Vec<u8>>,
+) -> Result<ObjectId> {
+    let _ = odb.write(ObjectKind::Blob, b"");
+
+    let mut entries: Vec<&IndexEntry> = index
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.stage() == 0
+                && !entry.intent_to_add()
+                && entry.mode != MODE_TREE
+                && paths.contains(&entry.path)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.stage().cmp(&b.stage())));
+    build_tree(odb, &entries, b"")
+}
+
+/// Build and write tree object(s) from index entries and return the tree OID.
 pub fn write_tree_from_index(odb: &Odb, index: &Index, prefix: &str) -> Result<ObjectId> {
     // Ensure implicit empty blobs used by intent-to-add entries exist.
     // These entries are skipped from tree construction below, but callers
@@ -94,6 +118,142 @@ fn build_tree(odb: &Odb, entries: &[&IndexEntry], dir_prefix: &[u8]) -> Result<O
 
     let data = serialize_tree(&tree_entries);
     odb.write(ObjectKind::Tree, &data)
+}
+
+/// Build a tree for a **partial** commit: paths listed in `paths_from_index` (repository-relative,
+/// UTF-8 path bytes) are taken from `index`; every other path is copied from `base_tree_oid`
+/// (typically `HEAD^{tree}`).
+///
+/// This matches Git's behaviour when committing with pathspecs while the index contains additional
+/// staged paths: the commit tree merges `HEAD` with only the pathspec-selected index updates.
+pub fn write_tree_partial_from_index(
+    odb: &Odb,
+    index: &Index,
+    base_tree_oid: &ObjectId,
+    paths_from_index: &std::collections::HashSet<Vec<u8>>,
+) -> Result<ObjectId> {
+    let _ = odb.write(ObjectKind::Blob, b"");
+
+    fn full_path(prefix: &[u8], name: &[u8]) -> Vec<u8> {
+        if prefix.is_empty() {
+            name.to_vec()
+        } else {
+            let mut p = prefix.to_vec();
+            p.push(b'/');
+            p.extend_from_slice(name);
+            p
+        }
+    }
+
+    fn subtree_affected(paths_from_index: &std::collections::HashSet<Vec<u8>>, dir: &[u8]) -> bool {
+        paths_from_index
+            .iter()
+            .any(|p| p == dir || (p.starts_with(dir) && p.get(dir.len()) == Some(&b'/')))
+    }
+
+    fn merge_level(
+        odb: &Odb,
+        index: &Index,
+        base_tree_oid: &ObjectId,
+        prefix: &[u8],
+        paths_from_index: &std::collections::HashSet<Vec<u8>>,
+    ) -> Result<ObjectId> {
+        let base_obj = odb.read(base_tree_oid)?;
+        let base_entries = parse_tree(&base_obj.data)?;
+
+        let mut by_name: BTreeMap<Vec<u8>, TreeEntry> = BTreeMap::new();
+        for te in base_entries {
+            let fp = full_path(prefix, &te.name);
+            if !subtree_affected(paths_from_index, &fp) {
+                by_name.insert(te.name.clone(), te);
+            } else if te.mode == MODE_TREE {
+                let sub_oid = merge_level(odb, index, &te.oid, &fp, paths_from_index)?;
+                by_name.insert(
+                    te.name.clone(),
+                    TreeEntry {
+                        mode: MODE_TREE,
+                        name: te.name,
+                        oid: sub_oid,
+                    },
+                );
+            } else if paths_from_index.contains(&fp) {
+                if let Some(ie) = index.entries.iter().find(|e| {
+                    e.stage() == 0 && !e.intent_to_add() && e.mode != MODE_TREE && e.path == fp
+                }) {
+                    by_name.insert(
+                        te.name.clone(),
+                        TreeEntry {
+                            mode: canonicalize_blob_mode(ie.mode),
+                            name: te.name,
+                            oid: ie.oid,
+                        },
+                    );
+                }
+                // No index entry: path was removed — omit from the merged tree.
+            } else {
+                by_name.insert(te.name.clone(), te);
+            }
+        }
+
+        for ie in &index.entries {
+            if ie.stage() != 0 || ie.intent_to_add() || ie.mode == MODE_TREE {
+                continue;
+            }
+            if !paths_from_index.contains(&ie.path) {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                ie.path.as_slice()
+            } else if ie.path.starts_with(prefix) && ie.path.get(prefix.len()) == Some(&b'/') {
+                &ie.path[prefix.len() + 1..]
+            } else {
+                continue;
+            };
+            if rel.is_empty() {
+                continue;
+            }
+            if let Some(slash) = rel.iter().position(|&b| b == b'/') {
+                let dir_name = rel[..slash].to_vec();
+                if by_name.contains_key(&dir_name) {
+                    continue;
+                }
+                let sub_prefix = full_path(prefix, &dir_name);
+                let sub_oid =
+                    write_tree_from_index(odb, index, &String::from_utf8_lossy(&sub_prefix))?;
+                by_name.insert(
+                    dir_name.clone(),
+                    TreeEntry {
+                        mode: MODE_TREE,
+                        name: dir_name,
+                        oid: sub_oid,
+                    },
+                );
+            } else {
+                let name = rel.to_vec();
+                if !by_name.contains_key(&name) {
+                    by_name.insert(
+                        name.clone(),
+                        TreeEntry {
+                            mode: canonicalize_blob_mode(ie.mode),
+                            name,
+                            oid: ie.oid,
+                        },
+                    );
+                }
+            }
+        }
+
+        let mut out: Vec<TreeEntry> = by_name.into_values().collect();
+        out.sort_by(|a, b| {
+            let a_tree = a.mode == MODE_TREE;
+            let b_tree = b.mode == MODE_TREE;
+            tree_entry_cmp(&a.name, a_tree, &b.name, b_tree)
+        });
+        let data = serialize_tree(&out);
+        odb.write(ObjectKind::Tree, &data)
+    }
+
+    merge_level(odb, index, base_tree_oid, b"", paths_from_index)
 }
 
 fn canonicalize_blob_mode(mode: u32) -> u32 {

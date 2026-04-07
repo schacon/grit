@@ -16,6 +16,7 @@ use grit_lib::objects::ObjectId;
 use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
+use grit_lib::wildmatch::wildmatch;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -157,7 +158,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Resolve the current working directory relative to the worktree
     let cwd = std::env::current_dir()?;
-    let prefix = pathdiff(&cwd, work_tree);
+    let prefix = crate::pathspec::pathdiff(&cwd, work_tree);
     die_if_in_unpopulated_submodule(&index, prefix.as_deref());
 
     // Validate empty string pathspecs
@@ -260,7 +261,8 @@ pub fn run(mut args: Args) -> Result<()> {
         let mut had_errors = false;
         let mut had_ignored = false;
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix.as_deref());
+            let resolved =
+                crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix.as_deref());
             // Expand glob patterns (e.g. "file?.t", "*.c") against the working tree.
             let expanded = expand_glob_pathspec(&resolved, work_tree);
             for resolved in &expanded {
@@ -389,7 +391,7 @@ fn run_refresh(
         }
     } else {
         for pathspec in &args.pathspec {
-            let resolved = resolve_pathspec(pathspec, work_tree, prefix);
+            let resolved = crate::pathspec::resolve_pathspec(pathspec, work_tree, prefix);
             let found = index.entries.iter_mut().any(|ie| {
                 let path_str = String::from_utf8_lossy(&ie.path);
                 if path_str == resolved || path_str.starts_with(&format!("{resolved}/")) {
@@ -1279,21 +1281,6 @@ fn walk_directory(
     Ok(())
 }
 
-/// Compute path relative to work tree from cwd.
-fn pathdiff(cwd: &Path, work_tree: &Path) -> Option<String> {
-    let cwd_canon = cwd.canonicalize().ok()?;
-    let wt_canon = work_tree.canonicalize().ok()?;
-
-    if cwd_canon == wt_canon {
-        return None;
-    }
-
-    cwd_canon
-        .strip_prefix(&wt_canon)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
-}
-
 /// Exit when running inside an unpopulated submodule worktree path.
 ///
 /// Git discovers the superproject when invoked from an unpopulated submodule
@@ -1347,136 +1334,12 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Resolve a pathspec relative to the prefix (cwd within worktree).
-fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
-    if pathspec == "." {
-        return prefix.unwrap_or("").to_owned();
-    }
-    // Normalize relative paths with .. by converting to absolute first
-    if pathspec.contains("../") || pathspec.starts_with("../") {
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let abs = cwd.join(pathspec);
-        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
-        // Normalize abs without requiring existence
-        let mut parts: Vec<std::ffi::OsString> = Vec::new();
-        for component in abs.components() {
-            use std::path::Component;
-            match component {
-                Component::ParentDir => {
-                    parts.pop();
-                }
-                Component::CurDir => {}
-                other => parts.push(other.as_os_str().to_os_string()),
-            }
-        }
-        let abs_norm: std::path::PathBuf = parts.iter().collect();
-        if let Ok(rel) = abs_norm.strip_prefix(&wt_canon) {
-            return rel.to_string_lossy().to_string();
-        }
-    }
-    // Handle absolute paths: make relative to work tree
-    if std::path::Path::new(pathspec).is_absolute() {
-        let abs = std::path::Path::new(pathspec);
-        // Try to strip work tree prefix
-        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
-        let abs_canon = abs.canonicalize().unwrap_or(abs.to_path_buf());
-        if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
-            return rel.to_string_lossy().to_string();
-        }
-        // Not under work tree — error will be caught later
-        return pathspec.to_owned();
-    }
-
-    // Magic pathspecs starting with ":" should not have prefix prepended.
-    // ":/<pattern>" means match from the root of the working tree.
-    // ":(magic)pattern" means use magic signature parsing.
-    if pathspec.starts_with(':') {
-        // ":/<pattern>" — top-level pathspec from repo root
-        if let Some(rest) = pathspec.strip_prefix(":/") {
-            // Treat the pattern as a path from the repo root
-            return rest.to_owned();
-        }
-        // ":(magic)pattern" — long-form magic, extract the pattern part
-        if pathspec.len() > 1 && pathspec.as_bytes()[1] == b'(' {
-            if let Some(close) = pathspec[2..].find(')') {
-                let pattern = &pathspec[close + 3..];
-                return pattern.to_owned();
-            }
-        }
-        // Other colon-prefixed — return as-is
-        return pathspec.to_owned();
-    }
-
-    match prefix {
-        Some(p) if !p.is_empty() => {
-            let combined = PathBuf::from(p).join(pathspec);
-            combined.to_string_lossy().to_string()
-        }
-        _ => pathspec.to_owned(),
-    }
-}
-
-/// Check whether a string contains glob metacharacters.
-fn has_glob_chars(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[')
-}
-
-/// Simple glob pattern matching against a single path component name.
-fn glob_matches(pattern: &str, name: &str) -> bool {
-    glob_match_inner(pattern.as_bytes(), name.as_bytes())
-}
-
-fn glob_match_inner(pat: &[u8], text: &[u8]) -> bool {
-    let mut pi = 0;
-    let mut ti = 0;
-    let mut star_pi = usize::MAX;
-    let mut star_ti = 0;
-    while ti < text.len() {
-        if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == text[ti]) {
-            pi += 1;
-            ti += 1;
-        } else if pi < pat.len() && pat[pi] == b'[' {
-            // bracket expression
-            if let Some(end) = pat[pi..].iter().position(|&b| b == b']') {
-                let inside = &pat[pi + 1..pi + end];
-                let matches_bracket = inside.contains(&text[ti]);
-                if matches_bracket {
-                    pi = pi + end + 1;
-                    ti += 1;
-                } else if star_pi != usize::MAX {
-                    pi = star_pi + 1;
-                    star_ti += 1;
-                    ti = star_ti;
-                } else {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        } else if pi < pat.len() && pat[pi] == b'*' {
-            star_pi = pi;
-            star_ti = ti;
-            pi += 1;
-        } else if star_pi != usize::MAX {
-            pi = star_pi + 1;
-            star_ti += 1;
-            ti = star_ti;
-        } else {
-            return false;
-        }
-    }
-    while pi < pat.len() && pat[pi] == b'*' {
-        pi += 1;
-    }
-    pi == pat.len()
-}
-
 /// Expand a pathspec containing glob characters against the working tree.
 ///
 /// If the pathspec does not contain glob characters, returns it unchanged.
 /// Otherwise, matches it against files/dirs in the working tree directory.
 fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
-    if !has_glob_chars(pathspec) {
+    if !crate::pathspec::has_glob_chars(pathspec) {
         return vec![pathspec.to_owned()];
     }
 
@@ -1499,7 +1362,10 @@ fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if glob_matches(pattern, &name_str) {
+            if name_str == ".git" {
+                continue;
+            }
+            if wildmatch(pattern.as_bytes(), name_str.as_bytes(), 0) {
                 let rel = if dir_prefix.is_empty() {
                     name_str.to_string()
                 } else {
@@ -1507,6 +1373,19 @@ fn expand_glob_pathspec(pathspec: &str, work_tree: &Path) -> Vec<String> {
                 };
                 matches.push(rel);
             }
+        }
+    }
+
+    // Git pathspec: a bracket pattern like `[abc]` matches one character class member *and*
+    // the literal filename `[abc]` when present (wildmatch alone does not match that literal).
+    if pattern.contains('[') && fs::symlink_metadata(search_dir.join(pattern)).is_ok() {
+        let rel = if dir_prefix.is_empty() {
+            pattern.to_string()
+        } else {
+            format!("{dir_prefix}/{pattern}")
+        };
+        if !matches.contains(&rel) {
+            matches.push(rel);
         }
     }
 
