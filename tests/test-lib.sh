@@ -782,6 +782,15 @@ test_cmp () {
 	diff -u "$1" "$2"
 }
 
+test_cmp_sorted () {
+	sort <"$1" >"$1.sorted" &&
+	sort <"$2" >"$2.sorted" &&
+	test_cmp "$1.sorted" "$2.sorted"
+	local rc=$?
+	rm -f "$1.sorted" "$2.sorted"
+	return $rc
+}
+
 # ── core test functions ───────────────────────────────────────────────────────
 
 test_expect_success () {

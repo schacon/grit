@@ -1,9 +1,14 @@
 # Test Results
 
-**Updated:** 2026-04-06
+**Updated:** 2026-04-07
 
-- `./scripts/run-tests.sh t6601-path-walk.sh`: 1/15 passing (baseline for newly claimed task; currently blocked by missing `test-tool path-walk` support).
-- `GUST_BIN=/workspace/target/release/grit bash tests/t6601-path-walk.sh`: 1/15 passing (direct baseline; first hard failure is `error: test-tool: unknown subcommand 'path-walk'`).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6601-path-walk.sh`: 15/15 passing (direct validation after implementing `test-tool path-walk` with commit/tag/tree/blob path batching, rev-spec parsing (`--all`, `--branches`, `--not`, `--boundary`, `--indexed-objects`), sparse pattern filtering (`--stdin-pl`), and top-level `test-tool -C` handling; fixed ordering/duplication edge cases for mixed `--branches --indexed-objects` by deferring index-only blobs until after tree walk ownership is established).
+- `./scripts/run-tests.sh t6601-path-walk.sh`: 15/15 passing (harness validation; TSV updated to full pass).
+- `./scripts/run-tests.sh t6600-test-reach.sh`: 17/47 passing (targeted rev-machinery regression snapshot after test-tool/path-walk updates; remains partial with no new pass claim).
+- `./scripts/run-tests.sh t0066-dir-iterator.sh`: 10/10 passing (test-tool regression check; still fully passing after `main.rs` test-tool dispatch updates).
+- `cargo fmt`: passing.
+- `cargo clippy --fix --allow-dirty`: passing (unrelated clippy edits in `grit-lib/src/state.rs`, `grit/src/commands/blame.rs`, `grit/src/commands/config.rs`, and `grit/src/commands/update_index.rs` were reverted).
+- `cargo test -p grit-lib --lib`: 98/98 passing.
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6437-submodule-merge.sh`: 22/22 passing (direct validation after submodule-focused merge behavior fixes and test expectation alignment for the merge-abort directory/submodule case).
 - `./scripts/run-tests.sh t6437-submodule-merge.sh`: 22/22 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge regression check after final `t6437` updates).

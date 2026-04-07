@@ -744,7 +744,7 @@ commit → check it off → move on.
 - [x] `t6436-merge-overwrite` ████████████████████ 18/18 (0 left) — git-merge
 
 - [x] `t6003-rev-list-topo-order` ████████████████████ 36/36 (0 left) — Tests git rev-list --topo-order functionality
-- [~] `t6601-path-walk` ░░░░░░░░░░░░░░░░░░░░ 0/15 (15 left) — direct path-walk API tests
+- [x] `t6601-path-walk` ████████████████████ 15/15 (0 left) — direct path-walk API tests
 - [x] `t6437-submodule-merge` ████████████████████ 22/22 (0 left) — merging with submodules
 - [x] `t6006-rev-list-format` ████████████████████ 80/80 (0 left) — git rev-list --pretty=format test
 - [ ] `t6422-merge-rename-corner-cases` ██████░░░░░░░░░░░░░░ 9/26 (17 left) — recursive merge corner cases w/ renames but not criss-crosses

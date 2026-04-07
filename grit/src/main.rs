@@ -7,6 +7,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Args, Command, FromArgMatches, Parser};
+use grit_lib::objects::{ObjectId, ObjectKind};
 use std::path::{Path, PathBuf};
 
 mod commands;
@@ -490,6 +491,933 @@ fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
         return Ok(());
     }
     dispatch("update-ref", &args, &GlobalOpts::default())
+}
+
+#[derive(Debug, Clone)]
+struct PathWalkOptions {
+    blobs: bool,
+    commits: bool,
+    tags: bool,
+    trees: bool,
+    prune_all_uninteresting: bool,
+    edge_aggressive: bool,
+    stdin_pl: bool,
+    chdir: Option<PathBuf>,
+}
+
+impl Default for PathWalkOptions {
+    fn default() -> Self {
+        Self {
+            blobs: true,
+            commits: true,
+            tags: true,
+            trees: true,
+            prune_all_uninteresting: false,
+            edge_aggressive: false,
+            stdin_pl: false,
+            chdir: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PathWalkBatch {
+    path: String,
+    oids: Vec<ObjectId>,
+    object_type: ObjectKind,
+    maybe_interesting: bool,
+}
+
+fn parse_test_tool_path_walk_args(rest: &[String]) -> Result<(PathWalkOptions, Vec<String>)> {
+    let mut opts = PathWalkOptions::default();
+    let mut idx = 1usize;
+    let mut seen_revision_separator = false;
+
+    while idx < rest.len() {
+        let arg = &rest[idx];
+        if arg == "--" {
+            seen_revision_separator = true;
+            idx += 1;
+            break;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        if arg == "-C" {
+            let Some(next) = rest.get(idx + 1) else {
+                bail!("usage: test-tool path-walk <options> -- <revision-options>");
+            };
+            opts.chdir = Some(PathBuf::from(next));
+            idx += 2;
+            continue;
+        }
+        if arg == "--blobs" {
+            opts.blobs = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-blobs" {
+            opts.blobs = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--commits" {
+            opts.commits = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-commits" {
+            opts.commits = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--tags" {
+            opts.tags = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-tags" {
+            opts.tags = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--trees" {
+            opts.trees = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-trees" {
+            opts.trees = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--prune" {
+            opts.prune_all_uninteresting = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-prune" {
+            opts.prune_all_uninteresting = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--edge-aggressive" {
+            opts.edge_aggressive = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--no-edge-aggressive" {
+            opts.edge_aggressive = false;
+            idx += 1;
+            continue;
+        }
+        if arg == "--stdin-pl" {
+            opts.stdin_pl = true;
+            idx += 1;
+            continue;
+        }
+        if arg == "--indexed-objects" || arg == "--branches" {
+            break;
+        }
+        break;
+    }
+
+    if !seen_revision_separator {
+        let tail_has_separator = rest[idx..].iter().any(|arg| arg == "--");
+        if !tail_has_separator {
+            bail!("usage: test-tool path-walk <options> -- <revision-options>");
+        }
+    }
+
+    let revision_args = if seen_revision_separator {
+        rest[idx..].to_vec()
+    } else {
+        let mut args = Vec::new();
+        let mut sep_seen = false;
+        for token in &rest[idx..] {
+            if token == "--" && !sep_seen {
+                sep_seen = true;
+                continue;
+            }
+            if sep_seen {
+                args.push(token.clone());
+            }
+        }
+        args
+    };
+
+    if revision_args.is_empty() {
+        bail!("usage: test-tool path-walk <options> -- <revision-options>");
+    }
+
+    Ok((opts, revision_args))
+}
+
+fn parse_sparse_pattern_list_from_stdin() -> Result<Vec<String>> {
+    use std::io::Read;
+    let mut buf = String::new();
+    std::io::stdin().read_to_string(&mut buf)?;
+    let patterns = buf
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+    Ok(patterns)
+}
+
+fn path_matches_sparse_patterns_for_walk(path: &str, patterns: &[String]) -> bool {
+    if path.is_empty() {
+        return true;
+    }
+    let mut included = false;
+    for raw_pattern in patterns {
+        let (negated, core_pattern) = if let Some(rest) = raw_pattern.strip_prefix('!') {
+            (true, rest)
+        } else {
+            (false, raw_pattern.as_str())
+        };
+        let normalized = core_pattern.strip_prefix('/').unwrap_or(core_pattern);
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let matches =
+            if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
+                crate::pathspec::pathspec_matches(normalized, path)
+            } else if let Some(prefix) = normalized.strip_suffix('/') {
+                path == prefix || path.starts_with(&format!("{prefix}/"))
+            } else {
+                crate::pathspec::pathspec_matches(normalized, path)
+            };
+        if matches {
+            included = !negated;
+        }
+    }
+    included
+}
+
+#[derive(Debug, Clone)]
+struct PathWalkRevisionArgs {
+    positive: Vec<String>,
+    negative: Vec<String>,
+    all_refs: bool,
+    include_branches: bool,
+    include_indexed_objects: bool,
+    boundary: bool,
+}
+
+fn parse_revision_specs_for_path_walk(revision_args: &[String]) -> PathWalkRevisionArgs {
+    let mut positive = Vec::new();
+    let mut negative = Vec::new();
+    let mut not_mode = false;
+    let mut all_refs = false;
+    let mut include_branches = false;
+    let mut include_indexed_objects = false;
+    let mut boundary = false;
+
+    for token in revision_args {
+        if token == "--not" {
+            not_mode = !not_mode;
+            continue;
+        }
+        if token == "--all" {
+            all_refs = true;
+            continue;
+        }
+        if token == "--branches" {
+            include_branches = true;
+            continue;
+        }
+        if token == "--indexed-objects" {
+            include_indexed_objects = true;
+            continue;
+        }
+        if token == "--boundary" {
+            boundary = true;
+            continue;
+        }
+        let (mut pos, mut neg) = grit_lib::rev_list::split_revision_token(token);
+        if not_mode {
+            std::mem::swap(&mut pos, &mut neg);
+        }
+        positive.extend(pos);
+        negative.extend(neg);
+    }
+
+    PathWalkRevisionArgs {
+        positive,
+        negative,
+        all_refs,
+        include_branches,
+        include_indexed_objects,
+        boundary,
+    }
+}
+
+fn object_kind_label(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Commit => "commit",
+        ObjectKind::Tree => "tree",
+        ObjectKind::Blob => "blob",
+        ObjectKind::Tag => "tag",
+    }
+}
+
+fn path_walk_type_priority(kind: ObjectKind) -> u8 {
+    match kind {
+        ObjectKind::Tag => 0,
+        ObjectKind::Blob => 1,
+        ObjectKind::Tree => 2,
+        ObjectKind::Commit => 3,
+    }
+}
+
+fn push_oid_to_batch(
+    batches: &mut std::collections::BTreeMap<String, PathWalkBatch>,
+    path_queue: &mut Vec<String>,
+    pushed_paths: &mut std::collections::HashSet<String>,
+    path: String,
+    oid: ObjectId,
+    object_type: ObjectKind,
+    interesting: bool,
+) {
+    let entry = batches
+        .entry(path.clone())
+        .or_insert_with(|| PathWalkBatch {
+            path: path.clone(),
+            oids: Vec::new(),
+            object_type,
+            maybe_interesting: false,
+        });
+    if entry.object_type != object_type {
+        return;
+    }
+    entry.oids.push(oid);
+    entry.maybe_interesting |= interesting;
+    if pushed_paths.insert(path.clone()) {
+        path_queue.push(path);
+    }
+}
+
+fn add_oid_to_batch(
+    batches: &mut std::collections::BTreeMap<String, PathWalkBatch>,
+    path: String,
+    oid: ObjectId,
+    object_type: ObjectKind,
+    interesting: bool,
+) {
+    let entry = batches
+        .entry(path.clone())
+        .or_insert_with(|| PathWalkBatch {
+            path,
+            oids: Vec::new(),
+            object_type,
+            maybe_interesting: false,
+        });
+    if entry.object_type != object_type {
+        return;
+    }
+    entry.oids.push(oid);
+    entry.maybe_interesting |= interesting;
+}
+
+fn pop_next_path(
+    path_queue: &mut Vec<String>,
+    batches: &std::collections::BTreeMap<String, PathWalkBatch>,
+) -> Option<String> {
+    let mut best_idx: Option<usize> = None;
+    for (idx, path) in path_queue.iter().enumerate() {
+        let Some(batch) = batches.get(path) else {
+            continue;
+        };
+        let key = (path_walk_type_priority(batch.object_type), path.as_str());
+        if let Some(current_best_idx) = best_idx {
+            let current_best_path = &path_queue[current_best_idx];
+            if let Some(current_best_batch) = batches.get(current_best_path) {
+                let current_key = (
+                    path_walk_type_priority(current_best_batch.object_type),
+                    current_best_path.as_str(),
+                );
+                if key < current_key {
+                    best_idx = Some(idx);
+                }
+            } else {
+                best_idx = Some(idx);
+            }
+        } else {
+            best_idx = Some(idx);
+        }
+    }
+    best_idx.map(|idx| path_queue.remove(idx))
+}
+
+fn peel_to_commit_for_path_walk(
+    repo: &grit_lib::repo::Repository,
+    mut oid: ObjectId,
+) -> Result<Option<ObjectId>> {
+    loop {
+        let object = repo.odb.read(&oid)?;
+        match object.kind {
+            ObjectKind::Commit => return Ok(Some(oid)),
+            ObjectKind::Tag => {
+                let parsed = grit_lib::objects::parse_tag(&object.data)?;
+                oid = parsed.object;
+            }
+            _ => return Ok(None),
+        }
+    }
+}
+
+fn collect_uninteresting_tree_objects(
+    repo: &grit_lib::repo::Repository,
+    tree_oid: ObjectId,
+    seen_trees: &mut std::collections::HashSet<ObjectId>,
+    out: &mut std::collections::HashSet<ObjectId>,
+) -> Result<()> {
+    if !seen_trees.insert(tree_oid) {
+        return Ok(());
+    }
+    let object = repo.odb.read(&tree_oid)?;
+    if object.kind != ObjectKind::Tree {
+        return Ok(());
+    }
+    out.insert(tree_oid);
+
+    let entries = grit_lib::objects::parse_tree(&object.data)?;
+    for entry in entries {
+        if entry.mode == 0o160000 {
+            continue;
+        }
+        out.insert(entry.oid);
+        if entry.mode == 0o040000 {
+            collect_uninteresting_tree_objects(repo, entry.oid, seen_trees, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_test_tool_path_walk(rest: &[String]) -> Result<()> {
+    let (opts, revision_args) = parse_test_tool_path_walk_args(rest)?;
+
+    let original_dir = std::env::current_dir()?;
+    if let Some(path) = opts.chdir.as_ref() {
+        std::env::set_current_dir(path)?;
+    }
+
+    let result = (|| -> Result<()> {
+        let repo = grit_lib::repo::Repository::discover(None)?;
+
+        let sparse_patterns = if opts.stdin_pl {
+            Some(parse_sparse_pattern_list_from_stdin()?)
+        } else {
+            None
+        };
+
+        let parsed_args = parse_revision_specs_for_path_walk(&revision_args);
+
+        let mut commit_positive_starts = Vec::new();
+        let mut commit_positive_seen = std::collections::HashSet::new();
+        let mut pending_objects = Vec::new();
+        let mut pending_seen = std::collections::HashSet::new();
+
+        for spec in &parsed_args.positive {
+            let oid = grit_lib::rev_parse::resolve_revision(&repo, spec)?;
+            if pending_seen.insert(oid) {
+                pending_objects.push(oid);
+            }
+            if let Some(commit_oid) = peel_to_commit_for_path_walk(&repo, oid)? {
+                if commit_positive_seen.insert(commit_oid) {
+                    commit_positive_starts.push(commit_oid);
+                }
+            }
+        }
+
+        if parsed_args.all_refs {
+            for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/")? {
+                if pending_seen.insert(oid) {
+                    pending_objects.push(oid);
+                }
+                if let Some(commit_oid) = peel_to_commit_for_path_walk(&repo, oid)? {
+                    if commit_positive_seen.insert(commit_oid) {
+                        commit_positive_starts.push(commit_oid);
+                    }
+                }
+            }
+        } else if parsed_args.include_branches {
+            for (_, oid) in grit_lib::refs::list_refs(&repo.git_dir, "refs/heads/")? {
+                if pending_seen.insert(oid) {
+                    pending_objects.push(oid);
+                }
+                if let Some(commit_oid) = peel_to_commit_for_path_walk(&repo, oid)? {
+                    if commit_positive_seen.insert(commit_oid) {
+                        commit_positive_starts.push(commit_oid);
+                    }
+                }
+            }
+        }
+
+        let mut commit_negative_starts = Vec::new();
+        let mut commit_negative_seen = std::collections::HashSet::new();
+        for spec in &parsed_args.negative {
+            let oid = grit_lib::rev_parse::resolve_revision(&repo, spec)?;
+            if let Some(commit_oid) = peel_to_commit_for_path_walk(&repo, oid)? {
+                if commit_negative_seen.insert(commit_oid) {
+                    commit_negative_starts.push(commit_oid);
+                }
+            }
+        }
+
+        if commit_positive_starts.is_empty()
+            && pending_objects.is_empty()
+            && !parsed_args.include_indexed_objects
+        {
+            return Err(
+                grit_lib::error::Error::InvalidRef("no revisions specified".to_owned()).into(),
+            );
+        }
+
+        let mut included_commits = Vec::new();
+        let mut included_commit_set = std::collections::HashSet::new();
+        let mut boundary_commits = Vec::new();
+        let mut boundary_commit_set = std::collections::HashSet::new();
+        if !commit_positive_starts.is_empty() {
+            let rev_opts = grit_lib::rev_list::RevListOptions {
+                boundary: parsed_args.boundary,
+                ..grit_lib::rev_list::RevListOptions::default()
+            };
+            let rev_result = grit_lib::rev_list::rev_list(
+                &repo,
+                &commit_positive_starts
+                    .iter()
+                    .map(ObjectId::to_hex)
+                    .collect::<Vec<_>>(),
+                &commit_negative_starts
+                    .iter()
+                    .map(ObjectId::to_hex)
+                    .collect::<Vec<_>>(),
+                &rev_opts,
+            )?;
+            included_commits = rev_result.commits;
+            included_commit_set = included_commits.iter().copied().collect();
+            boundary_commits = rev_result.boundary_commits;
+            boundary_commit_set = boundary_commits.iter().copied().collect();
+        }
+
+        let excluded_commit_set: std::collections::HashSet<ObjectId> =
+            if commit_negative_starts.is_empty() {
+                std::collections::HashSet::new()
+            } else {
+                let excluded_result = grit_lib::rev_list::rev_list(
+                    &repo,
+                    &commit_negative_starts
+                        .iter()
+                        .map(ObjectId::to_hex)
+                        .collect::<Vec<_>>(),
+                    &[],
+                    &grit_lib::rev_list::RevListOptions::default(),
+                )?;
+                excluded_result.commits.into_iter().collect()
+            };
+
+        let mut uninteresting_objects = std::collections::HashSet::new();
+        let mut seen_uninteresting_trees = std::collections::HashSet::new();
+        for oid in &excluded_commit_set {
+            let object = repo.odb.read(oid)?;
+            if object.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = grit_lib::objects::parse_commit(&object.data)?;
+            collect_uninteresting_tree_objects(
+                &repo,
+                commit.tree,
+                &mut seen_uninteresting_trees,
+                &mut uninteresting_objects,
+            )?;
+        }
+
+        let mut path_batches: std::collections::BTreeMap<String, PathWalkBatch> =
+            std::collections::BTreeMap::new();
+        let mut path_queue = Vec::new();
+        let mut pushed_paths = std::collections::HashSet::new();
+        let mut seen_objects = std::collections::HashSet::new();
+        let mut deferred_index_paths = Vec::new();
+        let mut deferred_index_path_set = std::collections::HashSet::new();
+
+        let mut root_tree_oids = Vec::new();
+        for oid in &included_commits {
+            let object = repo.odb.read(oid)?;
+            if object.kind != ObjectKind::Commit {
+                continue;
+            }
+            let commit = grit_lib::objects::parse_commit(&object.data)?;
+            if seen_objects.insert(commit.tree) {
+                root_tree_oids.push((commit.tree, !uninteresting_objects.contains(&commit.tree)));
+            }
+        }
+
+        if parsed_args.boundary {
+            for oid in &boundary_commits {
+                let object = repo.odb.read(oid)?;
+                if object.kind != ObjectKind::Commit {
+                    continue;
+                }
+                let commit = grit_lib::objects::parse_commit(&object.data)?;
+                if seen_objects.insert(commit.tree) {
+                    root_tree_oids.push((commit.tree, false));
+                }
+            }
+        } else if opts.edge_aggressive {
+            for oid in &commit_negative_starts {
+                let object = repo.odb.read(oid)?;
+                if object.kind != ObjectKind::Commit {
+                    continue;
+                }
+                let commit = grit_lib::objects::parse_commit(&object.data)?;
+                if seen_objects.insert(commit.tree) {
+                    root_tree_oids.push((commit.tree, false));
+                }
+            }
+        }
+
+        for pending_oid in pending_objects {
+            if seen_objects.contains(&pending_oid) {
+                continue;
+            }
+            let mut current_oid = pending_oid;
+            loop {
+                let object = repo.odb.read(&current_oid)?;
+                match object.kind {
+                    ObjectKind::Tag => {
+                        if seen_objects.insert(current_oid) && opts.tags {
+                            push_oid_to_batch(
+                                &mut path_batches,
+                                &mut path_queue,
+                                &mut pushed_paths,
+                                "/tags".to_owned(),
+                                current_oid,
+                                ObjectKind::Tag,
+                                true,
+                            );
+                        }
+                        let parsed_tag = grit_lib::objects::parse_tag(&object.data)?;
+                        current_oid = parsed_tag.object;
+                    }
+                    ObjectKind::Blob => {
+                        if seen_objects.insert(current_oid) && opts.blobs {
+                            push_oid_to_batch(
+                                &mut path_batches,
+                                &mut path_queue,
+                                &mut pushed_paths,
+                                "/tagged-blobs".to_owned(),
+                                current_oid,
+                                ObjectKind::Blob,
+                                !uninteresting_objects.contains(&current_oid),
+                            );
+                        }
+                        break;
+                    }
+                    ObjectKind::Tree => {
+                        if seen_objects.insert(current_oid) {
+                            root_tree_oids
+                                .push((current_oid, !uninteresting_objects.contains(&current_oid)));
+                        }
+                        break;
+                    }
+                    ObjectKind::Commit => break,
+                }
+            }
+        }
+
+        for (tree_oid, interesting) in root_tree_oids {
+            push_oid_to_batch(
+                &mut path_batches,
+                &mut path_queue,
+                &mut pushed_paths,
+                String::new(),
+                tree_oid,
+                ObjectKind::Tree,
+                interesting,
+            );
+        }
+
+        if parsed_args.include_indexed_objects && (opts.trees || opts.blobs) {
+            let index = grit_lib::index::Index::load(&repo.index_path())?;
+            let mut index_files: std::collections::BTreeMap<String, (ObjectId, u32)> =
+                std::collections::BTreeMap::new();
+            for entry in &index.entries {
+                if entry.stage() != 0 || entry.mode == grit_lib::index::MODE_GITLINK {
+                    continue;
+                }
+                let path = String::from_utf8_lossy(&entry.path).to_string();
+                if sparse_patterns
+                    .as_deref()
+                    .is_none_or(|patterns| path_matches_sparse_patterns_for_walk(&path, patterns))
+                    && opts.blobs
+                    && seen_objects.insert(entry.oid)
+                {
+                    add_oid_to_batch(
+                        &mut path_batches,
+                        path.clone(),
+                        entry.oid,
+                        ObjectKind::Blob,
+                        true,
+                    );
+                    if deferred_index_path_set.insert(path.clone()) {
+                        deferred_index_paths.push(path.clone());
+                    }
+                }
+                index_files.insert(path, (entry.oid, entry.mode));
+            }
+
+            if opts.trees {
+                let mut head_files = std::collections::BTreeMap::new();
+                let mut head_dirs = std::collections::BTreeMap::new();
+                let head_commit = grit_lib::refs::resolve_ref(&repo.git_dir, "HEAD")
+                    .ok()
+                    .and_then(|oid| peel_to_commit_for_path_walk(&repo, oid).ok().flatten());
+                if let Some(head_oid) = head_commit {
+                    let object = repo.odb.read(&head_oid)?;
+                    if object.kind == ObjectKind::Commit {
+                        let commit = grit_lib::objects::parse_commit(&object.data)?;
+                        let mut stack = vec![(String::new(), commit.tree)];
+                        while let Some((prefix, tree_oid)) = stack.pop() {
+                            let tree_obj = repo.odb.read(&tree_oid)?;
+                            if tree_obj.kind != ObjectKind::Tree {
+                                continue;
+                            }
+                            if !prefix.is_empty() {
+                                head_dirs.insert(prefix.clone(), tree_oid);
+                            }
+                            for entry in grit_lib::objects::parse_tree(&tree_obj.data)? {
+                                if entry.mode == grit_lib::index::MODE_GITLINK {
+                                    continue;
+                                }
+                                let name = String::from_utf8_lossy(&entry.name).to_string();
+                                let path = if prefix.is_empty() {
+                                    name
+                                } else {
+                                    format!("{prefix}/{name}")
+                                };
+                                if entry.mode == 0o040000 {
+                                    stack.push((path, entry.oid));
+                                } else {
+                                    head_files.insert(path, (entry.oid, entry.mode));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut candidate_dirs = std::collections::BTreeSet::new();
+                for path in index_files.keys() {
+                    let mut current = std::path::Path::new(path).parent();
+                    while let Some(parent) = current {
+                        let raw = parent.to_string_lossy().to_string();
+                        if raw.is_empty() || raw == "." {
+                            break;
+                        }
+                        candidate_dirs.insert(raw.clone());
+                        current = parent.parent();
+                    }
+                }
+
+                for dir in candidate_dirs {
+                    let prefix = format!("{dir}/");
+                    let mut unchanged = true;
+                    for (path, (oid, mode)) in index_files
+                        .iter()
+                        .filter(|(path, _)| path.starts_with(&prefix))
+                    {
+                        match head_files.get(path) {
+                            Some((head_oid, head_mode)) if head_oid == oid && head_mode == mode => {
+                            }
+                            _ => {
+                                unchanged = false;
+                                break;
+                            }
+                        }
+                    }
+                    if unchanged {
+                        for path in head_files.keys().filter(|path| path.starts_with(&prefix)) {
+                            if !index_files.contains_key(path) {
+                                unchanged = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !unchanged {
+                        continue;
+                    }
+                    let Some(tree_oid) = head_dirs.get(&dir).copied() else {
+                        continue;
+                    };
+                    if !seen_objects.insert(tree_oid) {
+                        continue;
+                    }
+                    add_oid_to_batch(
+                        &mut path_batches,
+                        format!("{dir}/"),
+                        tree_oid,
+                        ObjectKind::Tree,
+                        true,
+                    );
+                    let deferred_path = format!("{dir}/");
+                    if deferred_index_path_set.insert(deferred_path.clone()) {
+                        deferred_index_paths.push(deferred_path);
+                    }
+                }
+            }
+        }
+
+        let mut batch_nr = 0u64;
+        let mut commit_count = 0usize;
+        let mut tree_count = 0usize;
+        let mut blob_count = 0usize;
+        let mut tag_count = 0usize;
+
+        if opts.commits {
+            let mut commit_batch = included_commits.clone();
+            if parsed_args.boundary {
+                commit_batch.extend(boundary_commits.iter().copied());
+            }
+            commit_batch.sort();
+            commit_batch.dedup();
+            if !commit_batch.is_empty() {
+                commit_count += commit_batch.len();
+                for oid in commit_batch {
+                    let mut suffix = String::new();
+                    if boundary_commit_set.contains(&oid) && !included_commit_set.contains(&oid) {
+                        suffix.push_str(":UNINTERESTING");
+                    }
+                    println!("{batch_nr}:commit::{}{}", oid.to_hex(), suffix);
+                }
+                batch_nr += 1;
+            }
+        }
+
+        let mut queued_deferred_index_paths = false;
+        loop {
+            while let Some(path) = pop_next_path(&mut path_queue, &path_batches) {
+                let Some(batch) = path_batches.remove(&path) else {
+                    continue;
+                };
+                pushed_paths.remove(&path);
+                if opts.prune_all_uninteresting && !batch.maybe_interesting {
+                    continue;
+                }
+
+                let mut oids = batch.oids;
+                oids.sort();
+                oids.dedup();
+                if oids.is_empty() {
+                    continue;
+                }
+
+                if batch.object_type == ObjectKind::Tree {
+                    for tree_oid in &oids {
+                        let object = repo.odb.read(tree_oid)?;
+                        if object.kind != ObjectKind::Tree {
+                            continue;
+                        }
+                        for entry in grit_lib::objects::parse_tree(&object.data)? {
+                            if entry.mode == grit_lib::index::MODE_GITLINK {
+                                continue;
+                            }
+                            let name = String::from_utf8_lossy(&entry.name).to_string();
+                            let child_path = if path.is_empty() {
+                                name
+                            } else {
+                                format!("{path}{name}")
+                            };
+                            let child_kind = if entry.mode == 0o040000 {
+                                ObjectKind::Tree
+                            } else {
+                                ObjectKind::Blob
+                            };
+                            if child_kind == ObjectKind::Blob && !opts.blobs {
+                                continue;
+                            }
+                            let normalized_path = if child_kind == ObjectKind::Tree {
+                                format!("{child_path}/")
+                            } else {
+                                child_path
+                            };
+                            if sparse_patterns.as_deref().is_some_and(|patterns| {
+                                !path_matches_sparse_patterns_for_walk(&normalized_path, patterns)
+                            }) {
+                                continue;
+                            }
+                            if !seen_objects.insert(entry.oid) {
+                                continue;
+                            }
+                            push_oid_to_batch(
+                                &mut path_batches,
+                                &mut path_queue,
+                                &mut pushed_paths,
+                                normalized_path,
+                                entry.oid,
+                                child_kind,
+                                !uninteresting_objects.contains(&entry.oid),
+                            );
+                        }
+                    }
+                }
+
+                let should_emit = match batch.object_type {
+                    ObjectKind::Tag => opts.tags,
+                    ObjectKind::Blob => opts.blobs,
+                    ObjectKind::Tree => opts.trees,
+                    ObjectKind::Commit => false,
+                };
+                if !should_emit {
+                    continue;
+                }
+
+                match batch.object_type {
+                    ObjectKind::Tag => tag_count += oids.len(),
+                    ObjectKind::Blob => blob_count += oids.len(),
+                    ObjectKind::Tree => tree_count += oids.len(),
+                    ObjectKind::Commit => {}
+                }
+
+                for oid in oids {
+                    let suffix = if uninteresting_objects.contains(&oid) {
+                        ":UNINTERESTING"
+                    } else {
+                        ""
+                    };
+                    println!(
+                        "{batch_nr}:{}:{}:{}{suffix}",
+                        object_kind_label(batch.object_type),
+                        batch.path,
+                        oid.to_hex()
+                    );
+                }
+                batch_nr += 1;
+            }
+
+            if queued_deferred_index_paths {
+                break;
+            }
+            queued_deferred_index_paths = true;
+
+            for path in &deferred_index_paths {
+                if path_batches.contains_key(path) && pushed_paths.insert(path.clone()) {
+                    path_queue.push(path.clone());
+                }
+            }
+        }
+
+        println!("commits:{commit_count}");
+        println!("trees:{tree_count}");
+        println!("blobs:{blob_count}");
+        println!("tags:{tag_count}");
+        Ok(())
+    })();
+
+    let _ = std::env::set_current_dir(original_dir);
+    result
 }
 
 fn dir_iterator_error_name(kind: std::io::ErrorKind) -> &'static str {
@@ -2056,7 +2984,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
-            let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
+            let mut tool_idx = 0usize;
+            while tool_idx + 1 < rest.len() && rest[tool_idx] == "-C" {
+                std::env::set_current_dir(&rest[tool_idx + 1])?;
+                tool_idx += 2;
+            }
+            let tool_rest = &rest[tool_idx..];
+            let sub = tool_rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
                 "wildmatch" => {
                     // test-tool wildmatch <mode> <text> <pattern>
@@ -2097,16 +3031,17 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                "trace2" => run_test_tool_trace2(rest),
-                "example-tap" => run_test_tool_example_tap(rest),
-                "advise" => run_test_tool_advise(rest),
-                "env-helper" => run_test_tool_env_helper(rest),
-                "dir-iterator" => run_test_tool_dir_iterator(rest),
-                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(rest),
-                "revision-walking" => run_test_tool_revision_walking(rest),
-                "mergesort" => run_test_tool_mergesort(rest),
-                "find-pack" => run_test_tool_find_pack(rest),
-                "ref-store" => run_test_tool_ref_store(rest),
+                "trace2" => run_test_tool_trace2(tool_rest),
+                "example-tap" => run_test_tool_example_tap(tool_rest),
+                "advise" => run_test_tool_advise(tool_rest),
+                "env-helper" => run_test_tool_env_helper(tool_rest),
+                "dir-iterator" => run_test_tool_dir_iterator(tool_rest),
+                "parse-pathspec-file" => run_test_tool_parse_pathspec_file(tool_rest),
+                "revision-walking" => run_test_tool_revision_walking(tool_rest),
+                "mergesort" => run_test_tool_mergesort(tool_rest),
+                "find-pack" => run_test_tool_find_pack(tool_rest),
+                "ref-store" => run_test_tool_ref_store(tool_rest),
+                "path-walk" => run_test_tool_path_walk(tool_rest),
                 other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
