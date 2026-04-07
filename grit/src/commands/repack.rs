@@ -32,15 +32,29 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
-    /// Pass `--no-reuse-delta` (accepted; not wired to pack-objects yet).
+    /// Pass `--no-reuse-delta` (accepted; forwarded to pack-objects).
     #[arg(short = 'f')]
     pub force: bool,
+
+    /// Use deeper delta compression (same as `git gc --aggressive`).
+    #[arg(long)]
+    pub aggressive: bool,
 
     #[arg(long)]
     pub window: Option<i64>,
 
     #[arg(long)]
     pub depth: Option<i64>,
+
+    /// Write cruft pack (accepted; forwarded to pack-objects).
+    #[arg(long)]
+    pub cruft: bool,
+
+    #[arg(long = "no-cruft")]
+    pub no_cruft: bool,
+
+    #[arg(long = "keep-largest-pack")]
+    pub keep_largest_pack: bool,
 
     /// Extra arguments (ignored).
     #[arg(value_name = "ARG", num_args = 0.., allow_hyphen_values = true, trailing_var_arg = true)]
@@ -70,6 +84,30 @@ pub fn run(args: Args) -> Result<()> {
         .arg(pack_base);
     if args.quiet {
         cmd.arg("-q");
+    }
+    if args.aggressive {
+        cmd.arg("-f");
+        cmd.arg("--window").arg("250");
+        cmd.arg("--depth").arg("250");
+    } else {
+        if args.force {
+            cmd.arg("-f");
+        }
+        if let Some(w) = args.window {
+            cmd.arg("--window").arg(w.to_string());
+        }
+        if let Some(d) = args.depth {
+            cmd.arg("--depth").arg(d.to_string());
+        }
+    }
+    if args.cruft {
+        cmd.arg("--cruft");
+    }
+    if args.no_cruft {
+        cmd.arg("--no-cruft");
+    }
+    if args.keep_largest_pack {
+        cmd.arg("--keep-largest-pack");
     }
     let output = cmd.output().context("failed to run grit pack-objects")?;
     if !output.status.success() {

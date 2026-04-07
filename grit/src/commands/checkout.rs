@@ -1994,7 +1994,11 @@ fn checkout_paths(
 /// Shows each hunk of difference between the source (index or commit) and the
 /// working tree, prompting the user to accept (y), reject (n), quit (q),
 /// accept-all-in-file (a), or skip-rest-of-file (d) for each hunk.
-fn checkout_patch(repo: &Repository, source: Option<&str>, paths: &[String]) -> Result<()> {
+pub(crate) fn checkout_patch(
+    repo: &Repository,
+    source: Option<&str>,
+    paths: &[String],
+) -> Result<()> {
     use similar::TextDiff;
     use std::io::{self, BufRead, Write};
 

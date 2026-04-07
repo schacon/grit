@@ -80,8 +80,8 @@ pub fn run(args: Args) -> Result<()> {
     if args.pathspec_from_file.is_some() && args.patch {
         bail!("options '--pathspec-from-file' and '--patch' cannot be used together");
     }
-    if args.patch {
-        bail!("not implemented: grit restore --patch");
+    if args.patch && (args.ours || args.theirs || args.merge || args.conflict.is_some()) {
+        bail!("options '--patch' cannot be used with --ours, --theirs, --merge, or --conflict");
     }
     if (args.ours || args.theirs || args.merge || args.conflict.is_some())
         && (args.staged || args.source.is_some())
@@ -106,6 +106,15 @@ pub fn run(args: Args) -> Result<()> {
     }
     if pathspecs.is_empty() {
         bail!("you must specify path(s) to restore");
+    }
+
+    if args.patch {
+        if args.staged {
+            bail!("not implemented: grit restore --patch --staged");
+        }
+        let repo = Repository::discover(None).context("not a git repository")?;
+        let source = args.source.as_deref();
+        return crate::commands::checkout::checkout_patch(&repo, source, &pathspecs);
     }
 
     let repo = Repository::discover(None).context("not a git repository")?;

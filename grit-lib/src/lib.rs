@@ -29,6 +29,7 @@ pub mod index;
 pub mod ls_remote;
 pub mod merge_base;
 pub mod merge_file;
+pub mod midx;
 pub mod name_rev;
 pub mod objects;
 pub mod odb;
@@ -44,9 +45,9 @@ pub mod rev_list;
 pub mod rev_parse;
 pub mod state;
 pub mod stripspace;
-pub mod unpack_objects;
 #[cfg(unix)]
 pub mod unix_process;
+pub mod unpack_objects;
 pub mod userdiff;
 pub mod wildmatch;
 pub mod write_tree;

@@ -3,8 +3,8 @@
 //! Runs [`prune_packed_objects`](grit_lib::prune_packed::prune_packed_objects),
 //! [`pack_refs`](crate::commands::pack_refs), optional [`reflog`](grit_lib::reflog) expiry
 //! (`gc.reflogExpire`, `gc.reflogExpireUnreachable`), optional [`commit-graph`](crate::commands::commit_graph) writes
-//! (`gc.writeCommitGraph`), and [`repack`](crate::commands::repack) **`-d -l`** to pack objects.
-//! Missing: cruft / keep-largest-pack parity and **`--aggressive`** repack tuning.
+//! (`gc.writeCommitGraph`), and [`repack`](crate::commands::repack) **`-d -l`** to pack objects
+//! (including **`--aggressive`** and cruft / keep-largest-pack forwarding).
 
 use crate::commands::pack_refs;
 use crate::grit_exe;
@@ -56,7 +56,7 @@ pub struct Args {
     #[arg(long = "no-detach")]
     pub no_detach: bool,
 
-    /// Cruft pack options (accepted; no-op until repack supports them).
+    /// Cruft pack options (forwarded to `grit repack` / pack-objects).
     #[arg(long)]
     pub cruft: bool,
 
@@ -105,7 +105,7 @@ pub fn run(args: Args) -> Result<()> {
         no_prune: false,
     })?;
 
-    run_repack_for_gc(&repo, quiet)?;
+    run_repack_for_gc(&repo, quiet, &args)?;
 
     run_reflog_expire_for_gc(&repo, &cfg)?;
     run_reflog_expire_unreachable_for_gc(&repo, &cfg)?;
@@ -189,12 +189,24 @@ fn check_or_clear_stale_gc_pid(pid_path: &Path) -> Result<()> {
 
 /// Pack loose and packed objects into a new pack, then drop redundant packs (`-d`), same as
 /// `maintenance`’s loose-objects task (`-l`).
-fn run_repack_for_gc(repo: &Repository, quiet: bool) -> Result<()> {
+fn run_repack_for_gc(repo: &Repository, quiet: bool, gc_args: &Args) -> Result<()> {
     let work_dir = repo.work_tree.as_deref().unwrap_or(&repo.git_dir);
     let mut cmd = Command::new(grit_exe::grit_executable());
     cmd.current_dir(work_dir).args(["repack", "-d", "-l"]);
     if quiet {
         cmd.arg("-q");
+    }
+    if gc_args.aggressive {
+        cmd.arg("--aggressive");
+    }
+    if gc_args.cruft {
+        cmd.arg("--cruft");
+    }
+    if gc_args.no_cruft {
+        cmd.arg("--no-cruft");
+    }
+    if gc_args.keep_largest_pack {
+        cmd.arg("--keep-largest-pack");
     }
     let status = cmd.status().context("failed to run grit repack for gc")?;
     if !status.success() {
