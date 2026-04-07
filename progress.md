@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   104 |
+| Completed   |   105 |
 | In progress |     0 |
-| Remaining   |   663 |
+| Remaining   |   662 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0019-json-writer` — 16/16 tests pass (implemented `test-tool json-writer` in `grit/src/main.rs` with upstream-compatible scripted and unit-test modes: proper JSON string escaping, object/array begin/end stack handling, inline/nested structures, boolean/null emission, integer and floating-point formatting with configurable precision, optional pretty-print indentation/newline behavior, and robust tokenized stdin command parsing used by `tests/t0019-json-writer.sh`)
 - `t0033-safe-directory` — 22/22 tests pass (fixed ownership-policy plumbing to return Git-compatible `not a git repository: detected dubious ownership ...` errors while still reporting unsafe repos correctly; corrected `GIT_CONFIG_PARAMETERS` tokenization for quoted `safe.directory` values; implemented robust `safe.directory` matching semantics for exact paths, `*`, `/*` globs, `.` and `~/` expansion with canonicalized path comparisons and reset-on-empty behavior; and enforced local clone source safety checks so `clone --local` matches upstream accept/refuse behavior)
 - `t0035-safe-bare-repository` — 12/12 tests pass (fixed unborn-repo `worktree add <path>` behavior to infer implicit orphan creation, emitted `implicit-bare-repository:<path>` perf-trace markers for implicit bare-repo discovery paths, corrected bare-policy enforcement to apply only to truly bare repositories (so `.git` and worktree admin dirs are not misclassified), and aligned `submodule add --name` module storage path to `.git/modules/<name>` so embedded-submodule admin directories match test expectations)
 - `t0095-bloom` — 11/11 tests pass (implemented `test-tool bloom` compatibility helpers in `grit/src/main.rs`: seeded Murmur3 hash output for v2 and v1 behaviors expected by upstream helper tests, Bloom-key/filter generation using Git-compatible constants/seeds/bit placement, and commit changed-path Bloom filter synthesis from first-parent tree diffs including parent-directory path expansion, empty-filter handling, and `>512` changed-path truncation to `ff`)

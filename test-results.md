@@ -2,6 +2,14 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after implementing `test-tool json-writer` compatibility in `grit/src/main.rs`, including unit test mode, scripted stdin-driven object/array command parsing, JSON string escaping, nested inline object/array support, and pretty-print indentation behavior aligned with upstream helper semantics).
+- `rm -rf /workspace/tests/trash.t0019-json-writer /workspace/tests/bin.t0019-json-writer && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0019-json-writer.sh` (run from `/workspace/tests`): 16/16 passing (improved from 1/16; 1 test remains skipped for missing `PERLJSON` prereq in this environment).
+- `./scripts/run-tests.sh t0019-json-writer.sh`: 16/16 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0033-safe-directory.sh`: 22/22 passing.
+  - `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after `safe.directory` compatibility fixes that route repository discovery through `Repository::discover` for local clone source resolution and normalize dubious-ownership error shape as `error: not a git repository: detected dubious ownership ...`; this also keeps `safe.bareRepository`/worktree behavior intact).
 - `rm -rf /workspace/tests/trash.t0033-safe-directory /workspace/tests/bin.t0033-safe-directory && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0033-safe-directory.sh` (run from `/workspace/tests`): 22/22 passing (improved from 10/22).
 - `./scripts/run-tests.sh t0033-safe-directory.sh`: 22/22 passing.
