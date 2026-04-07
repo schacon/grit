@@ -265,6 +265,16 @@ pub fn run(args: Args) -> Result<()> {
         parents.extend(merge_heads);
     }
 
+    // For initial commits with empty tree (only ITA entries), fail
+    if !args.allow_empty && parents.is_empty() {
+        let empty_tree =
+            grit_lib::objects::ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+                .unwrap_or_else(|_| tree_oid);
+        if tree_oid == empty_tree {
+            bail!("nothing to commit");
+        }
+    }
+
     // Check if tree is the same as parent (empty commit)
     if !args.allow_empty && !parents.is_empty() && !args.amend {
         let parent_obj = repo.odb.read(&parents[0])?;
