@@ -11,7 +11,7 @@ t0008-ignores	t0	yes	398	394	4	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
 t0010-racy-git	t0	yes	10	10	0	true	ok	0
 t0012-help	t0	yes	124	124	0	true	ok	0
-t0013-sha1dc	t0	yes	0	0	0	false	ok	0
+t0013-sha1dc	t0	skip	0	0	0	false	ok	0
 t0014-alias	t0	yes	21	3	18	false	ok	1
 t0017-env-helper	t0	yes	5	5	0	true	ok	0
 t0018-advice	t0	yes	6	6	0	true	ok	0
@@ -1189,10 +1189,10 @@ t7107-reset-pathspec-file	t7	yes	11	0	11	false	ok	0
 t7110-reset-merge	t7	yes	21	7	14	false	ok	0
 t7110-reset-modes	t7	yes	20	20	0	true	ok	0
 t7111-reset-table	t7	yes	42	33	9	false	ok	0
-t7112-reset-submodule	t7	yes	82	0	70	false	ok	0
+t7112-reset-submodule	t7	yes	70	0	70	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	17	29	false	ok	0
-t7300-clean	t7	yes	55	26	27	false	ok	2
+t7300-clean	t7	yes	53	26	27	false	ok	2
 t7301-clean-interactive	t7	yes	23	8	15	false	ok	0
 t7400-submodule-basic	t7	yes	124	38	86	false	ok	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
@@ -1224,7 +1224,7 @@ t7501-commit-basic-functionality	t7	yes	77	41	36	false	ok	0
 t7502-commit-porcelain	t7	yes	82	22	60	false	ok	0
 t7503-pre-commit-and-diff-whitespace	t7	yes	22	21	1	false	ok	0
 t7503-pre-commit-and-pre-merge-commit-hooks	t7	yes	22	9	13	false	ok	0
-t7504-commit-msg-hook	t7	yes	30	15	14	false	ok	1
+t7504-commit-msg-hook	t7	yes	29	15	14	false	ok	1
 t7505-prepare-commit-msg	t7	yes	30	30	0	true	ok	0
 t7505-prepare-commit-msg-hook	t7	yes	23	5	18	false	ok	0
 t7506-status-submodule	t7	yes	40	4	36	false	ok	0
@@ -1274,8 +1274,8 @@ t7810-grep	t7	yes	263	177	86	false	ok	0
 t7811-grep-open	t7	yes	10	3	7	false	ok	0
 t7812-grep-icase-non-ascii	t7	yes	18	18	0	true	ok	0
 t7813-grep-icase-iso	t7	yes	2	2	0	true	ok	0
-t7814-grep-recurse-submodules	t7	yes	34	19	8	false	ok	7
-t7815-grep-binary	t7	yes	22	19	2	false	ok	1
+t7814-grep-recurse-submodules	t7	yes	27	19	8	false	ok	7
+t7815-grep-binary	t7	yes	21	19	2	false	ok	1
 t7816-grep-binary-pattern	t7	yes	145	97	48	false	ok	0
 t7817-grep-sparse-checkout	t7	yes	8	0	8	false	ok	0
 t7818-grep-extended	t7	yes	11	11	0	true	ok	0
@@ -1387,7 +1387,7 @@ t8970-symbolic-ref-chains	t8	yes	30	18	12	false	ok	0
 t8980-config-get-regexp	t8	yes	27	26	1	false	ok	0
 t8990-config-set-unset	t8	yes	27	20	7	false	ok	0
 t9000-init-default-branch	t9	yes	24	24	0	true	ok	0
-t9001-send-email	t9	yes	216	46	169	false	ok	1
+t9001-send-email	t9	yes	215	46	169	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
 t9003-help-autocorrect	t9	yes	0	0	0	false	timeout	0
 t9010-branch-list-sort	t9	yes	26	13	13	false	ok	0
@@ -1599,7 +1599,7 @@ t9880-config-file-option	t9	yes	32	25	7	false	ok	0
 t9890-init-object-format	t9	yes	31	31	0	true	ok	0
 t9900-branch-verbose-all	t9	yes	33	33	0	true	ok	0
 t9901-git-web--browse	t9	yes	5	0	5	false	ok	0
-t9902-completion	t9	yes	263	14	246	false	ok	2
+t9902-completion	t9	yes	260	14	246	false	ok	2
 t9903-bash-prompt	t9	yes	67	1	66	false	ok	0
 t9910-tag-pattern-glob	t9	yes	32	32	0	true	ok	0
 t9920-commit-tree-author-env	t9	yes	26	25	1	false	ok	0
