@@ -2640,62 +2640,70 @@ fn run_test_tool_submodule(rest: &[String]) -> Result<()> {
 }
 
 /// Resolve a submodule's relative URL against its parent's remote URL.
-/// `remote_url`: the remote URL template (e.g., `../`)
-/// `submodule_ref`: the actual remote URL of the parent repo
-/// `relative_url`: the submodule's relative URL from .gitmodules
-fn resolve_submodule_relative_url(
-    remote_url: &str,
-    submodule_ref: &str,
-    relative_url: &str,
-) -> String {
-    // If relative_url is an absolute URL or path, return it directly
-    if relative_url.contains("://") || relative_url.starts_with('/') {
-        return relative_url.to_string();
+/// `remote_url`: the remote URL of the parent repo  
+/// `up_path`: path from parent repo root to working tree (navigation from remote)
+/// `url`: the submodule's relative URL from .gitmodules
+fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) -> String {
+    // If url is absolute, return as-is
+    if url.contains("://") || url.starts_with('/') {
+        return url.to_string();
     }
-    // If relative_url doesn't start with "./" or "../", return it
-    if !relative_url.starts_with("./") && !relative_url.starts_with("../") {
-        return relative_url.to_string();
+    if !url.starts_with("./") && !url.starts_with("../") {
+        return url.to_string();
     }
-    // Use submodule_ref as the base, but compute relative to remote_url's meaning
-    // The effective base is: submodule_ref (the actual remote) with remote_url relationship
-    let base = if submodule_ref.is_empty() || submodule_ref == "(null)" {
-        // No parent remote — use relative_url relative to nothing
-        "".to_string()
-    } else {
-        // Navigate from submodule_ref using relative_url
-        // submodule_ref is something like ../foo or /abs/path
-        let base_parts: Vec<&str> = submodule_ref
-            .trim_end_matches('/')
-            .rsplitn(2, '/')
-            .collect();
-        if relative_url.starts_with("./") {
-            // Same directory
-            if base_parts.len() >= 2 {
-                format!("{}/{}", base_parts[1], &relative_url[2..])
-            } else {
-                relative_url[2..].to_string()
-            }
-        } else {
-            // "../" navigation
-            let mut parts: Vec<&str> = submodule_ref.trim_end_matches('/').split('/').collect();
-            let mut rel = relative_url;
-            while let Some(rest_rel) = rel.strip_prefix("../") {
-                if !parts.is_empty() {
-                    parts.pop();
+
+    /// Normalize path parts (resolve . and ..)
+    fn normalize(s: &str) -> Vec<String> {
+        let mut parts: Vec<String> = Vec::new();
+        for p in s.split('/') {
+            match p {
+                ".." => {
+                    if parts.last().map(|s: &String| s.as_str()) == Some("..") || parts.is_empty() {
+                        parts.push("..".to_string());
+                    } else {
+                        parts.pop();
+                    }
                 }
-                rel = rest_rel;
-            }
-            if rel.starts_with("./") {
-                rel = &rel[2..];
-            }
-            if parts.is_empty() {
-                format!("../{}", rel)
-            } else {
-                format!("{}/{}", parts.join("/"), rel)
+                "." | "" => {}
+                other => parts.push(other.to_string()),
             }
         }
+        parts
+    }
+
+    // Compute base: navigate from remote_url along up_path
+    let base_parts = if up_path.is_empty() || up_path == "(null)" {
+        normalize(remote_url.trim_end_matches('/'))
+    } else {
+        let combined = format!("{}/{}", remote_url.trim_end_matches('/'), up_path);
+        normalize(&combined)
     };
-    base
+
+    // Apply url navigation to base
+    let mut result = base_parts;
+    for part in url.split('/') {
+        match part {
+            ".." => {
+                if result.last().map(|s: &String| s.as_str()) == Some("..") || result.is_empty() {
+                    result.push("..".to_string());
+                } else {
+                    result.pop();
+                }
+            }
+            "." | "" => {}
+            other => result.push(other.to_string()),
+        }
+    }
+
+    let mut out = result.join("/");
+    if url.ends_with('/') && !out.ends_with('/') {
+        out.push('/');
+    }
+    if out.is_empty() {
+        ".".to_string()
+    } else {
+        out
+    }
 }
 
 /// Handle `test-tool chmtime` — get or set file modification times.
