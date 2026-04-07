@@ -2612,6 +2612,25 @@ fn checkout_index_to_worktree(
     for old_path in old_stage0.difference(&new_stage0) {
         let rel = String::from_utf8_lossy(old_path).into_owned();
         let abs = work_tree.join(&rel);
+        // Safety: don't follow symlinks when removing paths.
+        // Check if any parent path component is a symlink.
+        let path_through_symlink = {
+            let mut p = work_tree.to_path_buf();
+            let mut through_sym = false;
+            for component in std::path::Path::new(&rel).components() {
+                p.push(component);
+                if let Ok(meta) = std::fs::symlink_metadata(&p) {
+                    if meta.file_type().is_symlink() && p != abs {
+                        through_sym = true;
+                        break;
+                    }
+                }
+            }
+            through_sym
+        };
+        if path_through_symlink {
+            continue; // Skip: path goes through a symlink
+        }
         if abs.is_file() || abs.is_symlink() {
             let _ = std::fs::remove_file(&abs);
         } else if abs.is_dir() {
