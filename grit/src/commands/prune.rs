@@ -34,6 +34,14 @@ pub struct Args {
     /// Accepts "now" to prune everything, or a duration like "2.weeks.ago".
     #[arg(long = "expire")]
     pub expire: Option<String>,
+
+    /// Do not show progress (suppresses output to stderr).
+    #[arg(long = "no-progress")]
+    pub no_progress: bool,
+
+    /// Show progress.
+    #[arg(long = "progress")]
+    pub progress: bool,
 }
 
 /// Run `grit prune`.
