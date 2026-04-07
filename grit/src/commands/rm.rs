@@ -7,6 +7,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::diff::zero_oid;
 use grit_lib::error::Error;
 use grit_lib::index::Index;
@@ -216,6 +217,7 @@ pub fn run(mut args: Args) -> Result<()> {
 
         for path_str in matches {
             match safety_check(
+                &repo,
                 &index,
                 &repo.odb,
                 work_tree,
@@ -331,6 +333,7 @@ fn error_message(kind: &RmErrorKind, count: usize, args: &Args) -> (String, Opti
 ///
 /// Returns `Ok(())` when safe, `Err(kind)` with the error category otherwise.
 fn safety_check(
+    repo: &Repository,
     index: &Index,
     odb: &grit_lib::odb::Odb,
     work_tree: &Path,
@@ -370,7 +373,8 @@ fn safety_check(
     // working tree differs from index.
     let abs_path = work_tree.join(path_str);
     let worktree_differs = if abs_path.exists() {
-        worktree_differs_from_index(odb, &abs_path, &index_oid).unwrap_or(false)
+        worktree_differs_from_index(repo, index, work_tree, path_str, odb, &abs_path, &index_oid)
+            .unwrap_or(false)
     } else {
         false
     };
@@ -402,13 +406,30 @@ fn safety_check(
 
 /// Returns `true` if the working tree file content differs from the index OID.
 fn worktree_differs_from_index(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &Path,
+    rel_path: &str,
     _odb: &grit_lib::odb::Odb,
     abs_path: &Path,
     index_oid: &grit_lib::objects::ObjectId,
 ) -> Result<bool> {
     let data = fs::read(abs_path)?;
-    let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &data);
-    Ok(wt_oid != *index_oid)
+    let raw_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &data);
+    if raw_oid == *index_oid {
+        return Ok(false);
+    }
+
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let mut attrs = crlf::load_gitattributes(work_tree);
+    if attrs.is_empty() {
+        attrs = crlf::load_gitattributes_from_index(index, &repo.odb);
+    }
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+    let normalized = crlf::convert_to_git(&data, rel_path, &conv, &file_attrs).unwrap_or(data);
+    let normalized_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &normalized);
+    Ok(normalized_oid != *index_oid)
 }
 
 /// Build a map from repo-relative path string to HEAD tree OID.

@@ -14,6 +14,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
@@ -956,6 +958,16 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
         Ok(idx) => idx,
         Err(_) => return Ok(()),
     };
+    let config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = grit_lib::crlf::ConversionConfig::from_config(&config);
+    let mut attrs = if let Some(work_tree) = repo.work_tree.as_deref() {
+        grit_lib::crlf::load_gitattributes(work_tree)
+    } else {
+        Vec::new()
+    };
+    if attrs.is_empty() {
+        attrs = grit_lib::crlf::load_gitattributes_from_index(&index, &repo.odb);
+    }
 
     for fp in patches {
         if fp.is_new {
@@ -975,9 +987,27 @@ fn verify_worktree_matches_index(patches: &[FilePatch], args: &Args) -> Result<(
             continue;
         }
 
-        // Read working tree content and compute hash
+        // Read working tree content and compute hash after clean conversion.
         let wt_content = fs::read(&path)?;
-        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &wt_content);
+        let file_attrs = grit_lib::crlf::get_file_attrs(&attrs, &adjusted, &config);
+        let effective_attrs =
+            if adjusted.ends_with("/.gitattributes") || adjusted == ".gitattributes" {
+                let mut fa = file_attrs.clone();
+                if fa.text == grit_lib::crlf::TextAttr::Set
+                    && fa.eol == grit_lib::crlf::EolAttr::Crlf
+                    && conv.autocrlf == grit_lib::crlf::AutoCrlf::True
+                {
+                    fa.text = grit_lib::crlf::TextAttr::Unspecified;
+                    fa.eol = grit_lib::crlf::EolAttr::Unspecified;
+                }
+                fa
+            } else {
+                file_attrs
+            };
+        let normalized =
+            grit_lib::crlf::convert_to_git(&wt_content, &adjusted, &conv, &effective_attrs)
+                .unwrap_or(wt_content);
+        let wt_oid = grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &normalized);
 
         // Get index entry
         if let Some(entry) = index.get(adjusted.as_bytes(), 0) {
@@ -1012,6 +1042,20 @@ fn remove_empty_dirs_up(dir: &Path) {
 }
 
 fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
+    let repo_for_filters = Repository::discover(None).ok();
+    let (conv_cfg, attrs_rules, repo_cfg) = if let Some(repo) = repo_for_filters.as_ref() {
+        if let Some(work_tree) = repo.work_tree.as_deref() {
+            let cfg = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+            let conv = crlf::ConversionConfig::from_config(&cfg);
+            let attrs = crlf::load_gitattributes(work_tree);
+            (Some(conv), Some(attrs), Some(cfg))
+        } else {
+            (None, None, None)
+        }
+    } else {
+        (None, None, None)
+    };
+
     for fp in patches {
         let path_str = fp
             .effective_path()
@@ -1046,9 +1090,32 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
                     fs::create_dir_all(parent)?;
                 }
             }
-            let content = apply_hunks("", &fp.hunks).with_context(|| {
+            let mut content = apply_hunks("", &fp.hunks).with_context(|| {
                 format!("failed to apply hunks for new file {}", path.display())
             })?;
+            if let (Some(conv), Some(attrs), Some(cfg), Some(repo)) = (
+                conv_cfg.as_ref(),
+                attrs_rules.as_ref(),
+                repo_cfg.as_ref(),
+                repo_for_filters.as_ref(),
+            ) {
+                if let Some(work_tree) = repo.work_tree.as_deref() {
+                    if let Ok(rel) = path.strip_prefix(work_tree) {
+                        let rel_path = rel.to_string_lossy();
+                        let file_attrs = crlf::get_file_attrs(attrs, &rel_path, cfg);
+                        let converted = crlf::convert_to_worktree(
+                            content.as_bytes(),
+                            &rel_path,
+                            conv,
+                            &file_attrs,
+                            None,
+                        );
+                        if let Ok(text) = String::from_utf8(converted) {
+                            content = text;
+                        }
+                    }
+                }
+            }
             fs::write(&path, content.as_bytes())
                 .with_context(|| format!("failed to write {}", path.display()))?;
 
@@ -1087,8 +1154,31 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
             continue;
         }
 
-        let new_content = apply_hunks(&old_content, &fp.hunks)
+        let mut new_content = apply_hunks(&old_content, &fp.hunks)
             .with_context(|| format!("failed to apply patch to {}", path.display()))?;
+        if let (Some(conv), Some(attrs), Some(cfg), Some(repo)) = (
+            conv_cfg.as_ref(),
+            attrs_rules.as_ref(),
+            repo_cfg.as_ref(),
+            repo_for_filters.as_ref(),
+        ) {
+            if let Some(work_tree) = repo.work_tree.as_deref() {
+                if let Ok(rel) = path.strip_prefix(work_tree) {
+                    let rel_path = rel.to_string_lossy();
+                    let file_attrs = crlf::get_file_attrs(attrs, &rel_path, cfg);
+                    let converted = crlf::convert_to_worktree(
+                        new_content.as_bytes(),
+                        &rel_path,
+                        conv,
+                        &file_attrs,
+                        None,
+                    );
+                    if let Ok(text) = String::from_utf8(converted) {
+                        new_content = text;
+                    }
+                }
+            }
+        }
         fs::write(&path, new_content.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
     }
@@ -1099,6 +1189,13 @@ fn apply_to_worktree(patches: &[FilePatch], args: &Args) -> Result<()> {
 /// Apply patches to the index only (--cached).
 fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = repo
+        .work_tree
+        .as_deref()
+        .map(crlf::load_gitattributes)
+        .unwrap_or_default();
     let mut index = match Index::load(&repo.index_path()) {
         Ok(idx) => idx,
         Err(_) => Index::new(),
@@ -1193,7 +1290,28 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         };
 
         // Write new blob to ODB
-        let new_oid = repo.odb.write(ObjectKind::Blob, new_content.as_bytes())?;
+        let normalized_content = if repo.work_tree.as_deref().is_some() {
+            let rel = adjusted.strip_prefix(&cwd_prefix).unwrap_or(&adjusted);
+            let file_attrs = crlf::get_file_attrs(&attrs, rel, &config);
+            let effective_attrs = if rel.ends_with("/.gitattributes") || rel == ".gitattributes" {
+                let mut fa = file_attrs.clone();
+                if fa.text == crlf::TextAttr::Set
+                    && fa.eol == crlf::EolAttr::Crlf
+                    && conv.autocrlf == crlf::AutoCrlf::True
+                {
+                    fa.text = crlf::TextAttr::Unspecified;
+                    fa.eol = crlf::EolAttr::Unspecified;
+                }
+                fa
+            } else {
+                file_attrs
+            };
+            crlf::convert_to_git(new_content.as_bytes(), rel, &conv, &effective_attrs)
+                .unwrap_or_else(|_| new_content.as_bytes().to_vec())
+        } else {
+            new_content.as_bytes().to_vec()
+        };
+        let new_oid = repo.odb.write(ObjectKind::Blob, &normalized_content)?;
 
         // Determine mode
         let mode = if let Some(m) = fp.new_mode.as_deref() {
@@ -1205,7 +1323,7 @@ fn apply_to_index(patches: &[FilePatch], args: &Args) -> Result<()> {
         };
 
         // Update index entry
-        let size = new_content.len() as u32;
+        let size = normalized_content.len() as u32;
         let entry = grit_lib::index::IndexEntry {
             ctime_sec: 0,
             ctime_nsec: 0,

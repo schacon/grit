@@ -583,7 +583,14 @@ pub fn diff_index_to_worktree(
 
                 // Stat differs — hash the file to check actual content
                 let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
-                let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+                let raw_worktree_oid = hash_worktree_file_raw(odb, &file_path, &meta)?;
+                let normalized_worktree_oid =
+                    hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+                let worktree_oid = if raw_worktree_oid == ie.oid {
+                    raw_worktree_oid
+                } else {
+                    normalized_worktree_oid
+                };
                 let worktree_mode = mode_from_metadata(&meta);
 
                 if worktree_oid != ie.oid || worktree_mode != ie.mode {
@@ -685,6 +692,16 @@ fn hash_worktree_file(
         crate::crlf::convert_to_git(&raw, rel_path, conv, file_attrs).unwrap_or(raw)
     };
 
+    Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
+}
+
+fn hash_worktree_file_raw(_odb: &Odb, path: &Path, meta: &fs::Metadata) -> Result<ObjectId> {
+    let data = if meta.file_type().is_symlink() {
+        let target = fs::read_link(path)?;
+        target.to_string_lossy().into_owned().into_bytes()
+    } else {
+        fs::read(path)?
+    };
     Ok(Odb::hash_object_data(ObjectKind::Blob, &data))
 }
 

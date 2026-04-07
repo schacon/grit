@@ -230,6 +230,21 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                             _ => TextAttr::Unspecified,
                         };
                     }
+                    "crlf" => match value.as_str() {
+                        "unset" | "false" => {
+                            fa.text = TextAttr::Unset;
+                            fa.eol = EolAttr::Unspecified;
+                        }
+                        "input" => {
+                            fa.text = TextAttr::Set;
+                            fa.eol = EolAttr::Lf;
+                        }
+                        "set" | "true" => {
+                            fa.text = TextAttr::Set;
+                            fa.eol = EolAttr::Crlf;
+                        }
+                        _ => {}
+                    },
                     "eol" => {
                         fa.eol = match value.as_str() {
                             "lf" => EolAttr::Lf,
@@ -364,9 +379,12 @@ pub fn convert_to_git(
     // 2. Determine if we should do CRLF→LF conversion
     let would_convert = would_convert_on_input(conv, file_attrs, &buf);
 
-    // 3. safecrlf check — always check if conversion is configured,
-    // even if no actual conversion is needed for this particular file.
-    if would_convert {
+    // 3. safecrlf check.
+    // For autocrlf=true we still check mixed LF/CRLF files even when we do
+    // not perform conversion (Git warns/rejects these as potentially unsafe).
+    let needs_safecrlf_check =
+        would_convert || (conv.autocrlf == AutoCrlf::True && has_crlf(&buf) && has_lone_lf(&buf));
+    if needs_safecrlf_check {
         check_safecrlf_input(conv, &buf, rel_path)?;
     }
 
@@ -413,6 +431,11 @@ fn would_convert_on_input(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
             if is_binary(data) {
                 return false;
             }
+            // With autocrlf=true, keep mixed-end-of-line files as-is so they
+            // are not repeatedly reported dirty after checkout.
+            if conv.autocrlf == AutoCrlf::True && has_crlf(data) && has_lone_lf(data) {
+                return false;
+            }
             true
         }
         AutoCrlf::False => false,
@@ -433,26 +456,30 @@ fn check_safecrlf_input(
         return Ok(());
     }
 
-    // safecrlf with autocrlf=input: reject if file is all CRLF
-    // (the conversion would be irreversible — CRLF→LF, but checkout won't
-    // add CR back because autocrlf=input only strips on input)
-    if conv.autocrlf == AutoCrlf::Input && is_all_crlf(data) {
-        let msg = format!("fatal: CRLF would be replaced by LF in {rel_path}");
+    let has_mixed = has_crlf(data) && has_lone_lf(data);
+    let would_lose_crlf_on_add =
+        conv.autocrlf == AutoCrlf::Input && (is_all_crlf(data) || has_mixed);
+    if would_lose_crlf_on_add {
         if conv.safecrlf == SafeCrlf::True {
-            return Err(msg);
+            return Err(format!("fatal: CRLF would be replaced by LF in {rel_path}"));
         }
-        eprintln!("warning: {msg}");
+        eprintln!(
+            "warning: in the working copy of '{rel_path}', CRLF will be replaced by LF the next time Git touches it"
+        );
         return Ok(());
     }
 
     // safecrlf with autocrlf=true: reject if file is all LF
     // (LF→LF on input, then LF→CRLF on checkout changes the file)
-    if conv.autocrlf == AutoCrlf::True && is_all_lf(data) {
-        let msg = format!("fatal: LF would be replaced by CRLF in {rel_path}");
+    let would_gain_crlf_on_checkout =
+        conv.autocrlf == AutoCrlf::True && (is_all_lf(data) || has_mixed);
+    if would_gain_crlf_on_checkout {
         if conv.safecrlf == SafeCrlf::True {
-            return Err(msg);
+            return Err(format!("fatal: LF would be replaced by CRLF in {rel_path}"));
         }
-        eprintln!("warning: {msg}");
+        eprintln!(
+            "warning: in the working copy of '{rel_path}', LF will be replaced by CRLF the next time Git touches it"
+        );
         return Ok(());
     }
 
@@ -567,7 +594,8 @@ fn should_convert_to_crlf(conv: &ConversionConfig, attrs: &FileAttrs, data: &[u8
             if is_binary(data) {
                 return false;
             }
-            true
+            // Match Git behavior: keep mixed/CRLF files as-is.
+            !has_crlf(data)
         }
         AutoCrlf::Input | AutoCrlf::False => false,
     }

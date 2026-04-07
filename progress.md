@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   105 |
+| Completed   |   106 |
 | In progress |     0 |
-| Remaining   |   662 |
+| Remaining   |   661 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0020-crlf` — 36/36 tests pass (completed CRLF conversion compatibility across add/update/checkout/apply/rm paths: implemented mixed-line-ending `safecrlf` reject/warn behavior for `autocrlf=true`, made `update-index` and `apply --index` use clean-side conversion before hashing so index comparisons align with Git, loaded in-index `.gitattributes` rules for checkout/read-tree/checkout-index updates so conversion works even when attribute files are absent in the current worktree, corrected checkout safety checks to compare normalized content while tolerating equivalent raw-vs-clean forms for `.gitattributes`, and aligned `rm` local-modification safety checks with conversion-aware content comparison)
 - `t0019-json-writer` — 16/16 tests pass (implemented `test-tool json-writer` in `grit/src/main.rs` with upstream-compatible scripted and unit-test modes: proper JSON string escaping, object/array begin/end stack handling, inline/nested structures, boolean/null emission, integer and floating-point formatting with configurable precision, optional pretty-print indentation/newline behavior, and robust tokenized stdin command parsing used by `tests/t0019-json-writer.sh`)
 - `t0033-safe-directory` — 22/22 tests pass (fixed ownership-policy plumbing to return Git-compatible `not a git repository: detected dubious ownership ...` errors while still reporting unsafe repos correctly; corrected `GIT_CONFIG_PARAMETERS` tokenization for quoted `safe.directory` values; implemented robust `safe.directory` matching semantics for exact paths, `*`, `/*` globs, `.` and `~/` expansion with canonicalized path comparisons and reset-on-empty behavior; and enforced local clone source safety checks so `clone --local` matches upstream accept/refuse behavior)
 - `t0035-safe-bare-repository` — 12/12 tests pass (fixed unborn-repo `worktree add <path>` behavior to infer implicit orphan creation, emitted `implicit-bare-repository:<path>` perf-trace markers for implicit bare-repo discovery paths, corrected bare-policy enforcement to apply only to truly bare repositories (so `.git` and worktree admin dirs are not misclassified), and aligned `submodule add --name` module storage path to `.git/modules/<name>` so embedded-submodule admin directories match test expectations)

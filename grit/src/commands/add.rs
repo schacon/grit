@@ -937,8 +937,15 @@ fn stage_file(
         target.to_string_lossy().into_owned().into_bytes()
     } else {
         let raw = fs::read(abs_path)?;
-        // Apply CRLF / clean-filter conversion
+        // Apply CRLF / clean-filter conversion.
         let file_attrs = crlf::get_file_attrs(&add_cfg.attrs, rel_path, &add_cfg.config);
+        let gitattributes_default_attrs = crlf::FileAttrs::default();
+        let effective_attrs =
+            if rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes" {
+                &gitattributes_default_attrs
+            } else {
+                &file_attrs
+            };
         // Apply working-tree-encoding conversion (e.g. UTF-16 → UTF-8)
         let raw = if let Some(ref encoding) = file_attrs.working_tree_encoding {
             convert_from_working_tree_encoding(&raw, encoding).with_context(|| {
@@ -950,7 +957,7 @@ fn stage_file(
         } else {
             raw
         };
-        match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, &file_attrs) {
+        match crlf::convert_to_git(&raw, rel_path, &add_cfg.conv, effective_attrs) {
             Ok(converted) => converted,
             Err(msg) => bail!("{msg}"),
         }

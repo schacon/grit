@@ -141,7 +141,15 @@ pub fn run(args: Args) -> Result<()> {
         let entry = index.get(&path, target_stage).cloned().ok_or_else(|| {
             anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path))
         })?;
-        match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
+        match checkout_entry(
+            &repo,
+            &index,
+            &entry,
+            &work_tree,
+            prefix,
+            symlinks_enabled,
+            &args,
+        ) {
             Ok(outcome) => {
                 if let Some(updated) = outcome.updated_entry {
                     index.add_or_replace(updated);
@@ -176,6 +184,7 @@ struct CheckoutOutcome {
 
 fn checkout_entry(
     repo: &Repository,
+    index: &Index,
     entry: &grit_lib::index::IndexEntry,
     work_tree: &std::path::Path,
     prefix: &str,
@@ -234,11 +243,7 @@ fn checkout_entry(
 
     if let Some(parent) = abs_path.parent() {
         if !parent.exists() {
-            if args.mkdir || args.force || args.all {
-                std::fs::create_dir_all(parent)?;
-            } else {
-                bail!("'{rel_path}': leading directories do not exist");
-            }
+            std::fs::create_dir_all(parent)?;
         }
     }
 
@@ -257,7 +262,10 @@ fn checkout_entry(
         let data = {
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let attrs = crlf::load_gitattributes(work_tree);
+            let mut attrs = crlf::load_gitattributes(work_tree);
+            if attrs.is_empty() {
+                attrs = crlf::load_gitattributes_from_index(index, &repo.odb);
+            }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))

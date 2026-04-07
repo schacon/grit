@@ -1444,11 +1444,49 @@ fn is_worktree_dirty(
             Err(_) => Ok(true),
         }
     } else {
-        // For regular files, compare content
+        // For regular files, compare canonical "git" content so CRLF
+        // conversions do not look like local modifications.
         match std::fs::read(abs_path) {
             Ok(data) => {
+                let work_tree = repo
+                    .work_tree
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("not a git repository"))?;
+                let rel_path = abs_path
+                    .strip_prefix(work_tree)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .unwrap_or_default();
+                let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+                let conv = crlf::ConversionConfig::from_config(&config);
+                let mut attrs = crlf::load_gitattributes(work_tree);
+                if attrs.is_empty() {
+                    if let Ok(idx) = Index::load(&repo.index_path()) {
+                        attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+                    }
+                }
+                let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+                let effective_attrs =
+                    if rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes" {
+                        let mut fa = file_attrs.clone();
+                        if fa.text == crlf::TextAttr::Set
+                            && fa.eol == crlf::EolAttr::Crlf
+                            && conv.autocrlf == crlf::AutoCrlf::True
+                        {
+                            fa.text = crlf::TextAttr::Unspecified;
+                            fa.eol = crlf::EolAttr::Unspecified;
+                        }
+                        fa
+                    } else {
+                        file_attrs
+                    };
                 let obj = repo.odb.read(&entry.oid)?;
-                Ok(data != obj.data)
+                if data == obj.data {
+                    return Ok(false);
+                }
+                let normalized = crlf::convert_to_git(&data, rel_path, &conv, &effective_attrs)
+                    .unwrap_or_else(|_| data.clone());
+                Ok(normalized != obj.data)
             }
             Err(_) => Ok(true),
         }
@@ -2581,6 +2619,10 @@ fn checkout_index_to_worktree(
     work_tree: &std::path::Path,
     force_write_all: bool,
 ) -> Result<()> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
+
     let old_paths: HashSet<Vec<u8>> = old_index.entries.iter().map(|e| e.path.clone()).collect();
     let new_paths: HashSet<Vec<u8>> = new_index.entries.iter().map(|e| e.path.clone()).collect();
     let new_skip_paths: HashSet<Vec<u8>> = new_index
@@ -2646,7 +2688,29 @@ fn checkout_index_to_worktree(
                 if old_entry.oid == entry.oid && old_entry.mode == entry.mode {
                     let abs_path = work_tree.join(String::from_utf8_lossy(&entry.path).as_ref());
                     if abs_path.exists() || abs_path.is_symlink() {
-                        continue;
+                        if entry.mode != MODE_SYMLINK {
+                            let rel_path = String::from_utf8_lossy(&entry.path).into_owned();
+                            if let Ok(raw) = std::fs::read(&abs_path) {
+                                let file_attrs = crlf::get_file_attrs(&attrs, &rel_path, &config);
+                                let normalized =
+                                    crlf::convert_to_git(&raw, &rel_path, &conv, &file_attrs)
+                                        .unwrap_or_else(|_| raw.clone());
+                                let normalized_oid = grit_lib::odb::Odb::hash_object_data(
+                                    ObjectKind::Blob,
+                                    &normalized,
+                                );
+                                if normalized_oid != entry.oid {
+                                    // Working tree content no longer corresponds to index blob
+                                    // under current conversion rules; refresh from index.
+                                } else {
+                                    continue;
+                                }
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
                     }
                     // File was deleted from worktree, restore it
                 }
@@ -2654,7 +2718,31 @@ fn checkout_index_to_worktree(
         }
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(repo, work_tree, &path_str, &entry.oid, entry.mode)?;
+        let obj = repo
+            .odb
+            .read(&entry.oid)
+            .context("reading object for checkout")?;
+        if obj.kind != ObjectKind::Blob {
+            bail!("cannot checkout non-blob at '{path_str}'");
+        }
+
+        let data = if entry.mode != MODE_SYMLINK {
+            let mut file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
+            if (path_str.ends_with("/.gitattributes") || path_str == ".gitattributes")
+                && file_attrs.text == crlf::TextAttr::Set
+                && file_attrs.eol == crlf::EolAttr::Crlf
+                && conv.autocrlf == crlf::AutoCrlf::True
+            {
+                file_attrs.text = crlf::TextAttr::Unspecified;
+                file_attrs.eol = crlf::EolAttr::Unspecified;
+            }
+            let oid_hex = format!("{}", entry.oid);
+            crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
+        } else {
+            obj.data
+        };
+
+        write_to_worktree(work_tree, &path_str, &data, entry.mode)?;
     }
 
     Ok(())
@@ -2788,7 +2876,15 @@ fn write_blob_to_worktree(
                 attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
             }
         }
-        let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        let mut file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+        if (rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes")
+            && file_attrs.text == crlf::TextAttr::Set
+                && file_attrs.eol == crlf::EolAttr::Crlf
+                && conv.autocrlf == crlf::AutoCrlf::True
+            {
+                file_attrs.text = crlf::TextAttr::Unspecified;
+                file_attrs.eol = crlf::EolAttr::Unspecified;
+            }
         let oid_hex = format!("{oid}");
         crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
     } else {

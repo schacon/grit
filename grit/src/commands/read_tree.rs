@@ -791,14 +791,15 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
         if entry.skip_worktree() {
             continue;
         }
+        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
+        let abs_path = work_tree.join(&path_str);
         if old_stage0
             .get(&entry.path)
             .is_some_and(|old_entry| same_blob(old_entry, entry))
+            && (abs_path.exists() || abs_path.is_symlink())
         {
             continue;
         }
-        let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        let abs_path = work_tree.join(&path_str);
 
         if let Some(parent) = abs_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -828,9 +829,9 @@ fn checkout_index_entries(repo: &Repository, old_index: &Index, new_index: &Inde
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
             // Load attrs from worktree first, fall back to index
-            let mut attrs = crlf::load_gitattributes(&work_tree);
+            let mut attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
             if attrs.is_empty() {
-                attrs = crlf::load_gitattributes_from_index(new_index, &repo.odb);
+                attrs = crlf::load_gitattributes(&work_tree);
             }
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
@@ -949,7 +950,40 @@ fn worktree_matches_entry(repo: &Repository, entry: &IndexEntry, abs_path: &Path
     }
 
     let data = std::fs::read(abs_path)?;
-    Ok(data == obj.data)
+    let rel_path = repo
+        .work_tree
+        .as_deref()
+        .and_then(|wt| abs_path.strip_prefix(wt).ok())
+        .and_then(|p| p.to_str())
+        .unwrap_or_default();
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let mut attrs = crlf::load_gitattributes(
+        repo.work_tree
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    );
+    if attrs.is_empty() {
+        if let Ok(idx) = Index::load(&effective_index_path(repo)?) {
+            attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
+        }
+    }
+    let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
+    let effective_attrs = if rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes" {
+        let mut fa = file_attrs.clone();
+        if fa.text == crlf::TextAttr::Set
+            && fa.eol == crlf::EolAttr::Crlf
+            && conv.autocrlf == crlf::AutoCrlf::True
+        {
+            fa.text = crlf::TextAttr::Unspecified;
+            fa.eol = crlf::EolAttr::Unspecified;
+        }
+        fa
+    } else {
+        file_attrs
+    };
+    let normalized = crlf::convert_to_git(&data, rel_path, &conv, &effective_attrs).unwrap_or(data);
+    Ok(normalized == obj.data)
 }
 
 fn remove_empty_parent_dirs(work_tree: &Path, path: &Path) {

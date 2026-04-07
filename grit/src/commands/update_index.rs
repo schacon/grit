@@ -7,6 +7,7 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
+use grit_lib::crlf;
 use grit_lib::index::{entry_from_stat, normalize_mode, Index, IndexEntry};
 use grit_lib::objects::ObjectId;
 use grit_lib::odb::Odb;
@@ -115,6 +116,7 @@ pub struct Args {
 /// Run `grit update-index`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
     let symlinks_enabled = core_symlinks_enabled(&repo);
@@ -379,8 +381,33 @@ pub fn run(args: Args) -> Result<()> {
             let target = std::fs::read_link(&abs_path)?;
             target.to_string_lossy().into_owned().into_bytes()
         } else {
-            std::fs::read(&abs_path)
-                .with_context(|| format!("cannot read '{}'", abs_path.display()))?
+            let raw = std::fs::read(&abs_path)
+                .with_context(|| format!("cannot read '{}'", abs_path.display()))?;
+            let conv = crlf::ConversionConfig::from_config(&config);
+            let attrs = crlf::load_gitattributes(work_tree);
+            let rel_path_str = rel_path.to_string_lossy().to_string();
+            let file_attrs = crlf::get_file_attrs(&attrs, &rel_path_str, &config);
+            let effective_attrs = if rel_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == ".gitattributes")
+            {
+                let mut fa = file_attrs.clone();
+                if fa.text == crlf::TextAttr::Set
+                    && fa.eol == crlf::EolAttr::Crlf
+                    && conv.autocrlf == crlf::AutoCrlf::True
+                {
+                    fa.text = crlf::TextAttr::Unspecified;
+                    fa.eol = crlf::EolAttr::Unspecified;
+                }
+                fa
+            } else {
+                file_attrs
+            };
+            match crlf::convert_to_git(&raw, &rel_path_str, &conv, &effective_attrs) {
+                Ok(converted) => converted,
+                Err(msg) => bail!("{msg}"),
+            }
         };
 
         let oid = match repo.odb.write(grit_lib::objects::ObjectKind::Blob, &data) {

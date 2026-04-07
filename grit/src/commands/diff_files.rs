@@ -5,6 +5,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::ConfigSet;
+use grit_lib::crlf::{self, ConversionConfig, GitAttributes};
 use grit_lib::diff::{count_changes, format_stat_line, stat_matches, unified_diff, zero_oid};
 use grit_lib::index::{
     Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_REGULAR, MODE_SYMLINK,
@@ -251,6 +253,10 @@ fn collect_changes(
     work_tree: &Path,
     options: &Options,
 ) -> Result<Vec<Change>> {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let conv = ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+
     // Collect index entries, grouped by path.  For stage==0 we use merged
     // entries (stage 0).  For stage 1–3 we use that specific unmerged stage.
     // Paths that only have higher-stage entries and no stage-0 entry are
@@ -284,12 +290,11 @@ fn collect_changes(
         // Use stat info to skip unchanged files (avoid hashing).
         for (path, (idx_mode, idx_oid, idx_entry)) in &stage0 {
             let abs = work_tree.join(path);
-            match read_worktree_info_fast(repo, &abs, idx_entry)? {
+            match read_worktree_info_fast(repo, &abs, idx_entry, path, &conv, &attrs, &config)? {
                 WorktreeStatus::Unchanged => { /* skip — stat says identical */ }
                 WorktreeStatus::Modified(wt_mode, wt_oid) => {
                     let idx_canonical = canonicalize_mode(*idx_mode);
-                    if wt_oid != *idx_oid || wt_mode != idx_canonical || is_stat_smudged(idx_entry)
-                    {
+                    if wt_oid != *idx_oid || wt_mode != idx_canonical {
                         changes.insert(
                             path.clone(),
                             Change {
@@ -341,7 +346,7 @@ fn collect_changes(
         // Stage-specific mode: compare requested stage entries against worktree.
         for (path, (idx_mode, idx_oid)) in &staged {
             let abs = work_tree.join(path);
-            match read_worktree_info(repo, &abs)? {
+            match read_worktree_info(repo, &abs, path, Some(*idx_oid), &conv, &attrs, &config)? {
                 Some((wt_mode, _wt_oid)) => {
                     changes.insert(
                         path.clone(),
@@ -373,17 +378,6 @@ fn collect_changes(
     Ok(changes.into_values().collect())
 }
 
-/// `read-tree`-style entries carry zeroed stat data and are considered dirty
-/// until an explicit refresh (e.g. `checkout-index -u` / `update-index --refresh`).
-fn is_stat_smudged(entry: &IndexEntry) -> bool {
-    entry.ctime_sec == 0
-        && entry.ctime_nsec == 0
-        && entry.mtime_sec == 0
-        && entry.mtime_nsec == 0
-        && entry.dev == 0
-        && entry.ino == 0
-}
-
 // ── Worktree probing ─────────────────────────────────────────────────
 
 /// Result of probing a working-tree file against its index entry.
@@ -403,6 +397,10 @@ fn read_worktree_info_fast(
     repo: &Repository,
     abs_path: &Path,
     index_entry: &IndexEntry,
+    rel_path: &str,
+    conv: &ConversionConfig,
+    attrs: &GitAttributes,
+    config: &ConfigSet,
 ) -> Result<WorktreeStatus> {
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
@@ -441,8 +439,31 @@ fn read_worktree_info_fast(
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
-        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        let raw = fs::read(abs_path)?;
+        let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+        let file_attrs = crlf::get_file_attrs(attrs, rel_path, config);
+        let effective_attrs =
+            if rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes" {
+                let mut fa = file_attrs.clone();
+                if fa.text == crlf::TextAttr::Set
+                    && fa.eol == crlf::EolAttr::Crlf
+                    && conv.autocrlf == crlf::AutoCrlf::True
+                {
+                    fa.text = crlf::TextAttr::Unspecified;
+                    fa.eol = crlf::EolAttr::Unspecified;
+                }
+                fa
+            } else {
+                file_attrs
+            };
+        let normalized =
+            crlf::convert_to_git(&raw, rel_path, conv, &effective_attrs).unwrap_or(raw);
+        let normalized_oid = Odb::hash_object_data(ObjectKind::Blob, &normalized);
+        let oid = if raw_oid == index_entry.oid {
+            raw_oid
+        } else {
+            normalized_oid
+        };
         return Ok(WorktreeStatus::Modified(mode, oid));
     }
 
@@ -453,7 +474,15 @@ fn read_worktree_info_fast(
 ///
 /// The OID is computed by hashing the file content so we can detect
 /// modifications.  The mode is canonicalized to one of the four Git modes.
-fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32, ObjectId)>> {
+fn read_worktree_info(
+    repo: &Repository,
+    abs_path: &Path,
+    rel_path: &str,
+    expected_oid: Option<ObjectId>,
+    conv: &ConversionConfig,
+    attrs: &GitAttributes,
+    config: &ConfigSet,
+) -> Result<Option<(u32, ObjectId)>> {
     let meta = match fs::symlink_metadata(abs_path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -474,8 +503,31 @@ fn read_worktree_info(repo: &Repository, abs_path: &Path) -> Result<Option<(u32,
         } else {
             MODE_REGULAR
         };
-        let data = fs::read(abs_path)?;
-        let oid = Odb::hash_object_data(ObjectKind::Blob, &data);
+        let raw = fs::read(abs_path)?;
+        let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+        let file_attrs = crlf::get_file_attrs(attrs, rel_path, config);
+        let effective_attrs =
+            if rel_path.ends_with("/.gitattributes") || rel_path == ".gitattributes" {
+                let mut fa = file_attrs.clone();
+                if fa.text == crlf::TextAttr::Set
+                    && fa.eol == crlf::EolAttr::Crlf
+                    && conv.autocrlf == crlf::AutoCrlf::True
+                {
+                    fa.text = crlf::TextAttr::Unspecified;
+                    fa.eol = crlf::EolAttr::Unspecified;
+                }
+                fa
+            } else {
+                file_attrs
+            };
+        let normalized =
+            crlf::convert_to_git(&raw, rel_path, conv, &effective_attrs).unwrap_or(raw);
+        let normalized_oid = Odb::hash_object_data(ObjectKind::Blob, &normalized);
+        let oid = if expected_oid.is_some_and(|oid| oid == raw_oid) {
+            raw_oid
+        } else {
+            normalized_oid
+        };
         return Ok(Some((mode, oid)));
     }
 

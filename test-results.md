@@ -2,6 +2,16 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after CRLF-conversion compatibility fixes in add/update-index/apply/rm/checkout/read-tree/checkout-index paths, including conversion-aware index/worktree comparisons and robust attribute-source handling during branch/worktree transitions).
+- `rm -rf /workspace/tests/trash.t0020-crlf /workspace/tests/bin.t0020-crlf && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0020-crlf.sh` (run from `/workspace/tests`): 36/36 passing (improved from 19/36).
+- `./scripts/run-tests.sh t0020-crlf.sh`: 36/36 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0021-conversion.sh`: 18/42 (unchanged baseline in this plan neighborhood).
+  - `./scripts/run-tests.sh t0022-crlf-rename.sh`: 2/2 passing.
+  - `./scripts/run-tests.sh t0033-safe-directory.sh`: 22/22 passing.
+  - `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after implementing `test-tool json-writer` compatibility in `grit/src/main.rs`, including unit test mode, scripted stdin-driven object/array command parsing, JSON string escaping, nested inline object/array support, and pretty-print indentation behavior aligned with upstream helper semantics).
 - `rm -rf /workspace/tests/trash.t0019-json-writer /workspace/tests/bin.t0019-json-writer && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0019-json-writer.sh` (run from `/workspace/tests`): 16/16 passing (improved from 1/16; 1 test remains skipped for missing `PERLJSON` prereq in this environment).
 - `./scripts/run-tests.sh t0019-json-writer.sh`: 16/16 passing.
