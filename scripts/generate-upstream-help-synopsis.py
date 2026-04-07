@@ -2,6 +2,10 @@
 """Emit Rust `synopsis_for_builtin` from vendored git/Documentation/*.adoc (t0450 parity).
 
 Uses the same extraction rules as tests/t0450-txt-doc-vs-help.sh `adoc_to_synopsis`.
+
+After changing this script or the builtin list, also refresh the crates.io fallback:
+
+    python3 scripts/generate-upstream-help-synopsis.py > grit/upstream_help_synopsis.rs
 """
 
 from __future__ import annotations
