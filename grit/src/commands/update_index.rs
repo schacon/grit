@@ -3,6 +3,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use std::io::{self, BufRead};
+use std::collections::BTreeSet;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 
@@ -71,6 +72,10 @@ pub struct Args {
     /// Ignore missing files when adding.
     #[arg(long = "ignore-missing")]
     pub ignore_missing: bool,
+
+    /// Ignore submodule work tree state during --refresh.
+    #[arg(long = "ignore-submodules")]
+    pub ignore_submodules: bool,
 
     /// When removing entries, don't update (skip-worktree) entries.
     #[arg(long = "ignore-skip-worktree-entries")]
@@ -416,12 +421,26 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
+    let mut refresh_had_issues = false;
     if args.refresh || args.really_refresh || args.again {
-        // Re-stat all entries
-        refresh_index(&mut index, work_tree, &repo.odb)?;
+        // Re-stat all entries, reporting paths that are not up-to-date.
+        refresh_had_issues = refresh_index(
+            &mut index,
+            work_tree,
+            &repo.odb,
+            &conv,
+            &attrs,
+            &config,
+            args.ignore_missing,
+            args.unmerged,
+            args.ignore_submodules,
+        )?;
     }
 
     index.write(&index_path).context("writing index")?;
+    if refresh_had_issues {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -536,24 +555,120 @@ fn parse_index_info_record(index: &mut Index, rec: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Re-stat all tracked files, updating mtime/ctime/size.
-fn refresh_index(index: &mut Index, work_tree: &std::path::Path, _odb: &Odb) -> Result<()> {
+/// Re-stat tracked files, updating mtime/ctime/size for entries that are
+/// content-identical to the index and reporting out-of-date paths.
+fn refresh_index(
+    index: &mut Index,
+    work_tree: &std::path::Path,
+    _odb: &Odb,
+    conv: &crlf::ConversionConfig,
+    attrs: &crlf::GitAttributes,
+    config: &ConfigSet,
+    ignore_missing: bool,
+    allow_unmerged: bool,
+    ignore_submodules: bool,
+) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut problems = BTreeSet::new();
+
     for entry in &mut index.entries {
-        let path = std::path::Path::new(
-            std::str::from_utf8(&entry.path)
-                .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?,
-        );
-        let abs = work_tree.join(path);
-        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
-            use std::os::unix::fs::MetadataExt;
-            entry.ctime_sec = meta.ctime() as u32;
-            entry.ctime_nsec = meta.ctime_nsec() as u32;
-            entry.mtime_sec = meta.mtime() as u32;
-            entry.mtime_nsec = meta.mtime_nsec() as u32;
-            entry.size = meta.size() as u32;
+        let path = std::str::from_utf8(&entry.path)
+            .map_err(|_| anyhow::anyhow!("non-UTF-8 path in index"))?
+            .to_string();
+        let rel = std::path::Path::new(&path);
+
+        // Stage entries are unmerged. Unless explicitly allowed, report them
+        // as needing refresh.
+        if entry.stage() != 0 {
+            if !allow_unmerged {
+                problems.insert(path);
+            }
+            continue;
         }
+
+        let abs = work_tree.join(rel);
+
+        // Special handling for gitlinks (submodules).
+        if entry.mode == grit_lib::index::MODE_GITLINK {
+            if ignore_submodules {
+                continue;
+            }
+            let current = read_gitlink_head_oid(&abs);
+            match current {
+                Ok(oid) if oid == entry.oid => {}
+                _ => {
+                    problems.insert(path);
+                }
+            }
+            continue;
+        }
+
+        let meta = match std::fs::symlink_metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => {
+                if !ignore_missing {
+                    problems.insert(path);
+                }
+                continue;
+            }
+        };
+
+        let mode = normalize_mode(meta.mode());
+        let current_oid = if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&abs)?;
+            Odb::hash_object_data(
+                grit_lib::objects::ObjectKind::Blob,
+                target.to_string_lossy().as_bytes(),
+            )
+        } else if meta.file_type().is_file() {
+            let raw = std::fs::read(&abs)?;
+            let file_attrs = crlf::get_file_attrs(attrs, &path, config);
+            let mut conv_for_hash = conv.clone();
+            conv_for_hash.safecrlf = crlf::SafeCrlf::False;
+            let filtered = crlf::convert_to_git(&raw, &path, &conv_for_hash, &file_attrs)
+                .unwrap_or(raw);
+            Odb::hash_object_data(grit_lib::objects::ObjectKind::Blob, &filtered)
+        } else {
+            if !ignore_missing {
+                problems.insert(path);
+            }
+            continue;
+        };
+
+        if mode != entry.mode || current_oid != entry.oid {
+            problems.insert(path);
+            continue;
+        }
+
+        entry.ctime_sec = meta.ctime() as u32;
+        entry.ctime_nsec = meta.ctime_nsec() as u32;
+        entry.mtime_sec = meta.mtime() as u32;
+        entry.mtime_nsec = meta.mtime_nsec() as u32;
+        entry.size = meta.size() as u32;
     }
-    Ok(())
+
+    for path in &problems {
+        println!("{path}");
+    }
+    Ok(!problems.is_empty())
+}
+
+fn read_gitlink_head_oid(submodule_path: &Path) -> Result<ObjectId> {
+    let dot_git = submodule_path.join(".git");
+    let git_dir = resolve_gitdir(&dot_git)?;
+    let head_path = git_dir.join("HEAD");
+    let head_content = std::fs::read_to_string(&head_path)?;
+    let head = head_content.trim();
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(reference);
+        let resolved = std::fs::read_to_string(ref_path)?;
+        return resolved
+            .trim()
+            .parse()
+            .with_context(|| "invalid submodule HEAD oid");
+    }
+    head.parse().with_context(|| "invalid submodule HEAD oid")
 }
 
 fn read_paths_nul() -> Result<Vec<PathBuf>> {

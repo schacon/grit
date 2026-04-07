@@ -191,7 +191,7 @@ commit → check it off → move on.
 - [x] `t2022-checkout-paths` ████████████████████ 5/5 (0 left) — checkout $tree -- $paths
 - [x] `t2082-parallel-checkout-attributes` ████████████████████ 5/5 (0 left) — parallel-checkout: attributes
 
-- [ ] `t2103-update-index-ignore-missing` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — update-index with options
+- [x] `t2103-update-index-ignore-missing` ████████████████████ 5/5 (0 left) — update-index with options
 - [ ] `t2000-conflict-when-checking-files-out` ████████████░░░░░░░░ 9/14 (5 left) — git conflicts when checking files out test.
 - [ ] `t2011-checkout-invalid-head` ██████████░░░░░░░░░░ 5/10 (5 left) — checkout switching away from an invalid branch
 - [ ] `t2107-update-index-basic` ██████████░░░░░░░░░░ 5/10 (5 left) — basic update-index tests
