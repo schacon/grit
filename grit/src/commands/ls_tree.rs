@@ -274,7 +274,8 @@ fn list_tree(
         }
 
         if args.recursive && is_tree {
-            if args.show_trees {
+            if args.show_trees || args.only_trees {
+                // Show tree entry when -t or -d flag is set
                 let display_name = make_cwd_relative(&full_name, cwd_prefix);
                 print_entry(repo, entry, &display_name, args, out, term)?;
             }
