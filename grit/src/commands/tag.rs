@@ -59,20 +59,20 @@ pub struct Args {
     #[arg(long = "sort")]
     pub sort: Option<String>,
 
-    /// List only tags that contain the specified commit.
-    #[arg(long = "contains")]
+    /// List only tags that contain the specified commit (defaults to HEAD).
+    #[arg(long = "contains", num_args = 0..=1, default_missing_value = "HEAD")]
     pub contains: Option<String>,
 
-    /// List only tags that do not contain the specified commit.
-    #[arg(long = "no-contains")]
+    /// List only tags that do not contain the specified commit (defaults to HEAD).
+    #[arg(long = "no-contains", num_args = 0..=1, default_missing_value = "HEAD")]
     pub no_contains: Option<String>,
 
     /// Verify a tag (GPG signature check).
     #[arg(short = 'v', long = "verify")]
     pub verify: bool,
 
-    /// Only list tags that point at the specified object.
-    #[arg(long = "points-at")]
+    /// Only list tags that point at the specified object (defaults to HEAD).
+    #[arg(long = "points-at", num_args = 0..=1, default_missing_value = "HEAD")]
     pub points_at: Option<String>,
 
     /// Case-insensitive sort for -l listing.
