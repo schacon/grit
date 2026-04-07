@@ -222,7 +222,7 @@ pub fn match_string(date: &[u8], pat: &str) -> usize {
             i += 1;
             continue;
         }
-        if d.to_ascii_uppercase() == p.to_ascii_uppercase() {
+        if d.eq_ignore_ascii_case(&p) {
             i += 1;
             continue;
         }

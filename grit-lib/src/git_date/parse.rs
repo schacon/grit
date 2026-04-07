@@ -302,7 +302,7 @@ pub fn parse_date_basic(date: &str) -> Result<(u64, i32), ()> {
             m = match_alpha(&bytes[i..], &mut tm, &mut offset);
         } else if c.is_ascii_digit() {
             m = match_digit(&bytes[i..], &mut tm, &mut offset, &mut tm_gmt);
-        } else if (c == b'-' || c == b'+') && bytes.get(i + 1).map_or(false, |x| x.is_ascii_digit())
+        } else if (c == b'-' || c == b'+') && bytes.get(i + 1).is_some_and(|x| x.is_ascii_digit())
         {
             m = match_tz(&bytes[i..], &mut offset);
         }
@@ -334,7 +334,7 @@ pub fn parse_date_basic(date: &str) -> Result<(u64, i32), ()> {
         if offset > 0 && (offset as i64) * 60 > ts as i64 {
             return Err(());
         }
-        if offset < 0 && (-(offset as i64)) * 60 > (TIMESTAMP_MAX as i128 - ts as i128) {
+        if offset < 0 && (-(offset as i128)) * 60 > (TIMESTAMP_MAX as i128 - ts as i128) {
             return Err(());
         }
         ts = ts.saturating_sub((offset as i64 * 60) as u64);
@@ -606,7 +606,7 @@ fn match_alpha(date: &[u8], tm: &mut tm, offset: &mut i32) -> usize {
     for tz in TIMEZONE_NAMES {
         let m = match_string(date, tz.name);
         if m >= 3 || m == tz.name.len() {
-            let mut off = tz.offset_hours + tz.dst;
+            let off = tz.offset_hours + tz.dst;
             if *offset == -1 {
                 *offset = 60 * off;
             }
@@ -625,7 +625,7 @@ fn match_alpha(date: &[u8], tm: &mut tm, offset: &mut i32) -> usize {
     }
 
     if date.first() == Some(&b'T')
-        && date.get(1).map_or(false, |b| b.is_ascii_digit())
+        && date.get(1).is_some_and(|b| b.is_ascii_digit())
         && tm.tm_hour == -1
     {
         tm.tm_min = 0;
@@ -654,7 +654,7 @@ fn match_digit(date: &[u8], tm: &mut tm, offset: &mut i32, tm_gmt: &mut i32) -> 
 
     if let Some(&sep) = date.get(end) {
         if matches!(sep, b':' | b'.' | b'/' | b'-')
-            && date.get(end + 1).map_or(false, |b| b.is_ascii_digit())
+            && date.get(end + 1).is_some_and(|b| b.is_ascii_digit())
         {
             let m = match_multi_number(num, date, end, tm, 0);
             if m != 0 {
@@ -679,11 +679,10 @@ fn match_digit(date: &[u8], tm: &mut tm, offset: &mut i32, tm_gmt: &mut i32) -> 
             let _ = set_date(num1, num2, num3, None, get_time_sec(), tm);
         } else if set_time(num1 as i64, num2 as i64, num3 as i64, tm) == 0
             && date.get(end) == Some(&b'.')
-            && date.get(end + 1).map_or(false, |b| b.is_ascii_digit())
+            && date.get(end + 1).is_some_and(|b| b.is_ascii_digit())
         {
             let (_, rel) = parse_uint_suffix(&date[end + 1..]);
-            let mut e = end + 1 + rel;
-            return e;
+            return end + 1 + rel;
         }
         return end;
     }

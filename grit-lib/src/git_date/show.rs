@@ -1,7 +1,7 @@
 //! Git-compatible date display (`show_date`, `show_date_relative`, strftime handling).
 
 use super::tm::{
-    date_overflows, empty_tm, get_time_sec, gm_time_t, init_tm_unknown, local_time_tzoffset,
+    empty_tm, get_time_sec, init_tm_unknown, local_time_tzoffset,
     local_tzoffset, time_to_tm, time_to_tm_local, tm_to_time_t, TzHhmm,
 };
 use libc::{time_t, tm};
@@ -259,8 +259,8 @@ fn show_date_normal(
 
     hide.tz = local || tz == human_tz;
     hide.year = tm.tm_year == human_tm.tm_year;
-    if hide.year {
-        if tm.tm_mon == human_tm.tm_mon {
+    if hide.year
+        && tm.tm_mon == human_tm.tm_mon {
             if tm.tm_mday > human_tm.tm_mday {
                 // future date in same month
             } else if tm.tm_mday == human_tm.tm_mday {
@@ -270,7 +270,6 @@ fn show_date_normal(
                 hide.date = true;
             }
         }
-    }
 
     if hide.wday {
         return show_date_relative(time, get_time_sec());

@@ -7,8 +7,13 @@ description = "Core library for the grit Git implementation"
 readme = "README.md"
 repository = "https://github.com/schacon/grit"
 
-[lints]
-workspace = true
+# Do not use `lints.workspace = true`: we allow `unsafe_code` here for `git_date` (`libc` like Git `date.c`).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
 
 [dependencies]
 thiserror.workspace = true
