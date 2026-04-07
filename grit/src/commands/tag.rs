@@ -670,25 +670,38 @@ fn version_segments(s: &str) -> Vec<&str> {
 
 /// Build the tag message from CLI args.
 /// Strip #comment lines from a message and normalize whitespace.
+/// Also: strip trailing whitespace from each line, collapse multiple blank lines to one.
 fn strip_comments(s: &str) -> String {
-    let mut lines: Vec<&str> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
     for line in s.lines() {
-        if !line.starts_with('#') {
-            lines.push(line);
+        if line.starts_with('#') {
+            continue;
         }
+        lines.push(line.trim_end().to_string());
     }
-    // Remove leading and trailing blank lines
-    while lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+    // Remove leading blank lines
+    while lines.first().map(|l| l.is_empty()).unwrap_or(false) {
         lines.remove(0);
     }
-    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+    // Remove trailing blank lines
+    while lines.last().map(|l| l.is_empty()).unwrap_or(false) {
         lines.pop();
     }
     if lines.is_empty() {
-        String::new()
-    } else {
-        lines.join("\n") + "\n"
+        return String::new();
     }
+    // Collapse multiple consecutive blank lines to at most one
+    let mut result = Vec::new();
+    let mut last_blank = false;
+    for line in &lines {
+        let is_blank = line.is_empty();
+        if is_blank && last_blank {
+            continue; // skip extra blank lines
+        }
+        result.push(line.clone());
+        last_blank = is_blank;
+    }
+    result.join("\n") + "\n"
 }
 
 fn build_tag_message(args: &Args) -> Result<String> {
