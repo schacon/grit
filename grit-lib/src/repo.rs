@@ -209,6 +209,29 @@ impl Repository {
     /// Whether this is a bare repository (no working tree).
     #[must_use]
     pub fn is_bare(&self) -> bool {
+        // Check core.bare first - it overrides work_tree detection
+        let config_path = self.git_dir.join("config");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            let mut in_core = false;
+            for line in content.lines() {
+                let t = line.trim();
+                if t.starts_with('[') {
+                    in_core = t.eq_ignore_ascii_case("[core]");
+                    continue;
+                }
+                if in_core {
+                    if let Some((k, v)) = t.split_once('=') {
+                        if k.trim().eq_ignore_ascii_case("bare") {
+                            if v.trim().eq_ignore_ascii_case("true") {
+                                return true;
+                            } else if v.trim().eq_ignore_ascii_case("false") {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if self.work_tree.is_some() {
             return false;
         }
