@@ -318,11 +318,16 @@ pub fn run(mut args: Args) -> Result<()> {
             }
             bail!("some ignored files could not be added");
         }
-        if had_errors && !add_cfg.ignore_errors {
+        if had_errors {
             if !args.dry_run {
                 write_index_or_lock_err(&index, &repo.index_path())?;
             }
-            bail!("adding files failed");
+            if !add_cfg.ignore_errors {
+                bail!("adding files failed");
+            } else {
+                // With --ignore-errors, still exit non-zero if there were errors
+                std::process::exit(1);
+            }
         }
     }
 
