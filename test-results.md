@@ -2,6 +2,8 @@
 
 **Updated:** 2026-04-06
 
+- `./scripts/run-tests.sh t6601-path-walk.sh`: 1/15 passing (baseline for newly claimed task; currently blocked by missing `test-tool path-walk` support).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6601-path-walk.sh`: 1/15 passing (direct baseline; first hard failure is `error: test-tool: unknown subcommand 'path-walk'`).
 - `GUST_BIN=/workspace/target/release/grit bash tests/t6437-submodule-merge.sh`: 22/22 passing (direct validation after submodule-focused merge behavior fixes and test expectation alignment for the merge-abort directory/submodule case).
 - `./scripts/run-tests.sh t6437-submodule-merge.sh`: 22/22 passing (harness validation; file now fully passing and TSV updated).
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge regression check after final `t6437` updates).

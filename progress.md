@@ -7,8 +7,8 @@
 | Status      | Count |
 |-------------|-------|
 | Completed   |    88 |
-| In progress |     0 |
-| Remaining   |   679 |
+| In progress |     1 |
+| Remaining   |   678 |
 | **Total**   |   767 |
 
 ## Recently completed
@@ -78,4 +78,4 @@
 
 ## What Remains
 
-679 test files still pending. See `plan.md` for the full prioritized list.
+678 test files still pending, with `t6601-path-walk` currently in progress. See `plan.md` for the full prioritized list.

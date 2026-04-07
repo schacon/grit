@@ -758,7 +758,7 @@ t6439-merge-co-error-msgs	yes	6	6	0	ok	6	6	0
 t6500-gc	yes	35	15	20	ok	15	35	0
 t6501-freshen-objects	yes	42	42	0	ok	42	42	0
 t6600-test-reach	yes	47	7	40	ok	7	47	0
-t6601-path-walk	yes	15	0	15	ok	0	15	0
+t6601-path-walk	yes	15	1	14	ok	1	15	0
 t6700-tree-depth	yes	10	10	0	ok	10	10	0
 t7001-mv	yes	54	39	15	ok	39	54	0
 t7002-mv-sparse-checkout	yes	22	1	21	ok	1	22	0
