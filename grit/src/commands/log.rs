@@ -1779,11 +1779,24 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Apply --diff-filter
     let commits = if let Some(ref filter) = args.diff_filter {
-        let filter_chars: Vec<char> = filter.chars().collect();
+        // Lowercase = exclude, uppercase = include
+        let include_chars: Vec<char> = filter.chars().filter(|c| c.is_uppercase()).collect();
+        let exclude_chars: Vec<char> = filter
+            .chars()
+            .filter(|c| c.is_lowercase())
+            .map(|c| c.to_uppercase().next().unwrap_or(c))
+            .collect();
         commits
             .into_iter()
             .filter(|(_oid, info)| {
-                commit_has_diff_status(&repo.odb, info, &filter_chars).unwrap_or(true)
+                if !include_chars.is_empty() {
+                    commit_has_diff_status(&repo.odb, info, &include_chars).unwrap_or(true)
+                } else if !exclude_chars.is_empty() {
+                    // Include if NOT in exclude list
+                    commit_has_diff_status_not_in(&repo.odb, info, &exclude_chars).unwrap_or(true)
+                } else {
+                    true
+                }
             })
             .collect::<Vec<_>>()
     } else {
@@ -4489,6 +4502,27 @@ fn collect_oids_from_dir(
         }
     }
     Ok(())
+}
+
+/// Check if a commit does NOT have any changes of the excluded types (for lowercase diff-filter).
+/// Returns true if NONE of the changes match the excluded types.
+fn commit_has_diff_status_not_in(
+    odb: &Odb,
+    info: &CommitInfo,
+    exclude_chars: &[char],
+) -> Result<bool> {
+    let parent_tree = if let Some(parent) = info.parents.first() {
+        let pobj = odb.read(parent)?;
+        let pc = parse_commit(&pobj.data)?;
+        Some(pc.tree)
+    } else {
+        None
+    };
+    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    // Include commit if it has no changes of the excluded type
+    Ok(!entries
+        .iter()
+        .any(|e| exclude_chars.contains(&e.status.letter())))
 }
 
 /// Check if a commit has any changes matching the specified diff-filter status letters.
