@@ -1206,6 +1206,9 @@ PY
   run-command)
     shift
     exec "$GUST_BIN" test-tool run-command "$@" ;;
+  trace2)
+    shift
+    exec "$GUST_BIN" test-tool trace2 "$@" ;;
   rot13-filter)
     shift
     exec "$GUST_BIN" test-tool rot13-filter "$@" ;;
