@@ -676,10 +676,12 @@ fn set_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> 
 fn unset_upstream(repo: &Repository, head: &HeadState, args: &Args) -> Result<()> {
     let branch_name = match args.name.as_deref() {
         Some(n) => n.to_owned(),
-        None => head
-            .branch_name()
-            .ok_or_else(|| anyhow::anyhow!("no current branch; specify branch name"))?
-            .to_owned(),
+        None => {
+            eprintln!(
+                "fatal: could not unset upstream of HEAD when it does not point to any branch"
+            );
+            std::process::exit(128);
+        }
     };
 
     let config_path = repo.git_dir.join("config");
