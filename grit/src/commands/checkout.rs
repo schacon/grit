@@ -1083,7 +1083,8 @@ fn create_orphan_branch(repo: &Repository, name: &str, start_point: Option<&str>
         let old_index = repo.load_index().unwrap_or_else(|_| Index::new());
         let new_index = Index::new();
         checkout_index_to_worktree(repo, &old_index, &new_index, work_tree, true)?;
-        repo.write_index(&mut Index::new()).context("writing index")?;
+        repo.write_index(&mut Index::new())
+            .context("writing index")?;
     }
 
     // Point HEAD at the new branch (which doesn't exist yet = unborn)
@@ -3137,14 +3138,15 @@ fn resolve_nth_previous_branch(repo: &Repository, n: usize) -> Result<String> {
 
 fn write_checkout_reflog(
     repo: &Repository,
-    head: &HeadState,
+    _head: &HeadState,
     old_oid: &ObjectId,
     new_oid: &ObjectId,
     message: &str,
 ) {
     let identity = resolve_checkout_identity(repo);
 
-    // Write reflog for HEAD
+    // Git records `checkout: moving from X to Y` on `logs/HEAD` only. The branch ref we are
+    // leaving keeps its reflog unchanged (see t3406-rebase-message reflog expectations).
     let _ = append_reflog(
         &repo.git_dir,
         "HEAD",
@@ -3154,19 +3156,6 @@ fn write_checkout_reflog(
         message,
         false,
     );
-
-    // Write reflog for the branch ref if on a branch
-    if let HeadState::Branch { refname, .. } = head {
-        let _ = append_reflog(
-            &repo.git_dir,
-            refname,
-            old_oid,
-            new_oid,
-            &identity,
-            message,
-            false,
-        );
-    }
 }
 
 /// Resolve the committer identity for reflog entries.

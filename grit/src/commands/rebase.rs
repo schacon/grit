@@ -19,6 +19,8 @@ use std::path::Path;
 use grit_lib::config::ConfigSet;
 use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 
+use grit_lib::diff::{self, count_changes, DiffEntry};
+use grit_lib::merge_base::{is_ancestor, merge_bases_first_vs_rest};
 use grit_lib::merge_file::{merge, ConflictStyle, MergeInput};
 use grit_lib::objects::{
     parse_commit, parse_tree, serialize_commit, CommitData, ObjectId, ObjectKind,
@@ -71,7 +73,7 @@ impl<'a> RebaseConflictContext<'a> {
 }
 
 /// Arguments for `grit rebase`.
-#[derive(Debug, ClapArgs)]
+#[derive(Debug, Clone, ClapArgs)]
 #[command(about = "Reapply commits on top of another base tip")]
 pub struct Args {
     /// Upstream branch to rebase onto (default: upstream tracking branch).
@@ -137,10 +139,28 @@ pub struct Args {
     /// Branch to rebase (checkout first, then rebase onto upstream).
     #[arg(value_name = "BRANCH")]
     pub branch: Option<String>,
+
+    /// Show a diffstat of what would be replayed (also honors `rebase.stat` config).
+    #[arg(long = "stat")]
+    pub stat: bool,
+
+    /// Do not show a diffstat (overrides `rebase.stat` config).
+    #[arg(short = 'n', long = "no-stat")]
+    pub no_stat: bool,
+
+    /// Passed through for compatibility; validated when present.
+    #[arg(short = 'C', value_name = "n")]
+    pub context_lines: Option<String>,
+
+    /// Passed through for compatibility; validated when present.
+    #[arg(long = "whitespace", value_name = "action")]
+    pub whitespace: Option<String>,
 }
 
 /// Run the `rebase` command.
 pub fn run(mut args: Args) -> Result<()> {
+    validate_compat_options(&args)?;
+
     if args.abort {
         return do_abort();
     }
@@ -227,6 +247,53 @@ pub fn run(mut args: Args) -> Result<()> {
 //   msgnum      — 1-based index of current patch
 //   end         — total number of patches
 
+fn validate_compat_options(args: &Args) -> Result<()> {
+    if let Some(ref c) = args.context_lines {
+        if c.parse::<u32>().is_err() {
+            bail!("switch `C' expects a numerical value");
+        }
+    }
+    if let Some(ref ws) = args.whitespace {
+        let allowed = ["warn", "nowarn", "error", "error-all", "fix", "strip"];
+        if !allowed.contains(&ws.as_str()) {
+            bail!("Invalid whitespace option: '{ws}'");
+        }
+    }
+    Ok(())
+}
+
+fn rebase_reflog_action() -> String {
+    std::env::var("GIT_REFLOG_ACTION").unwrap_or_else(|_| "rebase".to_owned())
+}
+
+fn print_branch_up_to_date(head: &HeadState) {
+    if let Some(name) = head.branch_name() {
+        println!("Current branch {name} is up to date.");
+    } else {
+        println!("HEAD is up to date.");
+    }
+}
+
+fn reflog_identity(repo: &Repository) -> String {
+    let config = ConfigSet::load(Some(&repo.git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
 fn rebase_dir(git_dir: &Path) -> std::path::PathBuf {
     git_dir.join("rebase-apply")
 }
@@ -250,6 +317,21 @@ fn load_rebase_backend(rb_dir: &Path) -> RebaseBackend {
     } else {
         RebaseBackend::Merge
     }
+}
+
+fn load_rebase_reflog_action(rb_dir: &Path) -> String {
+    fs::read_to_string(rb_dir.join("reflog-action"))
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(rebase_reflog_action)
+}
+
+fn load_onto_name(rb_dir: &Path) -> Option<String> {
+    fs::read_to_string(rb_dir.join("onto-name"))
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }
 
 // ── Main rebase flow ────────────────────────────────────────────────
@@ -293,85 +375,118 @@ fn do_rebase(args: Args) -> Result<()> {
         }
     }
 
-    if args.interactive {
-        return do_interactive_stub(&repo, &args);
-    }
-
     // Resolve upstream
     let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
     let upstream_oid = resolve_revision(&repo, upstream_spec)
         .with_context(|| format!("bad revision '{upstream_spec}'"))?;
 
-    // Resolve current HEAD early (needed for --keep-base)
     let head_state = resolve_head(git_dir)?;
     let head_oid_early = head_state
         .oid()
         .ok_or_else(|| anyhow::anyhow!("cannot rebase: HEAD is unborn"))?
         .to_owned();
 
-    // Resolve onto (defaults to upstream, or merge-base with --keep-base)
     let onto_oid = if let Some(ref onto_spec) = args.onto {
         resolve_revision(&repo, onto_spec).with_context(|| format!("bad revision '{onto_spec}'"))?
     } else if args.keep_base {
-        // --keep-base: onto = merge-base(upstream, HEAD)
         find_merge_base(&repo, upstream_oid, head_oid_early).unwrap_or(upstream_oid)
     } else {
         upstream_oid
     };
 
-    // Use the already-resolved HEAD
     let head = head_state;
     let head_oid = head_oid_early;
 
-    // Check if already up to date (skip if --no-ff forces replay)
-    if !args.no_ff && head_oid == onto_oid {
-        eprintln!("Current branch is up to date.");
+    let config = ConfigSet::load(Some(git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let want_stat =
+        args.stat || (config.get("rebase.stat").as_deref() == Some("true") && !args.no_stat);
+
+    let branch_base_merge = merge_bases_first_vs_rest(&repo, onto_oid, &[head_oid])?;
+    let branch_base = if branch_base_merge.len() == 1 {
+        Some(branch_base_merge[0])
+    } else {
+        None
+    };
+
+    let allow_preemptive_ff = !args.interactive && args.exec.is_none();
+
+    if allow_preemptive_ff && rebase_can_preemptive_ff(&repo, onto_oid, upstream_oid, head_oid)? {
+        if !args.no_ff {
+            print_branch_up_to_date(&head);
+            return Ok(());
+        }
+        if let Some(name) = head.branch_name() {
+            println!("Current branch {name} is up to date, rebase forced.");
+        } else {
+            println!("HEAD is up to date, rebase forced.");
+        }
+    }
+
+    if want_stat {
+        if args.verbose {
+            match branch_base {
+                Some(bb) => println!(
+                    "Changes from {} to {}:",
+                    &bb.to_hex()[..7],
+                    &onto_oid.to_hex()[..7]
+                ),
+                None => println!("Changes to {}:", onto_oid.to_hex()),
+            }
+        }
+        print_rebase_diffstat(&repo, branch_base, onto_oid)?;
+    }
+
+    let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
+
+    if args.interactive {
+        if commits.is_empty() {
+            print_branch_up_to_date(&head);
+            return Ok(());
+        }
+        for oid in &commits {
+            let obj = repo.odb.read(oid)?;
+            let commit = parse_commit(&obj.data)?;
+            let subject = commit.message.lines().next().unwrap_or("");
+            println!("pick {} {}", &oid.to_hex()[..7], subject);
+        }
         return Ok(());
     }
 
-    // Collect commits to replay: walk from HEAD back, stopping when we hit upstream_oid
-    let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
-
-    // Fast-forward detection: if the first commit to replay is already a child
-    // of onto, then replaying would produce identical commits → noop.
-    if !args.no_ff && !commits.is_empty() {
-        let first = &commits[0];
-        let obj = repo.odb.read(first).context("reading first commit")?;
-        let cd = parse_commit(&obj.data)?;
-        if cd.parents.contains(&onto_oid) {
-            // The commits are already on top of onto — noop
-            eprintln!("Current branch is up to date.");
+    if !args.no_ff && commits.is_empty() {
+        if head_oid == onto_oid {
+            print_branch_up_to_date(&head);
             return Ok(());
+        }
+        if can_fast_forward(&repo, head_oid, onto_oid)? {
+            let ff_base = merge_bases_first_vs_rest(&repo, onto_oid, &[head_oid])?
+                .into_iter()
+                .next();
+            return fast_forward_rebase(
+                &repo,
+                &head,
+                head_oid,
+                onto_oid,
+                upstream_spec,
+                ff_base,
+                head_oid,
+            );
         }
     }
 
     if commits.is_empty() {
-        if !args.no_ff {
-            eprintln!("Current branch is up to date.");
-            return Ok(());
-        }
-        // --no-ff with no commits: record rebase completion in reflog
-        let _head_name = match &head {
-            HeadState::Branch { refname, .. } => refname.clone(),
-            _ => "detached HEAD".to_string(),
-        };
-        // Write reflog entry for the rebase
         if let HeadState::Branch { refname, .. } = &head {
+            let ident = reflog_identity(&repo);
             let msg = format!("rebase (no-ff): checkout {}", onto_oid.to_hex());
-            let ident = "grit <grit> 0 +0000";
-            let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, ident, &msg, false);
-            let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, ident, &msg, false);
+            let _ = append_reflog(git_dir, refname, &head_oid, &head_oid, &ident, &msg, false);
+            let _ = append_reflog(git_dir, "HEAD", &head_oid, &head_oid, &ident, &msg, false);
         }
         return Ok(());
     }
 
     let backend = choose_rebase_backend(&args);
-
-    // Save state
     let rb_dir = rebase_dir(git_dir);
     fs::create_dir_all(&rb_dir)?;
 
-    // Save original branch name
     let head_name = match &head {
         HeadState::Branch { refname, .. } => refname.clone(),
         _ => "detached HEAD".to_string(),
@@ -379,6 +494,11 @@ fn do_rebase(args: Args) -> Result<()> {
     fs::write(rb_dir.join("head-name"), &head_name)?;
     fs::write(rb_dir.join("orig-head"), head_oid.to_hex())?;
     fs::write(rb_dir.join("onto"), onto_oid.to_hex())?;
+    fs::write(rb_dir.join("onto-name"), format!("{upstream_spec}\n"))?;
+    fs::write(
+        rb_dir.join("reflog-action"),
+        format!("{}\n", rebase_reflog_action()),
+    )?;
     fs::write(
         rb_dir.join("backend"),
         match backend {
@@ -386,33 +506,45 @@ fn do_rebase(args: Args) -> Result<()> {
             RebaseBackend::Apply => "apply\n",
         },
     )?;
-    // Write the "rebasing" marker so git-prompt.sh detects this as a
-    // rebase (not an "am" or ambiguous "AM/REBASE").
     fs::write(rb_dir.join("rebasing"), "")?;
 
-    // Write todo list (oldest first)
     let todo: Vec<String> = commits.iter().map(|oid| oid.to_hex()).collect();
     let total = todo.len();
     fs::write(rb_dir.join("todo"), todo.join("\n") + "\n")?;
     fs::write(rb_dir.join("end"), total.to_string())?;
     fs::write(rb_dir.join("msgnum"), "1")?;
-    // Also write "next" and "last" — aliases that git-prompt.sh reads.
     fs::write(rb_dir.join("last"), total.to_string())?;
     fs::write(rb_dir.join("next"), "1")?;
 
-    // Save --exec command if given
     if let Some(ref exec_cmd) = args.exec {
         fs::write(rb_dir.join("exec"), exec_cmd)?;
     }
 
-    // Detach HEAD at onto
-    fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
+    let ident = reflog_identity(&repo);
+    let ra = rebase_reflog_action();
+    let start_msg = format!("{ra} (start): checkout {upstream_spec}");
+    // Git records `(start)` on HEAD only; the branch ref keeps its pre-rebase tip until `(finish)`.
+    let _ = append_reflog(
+        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
+    );
 
-    // Save ORIG_HEAD
+    fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
     fs::write(
         git_dir.join("ORIG_HEAD"),
         format!("{}\n", head_oid.to_hex()),
     )?;
+
+    let onto_obj = repo.odb.read(&onto_oid)?;
+    let onto_commit = parse_commit(&onto_obj.data)?;
+    let entries = tree_to_index_entries(&repo, &onto_commit.tree, "")?;
+    let mut idx = Index::new();
+    idx.entries = entries;
+    idx.sort();
+    let old_index = load_index(&repo)?;
+    repo.write_index(&mut idx)?;
+    if let Some(wt) = &repo.work_tree {
+        checkout_merged_index(&repo, wt, &old_index, &idx)?;
+    }
 
     eprintln!(
         "rebasing {} commits onto {}",
@@ -420,9 +552,88 @@ fn do_rebase(args: Args) -> Result<()> {
         &onto_oid.to_hex()[..7]
     );
 
-    // Replay each commit
     replay_remaining(&repo)?;
 
+    Ok(())
+}
+
+fn fast_forward_rebase(
+    repo: &Repository,
+    head: &HeadState,
+    head_oid: ObjectId,
+    onto_oid: ObjectId,
+    onto_name: &str,
+    branch_base: Option<ObjectId>,
+    orig_head: ObjectId,
+) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    if branch_base != Some(orig_head) {
+        bail!("internal: fast-forward branch base mismatch");
+    }
+
+    println!("First, rewinding head to replay your work on top of it...");
+
+    let ident = reflog_identity(repo);
+    let ra = rebase_reflog_action();
+    let start_msg = format!("{ra} (start): checkout {onto_name}");
+    let _ = append_reflog(
+        git_dir, "HEAD", &head_oid, &onto_oid, &ident, &start_msg, false,
+    );
+
+    fs::write(git_dir.join("HEAD"), format!("{}\n", onto_oid.to_hex()))?;
+    fs::write(
+        git_dir.join("ORIG_HEAD"),
+        format!("{}\n", head_oid.to_hex()),
+    )?;
+
+    let onto_obj = repo.odb.read(&onto_oid)?;
+    let onto_commit = parse_commit(&onto_obj.data)?;
+    let entries = tree_to_index_entries(repo, &onto_commit.tree, "")?;
+    let mut idx = Index::new();
+    idx.entries = entries;
+    idx.sort();
+    let old_index = load_index(repo)?;
+    repo.write_index(&mut idx)?;
+    if let Some(wt) = &repo.work_tree {
+        checkout_merged_index(repo, wt, &old_index, &idx)?;
+    }
+
+    let branch_disp = head
+        .branch_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "HEAD".to_owned());
+
+    if let HeadState::Branch { refname, .. } = head {
+        let finish_branch = format!("{ra} (finish): {refname} onto {}", onto_oid.to_hex());
+        let finish_head = format!("{ra} (finish): returning to {refname}");
+        let _ = append_reflog(
+            git_dir,
+            refname,
+            &head_oid,
+            &onto_oid,
+            &ident,
+            &finish_branch,
+            false,
+        );
+        let _ = append_reflog(
+            git_dir,
+            "HEAD",
+            &onto_oid,
+            &onto_oid,
+            &ident,
+            &finish_head,
+            false,
+        );
+
+        let ref_path = git_dir.join(refname);
+        if let Some(parent) = ref_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&ref_path, format!("{}\n", onto_oid.to_hex()))?;
+        fs::write(git_dir.join("HEAD"), format!("ref: {refname}\n"))?;
+    }
+
+    println!("Fast-forwarded {branch_disp} to {onto_name}.");
     Ok(())
 }
 
@@ -434,19 +645,16 @@ fn find_merge_base(repo: &Repository, a: ObjectId, b: ObjectId) -> Option<Object
         .and_then(|bases| bases.into_iter().next())
 }
 
-/// Collect commits to replay: ancestors of `head` that are not ancestors of `upstream`.
+/// Collect commits to replay: ancestors of `head` that are not ancestors of the merge-base
+/// of `upstream` and `head`. Stops at the merge base only (not at `upstream`), matching Git.
 /// Returns them oldest-first.
 fn collect_commits_to_replay(
     repo: &Repository,
     head: ObjectId,
     upstream: ObjectId,
 ) -> Result<Vec<ObjectId>> {
-    // Find the merge base between upstream and head
-    let bases = grit_lib::merge_base::merge_bases_first_vs_rest(repo, upstream, &[head])?;
-    let stop_at: HashSet<ObjectId> = bases.into_iter().collect();
-    // Also stop at upstream itself
-    let mut stop_set = stop_at;
-    stop_set.insert(upstream);
+    let bases = merge_bases_first_vs_rest(repo, upstream, &[head])?;
+    let stop_set: HashSet<ObjectId> = bases.into_iter().collect();
 
     let mut commits = Vec::new();
     let mut current = head;
@@ -467,14 +675,198 @@ fn collect_commits_to_replay(
         current = commit.parents[0];
     }
 
-    commits.reverse(); // oldest first
+    commits.reverse();
     Ok(commits)
+}
+
+/// Whether `onto` is a strict fast-forward of `head` (linear single-parent history from `head` to `onto`).
+fn can_fast_forward(repo: &Repository, head: ObjectId, onto: ObjectId) -> Result<bool> {
+    if head == onto {
+        return Ok(false);
+    }
+    if !is_ancestor(repo, head, onto)? {
+        return Ok(false);
+    }
+    let bases = merge_bases_first_vs_rest(repo, onto, &[head])?;
+    if bases.len() != 1 || bases[0] != head {
+        return Ok(false);
+    }
+    is_linear_history(repo, head, onto)
+}
+
+fn is_linear_history(repo: &Repository, from: ObjectId, to: ObjectId) -> Result<bool> {
+    let mut current = to;
+    loop {
+        if current == from {
+            return Ok(true);
+        }
+        let obj = repo.odb.read(&current)?;
+        let commit = parse_commit(&obj.data)?;
+        if commit.parents.len() != 1 {
+            return Ok(false);
+        }
+        current = commit.parents[0];
+    }
+}
+
+/// Git's `can_fast_forward` for preemptive up-to-date / noop detection.
+fn rebase_can_preemptive_ff(
+    repo: &Repository,
+    onto: ObjectId,
+    upstream: ObjectId,
+    head: ObjectId,
+) -> Result<bool> {
+    let bases = merge_bases_first_vs_rest(repo, onto, &[head])?;
+    if bases.len() != 1 || bases[0] != onto {
+        return Ok(false);
+    }
+    let up_bases = merge_bases_first_vs_rest(repo, upstream, &[head])?;
+    if up_bases.len() != 1 || up_bases[0] != onto {
+        return Ok(false);
+    }
+    is_linear_history(repo, onto, head)
+}
+
+fn print_rebase_diffstat(
+    repo: &Repository,
+    branch_base: Option<ObjectId>,
+    onto_oid: ObjectId,
+) -> Result<()> {
+    let old_tree = if let Some(bb) = branch_base {
+        let obj = repo.odb.read(&bb)?;
+        let c = parse_commit(&obj.data)?;
+        Some(c.tree)
+    } else {
+        None
+    };
+    let new_obj = repo.odb.read(&onto_oid)?;
+    let new_commit = parse_commit(&new_obj.data)?;
+    let entries = diff::diff_trees(&repo.odb, old_tree.as_ref(), Some(&new_commit.tree), "")?;
+    print_diffstat_from_entries(repo, &entries);
+    Ok(())
+}
+
+fn print_diffstat_from_entries(repo: &Repository, entries: &[DiffEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+
+    struct StatEntry {
+        path: String,
+        insertions: usize,
+        deletions: usize,
+        is_new: bool,
+        is_deleted: bool,
+        new_mode: Option<u32>,
+    }
+
+    let mut stats: Vec<StatEntry> = Vec::new();
+    let mut total_ins = 0usize;
+    let mut total_del = 0usize;
+
+    for entry in entries {
+        let path = entry
+            .new_path
+            .as_deref()
+            .or(entry.old_path.as_deref())
+            .unwrap_or("unknown");
+        let is_new = entry.old_oid == diff::zero_oid();
+        let is_deleted = entry.new_oid == diff::zero_oid();
+
+        let old_content = if !is_new {
+            repo.odb
+                .read(&entry.old_oid)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.data).to_string())
+        } else {
+            None
+        };
+        let new_content = if !is_deleted {
+            repo.odb
+                .read(&entry.new_oid)
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.data).to_string())
+        } else {
+            None
+        };
+
+        let (ins, del) = count_changes(
+            old_content.as_deref().unwrap_or(""),
+            new_content.as_deref().unwrap_or(""),
+        );
+
+        total_ins += ins;
+        total_del += del;
+
+        let mode_num = u32::from_str_radix(&entry.new_mode, 8).unwrap_or(0o100644);
+        stats.push(StatEntry {
+            path: path.to_owned(),
+            insertions: ins,
+            deletions: del,
+            is_new,
+            is_deleted,
+            new_mode: if is_new { Some(mode_num) } else { None },
+        });
+    }
+
+    let display_names: Vec<String> = stats.iter().map(|s| s.path.clone()).collect();
+    let max_path_len = display_names.iter().map(|s| s.len()).max().unwrap_or(0);
+    let max_change = stats
+        .iter()
+        .map(|s| s.insertions + s.deletions)
+        .max()
+        .unwrap_or(0);
+    let count_width = if max_change == 0 {
+        1
+    } else {
+        format!("{}", max_change).len()
+    };
+
+    for (i, s) in stats.iter().enumerate() {
+        let total = s.insertions + s.deletions;
+        let plus = "+".repeat(s.insertions.min(50));
+        let minus = "-".repeat(s.deletions.min(50));
+        println!(
+            " {:<width$} | {:>cw$} {}{}",
+            display_names[i],
+            total,
+            plus,
+            minus,
+            width = max_path_len,
+            cw = count_width
+        );
+    }
+
+    let files_changed = stats.len();
+    let mut parts = Vec::new();
+    parts.push(format!(
+        "{} file{} changed",
+        files_changed,
+        if files_changed != 1 { "s" } else { "" }
+    ));
+    if total_ins > 0 {
+        parts.push(format!(
+            "{} insertion{}",
+            total_ins,
+            if total_ins != 1 { "s(+)" } else { "(+)" }
+        ));
+    }
+    if total_del > 0 {
+        parts.push(format!(
+            "{} deletion{}",
+            total_del,
+            if total_del != 1 { "s(-)" } else { "(-)" }
+        ));
+    }
+    println!(" {}", parts.join(", "));
 }
 
 /// Replay all remaining commits from the todo list.
 fn replay_remaining(repo: &Repository) -> Result<()> {
     let git_dir = &repo.git_dir;
     let rb_dir = rebase_dir(git_dir);
+    let ra = load_rebase_reflog_action(&rb_dir);
+    let ident = reflog_identity(repo);
 
     let todo_content = fs::read_to_string(rb_dir.join("todo"))?;
     let todo: Vec<&str> = todo_content.lines().filter(|l| !l.is_empty()).collect();
@@ -494,7 +886,7 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
         let old_head = resolve_head(git_dir)?
             .oid()
             .cloned()
-            .unwrap_or_else(|| ObjectId::from_bytes(&[0u8; 20]).unwrap());
+            .unwrap_or_else(diff::zero_oid);
 
         let backend = load_rebase_backend(&rb_dir);
         match cherry_pick_for_rebase(repo, &commit_oid, backend) {
@@ -507,10 +899,8 @@ fn replay_remaining(repo: &Repository) -> Result<()> {
                 let commit = parse_commit(&obj.data)?;
                 let subject = commit.message.lines().next().unwrap_or("");
                 eprintln!("Applying: {}", subject);
-                // Add reflog entry for HEAD
-                let msg = format!("rebase: {}", subject);
-                let ident = "grit <grit> 0 +0000";
-                let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, ident, &msg, false);
+                let msg = format!("{ra} (pick): {subject}");
+                let _ = append_reflog(git_dir, "HEAD", &old_head, &new_oid, &ident, &msg, false);
 
                 // Run --exec command if present
                 if let Ok(exec_cmd) = fs::read_to_string(rb_dir.join("exec")) {
@@ -678,6 +1068,13 @@ fn finish_rebase(repo: &Repository) -> Result<()> {
     let head_name = fs::read_to_string(rb_dir.join("head-name"))?;
     let head_name = head_name.trim();
 
+    let onto_hex = fs::read_to_string(rb_dir.join("onto"))?;
+    let onto_hex = onto_hex.trim();
+    let onto_oid = ObjectId::from_hex(onto_hex)?;
+
+    let ra = load_rebase_reflog_action(&rb_dir);
+    let ident = reflog_identity(repo);
+
     let head = resolve_head(git_dir)?;
     let new_tip = head
         .oid()
@@ -685,18 +1082,40 @@ fn finish_rebase(repo: &Repository) -> Result<()> {
         .to_owned();
 
     if head_name != "detached HEAD" {
-        // Update the branch ref to point to the new tip
         let ref_path = git_dir.join(head_name);
+        let old_branch_oid = fs::read_to_string(&ref_path)
+            .ok()
+            .and_then(|s| ObjectId::from_hex(s.trim()).ok())
+            .unwrap_or(new_tip);
+
+        let finish_branch = format!("{ra} (finish): {head_name} onto {}", onto_oid.to_hex());
+        let finish_head = format!("{ra} (finish): returning to {head_name}");
+        let _ = append_reflog(
+            git_dir,
+            head_name,
+            &old_branch_oid,
+            &new_tip,
+            &ident,
+            &finish_branch,
+            false,
+        );
+        let _ = append_reflog(
+            git_dir,
+            "HEAD",
+            &new_tip,
+            &new_tip,
+            &ident,
+            &finish_head,
+            false,
+        );
+
         if let Some(parent) = ref_path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&ref_path, format!("{}\n", new_tip.to_hex()))?;
-
-        // Re-attach HEAD to the branch
-        fs::write(git_dir.join("HEAD"), format!("ref: {}\n", head_name))?;
+        fs::write(git_dir.join("HEAD"), format!("ref: {head_name}\n"))?;
     }
 
-    // Clean up state
     cleanup_rebase_state(git_dir);
 
     eprintln!(
@@ -777,6 +1196,16 @@ fn do_continue() -> Result<()> {
     let subject = original_commit.message.lines().next().unwrap_or("");
     eprintln!("Applying: {}", subject);
 
+    let backend = load_rebase_backend(&rb_dir);
+    let ra = load_rebase_reflog_action(&rb_dir);
+    let ident = reflog_identity(&repo);
+    let verb = match backend {
+        RebaseBackend::Merge => "continue",
+        RebaseBackend::Apply => "pick",
+    };
+    let msg = format!("{ra} ({verb}): {subject}");
+    let _ = append_reflog(git_dir, "HEAD", &head_oid, &new_oid, &ident, &msg, false);
+
     // Continue with remaining
     replay_remaining(&repo)?;
 
@@ -842,6 +1271,26 @@ fn do_abort() -> Result<()> {
     let head_name = fs::read_to_string(rb_dir.join("head-name"))?;
     let head_name = head_name.trim().to_string();
 
+    let ra = load_rebase_reflog_action(&rb_dir);
+    let ident = reflog_identity(&repo);
+    let cur_head = resolve_head(git_dir)?;
+    let cur_oid = cur_head.oid().cloned().unwrap_or_else(diff::zero_oid);
+    let abort_return = if head_name == "detached HEAD" {
+        orig_head_oid.to_hex()
+    } else {
+        head_name.clone()
+    };
+    let abort_msg = format!("{ra} (abort): returning to {abort_return}");
+    let _ = append_reflog(
+        git_dir,
+        "HEAD",
+        &cur_oid,
+        &orig_head_oid,
+        &ident,
+        &abort_msg,
+        false,
+    );
+
     // Restore HEAD
     if head_name != "detached HEAD" {
         // Update branch ref
@@ -878,37 +1327,6 @@ fn do_abort() -> Result<()> {
     eprintln!("Rebase aborted.");
 
     Ok(())
-}
-
-// ── Interactive stub ────────────────────────────────────────────────
-
-fn do_interactive_stub(repo: &Repository, args: &Args) -> Result<()> {
-    let upstream_spec = args.upstream.as_deref().unwrap_or("HEAD");
-    let upstream_oid = resolve_revision(repo, upstream_spec)
-        .with_context(|| format!("bad revision '{upstream_spec}'"))?;
-
-    let head = resolve_head(&repo.git_dir)?;
-    let head_oid = head
-        .oid()
-        .ok_or_else(|| anyhow::anyhow!("HEAD is unborn"))?
-        .to_owned();
-
-    let commits = collect_commits_to_replay(repo, head_oid, upstream_oid)?;
-
-    if commits.is_empty() {
-        eprintln!("Current branch is up to date.");
-        return Ok(());
-    }
-
-    // Write the todo list to stdout
-    for oid in &commits {
-        let obj = repo.odb.read(oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let subject = commit.message.lines().next().unwrap_or("");
-        println!("pick {} {}", &oid.to_hex()[..7], subject);
-    }
-
-    bail!("interactive rebase not fully supported");
 }
 
 // ── Cleanup ─────────────────────────────────────────────────────────

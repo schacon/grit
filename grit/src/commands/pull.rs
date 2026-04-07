@@ -220,6 +220,10 @@ fn do_merge_or_rebase(
             no_fork_point: false,
             verbose: false,
             update_refs: false,
+            stat: false,
+            no_stat: false,
+            context_lines: None,
+            whitespace: None,
         };
         super::rebase::run(rebase_args)
     } else {
