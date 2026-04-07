@@ -135,7 +135,7 @@ t10370-cat-file-type-errors	t1	yes	37	0	0	false		0
 t10380-mktree-batch-missing	t1	yes	31	0	0	false		0
 t10390-write-tree-after-modify	t1	yes	32	0	0	false		0
 t10400-ls-tree-name-only-z	t1	yes	33	0	0	false		0
-t10410-ls-files-nul-output	t1	yes	31	0	0	false		0
+t10410-ls-files-nul-output	t1	yes	31	31	0	true	ok	0
 t10420-diff-stat-numstat	t1	yes	35	0	0	false		0
 t10430-diff-tree-commit-range	t1	yes	33	0	0	false		0
 t10440-diff-index-exit-code	t1	yes	36	0	0	false		0

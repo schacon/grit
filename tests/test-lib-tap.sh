@@ -106,6 +106,10 @@ test_expect_success() {
 	_test_eval_result=0
 	_test_eval_inner() {
 		set -e
+		# Match upstream git test-lib: each test starts from the trash directory.
+		# Otherwise a prior test's `cd repo` leaves the shell nested and breaks
+		# later blocks that run `cd repo && ...`.
+		cd "$TRASH_DIRECTORY" || exit 1
 		eval "$1"
 	}
 	_twf_cmd=""
