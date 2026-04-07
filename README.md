@@ -13,8 +13,6 @@ This implementation is being written entirely by AI coding agents. The AGENT.md 
 
 ## Progress
 
-[![Test Progress](https://schacon.github.io/grit/progress.svg)](https://schacon.github.io/grit)
-
-See the full dashboard at **[schacon.github.io/grit](https://schacon.github.io/grit)** for detailed test pass rates, command coverage, and benchmarks.
+See the **[project dashboard](https://schacon.github.io/grit)** (generated from `data/test-files.csv` via `scripts/run-tests.sh`).
 
 

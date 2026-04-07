@@ -67,6 +67,8 @@ struct Options {
     verbose: bool,
     /// Suppress diff output in stdin mode (`-s`).
     suppress_diff: bool,
+    /// Output binary patches (--binary).
+    binary: bool,
     /// Show diffs for merge commits in stdin mode (`-m`).
     show_merges: bool,
     /// Output format.
@@ -115,6 +117,7 @@ impl Default for Options {
             no_commit_id: false,
             verbose: false,
             suppress_diff: false,
+            binary: false,
             show_merges: false,
             format: OutputFormat::Raw,
             context_lines: 3,
@@ -166,6 +169,10 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 "-m" => opts.show_merges = true,
                 "--raw" => opts.format = OutputFormat::Raw,
                 "-p" | "-u" | "--patch" => opts.format = OutputFormat::Patch,
+                "--binary" => {
+                    opts.format = OutputFormat::Patch;
+                    opts.binary = true;
+                }
                 "--stat" => {
                     opts.format = OutputFormat::Stat;
                     opts.stat_too = true;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grit Progress Dashboard</title>
+<title>Grit test dashboard</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -11,24 +11,14 @@ body {
   background: #0d1117;
   color: #e6edf3;
   padding: 2rem;
-  max-width: 1200px;
+  max-width: 960px;
   margin: 0 auto;
 }
-h1 {
-  font-size: 1.8rem;
-  margin-bottom: 0.3rem;
-  color: #f0f6fc;
-}
-.subtitle {
-  color: #7d8590;
-  margin-bottom: 2rem;
-  font-size: 0.95rem;
-}
-
-/* ── Summary cards ── */
+h1 { font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }
+.sub { color: #7d8590; font-size: 0.9rem; margin-bottom: 1.75rem; }
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1rem;
   margin-bottom: 2rem;
 }
@@ -36,467 +26,139 @@ h1 {
   background: #161b22;
   border: 1px solid #30363d;
   border-radius: 8px;
-  padding: 1.2rem;
+  padding: 1rem;
   text-align: center;
 }
-.card .number {
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-.card .label {
-  font-size: 0.78rem;
-  color: #7d8590;
-  margin-top: 0.3rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.card.green .number { color: #3fb950; }
-.card.blue .number { color: #58a6ff; }
-.card.yellow .number { color: #d29922; }
-.card.purple .number { color: #bc8cff; }
-
-/* ── Progress bar ── */
-.progress-section {
-  margin-bottom: 2.5rem;
-}
-.progress-section h2 {
-  font-size: 1.1rem;
-  margin-bottom: 0.8rem;
-  color: #f0f6fc;
-}
-.progress-bar-bg {
-  background: #21262d;
+.card .n { font-size: 1.65rem; font-weight: 700; color: #f0f6fc; }
+.card .lbl { font-size: 0.72rem; color: #7d8590; margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.card.accent .n { color: #3fb950; }
+h2 { font-size: 1.1rem; margin-bottom: 1rem; color: #f0f6fc; }
+.group-card {
+  display: block;
+  background: #161b22;
+  border: 1px solid #30363d;
   border-radius: 8px;
-  height: 40px;
-  overflow: hidden;
-  position: relative;
-  border: 1px solid #30363d;
-}
-.progress-bar-fill {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #fff;
-  transition: width 0.3s ease;
-}
-.progress-bar-fill.green {
-  background: linear-gradient(90deg, #238636, #2ea043);
-  border-radius: 8px 0 0 8px;
-}
-.progress-bar-fill.yellow {
-  background: linear-gradient(90deg, #9e6a03, #bb8009);
-}
-.progress-labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 0.5rem;
-  font-size: 0.82rem;
-  color: #7d8590;
-}
-
-/* ── Stat row ── */
-.stat-row {
-  display: flex;
-  gap: 2rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-  font-size: 0.9rem;
-  color: #7d8590;
-}
-.stat-row .stat {
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-}
-.stat-row .stat strong {
-  color: #e6edf3;
-  font-size: 1rem;
-}
-
-/* ── Command grid ── */
-.grid-section {
-  margin-bottom: 2rem;
-}
-.grid-section > h2 {
-  font-size: 1.2rem;
-  margin-bottom: 0.5rem;
-  color: #f0f6fc;
-}
-.legend {
-  display: flex;
-  gap: 1.5rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-  font-size: 0.82rem;
-  color: #7d8590;
-}
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.legend-swatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  border: 1px solid #30363d;
-}
-
-.cat-section {
-  margin-bottom: 1.8rem;
-}
-.cat-section h3 {
-  font-size: 0.9rem;
-  color: #7d8590;
-  margin-bottom: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 500;
-}
-.cat-count {
-  font-weight: 400;
-  font-size: 0.8rem;
-  color: #484f58;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.cmd-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
-  gap: 6px;
-}
-.cmd-cell {
-  border-radius: 6px;
-  padding: 0.45rem 0.6rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.82rem;
-  border: 1px solid transparent;
-  cursor: default;
-  transition: transform 0.1s;
-  white-space: nowrap;
-  position: relative;
-  overflow: hidden;
-}
-.cmd-cell:hover {
-  transform: scale(1.04);
-  z-index: 1;
-}
-a.cmd-cell {
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.75rem;
   text-decoration: none;
   color: inherit;
+  transition: border-color 0.15s;
 }
-.cmd-name {
-  font-weight: 600;
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  font-size: 0.76rem;
-  position: relative;
-  z-index: 1;
-}
-.cmd-pct {
-  font-size: 0.68rem;
-  opacity: 0.8;
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  position: relative;
-  z-index: 1;
-}
-.cmd-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  border-radius: 6px 0 0 6px;
-  z-index: 0;
-}
-.cmd-bar.bar-red    { background: linear-gradient(90deg, #3d1214, #5a1a1e); }
-.cmd-bar.bar-orange { background: linear-gradient(90deg, #3a2310, #4a2e14); }
-.cmd-bar.bar-blue   { background: linear-gradient(90deg, #152238, #1a3050); }
-.cmd-bar.bar-green  { background: linear-gradient(90deg, #1a3a1a, #12361e); }
-
-/* Cell colors */
-.cmd-cell.not-started {
-  background: #161b22;
-  border-color: #21262d;
-  color: #484f58;
-}
-.cmd-cell.started-no-tests {
-  background: #1c2333;
-  border-color: #1f3a5f;
-  color: #58a6ff;
-}
-.cmd-cell.complete {
-  background: #12261e;
-  border-color: #238636;
-  color: #3fb950;
-}
-.cmd-cell.partial {
-  background: #161b22;
-  border-color: #30363d;
-  color: #e6edf3;
-}
-.cmd-cell.zero-pass {
-  background: #161b22;
-  border-color: #21262d;
-  color: #484f58;
-}
-
-/* ── Footer ── */
-.footer {
-  margin-top: 3rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #21262d;
-  font-size: 0.8rem;
-  color: #484f58;
-  text-align: center;
-}
-.footer a { color: #58a6ff; text-decoration: none; }
-.footer a:hover { text-decoration: underline; }
+.group-card:hover { border-color: #58a6ff; }
+.group-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; }
+.group-id { font-weight: 700; color: #58a6ff; font-size: 1rem; }
+.group-meta { font-size: 0.78rem; color: #7d8590; }
+.group-desc { font-size: 0.85rem; color: #8b949e; margin: 0.5rem 0 0.75rem; }
+.bar-bg { background: #21262d; border-radius: 6px; height: 10px; overflow: hidden; border: 1px solid #30363d; }
+.bar-fg { height: 100%; background: linear-gradient(90deg, #238636, #2ea043); border-radius: 6px 0 0 6px; }
+.group-pct { font-size: 0.8rem; color: #7d8590; margin-top: 0.35rem; text-align: right; }
 </style>
 </head>
 <body>
-
-<h1>Grit &mdash; Git Reimplementation Progress</h1>
-<p class="subtitle">Test-driven compatibility tracking against the upstream Git test suite
-  &middot; <span id="gen-time" data-ts="1775541040">2026-04-07 05:50 UTC</span>
-  &middot; <a href="https://github.com/schacon/grit/commit/6cb93cbbf6ae0c3764b3b1d404816bcca058ce38" style="color:#484f58">6cb93cb</a>
-  &middot; <a href="testfiles.html" style="color:#58a6ff">Test Files</a>
-  &middot; <a href="timeline.html" style="color:#58a6ff">Timeline</a>
-</p>
+<h1>Grit test dashboard</h1>
+<p class="sub">Generated 2026-04-07 07:34 UTC · 2297a8f · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
 
 <div class="cards">
-  <div class="card green">
-    <div class="number">8,741</div>
-    <div class="label">Tests Passing</div>
-  </div>
-  <div class="card blue">
-    <div class="number">18,097</div>
-    <div class="label">Total Git Test Cases</div>
-  </div>
-  <div class="card green">
-    <div class="number">48.3%</div>
-    <div class="label">Passing Rate</div>
-  </div>
-  <div class="card yellow">
-    <div class="number">88</div>
-    <div class="label">Partially Implemented</div>
-  </div>
-  <div class="card purple">
-    <div class="number">134 / 141</div>
-    <div class="label">Commands Started</div>
-  </div>
-  <div class="card purple">
-    <div class="number">95.0%</div>
-    <div class="label">of Subcommands</div>
-  </div>
+  <div class="card"><div class="n">1,479</div><div class="lbl">Test files (in scope)</div></div>
+  <div class="card accent"><div class="n">229</div><div class="lbl">Files fully passing</div></div>
+  <div class="card"><div class="n">43,380</div><div class="lbl">Tests (total)</div></div>
+  <div class="card accent"><div class="n">8,691</div><div class="lbl">Tests passed</div></div>
+  <div class="card"><div class="n">20.0%</div><div class="lbl">Tests passing</div></div>
+  <div class="card"><div class="n">125</div><div class="lbl">Manually skipped files</div></div>
 </div>
 
-<div class="progress-section">
-  <h2>Overall Test Progress</h2>
-  <div class="progress-bar-bg">
-    <div style="display:flex;width:100%;height:100%;">
-      <div class="progress-bar-fill green" style="width:48.3%;justify-content:center;">
-        8,741 passing
+<h2>Groups</h2>
+<p class="sub" style="margin-bottom:1rem">Click a group for per-file detail. Counts exclude manually skipped files.</p>
+
+    <a class="group-card" href="testfiles.html?group=t0">
+      <div class="group-head">
+        <span class="group-id">t0</span>
+        <span class="group-meta">28/84 files · 2,015/4,820 tests</span>
       </div>
-    </div>
-  </div>
-  <div class="progress-labels">
-    <span style="color:#3fb950;">8,741 / 18,097 upstream tests passing (48.3%)</span>
-    <span>1011 test files ported · 230 fully passing</span>
-  </div>
-</div>
-
-<div class="grid-section">
-  <h2>Command Implementation Status</h2>
-  <div class="legend">
-    <div class="legend-item"><div class="legend-swatch" style="background:#12261e;border-color:#238636;"></div> Complete (all associated tests pass)</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#5a1a1e;border-color:#30363d;"></div> &lt;5%</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#4a2e14;border-color:#30363d;"></div> 6&ndash;50%</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#1a3050;border-color:#30363d;"></div> 51&ndash;85%</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#12361e;border-color:#30363d;"></div> &gt;85%</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#1c2333;border-color:#1f3a5f;"></div> Started (no associated tests found)</div>
-    <div class="legend-item"><div class="legend-swatch" style="background:#161b22;border-color:#21262d;"></div> Not started</div>
-  </div>
-<div class="cat-section"><h3>Main Porcelain <span class="cat-count">1/37 complete</span></h3>
-  <div style="margin-bottom:0.6rem;"><div style="display:flex;align-items:center;gap:0.6rem;"><div style="flex:1;background:#21262d;border-radius:4px;height:14px;overflow:hidden;border:1px solid #30363d;"><div style="width:20.7%;height:100%;background:linear-gradient(90deg,#238636,#2ea043);border-radius:4px 0 0 4px;"></div></div><span style="font-size:0.78rem;color:#7d8590;white-space:nowrap;">2,168 / 10,479 (20.7%)</span></div></div>
-<div class="cmd-grid">
-  <a href="tests.html?cmd=add" class="cmd-cell partial" title="add: 135/541 associated tests passing (25.0%)"><div class="cmd-bar bar-orange" style="width:25.0%"></div><span class="cmd-name">add</span><span class="cmd-pct">135/541</span></a>
-  <a href="tests.html?cmd=am" class="cmd-cell partial" title="am: 35/160 associated tests passing (22.0%)"><div class="cmd-bar bar-orange" style="width:22.0%"></div><span class="cmd-name">am</span><span class="cmd-pct">35/160</span></a>
-  <a href="tests.html?cmd=archive" class="cmd-cell partial" title="archive: 35/114 associated tests passing (30.6%)"><div class="cmd-bar bar-orange" style="width:30.6%"></div><span class="cmd-name">archive</span><span class="cmd-pct">35/114</span></a>
-  <a href="tests.html?cmd=bisect" class="cmd-cell zero-pass" title="bisect: 0/96 associated tests passing"><span class="cmd-name">bisect</span><span class="cmd-pct">0/96</span></a>
-  <a href="tests.html?cmd=branch" class="cmd-cell partial" title="branch: 29/351 associated tests passing (8.3%)"><div class="cmd-bar bar-orange" style="width:8.3%"></div><span class="cmd-name">branch</span><span class="cmd-pct">29/351</span></a>
-  <a href="tests.html?cmd=checkout" class="cmd-cell partial" title="checkout: 204/436 associated tests passing (46.8%)"><div class="cmd-bar bar-orange" style="width:46.8%"></div><span class="cmd-name">checkout</span><span class="cmd-pct">204/436</span></a>
-  <a href="tests.html?cmd=cherry-pick" class="cmd-cell partial" title="cherry-pick: 37/189 associated tests passing (19.6%)"><div class="cmd-bar bar-orange" style="width:19.6%"></div><span class="cmd-name">cherry-pick</span><span class="cmd-pct">37/189</span></a>
-  <a href="tests.html?cmd=clean" class="cmd-cell partial" title="clean: 36/87 associated tests passing (40.8%)"><div class="cmd-bar bar-orange" style="width:40.8%"></div><span class="cmd-name">clean</span><span class="cmd-pct">36/87</span></a>
-  <a href="tests.html?cmd=clone" class="cmd-cell partial" title="clone: 80/425 associated tests passing (18.9%)"><div class="cmd-bar bar-orange" style="width:18.9%"></div><span class="cmd-name">clone</span><span class="cmd-pct">80/425</span></a>
-  <a href="tests.html?cmd=commit" class="cmd-cell partial" title="commit: 28/377 associated tests passing (7.5%)"><div class="cmd-bar bar-orange" style="width:7.5%"></div><span class="cmd-name">commit</span><span class="cmd-pct">28/377</span></a>
-  <a href="tests.html?cmd=describe" class="cmd-cell partial" title="describe: 1/59 associated tests passing (1.7%)"><div class="cmd-bar bar-red" style="width:1.7%"></div><span class="cmd-name">describe</span><span class="cmd-pct">1/59</span></a>
-  <a href="tests.html?cmd=diff" class="cmd-cell partial" title="diff: 243/1002 associated tests passing (24.2%)"><div class="cmd-bar bar-orange" style="width:24.2%"></div><span class="cmd-name">diff</span><span class="cmd-pct">243/1002</span></a>
-  <a href="tests.html?cmd=fetch" class="cmd-cell partial" title="fetch: 74/699 associated tests passing (10.5%)"><div class="cmd-bar bar-orange" style="width:10.5%"></div><span class="cmd-name">fetch</span><span class="cmd-pct">74/699</span></a>
-  <a href="tests.html?cmd=format-patch" class="cmd-cell partial" title="format-patch: 20/229 associated tests passing (8.7%)"><div class="cmd-bar bar-orange" style="width:8.7%"></div><span class="cmd-name">format-patch</span><span class="cmd-pct">20/229</span></a>
-  <a href="tests.html?cmd=gc" class="cmd-cell partial" title="gc: 33/50 associated tests passing (66.0%)"><div class="cmd-bar bar-blue" style="width:66.0%"></div><span class="cmd-name">gc</span><span class="cmd-pct">33/50</span></a>
-  <a href="tests.html?cmd=grep" class="cmd-cell partial" title="grep: 39/260 associated tests passing (14.9%)"><div class="cmd-bar bar-orange" style="width:14.9%"></div><span class="cmd-name">grep</span><span class="cmd-pct">39/260</span></a>
-  <a href="tests.html?cmd=init" class="cmd-cell partial" title="init: 167/893 associated tests passing (18.6%)"><div class="cmd-bar bar-orange" style="width:18.6%"></div><span class="cmd-name">init</span><span class="cmd-pct">167/893</span></a>
-  <a href="tests.html?cmd=log" class="cmd-cell partial" title="log: 88/539 associated tests passing (16.3%)"><div class="cmd-bar bar-orange" style="width:16.3%"></div><span class="cmd-name">log</span><span class="cmd-pct">88/539</span></a>
-  <a href="tests.html?cmd=merge" class="cmd-cell partial" title="merge: 287/657 associated tests passing (43.7%)"><div class="cmd-bar bar-orange" style="width:43.7%"></div><span class="cmd-name">merge</span><span class="cmd-pct">287/657</span></a>
-  <a href="tests.html?cmd=mv" class="cmd-cell zero-pass" title="mv: 0/77 associated tests passing"><span class="cmd-name">mv</span><span class="cmd-pct">0/77</span></a>
-  <a href="tests.html?cmd=notes" class="cmd-cell partial" title="notes: 46/308 associated tests passing (14.9%)"><div class="cmd-bar bar-orange" style="width:14.9%"></div><span class="cmd-name">notes</span><span class="cmd-pct">46/308</span></a>
-  <a href="tests.html?cmd=pull" class="cmd-cell partial" title="pull: 13/142 associated tests passing (9.2%)"><div class="cmd-bar bar-orange" style="width:9.2%"></div><span class="cmd-name">pull</span><span class="cmd-pct">13/142</span></a>
-  <a href="tests.html?cmd=push" class="cmd-cell partial" title="push: 70/233 associated tests passing (30.1%)"><div class="cmd-bar bar-orange" style="width:30.1%"></div><span class="cmd-name">push</span><span class="cmd-pct">70/233</span></a>
-  <a href="tests.html?cmd=range-diff" class="cmd-cell zero-pass" title="range-diff: 0/47 associated tests passing"><span class="cmd-name">range-diff</span><span class="cmd-pct">0/47</span></a>
-  <a href="tests.html?cmd=rebase" class="cmd-cell partial" title="rebase: 54/558 associated tests passing (9.7%)"><div class="cmd-bar bar-orange" style="width:9.7%"></div><span class="cmd-name">rebase</span><span class="cmd-pct">54/558</span></a>
-  <a href="tests.html?cmd=reset" class="cmd-cell partial" title="reset: 50/119 associated tests passing (42.3%)"><div class="cmd-bar bar-orange" style="width:42.3%"></div><span class="cmd-name">reset</span><span class="cmd-pct">50/119</span></a>
-  <a href="tests.html?cmd=restore" class="cmd-cell partial" title="restore: 38/40 associated tests passing (95.0%)"><div class="cmd-bar bar-green" style="width:95.0%"></div><span class="cmd-name">restore</span><span class="cmd-pct">38/40</span></a>
-  <a href="tests.html?cmd=revert" class="cmd-cell zero-pass" title="revert: 0/20 associated tests passing"><span class="cmd-name">revert</span><span class="cmd-pct">0/20</span></a>
-  <a href="tests.html?cmd=rm" class="cmd-cell partial" title="rm: 7/97 associated tests passing (6.8%)"><div class="cmd-bar bar-orange" style="width:6.8%"></div><span class="cmd-name">rm</span><span class="cmd-pct">7/97</span></a>
-  <a href="tests.html?cmd=shortlog" class="cmd-cell zero-pass" title="shortlog: 0/32 associated tests passing"><span class="cmd-name">shortlog</span><span class="cmd-pct">0/32</span></a>
-  <a href="tests.html?cmd=show" class="cmd-cell partial" title="show: 1/27 associated tests passing (4.4%)"><div class="cmd-bar bar-red" style="width:4.4%"></div><span class="cmd-name">show</span><span class="cmd-pct">1/27</span></a>
-  <a href="tests.html?cmd=stash" class="cmd-cell partial" title="stash: 12/204 associated tests passing (6.0%)"><div class="cmd-bar bar-orange" style="width:6.0%"></div><span class="cmd-name">stash</span><span class="cmd-pct">12/204</span></a>
-  <a href="tests.html?cmd=status" class="cmd-cell partial" title="status: 136/474 associated tests passing (28.6%)"><div class="cmd-bar bar-orange" style="width:28.6%"></div><span class="cmd-name">status</span><span class="cmd-pct">136/474</span></a>
-  <a href="tests.html?cmd=submodule" class="cmd-cell partial" title="submodule: 81/476 associated tests passing (17.0%)"><div class="cmd-bar bar-orange" style="width:17.0%"></div><span class="cmd-name">submodule</span><span class="cmd-pct">81/476</span></a>
-  <a href="tests.html?cmd=switch" class="cmd-cell complete" title="switch: all 16 associated tests passing"><span class="cmd-name">switch</span><span class="cmd-pct">16/16</span></a>
-  <a href="tests.html?cmd=tag" class="cmd-cell partial" title="tag: 1/213 associated tests passing (0.3%)"><div class="cmd-bar bar-red" style="width:0.3%"></div><span class="cmd-name">tag</span><span class="cmd-pct">1/213</span></a>
-  <a href="tests.html?cmd=worktree" class="cmd-cell partial" title="worktree: 72/232 associated tests passing (31.0%)"><div class="cmd-bar bar-orange" style="width:31.0%"></div><span class="cmd-name">worktree</span><span class="cmd-pct">72/232</span></a>
-</div></div>
-<div class="cat-section"><h3>Ancillary Porcelain <span class="cat-count">2/38 complete</span></h3>
-  <div style="margin-bottom:0.6rem;"><div style="display:flex;align-items:center;gap:0.6rem;"><div style="flex:1;background:#21262d;border-radius:4px;height:14px;overflow:hidden;border:1px solid #30363d;"><div style="width:11.9%;height:100%;background:linear-gradient(90deg,#238636,#2ea043);border-radius:4px 0 0 4px;"></div></div><span style="font-size:0.78rem;color:#7d8590;white-space:nowrap;">443 / 3,711 (11.9%)</span></div></div>
-<div class="cmd-grid">
-  <a href="tests.html?cmd=annotate" class="cmd-cell zero-pass" title="annotate: 0/1 associated tests passing"><span class="cmd-name">annotate</span><span class="cmd-pct">0/1</span></a>
-  <a href="tests.html?cmd=blame" class="cmd-cell partial" title="blame: 65/98 associated tests passing (66.3%)"><div class="cmd-bar bar-blue" style="width:66.3%"></div><span class="cmd-name">blame</span><span class="cmd-pct">65/98</span></a>
-  <a href="tests.html?cmd=bundle" class="cmd-cell partial" title="bundle: 7/43 associated tests passing (17.0%)"><div class="cmd-bar bar-orange" style="width:17.0%"></div><span class="cmd-name">bundle</span><span class="cmd-pct">7/43</span></a>
-  <a href="tests.html?cmd=cherry" class="cmd-cell complete" title="cherry: all 4 associated tests passing"><span class="cmd-name">cherry</span><span class="cmd-pct">4/4</span></a>
-  <a href="tests.html?cmd=config" class="cmd-cell partial" title="config: 132/663 associated tests passing (19.9%)"><div class="cmd-bar bar-orange" style="width:19.9%"></div><span class="cmd-name">config</span><span class="cmd-pct">132/663</span></a>
-  <a href="tests.html?cmd=count-objects" class="cmd-cell partial" title="count-objects: 3/7 associated tests passing (36.3%)"><div class="cmd-bar bar-orange" style="width:36.3%"></div><span class="cmd-name">count-objects</span><span class="cmd-pct">3/7</span></a>
-  <a href="tests.html?cmd=cvsimport" class="cmd-cell not-started" title="cvsimport: not started"><span class="cmd-name">cvsimport</span></a>
-  <a href="tests.html?cmd=cvsserver" class="cmd-cell not-started" title="cvsserver: not started"><span class="cmd-name">cvsserver</span></a>
-  <a href="tests.html?cmd=diagnose" class="cmd-cell complete" title="diagnose: all 17 associated tests passing"><span class="cmd-name">diagnose</span><span class="cmd-pct">17/17</span></a>
-  <a href="tests.html?cmd=difftool" class="cmd-cell zero-pass" title="difftool: 0/61 associated tests passing"><span class="cmd-name">difftool</span><span class="cmd-pct">0/61</span></a>
-  <a href="tests.html?cmd=fast-export" class="cmd-cell partial" title="fast-export: 14/89 associated tests passing (15.7%)"><div class="cmd-bar bar-orange" style="width:15.7%"></div><span class="cmd-name">fast-export</span><span class="cmd-pct">14/89</span></a>
-  <a href="tests.html?cmd=fast-import" class="cmd-cell partial" title="fast-import: 24/262 associated tests passing (9.2%)"><div class="cmd-bar bar-orange" style="width:9.2%"></div><span class="cmd-name">fast-import</span><span class="cmd-pct">24/262</span></a>
-  <a href="tests.html?cmd=filter-branch" class="cmd-cell partial" title="filter-branch: 5/54 associated tests passing (9.3%)"><div class="cmd-bar bar-orange" style="width:9.3%"></div><span class="cmd-name">filter-branch</span><span class="cmd-pct">5/54</span></a>
-  <a href="tests.html?cmd=fsck" class="cmd-cell partial" title="fsck: 8/106 associated tests passing (7.9%)"><div class="cmd-bar bar-orange" style="width:7.9%"></div><span class="cmd-name">fsck</span><span class="cmd-pct">8/106</span></a>
-  <a href="tests.html?cmd=gitweb" class="cmd-cell not-started" title="gitweb: not started"><span class="cmd-name">gitweb</span></a>
-  <a href="tests.html?cmd=help" class="cmd-cell partial" title="help: 49/310 associated tests passing (15.7%)"><div class="cmd-bar bar-orange" style="width:15.7%"></div><span class="cmd-name">help</span><span class="cmd-pct">49/310</span></a>
-  <div class="cmd-cell not-started" title="imap-send: not started"><span class="cmd-name">imap-send</span></div>
-  <a href="tests.html?cmd=maintenance" class="cmd-cell zero-pass" title="maintenance: 0/70 associated tests passing"><span class="cmd-name">maintenance</span><span class="cmd-pct">0/70</span></a>
-  <a href="tests.html?cmd=merge-tree" class="cmd-cell partial" title="merge-tree: 5/54 associated tests passing (8.8%)"><div class="cmd-bar bar-orange" style="width:8.8%"></div><span class="cmd-name">merge-tree</span><span class="cmd-pct">5/54</span></a>
-  <a href="tests.html?cmd=mergetool" class="cmd-cell zero-pass" title="mergetool: 0/32 associated tests passing"><span class="cmd-name">mergetool</span><span class="cmd-pct">0/32</span></a>
-  <a href="tests.html?cmd=p4" class="cmd-cell not-started" title="p4: not started"><span class="cmd-name">p4</span></a>
-  <a href="tests.html?cmd=pack-refs" class="cmd-cell zero-pass" title="pack-refs: 0/16 associated tests passing"><span class="cmd-name">pack-refs</span><span class="cmd-pct">0/16</span></a>
-  <a href="tests.html?cmd=prune" class="cmd-cell partial" title="prune: 1/43 associated tests passing (2.2%)"><div class="cmd-bar bar-red" style="width:2.2%"></div><span class="cmd-name">prune</span><span class="cmd-pct">1/43</span></a>
-  <a href="tests.html?cmd=reflog" class="cmd-cell partial" title="reflog: 24/94 associated tests passing (25.5%)"><div class="cmd-bar bar-orange" style="width:25.5%"></div><span class="cmd-name">reflog</span><span class="cmd-pct">24/94</span></a>
-  <a href="tests.html?cmd=remote" class="cmd-cell partial" title="remote: 4/177 associated tests passing (2.5%)"><div class="cmd-bar bar-red" style="width:2.5%"></div><span class="cmd-name">remote</span><span class="cmd-pct">4/177</span></a>
-  <a href="tests.html?cmd=repack" class="cmd-cell partial" title="repack: 41/106 associated tests passing (38.6%)"><div class="cmd-bar bar-orange" style="width:38.6%"></div><span class="cmd-name">repack</span><span class="cmd-pct">41/106</span></a>
-  <a href="tests.html?cmd=replace" class="cmd-cell zero-pass" title="replace: 0/37 associated tests passing"><span class="cmd-name">replace</span><span class="cmd-pct">0/37</span></a>
-  <a href="tests.html?cmd=request-pull" class="cmd-cell not-started" title="request-pull: not started"><span class="cmd-name">request-pull</span></a>
-  <a href="tests.html?cmd=rerere" class="cmd-cell partial" title="rerere: 7/35 associated tests passing (19.4%)"><div class="cmd-bar bar-orange" style="width:19.4%"></div><span class="cmd-name">rerere</span><span class="cmd-pct">7/35</span></a>
-  <a href="tests.html?cmd=scalar" class="cmd-cell partial" title="scalar: 26/36 associated tests passing (72.2%)"><div class="cmd-bar bar-blue" style="width:72.2%"></div><span class="cmd-name">scalar</span><span class="cmd-pct">26/36</span></a>
-  <a href="tests.html?cmd=send-email" class="cmd-cell zero-pass" title="send-email: 0/1 associated tests passing"><span class="cmd-name">send-email</span><span class="cmd-pct">0/1</span></a>
-  <a href="tests.html?cmd=show-branch" class="cmd-cell zero-pass" title="show-branch: 0/22 associated tests passing"><span class="cmd-name">show-branch</span><span class="cmd-pct">0/22</span></a>
-  <a href="tests.html?cmd=sparse-checkout" class="cmd-cell partial" title="sparse-checkout: 6/184 associated tests passing (3.2%)"><div class="cmd-bar bar-red" style="width:3.2%"></div><span class="cmd-name">sparse-checkout</span><span class="cmd-pct">6/184</span></a>
-  <a href="tests.html?cmd=svn" class="cmd-cell not-started" title="svn: not started"><span class="cmd-name">svn</span></a>
-  <a href="tests.html?cmd=verify-commit" class="cmd-cell zero-pass" title="verify-commit: 0/16 associated tests passing"><span class="cmd-name">verify-commit</span><span class="cmd-pct">0/16</span></a>
-  <a href="tests.html?cmd=verify-tag" class="cmd-cell zero-pass" title="verify-tag: 0/30 associated tests passing"><span class="cmd-name">verify-tag</span><span class="cmd-pct">0/30</span></a>
-  <div class="cmd-cell started-no-tests" title="version: started (no associated upstream tests)"><span class="cmd-name">version</span></div>
-  <div class="cmd-cell started-no-tests" title="whatchanged: started (no associated upstream tests)"><span class="cmd-name">whatchanged</span></div>
-</div></div>
-<div class="cat-section"><h3>Plumbing <span class="cat-count">8/66 complete</span></h3>
-  <div style="margin-bottom:0.6rem;"><div style="display:flex;align-items:center;gap:0.6rem;"><div style="flex:1;background:#21262d;border-radius:4px;height:14px;overflow:hidden;border:1px solid #30363d;"><div style="width:25.9%;height:100%;background:linear-gradient(90deg,#238636,#2ea043);border-radius:4px 0 0 4px;"></div></div><span style="font-size:0.78rem;color:#7d8590;white-space:nowrap;">1,010 / 3,907 (25.9%)</span></div></div>
-<div class="cmd-grid">
-  <a href="tests.html?cmd=apply" class="cmd-cell partial" title="apply: 108/286 associated tests passing (37.6%)"><div class="cmd-bar bar-orange" style="width:37.6%"></div><span class="cmd-name">apply</span><span class="cmd-pct">108/286</span></a>
-  <a href="tests.html?cmd=backfill" class="cmd-cell zero-pass" title="backfill: 0/10 associated tests passing"><span class="cmd-name">backfill</span><span class="cmd-pct">0/10</span></a>
-  <a href="tests.html?cmd=cat-file" class="cmd-cell partial" title="cat-file: 11/174 associated tests passing (6.4%)"><div class="cmd-bar bar-orange" style="width:6.4%"></div><span class="cmd-name">cat-file</span><span class="cmd-pct">11/174</span></a>
-  <a href="tests.html?cmd=check-attr" class="cmd-cell partial" title="check-attr: 19/55 associated tests passing (34.5%)"><div class="cmd-bar bar-orange" style="width:34.5%"></div><span class="cmd-name">check-attr</span><span class="cmd-pct">19/55</span></a>
-  <a href="tests.html?cmd=check-ignore" class="cmd-cell zero-pass" title="check-ignore: 0/48 associated tests passing"><span class="cmd-name">check-ignore</span><span class="cmd-pct">0/48</span></a>
-  <a href="tests.html?cmd=check-mailmap" class="cmd-cell partial" title="check-mailmap: 21/74 associated tests passing (28.4%)"><div class="cmd-bar bar-orange" style="width:28.4%"></div><span class="cmd-name">check-mailmap</span><span class="cmd-pct">21/74</span></a>
-  <a href="tests.html?cmd=check-ref-format" class="cmd-cell complete" title="check-ref-format: all 5 associated tests passing"><span class="cmd-name">check-ref-format</span><span class="cmd-pct">5/5</span></a>
-  <a href="tests.html?cmd=checkout-index" class="cmd-cell partial" title="checkout-index: 10/10 associated tests passing (96.0%)"><div class="cmd-bar bar-green" style="width:96.0%"></div><span class="cmd-name">checkout-index</span><span class="cmd-pct">10/10</span></a>
-  <a href="tests.html?cmd=column" class="cmd-cell complete" title="column: all 15 associated tests passing"><span class="cmd-name">column</span><span class="cmd-pct">15/15</span></a>
-  <a href="tests.html?cmd=commit-graph" class="cmd-cell partial" title="commit-graph: 26/182 associated tests passing (14.1%)"><div class="cmd-bar bar-orange" style="width:14.1%"></div><span class="cmd-name">commit-graph</span><span class="cmd-pct">26/182</span></a>
-  <a href="tests.html?cmd=commit-tree" class="cmd-cell partial" title="commit-tree: 4/6 associated tests passing (63.3%)"><div class="cmd-bar bar-blue" style="width:63.3%"></div><span class="cmd-name">commit-tree</span><span class="cmd-pct">4/6</span></a>
-  <a href="tests.html?cmd=credential" class="cmd-cell partial" title="credential: 1/57 associated tests passing (1.8%)"><div class="cmd-bar bar-red" style="width:1.8%"></div><span class="cmd-name">credential</span><span class="cmd-pct">1/57</span></a>
-  <a href="tests.html?cmd=credential-cache" class="cmd-cell partial" title="credential-cache: 1/6 associated tests passing (11.5%)"><div class="cmd-bar bar-orange" style="width:11.5%"></div><span class="cmd-name">credential-cache</span><span class="cmd-pct">1/6</span></a>
-  <a href="tests.html?cmd=credential-store" class="cmd-cell partial" title="credential-store: 1/15 associated tests passing (7.7%)"><div class="cmd-bar bar-orange" style="width:7.7%"></div><span class="cmd-name">credential-store</span><span class="cmd-pct">1/15</span></a>
-  <a href="tests.html?cmd=daemon" class="cmd-cell zero-pass" title="daemon: 0/26 associated tests passing"><span class="cmd-name">daemon</span><span class="cmd-pct">0/26</span></a>
-  <a href="tests.html?cmd=diff-files" class="cmd-cell partial" title="diff-files: 3/6 associated tests passing (58.1%)"><div class="cmd-bar bar-blue" style="width:58.1%"></div><span class="cmd-name">diff-files</span><span class="cmd-pct">3/6</span></a>
-  <a href="tests.html?cmd=diff-index" class="cmd-cell partial" title="diff-index: 3/9 associated tests passing (30.3%)"><div class="cmd-bar bar-orange" style="width:30.3%"></div><span class="cmd-name">diff-index</span><span class="cmd-pct">3/9</span></a>
-  <a href="tests.html?cmd=diff-tree" class="cmd-cell partial" title="diff-tree: 2/3 associated tests passing (62.7%)"><div class="cmd-bar bar-blue" style="width:62.7%"></div><span class="cmd-name">diff-tree</span><span class="cmd-pct">2/3</span></a>
-  <a href="tests.html?cmd=fetch-pack" class="cmd-cell zero-pass" title="fetch-pack: 0/92 associated tests passing"><span class="cmd-name">fetch-pack</span><span class="cmd-pct">0/92</span></a>
-  <a href="tests.html?cmd=fmt-merge-msg" class="cmd-cell zero-pass" title="fmt-merge-msg: 0/36 associated tests passing"><span class="cmd-name">fmt-merge-msg</span><span class="cmd-pct">0/36</span></a>
-  <a href="tests.html?cmd=for-each-ref" class="cmd-cell partial" title="for-each-ref: 5/63 associated tests passing (8.6%)"><div class="cmd-bar bar-orange" style="width:8.6%"></div><span class="cmd-name">for-each-ref</span><span class="cmd-pct">5/63</span></a>
-  <a href="tests.html?cmd=for-each-repo" class="cmd-cell complete" title="for-each-repo: all 5 associated tests passing"><span class="cmd-name">for-each-repo</span><span class="cmd-pct">5/5</span></a>
-  <div class="cmd-cell started-no-tests" title="get-tar-commit-id: started (no associated upstream tests)"><span class="cmd-name">get-tar-commit-id</span></div>
-  <a href="tests.html?cmd=hash-object" class="cmd-cell zero-pass" title="hash-object: 0/37 associated tests passing"><span class="cmd-name">hash-object</span><span class="cmd-pct">0/37</span></a>
-  <a href="tests.html?cmd=hook" class="cmd-cell zero-pass" title="hook: 0/41 associated tests passing"><span class="cmd-name">hook</span><span class="cmd-pct">0/41</span></a>
-  <a href="tests.html?cmd=http-backend" class="cmd-cell zero-pass" title="http-backend: 0/18 associated tests passing"><span class="cmd-name">http-backend</span><span class="cmd-pct">0/18</span></a>
-  <a href="tests.html?cmd=index-pack" class="cmd-cell partial" title="index-pack: 4/42 associated tests passing (9.9%)"><div class="cmd-bar bar-orange" style="width:9.9%"></div><span class="cmd-name">index-pack</span><span class="cmd-pct">4/42</span></a>
-  <a href="tests.html?cmd=interpret-trailers" class="cmd-cell zero-pass" title="interpret-trailers: 0/98 associated tests passing"><span class="cmd-name">interpret-trailers</span><span class="cmd-pct">0/98</span></a>
-  <a href="tests.html?cmd=ls-files" class="cmd-cell partial" title="ls-files: 100/251 associated tests passing (39.9%)"><div class="cmd-bar bar-orange" style="width:39.9%"></div><span class="cmd-name">ls-files</span><span class="cmd-pct">100/251</span></a>
-  <a href="tests.html?cmd=ls-remote" class="cmd-cell zero-pass" title="ls-remote: 0/39 associated tests passing"><span class="cmd-name">ls-remote</span><span class="cmd-pct">0/39</span></a>
-  <a href="tests.html?cmd=ls-tree" class="cmd-cell partial" title="ls-tree: 23/36 associated tests passing (64.9%)"><div class="cmd-bar bar-blue" style="width:64.9%"></div><span class="cmd-name">ls-tree</span><span class="cmd-pct">23/36</span></a>
-  <a href="tests.html?cmd=mailinfo" class="cmd-cell partial" title="mailinfo: 15/23 associated tests passing (63.5%)"><div class="cmd-bar bar-blue" style="width:63.5%"></div><span class="cmd-name">mailinfo</span><span class="cmd-pct">15/23</span></a>
-  <div class="cmd-cell started-no-tests" title="mailsplit: started (no associated upstream tests)"><span class="cmd-name">mailsplit</span></div>
-  <a href="tests.html?cmd=merge-base" class="cmd-cell complete" title="merge-base: all 12 associated tests passing"><span class="cmd-name">merge-base</span><span class="cmd-pct">12/12</span></a>
-  <a href="tests.html?cmd=merge-file" class="cmd-cell partial" title="merge-file: 35/37 associated tests passing (94.9%)"><div class="cmd-bar bar-green" style="width:94.9%"></div><span class="cmd-name">merge-file</span><span class="cmd-pct">35/37</span></a>
-  <a href="tests.html?cmd=merge-index" class="cmd-cell partial" title="merge-index: 6/7 associated tests passing (85.7%)"><div class="cmd-bar bar-green" style="width:85.7%"></div><span class="cmd-name">merge-index</span><span class="cmd-pct">6/7</span></a>
-  <div class="cmd-cell started-no-tests" title="merge-one-file: started (no associated upstream tests)"><span class="cmd-name">merge-one-file</span></div>
-  <a href="tests.html?cmd=mktag" class="cmd-cell zero-pass" title="mktag: 0/11 associated tests passing"><span class="cmd-name">mktag</span><span class="cmd-pct">0/11</span></a>
-  <a href="tests.html?cmd=mktree" class="cmd-cell complete" title="mktree: all 8 associated tests passing"><span class="cmd-name">mktree</span><span class="cmd-pct">8/8</span></a>
-  <a href="tests.html?cmd=multi-pack-index" class="cmd-cell partial" title="multi-pack-index: 8/137 associated tests passing (5.7%)"><div class="cmd-bar bar-orange" style="width:5.7%"></div><span class="cmd-name">multi-pack-index</span><span class="cmd-pct">8/137</span></a>
-  <div class="cmd-cell started-no-tests" title="name-rev: started (no associated upstream tests)"><span class="cmd-name">name-rev</span></div>
-  <a href="tests.html?cmd=pack-objects" class="cmd-cell partial" title="pack-objects: 26/264 associated tests passing (9.9%)"><div class="cmd-bar bar-orange" style="width:9.9%"></div><span class="cmd-name">pack-objects</span><span class="cmd-pct">26/264</span></a>
-  <a href="tests.html?cmd=pack-redundant" class="cmd-cell partial" title="pack-redundant: 2/18 associated tests passing (11.1%)"><div class="cmd-bar bar-orange" style="width:11.1%"></div><span class="cmd-name">pack-redundant</span><span class="cmd-pct">2/18</span></a>
-  <a href="tests.html?cmd=patch-id" class="cmd-cell complete" title="patch-id: all 25 associated tests passing"><span class="cmd-name">patch-id</span><span class="cmd-pct">25/25</span></a>
-  <div class="cmd-cell started-no-tests" title="prune-packed: started (no associated upstream tests)"><span class="cmd-name">prune-packed</span></div>
-  <a href="tests.html?cmd=read-tree" class="cmd-cell partial" title="read-tree: 60/187 associated tests passing (32.3%)"><div class="cmd-bar bar-orange" style="width:32.3%"></div><span class="cmd-name">read-tree</span><span class="cmd-pct">60/187</span></a>
-  <a href="tests.html?cmd=receive-pack" class="cmd-cell partial" title="receive-pack: 1/23 associated tests passing (2.6%)"><div class="cmd-bar bar-red" style="width:2.6%"></div><span class="cmd-name">receive-pack</span><span class="cmd-pct">1/23</span></a>
-  <a href="tests.html?cmd=refs" class="cmd-cell partial" title="refs: 2/70 associated tests passing (2.9%)"><div class="cmd-bar bar-red" style="width:2.9%"></div><span class="cmd-name">refs</span><span class="cmd-pct">2/70</span></a>
-  <a href="tests.html?cmd=replay" class="cmd-cell zero-pass" title="replay: 0/31 associated tests passing"><span class="cmd-name">replay</span><span class="cmd-pct">0/31</span></a>
-  <a href="tests.html?cmd=rev-list" class="cmd-cell partial" title="rev-list: 131/378 associated tests passing (34.6%)"><div class="cmd-bar bar-orange" style="width:34.6%"></div><span class="cmd-name">rev-list</span><span class="cmd-pct">131/378</span></a>
-  <a href="tests.html?cmd=rev-parse" class="cmd-cell partial" title="rev-parse: 125/321 associated tests passing (39.1%)"><div class="cmd-bar bar-orange" style="width:39.1%"></div><span class="cmd-name">rev-parse</span><span class="cmd-pct">125/321</span></a>
-  <a href="tests.html?cmd=send-pack" class="cmd-cell partial" title="send-pack: 14/28 associated tests passing (50.3%)"><div class="cmd-bar bar-blue" style="width:50.3%"></div><span class="cmd-name">send-pack</span><span class="cmd-pct">14/28</span></a>
-  <div class="cmd-cell started-no-tests" title="show-index: started (no associated upstream tests)"><span class="cmd-name">show-index</span></div>
-  <a href="tests.html?cmd=show-ref" class="cmd-cell partial" title="show-ref: 10/20 associated tests passing (49.2%)"><div class="cmd-bar bar-orange" style="width:49.2%"></div><span class="cmd-name">show-ref</span><span class="cmd-pct">10/20</span></a>
-  <a href="tests.html?cmd=stripspace" class="cmd-cell complete" title="stripspace: all 30 associated tests passing"><span class="cmd-name">stripspace</span><span class="cmd-pct">30/30</span></a>
-  <a href="tests.html?cmd=symbolic-ref" class="cmd-cell partial" title="symbolic-ref: 27/27 associated tests passing (99.3%)"><div class="cmd-bar bar-green" style="width:99.3%"></div><span class="cmd-name">symbolic-ref</span><span class="cmd-pct">27/27</span></a>
-  <div class="cmd-cell started-no-tests" title="unpack-file: started (no associated upstream tests)"><span class="cmd-name">unpack-file</span></div>
-  <a href="tests.html?cmd=unpack-objects" class="cmd-cell partial" title="unpack-objects: 4/7 associated tests passing (57.1%)"><div class="cmd-bar bar-blue" style="width:57.1%"></div><span class="cmd-name">unpack-objects</span><span class="cmd-pct">4/7</span></a>
-  <a href="tests.html?cmd=update-index" class="cmd-cell partial" title="update-index: 36/82 associated tests passing (43.4%)"><div class="cmd-bar bar-orange" style="width:43.4%"></div><span class="cmd-name">update-index</span><span class="cmd-pct">36/82</span></a>
-  <a href="tests.html?cmd=update-ref" class="cmd-cell zero-pass" title="update-ref: 0/305 associated tests passing"><span class="cmd-name">update-ref</span><span class="cmd-pct">0/305</span></a>
-  <a href="tests.html?cmd=update-server-info" class="cmd-cell partial" title="update-server-info: 6/11 associated tests passing (57.0%)"><div class="cmd-bar bar-blue" style="width:57.0%"></div><span class="cmd-name">update-server-info</span><span class="cmd-pct">6/11</span></a>
-  <div class="cmd-cell started-no-tests" title="upload-archive: started (no associated upstream tests)"><span class="cmd-name">upload-archive</span></div>
-  <a href="tests.html?cmd=upload-pack" class="cmd-cell partial" title="upload-pack: 28/64 associated tests passing (43.8%)"><div class="cmd-bar bar-orange" style="width:43.8%"></div><span class="cmd-name">upload-pack</span><span class="cmd-pct">28/64</span></a>
-  <a href="tests.html?cmd=var" class="cmd-cell partial" title="var: 29/32 associated tests passing (90.9%)"><div class="cmd-bar bar-green" style="width:90.9%"></div><span class="cmd-name">var</span><span class="cmd-pct">29/32</span></a>
-  <a href="tests.html?cmd=verify-pack" class="cmd-cell complete" title="verify-pack: all 1 associated tests passing"><span class="cmd-name">verify-pack</span><span class="cmd-pct">1/1</span></a>
-  <a href="tests.html?cmd=write-tree" class="cmd-cell partial" title="write-tree: 2/3 associated tests passing (77.8%)"><div class="cmd-bar bar-blue" style="width:77.8%"></div><span class="cmd-name">write-tree</span><span class="cmd-pct">2/3</span></a>
-</div></div>
-
-</div>
-
-<div class="footer">
-  <a href="tests.html">View all test cases</a> &middot;
-  <a href="testfiles.html">Test files</a> &middot;
-  Generated by <a href="https://github.com/schacon/grit">grit</a> progress scripts
-</div>
-<script>
-(function() {
-  var el = document.getElementById('gen-time');
-  if (!el) return;
-  var ts = parseInt(el.dataset.ts, 10);
-  var now = Date.now() / 1000;
-  var diff = Math.floor(now - ts);
-  var text;
-  if (diff < 60) text = 'just now';
-  else if (diff < 3600) text = Math.floor(diff/60) + 'm ago';
-  else if (diff < 86400) text = Math.floor(diff/3600) + 'h ago';
-  else text = Math.floor(diff/86400) + 'd ago';
-  el.textContent = text;
-})();
-</script>
-
+      <p class="group-desc">Basic / setup</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:41.8%"></div></div>
+      <div class="group-pct">41.8%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t1">
+      <div class="group-head">
+        <span class="group-id">t1</span>
+        <span class="group-meta">22/376 files · 538/11,769 tests</span>
+      </div>
+      <p class="group-desc">Plumbing: read-tree, cat-file, refs</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:4.6%"></div></div>
+      <div class="group-pct">4.6%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t2">
+      <div class="group-head">
+        <span class="group-id">t2</span>
+        <span class="group-meta">20/70 files · 468/1,039 tests</span>
+      </div>
+      <p class="group-desc">Checkout / index</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:45.0%"></div></div>
+      <div class="group-pct">45.0%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t3">
+      <div class="group-head">
+        <span class="group-id">t3</span>
+        <span class="group-meta">23/143 files · 2,528/5,133 tests</span>
+      </div>
+      <p class="group-desc">ls-files, merge, cherry-pick, rm, add, mv</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:49.2%"></div></div>
+      <div class="group-pct">49.2%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t4">
+      <div class="group-head">
+        <span class="group-id">t4</span>
+        <span class="group-meta">40/180 files · 811/4,079 tests</span>
+      </div>
+      <p class="group-desc">Diff</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:19.9%"></div></div>
+      <div class="group-pct">19.9%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t5">
+      <div class="group-head">
+        <span class="group-id">t5</span>
+        <span class="group-meta">28/184 files · 827/4,582 tests</span>
+      </div>
+      <p class="group-desc">Pack / fetch / push / clone</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:18.0%"></div></div>
+      <div class="group-pct">18.0%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t6">
+      <div class="group-head">
+        <span class="group-id">t6</span>
+        <span class="group-meta">41/108 files · 715/2,275 tests</span>
+      </div>
+      <p class="group-desc">Rev-list, rev-parse, merge-base, for-each-ref</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:31.4%"></div></div>
+      <div class="group-pct">31.4%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t7">
+      <div class="group-head">
+        <span class="group-id">t7</span>
+        <span class="group-meta">16/137 files · 597/3,762 tests</span>
+      </div>
+      <p class="group-desc">Porcelain: commit, status, tag, branch, reset</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:15.9%"></div></div>
+      <div class="group-pct">15.9%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t8">
+      <div class="group-head">
+        <span class="group-id">t8</span>
+        <span class="group-meta">9/105 files · 131/2,772 tests</span>
+      </div>
+      <p class="group-desc">Git-p4 / misc</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:4.7%"></div></div>
+      <div class="group-pct">4.7%</div>
+    </a>
+    <a class="group-card" href="testfiles.html?group=t9">
+      <div class="group-head">
+        <span class="group-id">t9</span>
+        <span class="group-meta">2/92 files · 61/3,149 tests</span>
+      </div>
+      <p class="group-desc">Contrib / completion</p>
+      <div class="bar-bg"><div class="bar-fg" style="width:1.9%"></div></div>
+      <div class="group-pct">1.9%</div>
+    </a>
 </body>
 </html>

@@ -1894,6 +1894,63 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
     let common = common_dir(&repo.git_dir)?;
     let worktrees_dir = common.join("worktrees");
 
+    // Implicit repair: when running from a linked worktree without explicit paths,
+    // detect if the admin dir's gitdir still points to the OLD path.
+    if args.paths.is_empty() && repo.git_dir != common {
+        // We're in a linked worktree (git_dir is under worktrees/)
+        if repo.git_dir.starts_with(&worktrees_dir) {
+            let admin = &repo.git_dir;
+            let gitdir_file = admin.join("gitdir");
+            if let Some(ref wt) = repo.work_tree {
+                let wt_canonical = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+                if let Ok(raw) = fs::read_to_string(&gitdir_file) {
+                    let recorded_raw = std::path::PathBuf::from(raw.trim());
+                    let recorded = if recorded_raw.is_relative() {
+                        normalize_path(&admin.join(&recorded_raw))
+                    } else {
+                        recorded_raw
+                    };
+                    let recorded_wt = recorded.parent().unwrap_or(&recorded).to_path_buf();
+                    let recorded_canonical = recorded_wt.canonicalize().unwrap_or(recorded_wt);
+                    if recorded_canonical != wt_canonical {
+                        // Admin gitdir points to wrong location — repair it
+                        let new_dotgit = wt.join(".git");
+                        let use_rel = {
+                            let cfg = grit_lib::config::ConfigSet::load(Some(&common), true)
+                                .unwrap_or_default();
+                            args.relative_paths
+                                || (!args.no_relative_paths
+                                    && cfg
+                                        .get_bool("worktree.useRelativePaths")
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or(false))
+                        };
+                        let new_content = if use_rel {
+                            let rel = make_relative_path(admin, &new_dotgit);
+                            format!(
+                                "{}
+",
+                                rel.display()
+                            )
+                        } else {
+                            format!(
+                                "{}
+",
+                                new_dotgit.display()
+                            )
+                        };
+                        fs::write(&gitdir_file, &new_content)?;
+                        eprintln!(
+                            "repair: {}: gitdir incorrect: {}",
+                            wt.display(),
+                            gitdir_file.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Pre-validate specific paths before checking worktrees_dir
     if !args.paths.is_empty() {
         for p in &args.paths {

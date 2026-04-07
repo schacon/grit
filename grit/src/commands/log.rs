@@ -1779,11 +1779,24 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Apply --diff-filter
     let commits = if let Some(ref filter) = args.diff_filter {
-        let filter_chars: Vec<char> = filter.chars().collect();
+        // Lowercase = exclude, uppercase = include
+        let include_chars: Vec<char> = filter.chars().filter(|c| c.is_uppercase()).collect();
+        let exclude_chars: Vec<char> = filter
+            .chars()
+            .filter(|c| c.is_lowercase())
+            .map(|c| c.to_uppercase().next().unwrap_or(c))
+            .collect();
         commits
             .into_iter()
             .filter(|(_oid, info)| {
-                commit_has_diff_status(&repo.odb, info, &filter_chars).unwrap_or(true)
+                if !include_chars.is_empty() {
+                    commit_has_diff_status(&repo.odb, info, &include_chars).unwrap_or(true)
+                } else if !exclude_chars.is_empty() {
+                    // Include if NOT in exclude list
+                    commit_has_diff_status_not_in(&repo.odb, info, &exclude_chars).unwrap_or(true)
+                } else {
+                    true
+                }
             })
             .collect::<Vec<_>>()
     } else {
@@ -2160,6 +2173,25 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         let r = &args.revisions[0];
         if r == "HEAD" || r.starts_with("refs/") {
             r.clone()
+        } else if r.starts_with("@{") {
+            // Resolve @{-N} to the previous branch name
+            if let Some(n_str) = r.strip_prefix("@{").and_then(|s| s.strip_suffix('}')) {
+                if let Some(stripped) = n_str.strip_prefix('-') {
+                    if let Ok(n) = stripped.parse::<usize>() {
+                        if let Ok(branch) = grit_lib::refs::resolve_at_n_branch(&repo.git_dir, r) {
+                            format!("refs/heads/{branch}")
+                        } else {
+                            r.clone()
+                        }
+                    } else {
+                        r.clone()
+                    }
+                } else {
+                    r.clone()
+                }
+            } else {
+                r.clone()
+            }
         } else {
             let candidate = format!("refs/heads/{r}");
             if grit_lib::refs::resolve_ref(&repo.git_dir, &candidate).is_ok() {
@@ -2170,7 +2202,16 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         }
     };
 
-    let display_name = if refname.starts_with("refs/heads/") {
+    // Use the original user-provided name for display (preserve full ref name if given)
+    let orig_r_owned = args
+        .revisions
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "HEAD".to_string());
+    let orig_r = orig_r_owned.as_str();
+    let display_name = if orig_r.starts_with("refs/") {
+        orig_r
+    } else if refname.starts_with("refs/heads/") {
         refname.strip_prefix("refs/heads/").unwrap_or(&refname)
     } else {
         &refname
@@ -2362,7 +2403,14 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
                 }
             }
         } else if args.oneline {
-            let abbrev = &entry.new_oid.to_hex()[..7];
+            let abbrev_len = args
+                .abbrev
+                .as_deref()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(7)
+                .min(40);
+            let full_hex = entry.new_oid.to_hex();
+            let abbrev = &full_hex[..abbrev_len.min(full_hex.len())];
             if args.null_terminator {
                 write!(
                     out,
@@ -2379,7 +2427,13 @@ fn run_reflog_walk(repo: &Repository, args: &Args) -> Result<()> {
         } else {
             // Full format with Reflog headers
             writeln!(out, "commit {}", entry.new_oid.to_hex())?;
-            writeln!(out, "Reflog: {} ({})", selector, entry.identity)?;
+            // Strip timestamp from identity for Reflog: line (git shows only Name <email>)
+            let ident_display = if let Some(email_end) = entry.identity.rfind('>') {
+                &entry.identity[..email_end + 1]
+            } else {
+                &entry.identity
+            };
+            writeln!(out, "Reflog: {} ({})", selector, ident_display)?;
             writeln!(out, "Reflog message: {}", entry.message)?;
             writeln!(
                 out,
@@ -4448,6 +4502,27 @@ fn collect_oids_from_dir(
         }
     }
     Ok(())
+}
+
+/// Check if a commit does NOT have any changes of the excluded types (for lowercase diff-filter).
+/// Returns true if NONE of the changes match the excluded types.
+fn commit_has_diff_status_not_in(
+    odb: &Odb,
+    info: &CommitInfo,
+    exclude_chars: &[char],
+) -> Result<bool> {
+    let parent_tree = if let Some(parent) = info.parents.first() {
+        let pobj = odb.read(parent)?;
+        let pc = parse_commit(&pobj.data)?;
+        Some(pc.tree)
+    } else {
+        None
+    };
+    let entries = diff_trees(odb, parent_tree.as_ref(), Some(&info.tree), "")?;
+    // Include commit if it has no changes of the excluded type
+    Ok(!entries
+        .iter()
+        .any(|e| exclude_chars.contains(&e.status.letter())))
 }
 
 /// Check if a commit has any changes matching the specified diff-filter status letters.

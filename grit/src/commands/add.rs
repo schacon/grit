@@ -1279,9 +1279,43 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 }
 
 /// Resolve a pathspec relative to the prefix (cwd within worktree).
-fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> String {
+fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
     if pathspec == "." {
         return prefix.unwrap_or("").to_owned();
+    }
+    // Normalize relative paths with .. by converting to absolute first
+    if pathspec.contains("../") || pathspec.starts_with("../") {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let abs = cwd.join(pathspec);
+        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
+        // Normalize abs without requiring existence
+        let mut parts: Vec<std::ffi::OsString> = Vec::new();
+        for component in abs.components() {
+            use std::path::Component;
+            match component {
+                Component::ParentDir => {
+                    parts.pop();
+                }
+                Component::CurDir => {}
+                other => parts.push(other.as_os_str().to_os_string()),
+            }
+        }
+        let abs_norm: std::path::PathBuf = parts.iter().collect();
+        if let Ok(rel) = abs_norm.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+    }
+    // Handle absolute paths: make relative to work tree
+    if std::path::Path::new(pathspec).is_absolute() {
+        let abs = std::path::Path::new(pathspec);
+        // Try to strip work tree prefix
+        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
+        let abs_canon = abs.canonicalize().unwrap_or(abs.to_path_buf());
+        if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+        // Not under work tree — error will be caught later
+        return pathspec.to_owned();
     }
 
     // Magic pathspecs starting with ":" should not have prefix prepended.

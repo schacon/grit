@@ -2,128 +2,117 @@
 
 ## Overview
 
-Grit uses the upstream Git test suite as ground truth. The 1,011 upstream test files
-(from `git/t/`) have been ported to `tests/` with a `test-lib.sh` shim that wraps
-the grit binary as `git`. The goal: make every upstream test file pass 100%.
+Grit uses the upstream Git test suite as ground truth. Harness files live under `tests/` (ported from `git/t/`) and run through `scripts/run-tests.sh` with the grit binary copied into `tests/grit` and exposed as `git` via the harness.
 
-## Running Tests
+The **single source of truth** for per-file harness status is **`data/test-files.csv`**. There are no intermediate TSVs (no `file-results.tsv`, no per-command aggregates). After each run, **`docs/index.html`** (summary + progress by group) and **`docs/testfiles.html`** (per-file table, filterable by group) are regenerated from that CSV.
 
-All test runs go through `scripts/run-tests.sh`, which caches results in
-`data/file-results.tsv`. Both `docs/index.html` and `docs/testfiles.html` read
-from this same TSV.
+## Running tests
+
+Build the binary first; the runner expects **`target/release/grit`**.
 
 ```bash
+cargo build --release -p grit-rs
+
 # Single file
 ./scripts/run-tests.sh t3200-branch.sh
 
-# Category (e.g., all t1xxx plumbing tests)
+# One group (all t1xxx `.sh` files that are in scope, e.g. t1000-…, t1999-…)
 ./scripts/run-tests.sh t1
 
-# Full suite
+# Full suite (every row in test-files.csv with in_scope=yes)
 ./scripts/run-tests.sh
 
-# Only re-run files that aren't fully passing
-./scripts/run-tests.sh --failing
-
-# Only run files with no cached results
-./scripts/run-tests.sh --stale
-
-# Options
-./scripts/run-tests.sh --timeout 180    # per-file timeout (default 120s)
-./scripts/run-tests.sh --force          # re-run everything
-./scripts/run-tests.sh --quiet          # minimal output
+# Options (can appear before or after the target)
+./scripts/run-tests.sh --timeout 180 t0000-basic.sh
+./scripts/run-tests.sh t0000-basic.sh --quiet
 ```
 
-## Data Files
+### Manually skipped files
 
-All in `data/`:
+Edit **`data/test-files.csv`**: set **`in_scope`** to **`skip`** on the row for that file. Skipped files are **never** executed (single-file, group, or full run). Their tests are **excluded** from the summary counts on **`docs/index.html`**. They still appear on **`docs/testfiles.html`** with a skipped badge so you can see what was opted out.
 
-| File | Purpose |
-|------|---------|
-| `git-test-cases.tsv` | Master catalog of all 18,097 upstream test cases (extracted from `git/t/`) |
-| `file-results.tsv` | Per-file test results (updated by `run-tests.sh`) — **single source of truth** |
-| `test-results.tsv` | Per-test-case status (derived from file-results) |
-| `command-status.tsv` | Per-command aggregate stats (derived from test-results) |
+Re-run **`python3 scripts/generate-test-files-catalog.py`** if you add or rename `.sh` files and want the CSV updated without running tests (otherwise the next `run-tests.sh` also refreshes the catalog).
 
-**Pipeline:** `run-tests.sh` → `file-results.tsv` → `extract-and-test.py` → `test-results.tsv` + `command-status.tsv` → `generate-progress-html.py` → `docs/index.html`
+## Pipeline diagram
 
-For `docs/testfiles.html`: `file-results.tsv` → `generate-testfiles-html.py`
-
-## Work Strategy: One File at a Time
-
-Pick a single test file that isn't fully passing. Make it fully pass. Commit. Move on.
-
-### Priority Order
-
-Work through files in this order:
-
-1. **Plumbing (t0xxx, t1xxx)** — Core infrastructure, everything builds on these
-2. **Index/Checkout (t2xxx)** — Working tree operations
-3. **Core commands (t3xxx)** — ls-files, merge, cherry-pick, rm, add, mv
-4. **Diff (t4xxx)** — Diff engine, format-patch, log
-5. **Transport (t5xxx)** — Pack, fetch, push, clone
-6. **Rev machinery (t6xxx)** — Rev-list, rev-parse, merge-base, for-each-ref
-7. **Porcelain (t7xxx)** — commit, status, tag, branch, reset, grep
-8. **External helpers (t9xxx)** — p4, svn, cvs, completion (lowest priority)
-
-Within each category, prefer files with **fewer remaining failures** (closer to
-fully passing = quicker wins).
-
-### Workflow
-
-```bash
-# 1. Pick a file
-./scripts/run-tests.sh --failing     # see what's still broken
-
-# 2. Run it and study failures
-cd tests && GUST_BIN="$(pwd)/grit" bash t1234-foo.sh
-
-# 3. Fix the Rust code in grit/ or grit-lib/
-#    (fix GRIT, not the tests — unless flipping test_expect_failure)
-
-# 4. Rebuild and re-test
-cd /path/to/grit && cargo build --release
-cd tests && GUST_BIN="$(pwd)/grit" bash t1234-foo.sh
-
-# 5. Once fully passing, update results
-./scripts/run-tests.sh t1234-foo.sh
-
-# 6. Commit
-git add -A && git commit -m "fix: make t1234-foo fully pass"
-
-# 7. Regen dashboards
-python3 scripts/subscripts/extract-and-test.py
-python3 scripts/generate-testfiles-html.py
-python3 scripts/subscripts/generate-progress-html.py
-git add data/ docs/ && git commit -m "docs: update dashboards"
-git push origin main
 ```
+generate-test-files-catalog.py     (start of run-tests.sh: discover files, groups, marker counts)
+            │
+            ▼
+    data/test-files.csv  ◄────  apply-test-run-results.py  ◄────  run-tests.sh (bash harness per file)
+            │
+            └──►  generate-dashboard-from-test-files.py  ──►  docs/index.html
+                                                           ──►  docs/testfiles.html
+```
+
+## Scripts reference
+
+| Script | Role |
+|--------|------|
+| `scripts/generate-test-files-catalog.py` | Scan `tests/t*.sh`, merge **`data/test-files.csv`** (preserves `in_scope` and prior run columns where possible). |
+| `scripts/run-tests.sh` | Select files to run, execute harness, invoke apply + dashboard. |
+| `scripts/apply-test-run-results.py` | Merge one batch of run lines into **`data/test-files.csv`**, then call the dashboard generator. |
+| `scripts/generate-dashboard-from-test-files.py` | Read CSV only; write **`docs/index.html`** and **`docs/testfiles.html`**. |
+
+## Data pipeline (step by step)
+
+1. **`scripts/generate-test-files-catalog.py`** — Scans `tests/t*.sh`, counts `test_expect_success` / `test_expect_failure` per file, assigns `group` (`t0`…`t9` from the first digit after `t`), and writes or merges **`data/test-files.csv`**. Invoked automatically at the start of **`run-tests.sh`**.
+
+2. **`scripts/run-tests.sh`** — Copies `target/release/grit` to `tests/grit`, builds the file list (honoring **`in_scope`**), runs each selected script under `timeout`, parses the `# Tests:` summary line, writes a small batch TSV for **`scripts/apply-test-run-results.py`**.
+
+3. **`scripts/apply-test-run-results.py`** — Updates matching rows in **`data/test-files.csv`** (`passed_last`, `failing`, `fully_passing`, `status`, etc.), then runs **`scripts/generate-dashboard-from-test-files.py`**.
+
+4. **`data/test-files.csv`** columns:
+
+| Column | Meaning |
+|--------|---------|
+| `file` | Base name (no `.sh`) |
+| `group` | `t0` … `t9` from the file prefix |
+| `in_scope` | `yes` or `skip` (manual) |
+| `tests_total` | Count of test markers in the file |
+| `passed_last` | Pass count from the last run |
+| `failing` | Fail count from the last run |
+| `fully_passing` | `true` if `tests_total > 0` and `failing == 0` |
+| `status` | `ok`, `timeout`, or `error` from the harness |
+| `expect_failure` | Count of `test_expect_failure` lines |
+
+## Work strategy: one file at a time
+
+1. Pick a test file that is not fully passing.
+2. Run it: `./scripts/run-tests.sh t1234-foo.sh`
+3. Fix Rust in `grit/` / `grit-lib/`.
+4. Re-run until green; `test-files.csv` updates automatically.
+
+### Priority order
+
+1. Plumbing (`t0xxx`, `t1xxx`)
+2. Index/checkout (`t2xxx`)
+3. Core commands (`t3xxx`)
+4. Diff (`t4xxx`)
+5. Transport (`t5xxx`)
+6. Rev machinery (`t6xxx`)
+7. Porcelain (`t7xxx`)
+8. External helpers (`t9xxx`) last
 
 ## test_expect_failure
 
-These are tests marked as "known breakage" — they run the test body and expect
-it to *fail*. When you fix the Rust code so the test body passes:
-
-1. Flip `test_expect_failure` → `test_expect_success` in the test file
-2. The test now passes normally
-
-**Semantics:** In the test output:
-- `ok N # TODO known breakage` = body FAILED (expected) — still broken
-- `not ok N # TODO known breakage` = body SUCCEEDED — flip it!
+When you fix known breakage, flip `test_expect_failure` → `test_expect_success` in the test file.
 
 ## test-lib.sh
 
-**DO NOT** modify test-lib.sh to remove subshell isolation or add auto git-init.
-Past changes caused massive regressions. The BIN_DIRECTORY lives outside the
-working tree to survive `git clean -x`.
+**Do not** modify `tests/test-lib.sh` casually — past changes caused regressions.
 
 ## Dashboards
 
-Regenerate after merging fixes:
+Regenerated automatically after every `run-tests.sh` run. To refresh HTML only (no test run):
 
 ```bash
-# Update all dashboards from file-results.tsv
-python3 scripts/subscripts/extract-and-test.py    # updates test-results.tsv + command-status.tsv
-python3 scripts/generate-testfiles-html.py         # docs/testfiles.html
-python3 scripts/subscripts/generate-progress-html.py  # docs/index.html
+python3 scripts/generate-dashboard-from-test-files.py
 ```
+
+## Other runners (not the CSV pipeline)
+
+These do **not** update `data/test-files.csv` by default:
+
+- **`scripts/run-upstream-tests.sh`** / **`scripts/aggregate-upstream.sh`** — run upstream `git/t/` against grit in isolation (see **AGENTS.md**).
+- **`tests/harness/run-all-count.sh`** — separate harness; not wired to `test-files.csv`.

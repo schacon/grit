@@ -32,6 +32,22 @@ pub struct Args {
     /// Maximum number of entries to show (used when no subcommand is given).
     #[arg(short = 'n', long = "max-count")]
     pub max_count: Option<usize>,
+
+    /// Format string (used when no subcommand is given).
+    #[arg(long = "format", short = 'p', alias = "pretty")]
+    pub format: Option<String>,
+
+    /// Don't abbreviate commit hashes.
+    #[arg(long = "no-abbrev-commit")]
+    pub no_abbrev_commit: bool,
+
+    /// Abbreviate commit hashes.
+    #[arg(long = "abbrev-commit")]
+    pub abbrev_commit: bool,
+
+    /// Date format.
+    #[arg(long = "date")]
+    pub date: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -160,10 +176,10 @@ pub fn run(args: Args) -> Result<()> {
             run_show(ShowArgs {
                 refname,
                 max_count: args.max_count,
-                no_abbrev_commit: false,
-                abbrev_commit: false,
-                format: None,
-                date: None,
+                no_abbrev_commit: args.no_abbrev_commit,
+                abbrev_commit: args.abbrev_commit,
+                format: args.format,
+                date: args.date,
                 walk_reflogs: false,
             })
         }

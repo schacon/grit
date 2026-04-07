@@ -71,12 +71,7 @@ fn main() {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
             } else {
-                let rendered = format!("{e:#}");
-                if rendered.starts_with("git: '") {
-                    eprintln!("{rendered}");
-                } else {
-                    eprintln!("error: {rendered}");
-                }
+                eprintln!("error: {e:#}");
                 exit_code = 1;
             }
         }
@@ -1778,6 +1773,7 @@ struct GlobalOpts {
     glob_pathspecs: bool,
     noglob_pathspecs: bool,
     icase_pathspecs: bool,
+    exec_path: Option<PathBuf>,
 }
 
 /// Extract global options and return (globals, subcommand_name, remaining_args).
@@ -1808,6 +1804,21 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             continue;
         }
 
+        // --exec-path=<val>
+        if let Some(val) = arg.strip_prefix("--exec-path=") {
+            opts.exec_path = Some(PathBuf::from(val));
+            i += 1;
+            continue;
+        }
+        if arg == "--exec-path" {
+            // Print exec-path and exit
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    println!("{}", dir.display());
+                }
+            }
+            std::process::exit(0);
+        }
         // --git-dir=<val> or --git-dir <val>
         if let Some(val) = arg.strip_prefix("--git-dir=") {
             opts.git_dir = Some(PathBuf::from(val));
@@ -3015,8 +3026,6 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "worktree" => commands::worktree::run(parse_cmd_args(subcmd, rest)),
         "write-tree" => commands::write_tree::run(parse_cmd_args(subcmd, rest)),
         "test-tool" => {
-            let tt_args = preprocess_test_tool_args(rest)?;
-            let rest = tt_args.as_slice();
             let sub = rest.first().map(|s| s.as_str()).unwrap_or("");
             match sub {
                 "wildmatch" => {
@@ -3073,12 +3082,23 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "ref-store" => run_test_tool_ref_store(rest),
                 "path-utils" => run_test_tool_path_utils(&rest[1..]),
                 "submodule" => run_test_tool_submodule(&rest[1..]),
-                "sigchain" => run_test_tool_sigchain(rest),
-                "json-writer" => run_test_tool_json_writer(rest),
-                "bloom" => run_test_tool_bloom(rest),
-                "mktemp" => run_test_tool_mktemp(rest),
-                "regex" => run_test_tool_regex(rest),
-                _other => test_tool_usage(),
+                "config" => run_test_tool_config(&rest[1..]),
+                "genzeros" => {
+                    // Generate N zero bytes
+                    let n: usize = rest.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    use std::io::Write;
+                    let stdout = std::io::stdout();
+                    let mut out = stdout.lock();
+                    let buf = vec![0u8; 8192];
+                    let mut remaining = n;
+                    while remaining > 0 {
+                        let chunk = remaining.min(8192);
+                        out.write_all(&buf[..chunk])?;
+                        remaining -= chunk;
+                    }
+                    Ok(())
+                }
+                other => bail!("test-tool: unknown subcommand '{other}'"),
             }
         }
         "__list_cmds" => {
@@ -3114,6 +3134,23 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     dispatch(&corrected, rest, opts)
                 }
                 _ => {
+                    // Try external command: look for git-<subcmd> in exec-path
+                    let ext_cmd = format!("git-{}", subcmd);
+                    let exec_path = opts.exec_path.as_ref().map(|p| p.clone()).or_else(|| {
+                        std::env::current_exe()
+                            .ok()
+                            .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+                    });
+                    if let Some(ref ep) = exec_path {
+                        let ext_path = ep.join(&ext_cmd);
+                        if ext_path.is_file() {
+                            let status = std::process::Command::new(&ext_path)
+                                .args(rest.iter())
+                                .status()
+                                .map_err(|e| anyhow::anyhow!("failed to run {}: {}", ext_cmd, e))?;
+                            std::process::exit(status.code().unwrap_or(1));
+                        }
+                    }
                     // Default: show suggestions
                     if suggestions.is_empty() {
                         bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
@@ -3132,7 +3169,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 /// Normalize a path (resolve . and ..) without requiring filesystem existence.
 /// Returns "++failed++" if path goes above root for relative paths.
 fn normalize_path_simple(path: &str) -> String {
-    use std::path::Component;
+    use std::path::{Component, PathBuf};
     let is_abs = path.starts_with('/');
     // Track trailing slash: if input ends with '/', '/.', '/..', or similar
     // that resolves to a directory reference
@@ -3273,6 +3310,7 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 norm_path[..new_len].trim_end_matches('/').to_string()
             } else {
                 std::process::exit(1);
+                unreachable!()
             };
             println!("{stripped}");
             Ok(())
@@ -3617,4 +3655,65 @@ fn run_test_tool_chmtime(rest: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Handle `test-tool config` — config API test helper.
+fn run_test_tool_config(rest: &[String]) -> Result<()> {
+    let subcmd = rest.first().map(|s| s.as_str()).unwrap_or("");
+    let key = rest.get(1).map(|s| s.as_str()).unwrap_or("");
+
+    // Load config from current git repo
+    let repo = grit_lib::repo::Repository::discover(None).ok();
+    let git_dir = repo.as_ref().map(|r| r.git_dir.as_path());
+    let cfg = grit_lib::config::ConfigSet::load(git_dir, true).unwrap_or_default();
+
+    match subcmd {
+        "get_value" | "get" => match cfg.get(key) {
+            Some(val) => {
+                println!("{val}");
+                Ok(())
+            }
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        "get_value_multi" | "get_all" => {
+            // Get all values for a key
+            let values = cfg.get_all(key);
+            if values.is_empty() {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+            for v in values {
+                println!("{v}");
+            }
+            Ok(())
+        }
+        "get_int" => match cfg.get(key) {
+            Some(val) => match val.parse::<i64>() {
+                Ok(n) => {
+                    println!("{n}");
+                    Ok(())
+                }
+                Err(_) => bail!("bad numeric config value '{}'", val),
+            },
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        "get_bool" => match cfg.get_bool(key) {
+            Some(Ok(b)) => {
+                println!("{}", if b { "true" } else { "false" });
+                Ok(())
+            }
+            Some(Err(e)) => bail!("bad boolean config value: {}", e),
+            None => {
+                eprintln!("fatal: config {} not found", key);
+                std::process::exit(1);
+            }
+        },
+        _ => bail!("test-tool config: unknown subcommand '{subcmd}'"),
+    }
 }

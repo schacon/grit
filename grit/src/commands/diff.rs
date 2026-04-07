@@ -189,6 +189,10 @@ pub struct Args {
     #[arg(long = "binary")]
     pub binary: bool,
 
+    /// Reverse the diff (swap old and new).
+    #[arg(short = 'R')]
+    pub reverse: bool,
+
     /// Show a condensed summary of extended header info (renames, mode changes).
     #[arg(long = "summary")]
     pub summary: bool,
@@ -872,6 +876,30 @@ pub fn run(mut args: Args) -> Result<()> {
     // Apply orderfile sorting if specified
     let entries = if let Some(ref order_path) = args.order_file {
         apply_orderfile(entries, order_path)
+    } else {
+        entries
+    };
+
+    // Apply -R: reverse the diff (swap old and new sides)
+    let entries = if args.reverse {
+        entries
+            .into_iter()
+            .map(|mut e| {
+                std::mem::swap(&mut e.old_oid, &mut e.new_oid);
+                std::mem::swap(&mut e.old_mode, &mut e.new_mode);
+                if let Some(ref op) = e.old_path.clone() {
+                    e.old_path = e.new_path.take();
+                    e.new_path = Some(op.clone());
+                }
+                // Invert the status
+                e.status = match e.status {
+                    grit_lib::diff::DiffStatus::Added => grit_lib::diff::DiffStatus::Deleted,
+                    grit_lib::diff::DiffStatus::Deleted => grit_lib::diff::DiffStatus::Added,
+                    other => other,
+                };
+                e
+            })
+            .collect()
     } else {
         entries
     };
