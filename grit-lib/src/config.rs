@@ -31,6 +31,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::refs;
+use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 
 /// The scope (origin) of a configuration value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -75,6 +77,19 @@ pub struct ConfigEntry {
     pub line: usize,
 }
 
+/// Where a [`ConfigFile`] was loaded from for Git include semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigIncludeOrigin {
+    /// Normal path on disk (`-f`, global/local config files, etc.).
+    Disk,
+    /// `--file -` (stdin).
+    Stdin,
+    /// Synthetic file built from `GIT_CONFIG_PARAMETERS` / `git -c`.
+    CommandLine,
+    /// `git config --blob=…`.
+    Blob,
+}
+
 /// A parsed configuration file that preserves the raw text for round-trip
 /// editing (set/unset/rename-section/remove-section).
 #[derive(Debug, Clone)]
@@ -87,6 +102,8 @@ pub struct ConfigFile {
     pub entries: Vec<ConfigEntry>,
     /// Raw lines of the file (for round-trip editing).
     raw_lines: Vec<String>,
+    /// Source kind for `[include]` resolution (Git `CONFIG_ORIGIN_*`).
+    pub include_origin: ConfigIncludeOrigin,
 }
 
 /// A merged view across all configuration scopes.
@@ -97,6 +114,38 @@ pub struct ConfigFile {
 pub struct ConfigSet {
     /// All entries across all scopes, in load order.
     entries: Vec<ConfigEntry>,
+}
+
+/// Context for evaluating `[includeIf]` conditions (`gitdir:`, `onbranch:`).
+#[derive(Debug, Clone, Default)]
+pub struct IncludeContext {
+    /// Git directory path used for `gitdir:` matching (may contain unresolved symlinks).
+    pub git_dir: Option<PathBuf>,
+    /// When true, `git -c include.path=relative` fails instead of ignoring the include.
+    pub command_line_relative_include_is_error: bool,
+}
+
+/// Options controlling how [`ConfigSet::load_with_options`] merges files and includes.
+#[derive(Debug, Clone)]
+pub struct LoadConfigOptions {
+    /// Load `/etc/gitconfig` (unless `GIT_CONFIG_NOSYSTEM` is set).
+    pub include_system: bool,
+    /// Expand `[include]` / `[includeIf]` while reading file-backed layers.
+    pub process_includes: bool,
+    /// Expand includes for synthetic command-line config built from `GIT_CONFIG_PARAMETERS`.
+    pub command_includes: bool,
+    pub include_ctx: IncludeContext,
+}
+
+impl Default for LoadConfigOptions {
+    fn default() -> Self {
+        Self {
+            include_system: true,
+            process_includes: true,
+            command_includes: true,
+            include_ctx: IncludeContext::default(),
+        }
+    }
 }
 
 // ── Canonical key helpers ────────────────────────────────────────────
@@ -571,6 +620,55 @@ impl ConfigFile {
             scope,
             entries,
             raw_lines,
+            include_origin: ConfigIncludeOrigin::Disk,
+        })
+    }
+
+    /// Parse like [`Self::parse`] but record a non-disk include origin (blob, stdin, command line).
+    pub fn parse_with_origin(
+        path: &Path,
+        content: &str,
+        scope: ConfigScope,
+        include_origin: ConfigIncludeOrigin,
+    ) -> Result<Self> {
+        let mut f = Self::parse(path, content, scope)?;
+        f.include_origin = include_origin;
+        Ok(f)
+    }
+
+    /// Build a synthetic [`ConfigFile`] from `GIT_CONFIG_PARAMETERS` / `git -c` payloads.
+    ///
+    /// Unlike [`Self::parse`], this accepts flat `key=value` assignments without `[section]`
+    /// headers, matching how Git injects command-line configuration.
+    pub fn from_git_config_parameters(path: &Path, raw: &str) -> Result<Self> {
+        let mut entries = Vec::new();
+        for entry in parse_config_parameters(raw) {
+            if let Some((key, val)) = entry.split_once('=') {
+                let canon = canonical_key(key.trim())?;
+                entries.push(ConfigEntry {
+                    key: canon,
+                    value: Some(val.to_owned()),
+                    scope: ConfigScope::Command,
+                    file: None,
+                    line: 0,
+                });
+            } else {
+                let canon = canonical_key(entry.trim())?;
+                entries.push(ConfigEntry {
+                    key: canon,
+                    value: None,
+                    scope: ConfigScope::Command,
+                    file: None,
+                    line: 0,
+                });
+            }
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            scope: ConfigScope::Command,
+            entries,
+            raw_lines: Vec::new(),
+            include_origin: ConfigIncludeOrigin::CommandLine,
         })
     }
 
@@ -1304,22 +1402,34 @@ impl ConfigSet {
     ///
     /// Returns errors from file I/O or parsing.
     pub fn load(git_dir: Option<&Path>, include_system: bool) -> Result<Self> {
+        let mut opts = LoadConfigOptions::default();
+        opts.include_system = include_system;
+        opts.include_ctx.git_dir = git_dir.map(PathBuf::from);
+        Self::load_with_options(git_dir, &opts)
+    }
+
+    /// Load the standard configuration cascade with explicit include and scope control.
+    ///
+    /// See [`LoadConfigOptions`] for `GIT_CONFIG_PARAMETERS` / `-c` include behaviour.
+    pub fn load_with_options(git_dir: Option<&Path>, opts: &LoadConfigOptions) -> Result<Self> {
         let mut set = Self::new();
+        let proc = opts.process_includes;
+        let ctx = opts.include_ctx.clone();
 
         // System config
-        if include_system && std::env::var("GIT_CONFIG_NOSYSTEM").is_err() {
+        if opts.include_system && std::env::var("GIT_CONFIG_NOSYSTEM").is_err() {
             let system_path = std::env::var("GIT_CONFIG_SYSTEM")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::path::PathBuf::from("/etc/gitconfig"));
             if let Ok(Some(f)) = ConfigFile::from_path(&system_path, ConfigScope::System) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
             }
         }
 
         // Global config
         for path in global_config_paths() {
             if let Ok(Some(f)) = ConfigFile::from_path(&path, ConfigScope::Global) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
                 break; // Only use the first found
             }
         }
@@ -1328,20 +1438,24 @@ impl ConfigSet {
         if let Some(gd) = git_dir {
             let local_path = gd.join("config");
             if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
             }
 
             // Worktree config
             let wt_path = gd.join("config.worktree");
             if let Ok(Some(f)) = ConfigFile::from_path(&wt_path, ConfigScope::Worktree) {
-                Self::merge_with_includes(&mut set, &f, true, 0)?;
+                Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
             }
         }
 
-        // Environment overrides
+        // Environment overrides: optional file
         if let Ok(path) = std::env::var("GIT_CONFIG") {
             if let Ok(Some(f)) = ConfigFile::from_path(Path::new(&path), ConfigScope::Command) {
-                set.merge(&f);
+                if proc {
+                    Self::merge_with_includes(&mut set, &f, proc, 0, &ctx)?;
+                } else {
+                    set.merge(&f);
+                }
             }
         }
 
@@ -1358,20 +1472,53 @@ impl ConfigSet {
             }
         }
 
-        // GIT_CONFIG_PARAMETERS — single-quoted 'key=value' entries separated by spaces.
-        // This is the format used by `git -c key=value`.
+        // GIT_CONFIG_PARAMETERS — used by `git -c key=value`.
         if let Ok(params) = std::env::var("GIT_CONFIG_PARAMETERS") {
-            for entry in parse_config_parameters(&params) {
-                if let Some((key, val)) = entry.split_once('=') {
-                    let _ = set.add_command_override(key.trim(), val);
-                } else {
-                    // Bare key (boolean true)
-                    let _ = set.add_command_override(entry.trim(), "true");
+            if proc && opts.command_includes && !params.trim().is_empty() {
+                let pseudo = Path::new(":GIT_CONFIG_PARAMETERS");
+                let cmd_file = ConfigFile::from_git_config_parameters(pseudo, &params)?;
+                Self::merge_with_includes(&mut set, &cmd_file, proc, 0, &ctx)?;
+            } else if !params.trim().is_empty() {
+                for entry in parse_config_parameters(&params) {
+                    if let Some((key, val)) = entry.split_once('=') {
+                        let _ = set.add_command_override(key.trim(), val);
+                    } else {
+                        let _ = set.add_command_override(entry.trim(), "true");
+                    }
                 }
             }
         }
 
         Ok(set)
+    }
+
+    /// Read repository config early (Git `read_early_config`): only `.git/config` plus includes.
+    ///
+    /// Does not load global, system, worktree, or command-line layers.
+    pub fn read_early_config(git_dir: &Path, key: &str) -> Result<Option<String>> {
+        let path = git_dir.join("config");
+        let mut set = Self::new();
+        let ctx = IncludeContext {
+            git_dir: Some(git_dir.to_path_buf()),
+            command_line_relative_include_is_error: false,
+        };
+        if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Local)? {
+            set.merge_file_with_includes(&f, true, &ctx)?;
+        }
+        Ok(set.get(key))
+    }
+
+    /// Merge a single config file, optionally expanding `[include]` / `[includeIf]`.
+    ///
+    /// Used by `grit config -f` and scoped reads; [`ConfigSet::load_with_options`] uses the same
+    /// internal routine for the standard cascade.
+    pub fn merge_file_with_includes(
+        &mut self,
+        file: &ConfigFile,
+        process_includes: bool,
+        ctx: &IncludeContext,
+    ) -> Result<()> {
+        Self::merge_with_includes(self, file, process_includes, 0, ctx)
     }
 
     /// Merge a file, processing `[include]` and `[includeIf]` directives.
@@ -1380,6 +1527,7 @@ impl ConfigSet {
         file: &ConfigFile,
         process_includes: bool,
         depth: usize,
+        ctx: &IncludeContext,
     ) -> Result<()> {
         // Mirror Git behavior and stop runaway include recursion.
         // t0017 expects the diagnostic to contain this exact phrase.
@@ -1413,14 +1561,18 @@ impl ConfigSet {
         if process_includes {
             for (inc_path, condition) in includes {
                 if let Some(ref cond) = condition {
-                    if !evaluate_include_condition(cond, file) {
+                    if !evaluate_include_condition(cond, file, ctx) {
                         continue;
                     }
                 }
 
-                let resolved = resolve_include_path(&inc_path, file.path.parent());
+                let resolved = match resolve_include_file_path(&inc_path, file, ctx) {
+                    Ok(p) => p,
+                    Err(Error::ConfigError(msg)) if msg.is_empty() => continue,
+                    Err(e) => return Err(e),
+                };
                 if let Ok(Some(inc_file)) = ConfigFile::from_path(&resolved, file.scope) {
-                    Self::merge_with_includes(set, &inc_file, true, depth + 1)?;
+                    Self::merge_with_includes(set, &inc_file, process_includes, depth + 1, ctx)?;
                 }
             }
         }
@@ -1810,28 +1962,176 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var("HOME").ok().map(PathBuf::from)
 }
 
-/// Resolve an include path relative to the including file's directory.
-fn resolve_include_path(path: &str, base: Option<&Path>) -> PathBuf {
+/// True when Git would treat the config source as `CONFIG_ORIGIN_FILE` for includes.
+fn include_source_is_disk_file(file: &ConfigFile) -> bool {
+    file.include_origin == ConfigIncludeOrigin::Disk
+}
+
+/// Resolve an include file path (Git `handle_path_include` semantics).
+///
+/// Relative paths are only allowed when the including config came from a real on-disk file.
+fn resolve_include_file_path(
+    path: &str,
+    file: &ConfigFile,
+    ctx: &IncludeContext,
+) -> Result<PathBuf> {
     let expanded = parse_path(path);
     let p = Path::new(&expanded);
     if p.is_absolute() {
-        p.to_path_buf()
-    } else if let Some(base) = base {
-        base.join(p)
-    } else {
-        p.to_path_buf()
+        return Ok(p.to_path_buf());
     }
+    if !include_source_is_disk_file(file) {
+        if file.include_origin == ConfigIncludeOrigin::CommandLine {
+            if ctx.command_line_relative_include_is_error {
+                return Err(Error::ConfigError(
+                    "relative config includes must come from files".to_owned(),
+                ));
+            }
+            return Err(Error::ConfigError(String::new()));
+        }
+        return Err(Error::ConfigError(
+            "relative config includes must come from files".to_owned(),
+        ));
+    }
+    let base = match file.path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        Some(_) | None => Path::new("."),
+    };
+    Ok(base.join(p))
+}
+
+fn is_dir_sep(b: u8) -> bool {
+    b == b'/' || b == b'\\'
+}
+
+fn add_trailing_starstar_for_dir(pat: &mut String) {
+    let bytes = pat.as_bytes();
+    if !bytes.is_empty() && is_dir_sep(*bytes.last().unwrap()) {
+        pat.push_str("**");
+    }
+}
+
+/// Prepare a `gitdir:` / `gitdir/i:` pattern (Git `prepare_include_condition_pattern`).
+fn prepare_gitdir_pattern(condition: &str, file: &ConfigFile) -> Result<(String, usize)> {
+    // Git `interpolate_path`: expand `~/` in the condition before pattern rules.
+    let mut pat = parse_path(condition);
+    if pat.starts_with("./") || pat.starts_with(".\\") {
+        if !include_source_is_disk_file(file) {
+            return Err(Error::ConfigError(
+                "relative config include conditionals must come from files".to_owned(),
+            ));
+        }
+        let parent = file.path.parent().ok_or_else(|| {
+            Error::ConfigError(
+                "relative config include conditionals must come from files".to_owned(),
+            )
+        })?;
+        let real = parent.canonicalize().map_err(Error::Io)?;
+        let mut dir = real.to_string_lossy().into_owned();
+        if !dir.ends_with('/') && !dir.ends_with('\\') {
+            dir.push('/');
+        }
+        let rest = &pat[2..];
+        pat = format!("{dir}{rest}");
+        let prefix_len = dir.len();
+        add_trailing_starstar_for_dir(&mut pat);
+        return Ok((pat, prefix_len));
+    }
+    let p = Path::new(&pat);
+    if !p.is_absolute() {
+        pat.insert_str(0, "**/");
+    }
+    add_trailing_starstar_for_dir(&mut pat);
+    Ok((pat, 0))
+}
+
+/// Git `include_by_gitdir` tries `strbuf_realpath` first, then `strbuf_add_absolute_path` if no match.
+fn git_dir_match_texts(git_dir: &Path) -> (String, String) {
+    let real = git_dir
+        .canonicalize()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| git_dir.to_string_lossy().into_owned());
+    let abs = if git_dir.is_absolute() {
+        git_dir.to_string_lossy().into_owned()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(git_dir).to_string_lossy().into_owned()
+    } else {
+        git_dir.to_string_lossy().into_owned()
+    };
+    (real, abs)
+}
+
+fn include_by_gitdir(
+    condition: &str,
+    file: &ConfigFile,
+    ctx: &IncludeContext,
+    icase: bool,
+) -> bool {
+    let Some(git_dir) = ctx.git_dir.as_ref() else {
+        return false;
+    };
+    let (pattern, prefix) = match prepare_gitdir_pattern(condition, file) {
+        Ok(x) => x,
+        Err(_) => return false,
+    };
+    let flags = WM_PATHNAME | if icase { WM_CASEFOLD } else { 0 };
+    let (text_real, text_abs) = git_dir_match_texts(git_dir);
+    let try_match = |text: &str| -> bool {
+        let t = text.as_bytes();
+        let p = pattern.as_bytes();
+        if prefix > 0 {
+            if t.len() < prefix {
+                return false;
+            }
+            let pre = &p[..prefix];
+            let te = &t[..prefix];
+            let ok = if icase {
+                pre.eq_ignore_ascii_case(te)
+            } else {
+                pre == te
+            };
+            if !ok {
+                return false;
+            }
+            return wildmatch(&p[prefix..], &t[prefix..], flags);
+        }
+        wildmatch(p, t, flags)
+    };
+    if try_match(&text_real) {
+        return true;
+    }
+    text_real != text_abs && try_match(&text_abs)
+}
+
+fn current_branch_short_name(git_dir: Option<&Path>) -> Option<String> {
+    let gd = git_dir?;
+    let target = refs::read_symbolic_ref(gd, "HEAD").ok()??;
+    let rest = target.strip_prefix("refs/heads/")?;
+    Some(rest.to_owned())
+}
+
+fn include_by_onbranch(condition: &str, ctx: &IncludeContext) -> bool {
+    let Some(short) = current_branch_short_name(ctx.git_dir.as_deref()) else {
+        return false;
+    };
+    let mut pattern = condition.to_owned();
+    add_trailing_starstar_for_dir(&mut pattern);
+    wildmatch(pattern.as_bytes(), short.as_bytes(), WM_PATHNAME)
 }
 
 /// Evaluate an `[includeIf]` condition.
 ///
-/// Currently supports:
-/// - `gitdir:<pattern>` / `gitdir/i:<pattern>` — match against the git dir.
-/// - `onbranch:<pattern>` — match against the current branch.
-fn evaluate_include_condition(condition: &str, _file: &ConfigFile) -> bool {
-    // TODO: Implement gitdir: and onbranch: matching.
-    // For now, we skip conditional includes (safe default: don't include).
-    let _ = condition;
+/// Supports `gitdir:`, `gitdir/i:`, and `onbranch:` like Git. Unknown prefixes are false.
+fn evaluate_include_condition(condition: &str, file: &ConfigFile, ctx: &IncludeContext) -> bool {
+    if let Some(rest) = condition.strip_prefix("gitdir/i:") {
+        return include_by_gitdir(rest, file, ctx, true);
+    }
+    if let Some(rest) = condition.strip_prefix("gitdir:") {
+        return include_by_gitdir(rest, file, ctx, false);
+    }
+    if let Some(rest) = condition.strip_prefix("onbranch:") {
+        return include_by_onbranch(rest, ctx);
+    }
     false
 }
 

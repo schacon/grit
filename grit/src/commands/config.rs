@@ -5,7 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args as ClapArgs, Subcommand};
-use grit_lib::config::{parse_bool, parse_color, parse_i64, ConfigFile, ConfigScope, ConfigSet};
+use grit_lib::config::{
+    parse_bool, parse_color, parse_i64, ConfigFile, ConfigIncludeOrigin, ConfigScope, ConfigSet,
+    IncludeContext, LoadConfigOptions,
+};
 use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use grit_lib::rev_parse::resolve_revision;
@@ -574,7 +577,7 @@ fn cmd_get(
     git_dir: Option<&Path>,
     value_pattern: Option<&str>,
 ) -> Result<()> {
-    let config = load_config(args, git_dir)?;
+    let config = load_config(args, git_dir, ConfigReadIncludeMode::Lookup)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
     // Handle --url for URL matching (subcommand interface)
@@ -785,7 +788,7 @@ fn cmd_unset(
 }
 
 fn cmd_list(args: &Args, git_dir: Option<&Path>) -> Result<()> {
-    let config = load_config(args, git_dir)?;
+    let config = load_config(args, git_dir, ConfigReadIncludeMode::List)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
     let cwd = std::env::current_dir().ok();
 
@@ -905,7 +908,7 @@ fn cmd_edit(file_path: &Path) -> Result<()> {
 /// Handle `--blob=<blob-ish>` — read config from a blob object (read-only).
 /// Handle `--get-urlmatch <key> <URL>`.
 fn cmd_get_urlmatch(args: &Args, key: &str, url: &str, git_dir: Option<&Path>) -> Result<()> {
-    let config = load_config(args, git_dir)?;
+    let config = load_config(args, git_dir, ConfigReadIncludeMode::Lookup)?;
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
     if let Some(dot) = key.find('.') {
@@ -982,10 +985,26 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     let content = String::from_utf8(obj.data).context("blob is not valid UTF-8")?;
     let blob_path_str = blob_spec.to_string();
     let blob_path = std::path::Path::new(&blob_path_str);
-    let config_file = ConfigFile::parse(blob_path, &content, ConfigScope::Command)
-        .with_context(|| format!("bad config in blob '{}'", blob_spec))?;
+    let config_file = ConfigFile::parse_with_origin(
+        blob_path,
+        &content,
+        ConfigScope::Command,
+        ConfigIncludeOrigin::Blob,
+    )
+    .with_context(|| format!("bad config in blob '{}'", blob_spec))?;
     let mut config = ConfigSet::new();
-    config.merge(&config_file);
+    let process_includes = !args.no_includes;
+    if process_includes {
+        let inc_ctx = IncludeContext {
+            git_dir: Some(repo.git_dir.clone()),
+            command_line_relative_include_is_error: false,
+        };
+        config
+            .merge_file_with_includes(&config_file, true, &inc_ctx)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    } else {
+        config.merge(&config_file);
+    }
 
     let terminator = if args.null_terminated { '\0' } else { '\n' };
 
@@ -1161,13 +1180,33 @@ pub fn resolve_git_dir_pub() -> Option<PathBuf> {
     resolve_git_dir()
 }
 
+/// Directory to start repo discovery from.
+///
+/// When `PWD` is absolute and refers to the same location as [`std::env::current_dir`]
+/// (same canonical path), prefer `PWD` so logical symlink components in the path string
+/// match `gitdir:` patterns. If `PWD` points elsewhere (e.g. after `git -C`), use cwd.
+fn discovery_start_dir() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    if let Ok(pwd_s) = std::env::var("PWD") {
+        let pwd = PathBuf::from(&pwd_s);
+        if pwd.is_absolute() {
+            if let (Ok(cwd_c), Ok(pwd_c)) = (cwd.canonicalize(), pwd.canonicalize()) {
+                if cwd_c == pwd_c {
+                    return Some(pwd);
+                }
+            }
+        }
+    }
+    Some(cwd)
+}
+
 /// Resolve the git directory (best-effort; returns None outside a repo).
 fn resolve_git_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("GIT_DIR") {
         return Some(PathBuf::from(dir));
     }
     // Walk up from cwd looking for .git
-    let cwd = std::env::current_dir().ok()?;
+    let cwd = discovery_start_dir()?;
     let mut cur = cwd.as_path();
     loop {
         let dot_git = cur.join(".git");
@@ -1228,13 +1267,84 @@ fn resolve_config_file(args: &Args, git_dir: Option<&Path>) -> Result<(ConfigSco
     }
 }
 
+/// How includes are expanded for a read operation (matches Git split between `git config key` and `git config --list`).
+#[derive(Clone, Copy)]
+enum ConfigReadIncludeMode {
+    /// Single-key lookups: expand includes for the default cascade and stdin; not for `-f path` unless `--includes`;
+    /// not for `--global` / `--local` / `--system` unless `--includes`.
+    Lookup,
+    /// `--list` and similar: expand includes for scoped files too (still not for `-f path` unless `--includes`).
+    List,
+}
+
 /// Load the config set, respecting file-scope flags.
-fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
+fn load_config(
+    args: &Args,
+    git_dir: Option<&Path>,
+    mode: ConfigReadIncludeMode,
+) -> Result<ConfigSet> {
+    let process_includes = match mode {
+        ConfigReadIncludeMode::Lookup => {
+            if let Some(ref p) = args.file {
+                if p.to_string_lossy() == "-" {
+                    !args.no_includes
+                } else {
+                    args.includes && !args.no_includes
+                }
+            } else if args.system || args.global || args.local {
+                args.includes && !args.no_includes
+            } else {
+                !args.no_includes
+            }
+        }
+        ConfigReadIncludeMode::List => {
+            if let Some(ref p) = args.file {
+                if p.to_string_lossy() == "-" {
+                    !args.no_includes
+                } else {
+                    args.includes && !args.no_includes
+                }
+            } else {
+                !args.no_includes
+            }
+        }
+    };
+    let command_includes = !args.no_includes && args.file.is_none();
+    let mut load_opts = LoadConfigOptions {
+        include_system: true,
+        process_includes,
+        command_includes,
+        include_ctx: IncludeContext {
+            git_dir: git_dir.map(PathBuf::from),
+            command_line_relative_include_is_error: true,
+        },
+    };
+
     // If a specific file is requested, only read that file
     if let Some(ref path) = args.file {
         let mut set = ConfigSet::new();
-        if let Some(f) = ConfigFile::from_path(path, ConfigScope::Local)? {
-            set.merge(&f);
+        let pseudo = path.to_string_lossy();
+        let is_stdin = pseudo == "-";
+        let file = if is_stdin {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            Some(ConfigFile::parse_with_origin(
+                path,
+                &buf,
+                ConfigScope::Local,
+                ConfigIncludeOrigin::Stdin,
+            )?)
+        } else {
+            ConfigFile::from_path(path, ConfigScope::Local)?
+        };
+        if let Some(f) = file {
+            if process_includes {
+                set.merge_file_with_includes(&f, true, &load_opts.include_ctx)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            } else {
+                set.merge(&f);
+            }
         }
         return Ok(set);
     }
@@ -1245,7 +1355,12 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/etc/gitconfig"));
         if let Some(f) = ConfigFile::from_path(&system_path, ConfigScope::System)? {
-            set.merge(&f);
+            if process_includes {
+                set.merge_file_with_includes(&f, true, &load_opts.include_ctx)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+            } else {
+                set.merge(&f);
+            }
         }
         return Ok(set);
     }
@@ -1254,7 +1369,12 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
         let mut set = ConfigSet::new();
         if let Some(path) = global_config_path() {
             if let Some(f) = ConfigFile::from_path(&path, ConfigScope::Global)? {
-                set.merge(&f);
+                if process_includes {
+                    set.merge_file_with_includes(&f, true, &load_opts.include_ctx)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                } else {
+                    set.merge(&f);
+                }
             }
         }
         return Ok(set);
@@ -1264,14 +1384,20 @@ fn load_config(args: &Args, git_dir: Option<&Path>) -> Result<ConfigSet> {
         let mut set = ConfigSet::new();
         if let Some(gd) = git_dir {
             if let Some(f) = ConfigFile::from_path(&gd.join("config"), ConfigScope::Local)? {
-                set.merge(&f);
+                if process_includes {
+                    set.merge_file_with_includes(&f, true, &load_opts.include_ctx)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                } else {
+                    set.merge(&f);
+                }
             }
         }
         return Ok(set);
     }
 
     // Default: full cascade
-    Ok(ConfigSet::load(git_dir, true)?)
+    load_opts.include_system = true;
+    ConfigSet::load_with_options(git_dir, &load_opts).map_err(|e| anyhow::anyhow!("{}", e))
 }
 
 /// Get the path for the global config file.
