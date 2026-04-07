@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    87 |
-| In progress |     0 |
-| Remaining   |   680 |
+| Completed   |   218 |
+| In progress |     2 |
+| Remaining   |   547 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t7426-submodule-get-default-remote` — 15/15 tests pass (`submodule--helper get-default-remote`; nested submodule URL resolution uses outer superproject `remote.*.url` + Git `relative_url`; `pull` resolves local path remotes from `remote.<name>.url` for detached HEAD; `submodule update` treats path `.` as all submodules; submodule clone clears `GIT_DIR` and rewrites `remote.origin.url` to canonical path)
 - `t11490-commit-fixup-squash` — 33/33 tests pass (`commit` message sources, amend, allow-empty, `-a`, `--author`, `--date`, `-q`; harness CSV refreshed after clean run)
 - `t12590-log-format-tformat` — 33/33 tests pass (`log --format` with `%H`/`%h`/`%s`/`%an`/`%ae`/`%cn`/`%ce`/`%T`/`%t`/`%P`/`%p`/`%n`/`%%`, `format:` vs `tformat:` prefixes, `-n`/`--skip`/`--reverse`; verified clean harness run)
 - `t11290-update-ref-atomic-batch` — 33/33 tests pass (`test_must_fail` in `test-lib-tap.sh` now accepts absolute paths to `git`/`grit`/`scalar`, so `test_must_fail "$GUST_BIN"` and `test_must_fail "$REAL_GIT"` work under the harness)
