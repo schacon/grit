@@ -661,6 +661,22 @@ fn cmd_add(args: AddArgs) -> Result<()> {
     Ok(())
 }
 
+/// Normalize a path by resolving `.` and `..` without requiring filesystem existence.
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 fn setup_unborn_worktree(
     common: &Path,
     wt_admin: &Path,
@@ -1467,9 +1483,33 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
                     if target_str.is_empty() {
                         (true, "invalid gitdir file")
                     } else {
-                        let target = PathBuf::from(target_str);
+                        let target_raw = PathBuf::from(target_str);
+                        // Normalize the path (resolve .. without requiring existence)
+                        let target = normalize_path(&target_raw);
                         if !target.exists() {
-                            (true, "gitdir file points to non-existent location")
+                            // Check if the worktree path is the same as the main worktree path
+                            // (e.g. after main repo was moved to where the linked wt was).
+                            // In that case the linked worktree's gitdir now points to main's git dir.
+                            let wt_path_file = admin.join("gitdir");
+                            let _ = wt_path_file; // suppress warning
+                                                  // The wt_name path: check if worktrees/<name> path matches main worktree
+                            let main_wt = repo.work_tree.as_deref();
+                            let wt_abs = admin
+                                .parent()
+                                .and_then(|p| p.parent())
+                                .map(|p| p.join(&name));
+                            let wt_abs_canonical =
+                                wt_abs.as_ref().and_then(|p| p.canonicalize().ok());
+                            let main_wt_canonical = main_wt.and_then(|p| p.canonicalize().ok());
+                            let is_dup = match (wt_abs_canonical, main_wt_canonical) {
+                                (Some(a), Some(b)) => a == b,
+                                _ => false,
+                            };
+                            if is_dup {
+                                (true, "duplicate entry")
+                            } else {
+                                (true, "gitdir file points to non-existent location")
+                            }
                         } else {
                             (false, "")
                         }
@@ -1524,8 +1564,26 @@ fn cmd_prune(args: PruneArgs) -> Result<()> {
             let admin = worktrees_dir.join(name);
             let gitdir_file = admin.join("gitdir");
             if let Ok(raw) = fs::read_to_string(&gitdir_file) {
-                let target = PathBuf::from(raw.trim());
-                let target_canonical = target.canonicalize().unwrap_or(target);
+                let target_raw = PathBuf::from(raw.trim());
+                // Normalize first (resolve ..) then canonicalize for duplicate detection
+                let target_normalized = normalize_path(&target_raw);
+                let target_canonical = target_normalized
+                    .canonicalize()
+                    .unwrap_or(target_normalized.clone());
+                // Duplicate check: target points to same place as another linked worktree
+                // or as the main git_dir (e.g. after main repo moved to old linked wt path)
+                let main_gitdir_canonical =
+                    repo.git_dir.canonicalize().unwrap_or(repo.git_dir.clone());
+                let is_dup_of_main = target_canonical == main_gitdir_canonical;
+                if is_dup_of_main {
+                    if args.verbose || args.dry_run {
+                        eprintln!("Removing worktrees/{name}: duplicate entry");
+                    }
+                    if !args.dry_run {
+                        let _ = fs::remove_dir_all(&admin);
+                    }
+                    continue;
+                }
                 if let Some(first_name) = gitdir_targets.get(&target_canonical) {
                     if first_name != name {
                         // Duplicate! Remove this one.
