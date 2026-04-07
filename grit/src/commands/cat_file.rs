@@ -5,8 +5,7 @@ use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::error::Error as LibError;
 use grit_lib::pack;
-use grit_lib::rev_list::{self, ObjectFilter};
-use grit_lib::tree_path_follow::{get_tree_entry_follow_symlinks, FollowPathFailure, FollowPathResult};
+use grit_lib::rev_list::ObjectFilter;
 use std::io::{self, BufRead, Read as _, Write};
 use std::path::{Path, PathBuf};
 
@@ -522,7 +521,10 @@ fn max_tree_depth_object_filter(repo: &Repository) -> Result<ObjectFilter> {
 }
 
 fn merged_cat_file_object_filter(repo: &Repository, user: ObjectFilter) -> Result<ObjectFilter> {
-    Ok(ObjectFilter::Combine(vec![max_tree_depth_object_filter(repo)?, user]))
+    Ok(ObjectFilter::Combine(vec![
+        max_tree_depth_object_filter(repo)?,
+        user,
+    ]))
 }
 
 fn collect_all_loose_object_ids(objects_dir: &Path, oids: &mut BTreeSet<ObjectId>) -> Result<()> {
@@ -580,6 +582,113 @@ fn collect_all_object_ids(repo: &Repository) -> Result<Vec<ObjectId>> {
     Ok(oids.into_iter().collect())
 }
 
+fn object_ids_for_cat_file_filtered(
+    repo: &Repository,
+    filter: &ObjectFilter,
+) -> Result<Vec<ObjectId>> {
+    let mut out = BTreeSet::new();
+    for d in object_storage_dirs_for_repo(repo)? {
+        collect_filtered_loose_object_ids(repo, &d, filter, &mut out)?;
+        collect_filtered_pack_object_ids(repo, &d, filter, &mut out)?;
+    }
+    Ok(out.into_iter().collect())
+}
+
+fn collect_filtered_loose_object_ids(
+    repo: &Repository,
+    objects_dir: &Path,
+    filter: &ObjectFilter,
+    oids: &mut BTreeSet<ObjectId>,
+) -> Result<()> {
+    for prefix in 0u8..=255 {
+        let hex_prefix = format!("{prefix:02x}");
+        let dir = objects_dir.join(&hex_prefix);
+        if !dir.exists() {
+            continue;
+        }
+        let rd = std::fs::read_dir(&dir)?;
+        for entry in rd {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.len() == 38 {
+                let full_hex = format!("{hex_prefix}{name_str}");
+                if let Ok(oid) = ObjectId::from_hex(&full_hex) {
+                    if include_object_for_cat_file_filter(repo, oid, filter)? {
+                        oids.insert(oid);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_filtered_pack_object_ids(
+    repo: &Repository,
+    objects_dir: &Path,
+    filter: &ObjectFilter,
+    oids: &mut BTreeSet<ObjectId>,
+) -> Result<()> {
+    for idx in pack::read_local_pack_indexes(objects_dir)? {
+        for e in idx.entries {
+            if include_object_for_cat_file_filter(repo, e.oid, filter)? {
+                oids.insert(e.oid);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn include_object_for_cat_file_filter(
+    repo: &Repository,
+    oid: ObjectId,
+    filter: &ObjectFilter,
+) -> Result<bool> {
+    let obj = match repo.read_replaced(&oid) {
+        Ok(o) => o,
+        Err(_) => return Ok(false),
+    };
+    match obj.kind {
+        ObjectKind::Blob => Ok(filter.includes_blob(obj.data.len() as u64)),
+        ObjectKind::Tree => tree_included_by_depth_filter(repo, oid, filter, 0),
+        ObjectKind::Commit => Ok(true),
+        ObjectKind::Tag => Ok(true),
+    }
+}
+
+fn tree_included_by_depth_filter(
+    repo: &Repository,
+    tree_oid: ObjectId,
+    filter: &ObjectFilter,
+    depth: u64,
+) -> Result<bool> {
+    if !filter.includes_tree(depth) {
+        return Ok(false);
+    }
+    let obj = repo.odb.read(&tree_oid)?;
+    let entries = parse_tree(&obj.data)?;
+    for e in entries {
+        match e.mode {
+            0o040000 | 0o160000 => {
+                if !tree_included_by_depth_filter(repo, e.oid, filter, depth + 1)? {
+                    return Ok(false);
+                }
+            }
+            _ => {
+                let blob = repo.odb.read(&e.oid)?;
+                if blob.kind != ObjectKind::Blob {
+                    continue;
+                }
+                if !filter.includes_blob(blob.data.len() as u64) {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
 fn read_batch_object(
     repo: &Repository,
     oid: &ObjectId,
@@ -617,14 +726,6 @@ fn resolve_treeish_to_tree_oid(repo: &Repository, treeish: &str) -> Result<Objec
     }
 }
 
-#[derive(Clone, Copy)]
-struct BatchWriteOpts<'a> {
-    ignore_replace: bool,
-    follow_symlinks: bool,
-    batch_all_objects: bool,
-    objects_filter: Option<&'a ObjectFilter>,
-}
-
 fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -644,24 +745,20 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
 
     let mut app_buf: Vec<u8> = Vec::new();
 
-    let objects_filter: Option<ObjectFilter> =
-        if args.no_filter || args.filter.is_none() {
-            None
-        } else {
-            let spec = args
-                .filter
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
-            Some(
-                ObjectFilter::parse(spec)
-                    .map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?,
-            )
-        };
+    let objects_filter: Option<ObjectFilter> = if args.no_filter || args.filter.is_none() {
+        None
+    } else {
+        let spec = args
+            .filter
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("internal: filter"))?;
+        Some(ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("invalid object filter: {e}"))?)
+    };
 
     let records: Vec<String> = if args.batch_all_objects {
         let mut oids: Vec<ObjectId> = if let Some(ref f) = objects_filter {
             let merged = merged_cat_file_object_filter(repo, f.clone())?;
-            rev_list::object_ids_for_cat_file_filtered(repo, &merged)?
+            object_ids_for_cat_file_filtered(repo, &merged)?
         } else {
             collect_all_object_ids(repo)?
         };
@@ -673,13 +770,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
         oids.into_iter().map(|o| o.to_hex()).collect()
     } else {
         read_input_records(&stdin, nul_input)?
-    };
-
-    let write_opts = BatchWriteOpts {
-        ignore_replace: args.batch_all_objects,
-        follow_symlinks: args.follow_symlinks,
-        batch_all_objects: args.batch_all_objects,
-        objects_filter: objects_filter.as_ref(),
     };
 
     for line in &records {
@@ -710,7 +800,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -721,7 +810,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut stdout_lock,
                         )?;
                         stdout_lock.flush()?;
@@ -741,7 +829,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut app_buf,
                         )?;
                     } else {
@@ -752,7 +839,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                             format,
                             nul_output,
                             packed_sizes.as_ref(),
-                            write_opts,
                             &mut stdout_lock,
                         )?;
                         stdout_lock.flush()?;
@@ -787,7 +873,6 @@ fn run_batch(repo: &Repository, args: &Args) -> Result<()> {
                 format,
                 nul_output,
                 packed_sizes.as_ref(),
-                write_opts,
                 &mut stdout_lock,
             )?;
             if !use_app_buffer {

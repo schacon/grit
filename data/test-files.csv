@@ -440,9 +440,9 @@ t1503-rev-parse-verify	t1	yes	12	12	0	true	ok	0
 t1504-ceiling-dirs	t1	yes	44	9	35	false	ok	0
 t1504-revision-range	t1	yes	28	28	0	true	ok	0
 t1505-rev-parse-last	t1	yes	7	7	0	true	ok	0
-t1506-rev-parse-diagnosis	t1	yes	30	14	16	false	ok	0
-t1507-rev-parse-upstream	t1	yes	29	14	15	false	ok	0
-t1508-at-combinations	t1	yes	35	23	12	false	ok	0
+t1506-rev-parse-diagnosis	t1	yes	30	30	0	true	ok	0
+t1507-rev-parse-upstream	t1	yes	29	20	9	false	ok	0
+t1508-at-combinations	t1	yes	35	30	5	false	ok	0
 t1509-root-work-tree	t1	yes	0	0	0	false	ok	0
 t1510-repo-setup	t1	yes	109	13	96	false	ok	0
 t1511-rev-parse-caret	t1	yes	17	11	6	false	ok	0

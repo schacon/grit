@@ -625,6 +625,14 @@ fn fetch_remote(
 
             refs::write_ref(git_dir, &local_ref, remote_oid)
                 .with_context(|| format!("updating ref {local_ref}"))?;
+            let _ = append_fetch_reflog(
+                git_dir,
+                &local_ref,
+                old_oid.as_ref(),
+                remote_oid,
+                &url,
+                branch,
+            );
 
             if args.porcelain {
                 let zero = "0".repeat(40);
@@ -669,6 +677,7 @@ fn fetch_remote(
 
             refs::write_ref(git_dir, refname, remote_oid)
                 .with_context(|| format!("updating tag {refname}"))?;
+            let _ = append_fetch_reflog(git_dir, refname, old_oid.as_ref(), remote_oid, &url, "");
 
             if !args.quiet {
                 let tag_name = refname.strip_prefix("refs/tags/").unwrap_or(refname);
@@ -1010,6 +1019,50 @@ fn determine_remote_head(remote_git_dir: &Path) -> Option<String> {
 /// Read a ref to get its OID, returning None if it doesn't exist.
 fn read_ref_oid(git_dir: &Path, refname: &str) -> Option<ObjectId> {
     refs::resolve_ref(git_dir, refname).ok()
+}
+
+fn zero_oid() -> ObjectId {
+    ObjectId::from_hex("0000000000000000000000000000000000000000").expect("null oid")
+}
+
+fn fetch_reflog_identity(git_dir: &Path) -> String {
+    let config = ConfigSet::load(Some(git_dir), true).ok();
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_NAME").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.name")))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| std::env::var("GIT_AUTHOR_EMAIL").ok())
+        .or_else(|| config.as_ref().and_then(|c| c.get("user.email")))
+        .unwrap_or_default();
+    let now = time::OffsetDateTime::now_utc();
+    let epoch = now.unix_timestamp();
+    let offset = now.offset();
+    let hours = offset.whole_hours();
+    let minutes = offset.minutes_past_hour().unsigned_abs();
+    format!("{name} <{email}> {epoch} {hours:+03}{minutes:02}")
+}
+
+/// Append a reflog line for a ref updated by fetch (remote-tracking branches and tags).
+fn append_fetch_reflog(
+    git_dir: &Path,
+    refname: &str,
+    old_oid: Option<&ObjectId>,
+    new_oid: &ObjectId,
+    remote_url: &str,
+    branch: &str,
+) -> anyhow::Result<()> {
+    let old = old_oid.cloned().unwrap_or_else(zero_oid);
+    let message = if branch.is_empty() {
+        format!("fetch --append --prune {remote_url}")
+    } else {
+        format!("fetch --append --prune {remote_url} branch '{branch}' of {remote_url}")
+    };
+    let ident = fetch_reflog_identity(git_dir);
+    refs::append_reflog(git_dir, refname, &old, new_oid, &ident, &message, true)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Copy all objects (loose + packs) from remote to local.

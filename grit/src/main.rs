@@ -80,9 +80,18 @@ fn main() {
             if is_broken_pipe_error(&e) {
                 // Match shell signal convention for SIGPIPE.
                 exit_code = 128 + 13;
+            } else if let Some(msg) = verbatim_lib_error_message(&e) {
+                eprintln!("{msg}");
+                exit_code = 128;
             } else {
-                eprintln!("error: {e:#}");
-                exit_code = 1;
+                let display = format!("{e:#}");
+                if display.starts_with("fatal:") {
+                    eprintln!("{display}");
+                    exit_code = 128;
+                } else {
+                    eprintln!("error: {display}");
+                    exit_code = 1;
+                }
             }
         }
     }
@@ -114,6 +123,17 @@ fn main() {
     }
 
     std::process::exit(exit_code);
+}
+
+fn verbatim_lib_error_message(err: &anyhow::Error) -> Option<String> {
+    for cause in err.chain() {
+        if let Some(grit_lib::error::Error::Message(msg)) =
+            cause.downcast_ref::<grit_lib::error::Error>()
+        {
+            return Some(msg.clone());
+        }
+    }
+    None
 }
 
 fn is_broken_pipe_error(err: &anyhow::Error) -> bool {
@@ -2036,15 +2056,15 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
             continue;
         };
         if i == 0 {
-            print!("usage: {first}\n");
+            println!("usage: {first}");
         } else {
-            print!("   or: {first}\n");
+            println!("   or: {first}");
         }
         for cont in var.iter().skip(1) {
-            print!("{pad}{cont}\n");
+            println!("{pad}{cont}");
         }
     }
-    print!("\n");
+    println!();
     std::process::exit(129);
 }
 
@@ -3015,7 +3035,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         }
         "restore" => commands::restore::run(parse_cmd_args(subcmd, rest)),
         "rev-list" => commands::rev_list::run(parse_cmd_args(subcmd, rest)),
-        "rev-parse" => commands::rev_parse::run(parse_cmd_args(subcmd, rest)),
+        "rev-parse" => commands::rev_parse::run_with_raw_args(rest),
         "revert" => commands::revert::run(parse_cmd_args(subcmd, rest)),
         "rm" => commands::rm::run(parse_cmd_args(subcmd, rest)),
         "scalar" => commands::scalar::run(rest),

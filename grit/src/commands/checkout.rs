@@ -19,7 +19,7 @@ use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs::{self, append_reflog};
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision};
+use grit_lib::rev_parse::{abbreviate_object_id, resolve_revision, resolve_upstream_symbolic_name};
 use grit_lib::state::{resolve_head, HeadState};
 
 /// Arguments for `grit checkout`.
@@ -2483,6 +2483,40 @@ fn maybe_setup_tracking(
         std::fs::write(&config_path, config_content)?;
 
         checkout_eprintln!("branch '{}' set up to track '{}'.", branch_name, start);
+        return Ok(());
+    }
+
+    // Start point may be an upstream expression (e.g. `my-side@{u}`) resolving to a
+    // remote-tracking or local merge ref.
+    if let Ok(full) = resolve_upstream_symbolic_name(repo, start) {
+        let config_path = repo.git_dir.join("config");
+        let mut config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        let section = if let Some(rest) = full.strip_prefix("refs/remotes/") {
+            if let Some(slash) = rest.find('/') {
+                let remote = &rest[..slash];
+                let branch = &rest[slash + 1..];
+                format!(
+                    "\n[branch \"{}\"]\
+                    \n\tremote = {}\
+                    \n\tmerge = refs/heads/{}\n",
+                    branch_name, remote, branch
+                )
+            } else {
+                return Ok(());
+            }
+        } else if full.starts_with("refs/heads/") {
+            format!(
+                "\n[branch \"{}\"]\
+                \n\tremote = .\
+                \n\tmerge = {}\n",
+                branch_name, full
+            )
+        } else {
+            return Ok(());
+        };
+        config_content.push_str(&section);
+        std::fs::write(&config_path, config_content)?;
+        checkout_eprintln!("branch '{branch_name}' set up to track '{start}'.");
     }
 
     Ok(())
