@@ -41,7 +41,7 @@ commit → check it off → move on.
 
 - [x] `t0095-bloom` ████████████████████ 11/11 (0 left) — Testing the various Bloom filter computations in bloom.c
 - [x] `t0035-safe-bare-repository` ████████████████████ 12/12 (0 left) — verify safe.bareRepository checks
-- [ ] `t0033-safe-directory` █████████░░░░░░░░░░░ 10/22 (12 left) — verify safe.directory checks
+- [x] `t0033-safe-directory` ████████████████████ 22/22 (0 left) — verify safe.directory checks
 - [ ] `t0019-json-writer` █░░░░░░░░░░░░░░░░░░░ 1/16 (15 left) — test json-writer JSON generation
 - [ ] `t0020-crlf` ██████████░░░░░░░░░░ 19/36 (17 left) — CRLF conversion
 - [ ] `t0014-alias` ░░░░░░░░░░░░░░░░░░░░ 1/21 (20 left) — git command aliasing
@@ -943,4 +943,4 @@ commit → check it off → move on.
 - [ ] `t9902-completion` █░░░░░░░░░░░░░░░░░░░ 21/263 (242 left) — test bash completion
 
 **Total: 765 tracked files**
-**8,894/24,806 tests passing, 15,912 failures remaining**
+**8,906/24,806 tests passing, 15,900 failures remaining**

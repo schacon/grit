@@ -1717,26 +1717,28 @@ pub fn parse_path_optional(s: &str) -> Option<String> {
 /// Parse `GIT_CONFIG_PARAMETERS` — single-quoted `'key=value'` entries
 /// separated by whitespace.
 fn parse_config_parameters(raw: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut iter = raw.chars().peekable();
-    while let Some(&c) = iter.peek() {
-        if c == '\'' {
-            iter.next();
-            let mut s = String::new();
-            loop {
-                match iter.next() {
-                    Some('\'') | None => break,
-                    Some(x) => s.push(x),
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+
+    for ch in raw.chars() {
+        match ch {
+            '\'' => in_single_quote = !in_single_quote,
+            c if c.is_whitespace() && !in_single_quote => {
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
                 }
             }
-            if !s.is_empty() {
-                out.push(s);
-            }
-        } else {
-            iter.next();
+            other => current.push(other),
         }
     }
-    out
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 /// Return candidate paths for the global config file, in priority order.

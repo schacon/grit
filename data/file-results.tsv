@@ -28,7 +28,7 @@ t0028-working-tree-encoding	yes	0	0	0	ok	0	0	0
 t0029-core-unsetenvvars	yes	0	0	0	ok	0	0	0
 t0030-stripspace	yes	30	30	0	ok	30	30	0
 t0031-lockfile-pid	yes	7	7	0	ok	7	7	0
-t0033-safe-directory	yes	22	10	12	ok	10	22	0
+t0033-safe-directory	yes	22	22	0	ok	22	22	0
 t0034-root-safe-directory	yes	0	0	0	ok	0	0	0
 t0035-safe-bare-repository	yes	12	12	0	ok	12	12	0
 t0040-parse-options	yes	94	0	94	ok	0	94	0

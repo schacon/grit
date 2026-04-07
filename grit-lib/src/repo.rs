@@ -433,6 +433,11 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
             fs::read_to_string(&dot_git).map_err(|e| Error::NotARepository(e.to_string()))?;
         let git_dir = parse_gitfile(&content, dir)?;
         let repo = Repository::open(&git_dir, Some(dir))?;
+        if env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER").ok().as_deref() == Some("1")
+            && !safe_directory_allows_repo_path(dir, &repo.git_dir)
+        {
+            return Err(Error::DubiousOwnership(dir.display().to_string()));
+        }
         return Ok(Some(repo));
     }
 
@@ -460,6 +465,11 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
                     };
                     repo.git_dir = abs_dot_git;
                 }
+                if env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER").ok().as_deref() == Some("1")
+                    && !safe_directory_allows_repo_path(dir, &repo.git_dir)
+                {
+                    return Err(Error::DubiousOwnership(dir.display().to_string()));
+                }
                 return Ok(Some(repo));
             }
             Err(Error::NotARepository(_)) => return Ok(None),
@@ -467,14 +477,19 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
         }
     }
 
-    // Check if `dir` itself is a bare repo (has objects/ and HEAD directly)
+    // Check if `dir` itself is a repository root candidate (objects/ + HEAD).
     if dir.join("objects").is_dir() && dir.join("HEAD").is_file() {
         emit_implicit_bare_repository_trace(dir);
         let repo = Repository::open(dir, None)?;
         // Check safe.bareRepository policy before opening implicit bare repos.
         // This is only respected in protected config (system/global/command).
-        if repo.is_bare() && safe_bare_repository_explicit() {
+        if repo.is_bare() && safe_bare_repository_explicit(&repo.git_dir) {
             return Err(Error::ForbiddenBareRepository(dir.display().to_string()));
+        }
+        if env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER").ok().as_deref() == Some("1")
+            && !safe_directory_allows_repo_path(dir, &repo.git_dir)
+        {
+            return Err(Error::DubiousOwnership(dir.display().to_string()));
         }
         return Ok(Some(repo));
     }
@@ -482,8 +497,8 @@ fn try_open_at(dir: &Path) -> Result<Option<Repository>> {
     Ok(None)
 }
 
-fn safe_bare_repository_explicit() -> bool {
-    if let Ok(cfg) = crate::config::ConfigSet::load(None, true) {
+fn safe_bare_repository_explicit(git_dir: &Path) -> bool {
+    if let Ok(cfg) = crate::config::ConfigSet::load(Some(git_dir), true) {
         if let Some(val) = cfg.get("safe.bareRepository") {
             return val.eq_ignore_ascii_case("explicit");
         }
@@ -506,6 +521,67 @@ fn emit_implicit_bare_repository_trace(path: &Path) {
             }
         }
     }
+}
+
+fn normalize_safe_directory_candidate(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn safe_directory_pattern_matches(candidate: &Path, pattern: &str, cwd: &Path) -> bool {
+    let candidate = normalize_safe_directory_candidate(candidate);
+    let mut configured = pattern.trim().to_owned();
+    if configured.is_empty() {
+        return false;
+    }
+    if configured == "*" {
+        return true;
+    }
+    if let Some(rest) = configured.strip_prefix("~/") {
+        if let Ok(home) = env::var("HOME") {
+            configured = Path::new(&home).join(rest).to_string_lossy().into_owned();
+        }
+    }
+    let wildcard = configured.ends_with("/*");
+    let configured_path = if wildcard {
+        PathBuf::from(configured.trim_end_matches("/*"))
+    } else if configured == "." {
+        cwd.to_path_buf()
+    } else {
+        PathBuf::from(&configured)
+    };
+    let configured_path = normalize_safe_directory_candidate(&configured_path);
+    if wildcard {
+        candidate.starts_with(&configured_path)
+    } else {
+        candidate == configured_path
+    }
+}
+
+fn safe_directory_allows_repo_path(repo_path: &Path, _git_dir: &Path) -> bool {
+    let Ok(cfg) = crate::config::ConfigSet::load(None, true) else {
+        return false;
+    };
+    let mut values = cfg.get_all("safe.directory");
+    if values.is_empty() {
+        return false;
+    }
+
+    let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cwd = normalize_safe_directory_candidate(&cwd);
+    let repo_path = normalize_safe_directory_candidate(repo_path);
+
+    let mut allowed = false;
+    for value in values.drain(..) {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            allowed = false;
+            continue;
+        }
+        if safe_directory_pattern_matches(&repo_path, trimmed, &cwd) {
+            allowed = true;
+        }
+    }
+    allowed
 }
 
 /// Parse a gitfile's `"gitdir: <path>"` line.

@@ -18,6 +18,10 @@ pub enum Error {
     #[error("cannot use bare repository '{0}' (safe.bareRepository is 'explicit')")]
     ForbiddenBareRepository(String),
 
+    /// Repository access was denied due to ownership safety checks.
+    #[error("detected dubious ownership in repository at '{0}'")]
+    DubiousOwnership(String),
+
     /// Repository format version is not supported by this implementation.
     #[error("unsupported repository format version '{0}'")]
     UnsupportedRepositoryFormatVersion(u32),

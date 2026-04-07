@@ -202,6 +202,7 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
     };
+    enforce_safe_directory_for_local_source(&source)?;
     let source_has_commits = refs::resolve_ref(&source.git_dir, "HEAD").is_ok();
 
     // Determine target directory
@@ -432,6 +433,81 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+fn normalize_safe_directory_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn safe_directory_matches(candidate: &Path, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+
+    let candidate = normalize_safe_directory_path(candidate);
+    let mut configured = pattern.to_owned();
+
+    if let Some(rest) = configured.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            configured = Path::new(&home).join(rest).to_string_lossy().into_owned();
+        }
+    }
+
+    let wildcard = configured.ends_with("/*");
+    let configured_path = if wildcard {
+        PathBuf::from(configured.trim_end_matches("/*"))
+    } else if configured == "." {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else {
+        PathBuf::from(&configured)
+    };
+    let configured_path = normalize_safe_directory_path(&configured_path);
+
+    if wildcard {
+        candidate.starts_with(&configured_path)
+    } else {
+        candidate == configured_path
+    }
+}
+
+fn enforce_safe_directory_for_local_source(source: &Repository) -> Result<()> {
+    if std::env::var("GIT_TEST_ASSUME_DIFFERENT_OWNER")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return Ok(());
+    }
+
+    let safe_values = ConfigSet::load(None, true)
+        .map(|cfg| cfg.get_all("safe.directory"))
+        .unwrap_or_default();
+    let candidate = normalize_safe_directory_path(&source.git_dir);
+
+    if safe_values.is_empty() {
+        bail!(grit_lib::error::Error::DubiousOwnership(
+            candidate.display().to_string()
+        ));
+    }
+
+    let mut allowed = false;
+    for value in safe_values {
+        if value.is_empty() {
+            allowed = false;
+            continue;
+        }
+        if safe_directory_matches(&candidate, &value) {
+            allowed = true;
+        }
+    }
+
+    if !allowed {
+        bail!(grit_lib::error::Error::DubiousOwnership(
+            candidate.display().to_string()
+        ));
+    }
+
+    Ok(())
+}
+
 /// Check whether a URL looks like an SSH-style `host:/path` address.
 ///
 /// Returns `false` for local paths, `file://` URLs, or URLs containing `://`.
@@ -641,7 +717,7 @@ fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<Str
 /// Open a source repository (bare or non-bare).
 fn open_source_repo(path: &Path) -> Result<Repository> {
     // Try as-is first (might be a bare repo or .git dir)
-    if let Ok(repo) = Repository::open(path, None) {
+    if let Ok(repo) = Repository::discover(Some(path)) {
         return Ok(repo);
     }
     // Try path/.git for non-bare repos

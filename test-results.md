@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after `safe.directory` compatibility fixes that route repository discovery through `Repository::discover` for local clone source resolution and normalize dubious-ownership error shape as `error: not a git repository: detected dubious ownership ...`; this also keeps `safe.bareRepository`/worktree behavior intact).
+- `rm -rf /workspace/tests/trash.t0033-safe-directory /workspace/tests/bin.t0033-safe-directory && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0033-safe-directory.sh` (run from `/workspace/tests`): 22/22 passing (improved from 10/22).
+- `./scripts/run-tests.sh t0033-safe-directory.sh`: 22/22 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passing.
+  - `./scripts/run-tests.sh t5601-clone.sh`: 0/0 (harness timeout/skip behavior unchanged).
+  - `./scripts/run-tests.sh t5603-clone-dirname.sh`: 0/0 (harness timeout/skip behavior unchanged).
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing).
+
 - `cargo build --release -p grit-rs`: success (after `safe.bareRepository` compatibility fixes in repository discovery, unborn-HEAD `worktree add` behavior alignment, and submodule named-module-path storage correction).
 - `GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0035-safe-bare-repository.sh` (run from `/workspace/tests`): 12/12 passing (improved from 1/12).
 - `./scripts/run-tests.sh t0035-safe-bare-repository.sh`: 12/12 passing.
