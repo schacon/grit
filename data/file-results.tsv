@@ -177,7 +177,7 @@ t2008-checkout-subdir	yes	9	9	0	ok	9	9	0
 t2009-checkout-statinfo	yes	3	3	0	ok	3	3	0
 t2010-checkout-ambiguous	yes	10	7	3	ok	7	10	0
 t2011-checkout-invalid-head	yes	10	5	5	ok	5	10	0
-t2012-checkout-last	yes	22	19	3	ok	19	22	0
+t2012-checkout-last	yes	22	22	0	ok	22	22	0
 t2013-checkout-submodule	yes	74	14	60	ok	14	74	0
 t2014-checkout-switch	yes	4	4	0	ok	4	4	0
 t2015-checkout-unborn	yes	6	6	0	ok	6	6	0
