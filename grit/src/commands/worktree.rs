@@ -1246,6 +1246,31 @@ fn parse_expire_to_secs(expire: &str) -> i64 {
     0
 }
 
+/// Check if a directory contains an initialized submodule (has .git directory inside).
+fn has_initialized_submodule(wt_path: &Path) -> bool {
+    walk_for_submodule(wt_path, wt_path)
+}
+
+fn walk_for_submodule(base: &Path, dir: &Path) -> bool {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.file_name().map(|n| n == ".git").unwrap_or(false) {
+            if path != base.join(".git") {
+                // Found a .git directory that's NOT the worktree's own .git
+                return true;
+            }
+        } else if path.is_dir() && path.file_name().map(|n| n != ".git").unwrap_or(true) {
+            if walk_for_submodule(base, &path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Check if a worktree has untracked files.
 fn has_untracked_files(work_tree: &Path, index: &grit_lib::index::Index) -> bool {
     let staged: std::collections::HashSet<Vec<u8>> = index
@@ -1577,6 +1602,13 @@ fn cmd_move(args: MoveArgs) -> Result<()> {
 
     if dst_path.exists() {
         bail!("target '{}' already exists", dst_path.display());
+    }
+
+    // Check for initialized submodules (cannot move a worktree with active submodules)
+    if args.force < 1 {
+        if has_initialized_submodule(&src_path) {
+            bail!("cannot move a working tree containing an initialized submodule");
+        }
     }
 
     // Move the working tree directory
