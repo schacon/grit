@@ -1121,6 +1121,33 @@ fn apply_peel(repo: &Repository, mut oid: ObjectId, peel: Option<&str>) -> Resul
                 _ => Err(Error::InvalidRef("expected tree or commit".to_owned())),
             }
         }
+        Some("blob") => {
+            // ^{blob}: peel tags until we reach a blob
+            let mut cur = oid;
+            loop {
+                let obj = repo.odb.read(&cur)?;
+                match obj.kind {
+                    ObjectKind::Blob => return Ok(cur),
+                    ObjectKind::Tag => {
+                        cur = parse_tag_target(&obj.data)?;
+                    }
+                    _ => return Err(Error::InvalidRef("expected blob".to_owned())),
+                }
+            }
+        }
+        Some("object") => {
+            // ^{object}: just return the OID as-is (any object)
+            Ok(oid)
+        }
+        Some("tag") => {
+            // ^{tag}: return if it's a tag object
+            let obj = repo.odb.read(&oid)?;
+            if obj.kind == ObjectKind::Tag {
+                Ok(oid)
+            } else {
+                Err(Error::InvalidRef("expected tag".to_owned()))
+            }
+        }
         Some(other) => Err(Error::InvalidRef(format!(
             "unsupported peel operator '{{{other}}}'"
         ))),
