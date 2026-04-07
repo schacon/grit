@@ -275,6 +275,7 @@ test_must_fail() {
 }
 
 test_done() {
+	test_atexit_handler
 	rm -rf "$BIN_DIRECTORY" 2>/dev/null
 	if test -n "$skip_all"
 	then

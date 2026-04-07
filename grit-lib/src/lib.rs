@@ -45,6 +45,22 @@ pub mod reftable;
 pub mod repo;
 pub mod rev_list;
 pub mod rev_parse;
+#[cfg(unix)]
+pub mod simple_ipc;
+#[cfg(not(unix))]
+pub mod simple_ipc {
+    /// Whether simple IPC is supported on this platform.
+    #[must_use]
+    pub fn supports_simple_ipc() -> bool {
+        false
+    }
+
+    /// Stub for non-Unix targets.
+    pub fn run_simple_ipc_tool(_args: &[String]) -> i32 {
+        eprintln!("simple IPC not available on this platform");
+        1
+    }
+}
 pub mod state;
 pub mod stripspace;
 pub mod tree_path_follow;

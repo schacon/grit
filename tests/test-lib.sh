@@ -1028,6 +1028,22 @@ test_when_finished () {
 	_twf_cmd="$*${_twf_cmd:+; $_twf_cmd}"
 }
 
+# Process-wide cleanup chain (Git `test_atexit`), run from `test_done` before
+# trash teardown so daemons can stop while sockets/paths still exist.
+test_atexit_cleanup=:
+test_atexit () {
+	test "${BASH_SUBSHELL-0}" = 0 ||
+		(echo >&2 "BUG: test_atexit does nothing in a subshell"; exit 99)
+	test_atexit_cleanup="{ $*
+		} && (exit \"\$eval_ret\"); eval_ret=\$?; $test_atexit_cleanup"
+}
+
+test_atexit_handler () {
+	test : != "$test_atexit_cleanup" || return 0
+	eval "$test_atexit_cleanup"
+	test_atexit_cleanup=:
+}
+
 . "$TEST_DIRECTORY"/test-lib-tap.sh
 if match_pattern_list "$this_test" "$GIT_SKIP_TESTS"
 then
