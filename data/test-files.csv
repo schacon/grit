@@ -595,7 +595,7 @@ t3402-rebase-merge	t3	yes	13	2	11	false	ok	0
 t3403-rebase-skip	t3	yes	20	9	11	false	ok	0
 t3404-rebase-interactive	t3	yes	132	3	129	false	ok	0
 t3405-rebase-malformed	t3	yes	5	5	0	true	ok	0
-t3406-rebase-message	t3	yes	32	32	0	true	ok	0
+t3406-rebase-message	t3	yes	32	3	29	false	ok	0
 t3407-rebase-abort	t3	yes	17	0	17	false	ok	0
 t3408-rebase-multi-line	t3	yes	2	1	1	false	ok	0
 t3409-rebase-environ	t3	yes	3	3	0	true	ok	0
