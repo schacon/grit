@@ -113,6 +113,10 @@ pub struct DeleteArgs {
     /// Update the ref to the value of the entry being deleted.
     #[arg(long = "updateref")]
     pub updateref: bool,
+
+    /// Rewrite remaining entries to maintain predecessor links.
+    #[arg(long = "rewrite")]
+    pub rewrite: bool,
 }
 
 /// Arguments for `reflog exists`.

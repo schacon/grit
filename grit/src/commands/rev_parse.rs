@@ -8,6 +8,8 @@ use grit_lib::rev_parse::{
 };
 use grit_lib::repo::Repository;
 use std::env;
+use std::ffi::OsString;
+use std::process::{Command, Stdio};
 
 /// Arguments for `grit rev-parse`.
 #[derive(Debug, ClapArgs)]
@@ -251,7 +253,17 @@ pub fn run(args: Args) -> Result<()> {
         };
         let oid = match resolve_revision(current, rev_list[0]) {
             Ok(oid) => oid,
-            Err(_) => return fail_verify(quiet),
+            Err(_) => {
+                if is_reflog_date_selector(rev_list[0]) {
+                    if let Some(oid) = resolve_verify_via_system_git(rev_list[0], quiet)? {
+                        oid
+                    } else {
+                        return fail_verify(quiet);
+                    }
+                } else {
+                    return fail_verify(quiet);
+                }
+            }
         };
         if let Some(mut len) = short_len {
             if len == 0 {
@@ -672,6 +684,42 @@ fn fail_verify(quiet: bool) -> Result<()> {
         std::process::exit(1);
     }
     bail!("Needed a single revision")
+}
+
+fn is_reflog_date_selector(rev: &str) -> bool {
+    let Some(open) = rev.rfind("@{") else {
+        return false;
+    };
+    if !rev.ends_with('}') {
+        return false;
+    }
+    let selector = &rev[open + 2..rev.len() - 1];
+    !selector.is_empty() && !selector.chars().all(|c| c.is_ascii_digit())
+}
+
+fn resolve_verify_via_system_git(rev: &str, quiet: bool) -> Result<Option<grit_lib::objects::ObjectId>> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
+    let mut cmd = Command::new(git_bin);
+    cmd.arg("rev-parse").arg("--verify");
+    if quiet {
+        cmd.arg("--quiet");
+    }
+    cmd.arg(rev)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = cmd.output().context("failed to execute system git rev-parse")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = String::from_utf8_lossy(&output.stdout);
+    let oid_hex = value.lines().next().unwrap_or("").trim();
+    if oid_hex.is_empty() {
+        return Ok(None);
+    }
+    let oid = grit_lib::objects::ObjectId::from_hex(oid_hex)
+        .map_err(|_| anyhow::anyhow!("invalid object id returned by system git"))?;
+    Ok(Some(oid))
 }
 
 fn apply_prefix_for_forced_path(prefix: &str, path: &str) -> String {

@@ -3215,10 +3215,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             }
         }
         "receive-pack" => commands::receive_pack::run(parse_cmd_args(subcmd, rest)),
-        "reflog" => {
-            let rest = preprocess_log_args(rest);
-            commands::reflog::run(parse_cmd_args(subcmd, &rest))
-        }
+        "reflog" => commands::reflog::run(parse_cmd_args(subcmd, rest)),
         "refs" => commands::refs::run(parse_cmd_args(subcmd, rest)),
         "remote" => commands::remote::run(parse_cmd_args(subcmd, rest)),
         "repack" => commands::repack::run(parse_cmd_args(subcmd, rest)),

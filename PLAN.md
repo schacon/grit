@@ -83,7 +83,7 @@ commit → check it off → move on.
 - [x] `t1408-packed-refs` ████████████████████ 3/3 (0 left) — packed-refs entries are covered by loose refs
 - [ ] `t1401-symbolic-ref` █████████████████░░░ 22/25 (3 left) — basic symbolic-ref tests
 - [ ] `t1307-config-blob` ███████████████░░░░░ 10/13 (3 left) — support for reading config from a blob
-- [ ] `t1503-rev-parse-verify` ███████████████░░░░░ 9/12 (3 left) — test git rev-parse --verify
+- [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
 - [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
 - [ ] `t1407-worktree-ref-store` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — test worktree ref store api
 - [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again

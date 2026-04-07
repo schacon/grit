@@ -710,6 +710,11 @@ fn try_resolve_reflog_index(repo: &Repository, spec: &str) -> Result<Option<Obje
         ReflogSelector::Index(n)
     } else if let Some(ts) = approxidate(inner) {
         ReflogSelector::Date(ts)
+    } else if inner.contains('.') {
+        // Git accepts date-ish reflog selectors like "1.year.ago" even when no
+        // concrete timestamp can be parsed from them; treat as "very old" and
+        // let selection logic fall back to the oldest entry.
+        ReflogSelector::Date(i64::MIN)
     } else {
         return Ok(None);
     };
