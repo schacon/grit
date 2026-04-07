@@ -2677,14 +2677,18 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         ("".to_string(), base.clone())
     };
 
-    // Split path into components (keep all including dots; only strip empty except leading /)
+    // Split path into components (keep all including dots; only strip empty except leading / or //)
+    let double_leading = path_part.starts_with("//");
     let leading_slash = path_part.starts_with('/');
     let mut parts: Vec<String> = path_part
         .split('/')
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    if leading_slash {
+    if double_leading {
+        parts.insert(0, String::new()); // //<...> = two slashes
+        parts.insert(0, String::new());
+    } else if leading_slash {
         parts.insert(0, String::new()); // empty = leading /
     }
 
