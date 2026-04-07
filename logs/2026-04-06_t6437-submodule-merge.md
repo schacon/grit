@@ -60,3 +60,15 @@ Date: 2026-04-06
 - `./scripts/run-tests.sh t6436-merge-overwrite.sh` → 18/18
 - `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh` → 3/3
 
+### Finalization update
+- Re-validated direct + harness after latest merge/submodule changes:
+  - `GUST_BIN=/workspace/target/release/grit bash tests/t6437-submodule-merge.sh` → **22/22**.
+  - `./scripts/run-tests.sh t6437-submodule-merge.sh` → **22/22**.
+- Verified that only the `merge --abort works afterward` case should be promoted:
+  - `directory/submodule conflict; keep submodule clean` remains `test_expect_failure` because it still fails in this harness (`FAIL 18` when promoted).
+  - `directory/submodule conflict; merge --abort works afterward` now correctly behaves as success and is set to `test_expect_success`.
+- Re-ran targeted regressions after final t6437 pass:
+  - `./scripts/run-tests.sh t6436-merge-overwrite.sh` → 18/18.
+  - `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh` → 3/3.
+- Result: `t6437-submodule-merge` is now complete and ready to mark `[x] 22/22` in plan/progress.
+

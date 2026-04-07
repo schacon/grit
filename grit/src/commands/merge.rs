@@ -853,6 +853,87 @@ fn format_submodule_conflict_advice(
     )
 }
 
+fn open_submodule_repo(repo: &Repository, path: &str) -> Option<Repository> {
+    let work_tree = repo.work_tree.as_ref()?;
+    let submodule_path = work_tree.join(path);
+    Repository::discover(Some(&submodule_path)).ok()
+}
+
+fn resolve_submodule_fast_forward_target(
+    repo: &Repository,
+    path: &str,
+    base: ObjectId,
+    ours: ObjectId,
+    theirs: ObjectId,
+) -> Option<ObjectId> {
+    let submodule_repo = open_submodule_repo(repo, path)?;
+    let base_to_ours = is_ancestor(&submodule_repo, base, ours).ok()?;
+    let base_to_theirs = is_ancestor(&submodule_repo, base, theirs).ok()?;
+    if !base_to_ours || !base_to_theirs {
+        return None;
+    }
+    if is_ancestor(&submodule_repo, ours, theirs).ok()? {
+        return Some(theirs);
+    }
+    if is_ancestor(&submodule_repo, theirs, ours).ok()? {
+        return Some(ours);
+    }
+    None
+}
+
+fn find_submodule_resolution_candidates(
+    repo: &Repository,
+    path: &str,
+    ours: ObjectId,
+    theirs: ObjectId,
+) -> Vec<ObjectId> {
+    let Some(submodule_repo) = open_submodule_repo(repo, path) else {
+        return Vec::new();
+    };
+    let Ok(refs) = list_refs(&submodule_repo.git_dir, "refs/heads/") else {
+        return Vec::new();
+    };
+
+    let mut candidates = BTreeSet::new();
+    for (_, oid) in refs {
+        if oid == ours || oid == theirs {
+            continue;
+        }
+        let ours_is_ancestor = is_ancestor(&submodule_repo, ours, oid).unwrap_or(false);
+        let theirs_is_ancestor = is_ancestor(&submodule_repo, theirs, oid).unwrap_or(false);
+        if ours_is_ancestor && theirs_is_ancestor {
+            candidates.insert(oid);
+        }
+    }
+    candidates.into_iter().collect()
+}
+
+fn push_distinct_submodule_side_conflict_file(
+    repo: &Repository,
+    path: &str,
+    ours: &IndexEntry,
+    theirs: &IndexEntry,
+    ours_label: &str,
+    theirs_label: &str,
+    conflict_files: &mut Vec<(String, Vec<u8>)>,
+) {
+    let (non_gitlink_entry, label) = if ours.mode == MODE_GITLINK && theirs.mode != MODE_GITLINK {
+        (theirs, theirs_label)
+    } else if theirs.mode == MODE_GITLINK && ours.mode != MODE_GITLINK {
+        (ours, ours_label)
+    } else {
+        return;
+    };
+    let Ok(obj) = repo.odb.read(&non_gitlink_entry.oid) else {
+        return;
+    };
+    if obj.kind != ObjectKind::Blob {
+        return;
+    }
+    let safe_label = label.replace('/', "-");
+    conflict_files.push((format!("{path}~{safe_label}"), obj.data));
+}
+
 fn apply_subtree_shift(
     subtree_shift: &SubtreeShift,
     ours: &HashMap<Vec<u8>, IndexEntry>,
@@ -1147,6 +1228,11 @@ fn do_real_merge(
                 println!("CONFLICT ({ctype}): {cpath}");
             } else {
                 println!("CONFLICT ({ctype}): Merge conflict in {cpath}");
+            }
+        }
+        for conflict in &merge_result.submodule_conflicts {
+            for candidate in &conflict.resolution_candidates {
+                println!("{}", short_oid(*candidate));
             }
         }
         if !merge_result.submodule_conflicts.is_empty() {
@@ -2550,6 +2636,8 @@ pub(crate) struct SubmoduleConflict {
     pub ours: ObjectId,
     /// Theirs side submodule commit.
     pub theirs: ObjectId,
+    /// Candidate merged commits found in the submodule repository.
+    pub resolution_candidates: Vec<ObjectId>,
 }
 
 #[derive(Debug)]
@@ -3688,32 +3776,66 @@ fn merge_trees(
                     || oe.mode == MODE_GITLINK
                     || te.mode == MODE_GITLINK =>
             {
+                let path_str = String::from_utf8_lossy(path).to_string();
                 if oe.oid == te.oid {
                     index.entries.push(oe.clone());
+                } else if let Some(ff_target) =
+                    resolve_submodule_fast_forward_target(repo, &path_str, be.oid, oe.oid, te.oid)
+                {
+                    if ff_target == te.oid {
+                        index.entries.push(te.clone());
+                    } else {
+                        index.entries.push(oe.clone());
+                    }
                 } else if be.oid == oe.oid {
                     index.entries.push(te.clone());
                 } else if be.oid == te.oid {
                     index.entries.push(oe.clone());
                 } else {
-                    let path_str = String::from_utf8_lossy(path).to_string();
                     has_conflicts = true;
                     stage_entry(&mut index, oe, 2);
                     stage_entry(&mut index, te, 3);
                     conflict_descriptions.push(("submodule".to_string(), path_str.clone()));
+                    push_distinct_submodule_side_conflict_file(
+                        repo,
+                        &path_str,
+                        oe,
+                        te,
+                        ours_label,
+                        their_name,
+                        &mut conflict_files,
+                    );
                     submodule_conflicts.push(SubmoduleConflict {
-                        path: path_str,
+                        path: path_str.clone(),
                         ours: oe.oid,
                         theirs: te.oid,
+                        resolution_candidates: find_submodule_resolution_candidates(
+                            repo, &path_str, oe.oid, te.oid,
+                        ),
                     });
                 }
             }
             // Added only by ours
             (None, Some(oe), None) => {
-                index.entries.push(oe.clone());
+                if oe.mode == MODE_GITLINK && has_descendant(&theirs_entries, path) {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, oe, 2);
+                    conflict_descriptions.push(("submodule".to_string(), path_str));
+                } else {
+                    index.entries.push(oe.clone());
+                }
             }
             // Added only by theirs
             (None, None, Some(te)) => {
-                index.entries.push(te.clone());
+                if te.mode == MODE_GITLINK && has_descendant(&ours_entries, path) {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    stage_entry(&mut index, te, 3);
+                    conflict_descriptions.push(("submodule".to_string(), path_str));
+                } else {
+                    index.entries.push(te.clone());
+                }
             }
             // Both added same thing
             (None, Some(oe), Some(te)) if oe.oid == te.oid && oe.mode == te.mode => {
@@ -3726,7 +3848,19 @@ fn merge_trees(
                 stage_entry(&mut index, oe, 2);
                 stage_entry(&mut index, te, 3);
                 conflict_descriptions.push(("submodule".to_string(), path_str.clone()));
+                push_distinct_submodule_side_conflict_file(
+                    repo,
+                    &path_str,
+                    oe,
+                    te,
+                    ours_label,
+                    their_name,
+                    &mut conflict_files,
+                );
                 submodule_conflicts.push(SubmoduleConflict {
+                    resolution_candidates: find_submodule_resolution_candidates(
+                        repo, &path_str, oe.oid, te.oid,
+                    ),
                     path: path_str,
                     ours: oe.oid,
                     theirs: te.oid,
@@ -3841,6 +3975,14 @@ fn merge_trees(
                 // Check if theirs renamed this file — if so, it's handled above
                 if theirs_renames.contains_key(path) {
                     // Already handled in rename pass
+                } else if oe.mode == MODE_GITLINK && has_descendant(&theirs_entries, path) {
+                    let path_str = String::from_utf8_lossy(path).to_string();
+                    has_conflicts = true;
+                    let conflict_path = format!("{path_str}~{ours_label}");
+                    let mut oe_conflict = oe.clone();
+                    oe_conflict.path = conflict_path.as_bytes().to_vec();
+                    stage_entry(&mut index, &oe_conflict, 2);
+                    conflict_descriptions.push(("modify/delete".to_string(), path_str));
                 } else if be.oid == oe.oid && be.mode == oe.mode {
                     // Ours didn't change it, theirs deleted → clean delete
                 } else if merge_renormalize && blobs_equivalent_after_renormalize(repo, be, oe)? {

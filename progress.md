@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    87 |
-| In progress |     1 |
+| Completed   |    88 |
+| In progress |     0 |
 | Remaining   |   679 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t6437-submodule-merge` — 22/22 tests pass (`merge` now handles submodule pointer merges with fast-forward detection and candidate-resolution hints, prints Git-compatible submodule conflict advice, avoids treating gitlink OIDs as blobs during checkout/update paths, and handles file/directory-vs-submodule conflicts without writing into submodule working trees; `submodule status` now reports unmerged gitlinks as `U$ZERO_OID`; test coverage finalized by promoting the now-fixed merge-abort conflict case to `test_expect_success`.)
 - `t6003-rev-list-topo-order` — 36/36 tests pass (`rev-list` now supports `--author-date-order`, `--max-age=<ts>`, and `--min-age=<ts>` option parsing, with age filters applied using committer timestamps; topo-order traversal was updated to a stack-oriented parent-unlock walk that preserves Git-like parent-order-sensitive output for `--topo-order`; `--date-order`/`--author-date-order` now use topological walks constrained by committer/author timestamp priority, matching expected ordering in the t6003 graph suite and resolving parent/epoch ordering edge cases).
 - `t6006-rev-list-format` — 80/80 tests pass (`rev-list` pretty/format rendering now matches Git semantics for `%b` and `%B` newline behavior, `%+` / `%-` / `% ` conditional insertion directives, and named pretty header handling with `--no-commit-header`; `%C(red yellow bold)` and `%C(auto)` coloring now emit separate ANSI sequences compatible with test decoder expectations; `log -g` now expands `%gD` and honors `--abbrev` in custom formats while keeping reflog output parity; `reflog show` now accepts `--date` and `--abbrev`; `commit --cleanup=verbatim` and `--cleanup=whitespace` now allow empty commit messages as expected by pretty-format edge-case tests; `show` now supports `--oneline`, `--graph`, and `--abbrev=<n>`/`--abbrev-commit` interactions used by formatting checks).
 - `t6436-merge-overwrite` — 18/18 tests pass (`merge` now protects staged re-added paths from being overwritten when the merge result only has higher-stage conflict entries, by treating conflict-only paths as merge-touched during staged-change overwrite checks; untracked leading-path blockers like file/symlink `sub` against incoming `sub/f` are now detected during merge preflight and reported with Git-compatible untracked-overwrite diagnostics; unborn-branch merge flow now runs overwrite checks before mutating refs, preserves existing stage-0 index entries that do not conflict with target tree paths, and emits the expected unborn untracked refusal text (`Untracked working tree file ...` + `fatal: read-tree failed`) while leaving HEAD unborn on failure)
@@ -77,4 +78,4 @@
 
 ## What Remains
 
-679 test files still pending, with `t6437-submodule-merge` currently in progress. See `plan.md` for the full prioritized list.
+679 test files still pending. See `plan.md` for the full prioritized list.

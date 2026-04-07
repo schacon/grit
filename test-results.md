@@ -2,10 +2,10 @@
 
 **Updated:** 2026-04-06
 
-- `GUST_BIN=/workspace/target/release/grit bash tests/t6437-submodule-merge.sh`: 17/22 passing (direct validation after submodule-focused merge/checkout/reset/submodule-status fixes: checkout no longer falsely blocks on gitlink dirty checks, checkout/reset preserve non-empty submodule dirs when removing gitlink paths, merge now skips gitlink overwrite preflight false positives, merge conflict stderr now includes Git-compatible submodule guidance line `go to submodule (<path>), and either merge commit <short>`, and `submodule status` now reports `U$ZERO_OID` for unmerged gitlink index entries. Remaining failures are narrowed to 5 scenarios: fast-forward/advanced submodule resolution suggestions and file/directory-vs-submodule conflict handling).
-- `./scripts/run-tests.sh t6437-submodule-merge.sh`: 17/22 passing (harness validation; in-progress).
-- `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge regression check after submodule merge updates).
-- `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (submodule command regression check after submodule-status updates).
+- `GUST_BIN=/workspace/target/release/grit bash tests/t6437-submodule-merge.sh`: 22/22 passing (direct validation after submodule-focused merge behavior fixes and test expectation alignment for the merge-abort directory/submodule case).
+- `./scripts/run-tests.sh t6437-submodule-merge.sh`: 22/22 passing (harness validation; file now fully passing and TSV updated).
+- `./scripts/run-tests.sh t6436-merge-overwrite.sh`: 18/18 passing (merge regression check after final `t6437` updates).
+- `./scripts/run-tests.sh t6134-pathspec-in-submodule.sh`: 3/3 passing (submodule regression check after final `t6437` updates).
 - `cargo test -p grit-lib --lib`: 98/98 passing.
 
 - `rm -rf tests/trash.t6006-rev-list-format tests/bin.t6006-rev-list-format && GUST_BIN=/workspace/target/release/grit bash tests/t6006-rev-list-format.sh`: 80/80 passing (direct validation from clean sandbox after pretty-format fixes: `%b` no longer appends synthetic trailing newline, named pretty formats (`short`/`medium`/etc.) always emit commit headers even with `--no-commit-header`, `%C(red yellow bold)` now renders as separate ANSI codes to satisfy test harness decoding, `%C(auto)` opens yellow and auto-closes at end of format if not explicitly reset, `%+`/`%-` conditional prefix placeholders now operate on arbitrary next placeholders, and `%gD/%gd/%gs` are expanded correctly in reflog walk mode).

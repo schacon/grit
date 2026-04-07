@@ -460,7 +460,7 @@ test_expect_success !FAIL_PREREQS 'directory/submodule conflict; should not trea
 	)
 '
 
-test_expect_failure 'directory/submodule conflict; merge --abort works afterward' '
+test_expect_success 'directory/submodule conflict; merge --abort works afterward' '
 	test_when_finished "git -C directory-submodule/path reset --hard" &&
 	test_when_finished "git -C directory-submodule reset --hard" &&
 	(
