@@ -2677,11 +2677,31 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         ("".to_string(), base.clone())
     };
 
-    // Split path into components WITHOUT normalizing
-    let mut parts: Vec<String> = path_part.split('/').map(|s| s.to_string()).collect();
+    // Split path into components (keep all including dots; only strip empty except leading /)
+    let leading_slash = path_part.starts_with('/');
+    let mut parts: Vec<String> = path_part
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    if leading_slash {
+        parts.insert(0, String::new()); // empty = leading /
+    }
 
     // Detect if url ends with /. (directory marker to preserve)
     let url_ends_with_dot = url.ends_with("/.");
+
+    // Before applying url, normalize single dots from the base
+    // (but keep the last component as-is for directory markers)
+    let mut clean_parts: Vec<String> = Vec::new();
+    for (i, p) in parts.iter().enumerate() {
+        if p == "." && i + 1 < parts.len() {
+            // Skip intermediate dots
+        } else {
+            clean_parts.push(p.clone());
+        }
+    }
+    parts = clean_parts;
 
     // Apply url components to parts
     for component in url.split('/') {
