@@ -2318,8 +2318,17 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
 fn normalize_path_simple(path: &str) -> String {
     use std::path::{Component, PathBuf};
     let is_abs = path.starts_with('/');
-    // Track trailing slash
-    let trailing_slash = path.ends_with('/') && path.len() > 1;
+    // Track trailing slash: if input ends with '/', '/.', '/..', or similar
+    // that resolves to a directory reference
+    let raw_ends_dir = {
+        let stripped = path.trim_end_matches('/');
+        stripped.ends_with("/.")
+            || stripped.ends_with("/..")
+            || path.ends_with('/')
+            || path == "."
+            || path == ".."
+    };
+    let trailing_slash = raw_ends_dir && !path.is_empty();
     let mut out: Vec<String> = Vec::new();
     let mut failed = false;
     for component in std::path::Path::new(path).components() {
@@ -2327,11 +2336,12 @@ fn normalize_path_simple(path: &str) -> String {
             Component::CurDir => {}
             Component::ParentDir => {
                 if out.is_empty() {
-                    if !is_abs {
-                        failed = true;
-                        break;
-                    }
-                    // at root, ignore ..
+                    failed = true;
+                    break;
+                } else if out.len() == 1 && is_abs {
+                    // Trying to go above root — fail
+                    failed = true;
+                    break;
                 } else {
                     out.pop();
                 }
@@ -2359,10 +2369,8 @@ fn normalize_path_simple(path: &str) -> String {
     } else {
         out.join("/")
     };
-    if result.is_empty() && !is_abs {
-        result = ".".to_string();
-    }
-    if trailing_slash && !result.ends_with('/') {
+    // Don't add "." for empty relative paths — git returns empty string for "."
+    if trailing_slash && !result.is_empty() && !result.ends_with('/') {
         result.push('/');
     }
     result
@@ -2451,9 +2459,17 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("longest_ancestor_length: missing prefixes"))?;
             let mut best: i64 = -1;
             for prefix in prefixes_str.split(':') {
-                if path == prefix {
-                    best = prefix.len() as i64;
-                    break;
+                if prefix.is_empty() {
+                    continue;
+                }
+                if prefix == "/" {
+                    // "/" is ancestor of any absolute path with len > 1, result length is 0
+                    if path.starts_with('/') && path.len() > 1 {
+                        if 0 > best {
+                            best = 0;
+                        }
+                    }
+                    continue;
                 }
                 let with_slash = format!("{}/", prefix);
                 if path.starts_with(&with_slash) {
