@@ -68,7 +68,7 @@ commit → check it off → move on.
 - [x] `t1003-read-tree-prefix` ████████████████████ 3/3 (0 left) — git read-tree --prefix test.
 
 - [x] `t1008-read-tree-overlay` ████████████████████ 2/2 (0 left) — test multi-tree read-tree without merging
-- [ ] `t0611-reftable-httpd` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — reftable HTTPD tests
+- [x] `t0611-reftable-httpd` ████████████████████ 1/1 (0 left) — reftable HTTPD tests
 - [ ] `t1022-read-tree-partial-clone` ░░░░░░░░░░░░░░░░░░░░ 0/1 (1 left) — git read-tree in partial clones
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config

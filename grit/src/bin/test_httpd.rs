@@ -445,6 +445,19 @@ fn handle_smart_http_with_path(
     config: &Config,
     prefix: &str,
 ) -> Result<(), String> {
+    if let Some(response) = maybe_serve_reftable_upload_pack_advertisement(req, config, prefix)? {
+        return send_response(
+            stream,
+            200,
+            "OK",
+            &[
+                ("Content-Type", "application/x-git-upload-pack-advertisement"),
+                ("Cache-Control", "no-cache"),
+            ],
+            &response,
+        );
+    }
+
     let smart_path = &req.path[prefix.len()..]; // e.g., /repo.git/info/refs
 
     let path_translated = format!("{}{}", config.root.display(), smart_path);
@@ -498,6 +511,92 @@ fn handle_smart_http_with_path(
     // Parse CGI response (headers + body separated by blank line)
     let stdout = output.stdout;
     parse_and_send_cgi_response(stream, &stdout)
+}
+
+fn maybe_serve_reftable_upload_pack_advertisement(
+    req: &Request,
+    config: &Config,
+    prefix: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    if req.method != "GET" {
+        return Ok(None);
+    }
+    if req.query != "service=git-upload-pack" {
+        return Ok(None);
+    }
+    if !req.path.ends_with("/info/refs") {
+        return Ok(None);
+    }
+
+    let smart_path = &req.path[prefix.len()..];
+    let Some(repo_part) = smart_path.strip_suffix("/info/refs") else {
+        return Ok(None);
+    };
+    let repo_rel = repo_part.trim_start_matches('/');
+    if repo_rel.is_empty() || repo_rel.contains("..") {
+        return Ok(None);
+    }
+
+    let repo_path = config.root.join(repo_rel);
+    if !repo_uses_reftable(&repo_path) {
+        return Ok(None);
+    }
+
+    let grit_bin = env::var("GUST_BIN").unwrap_or_else(|_| "grit".to_string());
+    let output = Command::new(&grit_bin)
+        .arg("upload-pack")
+        .arg("--advertise-refs")
+        .arg(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to run '{grit_bin} upload-pack': {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "grit upload-pack --advertise-refs failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let mut body = Vec::new();
+    let service_line = "# service=git-upload-pack\n";
+    body.extend_from_slice(format!("{:04x}", service_line.len() + 4).as_bytes());
+    body.extend_from_slice(service_line.as_bytes());
+    body.extend_from_slice(b"0000");
+    body.extend_from_slice(&output.stdout);
+    Ok(Some(body))
+}
+
+fn repo_uses_reftable(repo_path: &Path) -> bool {
+    let direct_config = repo_path.join("config");
+    let dot_git_config = repo_path.join(".git").join("config");
+    let config_path = if direct_config.exists() {
+        direct_config
+    } else {
+        dot_git_config
+    };
+
+    let Ok(content) = fs::read_to_string(config_path) else {
+        return false;
+    };
+
+    let mut in_extensions = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_extensions = trimmed.eq_ignore_ascii_case("[extensions]");
+            continue;
+        }
+        if in_extensions {
+            if let Some((key, value)) = trimmed.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("refstorage")
+                    && value.trim().eq_ignore_ascii_case("reftable")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn parse_and_send_cgi_response(stream: &mut TcpStream, cgi_output: &[u8]) -> Result<(), String> {

@@ -2963,7 +2963,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     }
 
     match subcmd {
-        "add" => commands::git_passthrough::run(subcmd, rest),
+        "add" => {
+            let use_native_add = Repository::discover(None)
+                .ok()
+                .is_some_and(|repo| grit_lib::reftable::is_reftable_repo(&repo.git_dir));
+            if use_native_add {
+                commands::add::run(parse_cmd_args(subcmd, rest))
+            } else {
+                commands::git_passthrough::run(subcmd, rest)
+            }
+        }
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
@@ -3010,7 +3019,12 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 .position(|arg| !arg.starts_with('-') && arg != "--")
                 .unwrap_or(usize::MAX);
             let pathspec_before_message = first_non_option < first_message_opt;
-            if interactive || has_message_flag || pathspec_before_message {
+            let use_native_commit = Repository::discover(None)
+                .ok()
+                .is_some_and(|repo| grit_lib::reftable::is_reftable_repo(&repo.git_dir));
+            if use_native_commit {
+                commands::commit::run(parse_cmd_args(subcmd, rest))
+            } else if interactive || has_message_flag || pathspec_before_message {
                 commands::git_passthrough::run(subcmd, rest)
             } else {
                 commands::commit::run(parse_cmd_args(subcmd, rest))
@@ -3125,7 +3139,14 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             commands::log::run(parse_cmd_args(subcmd, &rest))
         }
         "ls-files" => commands::ls_files::run(parse_cmd_args(subcmd, rest)),
-        "ls-remote" => commands::ls_remote::run(parse_cmd_args(subcmd, rest)),
+        "ls-remote" => {
+            let has_url = rest.iter().any(|arg| arg.contains("://"));
+            if has_url {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::ls_remote::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "ls-tree" => commands::ls_tree::run(parse_cmd_args(subcmd, rest)),
         "mailinfo" => commands::mailinfo::run(parse_cmd_args(subcmd, rest)),
         "mailsplit" => commands::mailsplit::run(parse_cmd_args(subcmd, rest)),

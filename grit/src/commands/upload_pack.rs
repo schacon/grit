@@ -118,10 +118,13 @@ fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
         version,
     );
 
-    // HEAD first, with capabilities after NUL
+    // HEAD first, with capabilities after NUL.
+    //
+    // Note: pkt-line ref advertisements use "<oid> <refname>\0<caps>" (space),
+    // not tab-separated "<oid>\t<refname>".
     let mut first = true;
     if let Ok(head_oid) = refs::resolve_ref(git_dir, "HEAD") {
-        let line = format!("{}\tHEAD\0{}\n", head_oid.to_hex(), caps);
+        let line = format!("{} HEAD\0{}\n", head_oid.to_hex(), caps);
         let len = 4 + line.len();
         write!(out, "{:04x}{}", len, line)?;
         first = false;
@@ -130,12 +133,12 @@ fn advertise_refs_with_caps(repo: &Repository) -> Result<()> {
     let all_refs = list_all_refs(git_dir)?;
     for (refname, oid) in &all_refs {
         if first {
-            let line = format!("{}\t{}\0{}\n", oid.to_hex(), refname, caps);
+            let line = format!("{} {}\0{}\n", oid.to_hex(), refname, caps);
             let len = 4 + line.len();
             write!(out, "{:04x}{}", len, line)?;
             first = false;
         } else {
-            let line = format!("{}\t{}\n", oid.to_hex(), refname);
+            let line = format!("{} {}\n", oid.to_hex(), refname);
             let len = 4 + line.len();
             write!(out, "{:04x}{}", len, line)?;
         }

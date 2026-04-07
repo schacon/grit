@@ -74,7 +74,7 @@ t0500-progress-display	yes	16	0	16	ok	0	16	0
 t0600-reffiles-backend	yes	33	9	24	ok	9	33	0
 t0602-reffiles-fsck	yes	23	3	20	ok	3	23	0
 t0610-reftable-basics	yes	91	21	70	ok	21	91	0
-t0611-reftable-httpd	yes	1	0	1	ok	0	1	0
+t0611-reftable-httpd	yes	1	1	0	ok	1	1	0
 t0612-reftable-jgit-compatibility	yes	0	0	0	ok	0	0	0
 t0613-reftable-write-options	yes	11	0	11	ok	0	11	0
 t0614-reftable-fsck	yes	7	0	7	ok	0	7	0
