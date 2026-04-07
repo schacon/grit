@@ -124,7 +124,7 @@ t1022-read-tree-partial-clone	t1	yes	1	1	0	true	ok	0
 t10220-reset-soft-commit	t1	yes	34	0	0	false		0
 t10230-cherry-pick-range	t1	yes	31	0	0	false		0
 t10240-diff-cached-rename	t1	yes	34	0	0	false		0
-t10300-for-each-ref-count-pattern	t1	yes	36	0	0	false		0
+t10300-for-each-ref-count-pattern	t1	yes	36	36	0	true	ok	0
 t10310-show-ref-quiet-hash	t1	yes	33	0	0	false		0
 t10320-update-ref-verify-old	t1	yes	31	0	0	false		0
 t10330-symbolic-ref-short	t1	yes	30	0	0	false		0
@@ -154,7 +154,7 @@ t10530-add-verbose-dry-run	t1	yes	32	0	0	false		0
 t10540-rm-ignore-unmatch	t1	yes	31	0	0	false		0
 t10550-mv-verbose-dry-run	t1	yes	28	0	0	false		0
 t10560-switch-create-detach	t1	yes	28	0	0	false		0
-t10570-restore-worktree-only	t1	yes	28	0	0	false		0
+t10570-restore-worktree-only	t1	yes	28	27	1	false	ok	0
 t10580-reset-path-mixed	t1	yes	25	0	0	false		0
 t1060-object-corruption	t1	yes	17	0	0	false	ok	1
 t1060-object-types	t1	yes	35	0	0	false		0
@@ -276,7 +276,7 @@ t12110-rm-force-recursive	t1	yes	35	0	0	false		0
 t12120-mv-verbose-dryrun	t1	yes	33	0	0	false		0
 t12130-switch-create-force	t1	yes	33	0	0	false		0
 t12160-cherry-pick-conflict-resolve	t1	yes	34	0	0	false		0
-t12170-for-each-ref-count-limit	t1	yes	33	0	0	false		0
+t12170-for-each-ref-count-limit	t1	yes	33	33	0	true	ok	0
 t12180-show-ref-hash-abbrev	t1	yes	33	0	0	false		0
 t12190-update-ref-deref-symref	t1	yes	35	0	0	false		0
 t12200-check-ignore-pathname	t1	yes	30	0	0	false		0
