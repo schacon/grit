@@ -291,33 +291,56 @@ impl Parser {
     /// Parse a `key = value` or bare `key` line.
     ///
     /// Returns `Some((canonical_key, value))` if this is a variable line.
-    fn try_parse_entry(&self, line: &str) -> Option<(String, Option<String>)> {
+    fn try_parse_entry(&self, line: &str) -> Result<Option<(String, Option<String>)>> {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            return None;
+            return Ok(None);
         }
         if trimmed.starts_with('[') {
-            return None;
+            return Ok(None);
         }
         if self.section.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         if let Some(eq_pos) = trimmed.find('=') {
             let raw_name = trimmed[..eq_pos].trim();
             let raw_value = trimmed[eq_pos + 1..].trim();
+            if has_unterminated_double_quote(raw_value) {
+                return Err(Error::ConfigError(
+                    "invalid configuration line: unterminated double quote".to_string(),
+                ));
+            }
             // Strip inline comment (not inside quotes)
             let value = strip_inline_comment(raw_value);
             let value = unescape_value(&value);
             let key = self.make_key(raw_name);
-            Some((key, Some(value)))
+            Ok(Some((key, Some(value))))
         } else {
             // Bare key (boolean true)
             let raw_name = strip_inline_comment(trimmed);
             let key = self.make_key(raw_name.trim());
-            Some((key, None))
+            Ok(Some((key, None)))
         }
     }
+}
+
+fn has_unterminated_double_quote(s: &str) -> bool {
+    let mut in_quote = false;
+    let mut escaped = false;
+    for ch in s.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => in_quote = !in_quote,
+            '#' | ';' if !in_quote => break,
+            _ => {}
+        }
+    }
+    in_quote
 }
 
 /// Check if a value line ends with a continuation backslash.
@@ -406,6 +429,7 @@ fn unescape_value(s: &str) -> String {
             '\\' => match chars.next() {
                 Some('n') => result.push('\n'),
                 Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
                 Some('\\') => result.push('\\'),
                 Some('"') => result.push('"'),
                 Some(other) => {
@@ -528,7 +552,7 @@ impl ConfigFile {
             if parser.try_parse_section_with_remainder(line, &mut inline_remainder) {
                 // Check if there's an inline key=value after the section header
                 if let Some(remainder) = inline_remainder {
-                    if let Some((key, value)) = parser.try_parse_entry(remainder) {
+                    if let Some((key, value)) = parser.try_parse_entry(remainder)? {
                         entries.push(ConfigEntry {
                             key,
                             value,
@@ -554,7 +578,7 @@ impl ConfigFile {
                 idx += 1;
             }
 
-            if let Some((key, value)) = parser.try_parse_entry(&logical_line) {
+            if let Some((key, value)) = parser.try_parse_entry(&logical_line)? {
                 entries.push(ConfigEntry {
                     key,
                     value,

@@ -1097,6 +1097,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     if args.positional.len() == 1 {
         match config.get(&args.positional[0]) {
             Some(val) => {
+                let val = normalize_blob_value(&val);
                 let val = format_typed_value(args, &val)?;
                 print!("{val}{terminator}");
                 return Ok(());
@@ -1123,6 +1124,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
                     for entry in matches {
                         let val = entry.value.as_deref().unwrap_or("true");
                         let val = format_typed_value(args, val)?;
+                        let val = normalize_blob_value(&val);
                         if get_args.show_names {
                             print!("{} {}{}", entry.key, val, terminator);
                         } else {
@@ -1138,6 +1140,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
                     }
                     for val in values {
                         let val = format_typed_value(args, &val)?;
+                        let val = normalize_blob_value(&val);
                         print!("{val}{terminator}");
                     }
                     return Ok(());
@@ -1145,6 +1148,7 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
                 match config.get(&get_args.key) {
                     Some(val) => {
                         let val = format_typed_value(args, &val)?;
+                        let val = normalize_blob_value(&val);
                         print!("{val}{terminator}");
                         Ok(())
                     }
@@ -1167,6 +1171,11 @@ fn cmd_blob(args: &Args, blob_spec: &str) -> Result<()> {
     } else {
         bail!("--blob requires a key or --list");
     }
+}
+
+fn normalize_blob_value(val: &str) -> String {
+    let val = val.trim_end_matches('\n');
+    val.trim_end_matches('\r').to_owned()
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
