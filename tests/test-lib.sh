@@ -114,9 +114,14 @@ PATH="$TEST_DIRECTORY:$PATH"
 	# Initialize a git repository in the trash directory (like upstream)
 	if test -z "$TEST_NO_CREATE_REPO"
 	then
-		"$GUST_BIN" init >/dev/null 2>&1 ||
-			echo "warning: could not git init trash directory" >&2
-
+		if test -n "$TEST_CREATE_REPO_NO_TEMPLATE"
+		then
+			"$GUST_BIN" init --template= >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		else
+			"$GUST_BIN" init >/dev/null 2>&1 ||
+				echo "warning: could not git init trash directory" >&2
+		fi
 	fi
 }
 
@@ -441,6 +446,12 @@ EMPTY_BLOB=e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 # SHA-1 only today, so provide a stable default when the environment does not.
 : "${GIT_DEFAULT_HASH:=sha1}"
 export GIT_DEFAULT_HASH
+test_hash_algo="${GIT_DEFAULT_HASH%%:*}"
+test_compat_hash_algo=sha256
+if test "$test_hash_algo" = "sha256"
+then
+	test_compat_hash_algo=sha1
+fi
 
 export OID_REGEX _x05 _x35 _x40 ZERO_OID EMPTY_TREE EMPTY_BLOB
 
@@ -460,6 +471,11 @@ test_oid () {
 test_oid_cache () {
 	# consume and ignore stdin
 	cat >/dev/null
+}
+
+test_oid_to_path () {
+	local basename="${1#??}"
+	echo "${1%$basename}/$basename"
 }
 
 # CR/LF helpers
@@ -794,7 +810,8 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= append= signoff= indir= tag=yes message= file= contents= author=
+	local output_cmd=echo
 	while test $# != 0
 	do
 		case "$1" in
@@ -803,8 +820,8 @@ test_commit () {
 		--no-tag) tag=; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
-		--append) shift ;; # accepted but ignored for compat
-		--printf) shift ;; # accepted but ignored for compat
+		--append) append=yes; shift ;;
+		--printf) output_cmd=printf; shift ;;
 		*) break ;;
 		esac
 	done
@@ -813,8 +830,13 @@ test_commit () {
 	contents="${1:-$message}" && { test $# -gt 0 && shift || true; }
 	(
 		test -n "$indir" && cd "$indir"
-		printf '%s\n' "$contents" >"$file" &&
-		git add "$file" &&
+		if test -n "$append"
+		then
+			$output_cmd "${contents}" >>"$file"
+		else
+			$output_cmd "${contents}" >"$file"
+		fi &&
+		git add -- "$file" &&
 		if test -z "$notick"; then
 			test_tick
 		fi &&
@@ -874,6 +896,14 @@ debug () {
 # Evaluate $2 and check $1 == stdout.
 test_cmp () {
 	diff -u "$1" "$2"
+}
+
+test_trailing_hash () {
+	local file="$1" &&
+	tail -c "$(test_oid rawsz)" "$file" |
+		od -An -tx1 -v |
+		tr -d ' \n'
+	echo
 }
 
 # ── core test functions ───────────────────────────────────────────────────────

@@ -84,10 +84,10 @@ commit → check it off → move on.
 - [x] `t1401-symbolic-ref` ████████████████████ 25/25 (0 left) — basic symbolic-ref tests
 - [x] `t1307-config-blob` ████████████████████ 13/13 (0 left) — support for reading config from a blob
 - [x] `t1503-rev-parse-verify` ████████████████████ 12/12 (0 left) — test git rev-parse --verify
-- [ ] `t1600-index` ███████████░░░░░░░░░ 4/7 (3 left) — index file specific tests
+- [x] `t1600-index` ████████████████████ 7/7 (0 left) — index file specific tests
 - [x] `t1407-worktree-ref-store` ████████████████████ 4/4 (0 left) — test worktree ref store api
-- [ ] `t1412-reflog-loop` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — reflog walk shows repeated commits again
-- [ ] `t1512-rev-parse-disambiguation` ░░░░░░░░░░░░░░░░░░░░ 0/3 (3 left) — object name disambiguation
+- [x] `t1412-reflog-loop` ████████████████████ 3/3 (0 left) — reflog walk shows repeated commits again
+- [x] `t1512-rev-parse-disambiguation` ████████████████████ 3/3 (0 left) — object name disambiguation
 
 - [ ] `t1051-large-conversion` █████████████░░░░░░░ 8/12 (4 left) — test conversion filters on large files
 - [ ] `t1012-read-tree-df` ████░░░░░░░░░░░░░░░░ 1/5 (4 left) — read-tree D/F conflict corner cases

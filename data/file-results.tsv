@@ -128,7 +128,7 @@ t1408-packed-refs	yes	3	3	0	ok	3	3	0
 t1409-avoid-packing-refs	yes	0	0	0	ok	0	0	0
 t1410-reflog	yes	41	4	37	ok	3	40	1
 t1411-reflog-show	yes	17	6	11	ok	6	17	0
-t1412-reflog-loop	yes	3	0	3	ok	0	3	0
+t1412-reflog-loop	yes	3	3	0	ok	3	3	0
 t1413-reflog-detach	yes	7	7	0	ok	7	7	0
 t1414-reflog-walk	yes	12	3	9	ok	3	12	0
 t1415-worktree-refs	yes	10	4	6	ok	4	10	0
@@ -155,12 +155,12 @@ t1508-at-combinations	yes	35	21	14	ok	21	35	0
 t1509-root-work-tree	yes	0	0	0	ok	0	0	0
 t1510-repo-setup	yes	109	12	97	ok	12	109	0
 t1511-rev-parse-caret	yes	17	10	7	ok	10	17	0
-t1512-rev-parse-disambiguation	yes	3	0	3	ok	0	0	3
+t1512-rev-parse-disambiguation	yes	3	3	0	ok	0	3	3
 t1513-rev-parse-prefix	yes	11	11	0	ok	11	11	0
 t1514-rev-parse-push	yes	9	3	6	ok	3	9	0
 t1515-rev-parse-outside-repo	yes	4	4	0	ok	4	4	0
 t1517-outside-repo	yes	195	97	98	ok	97	195	0
-t1600-index	yes	7	4	3	ok	4	7	0
+t1600-index	yes	7	7	0	ok	7	7	0
 t1601-index-bogus	yes	4	4	0	ok	4	4	0
 t1700-split-index	yes	28	2	26	ok	2	28	0
 t1701-racy-split-index	yes	31	1	30	ok	1	31	0

@@ -80,6 +80,31 @@ PY
   genzeros)
     count="${2:-0}"
     dd if=/dev/zero bs=1 count="$count" 2>/dev/null ;;
+  zlib)
+    shift
+    mode="$1"
+    shift
+    case "$mode" in
+      deflate)
+        python3 -c '
+import sys, zlib
+data = sys.stdin.buffer.read()
+sys.stdout.buffer.write(zlib.compress(data))
+'
+        ;;
+      inflate)
+        python3 -c '
+import sys, zlib
+data = sys.stdin.buffer.read()
+sys.stdout.buffer.write(zlib.decompress(data))
+'
+        ;;
+      *)
+        echo "test-tool zlib: unknown mode '$mode'" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   mktemp)
     shift
     if [ $# -ne 1 ]; then

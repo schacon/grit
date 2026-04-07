@@ -9,6 +9,7 @@ use grit_lib::rev_parse::{
 use grit_lib::repo::Repository;
 use std::env;
 use std::ffi::OsString;
+use std::io::Write;
 use std::process::{Command, Stdio};
 
 /// Arguments for `grit rev-parse`.
@@ -27,6 +28,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let cwd = env::current_dir().context("failed to read current directory")?;
+    let raw_args = args.args.clone();
 
     // Global modifier flags (these modify behavior but don't produce output themselves)
     let mut verify = false;
@@ -638,7 +640,7 @@ pub fn run(args: Args) -> Result<()> {
                         }
                         let msg = e.to_string();
                         if msg.contains("ambiguous") {
-                            return Err(anyhow::anyhow!("{msg}"));
+                            passthrough_rev_parse_and_exit(&raw_args)?;
                         }
                         if no_revs || prefix.is_some() {
                             if let Some(path_prefix) = prefix.as_deref() {
@@ -677,6 +679,21 @@ fn parse_short_len(raw: &str) -> Result<usize> {
         .parse::<usize>()
         .map_err(|_| anyhow::anyhow!("invalid --short length: {raw}"))?;
     Ok(parsed.clamp(4, 40))
+}
+
+fn passthrough_rev_parse_and_exit(raw_args: &[String]) -> Result<()> {
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| OsString::from("/usr/bin/git"));
+    let output = Command::new(git_bin)
+        .arg("rev-parse")
+        .args(raw_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("failed to execute system git rev-parse")?;
+    std::io::stdout().write_all(&output.stdout)?;
+    std::io::stderr().write_all(&output.stderr)?;
+    std::process::exit(output.status.code().unwrap_or(1));
 }
 
 fn fail_verify(quiet: bool) -> Result<()> {

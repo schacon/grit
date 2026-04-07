@@ -266,7 +266,8 @@ impl Index {
         let mut hasher = Sha1::new();
         hasher.update(body);
         let computed = hasher.finalize();
-        if computed.as_slice() != checksum {
+        let skip_hash = checksum.iter().all(|b| *b == 0);
+        if !skip_hash && computed.as_slice() != checksum {
             return Err(Error::IndexError("SHA-1 checksum mismatch".to_owned()));
         }
 
