@@ -263,3 +263,6 @@ test_file_size () {
 	test "$#" -eq 1 || BUG "test_file_size needs 1 argument"
 	wc -c <"$1" | tr -d ' '
 }
+
+# Path exists (file, dir, or symlink); upstream test-lib-functions.sh name.
+test_path_exists () { test -e "$1"; }

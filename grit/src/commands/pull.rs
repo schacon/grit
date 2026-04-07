@@ -249,7 +249,7 @@ fn do_merge_or_rebase(
             squash: false,
             abort: false,
             continue_merge: false,
-            strategy: args.strategy.clone(),
+            strategy: args.strategy.clone().into_iter().collect::<Vec<_>>(),
             strategy_option: args.strategy_option.clone(),
             quiet: args.quiet,
             progress: false,

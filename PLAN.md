@@ -750,7 +750,7 @@ commit → check it off → move on.
 - [ ] `t6422-merge-rename-corner-cases` ██████░░░░░░░░░░░░░░ 9/26 (17 left) — recursive merge corner cases w/ renames but not criss-crosses
 - [ ] `t6000-rev-list-misc` █████░░░░░░░░░░░░░░░ 6/23 (17 left) — miscellaneous rev-list tests
 - [ ] `t6130-pathspec-noglob` ███░░░░░░░░░░░░░░░░░ 4/21 (17 left) — test globbing (and noglob) of pathspec limiting
-- [ ] `t6424-merge-unrelated-index-changes` ██░░░░░░░░░░░░░░░░░░ 2/19 (17 left) — merges with unrelated index changes
+- [x] `t6424-merge-unrelated-index-changes` — merges with unrelated index changes (19/19)
 - [ ] `t6019-rev-list-ancestry-path` █░░░░░░░░░░░░░░░░░░░ 1/18 (17 left) — --ancestry-path
 - [ ] `t6101-rev-parse-parents` ██████████░░░░░░░░░░ 20/38 (18 left) — Test git rev-parse with different parent options
 - [ ] `t6137-pathspec-wildcards-literal` █████░░░░░░░░░░░░░░░ 7/25 (18 left) — test wildcards and literals with git add/commit (subshell style)

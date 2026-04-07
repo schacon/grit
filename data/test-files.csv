@@ -1119,7 +1119,7 @@ t6419-merge-ignorecase	t6	yes	0	0	0	false	ok	0
 t6421-merge-partial-clone	t6	yes	3	3	0	true	ok	0
 t6422-merge-rename-corner-cases	t6	yes	20	8	12	false	ok	6
 t6423-merge-rename-directories	t6	yes	80	28	52	false	ok	2
-t6424-merge-unrelated-index-changes	t6	yes	19	5	14	false	ok	0
+t6424-merge-unrelated-index-changes	t6	yes	19	19	0	true	ok	0
 t6425-merge-rename-delete	t6	yes	1	1	0	true	ok	0
 t6426-merge-skip-unneeded-updates	t6	yes	13	13	0	true	ok	0
 t6427-diff3-conflict-markers	t6	yes	9	9	0	true	ok	0
