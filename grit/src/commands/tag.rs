@@ -383,8 +383,12 @@ fn list_tags(
     for (name, oid) in &tags {
         if let Some(n) = lines {
             let annotation = get_tag_annotation(repo, oid, n);
+            // When -n is specified, always pad name to 15 chars (git behavior)
             if let Some(ann) = annotation {
-                writeln!(out, "{name:<15} {ann}")?;
+                writeln!(out, "{name:<15} {ann}")?
+            } else if n > 0 {
+                // No annotation but -n specified: pad name
+                writeln!(out, "{name:<15} ")?;
             } else {
                 writeln!(out, "{name}")?;
             }
@@ -436,10 +440,18 @@ fn get_tag_annotation(repo: &Repository, oid: &ObjectId, n: u32) -> Option<Strin
     }
     let obj = repo.odb.read(oid).ok()?;
     let tag = parse_tag(&obj.data).ok()?;
-    if tag.message.is_empty() {
+    if tag.message.trim().is_empty() {
         return None;
     }
-    let lines: Vec<&str> = tag.message.lines().take(n as usize).collect();
+    let lines: Vec<&str> = tag
+        .message
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(n as usize)
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
     Some(lines.join(" "))
 }
 
