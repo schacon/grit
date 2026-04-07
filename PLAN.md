@@ -211,7 +211,7 @@ commit → check it off → move on.
 - [x] `t2404-worktree-config` ████████████████████ 12/12 (0 left) — config file in multi worktree
 - [x] `t2405-worktree-submodule` ████████████████████ 11/11 (0 left) — Combination of submodules and multiple worktrees
 - [x] `t2020-checkout-detach` ████████████████████ 26/26 (0 left) — checkout into detached HEAD state
-- [ ] `t2204-add-ignored` ███████████████░░░░░ 37/47 (10 left) — giving ignored paths to git add
+- [x] `t2204-add-ignored` ████████████████████ 47/47 (0 left) — giving ignored paths to git add
 - [ ] `t2070-restore` ██████░░░░░░░░░░░░░░ 5/15 (10 left) — restore basic functionality
 - [ ] `t2205-add-worktree-config` ████░░░░░░░░░░░░░░░░ 3/13 (10 left) — directory traversal respects user config
 

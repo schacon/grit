@@ -780,6 +780,28 @@ fn add_path(
     let is_real_dir = fs::symlink_metadata(&abs_path)
         .map(|m| m.file_type().is_dir())
         .unwrap_or(false);
+    // Check ignore patterns for explicitly named paths (like real git).
+    // For conflict resolution, allow ignored files when there are unmerged
+    // index entries for this exact path.
+    if !args.force {
+        let path_bytes = path.as_bytes();
+        let has_unmerged = (1..=3).any(|stage| index.get(path_bytes, stage).is_some());
+        if !has_unmerged {
+            if let Some(ref mut matcher) = ignore_matcher {
+                let (is_ignored, _match_info) = matcher
+                    .check_path(repo, Some(&*index), path, is_real_dir)
+                    .map_err(|e| AddPathError::Other(e.into()))?;
+                if is_ignored {
+                    return Err(AddPathError::Ignored(format!(
+                        "The following paths are ignored by one of your .gitignore files:\n\
+                         {path}\n\
+                         Use -f if you really want to add them."
+                    )));
+                }
+            }
+        }
+    }
+
     if is_real_dir {
         // Check for embedded repository (directory with its own .git)
         let embedded_git = abs_path.join(".git");
@@ -809,26 +831,6 @@ fn add_path(
             }
         }
     } else {
-        // Allow adding ignored files when resolving merge conflicts (unmerged entries).
-        let path_bytes = path.as_bytes();
-        let has_unmerged = (1..=3).any(|stage| index.get(path_bytes, stage).is_some());
-
-        // Check ignore patterns for explicitly named files (like real git),
-        // but skip the check if the file has unmerged entries (conflict resolution).
-        if !has_unmerged {
-            if let Some(ref mut matcher) = ignore_matcher {
-                let (is_ignored, _match_info) = matcher
-                    .check_path(repo, Some(&*index), path, false)
-                    .map_err(|e| AddPathError::Other(e.into()))?;
-                if is_ignored {
-                    return Err(AddPathError::Ignored(format!(
-                        "The following paths are ignored by one of your .gitignore files:\n\
-                         {path}\n\
-                         Use -f if you really want to add them."
-                    )));
-                }
-            }
-        }
         stage_file(odb, index, work_tree, path, &abs_path, args, add_cfg)
             .map_err(AddPathError::IoError)?;
     }
