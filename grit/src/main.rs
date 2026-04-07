@@ -989,7 +989,8 @@ fn preprocess_test_tool_args(rest: &[String]) -> Result<Vec<String>> {
     if let Some(dir) = change_dir {
         if let Err(e) = std::env::set_current_dir(dir) {
             let subcmd = rest.get(i).map(String::as_str);
-            let allow_for_env_helper = std::env::var("GIT_TEST_ENV_HELPER").as_deref() == Ok("true")
+            let allow_for_env_helper = std::env::var("GIT_TEST_ENV_HELPER").as_deref()
+                == Ok("true")
                 && subcmd == Some("env-helper");
             if !allow_for_env_helper {
                 return Err(e.into());
@@ -1245,23 +1246,38 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
             }
 
             "object-string" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires key"))?;
-                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires value"))?;
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires key"))?;
+                let value = parts
+                    .get(2)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-string requires value"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Object { entries, .. } => {
-                        entries.push(((*key).to_string(), JsonWriterValue::String((*value).to_string())));
+                        entries.push((
+                            (*key).to_string(),
+                            JsonWriterValue::String((*value).to_string()),
+                        ));
                     }
                     _ => bail!("json-writer: object-string used outside object"),
                 }
             }
             "object-int" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires key"))?;
-                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires value"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires key"))?;
+                let value = parts
+                    .get(2)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-int requires value"))?;
                 let parsed = value
                     .parse::<i64>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Object { entries, .. } => {
                         entries.push(((*key).to_string(), JsonWriterValue::Integer(parsed)));
@@ -1270,9 +1286,15 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                 }
             }
             "object-double" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires key"))?;
-                let precision = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires precision"))?;
-                let value = parts.get(3).ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires value"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires key"))?;
+                let precision = parts.get(2).ok_or_else(|| {
+                    anyhow::anyhow!("json-writer: object-double requires precision")
+                })?;
+                let value = parts
+                    .get(3)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-double requires value"))?;
                 let p = precision
                     .parse::<usize>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
@@ -1280,7 +1302,9 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                     .parse::<f64>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
                 let rendered = format!("{v:.p$}");
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Object { entries, .. } => {
                         entries.push(((*key).to_string(), JsonWriterValue::Double(rendered)));
@@ -1289,13 +1313,17 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                 }
             }
             "object-true" | "object-false" | "object-null" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object literal requires key"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object literal requires key"))?;
                 let val = match verb {
                     "object-true" => JsonWriterValue::Boolean(true),
                     "object-false" => JsonWriterValue::Boolean(false),
                     _ => JsonWriterValue::Null,
                 };
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Object { entries, .. } => {
                         entries.push(((*key).to_string(), val));
@@ -1304,14 +1332,18 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                 }
             }
             "object-object" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-object requires key"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-object requires key"))?;
                 stack.push(JsonWriterContainer::Object {
                     key_in_parent: Some((*key).to_string()),
                     entries: Vec::new(),
                 });
             }
             "object-array" => {
-                let key = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: object-array requires key"))?;
+                let key = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: object-array requires key"))?;
                 stack.push(JsonWriterContainer::Array {
                     key_in_parent: Some((*key).to_string()),
                     entries: Vec::new(),
@@ -1319,8 +1351,12 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
             }
 
             "array-string" => {
-                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-string requires value"))?;
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let value = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: array-string requires value"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Array { entries, .. } => {
                         entries.push(JsonWriterValue::String((*value).to_string()));
@@ -1329,11 +1365,15 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                 }
             }
             "array-int" => {
-                let value = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-int requires value"))?;
+                let value = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: array-int requires value"))?;
                 let parsed = value
                     .parse::<i64>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid integer '{value}'"))?;
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Array { entries, .. } => {
                         entries.push(JsonWriterValue::Integer(parsed));
@@ -1342,8 +1382,12 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                 }
             }
             "array-double" => {
-                let precision = parts.get(1).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires precision"))?;
-                let value = parts.get(2).ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires value"))?;
+                let precision = parts.get(1).ok_or_else(|| {
+                    anyhow::anyhow!("json-writer: array-double requires precision")
+                })?;
+                let value = parts
+                    .get(2)
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: array-double requires value"))?;
                 let p = precision
                     .parse::<usize>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid precision '{precision}'"))?;
@@ -1351,7 +1395,9 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                     .parse::<f64>()
                     .map_err(|_| anyhow::anyhow!("json-writer: invalid float '{value}'"))?;
                 let rendered = format!("{v:.p$}");
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Array { entries, .. } => {
                         entries.push(JsonWriterValue::Double(rendered));
@@ -1365,7 +1411,9 @@ fn run_test_tool_json_writer(rest: &[String]) -> Result<()> {
                     "array-false" => JsonWriterValue::Boolean(false),
                     _ => JsonWriterValue::Null,
                 };
-                let parent = stack.last_mut().ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
+                let parent = stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("json-writer: no active container"))?;
                 match parent {
                     JsonWriterContainer::Array { entries, .. } => {
                         entries.push(val);
@@ -1715,7 +1763,6 @@ fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
         ),
     }
 }
-
 
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
