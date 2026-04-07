@@ -24,7 +24,7 @@ GRIT=$GRIT_BIN
 case "\${1:-__NOARGS__}" in
   __NOARGS__) echo "usage: git ..." >&2; exit 1 ;;
   --exec-path) echo "$WORKDIR"; exit 0 ;;
-  --exec-path=*) exit 0 ;;
+  --exec-path=*) exec "\$GRIT" "\$@" ;;
   version)
     if test "\$2" = "--build-options"; then
       echo "git version 2.47.0"; echo "sizeof-long: 8"; echo "sizeof-size_t: 8"; echo "shell-path: /bin/sh"; echo "default-hash: sha1"; exit 0
