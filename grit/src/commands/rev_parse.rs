@@ -453,31 +453,58 @@ pub fn run(args: Args) -> Result<()> {
                     let path_arg = &path_arg_normalized;
 
                     // Check GIT_COMMON_DIR: certain paths are relative to common dir
-                    let common_dir_paths = [
-                        "objects",
-                        "refs",
-                        "packed-refs",
-                        "info",
-                        "config",
-                        "ORIG_HEAD",
-                        "FETCH_HEAD",
-                        "logs",
-                        "shallow",
-                        "remotes",
-                        "branches",
-                        "hooks",
-                        "common",
-                    ];
+                    // Worktree-local paths (NOT common):
+                    let is_worktree_local = {
+                        let p = path_arg.as_str();
+                        p == "HEAD"
+                            || p == "index"
+                            || p == "config.worktree"
+                            || p == "MERGE_HEAD"
+                            || p == "CHERRY_PICK_HEAD"
+                            || p == "REVERT_HEAD"
+                            || p == "BISECT_LOG"
+                            || p == "BISECT_TERMS"
+                            || p == "BISECT_EXPECTED_REV"
+                            || p == "AUTO_MERGE"
+                            || p == "SQUASH_MSG"
+                            || p == "MERGE_MSG"
+                            || p.starts_with("rebase-")
+                            || p.starts_with("sequencer")
+                            || p == "logs/HEAD"
+                            || p.starts_with("logs/HEAD.")
+                            || p.starts_with("logs/FETCH_HEAD")
+                            || p == "refs/bisect"
+                            || p.starts_with("refs/bisect/")
+                            || p == "logs/refs/bisect"
+                            || p.starts_with("logs/refs/bisect/")
+                            || p == "info/sparse-checkout"
+                    };
                     if let Ok(common_dir) = std::env::var("GIT_COMMON_DIR") {
-                        let is_common = common_dir_paths
-                            .iter()
-                            .any(|p| path_arg == p || path_arg.starts_with(&format!("{}/", p)));
-                        if is_common {
-                            println!("{}/{}", common_dir, path_arg);
-                            continue;
+                        if !is_worktree_local {
+                            let common_prefixes = [
+                                "objects",
+                                "refs",
+                                "packed-refs",
+                                "info",
+                                "config",
+                                "ORIG_HEAD",
+                                "FETCH_HEAD",
+                                "logs",
+                                "shallow",
+                                "remotes",
+                                "branches",
+                                "hooks",
+                                "common",
+                            ];
+                            let is_common = common_prefixes
+                                .iter()
+                                .any(|p| path_arg == p || path_arg.starts_with(&format!("{}/", p)));
+                            if is_common {
+                                println!("{}/{}", common_dir, path_arg);
+                                continue;
+                            }
                         }
                     }
-
                     // Check env var overrides
                     let env_override = if path_arg == "info/grafts" {
                         std::env::var("GIT_GRAFT_FILE").ok()
