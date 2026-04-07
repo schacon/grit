@@ -235,7 +235,7 @@ t11490-commit-fixup-squash	t1	yes	33	32	1	false	ok	0
 t11500-add-chmod-intent	t1	yes	31	29	2	false	ok	0
 t11510-rm-cached-worktree	t1	yes	30	30	0	true	ok	0
 t11520-mv-directory-structure	t1	yes	31	31	0	true	ok	0
-t11530-switch-orphan-track	t1	yes	30	30	0	true	ok	0
+t11530-switch-orphan-track	t1	yes	30	20	10	false	ok	0
 t11540-restore-staged-worktree	t1	yes	30	30	0	true	ok	0
 t11550-reset-merge-keep	t1	yes	30	30	0	true	ok	0
 t11560-cherry-pick-signoff-edit	t1	yes	32	30	2	false	ok	0
