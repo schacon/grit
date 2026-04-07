@@ -73,7 +73,7 @@ commit → check it off → move on.
 - [x] `t1402-check-ref-format` ████████████████████ 99/99 (0 left) — Test git check-ref-format
 - [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
-- [ ] `t1303-wacky-config` ████████████████░░░░ 9/11 (2 left) — Test wacky input to git config
+- [x] `t1303-wacky-config` ████████████████████ 11/11 (0 left) — Test wacky input to git config
 - [x] `t0101-at-syntax` ████████████████████ 8/8 (0 left) — various @{whatever} syntax tests
 - [x] `t1015-read-index-unmerged` ████████████████████ 6/6 (0 left) — Test various callers of read_index_unmerged
 - [x] `t1310-config-default` ████████████████████ 5/5 (0 left) — Test git config in different settings (with --default)
@@ -139,7 +139,7 @@ commit → check it off → move on.
 
 - [ ] `t1502-rev-parse-parseopt` █████░░░░░░░░░░░░░░░ 11/37 (26 left) — test git rev-parse --parseopt
 - [ ] `t1700-split-index` █░░░░░░░░░░░░░░░░░░░ 2/28 (26 left) — split index mode tests
-- [ ] `t1900-repo-info` ████░░░░░░░░░░░░░░░░ 9/37 (28 left) — test git repo-info
+- [x] `t1900-repo-info` ████████████████████ 37/37 (0 left) — test git repo-info
 - [ ] `t0410-partial-clone` ████░░░░░░░░░░░░░░░░ 9/38 (29 left) — partial clone
 - [ ] `t1701-racy-split-index` ░░░░░░░░░░░░░░░░░░░░ 1/31 (30 left) — racy split index
 - [ ] `t1423-ref-backend` ██░░░░░░░░░░░░░░░░░░ 4/36 (32 left) — Test reference backend URIs
