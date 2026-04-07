@@ -1203,6 +1203,12 @@ PY
   mergesort)
     shift
     exec "$GUST_BIN" test-tool mergesort "$@" ;;
+  ref-store)
+    shift
+    # Prefer grit-native implementation; fall back to system helper when available.
+    "$GUST_BIN" test-tool ref-store "$@" && exit 0
+    git_with_global_c test-tool ref-store "$@"
+    exit $? ;;
   run-command)
     shift
     exec "$GUST_BIN" test-tool run-command "$@" ;;

@@ -698,6 +698,112 @@ fn run_spawned_command(
     }
 }
 
+fn run_test_tool_ref_store(rest: &[String]) -> Result<()> {
+    if rest.len() < 3 {
+        bail!("usage: test-tool ref-store <store> <function> ...");
+    }
+
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let main_git_dir = if repo.git_dir.join("commondir").exists() {
+        let raw = fs::read_to_string(repo.git_dir.join("commondir")).unwrap_or_default();
+        let rel = raw.trim();
+        if Path::new(rel).is_absolute() {
+            PathBuf::from(rel)
+        } else {
+            repo.git_dir.join(rel)
+        }
+    } else {
+        repo.git_dir.clone()
+    };
+
+    let store = &rest[1];
+    let store_git_dir = if store == "main" || store == "worktree:main" {
+        main_git_dir.clone()
+    } else if let Some(id) = store.strip_prefix("worktree:") {
+        let candidate = main_git_dir.join("worktrees").join(id);
+        if !candidate.exists() {
+            eprintln!("test-tool ref-store: no such backend '{store}'");
+            std::process::exit(1);
+        }
+        candidate
+    } else {
+        eprintln!("test-tool ref-store: unsupported backend '{store}'");
+        std::process::exit(1);
+    };
+
+    let git_bin = std::env::var_os("REAL_GIT").unwrap_or_else(|| std::ffi::OsString::from("/usr/bin/git"));
+    let func = rest[2].as_str();
+    match func {
+        "resolve-ref" => {
+            if rest.len() < 5 {
+                bail!("usage: test-tool ref-store <store> resolve-ref <refname> <flags>");
+            }
+            let refname = &rest[3];
+            let mut resolved = refname.clone();
+            let mut flags = 0u32;
+
+            if refname == "HEAD" {
+                let sym = std::process::Command::new(&git_bin)
+                    .arg("--git-dir")
+                    .arg(&store_git_dir)
+                    .arg("symbolic-ref")
+                    .arg("--quiet")
+                    .arg("HEAD")
+                    .output()?;
+                if sym.status.success() {
+                    resolved = String::from_utf8_lossy(&sym.stdout).trim().to_owned();
+                    flags |= 0x1;
+                } else {
+                    resolved = "(null)".to_owned();
+                }
+            }
+
+            let oid_out = std::process::Command::new(&git_bin)
+                .arg("--git-dir")
+                .arg(&store_git_dir)
+                .arg("rev-parse")
+                .arg("--verify")
+                .arg("--quiet")
+                .arg(refname)
+                .output()?;
+            let oid = String::from_utf8_lossy(&oid_out.stdout).trim().to_owned();
+            let oid = if oid.is_empty() {
+                "0000000000000000000000000000000000000000".to_owned()
+            } else {
+                oid
+            };
+            println!("{oid} {resolved} 0x{flags:x}");
+            if oid_out.status.success() {
+                Ok(())
+            } else {
+                std::process::exit(1);
+            }
+        }
+        "create-symref" => {
+            if rest.len() < 6 {
+                bail!(
+                    "usage: test-tool ref-store <store> create-symref <refname> <target> <logmsg>"
+                );
+            }
+            let refname = &rest[3];
+            let target = &rest[4];
+            let status = std::process::Command::new(&git_bin)
+                .arg("--git-dir")
+                .arg(&store_git_dir)
+                .arg("symbolic-ref")
+                .arg(refname)
+                .arg(target)
+                .status()?;
+            if status.success() {
+                Ok(())
+            } else {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
+        other => bail!("test-tool ref-store: unsupported function '{other}'"),
+    }
+}
+
 fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
     // Syntax mirrors git's helper:
     // test-tool run-command [--ungroup] [env KEY[=VALUE] ...] <mode> ...
@@ -3382,6 +3488,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "mergesort" => run_test_tool_mergesort(rest),
                 "revision-walking" => run_test_tool_revision_walking(rest),
                 "find-pack" => run_test_tool_find_pack(rest),
+                "ref-store" => run_test_tool_ref_store(rest),
                 "run-command" => run_test_tool_run_command(rest),
                 "rot13-filter" => run_test_tool_rot13_filter(rest),
                 "dump-cache-tree" => run_test_tool_dump_cache_tree(rest),

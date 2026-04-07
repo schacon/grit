@@ -123,7 +123,7 @@ t1403-show-ref	yes	12	2	10	ok	2	12	0
 t1404-update-ref-errors	yes	38	0	38	ok	0	38	0
 t1405-main-ref-store	yes	16	2	14	ok	2	16	0
 t1406-submodule-ref-store	yes	15	8	7	ok	8	15	0
-t1407-worktree-ref-store	yes	4	1	3	ok	1	4	0
+t1407-worktree-ref-store	yes	4	4	0	ok	4	4	0
 t1408-packed-refs	yes	3	3	0	ok	3	3	0
 t1409-avoid-packing-refs	yes	0	0	0	ok	0	0	0
 t1410-reflog	yes	41	4	37	ok	3	40	1
