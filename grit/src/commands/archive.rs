@@ -48,6 +48,18 @@ pub struct Args {
     #[arg(long = "end-of-options", hide = true)]
     pub end_of_options: bool,
 
+    /// Add files to the archive.
+    #[arg(long = "add-file", value_name = "FILE", action = clap::ArgAction::Append)]
+    pub add_file: Vec<String>,
+
+    /// Add virtual file to archive.
+    #[arg(long = "add-virtual-file", action = clap::ArgAction::Append)]
+    pub add_virtual_file: Vec<String>,
+
+    /// Set modification time (not yet implemented).
+    #[arg(long = "mtime", value_name = "TIME")]
+    pub mtime: Option<String>,
+
     /// The tree or commit to produce an archive for.
     #[arg(required_unless_present = "list")]
     pub tree_ish: Option<String>,
