@@ -13,7 +13,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::merge_base;
 use crate::objects::ObjectId;
+use crate::refs;
+use crate::repo::Repository;
 
 /// A single reflog entry.
 #[derive(Debug, Clone)]
@@ -154,6 +157,59 @@ pub fn expire_reflog(git_dir: &Path, refname: &str, expire_time: Option<i64>) ->
             (Some(_), None) => false, // can't parse => keep
         };
         if dominated {
+            pruned += 1;
+        } else {
+            kept.push(format_reflog_entry(entry));
+        }
+    }
+
+    fs::write(&path, kept.join(""))?;
+    Ok(pruned)
+}
+
+/// Expire reflog entries whose `new_oid` is not an ancestor of the current ref tip
+/// and whose identity timestamp is older than `cutoff` (Unix seconds).
+///
+/// Entries with an all-zero `new_oid` are never removed by this pass.
+///
+/// When `cutoff` is `None`, no entries are removed.
+///
+/// Reftable-backed repositories are skipped until reflog rewrite is implemented there.
+pub fn expire_reflog_unreachable(
+    repo: &Repository,
+    git_dir: &Path,
+    refname: &str,
+    cutoff: Option<i64>,
+) -> Result<usize> {
+    let Some(cutoff) = cutoff else {
+        return Ok(0);
+    };
+    if crate::reftable::is_reftable_repo(git_dir) {
+        return Ok(0);
+    }
+    let tip = match refs::resolve_ref(git_dir, refname) {
+        Ok(o) => o,
+        Err(_) => return Ok(0),
+    };
+    let ancestors = match merge_base::ancestor_closure(repo, tip) {
+        Ok(a) => a,
+        Err(_) => return Ok(0),
+    };
+
+    let entries = read_reflog(git_dir, refname)?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    let path = reflog_path(git_dir, refname);
+    let mut kept = Vec::new();
+    let mut pruned = 0usize;
+
+    for entry in &entries {
+        let ts = parse_timestamp_from_identity(&entry.identity);
+        let unreachable = !entry.new_oid.is_zero() && !ancestors.contains(&entry.new_oid);
+        let should_prune = unreachable && matches!(ts, Some(t) if t < cutoff);
+        if should_prune {
             pruned += 1;
         } else {
             kept.push(format_reflog_entry(entry));

@@ -31,15 +31,100 @@ GROUP_DESC: dict[str, str] = {
 }
 
 
-def git_short_sha() -> str:
+def git_full_sha() -> str:
     try:
-        return (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
-            ).strip()[:7]
-        )
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+        ).strip()
     except Exception:
-        return "unknown"
+        return ""
+
+
+def git_short_sha() -> str:
+    full = git_full_sha()
+    return full[:7] if len(full) >= 7 else (full if full else "unknown")
+
+
+def github_commit_url(sha: str) -> str | None:
+    """Return an https://github.com/.../commit/SHA URL if ``origin`` is GitHub."""
+    if not sha or sha == "unknown":
+        return None
+    try:
+        raw = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=REPO,
+            text=True,
+        ).strip()
+    except Exception:
+        return None
+    raw = raw.rstrip("/")
+    if raw.endswith(".git"):
+        raw = raw[:-4]
+    owner: str | None = None
+    repo: str | None = None
+    if raw.startswith("git@"):
+        host_and_rest = raw.partition("@")[2]
+        domain, _, path = host_and_rest.partition(":")
+        if domain != "github.com" or "/" not in path:
+            return None
+        owner, repo = path.split("/", 1)
+    elif "github.com/" in raw:
+        after = raw.split("github.com/", 1)[1]
+        segs = after.strip("/").split("/")
+        if len(segs) >= 2:
+            owner, repo = segs[0], segs[1]
+    if not owner or not repo:
+        return None
+    repo = repo.removesuffix(".git")
+    return f"https://github.com/{owner}/{repo}/commit/{sha}"
+
+
+def generated_time_element(now: datetime) -> str:
+    """Markup for build time: absolute in ``title``, relative text set by JS."""
+    gen_time = now.strftime("%Y-%m-%d %H:%M UTC")
+    iso = now.replace(microsecond=0).isoformat()
+    return (
+        f'<time datetime="{html.escape(iso)}" class="gen-time" title="{html.escape(gen_time)}">'
+        f"{html.escape(gen_time)}</time>"
+    )
+
+
+def sha_link_html(sha_short: str, sha_full: str) -> str:
+    """Short SHA, linking to GitHub commit when ``origin`` is GitHub."""
+    url = github_commit_url(sha_full)
+    if url:
+        return (
+            f'<a href="{html.escape(url)}" style="color:#58a6ff">{html.escape(sha_short)}</a>'
+        )
+    return html.escape(sha_short)
+
+
+RELATIVE_TIME_JS = """
+<script>
+(function() {
+  document.querySelectorAll('time.gen-time').forEach(function(el) {
+    var dt = el.getAttribute('datetime');
+    if (!dt) return;
+    var d = new Date(dt);
+    if (isNaN(d.getTime())) return;
+    var rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    var now = new Date();
+    var diffSec = (d - now) / 1000;
+    var abs = Math.abs(diffSec);
+    var v;
+    var unit;
+    if (abs < 60) { v = Math.round(diffSec); unit = 'second'; }
+    else if (abs < 3600) { v = Math.round(diffSec / 60); unit = 'minute'; }
+    else if (abs < 86400) { v = Math.round(diffSec / 3600); unit = 'hour'; }
+    else if (abs < 604800) { v = Math.round(diffSec / 86400); unit = 'day'; }
+    else if (abs < 2629800) { v = Math.round(diffSec / 604800); unit = 'week'; }
+    else if (abs < 31536000) { v = Math.round(diffSec / 2629800); unit = 'month'; }
+    else { v = Math.round(diffSec / 31536000); unit = 'year'; }
+    el.textContent = rtf.format(v, unit);
+  });
+})();
+</script>
+"""
 
 
 def load_rows() -> list[dict[str, str]]:
@@ -55,6 +140,17 @@ def load_rows() -> list[dict[str, str]]:
 
 def pct(n: int, d: int) -> float:
     return round(100.0 * n / d, 1) if d > 0 else 0.0
+
+
+def pass_rate_band(pc: float) -> str:
+    """CSS class suffix for pass-rate coloring: red / orange / blue / green."""
+    if pc < 40.0:
+        return "pct-red"
+    if pc < 60.0:
+        return "pct-orange"
+    if pc < 80.0:
+        return "pct-blue"
+    return "pct-green"
 
 
 def generate_index(rows: list[dict[str, str]]) -> str:
@@ -80,8 +176,10 @@ def generate_index(rows: list[dict[str, str]]) -> str:
     pass_rate = pct(total_pass, total_tests)
 
     now = datetime.now(timezone.utc)
-    gen_time = now.strftime("%Y-%m-%d %H:%M UTC")
+    sha_full = git_full_sha()
     sha = git_short_sha()
+    time_el = generated_time_element(now)
+    sha_l = sha_link_html(sha, sha_full)
 
     groups: dict[str, dict[str, int]] = {}
     for r in in_scope:
@@ -99,7 +197,16 @@ def generate_index(rows: list[dict[str, str]]) -> str:
         if (r.get("fully_passing") or "").lower() == "true" and tt > 0:
             groups[g]["full"] += 1
 
+    skipped_by_group: dict[str, int] = {}
+    for r in rows:
+        if r.get("in_scope", "yes").strip().lower() != "skip":
+            continue
+        g = r.get("group") or "t?"
+        skipped_by_group[g] = skipped_by_group.get(g, 0) + 1
+
     order = sorted(groups.keys(), key=lambda x: (len(x), x))
+
+    overall_band = pass_rate_band(pass_rate)
 
     group_html = ""
     for g in order:
@@ -107,17 +214,21 @@ def generate_index(rows: list[dict[str, str]]) -> str:
         desc = GROUP_DESC.get(g, "Tests")
         ttot, tpass = st["tests"], st["pass"]
         pc = pct(tpass, ttot)
+        band = pass_rate_band(pc)
         q = urllib.parse.urlencode({"group": g})
         href = f"testfiles.html?{q}"
+        n_skip = skipped_by_group.get(g, 0)
         group_html += f"""
     <a class="group-card" href="{html.escape(href)}">
-      <div class="group-head">
+      <div class="group-line1">
         <span class="group-id">{html.escape(g)}</span>
-        <span class="group-meta">{st["full"]}/{st["files"]} files · {tpass:,}/{ttot:,} tests</span>
+        <span class="group-desc">{html.escape(desc)}</span>
+        <span class="group-meta">{st["full"]}/{st["files"]} files · {n_skip} skipped · {tpass:,}/{ttot:,} tests</span>
       </div>
-      <p class="group-desc">{html.escape(desc)}</p>
-      <div class="bar-bg"><div class="bar-fg" style="width:{pc}%"></div></div>
-      <div class="group-pct">{pc}%</div>
+      <div class="group-line2">
+        <div class="bar-bg"><div class="bar-fg {band}" style="width:{pc}%"></div></div>
+        <span class="group-pct {band}">{pc}%</span>
+      </div>
     </a>"""
 
     return f"""<!DOCTYPE html>
@@ -125,7 +236,7 @@ def generate_index(rows: list[dict[str, str]]) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grit test dashboard</title>
+<title>Grit Project Progress</title>
 <style>
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
@@ -138,12 +249,42 @@ body {{
 }}
 h1 {{ font-size: 1.75rem; margin-bottom: 0.25rem; color: #f0f6fc; }}
 .sub {{ color: #7d8590; font-size: 0.9rem; margin-bottom: 1.75rem; }}
+.sub time.gen-time {{ color: inherit; }}
 .cards {{
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 1rem;
+  margin-bottom: 1.25rem;
+}}
+.overall-progress {{
   margin-bottom: 2rem;
 }}
+.overall-progress-head {{
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.45rem;
+}}
+.overall-progress-label {{
+  font-size: 0.85rem;
+  color: #8b949e;
+}}
+.overall-progress-pct {{
+  font-size: 1rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}}
+.overall-progress-pct.pct-red {{ color: #f85149; }}
+.overall-progress-pct.pct-orange {{ color: #e3b341; }}
+.overall-progress-pct.pct-blue {{ color: #79c0ff; }}
+.overall-progress-pct.pct-green {{ color: #3fb950; }}
+.overall-progress .bar-bg.overall-bar-bg {{ height: 14px; }}
+.overall-progress .bar-fg {{ height: 100%; border-radius: 6px 0 0 6px; }}
+.overall-progress .bar-fg.pct-red, .group-line2 .bar-fg.pct-red {{ background: linear-gradient(90deg, #8b2020, #da3633); }}
+.overall-progress .bar-fg.pct-orange, .group-line2 .bar-fg.pct-orange {{ background: linear-gradient(90deg, #8b6914, #d29922); }}
+.overall-progress .bar-fg.pct-blue, .group-line2 .bar-fg.pct-blue {{ background: linear-gradient(90deg, #1f4f8f, #58a6ff); }}
+.overall-progress .bar-fg.pct-green, .group-line2 .bar-fg.pct-green {{ background: linear-gradient(90deg, #238636, #2ea043); }}
 .card {{
   background: #161b22;
   border: 1px solid #30363d;
@@ -167,31 +308,59 @@ h2 {{ font-size: 1.1rem; margin-bottom: 1rem; color: #f0f6fc; }}
   transition: border-color 0.15s;
 }}
 .group-card:hover {{ border-color: #58a6ff; }}
-.group-head {{ display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; }}
-.group-id {{ font-weight: 700; color: #58a6ff; font-size: 1rem; }}
-.group-meta {{ font-size: 0.78rem; color: #7d8590; }}
-.group-desc {{ font-size: 0.85rem; color: #8b949e; margin: 0.5rem 0 0.75rem; }}
+.group-line1 {{
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.65rem;
+  min-width: 0;
+}}
+.group-id {{ flex-shrink: 0; font-weight: 700; color: #58a6ff; font-size: 1rem; }}
+.group-desc {{
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 0.85rem;
+  color: #8b949e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.group-meta {{ flex-shrink: 0; font-size: 0.78rem; color: #7d8590; text-align: right; }}
+.group-line2 {{ display: flex; align-items: center; gap: 0.75rem; min-width: 0; }}
+.group-line2 .bar-bg {{ flex: 1 1 auto; min-width: 0; }}
 .bar-bg {{ background: #21262d; border-radius: 6px; height: 10px; overflow: hidden; border: 1px solid #30363d; }}
-.bar-fg {{ height: 100%; background: linear-gradient(90deg, #238636, #2ea043); border-radius: 6px 0 0 6px; }}
-.group-pct {{ font-size: 0.8rem; color: #7d8590; margin-top: 0.35rem; text-align: right; }}
+.group-line2 .bar-fg {{ height: 100%; border-radius: 6px 0 0 6px; }}
+.group-pct {{ flex-shrink: 0; font-size: 0.8rem; font-weight: 600; }}
+.group-pct.pct-red {{ color: #f85149; }}
+.group-pct.pct-orange {{ color: #e3b341; }}
+.group-pct.pct-blue {{ color: #79c0ff; }}
+.group-pct.pct-green {{ color: #3fb950; }}
 </style>
 </head>
 <body>
-<h1>Grit test dashboard</h1>
-<p class="sub">Generated {html.escape(gen_time)} · {html.escape(sha)} · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
+<h1>Grit Project Progress</h1>
+<p class="sub">Generated {time_el} · {sha_l} · <a href="testfiles.html" style="color:#58a6ff">All test files</a></p>
 
 <div class="cards">
+  <div class="card accent"><div class="n">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
+  <div class="card"><div class="n">{total_tests:,}</div><div class="lbl">Tests (total)</div></div>
   <div class="card"><div class="n">{file_count:,}</div><div class="lbl">Test files (in scope)</div></div>
   <div class="card accent"><div class="n">{full_files:,}</div><div class="lbl">Files fully passing</div></div>
-  <div class="card"><div class="n">{total_tests:,}</div><div class="lbl">Tests (total)</div></div>
-  <div class="card accent"><div class="n">{total_pass:,}</div><div class="lbl">Tests passed</div></div>
-  <div class="card"><div class="n">{pass_rate}%</div><div class="lbl">Tests passing</div></div>
   <div class="card"><div class="n">{len(skipped):,}</div><div class="lbl">Manually skipped files</div></div>
+</div>
+<div class="overall-progress" aria-label="Overall test pass rate">
+  <div class="overall-progress-head">
+    <span class="overall-progress-label">Tests passing (overall)</span>
+    <span class="overall-progress-pct {overall_band}">{pass_rate}%</span>
+  </div>
+  <div class="bar-bg overall-bar-bg"><div class="bar-fg {overall_band}" style="width:{pass_rate}%"></div></div>
 </div>
 
 <h2>Groups</h2>
 <p class="sub" style="margin-bottom:1rem">Click a group for per-file detail. Counts exclude manually skipped files.</p>
 {group_html}
+{RELATIVE_TIME_JS}
 </body>
 </html>
 """
@@ -199,8 +368,10 @@ h2 {{ font-size: 1.1rem; margin-bottom: 1rem; color: #f0f6fc; }}
 
 def generate_testfiles(rows: list[dict[str, str]]) -> str:
     now = datetime.now(timezone.utc)
-    gen_time = now.strftime("%Y-%m-%d %H:%M UTC")
+    sha_full = git_full_sha()
     sha = git_short_sha()
+    time_el = generated_time_element(now)
+    sha_l = sha_link_html(sha, sha_full)
 
     in_scope = [r for r in rows if r.get("in_scope", "yes").strip().lower() != "skip"]
     skipped_rows = [r for r in rows if r.get("in_scope", "yes").strip().lower() == "skip"]
@@ -278,6 +449,7 @@ body {{
 }}
 h1 {{ font-size: 1.5rem; margin-bottom: 0.25rem; }}
 .sub {{ color: #7d8590; margin-bottom: 1.25rem; font-size: 0.9rem; }}
+.sub time.gen-time {{ color: inherit; }}
 a {{ color: #58a6ff; text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
 .toolbar {{ display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }}
@@ -345,7 +517,7 @@ tr.row-skip td {{ opacity: 0.65; }}
 </head>
 <body>
 <h1>Test files</h1>
-<p class="sub"><a href="index.html">Dashboard</a> · {html.escape(gen_time)} · {html.escape(sha)}</p>
+<p class="sub"><a href="index.html">Dashboard</a> · {time_el} · {sha_l}</p>
 
 <div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for visible in-scope rows" aria-live="polite">
   <div class="card"><div class="n" id="sum-files">{file_count:,}</div><div class="lbl">Files in scope</div></div>
@@ -432,6 +604,7 @@ tr.row-skip td {{ opacity: 0.65; }}
   apply();
 }})();
 </script>
+{RELATIVE_TIME_JS}
 </body>
 </html>
 """

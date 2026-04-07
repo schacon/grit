@@ -45,6 +45,8 @@ pub mod rev_parse;
 pub mod state;
 pub mod stripspace;
 pub mod unpack_objects;
+#[cfg(unix)]
+pub mod unix_process;
 pub mod userdiff;
 pub mod wildmatch;
 pub mod write_tree;

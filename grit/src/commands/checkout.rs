@@ -1084,7 +1084,9 @@ fn force_reset_to_tree(repo: &Repository, target_tree: &ObjectId) -> Result<()> 
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
+        write_blob_to_worktree(
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+        )?;
     }
 
     new_index
@@ -1118,7 +1120,28 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
             continue;
         }
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(repo, &work_tree, &path_str, &entry.oid, entry.mode)?;
+        write_blob_to_worktree(
+            repo, &work_tree, &path_str, &entry.oid, entry.mode, &new_index,
+        )?;
+    }
+
+    // Refresh stat cache so `git diff` agrees with the index (t0020: checkout -f).
+    for entry in &mut new_index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        let path_str = String::from_utf8_lossy(&entry.path);
+        let abs = work_tree.join(path_str.as_ref());
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            use std::os::unix::fs::MetadataExt as _;
+            entry.ctime_sec = meta.ctime() as u32;
+            entry.ctime_nsec = meta.ctime_nsec() as u32;
+            entry.mtime_sec = meta.mtime() as u32;
+            entry.mtime_nsec = meta.mtime_nsec() as u32;
+            entry.dev = meta.dev() as u32;
+            entry.ino = meta.ino() as u32;
+            entry.size = meta.size() as u32;
+        }
     }
 
     // Write the new index
@@ -1346,7 +1369,7 @@ fn check_dirty_worktree(
         }
 
         // Read the current worktree file and compare with index blob
-        if is_worktree_dirty(repo, old_entry, &abs_path)? {
+        if is_worktree_dirty(repo, old_index, work_tree, old_entry, &abs_path)? {
             would_overwrite.push(rel_path.into_owned());
         }
     }
@@ -1570,8 +1593,13 @@ fn check_dirty_worktree(
 }
 
 /// Check if a working tree file differs from its index entry.
+///
+/// Compares the clean (CRLF-normalized) hash of the worktree file to the
+/// staged blob OID, matching Git when `core.autocrlf` / `.gitattributes` apply.
 fn is_worktree_dirty(
     repo: &Repository,
+    index: &Index,
+    work_tree: &std::path::Path,
     entry: &IndexEntry,
     abs_path: &std::path::Path,
 ) -> Result<bool> {
@@ -1586,14 +1614,21 @@ fn is_worktree_dirty(
             Err(_) => Ok(true),
         }
     } else {
-        // For regular files, compare content
-        match std::fs::read(abs_path) {
-            Ok(data) => {
-                let obj = repo.odb.read(&entry.oid)?;
-                Ok(data != obj.data)
-            }
-            Err(_) => Ok(true),
-        }
+        let raw = match std::fs::read(abs_path) {
+            Ok(data) => data,
+            Err(_) => return Ok(true),
+        };
+        let rel = String::from_utf8_lossy(&entry.path);
+        let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+        let conv = crlf::ConversionConfig::from_config(&config);
+        let rules =
+            crlf::load_gitattributes_for_checkout(work_tree, rel.as_ref(), index, &repo.odb);
+        let file_attrs = crlf::get_file_attrs(&rules, rel.as_ref(), &config);
+        let oid = match crlf::convert_to_git(&raw, rel.as_ref(), &conv, &file_attrs) {
+            Ok(cleaned) => grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &cleaned),
+            Err(_) => grit_lib::odb::Odb::hash_object_data(ObjectKind::Blob, &raw),
+        };
+        Ok(oid != entry.oid)
     }
 }
 
@@ -1635,7 +1670,7 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if glob_matches(&rel, &p) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
+                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
                             matched = true;
                         }
                     }
@@ -1657,11 +1692,11 @@ fn checkout_paths(
                             continue;
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
-                        write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
+                        write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
                     }
                 } else if let Some(entry) = index.get(path_bytes, 0) {
                     // Exact file match
-                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode)?;
+                    write_blob_to_worktree(repo, work_tree, &rel, &entry.oid, entry.mode, &index)?;
                 } else if merge_mode {
                     let stage1 = index.get(path_bytes, 1).cloned();
                     let stage2 = index.get(path_bytes, 2).cloned();
@@ -1691,7 +1726,7 @@ fn checkout_paths(
                         }
                         let p = String::from_utf8_lossy(&ie.path).to_string();
                         if p.starts_with(&prefix) {
-                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode)?;
+                            write_blob_to_worktree(repo, work_tree, &p, &ie.oid, ie.mode, &index)?;
                             matched = true;
                         }
                     }
@@ -1739,6 +1774,7 @@ fn checkout_paths(
                             &entry_path,
                             &flat_entry.oid,
                             flat_entry.mode,
+                            &index,
                         )?;
                         index.add_or_replace(flat_entry.clone());
                         index_modified = true;
@@ -1822,6 +1858,7 @@ fn checkout_paths(
                             &entry_path,
                             &flat_entry.oid,
                             flat_entry.mode,
+                            &index,
                         )?;
                         index.add_or_replace(flat_entry.clone());
                         index_modified = true;
@@ -1892,7 +1929,7 @@ fn checkout_paths(
                     })?;
 
                     // Write to working tree with CRLF conversion
-                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode)?;
+                    write_blob_to_worktree(repo, work_tree, &rel, &blob_oid, mode, &index)?;
 
                     // Read blob size for index entry
                     let obj = repo
@@ -2671,7 +2708,9 @@ fn checkout_index_to_worktree(
         }
 
         let path_str = String::from_utf8_lossy(&entry.path).into_owned();
-        write_blob_to_worktree(repo, work_tree, &path_str, &entry.oid, entry.mode)?;
+        write_blob_to_worktree(
+            repo, work_tree, &path_str, &entry.oid, entry.mode, new_index,
+        )?;
     }
 
     Ok(())
@@ -2684,6 +2723,7 @@ fn write_blob_to_worktree(
     rel_path: &str,
     oid: &ObjectId,
     mode: u32,
+    index: &Index,
 ) -> Result<()> {
     let obj = repo.odb.read(oid).context("reading object for checkout")?;
     if obj.kind != ObjectKind::Blob {
@@ -2694,13 +2734,7 @@ fn write_blob_to_worktree(
     let data = if mode != MODE_SYMLINK {
         let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
         let conv = crlf::ConversionConfig::from_config(&config);
-        let mut attrs = crlf::load_gitattributes(work_tree);
-        if attrs.is_empty() {
-            // Try loading from the index (during checkout when worktree may not have .gitattributes yet)
-            if let Ok(idx) = Index::load(&repo.index_path()) {
-                attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
-            }
-        }
+        let attrs = crlf::load_gitattributes_for_checkout(work_tree, rel_path, index, &repo.odb);
         let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
         let oid_hex = format!("{oid}");
         crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))

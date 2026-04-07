@@ -44,9 +44,9 @@ These are intentional: child processes run the **same** `grit` binary for sub-op
 
 ### Entire command had no native body (now errors)
 
-- [ ] **`gc`** — Garbage collection (`grit gc` currently `not implemented`).
-- [ ] **`repack`** — Repack objects (`grit repack` stub).
-- [ ] **`multi-pack-index`** — MIDX write/verify/repack/compact.
+- [~] **`gc`** — **prune-packed**, **pack-refs**, **`repack -d -l`**, **`gc.reflogExpire`**, **`gc.reflogExpireUnreachable`** (via `grit_lib::reflog` + `merge_base::ancestor_closure`), **`gc.pid`** (Git-style host + `kill(pid,0)` stale checks), **`gc.writeCommitGraph`** → **`commit-graph write`**; **`--auto`** + **`pre-auto-gc`**. Missing: cruft / **keep-largest-pack** parity, **`--aggressive`** repack tuning.
+- [~] **`repack`** — Invokes **`grit pack-objects --all`** into `objects/pack`; **`-d`** removes other `pack-*.pack` / `.idx` (honours **`pack-*.keep`**) and refreshes **`objects/info/packs`**.
+- [~] **`multi-pack-index`** — **`verify`** checks `objects/pack/multi-pack-index` header (signature, version, hash id). **`write` / `repack` / `compact`** not implemented.
 - [ ] **`fast-import`** / **`fast-export`** — Stream formats.
 
 ### Gaps (still explicit errors or partial)
@@ -62,7 +62,7 @@ These are intentional: child processes run the **same** `grit` binary for sub-op
 ### Suggested order (highest leverage first)
 
 1. **`rm` pathspec gaps** — unblocks many porcelain tests without new storage features.
-2. **`gc` / `repack`** — compose existing pack/prune pieces in `grit-lib` where they exist; add missing primitives incrementally.
+2. **`gc` / `repack` (deepen)** — **cruft** / **keep-largest-pack**, **`--aggressive`** repack tuning (done: **`gc.reflogExpireUnreachable`**, **`gc.pid`**).
 3. **`switch` parity** — builds on `checkout` and config.
 4. **`fast-import` / `fast-export`** — large surface area; schedule after core object workflows are solid.
 

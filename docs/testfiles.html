@@ -16,6 +16,7 @@ body {
 }
 h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 .sub { color: #7d8590; margin-bottom: 1.25rem; font-size: 0.9rem; }
+.sub time.gen-time { color: inherit; }
 a { color: #58a6ff; text-decoration: none; }
 a:hover { text-decoration: underline; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
@@ -83,13 +84,13 @@ tr.row-skip td { opacity: 0.65; }
 </head>
 <body>
 <h1>Test files</h1>
-<p class="sub"><a href="index.html">Dashboard</a> · 2026-04-07 13:00 UTC · fc97d4e</p>
+<p class="sub"><a href="index.html">Dashboard</a> · <time datetime="2026-04-07T13:41:38+00:00" class="gen-time" title="2026-04-07 13:41 UTC">2026-04-07 13:41 UTC</time> · <a href="https://github.com/schacon/grit/commit/456be1040a36b1f31843f999014ef6f3166486b3" style="color:#58a6ff">456be10</a></p>
 
 <div class="summary-cards" id="summaryCards" aria-label="Aggregate counts for visible in-scope rows" aria-live="polite">
   <div class="card"><div class="n" id="sum-files">1,404</div><div class="lbl">Files in scope</div></div>
-  <div class="card"><div class="n" id="sum-tests">43,671</div><div class="lbl">Unskipped tests</div></div>
-  <div class="card accent"><div class="n" id="sum-passed">28,736</div><div class="lbl">Tests passed</div></div>
-  <div class="card accent"><div class="n" id="sum-pct">65.8%</div><div class="lbl">Pass rate</div></div>
+  <div class="card"><div class="n" id="sum-tests">43,879</div><div class="lbl">Unskipped tests</div></div>
+  <div class="card accent"><div class="n" id="sum-passed">28,600</div><div class="lbl">Tests passed</div></div>
+  <div class="card accent"><div class="n" id="sum-pct">65.2%</div><div class="lbl">Pass rate</div></div>
 </div>
 <p class="summary-note" id="summaryNote"></p>
 
@@ -366,12 +367,12 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t0" data-tests="2600" data-passed="1237">
+<tr class="" data-group="t0" data-tests="2600" data-passed="1238">
   <td class="mono">t0027-auto-crlf</td>
   <td>t0</td>
   <td></td>
   <td class="right">2600</td>
-  <td class="right">1237</td>
+  <td class="right">1238</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:47.6%"></div></div></td>
   <td class="right small">0</td>
@@ -616,14 +617,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t0" data-tests="4" data-passed="2">
+<tr class="" data-group="t0" data-tests="4" data-passed="4">
   <td class="mono">t0081-find-pack</td>
   <td>t0</td>
-  <td></td>
+  <td><span class="badge ok">full pass</span></td>
   <td class="right">4</td>
-  <td class="right">2</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t0" data-tests="22" data-passed="0">
@@ -866,14 +867,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:28.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t0" data-tests="515" data-passed="366">
+<tr class="" data-group="t0" data-tests="548" data-passed="366">
   <td class="mono">t0450-txt-doc-vs-help</td>
   <td>t0</td>
   <td></td>
-  <td class="right">515</td>
+  <td class="right">548</td>
   <td class="right">366</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:71.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t0" data-tests="16" data-passed="0">
@@ -1056,14 +1057,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="290" data-passed="233">
+<tr class="" data-group="t1" data-tests="291" data-passed="238">
   <td class="mono">t1006-cat-file</td>
   <td>t1</td>
   <td></td>
-  <td class="right">290</td>
-  <td class="right">233</td>
+  <td class="right">291</td>
+  <td class="right">238</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:80.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:81.8%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t1" data-tests="34" data-passed="33">
@@ -1086,14 +1087,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:77.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="33" data-passed="9">
+<tr class="" data-group="t1" data-tests="33" data-passed="33">
   <td class="mono">t10070-cat-file-batch-format</td>
   <td>t1</td>
-  <td></td>
+  <td><span class="badge ok">full pass</span></td>
   <td class="right">33</td>
-  <td class="right">9</td>
+  <td class="right">33</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:27.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t1" data-tests="2" data-passed="2">
@@ -1196,11 +1197,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="58" data-passed="0">
+<tr class="" data-group="t1" data-tests="68" data-passed="0">
   <td class="mono">t1013-read-tree-submodule</td>
   <td>t1</td>
   <td></td>
-  <td class="right">58</td>
+  <td class="right">68</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -1576,14 +1577,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="29" data-passed="12">
+<tr class="" data-group="t1" data-tests="29" data-passed="13">
   <td class="mono">t1050-large</td>
   <td>t1</td>
   <td></td>
   <td class="right">29</td>
-  <td class="right">12</td>
+  <td class="right">13</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:41.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:44.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t1" data-tests="33" data-passed="31">
@@ -1696,14 +1697,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="16" data-passed="12">
+<tr class="" data-group="t1" data-tests="17" data-passed="12">
   <td class="mono">t1060-object-corruption</td>
   <td>t1</td>
   <td></td>
-  <td class="right">16</td>
+  <td class="right">17</td>
   <td class="right">12</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:75.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:70.6%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t1" data-tests="35" data-passed="35">
@@ -2026,14 +2027,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="76" data-passed="9">
+<tr class="" data-group="t1" data-tests="77" data-passed="9">
   <td class="mono">t1091-sparse-checkout-builtin</td>
   <td>t1</td>
   <td></td>
-  <td class="right">76</td>
+  <td class="right">77</td>
   <td class="right">9</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.8%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.7%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t1" data-tests="35" data-passed="31">
@@ -2046,14 +2047,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:88.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="104" data-passed="1">
+<tr class="" data-group="t1" data-tests="106" data-passed="1">
   <td class="mono">t1092-sparse-checkout-compatibility</td>
   <td>t1</td>
   <td></td>
-  <td class="right">104</td>
+  <td class="right">106</td>
   <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:1.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.9%"></div></div></td>
   <td class="right small">3</td>
 </tr>
 <tr class="" data-group="t1" data-tests="29" data-passed="19">
@@ -3666,14 +3667,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:96.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="18" data-passed="16">
+<tr class="" data-group="t1" data-tests="18" data-passed="18">
   <td class="mono">t1302-repo-version</td>
   <td>t1</td>
-  <td></td>
+  <td><span class="badge ok">full pass</span></td>
   <td class="right">18</td>
-  <td class="right">16</td>
+  <td class="right">18</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:88.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t1" data-tests="30" data-passed="29">
@@ -3806,14 +3807,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:51.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="8" data-passed="1">
+<tr class="" data-group="t1" data-tests="10" data-passed="1">
   <td class="mono">t1309-early-config</td>
   <td>t1</td>
   <td></td>
-  <td class="right">8</td>
+  <td class="right">10</td>
   <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:12.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t1" data-tests="5" data-passed="5">
@@ -4236,14 +4237,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="40" data-passed="6">
+<tr class="" data-group="t1" data-tests="41" data-passed="6">
   <td class="mono">t1410-reflog</td>
   <td>t1</td>
   <td></td>
-  <td class="right">40</td>
+  <td class="right">41</td>
   <td class="right">6</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:15.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.6%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t1" data-tests="17" data-passed="8">
@@ -4376,14 +4377,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="40" data-passed="6">
+<tr class="" data-group="t1" data-tests="42" data-passed="6">
   <td class="mono">t1430-bad-ref-name</td>
   <td>t1</td>
   <td></td>
-  <td class="right">40</td>
+  <td class="right">42</td>
   <td class="right">6</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:15.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.3%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="row-skip" data-group="t1" data-tests="74" data-passed="0">
@@ -4396,14 +4397,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="31" data-passed="13">
+<tr class="" data-group="t1" data-tests="31" data-passed="29">
   <td class="mono">t1450-fsck-basic</td>
   <td>t1</td>
   <td></td>
   <td class="right">31</td>
-  <td class="right">13</td>
+  <td class="right">29</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:41.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:93.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t1" data-tests="10" data-passed="8">
@@ -4636,14 +4637,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t1" data-tests="181" data-passed="90">
+<tr class="" data-group="t1" data-tests="193" data-passed="90">
   <td class="mono">t1517-outside-repo</td>
   <td>t1</td>
   <td></td>
-  <td class="right">181</td>
+  <td class="right">193</td>
   <td class="right">90</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:49.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:46.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t1" data-tests="7" data-passed="5">
@@ -4846,14 +4847,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t2" data-tests="64" data-passed="4">
+<tr class="" data-group="t2" data-tests="74" data-passed="4">
   <td class="mono">t2013-checkout-submodule</td>
   <td>t2</td>
   <td></td>
-  <td class="right">64</td>
+  <td class="right">74</td>
   <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t2" data-tests="4" data-passed="4">
@@ -5406,14 +5407,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t2" data-tests="8" data-passed="4">
+<tr class="" data-group="t2" data-tests="10" data-passed="4">
   <td class="mono">t2500-untracked-overwriting</td>
   <td>t2</td>
   <td></td>
-  <td class="right">8</td>
+  <td class="right">10</td>
   <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t2" data-tests="24" data-passed="3">
@@ -5536,14 +5537,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="20" data-passed="14">
+<tr class="" data-group="t3" data-tests="21" data-passed="14">
   <td class="mono">t3011-common-prefixes-and-directory-traversal</td>
   <td>t3</td>
   <td></td>
-  <td class="right">20</td>
+  <td class="right">21</td>
   <td class="right">14</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:70.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t3" data-tests="29" data-passed="28">
@@ -6026,14 +6027,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:53.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="8" data-passed="4">
+<tr class="" data-group="t3" data-tests="10" data-passed="4">
   <td class="mono">t3401-rebase-and-am-rename</td>
   <td>t3</td>
   <td></td>
-  <td class="right">8</td>
+  <td class="right">10</td>
   <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t3" data-tests="32" data-passed="32">
@@ -6206,14 +6207,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="63" data-passed="7">
+<tr class="" data-group="t3" data-tests="64" data-passed="7">
   <td class="mono">t3421-rebase-topology-linear</td>
   <td>t3</td>
   <td></td>
-  <td class="right">63</td>
+  <td class="right">64</td>
   <td class="right">7</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.9%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t3" data-tests="52" data-passed="37">
@@ -6236,14 +6237,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="19" data-passed="2">
+<tr class="" data-group="t3" data-tests="20" data-passed="2">
   <td class="mono">t3424-rebase-empty</td>
   <td>t3</td>
   <td></td>
-  <td class="right">19</td>
+  <td class="right">20</td>
   <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t3" data-tests="13" data-passed="1">
@@ -6256,11 +6257,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:7.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="25" data-passed="0">
+<tr class="" data-group="t3" data-tests="29" data-passed="0">
   <td class="mono">t3426-rebase-submodule</td>
   <td>t3</td>
   <td></td>
-  <td class="right">25</td>
+  <td class="right">29</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -6316,14 +6317,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:26.9%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="219" data-passed="213">
+<tr class="" data-group="t3" data-tests="225" data-passed="213">
   <td class="mono">t3432-rebase-fast-forward</td>
   <td>t3</td>
   <td></td>
-  <td class="right">219</td>
+  <td class="right">225</td>
   <td class="right">213</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:97.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:94.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t3" data-tests="4" data-passed="4">
@@ -6516,14 +6517,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="44" data-passed="11">
+<tr class="" data-group="t3" data-tests="44" data-passed="12">
   <td class="mono">t3507-cherry-pick-conflict</td>
   <td>t3</td>
   <td></td>
   <td class="right">44</td>
-  <td class="right">11</td>
+  <td class="right">12</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:25.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:27.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t3" data-tests="14" data-passed="8">
@@ -6576,21 +6577,21 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:45.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="13" data-passed="0">
+<tr class="" data-group="t3" data-tests="15" data-passed="0">
   <td class="mono">t3512-cherry-pick-submodule</td>
   <td>t3</td>
   <td></td>
-  <td class="right">13</td>
+  <td class="right">15</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="12" data-passed="0">
+<tr class="" data-group="t3" data-tests="14" data-passed="0">
   <td class="mono">t3513-revert-submodule</td>
   <td>t3</td>
   <td></td>
-  <td class="right">12</td>
+  <td class="right">14</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -6796,11 +6797,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:35.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t3" data-tests="6" data-passed="0">
+<tr class="" data-group="t3" data-tests="16" data-passed="0">
   <td class="mono">t3906-stash-submodule</td>
   <td>t3</td>
   <td></td>
-  <td class="right">6</td>
+  <td class="right">16</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -7286,14 +7287,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="25" data-passed="5">
+<tr class="" data-group="t4" data-tests="26" data-passed="5">
   <td class="mono">t4038-diff-combined</td>
   <td>t4</td>
   <td></td>
-  <td class="right">25</td>
+  <td class="right">26</td>
   <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:19.2%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t4" data-tests="4" data-passed="2">
@@ -7356,14 +7357,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="38" data-passed="17">
+<tr class="" data-group="t4" data-tests="39" data-passed="17">
   <td class="mono">t4045-diff-relative</td>
   <td>t4</td>
   <td></td>
-  <td class="right">38</td>
+  <td class="right">39</td>
   <td class="right">17</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:44.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:43.6%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t4" data-tests="8" data-passed="3">
@@ -7516,14 +7517,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="14" data-passed="8">
+<tr class="" data-group="t4" data-tests="16" data-passed="8">
   <td class="mono">t4058-diff-duplicates</td>
   <td>t4</td>
   <td></td>
-  <td class="right">14</td>
+  <td class="right">16</td>
   <td class="right">8</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:57.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t4" data-tests="8" data-passed="1">
@@ -7696,14 +7697,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="50" data-passed="47">
+<tr class="" data-group="t4" data-tests="76" data-passed="47">
   <td class="mono">t4072-diff-max-depth</td>
   <td>t4</td>
   <td></td>
-  <td class="right">50</td>
+  <td class="right">76</td>
   <td class="right">47</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:94.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:61.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t4" data-tests="6" data-passed="4">
@@ -8176,14 +8177,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="19" data-passed="2">
+<tr class="" data-group="t4" data-tests="20" data-passed="2">
   <td class="mono">t4135-apply-weird-filenames</td>
   <td>t4</td>
   <td></td>
-  <td class="right">19</td>
+  <td class="right">20</td>
   <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t4" data-tests="6" data-passed="3">
@@ -8196,11 +8197,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="24" data-passed="0">
+<tr class="" data-group="t4" data-tests="28" data-passed="0">
   <td class="mono">t4137-apply-submodule</td>
   <td>t4</td>
   <td></td>
-  <td class="right">24</td>
+  <td class="right">28</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -8366,14 +8367,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="123" data-passed="66">
+<tr class="" data-group="t4" data-tests="125" data-passed="66">
   <td class="mono">t4205-log-pretty-formats</td>
   <td>t4</td>
   <td></td>
-  <td class="right">123</td>
+  <td class="right">125</td>
   <td class="right">66</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:53.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:52.8%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t4" data-tests="26" data-passed="26">
@@ -8596,11 +8597,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t4" data-tests="29" data-passed="0">
+<tr class="" data-group="t4" data-tests="33" data-passed="0">
   <td class="mono">t4255-am-submodule</td>
   <td>t4</td>
   <td></td>
-  <td class="right">29</td>
+  <td class="right">33</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -8656,14 +8657,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="90" data-passed="40">
+<tr class="" data-group="t5" data-tests="90" data-passed="46">
   <td class="mono">t5000-tar-tree</td>
   <td>t5</td>
   <td></td>
   <td class="right">90</td>
-  <td class="right">40</td>
+  <td class="right">46</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:44.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:51.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="5" data-passed="4">
@@ -8676,14 +8677,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:80.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="44" data-passed="26">
+<tr class="" data-group="t5" data-tests="44" data-passed="27">
   <td class="mono">t5001-archive-attr</td>
   <td>t5</td>
   <td></td>
   <td class="right">44</td>
-  <td class="right">26</td>
+  <td class="right">27</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:59.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:61.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="19" data-passed="5">
@@ -8746,14 +8747,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="8" data-passed="5">
+<tr class="" data-group="t5" data-tests="8" data-passed="6">
   <td class="mono">t5200-update-server-info</td>
   <td>t5</td>
   <td></td>
   <td class="right">8</td>
-  <td class="right">5</td>
+  <td class="right">6</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:62.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:75.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="63" data-passed="29">
@@ -8806,14 +8807,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:94.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="25" data-passed="5">
+<tr class="" data-group="t5" data-tests="25" data-passed="20">
   <td class="mono">t5303-pack-corruption</td>
   <td>t5</td>
   <td></td>
   <td class="right">25</td>
-  <td class="right">5</td>
+  <td class="right">20</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:80.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="36" data-passed="22">
@@ -8826,14 +8827,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:61.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="32" data-passed="8">
+<tr class="" data-group="t5" data-tests="32" data-passed="9">
   <td class="mono">t5304-prune</td>
   <td>t5</td>
   <td></td>
   <td class="right">32</td>
-  <td class="right">8</td>
+  <td class="right">9</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:25.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:28.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="20" data-passed="18">
@@ -8936,14 +8937,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:22.2%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="2" data-passed="0">
+<tr class="" data-group="t5" data-tests="2" data-passed="1">
   <td class="mono">t5314-pack-cycle-detection</td>
   <td>t5</td>
   <td></td>
   <td class="right">2</td>
-  <td class="right">0</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="9" data-passed="1">
@@ -8996,14 +8997,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="98" data-passed="9">
+<tr class="" data-group="t5" data-tests="98" data-passed="11">
   <td class="mono">t5319-multi-pack-index</td>
   <td>t5</td>
   <td></td>
   <td class="right">98</td>
-  <td class="right">9</td>
+  <td class="right">11</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:9.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.2%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="15" data-passed="5">
@@ -9066,14 +9067,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.2%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="357" data-passed="97">
+<tr class="" data-group="t5" data-tests="357" data-passed="85">
   <td class="mono">t5326-multi-pack-bitmaps</td>
   <td>t5</td>
   <td></td>
   <td class="right">357</td>
-  <td class="right">97</td>
+  <td class="right">85</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:27.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:23.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="314" data-passed="80">
@@ -9096,14 +9097,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="25" data-passed="2">
+<tr class="" data-group="t5" data-tests="25" data-passed="1">
   <td class="mono">t5329-pack-objects-cruft</td>
   <td>t5</td>
   <td></td>
   <td class="right">25</td>
-  <td class="right">2</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:8.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:4.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="4" data-passed="4">
@@ -9146,14 +9147,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="16" data-passed="5">
+<tr class="" data-group="t5" data-tests="16" data-passed="4">
   <td class="mono">t5334-incremental-multi-pack-index</td>
   <td>t5</td>
   <td></td>
   <td class="right">16</td>
-  <td class="right">5</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:31.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:25.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="10" data-passed="0">
@@ -9346,14 +9347,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="129" data-passed="19">
+<tr class="" data-group="t5" data-tests="130" data-passed="19">
   <td class="mono">t5505-remote</td>
   <td>t5</td>
   <td></td>
-  <td class="right">129</td>
+  <td class="right">130</td>
   <td class="right">19</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.6%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t5" data-tests="9" data-passed="1">
@@ -9386,14 +9387,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:13.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="215" data-passed="79">
+<tr class="" data-group="t5" data-tests="215" data-passed="78">
   <td class="mono">t5510-fetch</td>
   <td>t5</td>
   <td></td>
   <td class="right">215</td>
-  <td class="right">79</td>
+  <td class="right">78</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:36.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:36.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="47" data-passed="24">
@@ -9556,14 +9557,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="56" data-passed="5">
+<tr class="" data-group="t5" data-tests="56" data-passed="0">
   <td class="mono">t5526-fetch-submodules</td>
   <td>t5</td>
   <td></td>
   <td class="right">56</td>
-  <td class="right">5</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:8.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="5" data-passed="5">
@@ -9576,14 +9577,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="31" data-passed="13">
+<tr class="" data-group="t5" data-tests="32" data-passed="13">
   <td class="mono">t5528-push-default</td>
   <td>t5</td>
   <td></td>
-  <td class="right">31</td>
+  <td class="right">32</td>
   <td class="right">13</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:41.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.6%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t5" data-tests="8" data-passed="8">
@@ -9696,14 +9697,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:25.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="8" data-passed="7">
+<tr class="" data-group="t5" data-tests="8" data-passed="1">
   <td class="mono">t5539-fetch-http-shallow</td>
   <td>t5</td>
   <td></td>
   <td class="right">8</td>
-  <td class="right">7</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:87.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:12.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="12" data-passed="9">
@@ -9756,14 +9757,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="3" data-passed="3">
+<tr class="" data-group="t5" data-tests="3" data-passed="1">
   <td class="mono">t5542-push-http-shallow</td>
   <td>t5</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="13" data-passed="7">
@@ -9786,14 +9787,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:28.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="13" data-passed="8">
+<tr class="" data-group="t5" data-tests="13" data-passed="5">
   <td class="mono">t5545-push-options</td>
   <td>t5</td>
   <td></td>
   <td class="right">13</td>
-  <td class="right">8</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:61.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:38.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="17" data-passed="14">
@@ -9826,14 +9827,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="3" data-passed="3">
+<tr class="" data-group="t5" data-tests="3" data-passed="0">
   <td class="mono">t5549-fetch-push-http</td>
   <td>t5</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t5" data-tests="57" data-passed="0">
@@ -10006,14 +10007,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:45.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="61" data-passed="1">
+<tr class="" data-group="t5" data-tests="69" data-passed="1">
   <td class="mono">t5572-pull-submodule</td>
   <td>t5</td>
   <td></td>
-  <td class="right">61</td>
+  <td class="right">69</td>
   <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:1.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:1.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t5" data-tests="16" data-passed="0">
@@ -10056,14 +10057,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="16" data-passed="7">
+<tr class="" data-group="t5" data-tests="16" data-passed="1">
   <td class="mono">t5582-fetch-negative-refspec</td>
   <td>t5</td>
   <td></td>
   <td class="right">16</td>
-  <td class="right">7</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:43.8%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.2%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="8" data-passed="8">
@@ -10086,14 +10087,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="115" data-passed="26">
+<tr class="" data-group="t5" data-tests="115" data-passed="21">
   <td class="mono">t5601-clone</td>
   <td>t5</td>
   <td></td>
   <td class="right">115</td>
-  <td class="right">26</td>
+  <td class="right">21</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:22.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:18.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="3" data-passed="3">
@@ -10236,14 +10237,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="47" data-passed="11">
+<tr class="" data-group="t5" data-tests="47" data-passed="10">
   <td class="mono">t5616-partial-clone</td>
   <td>t5</td>
   <td></td>
   <td class="right">47</td>
-  <td class="right">11</td>
+  <td class="right">10</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:23.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:21.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="9" data-passed="2">
@@ -10296,14 +10297,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:25.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="24" data-passed="9">
+<tr class="" data-group="t5" data-tests="24" data-passed="4">
   <td class="mono">t5700-protocol-v1</td>
   <td>t5</td>
   <td></td>
   <td class="right">24</td>
-  <td class="right">9</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:37.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:16.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="25" data-passed="25">
@@ -10316,24 +10317,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="85" data-passed="27">
+<tr class="" data-group="t5" data-tests="85" data-passed="10">
   <td class="mono">t5702-protocol-v2</td>
   <td>t5</td>
   <td></td>
   <td class="right">85</td>
-  <td class="right">27</td>
+  <td class="right">10</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:31.8%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="26" data-passed="5">
+<tr class="" data-group="t5" data-tests="26" data-passed="4">
   <td class="mono">t5703-upload-pack-ref-in-want</td>
   <td>t5</td>
   <td></td>
   <td class="right">26</td>
-  <td class="right">5</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:19.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:15.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="3" data-passed="0">
@@ -10386,14 +10387,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:12.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="9" data-passed="6">
+<tr class="" data-group="t5" data-tests="9" data-passed="3">
   <td class="mono">t5732-protocol-v2-bundle-uri-http</td>
   <td>t5</td>
   <td></td>
   <td class="right">9</td>
-  <td class="right">6</td>
+  <td class="right">3</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="13" data-passed="0">
@@ -10446,14 +10447,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:34.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="29" data-passed="20">
+<tr class="" data-group="t5" data-tests="29" data-passed="11">
   <td class="mono">t5812-proto-disable-http</td>
   <td>t5</td>
   <td></td>
   <td class="right">29</td>
-  <td class="right">20</td>
+  <td class="right">11</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:69.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:37.9%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="81" data-passed="30">
@@ -10476,14 +10477,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t5" data-tests="8" data-passed="8">
+<tr class="" data-group="t5" data-tests="8" data-passed="5">
   <td class="mono">t5815-submodule-protos</td>
   <td>t5</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">8</td>
-  <td class="right">8</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:62.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t5" data-tests="8" data-passed="0">
@@ -10586,14 +10587,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:93.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="2" data-passed="2">
+<tr class="" data-group="t6" data-tests="2" data-passed="0">
   <td class="mono">t6008-rev-list-submodule</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">2</td>
-  <td class="right">2</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="15" data-passed="15">
@@ -10616,14 +10617,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="6" data-passed="6">
+<tr class="" data-group="t6" data-tests="6" data-passed="4">
   <td class="mono">t6011-rev-list-with-bad-commit</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">6</td>
-  <td class="right">6</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="28" data-passed="25">
@@ -10636,14 +10637,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:89.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="42" data-passed="1">
+<tr class="" data-group="t6" data-tests="42" data-passed="0">
   <td class="mono">t6012-rev-list-simplify</td>
   <td>t6</td>
   <td></td>
   <td class="right">42</td>
-  <td class="right">1</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:2.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="3" data-passed="2">
@@ -10766,11 +10767,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="12" data-passed="0">
+<tr class="" data-group="t6" data-tests="14" data-passed="0">
   <td class="mono">t6041-bisect-submodule</td>
   <td>t6</td>
   <td></td>
-  <td class="right">12</td>
+  <td class="right">14</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -10806,14 +10807,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="38" data-passed="24">
+<tr class="" data-group="t6" data-tests="38" data-passed="25">
   <td class="mono">t6101-rev-parse-parents</td>
   <td>t6</td>
   <td></td>
   <td class="right">38</td>
-  <td class="right">24</td>
+  <td class="right">25</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:63.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:65.8%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="22" data-passed="19">
@@ -10836,14 +10837,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="65" data-passed="0">
+<tr class="" data-group="t6" data-tests="65" data-passed="5">
   <td class="mono">t6111-rev-list-treesame</td>
   <td>t6</td>
   <td></td>
   <td class="right">65</td>
-  <td class="right">0</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:7.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="54" data-passed="18">
@@ -10866,14 +10867,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="3" data-passed="3">
+<tr class="" data-group="t6" data-tests="3" data-passed="2">
   <td class="mono">t6114-keep-packs</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="17" data-passed="17">
@@ -10886,14 +10887,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="103" data-passed="29">
+<tr class="" data-group="t6" data-tests="105" data-passed="29">
   <td class="mono">t6120-describe</td>
   <td>t6</td>
   <td></td>
-  <td class="right">103</td>
+  <td class="right">105</td>
   <td class="right">29</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:28.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:27.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="41" data-passed="41">
@@ -10956,14 +10957,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="3" data-passed="3">
+<tr class="" data-group="t6" data-tests="3" data-passed="0">
   <td class="mono">t6134-pathspec-in-submodule</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="32" data-passed="32">
@@ -11226,14 +11227,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="3" data-passed="3">
+<tr class="" data-group="t6" data-tests="3" data-passed="1">
   <td class="mono">t6413-merge-crlf</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="3" data-passed="3">
@@ -11246,24 +11247,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="24" data-passed="24">
+<tr class="" data-group="t6" data-tests="24" data-passed="22">
   <td class="mono">t6415-merge-dir-to-symlink</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">24</td>
-  <td class="right">24</td>
+  <td class="right">22</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:91.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="37" data-passed="14">
+<tr class="" data-group="t6" data-tests="40" data-passed="14">
   <td class="mono">t6416-recursive-corner-cases</td>
   <td>t6</td>
   <td></td>
-  <td class="right">37</td>
+  <td class="right">40</td>
   <td class="right">14</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:37.8%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:35.0%"></div></div></td>
   <td class="right small">3</td>
 </tr>
 <tr class="" data-group="t6" data-tests="7" data-passed="7">
@@ -11306,24 +11307,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="20" data-passed="8">
+<tr class="" data-group="t6" data-tests="26" data-passed="8">
   <td class="mono">t6422-merge-rename-corner-cases</td>
   <td>t6</td>
   <td></td>
-  <td class="right">20</td>
+  <td class="right">26</td>
   <td class="right">8</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:30.8%"></div></div></td>
   <td class="right small">6</td>
 </tr>
-<tr class="" data-group="t6" data-tests="80" data-passed="28">
+<tr class="" data-group="t6" data-tests="82" data-passed="28">
   <td class="mono">t6423-merge-rename-directories</td>
   <td>t6</td>
   <td></td>
-  <td class="right">80</td>
+  <td class="right">82</td>
   <td class="right">28</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:35.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:34.1%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t6" data-tests="19" data-passed="5">
@@ -11376,24 +11377,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="11" data-passed="11">
+<tr class="" data-group="t6" data-tests="11" data-passed="10">
   <td class="mono">t6429-merge-sequence-rename-caching</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">11</td>
-  <td class="right">11</td>
+  <td class="right">10</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:90.9%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="36" data-passed="12">
+<tr class="" data-group="t6" data-tests="36" data-passed="11">
   <td class="mono">t6430-merge-recursive</td>
   <td>t6</td>
   <td></td>
   <td class="right">36</td>
-  <td class="right">12</td>
+  <td class="right">11</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:30.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="6" data-passed="6">
@@ -11496,21 +11497,21 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="20" data-passed="3">
+<tr class="" data-group="t6" data-tests="22" data-passed="2">
   <td class="mono">t6437-submodule-merge</td>
   <td>t6</td>
   <td></td>
-  <td class="right">20</td>
-  <td class="right">3</td>
+  <td class="right">22</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:15.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:9.1%"></div></div></td>
   <td class="right small">2</td>
 </tr>
-<tr class="" data-group="t6" data-tests="48" data-passed="0">
+<tr class="" data-group="t6" data-tests="56" data-passed="0">
   <td class="mono">t6438-submodule-directory-file-conflicts</td>
   <td>t6</td>
   <td></td>
-  <td class="right">48</td>
+  <td class="right">56</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -11526,24 +11527,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="35" data-passed="3">
+<tr class="" data-group="t6" data-tests="35" data-passed="10">
   <td class="mono">t6500-gc</td>
   <td>t6</td>
   <td></td>
   <td class="right">35</td>
-  <td class="right">3</td>
+  <td class="right">10</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:8.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:28.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="42" data-passed="42">
+<tr class="" data-group="t6" data-tests="42" data-passed="33">
   <td class="mono">t6501-freshen-objects</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">42</td>
-  <td class="right">42</td>
+  <td class="right">33</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:78.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t6" data-tests="47" data-passed="12">
@@ -11566,24 +11567,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t6" data-tests="10" data-passed="10">
+<tr class="" data-group="t6" data-tests="10" data-passed="4">
   <td class="mono">t6700-tree-depth</td>
   <td>t6</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">10</td>
-  <td class="right">10</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="54" data-passed="43">
+<tr class="" data-group="t7" data-tests="54" data-passed="40">
   <td class="mono">t7001-mv</td>
   <td>t7</td>
   <td></td>
   <td class="right">54</td>
-  <td class="right">43</td>
+  <td class="right">40</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:79.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:74.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="22" data-passed="1">
@@ -12026,11 +12027,11 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:78.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="70" data-passed="0">
+<tr class="" data-group="t7" data-tests="82" data-passed="0">
   <td class="mono">t7112-reset-submodule</td>
   <td>t7</td>
   <td></td>
-  <td class="right">70</td>
+  <td class="right">82</td>
   <td class="right">0</td>
   <td class="right">ok</td>
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
@@ -12056,34 +12057,34 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:37.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="53" data-passed="26">
+<tr class="" data-group="t7" data-tests="55" data-passed="22">
   <td class="mono">t7300-clean</td>
   <td>t7</td>
   <td></td>
-  <td class="right">53</td>
-  <td class="right">26</td>
+  <td class="right">55</td>
+  <td class="right">22</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:49.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
   <td class="right small">2</td>
 </tr>
-<tr class="" data-group="t7" data-tests="23" data-passed="8">
+<tr class="" data-group="t7" data-tests="23" data-passed="5">
   <td class="mono">t7301-clean-interactive</td>
   <td>t7</td>
   <td></td>
   <td class="right">23</td>
-  <td class="right">8</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:34.8%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:21.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="124" data-passed="38">
+<tr class="" data-group="t7" data-tests="124" data-passed="33">
   <td class="mono">t7400-submodule-basic</td>
   <td>t7</td>
   <td></td>
   <td class="right">124</td>
-  <td class="right">38</td>
+  <td class="right">33</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:30.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:26.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="25" data-passed="6">
@@ -12106,24 +12107,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="18" data-passed="2">
+<tr class="" data-group="t7" data-tests="18" data-passed="1">
   <td class="mono">t7403-submodule-sync</td>
   <td>t7</td>
   <td></td>
   <td class="right">18</td>
-  <td class="right">2</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="70" data-passed="8">
+<tr class="" data-group="t7" data-tests="70" data-passed="5">
   <td class="mono">t7406-submodule-update</td>
   <td>t7</td>
   <td></td>
   <td class="right">70</td>
-  <td class="right">8</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:7.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="23" data-passed="3">
@@ -12156,78 +12157,68 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="20" data-passed="4">
+<tr class="" data-group="t7" data-tests="20" data-passed="2">
   <td class="mono">t7411-submodule-config</td>
   <td>t7</td>
   <td></td>
   <td class="right">20</td>
-  <td class="right">4</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="12" data-passed="4">
+<tr class="" data-group="t7" data-tests="12" data-passed="5">
   <td class="mono">t7412-submodule-absorbgitdirs</td>
   <td>t7</td>
   <td></td>
   <td class="right">12</td>
-  <td class="right">4</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:41.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="10" data-passed="2">
+<tr class="" data-group="t7" data-tests="10" data-passed="1">
   <td class="mono">t7413-submodule-is-active</td>
   <td>t7</td>
   <td></td>
   <td class="right">10</td>
-  <td class="right">2</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:10.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="5" data-passed="5">
+<tr class="" data-group="t7" data-tests="5" data-passed="4">
   <td class="mono">t7414-submodule-mistakes</td>
   <td>t7</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">5</td>
-  <td class="right">5</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:80.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="18" data-passed="4">
+<tr class="" data-group="t7" data-tests="18" data-passed="3">
   <td class="mono">t7416-submodule-dash-url</td>
   <td>t7</td>
   <td></td>
   <td class="right">18</td>
-  <td class="right">4</td>
+  <td class="right">3</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:22.2%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:16.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="5" data-passed="3">
+<tr class="" data-group="t7" data-tests="5" data-passed="2">
   <td class="mono">t7417-submodule-path-url</td>
   <td>t7</td>
   <td></td>
   <td class="right">5</td>
-  <td class="right">3</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:60.0%"></div></div></td>
-  <td class="right small">0</td>
-</tr>
-<tr class="" data-group="t7" data-tests="9" data-passed="5">
-  <td class="mono">t7418-submodule-sparse-gitmodules</td>
-  <td>t7</td>
-  <td></td>
-  <td class="right">9</td>
-  <td class="right">5</td>
-  <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:55.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="9" data-passed="3">
-  <td class="mono">t7419-submodule-set-branch</td>
+  <td class="mono">t7418-submodule-sparse-gitmodules</td>
   <td>t7</td>
   <td></td>
   <td class="right">9</td>
@@ -12236,14 +12227,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="3" data-passed="3">
+<tr class="" data-group="t7" data-tests="9" data-passed="2">
+  <td class="mono">t7419-submodule-set-branch</td>
+  <td>t7</td>
+  <td></td>
+  <td class="right">9</td>
+  <td class="right">2</td>
+  <td class="right">ok</td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:22.2%"></div></div></td>
+  <td class="right small">0</td>
+</tr>
+<tr class="" data-group="t7" data-tests="3" data-passed="1">
   <td class="mono">t7420-submodule-set-url</td>
   <td>t7</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">3</td>
-  <td class="right">3</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="5" data-passed="1">
@@ -12256,24 +12257,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="18" data-passed="1">
+<tr class="" data-group="t7" data-tests="18" data-passed="0">
   <td class="mono">t7422-submodule-output</td>
   <td>t7</td>
   <td></td>
   <td class="right">18</td>
-  <td class="right">1</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="6" data-passed="4">
+<tr class="" data-group="t7" data-tests="6" data-passed="3">
   <td class="mono">t7423-submodule-symlinks</td>
   <td>t7</td>
   <td></td>
   <td class="right">6</td>
-  <td class="right">4</td>
+  <td class="right">3</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:66.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t7" data-tests="14" data-passed="3">
@@ -12286,34 +12287,34 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="23" data-passed="6">
+<tr class="" data-group="t7" data-tests="23" data-passed="4">
   <td class="mono">t7425-submodule-gitdir-path-extension</td>
   <td>t7</td>
   <td></td>
   <td class="right">23</td>
-  <td class="right">6</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:26.1%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:17.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="15" data-passed="3">
+<tr class="" data-group="t7" data-tests="15" data-passed="1">
   <td class="mono">t7426-submodule-get-default-remote</td>
   <td>t7</td>
   <td></td>
   <td class="right">15</td>
-  <td class="right">3</td>
+  <td class="right">1</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:20.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="50" data-passed="22">
+<tr class="" data-group="t7" data-tests="50" data-passed="7">
   <td class="mono">t7450-bad-git-dotfiles</td>
   <td>t7</td>
   <td></td>
   <td class="right">50</td>
-  <td class="right">22</td>
+  <td class="right">7</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:44.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:14.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="57" data-passed="20">
@@ -12376,14 +12377,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:40.9%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="29" data-passed="15">
+<tr class="" data-group="t7" data-tests="30" data-passed="15">
   <td class="mono">t7504-commit-msg-hook</td>
   <td>t7</td>
   <td></td>
-  <td class="right">29</td>
+  <td class="right">30</td>
   <td class="right">15</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:51.7%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:50.0%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t7" data-tests="30" data-passed="30">
@@ -12436,14 +12437,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:30.2%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="12" data-passed="1">
+<tr class="" data-group="t7" data-tests="12" data-passed="5">
   <td class="mono">t7509-commit-authorship</td>
   <td>t7</td>
   <td></td>
   <td class="right">12</td>
-  <td class="right">1</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:8.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:41.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t7" data-tests="28" data-passed="0">
@@ -12776,24 +12777,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:71.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="47" data-passed="23">
+<tr class="" data-group="t7" data-tests="47" data-passed="11">
   <td class="mono">t7700-repack</td>
   <td>t7</td>
   <td></td>
   <td class="right">47</td>
-  <td class="right">23</td>
+  <td class="right">11</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:48.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:23.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="9" data-passed="4">
+<tr class="" data-group="t7" data-tests="9" data-passed="0">
   <td class="mono">t7701-repack-unpack-unreachable</td>
   <td>t7</td>
   <td></td>
   <td class="right">9</td>
-  <td class="right">4</td>
+  <td class="right">0</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:44.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="2" data-passed="2">
@@ -12806,14 +12807,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="18" data-passed="6">
+<tr class="" data-group="t7" data-tests="18" data-passed="2">
   <td class="mono">t7703-repack-geometric</td>
   <td>t7</td>
   <td></td>
   <td class="right">18</td>
-  <td class="right">6</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:33.3%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:11.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t7" data-tests="25" data-passed="5">
@@ -12876,24 +12877,24 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="27" data-passed="19">
+<tr class="" data-group="t7" data-tests="34" data-passed="18">
   <td class="mono">t7814-grep-recurse-submodules</td>
   <td>t7</td>
   <td></td>
-  <td class="right">27</td>
-  <td class="right">19</td>
+  <td class="right">34</td>
+  <td class="right">18</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:70.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:52.9%"></div></div></td>
   <td class="right small">7</td>
 </tr>
-<tr class="" data-group="t7" data-tests="21" data-passed="19">
+<tr class="" data-group="t7" data-tests="22" data-passed="19">
   <td class="mono">t7815-grep-binary</td>
   <td>t7</td>
   <td></td>
-  <td class="right">21</td>
+  <td class="right">22</td>
   <td class="right">19</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:90.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:86.4%"></div></div></td>
   <td class="right small">1</td>
 </tr>
 <tr class="" data-group="t7" data-tests="145" data-passed="97">
@@ -12926,14 +12927,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t7" data-tests="72" data-passed="5">
+<tr class="" data-group="t7" data-tests="72" data-passed="4">
   <td class="mono">t7900-maintenance</td>
   <td>t7</td>
   <td></td>
   <td class="right">72</td>
-  <td class="right">5</td>
+  <td class="right">4</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.9%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.6%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t7" data-tests="7" data-passed="7">
@@ -13146,14 +13147,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t8" data-tests="28" data-passed="28">
+<tr class="" data-group="t8" data-tests="28" data-passed="27">
   <td class="mono">t8020-last-modified</td>
   <td>t8</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">28</td>
-  <td class="right">28</td>
+  <td class="right">27</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:96.4%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t8" data-tests="25" data-passed="25">
@@ -13386,14 +13387,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t8" data-tests="30" data-passed="30">
+<tr class="" data-group="t8" data-tests="30" data-passed="2">
   <td class="mono">t8330-switch-track</td>
   <td>t8</td>
-  <td><span class="badge ok">full pass</span></td>
+  <td></td>
   <td class="right">30</td>
-  <td class="right">30</td>
+  <td class="right">2</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:6.7%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t8" data-tests="27" data-passed="16">
@@ -13746,14 +13747,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t8" data-tests="29" data-passed="28">
+<tr class="" data-group="t8" data-tests="29" data-passed="29">
   <td class="mono">t8720-repack-prune</td>
   <td>t8</td>
-  <td></td>
+  <td><span class="badge ok">full pass</span></td>
   <td class="right">29</td>
-  <td class="right">28</td>
+  <td class="right">29</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:96.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:100.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t8" data-tests="28" data-passed="28">
@@ -15176,14 +15177,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">1</td>
 </tr>
-<tr class="" data-group="t9" data-tests="17" data-passed="12">
+<tr class="" data-group="t9" data-tests="17" data-passed="8">
   <td class="mono">t9351-fast-export-anonymize</td>
   <td>t9</td>
   <td></td>
   <td class="right">17</td>
-  <td class="right">12</td>
+  <td class="right">8</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:70.6%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:47.1%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="" data-group="t9" data-tests="25" data-passed="23">
@@ -15446,14 +15447,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t9" data-tests="40" data-passed="19">
+<tr class="" data-group="t9" data-tests="40" data-passed="5">
   <td class="mono">t9600-switch-branch-create</td>
   <td>t9</td>
   <td></td>
   <td class="right">40</td>
-  <td class="right">19</td>
+  <td class="right">5</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:47.5%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:12.5%"></div></div></td>
   <td class="right small">0</td>
 </tr>
 <tr class="row-skip" data-group="t9" data-tests="9" data-passed="0">
@@ -16126,14 +16127,14 @@ tr.row-skip td { opacity: 0.65; }
   <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:0.0%"></div></div></td>
   <td class="right small">0</td>
 </tr>
-<tr class="" data-group="t9" data-tests="260" data-passed="14">
+<tr class="" data-group="t9" data-tests="263" data-passed="15">
   <td class="mono">t9902-completion</td>
   <td>t9</td>
   <td></td>
-  <td class="right">260</td>
-  <td class="right">14</td>
+  <td class="right">263</td>
+  <td class="right">15</td>
   <td class="right">ok</td>
-  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.4%"></div></div></td>
+  <td class="bar"><div class="bar-bg"><div class="bar-fg" style="width:5.7%"></div></div></td>
   <td class="right small">2</td>
 </tr>
 <tr class="" data-group="t9" data-tests="67" data-passed="1">
@@ -16221,5 +16222,31 @@ tr.row-skip td { opacity: 0.65; }
   apply();
 })();
 </script>
+
+<script>
+(function() {
+  document.querySelectorAll('time.gen-time').forEach(function(el) {
+    var dt = el.getAttribute('datetime');
+    if (!dt) return;
+    var d = new Date(dt);
+    if (isNaN(d.getTime())) return;
+    var rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    var now = new Date();
+    var diffSec = (d - now) / 1000;
+    var abs = Math.abs(diffSec);
+    var v;
+    var unit;
+    if (abs < 60) { v = Math.round(diffSec); unit = 'second'; }
+    else if (abs < 3600) { v = Math.round(diffSec / 60); unit = 'minute'; }
+    else if (abs < 86400) { v = Math.round(diffSec / 3600); unit = 'hour'; }
+    else if (abs < 604800) { v = Math.round(diffSec / 86400); unit = 'day'; }
+    else if (abs < 2629800) { v = Math.round(diffSec / 604800); unit = 'week'; }
+    else if (abs < 31536000) { v = Math.round(diffSec / 2629800); unit = 'month'; }
+    else { v = Math.round(diffSec / 31536000); unit = 'year'; }
+    el.textContent = rtf.format(v, unit);
+  });
+})();
+</script>
+
 </body>
 </html>

@@ -98,6 +98,16 @@ pub fn is_ancestor(repo: &Repository, ancestor: ObjectId, descendant: ObjectId) 
     Ok(cache.ancestor_closure(descendant)?.contains(&ancestor))
 }
 
+/// Returns every commit reachable from `tip` by walking parent links (including `tip`).
+///
+/// # Errors
+///
+/// Returns [`Error::CorruptObject`] if an encountered object is not a commit.
+pub fn ancestor_closure(repo: &Repository, tip: ObjectId) -> Result<HashSet<ObjectId>> {
+    let mut cache = CommitGraphCache::new(repo);
+    cache.ancestor_closure(tip)
+}
+
 /// Return commits that are not reachable from any other input commit.
 ///
 /// The output order follows input order, dropping any commit reachable from

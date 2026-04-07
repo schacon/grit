@@ -2237,6 +2237,7 @@ fn print_completion_helper(subcmd: &str, show_all: bool) -> Result<()> {
         "ls-tree" => extract_options::<commands::ls_tree::Args>(show_all),
         "merge" => extract_options::<commands::merge::Args>(show_all),
         "merge-base" => extract_options::<commands::merge_base::Args>(show_all),
+        "multi-pack-index" => extract_options::<commands::multi_pack_index::Args>(show_all),
         "mv" => extract_options::<commands::mv::Args>(show_all),
         "notes" => extract_options::<commands::notes::Args>(show_all),
         "pull" => extract_options::<commands::pull::Args>(show_all),

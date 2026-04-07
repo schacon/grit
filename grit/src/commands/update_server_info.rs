@@ -122,6 +122,11 @@ fn collect_loose_refs(
 // ── objects/info/packs ───────────────────────────────────────────────
 
 /// Write `objects/info/packs` — one `P <pack-name>.pack\n` per pack file.
+/// Rewrite `objects/info/packs` from `.pack` files in `objects/pack` (e.g. after repack).
+pub fn refresh_objects_info_packs(repo: &Repository) -> Result<()> {
+    update_info_packs(repo)
+}
+
 fn update_info_packs(repo: &Repository) -> Result<()> {
     let objects_dir = repo.odb.objects_dir();
     let info_dir = objects_dir.join("info");

@@ -708,7 +708,20 @@ pub fn diff_index_to_worktree(
                 let worktree_oid = hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
                 let worktree_mode = mode_from_metadata(&meta);
 
-                if worktree_oid != ie.oid || worktree_mode != ie.mode {
+                // If clean conversion disagrees with the index but raw bytes match the
+                // blob (e.g. mixed line endings committed with autocrlf off), Git reports
+                // no diff (t0020: touch + git diff --exit-code).
+                let mut eff_oid = worktree_oid;
+                if eff_oid != ie.oid {
+                    if let Ok(raw) = fs::read(&file_path) {
+                        let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+                        if raw_oid == ie.oid {
+                            eff_oid = ie.oid;
+                        }
+                    }
+                }
+
+                if eff_oid != ie.oid || worktree_mode != ie.mode {
                     let path_owned = path_str_ref.to_owned();
                     result.push(DiffEntry {
                         status: DiffStatus::Modified,
@@ -717,7 +730,7 @@ pub fn diff_index_to_worktree(
                         old_mode: format_mode(ie.mode),
                         new_mode: format_mode(worktree_mode),
                         old_oid: ie.oid,
-                        new_oid: worktree_oid,
+                        new_oid: eff_oid,
                     score: None,
                     });
                 }
