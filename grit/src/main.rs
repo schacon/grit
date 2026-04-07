@@ -2396,9 +2396,12 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let path = rest
                 .get(1)
                 .ok_or_else(|| anyhow::anyhow!("real_path: missing path"))?;
+            if path.is_empty() {
+                bail!("The empty string is not a valid path");
+            }
             let p = std::path::Path::new(path)
                 .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(path));
+                .unwrap_or_else(|_| std::path::PathBuf::from(normalize_path_simple(path)));
             println!("{}", p.display());
             Ok(())
         }
@@ -2406,6 +2409,9 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let path = rest
                 .get(1)
                 .ok_or_else(|| anyhow::anyhow!("absolute_path: missing path"))?;
+            if path.is_empty() {
+                bail!("The empty string is not a valid path");
+            }
             let cwd = std::env::current_dir()?;
             let abs = if std::path::Path::new(path).is_absolute() {
                 normalize_path_simple(path)
@@ -2443,11 +2449,17 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
                 .get(1)
                 .ok_or_else(|| anyhow::anyhow!("strip_path_suffix: missing path"))?;
             let suffix = rest.get(2).map(|s| s.as_str()).unwrap_or("");
-            if let Some(stripped) = path.strip_suffix(suffix) {
-                println!("{stripped}");
+            // Normalize double slashes before comparing
+            let norm_path = path.replace("//", "/");
+            let norm_suffix = suffix.replace("//", "/");
+            let stripped = if norm_path.ends_with(&*norm_suffix) {
+                let new_len = norm_path.len() - norm_suffix.len();
+                norm_path[..new_len].trim_end_matches('/').to_string()
             } else {
                 std::process::exit(1);
-            }
+                unreachable!()
+            };
+            println!("{stripped}");
             Ok(())
         }
         "longest_ancestor_length" => {
@@ -2505,10 +2517,18 @@ fn run_test_tool_path_utils(rest: &[String]) -> Result<()> {
             let base = rest
                 .get(2)
                 .ok_or_else(|| anyhow::anyhow!("relative_path: missing base"))?;
-            let p = std::path::Path::new(path.as_str());
-            let b = std::path::Path::new(base.as_str());
-            let rel = make_relative_for_path_utils(p, b);
-            println!("{}", rel.display());
+            let has_trailing = path.ends_with('/');
+            let norm_path = normalize_path_simple(path);
+            let norm_base = normalize_path_simple(base.trim_end_matches('/'));
+            let rel = make_relative_for_path_utils(
+                std::path::Path::new(&norm_path),
+                std::path::Path::new(&norm_base),
+            );
+            let mut rel_str = rel.display().to_string();
+            if has_trailing && !rel_str.ends_with('/') {
+                rel_str.push('/');
+            }
+            println!("{rel_str}");
             Ok(())
         }
         "is_dotgitattributes" | "is_dotgitignore" | "is_dotgitmodules" | "is_dotmailmap" => {
@@ -2541,10 +2561,9 @@ fn make_relative_for_path_utils(
     path: &std::path::Path,
     base: &std::path::Path,
 ) -> std::path::PathBuf {
-    let path_abs = path.canonicalize().unwrap_or(path.to_path_buf());
-    let base_abs = base.canonicalize().unwrap_or(base.to_path_buf());
-    let path_comps: Vec<_> = path_abs.components().collect();
-    let base_comps: Vec<_> = base_abs.components().collect();
+    // Don't use canonicalize (paths may not exist); use components directly
+    let path_comps: Vec<_> = path.components().collect();
+    let base_comps: Vec<_> = base.components().collect();
     let common_len = path_comps
         .iter()
         .zip(base_comps.iter())
