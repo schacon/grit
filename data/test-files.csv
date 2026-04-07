@@ -1386,7 +1386,7 @@ t8960-update-ref-stdin-nul	t8	yes	31	0	0	false		0
 t8970-symbolic-ref-chains	t8	yes	30	0	0	false		0
 t8980-config-get-regexp	t8	yes	27	0	0	false		0
 t8990-config-set-unset	t8	yes	27	0	0	false		0
-t9000-init-default-branch	t9	yes	24	0	0	false		0
+t9000-init-default-branch	t9	yes	24	24	0	true	ok	0
 t9001-send-email	t9	yes	200	0	0	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
 t9003-help-autocorrect	t9	yes	10	1	9	false	ok	0
