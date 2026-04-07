@@ -482,8 +482,10 @@ pub fn serialize_tag(t: &TagData) -> Vec<u8> {
         out.push_str(&format!("tagger {tagger}\n"));
     }
     out.push('\n');
-    out.push_str(&t.message);
-    if !t.message.is_empty() && !t.message.ends_with('\n') {
+    // Only add message if non-empty (don't add extra blank line for empty message)
+    let msg = t.message.trim_end_matches('\n');
+    if !msg.is_empty() {
+        out.push_str(msg);
         out.push('\n');
     }
     out.into_bytes()
