@@ -88,7 +88,7 @@ t10000-for-each-ref-merged	t1	yes	32	32	0	true	ok	0
 t1001-read-tree-m-2way	t1	yes	29	29	0	true	ok	0
 t10010-show-ref-dereference	t1	yes	37	37	0	true	ok	0
 t1002-read-tree-m-u-2way	t1	yes	22	8	14	false	ok	0
-t10020-update-ref-stdin-batch	t1	yes	33	26	7	false	ok	0
+t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	14	3	false	ok	0
 t1005-read-tree-reset	t1	yes	7	1	6	false	ok	0

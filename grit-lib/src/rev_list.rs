@@ -47,6 +47,8 @@ pub enum ObjectFilter {
     BlobLimit(u64),
     /// `tree:<depth>` — omit trees deeper than `depth`.
     TreeDepth(u64),
+    /// `object:type=<kind>` — only emit objects of that kind with `--objects`.
+    ObjectType(ObjectKind),
     /// `combine:<filter>+<filter>+…` — apply multiple filters.
     Combine(Vec<ObjectFilter>),
 }
@@ -68,6 +70,16 @@ impl ObjectFilter {
                 .map_err(|_| format!("invalid tree depth: {rest}"))?;
             return Ok(ObjectFilter::TreeDepth(depth));
         }
+        if let Some(rest) = spec.strip_prefix("object:type=") {
+            let kind = match rest {
+                "blob" => ObjectKind::Blob,
+                "tree" => ObjectKind::Tree,
+                "commit" => ObjectKind::Commit,
+                "tag" => ObjectKind::Tag,
+                _ => return Err(format!("unsupported filter spec: {spec}")),
+            };
+            return Ok(ObjectFilter::ObjectType(kind));
+        }
         if let Some(rest) = spec.strip_prefix("combine:") {
             let parts = split_combine(rest);
             let mut filters = Vec::new();
@@ -79,23 +91,52 @@ impl ObjectFilter {
         Err(format!("unsupported filter spec: {spec}"))
     }
 
-    /// Check if a blob should be included given its size.
-    pub fn includes_blob(&self, size: u64) -> bool {
+    /// Whether a blob encountered during a tree walk should appear in `--objects` output.
+    #[must_use]
+    pub fn emit_blob(&self, size: u64) -> bool {
         match self {
             ObjectFilter::BlobNone => false,
             ObjectFilter::BlobLimit(limit) => size <= *limit,
             ObjectFilter::TreeDepth(_) => true,
-            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_blob(size)),
+            ObjectFilter::ObjectType(kind) => *kind == ObjectKind::Blob,
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.emit_blob(size)),
         }
     }
 
-    /// Check if a tree at given depth should be included.
-    pub fn includes_tree(&self, depth: u64) -> bool {
+    /// Whether a tree at `depth` should appear in `--objects` output.
+    #[must_use]
+    pub fn emit_tree(&self, depth: u64) -> bool {
         match self {
             ObjectFilter::BlobNone => true,
             ObjectFilter::BlobLimit(_) => true,
             ObjectFilter::TreeDepth(max_depth) => depth < *max_depth,
-            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.includes_tree(depth)),
+            ObjectFilter::ObjectType(kind) => *kind == ObjectKind::Tree,
+            ObjectFilter::Combine(filters) => filters.iter().all(|f| f.emit_tree(depth)),
+        }
+    }
+
+    /// Check if a blob should be included given its size.
+    pub fn includes_blob(&self, size: u64) -> bool {
+        self.emit_blob(size)
+    }
+
+    /// Check if a tree at given depth should be included.
+    pub fn includes_tree(&self, depth: u64) -> bool {
+        self.emit_tree(depth)
+    }
+
+    /// Whether an object passes this filter for direct OID lookup (`git cat-file --filter`).
+    #[must_use]
+    pub fn passes_for_object(&self, kind: ObjectKind, size: usize) -> bool {
+        let sz = size as u64;
+        match self {
+            ObjectFilter::BlobNone => kind != ObjectKind::Blob,
+            ObjectFilter::BlobLimit(limit) => kind != ObjectKind::Blob || sz <= *limit,
+            ObjectFilter::TreeDepth(_) => true,
+            ObjectFilter::ObjectType(expected) => kind == *expected,
+            ObjectFilter::Combine(filters) => {
+                filters.iter().all(|f| f.passes_for_object(kind, size))
+            }
         }
     }
 }
@@ -2672,6 +2713,50 @@ fn flatten_tree(
         }
     }
     Ok(result)
+}
+
+fn filter_requests_tag_objects(filter: &ObjectFilter) -> bool {
+    match filter {
+        ObjectFilter::ObjectType(k) => *k == ObjectKind::Tag,
+        ObjectFilter::Combine(parts) => parts.iter().any(filter_requests_tag_objects),
+        _ => false,
+    }
+}
+
+fn append_tag_ref_object_ids(repo: &Repository, oids: &mut Vec<ObjectId>) -> Result<()> {
+    for (_, tip) in refs::list_refs(&repo.git_dir, "refs/tags/")? {
+        let obj = match repo.odb.read(&tip) {
+            Ok(o) => o,
+            Err(_) => continue,
+        };
+        if obj.kind == ObjectKind::Tag {
+            oids.push(tip);
+        }
+    }
+    Ok(())
+}
+
+/// Sorted unique object IDs for `git cat-file --batch-all-objects --filter`.
+pub fn object_ids_for_cat_file_filtered(
+    repo: &Repository,
+    merged_filter: &ObjectFilter,
+) -> Result<Vec<ObjectId>> {
+    let mut options = RevListOptions::default();
+    options.all_refs = true;
+    options.objects = true;
+    options.no_object_names = true;
+    options.filter = Some(merged_filter.clone());
+    options.missing_action = MissingAction::Allow;
+    let r = rev_list(repo, &[], &[], &options)?;
+    let mut oids: Vec<ObjectId> = Vec::new();
+    oids.extend(r.commits.iter().copied());
+    oids.extend(r.objects.iter().map(|(o, _)| *o));
+    if filter_requests_tag_objects(merged_filter) {
+        append_tag_ref_object_ids(repo, &mut oids)?;
+    }
+    oids.sort_unstable();
+    oids.dedup();
+    Ok(oids)
 }
 
 /// Compute merge bases between two commits.
