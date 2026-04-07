@@ -28,6 +28,21 @@ cargo build --release -p grit-rs
 ./scripts/run-tests.sh
 ```
 
+## Testing pipeline (harness)
+
+Upstream-style tests live in `tests/` and are driven by **`scripts/run-tests.sh`**. Per-file status and last-run counts live in **`data/test-files.csv`** (tab-separated). Dashboards **`docs/index.html`** and **`docs/testfiles.html`** are generated from that CSV.
+
+**Flow:**
+
+1. **`scripts/generate-test-files-catalog.py`** — At the start of every `run-tests.sh` invocation, refreshes the catalog: discovers `tests/t*.sh`, assigns **`group`** (`t0`–`t9`), counts test markers, merges with existing rows so **`in_scope`** and prior results are preserved.
+2. **`scripts/run-tests.sh`** — Runs the requested files (single `.sh`, group prefix like `t1`, or all rows with `in_scope=yes`). Rows with **`in_scope=skip`** are never run.
+3. **`scripts/apply-test-run-results.py`** — Merges the batch output into **`data/test-files.csv`**.
+4. **`scripts/generate-dashboard-from-test-files.py`** — Regenerates **`docs/index.html`** and **`docs/testfiles.html`**.
+
+To skip a file manually, set **`in_scope`** to **`skip`** on its row in `data/test-files.csv`. Skipped files are omitted from runs and from aggregate counts on the main dashboard.
+
+Full detail: **TESTING.md**.
+
 ## The One Rule
 
 **Fix grit Rust code to make upstream tests pass. Do not modify tests.**
@@ -50,9 +65,9 @@ Read **TESTING.md** for the full strategy. The short version:
 1. Pick **one test file** that isn't fully passing
 2. Run it, study the failures
 3. Fix the Rust code (`grit/src/` or `grit-lib/src/`)
-4. Rebuild (`cargo build --release`)
+4. Rebuild (`cargo build --release -p grit-rs`)
 5. Re-run until fully passing
-6. Update results: `./scripts/run-tests.sh <file>`
+6. Refresh results: `./scripts/run-tests.sh <file>.sh` (updates `data/test-files.csv` and dashboards)
 7. Commit with a message like `fix: make t1234-foo fully pass`
 
 ### Priority Order
@@ -120,14 +135,19 @@ grit/
 └── TESTING.md             # Full testing strategy
 ```
 
-## Data Flow
+## Data flow (harness)
 
 ```
-generate-test-files-catalog.py → data/test-files.csv (merge / refresh)
-run-tests.sh → merge results → data/test-files.csv
+                    ┌─ generate-test-files-catalog.py
+                    │       (merge catalog: files, groups, markers; keep in_scope)
                     ↓
-         generate-dashboard-from-test-files.py → docs/index.html + docs/testfiles.html
+              data/test-files.csv  ←── apply-test-run-results.py ← run-tests.sh
+                    │
+                    └─ generate-dashboard-from-test-files.py → docs/index.html
+                                                                  docs/testfiles.html
 ```
+
+There is no separate `file-results.tsv`, `test-results.tsv`, or command-level TSV; **`data/test-files.csv`** is the only harness results store.
 
 ## Rust Style and Idioms
 
@@ -237,7 +257,7 @@ When running multiple subagents in parallel:
 
 - **Rust toolchain**: The pre-installed Rust may be outdated. The update script runs `rustup update stable && rustup default stable` to ensure the latest stable toolchain is available, since newer workspace dependencies (e.g. `time-core`) require edition 2024 support (Rust ≥ 1.85).
 - **No external services**: Grit is a pure CLI tool with no databases, containers, or network services. Build and test entirely via Cargo and the Bash test runner.
-- **Unit tests**: Run `cargo test -p grit-lib --lib` (95 tests). The `grit-rs` crate has no lib target; use `cargo test --workspace` to run everything.
+- **Unit tests**: Run `cargo test -p grit-lib --lib`. The `grit-rs` crate has no lib target; use `cargo test --workspace` to run everything.
 - **Integration tests**: Use `./scripts/run-tests.sh <test-file>` (see TESTING.md). Many tests are expected to fail — Grit is a work-in-progress.
 - **Lint**: `cargo check -p grit-rs 2>&1 | grep warning` — there are 2 pre-existing unused-variable warnings in `grit/src/commands/add.rs`.
 - **Binary location**: After `cargo build --release`, the binary is at `target/release/grit`. The test harness expects this path.
