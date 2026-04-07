@@ -398,7 +398,7 @@ pub fn run(mut args: Args) -> Result<()> {
             bail!("--detach does not take a path argument");
         }
         match resolve_to_commit(&repo, &target) {
-            Ok(oid) => return detach_head(&repo, &oid, switch_force),
+            Ok(oid) => return detach_head_explicit(&repo, &oid, switch_force),
             Err(e) => bail!("cannot detach HEAD at '{}': {}", target, e),
         }
     }
@@ -992,7 +992,15 @@ fn force_reset_to_head(repo: &Repository) -> Result<()> {
 }
 
 /// Detach HEAD at a specific commit.
+fn detach_head_explicit(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
+    detach_head_inner(repo, oid, force, true)
+}
+
 fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
+    detach_head_inner(repo, oid, force, false)
+}
+
+fn detach_head_inner(repo: &Repository, oid: &ObjectId, force: bool, explicit: bool) -> Result<()> {
     let head = resolve_head(&repo.git_dir)?;
 
     let already_at_target = head.oid() == Some(oid);
@@ -1018,7 +1026,11 @@ fn detach_head(repo: &Repository, oid: &ObjectId, force: bool) -> Result<()> {
     // Write detached HEAD
     std::fs::write(repo.git_dir.join("HEAD"), format!("{oid}\n"))?;
 
-    print_detached_head_message(repo, oid)?;
+    if explicit {
+        print_detached_head_message_explicit(repo, oid)?;
+    } else {
+        print_detached_head_message(repo, oid)?;
+    }
     Ok(())
 }
 
@@ -2113,6 +2125,18 @@ fn apply_accepted_hunks(
 
 /// Print detached HEAD message.
 fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> {
+    print_detached_head_message_inner(repo, oid, false)
+}
+
+fn print_detached_head_message_explicit(repo: &Repository, oid: &ObjectId) -> Result<()> {
+    print_detached_head_message_inner(repo, oid, true)
+}
+
+fn print_detached_head_message_inner(
+    repo: &Repository,
+    oid: &ObjectId,
+    explicit_detach_flag: bool,
+) -> Result<()> {
     let obj = repo.odb.read(oid)?;
     if obj.kind != ObjectKind::Commit {
         return Ok(());
@@ -2122,14 +2146,17 @@ fn print_detached_head_message(repo: &Repository, oid: &ObjectId) -> Result<()> 
     let abbrev =
         abbreviate_object_id(repo, *oid, 7).unwrap_or_else(|_| oid.to_hex()[..7].to_owned());
 
-    // Print detached HEAD advice unless advice.detachedHead is false
-    let show_advice = match ConfigSet::load(Some(&repo.git_dir), true) {
-        Ok(config) => match config.get_bool("advice.detachedHead") {
-            Some(Ok(val)) => val,
-            _ => true, // default: show advice
-        },
-        Err(_) => true,
-    };
+    // Print detached HEAD advice unless:
+    // 1. advice.detachedHead is false
+    // 2. Explicit --detach was used (suppresses advice)
+    let show_advice = !explicit_detach_flag
+        && match ConfigSet::load(Some(&repo.git_dir), true) {
+            Ok(config) => match config.get_bool("advice.detachedHead") {
+                Some(Ok(val)) => val,
+                _ => true, // default: show advice
+            },
+            Err(_) => true,
+        };
     if show_advice {
         checkout_eprintln!(
             "Note: switching to '{}'.\n\
