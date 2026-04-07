@@ -164,6 +164,16 @@ pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let head = resolve_head(&repo.git_dir)?;
 
+    // Resolve @{-N} in branch name if present
+    let mut args = args;
+    if let Some(ref name) = args.name.clone() {
+        if name.starts_with("@{") {
+            if let Ok(resolved) = grit_lib::refs::resolve_at_n_branch(&repo.git_dir, name) {
+                args.name = Some(resolved);
+            }
+        }
+    }
+
     // Validate mutually exclusive mode options
     {
         let mut modes = Vec::new();
