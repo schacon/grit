@@ -50,6 +50,10 @@ pub struct Args {
     #[arg(short = 'q', long = "quiet")]
     pub quiet: bool,
 
+    /// Create reflog for the new branch.
+    #[arg(short = 'l')]
+    pub create_reflog: bool,
+
     /// Detach HEAD at the named commit (even if it is a branch).
     #[arg(long = "detach", short = 'd', conflicts_with_all = ["new_branch", "force_branch", "orphan"])]
     pub detach: bool,
