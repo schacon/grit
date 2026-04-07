@@ -337,7 +337,7 @@ t12810-merge-file-binary-text	t1	yes	38	38	0	true	ok	0
 t12820-diff-no-index-symlink	t1	yes	41	33	8	false	ok	0
 t12830-diff-cached-mode-change	t1	yes	38	37	1	false	ok	0
 t12840-diff-tree-empty-commit	t1	yes	36	36	0	true	ok	0
-t12880-log-notes-display	t1	yes	34	33	1	false	ok	0
+t12880-log-notes-display	t1	yes	34	34	0	true	ok	0
 t12890-log-grep-author	t1	yes	33	33	0	true	ok	0
 t12900-rev-list-cherry-pick	t1	yes	30	30	0	true	ok	0
 t12910-rev-list-header-format	t1	yes	32	32	0	true	ok	0

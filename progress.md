@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    93 |
+| Completed   |    94 |
 | In progress |     0 |
-| Remaining   |   674 |
+| Remaining   |   673 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t12880-log-notes-display` — 34/34 tests pass (`log --oneline` now shows short ref decorations by default like Git on a TTY, including both `HEAD -> <branch>` and the branch name; `--graph --oneline` includes the same suffix; harness CSV refreshed)
 - `t12730-switch-start-point` — 36/36 tests pass (`grit switch -c` with start-point, `--detach`, `--orphan`, tags, abbreviated hashes, `HEAD~N`; harness CSV refreshed)
 - `t1451-fsck-buffer` — 72/72 tests pass (`hash-object` now runs Git-style standalone fsck on commit/tag/tree buffers with matching `missingTree`/`badTree`/ident diagnostics and stderr ordering; new `grit_lib::fsck_standalone`)
 - `t5405-send-pack-rewind` — 3/3 tests pass (`fetch --update-head-ok` now skips the “checked out branch” refusal when updating `refs/heads/*` destinations, matching Git; harness CSV refreshed)
