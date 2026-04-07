@@ -1208,6 +1208,12 @@ impl ConfigSet {
         }
     }
 
+    /// All merged entries in load order (for listing keys such as `alias.*`).
+    #[must_use]
+    pub fn entries(&self) -> &[ConfigEntry] {
+        &self.entries
+    }
+
     /// Merge entries from a [`ConfigFile`] into this set.
     ///
     /// Entries are appended; later values override earlier ones for
@@ -1285,12 +1291,6 @@ impl ConfigSet {
             .iter()
             .filter(|e| re.is_match(&e.key))
             .collect())
-    }
-
-    /// List all entries in load order.
-    #[must_use]
-    pub fn entries(&self) -> &[ConfigEntry] {
-        &self.entries
     }
 
     /// Load the standard Git configuration file cascade for a repository.

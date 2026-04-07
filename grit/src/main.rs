@@ -12,6 +12,7 @@ use clap::{Args, Command, FromArgMatches, Parser};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+mod alias;
 mod commands;
 mod dotfile;
 mod git_path;
@@ -171,7 +172,7 @@ fn get_process_ancestry() -> Vec<String> {
 /// - "1" or "true" → stderr
 /// - "2" → stderr
 /// - A file path → append to that file
-fn write_git_trace(dest: &str, line: &str) {
+pub(crate) fn write_git_trace(dest: &str, line: &str) {
     use std::io::Write;
     match dest {
         "1" | "true" | "2" => {
@@ -272,7 +273,7 @@ fn chrono_now() -> String {
     format!("{:02}:{:02}:{:02}.{:06}", hours, mins, secs, micros)
 }
 
-fn exit_with_status(status: std::process::ExitStatus) -> ! {
+pub(crate) fn exit_with_status(status: std::process::ExitStatus) -> ! {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -1765,7 +1766,7 @@ fn run_test_tool_bloom(rest: &[String]) -> Result<()> {
 
 /// Global options parsed from argv before the subcommand.
 #[derive(Default)]
-struct GlobalOpts {
+pub(crate) struct GlobalOpts {
     git_dir: Option<PathBuf>,
     work_tree: Option<PathBuf>,
     change_dir: Option<PathBuf>,
@@ -2090,13 +2091,6 @@ fn run() -> Result<()> {
         }
     }
 
-    // Expand configured aliases when the subcommand is not a built-in.
-    if !KNOWN_COMMANDS.contains(&subcmd.as_str()) {
-        if let Some(alias) = get_alias_definition(&subcmd) {
-            return run_alias(&subcmd, &alias, &rest, &opts);
-        }
-    }
-
     // Handle --git-completion-helper / --git-completion-helper-all
     if rest
         .iter()
@@ -2116,7 +2110,7 @@ fn run() -> Result<()> {
         return print_completion_helper(&key, show_all);
     }
 
-    dispatch(&subcmd, &rest, &opts)
+    alias::run_command_with_aliases(subcmd, rest, &opts)
 }
 
 /// Print --git-completion-helper output for a subcommand.
@@ -2394,6 +2388,9 @@ fn print_list_cmds(categories: &str) {
                 result.extend_from_slice(&complete);
                 result.extend_from_slice(&plumbing);
             }
+            "deprecated" => {
+                result.extend_from_slice(crate::alias::DEPRECATED_COMMANDS);
+            }
             "others" => {
                 // Non-built-in commands like gitk
                 result.push("gitk");
@@ -2599,71 +2596,6 @@ fn get_autocorrect_setting() -> Option<String> {
     None
 }
 
-/// Read an alias definition from config (`alias.<name>`).
-fn get_alias_definition(name: &str) -> Option<String> {
-    let key = format!("alias.{name}");
-    if let Some(val) = protocol::check_config_param(&key) {
-        return Some(val);
-    }
-    let git_dir = std::env::var("GIT_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            grit_lib::repo::Repository::discover(None)
-                .ok()
-                .map(|r| r.git_dir)
-        });
-    if let Ok(config) = grit_lib::config::ConfigSet::load(git_dir.as_deref(), true) {
-        return config.get(&key);
-    }
-    None
-}
-
-#[allow(dead_code)]
-fn work_tree_root_for_shell_alias() -> std::path::PathBuf {
-    if let Ok(wt) = std::env::var("GIT_WORK_TREE") {
-        if !wt.is_empty() {
-            let p = std::path::PathBuf::from(&wt);
-            return std::fs::canonicalize(&p).unwrap_or(p);
-        }
-    }
-    let mut cur = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    loop {
-        if cur.join(".git").exists() {
-            return cur;
-        }
-        if !cur.pop() {
-            break;
-        }
-    }
-    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
-fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
-    if let Some(shell_cmd) = alias.strip_prefix('!') {
-        let root = work_tree_root_for_shell_alias();
-        let status = std::process::Command::new("sh")
-            .current_dir(&root)
-            .arg("-c")
-            .arg(shell_cmd)
-            .arg(format!("git-{name}"))
-            .args(rest)
-            .status()?;
-        exit_with_status(status);
-    }
-
-    let mut parts: Vec<String> = alias.split_whitespace().map(|s| s.to_owned()).collect();
-    if parts.is_empty() {
-        bail!("alias '{name}' expands to an empty command");
-    }
-    let next_subcmd = parts.remove(0);
-    if next_subcmd == name {
-        bail!("recursive alias '{name}'");
-    }
-    parts.extend(rest.iter().cloned());
-    dispatch(&next_subcmd, &parts, opts)
-}
-
 fn strsim_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -2838,7 +2770,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
 /// Dispatch to the appropriate command handler.
 ///
 /// Each arm only constructs the clap parser for that specific command.
-fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
+pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     match subcmd {
         "add" => commands::add::run(parse_cmd_args(subcmd, rest)),
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
@@ -3255,7 +3187,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
             match autocorrect.as_deref() {
                 Some("never") => {
                     // With never, just say it's not a command, no suggestions
-                    bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.");
+                    bail!("git: '{subcmd}' is not a git command. See 'git --help'.");
                 }
                 Some("immediate") | Some("-1") if suggestions.len() == 1 => {
                     // Auto-run the single matching command
@@ -3286,11 +3218,11 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                     }
                     // Default: show suggestions
                     if suggestions.is_empty() {
-                        bail!("grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nunrecognized subcommand");
+                        bail!("git: '{subcmd}' is not a git command. See 'git --help'.\n\nunrecognized subcommand");
                     } else {
                         let similar = suggestions.join("\n\t");
                         bail!(
-                            "grit: '{subcmd}' is not a grit command. See 'grit --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
+                            "git: '{subcmd}' is not a git command. See 'git --help'.\n\nThe most similar command is\n\t{similar}\n\nunrecognized subcommand"
                         );
                     }
                 }

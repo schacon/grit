@@ -198,6 +198,7 @@ pub fn run(args: Args) -> Result<()> {
         let verbose = !args.no_verbose;
         if verbose {
             print!("{}", ALL_COMMANDS_HELP);
+            print_command_aliases_section()?;
         } else {
             print_all_commands_no_verbose()?;
         }
@@ -351,6 +352,35 @@ fn open_html_browser(config: &grit_lib::config::ConfigSet, path: &str) -> Result
 
     if !status.success() {
         std::process::exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+fn print_command_aliases_section() -> Result<()> {
+    let config = match grit_lib::repo::Repository::discover(None) {
+        Ok(repo) => {
+            grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default()
+        }
+        Err(_) => return Ok(()),
+    };
+    let aliases = crate::alias::list_aliases_from_config(&config);
+    if aliases.is_empty() {
+        return Ok(());
+    }
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    writeln!(out)?;
+    writeln!(out, "Command aliases")?;
+    let col_width = 25usize;
+    let mid = aliases.len().div_ceil(2);
+    for i in 0..mid {
+        let (left_name, _) = &aliases[i];
+        write!(out, "  {left_name:width$}", width = col_width)?;
+        if let Some((right_name, _)) = aliases.get(i + mid) {
+            writeln!(out, "{right_name}")?;
+        } else {
+            writeln!(out)?;
+        }
     }
     Ok(())
 }
