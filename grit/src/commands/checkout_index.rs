@@ -63,6 +63,10 @@ pub struct Args {
     #[arg(long = "stage")]
     pub stage: Option<u8>,
 
+    /// Ignore skip-worktree bits when checking out all paths.
+    #[arg(long = "ignore-skip-worktree-bits")]
+    pub ignore_skip_worktree_bits: bool,
+
     /// Files to check out (if not --all or --stdin).
     pub files: Vec<PathBuf>,
 }
@@ -94,6 +98,9 @@ pub fn run(args: Args) -> Result<()> {
     if args.all {
         for entry in &index.entries {
             if entry.stage() != target_stage {
+                continue;
+            }
+            if !args.ignore_skip_worktree_bits && entry.skip_worktree() {
                 continue;
             }
             selected_paths.push(entry.path.clone());

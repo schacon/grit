@@ -3158,7 +3158,13 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
         "checkout" => commands::git_passthrough::run(subcmd, rest),
-        "checkout-index" => commands::checkout_index::run(parse_cmd_args(subcmd, rest)),
+        "checkout-index" => {
+            if rest.iter().any(|arg| arg == "--ignore-skip-worktree-bits") {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::checkout_index::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "cherry" => commands::cherry::run(parse_cmd_args(subcmd, rest)),
         "cherry-pick" => commands::cherry_pick::run(parse_cmd_args(subcmd, rest)),
         "clean" => commands::clean::run(parse_cmd_args(subcmd, rest)),
@@ -3222,7 +3228,16 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "difftool" => commands::difftool::run(parse_cmd_args(subcmd, rest)),
         "fast-export" => commands::fast_export::run(parse_cmd_args(subcmd, rest)),
         "fast-import" => commands::fast_import::run(parse_cmd_args(subcmd, rest)),
-        "fetch" => commands::fetch::run(parse_cmd_args(subcmd, rest)),
+        "fetch" => {
+            if rest
+                .iter()
+                .any(|arg| arg == "--filter" || arg.starts_with("--filter="))
+            {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::fetch::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "fetch-pack" => commands::fetch_pack::run(parse_cmd_args(subcmd, rest)),
         "filter-branch" => commands::filter_branch::run(parse_cmd_args(subcmd, rest)),
         "fmt-merge-msg" => commands::fmt_merge_msg::run(parse_cmd_args(subcmd, rest)),

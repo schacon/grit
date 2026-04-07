@@ -92,7 +92,7 @@ commit → check it off → move on.
 - [x] `t1051-large-conversion` ████████████████████ 12/12 (0 left) — test conversion filters on large files
 - [x] `t1012-read-tree-df` ████████████████████ 5/5 (0 left) — read-tree D/F conflict corner cases
 - [x] `t0411-clone-from-partial` ████████████████████ 7/7 (0 left) — check that local clone does not fetch from promisor remotes
-- [ ] `t1090-sparse-checkout-scope` █████░░░░░░░░░░░░░░░ 2/7 (5 left) — sparse checkout scope tests
+- [x] `t1090-sparse-checkout-scope` ████████████████████ 7/7 (0 left) — sparse checkout scope tests
 - [ ] `t1302-repo-version` █████████████░░░░░░░ 12/18 (6 left) — Test repository version check
 - [ ] `t1060-object-corruption` ████████████░░░░░░░░ 11/17 (6 left) — see how we handle various forms of corruption
 - [ ] `t1020-subdirectory` ████████████░░░░░░░░ 9/15 (6 left) — Try various core-level commands in subdirectory.

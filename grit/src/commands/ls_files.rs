@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::Component;
 use std::path::PathBuf;
 
+use grit_lib::config::ConfigSet;
 use grit_lib::ignore::IgnoreMatcher;
 use grit_lib::index::{Index, IndexEntry};
 use grit_lib::repo::Repository;
@@ -124,6 +125,21 @@ pub fn run(args: Args) -> Result<()> {
     let cwd_prefix = cwd_prefix_bytes(work_tree, &cwd)?;
     let index_path = repo.index_path();
     let index = Index::load(&index_path).context("loading index")?;
+    let ls_config = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let expect_outside_patterns = ls_config
+        .get("sparse.expectFilesOutsideOfPatterns")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false);
+    let sparse_patterns = if expect_outside_patterns {
+        load_sparse_patterns(&repo.git_dir).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let expect_outside_patterns = config
+        .get_bool("sparse.expectFilesOutsideOfPatterns")
+        .and_then(|v| v.ok())
+        .unwrap_or(false);
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -246,10 +262,10 @@ pub fn run(args: Args) -> Result<()> {
                 } else if is_modified(entry, &full) {
                     (Some('C'), None)
                 } else {
-                    (Some(status_tag(entry)), None)
+                    (Some(status_tag(entry, expect_outside_patterns, &sparse_patterns)), None)
                 }
             } else {
-                (Some(status_tag(entry)), None)
+                (Some(status_tag(entry, expect_outside_patterns, &sparse_patterns)), None)
             }
         } else {
             (None, None)
@@ -913,14 +929,74 @@ fn maybe_quote(name: &str, use_nul: bool) -> String {
     }
 }
 
-fn status_tag(entry: &IndexEntry) -> char {
+fn status_tag(entry: &IndexEntry, expect_outside_patterns: bool, sparse_patterns: &[String]) -> char {
     if entry.stage() != 0 {
         'C' // unmerged (conflict)
-    } else if entry.skip_worktree() {
+    } else if entry.skip_worktree()
+        || (expect_outside_patterns
+            && !sparse_patterns.is_empty()
+            && !path_matches_sparse_patterns(std::str::from_utf8(&entry.path).unwrap_or(""), sparse_patterns))
+    {
         'S'
     } else if entry.assume_unchanged() {
         'h' // assume-unchanged uses lowercase
     } else {
         'H' // regular cached
     }
+}
+
+fn load_sparse_patterns(git_dir: &std::path::Path) -> Result<Vec<String>> {
+    let sparse_enabled = grit_lib::config::ConfigSet::load(Some(git_dir), true)
+        .unwrap_or_default()
+        .get("core.sparseCheckout")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1"))
+        .unwrap_or(false);
+    if !sparse_enabled {
+        return Ok(Vec::new());
+    }
+
+    let sparse_path = git_dir.join("info").join("sparse-checkout");
+    let content = match std::fs::read_to_string(&sparse_path) {
+        Ok(c) => c,
+        Err(_) => return Ok(Vec::new()),
+    };
+    Ok(content
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.to_owned())
+        .collect())
+}
+
+fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
+    for pattern in patterns {
+        let pat = pattern.trim();
+        if pat.is_empty() || pat.starts_with('#') {
+            continue;
+        }
+
+        if pat.ends_with('/') {
+            let dir = pat.trim_end_matches('/').trim_start_matches('/');
+            if path == dir || (path.starts_with(dir) && path.as_bytes().get(dir.len()) == Some(&b'/')) {
+                return true;
+            }
+            continue;
+        }
+
+        let anchored = pat.starts_with('/');
+        let core = if anchored { &pat[1..] } else { pat };
+        if !core.contains('*') && !core.contains('?') && !core.contains('[') {
+            if path == core {
+                return true;
+            }
+            if !anchored && path.rsplit('/').next().unwrap_or(path) == core {
+                return true;
+            }
+            continue;
+        }
+        if glob_match(core, path) {
+            return true;
+        }
+    }
+    false
 }

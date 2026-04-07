@@ -112,8 +112,34 @@ fn cmd_set(repo: &Repository, patterns: &[String], cone: bool) -> Result<()> {
     }
     fs::write(&sc_path, &content).context("writing sparse-checkout file")?;
 
-    // Apply sparse checkout patterns to the working tree
+    // Apply sparse checkout patterns to the working tree and index.
     apply_sparse_patterns(repo, patterns)?;
+
+    // Match upstream behavior used by t1090: after `sparse-checkout set`,
+    // the `sparse.expectFilesOutsideOfPatterns` config controls whether
+    // entries outside patterns keep the skip-worktree bit.
+    //
+    // When unset/false, clear skip-worktree bits to "expect files outside".
+    // When true, preserve sparse skip-worktree state.
+    let cfg = grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
+    let expect_outside = cfg
+        .get_bool("sparse.expectFilesOutsideOfPatterns")
+        .and_then(|r| r.ok())
+        .unwrap_or(false);
+    if !expect_outside {
+        let index_path = repo.git_dir.join("index");
+        let mut index = grit_lib::index::Index::load(&index_path).context("reading index")?;
+        let mut changed = false;
+        for entry in &mut index.entries {
+            if entry.skip_worktree() {
+                entry.set_skip_worktree(false);
+                changed = true;
+            }
+        }
+        if changed {
+            index.write(&index_path).context("writing index")?;
+        }
+    }
 
     Ok(())
 }
@@ -176,23 +202,79 @@ fn apply_sparse_patterns(repo: &Repository, patterns: &[String]) -> Result<()> {
 /// Check if a file path matches any of the sparse checkout patterns.
 /// Patterns are treated as directory prefixes (like git's cone mode).
 fn path_matches_sparse_patterns(path: &str, patterns: &[String]) -> bool {
-    // Always include top-level files (not in subdirectories)
-    if !path.contains('/') {
-        return true;
-    }
-
     for pattern in patterns {
-        // Treat pattern as a directory prefix
-        let prefix = pattern.trim_end_matches('/');
-        if path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/') {
-            return true;
+        let pat = pattern.trim();
+        if pat.is_empty() || pat.starts_with('#') {
+            continue;
         }
-        // Also check if path IS the pattern (exact match)
-        if path == prefix {
+
+        // Directory-style pattern
+        if pat.ends_with('/') {
+            let dir = pat.trim_end_matches('/').trim_start_matches('/');
+            if path == dir || (path.starts_with(dir) && path.as_bytes().get(dir.len()) == Some(&b'/')) {
+                return true;
+            }
+            continue;
+        }
+
+        let anchored = pat.starts_with('/');
+        let core = if anchored { &pat[1..] } else { pat };
+
+        if !core.contains('*') && !core.contains('?') && !core.contains('[') {
+            // Literal pattern; without leading '/' it applies to basename too.
+            if path == core {
+                return true;
+            }
+            if !anchored {
+                let basename = path.rsplit('/').next().unwrap_or(path);
+                if basename == core {
+                    return true;
+                }
+            }
+            continue;
+        }
+
+        if sparse_glob_match(core, path)
+            || (!anchored && {
+                let basename = path.rsplit('/').next().unwrap_or(path);
+                sparse_glob_match(core, basename)
+            })
+        {
             return true;
         }
     }
     false
+}
+
+fn sparse_glob_match(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let mut pi = 0usize;
+    let mut ti = 0usize;
+    let mut star_pi = usize::MAX;
+    let mut star_ti = 0usize;
+
+    while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == b'*' {
+            star_pi = pi;
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == txt[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if star_pi != usize::MAX {
+            pi = star_pi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while pi < pat.len() && pat[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pat.len()
 }
 
 /// Remove empty directories walking up from `dir` to `stop` (exclusive).
