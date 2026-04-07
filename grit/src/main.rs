@@ -3057,6 +3057,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "status" => commands::status::run(parse_cmd_args(subcmd, rest)),
         "stripspace" => commands::stripspace::run(parse_cmd_args(subcmd, rest)),
         "submodule" => commands::submodule::run(parse_cmd_args(subcmd, rest)),
+        "submodule--helper" => commands::submodule_helper::run(rest),
         "switch" => commands::switch::run(parse_cmd_args(subcmd, rest)),
         "symbolic-ref" => commands::symbolic_ref::run(parse_cmd_args(subcmd, rest)),
         "tag" => commands::tag::run(parse_cmd_args(subcmd, rest)),

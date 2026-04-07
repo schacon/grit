@@ -5,9 +5,13 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::config::{ConfigFile, ConfigScope};
+use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
+use grit_lib::submodule_gitdir::{
+    connect_submodule_work_tree_and_git_dir, ensure_submodule_gitdir_config,
+    set_submodule_repo_worktree, submodule_path_config_enabled, write_submodule_gitfile,
+};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -69,6 +73,10 @@ pub struct Args {
     /// Recurse into submodules after cloning.
     #[arg(long = "recurse-submodules", alias = "recursive")]
     pub recurse_submodules: bool,
+
+    /// Number of parallel jobs for submodule cloning (local transport).
+    #[arg(short = 'j', long = "jobs", value_name = "N", default_value = "1")]
+    pub jobs: usize,
 
     /// Use remote-tracking branch for submodules.
     #[arg(long = "remote-submodules")]
@@ -294,7 +302,7 @@ pub fn run(args: Args) -> Result<()> {
     fs::create_dir_all(&target_path)
         .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
 
-    let template_dir = args.template.as_ref().map(|s| PathBuf::from(s));
+    let template_dir = args.template.as_ref().map(PathBuf::from);
 
     let dest = if let Some(ref sep_git) = args.separate_git_dir {
         if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
@@ -434,6 +442,8 @@ pub fn run(args: Args) -> Result<()> {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
     }
 
+    maybe_inherit_default_submodule_path_config(&dest.git_dir)?;
+
     // Handle --no-tags: set remote.origin.tagOpt
     if args.no_tags {
         let config_path = dest.git_dir.join("config");
@@ -471,7 +481,8 @@ pub fn run(args: Args) -> Result<()> {
     // Recurse into submodules if requested
     if args.recurse_submodules && !args.bare {
         if let Some(ref wt) = dest.work_tree {
-            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+            clone_submodules(wt, &dest, &source_path, args.jobs.max(1), args.quiet)
+                .context("cloning submodules")?;
         }
     }
 
@@ -527,109 +538,231 @@ fn run_ssh_clone(args: Args) -> Result<()> {
     Ok(())
 }
 
-/// Clone submodules listed in .gitmodules.
-///
-/// Reads `.gitmodules` from the work tree, resolves each submodule's URL
-/// (relative paths are resolved against the parent repo's remote URL),
-/// and uses `grit clone` to clone each submodule.
-fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<()> {
+fn clone_bool(s: &str) -> bool {
+    matches!(s.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1")
+}
+
+/// If `init.defaultSubmodulePathConfig` is set in the environment, enable the extension in the new repo.
+fn maybe_inherit_default_submodule_path_config(git_dir: &Path) -> Result<()> {
+    let cfg = ConfigSet::load(Some(git_dir), true).unwrap_or_default();
+    let Some(v) = cfg.get("init.defaultSubmodulePathConfig") else {
+        return Ok(());
+    };
+    if !clone_bool(&v) {
+        return Ok(());
+    }
+    let config_path = git_dir.join("config");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut c = ConfigFile::parse(&config_path, &content, ConfigScope::Local)?;
+    c.set("core.repositoryformatversion", "1")?;
+    c.set("extensions.submodulePathConfig", "true")?;
+    c.write().context("writing submodulePathConfig")?;
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct CloneSubmoduleTask {
+    name: String,
+    path: String,
+    url: String,
+}
+
+/// Clone submodules listed in `.gitmodules` (name, path, url), with Git-compatible URL resolution.
+fn clone_submodules(
+    work_tree: &Path,
+    repo: &Repository,
+    source_repo_path: &Path,
+    jobs: usize,
+    quiet: bool,
+) -> Result<()> {
     let gitmodules_path = work_tree.join(".gitmodules");
     if !gitmodules_path.exists() {
         return Ok(());
     }
 
     let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
+    let gitmodules_file = ConfigFile::parse(&gitmodules_path, &content, ConfigScope::Local)?;
 
-    // Simple parser for .gitmodules
-    let mut submodules: Vec<(String, String)> = Vec::new(); // (path, url)
-    let mut current_path: Option<String> = None;
-    let mut current_url: Option<String> = None;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            // Flush previous
-            if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
-                submodules.push((p, u));
-            }
+    let mut by_name: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+        std::collections::BTreeMap::new();
+    for e in &gitmodules_file.entries {
+        let key = &e.key;
+        if !key.starts_with("submodule.") {
             continue;
         }
-        if let Some(val) = trimmed
-            .strip_prefix("path = ")
-            .or_else(|| trimmed.strip_prefix("path="))
-        {
-            current_path = Some(val.trim().to_string());
+        let rest = &key["submodule.".len()..];
+        if let Some(last_dot) = rest.rfind('.') {
+            let name = &rest[..last_dot];
+            let var = &rest[last_dot + 1..];
+            let slot = by_name.entry(name.to_string()).or_insert((None, None));
+            match var {
+                "path" => slot.0 = e.value.clone(),
+                "url" => slot.1 = e.value.clone(),
+                _ => {}
+            }
         }
-        if let Some(val) = trimmed
-            .strip_prefix("url = ")
-            .or_else(|| trimmed.strip_prefix("url="))
-        {
-            current_url = Some(val.trim().to_string());
-        }
-    }
-    if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
-        submodules.push((p, u));
     }
 
-    // Get the parent's remote URL to resolve relative submodule URLs
-    let parent_url = {
-        let config_path = repo.git_dir.join("config");
-        let config_content = fs::read_to_string(&config_path).unwrap_or_default();
-        extract_remote_url(&config_content, "origin")
-    };
+    let mut tasks: Vec<CloneSubmoduleTask> = Vec::new();
+    for (name, (path, url)) in by_name {
+        if let (Some(path), Some(url)) = (path, url) {
+            tasks.push(CloneSubmoduleTask { name, path, url });
+        }
+    }
+
+    let config_path = repo.git_dir.join("config");
+    let config_content = fs::read_to_string(&config_path).unwrap_or_default();
+    let origin_url = extract_remote_url(&config_content, "origin");
 
     let grit_bin = crate::grit_exe::grit_executable();
+    let _jobs = jobs.max(1);
 
-    for (path, url) in &submodules {
-        let sub_dest = work_tree.join(path);
-
-        // Resolve relative URLs
-        let resolved_url = if url.starts_with("./") || url.starts_with("../") {
-            if let Some(ref parent) = parent_url {
-                let base = PathBuf::from(parent);
-                let resolved = base.parent().unwrap_or(&base).join(url);
-                resolved.to_string_lossy().to_string()
-            } else {
-                url.clone()
-            }
-        } else {
-            url.clone()
-        };
+    let run_one = |task: CloneSubmoduleTask| -> Result<()> {
+        let sub_dest = work_tree.join(&task.path);
+        let resolved_url = resolve_submodule_clone_url(
+            work_tree,
+            source_repo_path,
+            origin_url.as_deref(),
+            &task.url,
+        )?;
 
         if !quiet {
             eprintln!("Cloning into '{}'...", sub_dest.display());
         }
 
-        // Remove the placeholder directory if it exists
         if sub_dest.exists() {
             let _ = fs::remove_dir_all(&sub_dest);
+        }
+
+        let mut local_cfg = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+            Some(c) => c,
+            None => ConfigFile::parse(&config_path, &config_content, ConfigScope::Local)?,
+        };
+        local_cfg.set(&format!("submodule.{}.url", task.name), &task.url)?;
+        local_cfg.set(&format!("submodule.{}.active", task.name), "true")?;
+
+        let modules_fs = if submodule_path_config_enabled(&repo.git_dir) {
+            let rel = ensure_submodule_gitdir_config(
+                work_tree,
+                &repo.git_dir,
+                &mut local_cfg,
+                &task.name,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            work_tree.join(rel)
+        } else {
+            repo.git_dir.join("modules").join(&task.name)
+        };
+
+        if let Some(parent) = modules_fs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if modules_fs.exists() {
+            let _ = fs::remove_dir_all(&modules_fs);
         }
 
         let mut cmd = std::process::Command::new(&grit_bin);
         cmd.arg("clone")
             .arg("-c")
             .arg("protocol.file.allow=always")
+            .arg("--no-checkout")
+            .arg("--separate-git-dir")
+            .arg(&modules_fs)
             .arg(&resolved_url)
-            .arg(&sub_dest);
+            .arg(&sub_dest)
+            .current_dir(work_tree);
         if quiet {
             cmd.arg("-q");
         }
 
         let status = cmd
             .status()
-            .with_context(|| format!("failed to clone submodule '{}'", path))?;
+            .with_context(|| format!("failed to clone submodule '{}'", task.path))?;
 
         if !status.success() {
-            eprintln!("warning: failed to clone submodule '{}'", path);
             anyhow::bail!(
                 "clone of '{}' into submodule path '{}' failed",
                 resolved_url,
                 sub_dest.display()
             );
         }
-    }
 
+        if submodule_path_config_enabled(&repo.git_dir) {
+            local_cfg = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+                Some(c) => c,
+                None => ConfigFile::parse(&config_path, &config_content, ConfigScope::Local)?,
+            };
+            connect_submodule_work_tree_and_git_dir(
+                &grit_bin,
+                work_tree,
+                &repo.git_dir,
+                &local_cfg,
+                &task.name,
+                &sub_dest,
+            )
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        } else {
+            write_submodule_gitfile(&sub_dest, &modules_fs).map_err(|e| anyhow::anyhow!("{e}"))?;
+            set_submodule_repo_worktree(&grit_bin, &modules_fs, &sub_dest);
+        }
+
+        let gitlink_oid = {
+            let index = repo
+                .load_index()
+                .with_context(|| format!("load index for submodule '{}'", task.path))?;
+            let path_bytes = task.path.as_bytes();
+            index
+                .get(path_bytes, 0)
+                .filter(|ie| ie.mode == 0o160000)
+                .map(|ie| ie.oid.to_hex())
+        };
+        if let Some(oid) = gitlink_oid {
+            let co = std::process::Command::new(&grit_bin)
+                .arg("checkout")
+                .arg("-q")
+                .arg(&oid)
+                .current_dir(&sub_dest)
+                .status()
+                .with_context(|| format!("checkout submodule '{}'", task.path))?;
+            if !co.success() {
+                anyhow::bail!("failed to checkout {} in submodule '{}'", oid, task.path);
+            }
+        }
+
+        local_cfg.write().context("writing submodule config")?;
+        Ok(())
+    };
+
+    for t in tasks {
+        run_one(t)?;
+    }
     Ok(())
+}
+
+fn resolve_submodule_clone_url(
+    work_tree: &Path,
+    source_repo_path: &Path,
+    origin_url: Option<&str>,
+    url: &str,
+) -> Result<String> {
+    if url.starts_with("./") || url.starts_with("../") {
+        let base = if origin_url.is_some_and(|u| u.starts_with("./") || u.starts_with("../")) {
+            work_tree
+        } else {
+            source_repo_path
+        };
+        let joined = base.join(url);
+        let canon = joined
+            .canonicalize()
+            .with_context(|| format!("cannot resolve submodule URL '{}'", url))?;
+        return Ok(canon.to_string_lossy().into_owned());
+    }
+    if let Some(ou) = origin_url {
+        if let Ok(u) = crate::git_path::relative_url(ou, url, None) {
+            return Ok(u);
+        }
+    }
+    Ok(url.to_string())
 }
 
 /// Extract a remote URL from config content.
@@ -690,9 +823,16 @@ fn open_source_repo(path: &Path) -> Result<Repository> {
     if let Ok(repo) = Repository::open(path, None) {
         return Ok(repo);
     }
-    // Try path/.git for non-bare repos
-    let git_dir = path.join(".git");
-    Repository::open(&git_dir, Some(path)).map_err(Into::into)
+    // Non-bare: `.git` may be a directory or a gitfile (submodule work trees).
+    let dot_git = path.join(".git");
+    if dot_git.exists() {
+        let resolved = grit_lib::repo::resolve_dot_git(&dot_git)?;
+        return Repository::open(&resolved, Some(path)).map_err(Into::into);
+    }
+    Err(anyhow::anyhow!(
+        "'{}' does not appear to be a git repository",
+        path.display()
+    ))
 }
 
 /// Write an alternates file pointing to the source and reference repos' object stores.

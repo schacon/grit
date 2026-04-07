@@ -10,6 +10,12 @@ use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
 use grit_lib::repo::Repository;
 use grit_lib::state::resolve_head;
+use grit_lib::submodule_gitdir::{
+    connect_submodule_work_tree_and_git_dir, die_path_inside_submodule_when_disabled,
+    ensure_submodule_gitdir_config, init_submodule_head_from_gitlink, set_submodule_repo_worktree,
+    submodule_gitdir_filesystem_path, submodule_path_config_enabled,
+    validate_legacy_submodule_git_dir, write_submodule_gitfile,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
@@ -284,6 +290,34 @@ fn parse_gitmodules_with_repo(
 }
 
 /// Filter submodules by path args (empty = all).
+fn load_local_config(git_dir: &Path) -> Result<ConfigFile> {
+    let config_path = git_dir.join("config");
+    if config_path.exists() {
+        let content = fs::read_to_string(&config_path)?;
+        Ok(ConfigFile::parse(
+            &config_path,
+            &content,
+            ConfigScope::Local,
+        )?)
+    } else {
+        Ok(ConfigFile::parse(&config_path, "", ConfigScope::Local)?)
+    }
+}
+
+fn submodule_modules_dir(
+    work_tree: &Path,
+    git_dir: &Path,
+    cfg: &mut ConfigFile,
+    submodule_name: &str,
+) -> Result<PathBuf> {
+    if submodule_path_config_enabled(git_dir) {
+        let rel = ensure_submodule_gitdir_config(work_tree, git_dir, cfg, submodule_name)?;
+        Ok(work_tree.join(rel))
+    } else {
+        Ok(git_dir.join("modules").join(submodule_name))
+    }
+}
+
 fn filter_submodules<'a>(modules: &'a [SubmoduleInfo], paths: &[String]) -> Vec<&'a SubmoduleInfo> {
     if paths.is_empty() {
         modules.iter().collect()
@@ -350,6 +384,7 @@ fn run_status(args: &StatusArgs) -> Result<()> {
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
     let selected = filter_submodules(&modules, &args.paths);
+    let local_cfg = load_local_config(&repo.git_dir)?;
 
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -373,10 +408,19 @@ fn run_status(args: &StatusArgs) -> Result<()> {
             let sub_head = if head_file.exists() {
                 read_submodule_head(&sub_path)
             } else {
-                // gitfile indirection: check .git/modules/<name>/HEAD
-                let modules_head = repo.git_dir.join("modules").join(&m.name).join("HEAD");
-                if modules_head.exists() {
-                    read_head_from_file(&modules_head)
+                let modules_head = if submodule_path_config_enabled(&repo.git_dir) {
+                    submodule_gitdir_filesystem_path(work_tree, &repo.git_dir, &local_cfg, &m.name)
+                        .ok()
+                        .map(|p| p.join("HEAD"))
+                } else {
+                    Some(repo.git_dir.join("modules").join(&m.name).join("HEAD"))
+                };
+                if let Some(p) = modules_head {
+                    if p.exists() {
+                        read_head_from_file(&p)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -496,6 +540,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
     let selected = filter_submodules(&modules, &args.paths);
 
     let grit_bin = grit_exe::grit_executable();
+    let mut local_cfg = load_local_config(&repo.git_dir)?;
 
     for m in &selected {
         let sub_path = work_tree.join(&m.path);
@@ -524,7 +569,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             }
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = submodule_modules_dir(work_tree, &repo.git_dir, &mut local_cfg, &m.name)?;
 
         let needs_clone = if sub_path.exists() {
             // Directory exists but might be empty (from superproject clone).
@@ -606,7 +651,22 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     eprintln!("error: failed to clone submodule from '{}'", clone_url);
                     bail!("failed to clone submodule '{}'", m.name);
                 }
+                if submodule_path_config_enabled(&repo.git_dir) {
+                    local_cfg = load_local_config(&repo.git_dir)?;
+                    connect_submodule_work_tree_and_git_dir(
+                        &grit_bin,
+                        work_tree,
+                        &repo.git_dir,
+                        &local_cfg,
+                        &m.name,
+                        &sub_path,
+                    )?;
+                }
             }
+        }
+
+        if submodule_path_config_enabled(&repo.git_dir) {
+            let _ = init_submodule_head_from_gitlink(&modules_dir, recorded_oid);
         }
 
         // Determine which commit to checkout.
@@ -713,15 +773,8 @@ fn attach_existing_submodule_worktree(
     if !sub_path.exists() {
         fs::create_dir_all(sub_path)?;
     }
-    let gitfile = sub_path.join(".git");
-    fs::write(&gitfile, format!("gitdir: {}\n", modules_dir.display()))?;
-    let _ = Command::new(grit_bin)
-        .arg("--git-dir")
-        .arg(modules_dir)
-        .arg("config")
-        .arg("core.worktree")
-        .arg(sub_path)
-        .status();
+    write_submodule_gitfile(sub_path, modules_dir)?;
+    set_submodule_repo_worktree(grit_bin, modules_dir, sub_path);
     Ok(())
 }
 
@@ -744,9 +797,19 @@ fn run_add(args: &AddArgs) -> Result<()> {
         }
     };
 
+    let head_index = repo.load_index().ok();
+    die_path_inside_submodule_when_disabled(&repo.git_dir, work_tree, &path, head_index.as_ref())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let name = args.name.as_deref().unwrap_or(&path).to_string();
+    if !submodule_path_config_enabled(&repo.git_dir) {
+        let would_be = repo.git_dir.join("modules").join(&name);
+        validate_legacy_submodule_git_dir(&would_be, &name).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
     let sub_path = work_tree.join(&path);
 
     let grit_bin = grit_exe::grit_executable();
+    let mut local_cfg = load_local_config(&repo.git_dir)?;
 
     if sub_path.exists() {
         // If the path already exists and is a valid git repo, treat it like
@@ -756,9 +819,51 @@ fn run_add(args: &AddArgs) -> Result<()> {
             bail!("'{}' already exists and is not a git repository", path);
         }
         eprintln!("Adding existing repo at '{}' to the index", path);
+        if submodule_path_config_enabled(&repo.git_dir) {
+            let dot_git = sub_path.join(".git");
+            let modules_dir =
+                submodule_modules_dir(work_tree, &repo.git_dir, &mut local_cfg, &name)?;
+            if dot_git.is_dir() {
+                if !modules_dir.exists() {
+                    if let Some(parent) = modules_dir.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::rename(&dot_git, &modules_dir)
+                        .context("failed to relocate submodule .git")?;
+                    let moved_config_path = modules_dir.join("config");
+                    if moved_config_path.exists() {
+                        let content = fs::read_to_string(&moved_config_path)?;
+                        let mut cfg =
+                            ConfigFile::parse(&moved_config_path, &content, ConfigScope::Local)?;
+                        let relative_worktree = pathdiff_relative(&modules_dir, &sub_path);
+                        cfg.set("core.worktree", &relative_worktree)?;
+                        cfg.write()?;
+                    }
+                }
+                local_cfg = load_local_config(&repo.git_dir)?;
+                connect_submodule_work_tree_and_git_dir(
+                    &grit_bin,
+                    work_tree,
+                    &repo.git_dir,
+                    &local_cfg,
+                    &name,
+                    &sub_path,
+                )?;
+            } else if dot_git.is_file() {
+                local_cfg = load_local_config(&repo.git_dir)?;
+                connect_submodule_work_tree_and_git_dir(
+                    &grit_bin,
+                    work_tree,
+                    &repo.git_dir,
+                    &local_cfg,
+                    &name,
+                    &sub_path,
+                )?;
+            }
+        }
     } else {
         // Clone the submodule.
-        let modules_dir = repo.git_dir.join("modules").join(&path);
+        let modules_dir = submodule_modules_dir(work_tree, &repo.git_dir, &mut local_cfg, &name)?;
         // Only create the parent directory; git clone --separate-git-dir
         // will create the modules_dir itself.
         if let Some(parent) = modules_dir.parent() {
@@ -809,10 +914,18 @@ fn run_add(args: &AddArgs) -> Result<()> {
         if !status.success() {
             bail!("failed to clone submodule from '{}'", args.url);
         }
+        if submodule_path_config_enabled(&repo.git_dir) {
+            local_cfg = load_local_config(&repo.git_dir)?;
+            connect_submodule_work_tree_and_git_dir(
+                &grit_bin,
+                work_tree,
+                &repo.git_dir,
+                &local_cfg,
+                &name,
+                &sub_path,
+            )?;
+        }
     }
-
-    // Derive the submodule name (use --name if provided, otherwise path).
-    let name = args.name.as_deref().unwrap_or(&path);
 
     // Update .gitmodules.
     let gitmodules_path = work_tree.join(".gitmodules");
@@ -828,16 +941,9 @@ fn run_add(args: &AddArgs) -> Result<()> {
     config.write()?;
 
     // Also register the submodule in the local .git/config (like git does).
-    let local_config_path = repo.git_dir.join("config");
-    let mut local_config = if local_config_path.exists() {
-        let content = fs::read_to_string(&local_config_path)?;
-        ConfigFile::parse(&local_config_path, &content, ConfigScope::Local)?
-    } else {
-        ConfigFile::parse(&local_config_path, "", ConfigScope::Local)?
-    };
-    local_config.set(&format!("submodule.{name}.url"), &args.url)?;
-    local_config.set(&format!("submodule.{name}.active"), "true")?;
-    local_config.write()?;
+    local_cfg.set(&format!("submodule.{name}.url"), &args.url)?;
+    local_cfg.set(&format!("submodule.{name}.active"), "true")?;
+    local_cfg.write()?;
 
     // Add the submodule path to the index.
     // Use --no-warn-embedded-repo so the add doesn't warn about the
@@ -1163,6 +1269,8 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
     let work_tree = repo.work_tree.as_ref().context("bare repository")?;
     let modules = parse_gitmodules(work_tree)?;
     let selected = filter_submodules(&modules, &args.paths);
+    let grit_bin = grit_exe::grit_executable();
+    let mut local_cfg = load_local_config(&repo.git_dir)?;
 
     for m in &selected {
         let sub_path = work_tree.join(&m.path);
@@ -1173,7 +1281,7 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
             continue;
         }
 
-        let modules_dir = repo.git_dir.join("modules").join(&m.name);
+        let modules_dir = submodule_modules_dir(work_tree, &repo.git_dir, &mut local_cfg, &m.name)?;
 
         // Create the modules directory if needed.
         fs::create_dir_all(modules_dir.parent().unwrap())?;
@@ -1197,9 +1305,15 @@ fn run_absorbgitdirs(args: &AbsorbgitdirsArgs) -> Result<()> {
             cfg.write()?;
         }
 
-        // Write a gitfile in place of the .git directory.
-        let relative_gitdir = pathdiff_relative(&sub_path, &modules_dir);
-        fs::write(&dot_git, format!("gitdir: {}\n", relative_gitdir))?;
+        local_cfg = load_local_config(&repo.git_dir)?;
+        connect_submodule_work_tree_and_git_dir(
+            &grit_bin,
+            work_tree,
+            &repo.git_dir,
+            &local_cfg,
+            &m.name,
+            &sub_path,
+        )?;
 
         eprintln!(
             "Migrating git directory of '{}' from '{}' to '{}'",
