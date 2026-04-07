@@ -1391,7 +1391,7 @@ t9001-send-email	t9	yes	200	0	0	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
 t9003-help-autocorrect	t9	yes	10	1	9	false	ok	0
 t9010-branch-list-sort	t9	yes	26	0	0	false		0
-t9020-tag-list-contains	t9	yes	28	0	0	false		0
+t9020-tag-list-contains	t9	yes	28	28	0	true	ok	0
 t9030-commit-tree-parents	t9	yes	25	0	0	false		0
 t9040-hash-object-types	t9	yes	28	0	0	false		0
 t9050-write-tree-verify	t9	yes	26	0	0	false		0
