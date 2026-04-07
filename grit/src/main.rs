@@ -3163,7 +3163,17 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
         "check-ignore" => commands::check_ignore::run(parse_cmd_args(subcmd, rest)),
         "check-mailmap" => commands::check_mailmap::run(parse_cmd_args(subcmd, rest)),
         "check-ref-format" => commands::check_ref_format::run(parse_cmd_args(subcmd, rest)),
-        "checkout" => commands::git_passthrough::run(subcmd, rest),
+        "checkout" => {
+            if discovered_repo_is_reftable()
+                || rest
+                    .iter()
+                    .any(|arg| arg == "--recurse-submodules")
+            {
+                commands::git_passthrough::run(subcmd, rest)
+            } else {
+                commands::checkout::run(parse_cmd_args(subcmd, rest))
+            }
+        }
         "checkout-index" => {
             if rest.iter().any(|arg| arg == "--ignore-skip-worktree-bits") {
                 commands::git_passthrough::run(subcmd, rest)
