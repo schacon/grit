@@ -60,6 +60,7 @@ pub fn get_tree_entry_follow_symlinks(
     let mut path_buf = path.to_string();
     let mut follows = 0usize;
     let mut followed_symlink_blobs: HashSet<ObjectId> = HashSet::new();
+    let mut symlink_just_followed = false;
 
     loop {
         let Some(&tree_oid) = stack.last() else {
@@ -90,6 +91,7 @@ pub fn get_tree_entry_follow_symlinks(
             }
             stack.pop();
             followed_symlink_blobs.clear();
+            symlink_just_followed = false;
             path_buf = rest.unwrap_or_default();
             continue;
         }
@@ -118,8 +120,12 @@ pub fn get_tree_entry_follow_symlinks(
         };
 
         let Some((entry_oid, mode)) = found else {
+            if symlink_just_followed {
+                return Ok(Err(FollowPathFailure::DanglingSymlink));
+            }
             return Ok(Err(FollowPathFailure::Missing));
         };
+        symlink_just_followed = false;
 
         if git_mode_is_dir(mode) {
             if rest.is_none() {
@@ -166,12 +172,15 @@ pub fn get_tree_entry_follow_symlinks(
                 }));
             }
 
-            let mut new_path = String::from_utf8_lossy(&obj.data).into_owned();
+            let mut new_path = String::from_utf8_lossy(&obj.data)
+                .trim_end_matches(|c| c == '\n' || c == '\r')
+                .to_string();
             if let Some(r) = rest {
                 new_path.push('/');
                 new_path.push_str(&r);
             }
             path_buf = new_path;
+            symlink_just_followed = true;
             continue;
         }
 
