@@ -3316,6 +3316,13 @@ fn merge_trees(
         handled_paths.insert(base_path.clone());
         // The new path on ours side is handled here too (don't treat as add/add)
         handled_paths.insert(ours_new_path.clone());
+        let base_path_is_under_ours_new_path = base_path.len() > ours_new_path.len()
+            && base_path.starts_with(ours_new_path)
+            && base_path.get(ours_new_path.len()) == Some(&b'/');
+        let ours_new_path_df_conflict =
+            has_descendant(&theirs_entries, ours_new_path) && !base_path_is_under_ours_new_path;
+        let ours_new_path_sidepath =
+            format!("{}~{}", String::from_utf8_lossy(ours_new_path), ours_label);
 
         let be = base.get(base_path);
         let oe = ours_entries.get(ours_new_path); // The renamed file in ours
@@ -3337,15 +3344,25 @@ fn merge_trees(
                 } else {
                     // Both modified — try content merge at new path
                     let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                    let ours_label_for_merge = if ours_new_path_df_conflict {
+                        format!("{ours_label}:{path_str}")
+                    } else {
+                        ours_label.to_string()
+                    };
+                    let theirs_label_for_merge = if ours_new_path_df_conflict {
+                        format!("{}:{}", their_name, String::from_utf8_lossy(base_path))
+                    } else {
+                        their_name.to_string()
+                    };
                     match try_content_merge(
                         repo,
                         &path_str,
                         be,
                         oe,
                         te,
-                        ours_label,
+                        &ours_label_for_merge,
                         base_label,
-                        their_name,
+                        &theirs_label_for_merge,
                         favor,
                         diff_algorithm,
                         merge_renormalize,
@@ -3358,40 +3375,70 @@ fn merge_trees(
                             let mut entry = oe.clone();
                             entry.oid = merged_oid;
                             entry.mode = mode;
-                            index.entries.push(entry);
                             let mut resolved = oe.clone();
                             resolved.oid = merged_oid;
                             resolved.mode = mode;
-                            resolved_entry_at_new = Some(resolved);
+                            if ours_new_path_df_conflict {
+                                has_conflicts = true;
+                                has_conflict_at_new = true;
+                                stage_entry(&mut index, &resolved, 2);
+                                if let Ok(obj) = repo.odb.read(&merged_oid) {
+                                    conflict_files.push((ours_new_path_sidepath.clone(), obj.data));
+                                }
+                            } else {
+                                index.entries.push(entry);
+                                resolved_entry_at_new = Some(resolved);
+                            }
                         }
                         ContentMergeResult::Conflict(content) => {
                             has_conflicts = true;
                             has_conflict_at_new = true;
+                            let conflict_stage_path = if ours_new_path_df_conflict {
+                                ours_new_path_sidepath.as_bytes().to_vec()
+                            } else {
+                                ours_new_path.clone()
+                            };
+                            let conflict_stage_path_str =
+                                String::from_utf8_lossy(&conflict_stage_path).to_string();
                             let mut be_at_new = be.clone();
-                            be_at_new.path = ours_new_path.clone();
+                            be_at_new.path = conflict_stage_path.clone();
                             stage_entry(&mut index, &be_at_new, 1);
-                            stage_entry(&mut index, oe, 2);
+                            let mut oe_at_new = oe.clone();
+                            oe_at_new.path = conflict_stage_path.clone();
+                            stage_entry(&mut index, &oe_at_new, 2);
                             let mut te_at_new = te.clone();
-                            te_at_new.path = ours_new_path.clone();
+                            te_at_new.path = conflict_stage_path;
                             stage_entry(&mut index, &te_at_new, 3);
-                            conflict_descriptions.push(("content".to_string(), path_str.clone()));
-                            conflict_files.push((path_str, content));
+                            conflict_descriptions
+                                .push(("content".to_string(), conflict_stage_path_str.clone()));
+                            conflict_files.push((conflict_stage_path_str, content));
                         }
                         ContentMergeResult::BinaryConflict(content) => {
                             has_conflicts = true;
                             has_conflict_at_new = true;
+                            let conflict_stage_path = if ours_new_path_df_conflict {
+                                ours_new_path_sidepath.as_bytes().to_vec()
+                            } else {
+                                ours_new_path.clone()
+                            };
+                            let conflict_stage_path_str =
+                                String::from_utf8_lossy(&conflict_stage_path).to_string();
                             let mut be_at_new = be.clone();
-                            be_at_new.path = ours_new_path.clone();
+                            be_at_new.path = conflict_stage_path.clone();
                             stage_entry(&mut index, &be_at_new, 1);
-                            stage_entry(&mut index, oe, 2);
+                            let mut oe_at_new = oe.clone();
+                            oe_at_new.path = conflict_stage_path.clone();
+                            stage_entry(&mut index, &oe_at_new, 2);
                             let mut te_at_new = te.clone();
-                            te_at_new.path = ours_new_path.clone();
+                            te_at_new.path = conflict_stage_path;
                             stage_entry(&mut index, &te_at_new, 3);
                             conflict_descriptions.push((
                                 "binary".to_string(),
-                                format!("{path_str} ({ours_label} vs. {their_name})"),
+                                format!(
+                                    "{conflict_stage_path_str} ({ours_label} vs. {their_name})"
+                                ),
                             ));
-                            conflict_files.push((path_str, content));
+                            conflict_files.push((conflict_stage_path_str, content));
                         }
                     }
                 }
@@ -4924,6 +4971,7 @@ fn remove_deleted_files(
     let new_paths: std::collections::HashSet<&[u8]> = new_index
         .entries
         .iter()
+        .filter(|e| e.stage() == 0)
         .map(|e| e.path.as_slice())
         .collect();
     for path in old_entries.keys() {

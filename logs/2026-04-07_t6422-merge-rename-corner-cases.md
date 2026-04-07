@@ -41,6 +41,41 @@
 - Attempted patch did not improve pass count and was reverted to keep the branch coherent.
 - No functional merge behavior change has been committed yet for t6422 in this iteration.
 
+## 2026-04-07 — Increment: 14/26 → 16/26
+
+### Implemented fixes (committed increment)
+- Updated `grit/src/commands/merge.rs` to handle rename/delete + rename/add overlap at the same rename target:
+  - when ours renamed `base_path -> ours_new_path`, theirs deleted `base_path`, and theirs independently added at `ours_new_path`,
+    we now classify as `rename/add` conflict at the destination (stage 2 ours, stage 3 theirs), instead of only `rename/delete`.
+  - this resolves the `rad` scenario shape and unblocks subtest #17.
+- Improved D/F rename-directory conflict handling:
+  - detect when rename target collides with paths that only exist due to that same source rename (`base_path` nested under `ours_new_path`) and avoid treating that as directory/file collision.
+  - for real directory/file collisions, stage and materialize conflict content at side-path (`<path>~HEAD`) so worktree/index shape matches expected `newfile~HEAD` behavior.
+- `remove_deleted_files(...)` now only removes regular files and skips directories, avoiding unintended removal attempts on conflict-created directories.
+- Conflict marker labels for rename content merges now preserve expected path-qualified labels:
+  - ours label: `HEAD:<rename-target>`
+  - theirs label: `<other>:<source-path>`
+
+### Validation after this increment
+- Direct:
+  - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6422-merge-rename-corner-cases.sh`
+  - **16/26 passing**.
+- Harness:
+  - `./scripts/run-tests.sh t6422-merge-rename-corner-cases.sh`
+  - **16/26 passing**.
+
+### Newly passing subtests
+- #8 `rename/directory conflict + content merge conflict`
+- #17 `rad-check: rename/add/delete conflict`
+
+### Remaining failures (10)
+- 7, 12, 13, 16, 18, 19, 20, 24, 25, 26
+
+### Targeted regressions
+- `./scripts/run-tests.sh t6400-merge-df.sh` → 7/7
+- `./scripts/run-tests.sh t6417-merge-ours-theirs.sh` → 7/7
+- `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh` → 2/2
+
 ### Next concrete debugging target
 - Start with failing block #7/#8/#9 (rename-directory trio) to align:
   - conflict path naming,
