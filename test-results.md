@@ -2,6 +2,15 @@
 
 **Updated:** 2026-04-07
 
+- `cargo build --release -p grit-rs`: success (after adding `test-tool run-command` compatibility helper implementation in `grit/src/main.rs`, including ENOENT/EACCES reporting, PATH resolution/execution fallback behavior, `env` var overlay handling, trace emission for `GIT_TRACE` `run_command`/`start_command`, grouped/ungrouped parallel harness modes, stdin-feed and abort/no-jobs scenarios, and shell fallback for executable scripts without shebang).
+- `rm -rf /workspace/tests/trash.t0061-run-command /workspace/tests/bin.t0061-run-command && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0061-run-command.sh` (run from `/workspace/tests`): 24/24 passing (improved from 4/24).
+- `./scripts/run-tests.sh t0061-run-command.sh`: 24/24 passing.
+- regression checks:
+  - `./scripts/run-tests.sh t0014-alias.sh`: 21/21 passing.
+  - `./scripts/run-tests.sh t0210-trace2-normal.sh`: 14/14 passing.
+  - `./scripts/run-tests.sh t0211-trace2-perf.sh`: 17/17 passing.
+- `cargo fmt && cargo clippy --fix --allow-dirty && cargo test -p grit-lib --lib`: success (grit-lib unit tests 98/98 passing; reverted unrelated clippy formatting-only changes in `grit/src/commands/checkout.rs`).
+
 - `cargo build --release -p grit-rs`: success (after implementing `t0014` alias compatibility fixes across alias lookup/expansion, shell tracing, external dashed fallback, and help alias listing).
 - `rm -rf /workspace/tests/trash.t0014-alias /workspace/tests/bin.t0014-alias && GUST_BIN=/workspace/target/release/grit TEST_VERBOSE=1 bash t0014-alias.sh` (run from `/workspace/tests`): 21/21 passing (improved from 4/21).
 - `./scripts/run-tests.sh t0014-alias.sh`: 21/21 passing.

@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   107 |
+| Completed   |   108 |
 | In progress |     0 |
-| Remaining   |   660 |
+| Remaining   |   659 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t0061-run-command` — 24/24 tests pass (implemented `test-tool run-command` compatibility helper in `grit/src/main.rs` with support for `start-command-ENOENT`, single-command execution with PATH-restricted lookup and ENOENT/EACCES diagnostics, shebang-less script fallback via `/bin/sh`, deterministic parallel/ungroup/stdin/abort/no-jobs harness behaviors expected by the upstream helper tests, and `GIT_TRACE=1` `trace: run_command:` environment rendering semantics including unset operations and shell-style quoting)
 - `t0014-alias` — 21/21 tests pass (implemented alias expansion compatibility in `grit/src/main.rs` and `grit/src/commands/help.rs`: support for alias shadowing of deprecated builtins (`whatchanged`, `pack-redundant`), alias loop detection with Git-style loop diagnostics, subsection alias syntax (`alias.<name>.command` and `alias..name.command`) including UTF-8/case-sensitive names, proper valueless-alias error reporting (`alias.<key> is not set`), shell-alias trace output compatibility for `GIT_TRACE` `start_command`, external dashed-command fallback with `trace: run_command`, and help `-a` alias listing from config)
 - `t0020-crlf` — 36/36 tests pass (completed CRLF conversion compatibility across add/update/checkout/apply/rm paths: implemented mixed-line-ending `safecrlf` reject/warn behavior for `autocrlf=true`, made `update-index` and `apply --index` use clean-side conversion before hashing so index comparisons align with Git, loaded in-index `.gitattributes` rules for checkout/read-tree/checkout-index updates so conversion works even when attribute files are absent in the current worktree, corrected checkout safety checks to compare normalized content while tolerating equivalent raw-vs-clean forms for `.gitattributes`, and aligned `rm` local-modification safety checks with conversion-aware content comparison)
 - `t0019-json-writer` — 16/16 tests pass (implemented `test-tool json-writer` in `grit/src/main.rs` with upstream-compatible scripted and unit-test modes: proper JSON string escaping, object/array begin/end stack handling, inline/nested structures, boolean/null emission, integer and floating-point formatting with configurable precision, optional pretty-print indentation/newline behavior, and robust tokenized stdin command parsing used by `tests/t0019-json-writer.sh`)
@@ -100,4 +101,4 @@
 
 ## What Remains
 
-660 test files still pending. See `plan.md` for the full prioritized list.
+659 test files still pending. See `plan.md` for the full prioritized list.

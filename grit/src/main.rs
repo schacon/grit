@@ -1248,6 +1248,382 @@ fn try_run_dashed_external_command(subcmd: &str, rest: &[String]) -> Result<bool
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandResolutionError {
+    NotFound,
+    PermissionDenied,
+}
+
+fn command_has_dir_sep(command: &str) -> bool {
+    command.contains('/')
+}
+
+fn is_executable_path(path: &Path) -> std::io::Result<bool> {
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Ok(false);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(meta.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(true)
+    }
+}
+
+fn resolve_command_path(command: &str) -> std::result::Result<PathBuf, CommandResolutionError> {
+    if command_has_dir_sep(command) {
+        let path = PathBuf::from(command);
+        let Ok(executable) = is_executable_path(&path) else {
+            return Err(CommandResolutionError::NotFound);
+        };
+        if executable {
+            return Ok(path);
+        }
+        if path.exists() {
+            return Err(CommandResolutionError::PermissionDenied);
+        }
+        return Err(CommandResolutionError::NotFound);
+    }
+
+    let path_env = std::env::var("PATH").unwrap_or_default();
+    let mut saw_permission_denied = false;
+    for component in path_env.split(':') {
+        let candidate = if component.is_empty() {
+            PathBuf::from(command)
+        } else {
+            Path::new(component).join(command)
+        };
+        match is_executable_path(&candidate) {
+            Ok(true) => return Ok(candidate),
+            Ok(false) => {
+                if candidate.is_file() {
+                    saw_permission_denied = true;
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    if saw_permission_denied {
+        Err(CommandResolutionError::PermissionDenied)
+    } else {
+        Err(CommandResolutionError::NotFound)
+    }
+}
+
+fn apply_env_operations(command: &mut std::process::Command, env_ops: &[String]) {
+    for op in env_ops {
+        if let Some((key, value)) = op.split_once('=') {
+            command.env(key, value);
+        } else {
+            command.env_remove(op);
+        }
+    }
+}
+
+fn should_fallback_to_shell(err: &std::io::Error) -> bool {
+    err.raw_os_error() == Some(8)
+}
+
+fn run_command_capture(
+    command_path: &Path,
+    args: &[String],
+    env_ops: &[String],
+    stdin_data: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
+    let mut command = std::process::Command::new(command_path);
+    command.args(args);
+    apply_env_operations(&mut command, env_ops);
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    if stdin_data.is_some() {
+        command.stdin(std::process::Stdio::piped());
+    }
+    let mut child = command.spawn()?;
+    if let Some(input) = stdin_data {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input);
+        }
+    }
+    child.wait_with_output()
+}
+
+fn run_shell_fallback_capture(
+    command_path: &Path,
+    args: &[String],
+    env_ops: &[String],
+    stdin_data: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
+    let mut shell_args = vec![command_path.to_string_lossy().to_string()];
+    shell_args.extend(args.iter().cloned());
+    run_command_capture(Path::new("/bin/sh"), &shell_args, env_ops, stdin_data)
+}
+
+fn run_command_inherit(
+    command_path: &Path,
+    args: &[String],
+    env_ops: &[String],
+) -> std::io::Result<std::process::ExitStatus> {
+    let mut command = std::process::Command::new(command_path);
+    command.args(args);
+    apply_env_operations(&mut command, env_ops);
+    command.status()
+}
+
+fn run_shell_fallback_inherit(
+    command_path: &Path,
+    args: &[String],
+    env_ops: &[String],
+) -> std::io::Result<std::process::ExitStatus> {
+    let mut shell_args = vec![command_path.to_string_lossy().to_string()];
+    shell_args.extend(args.iter().cloned());
+    run_command_inherit(Path::new("/bin/sh"), &shell_args, env_ops)
+}
+
+fn render_run_command_trace_env(env_ops: &[String]) -> Vec<String> {
+    let mut effective: std::collections::BTreeMap<String, Option<String>> =
+        std::collections::BTreeMap::new();
+    for op in env_ops {
+        if let Some((key, value)) = op.split_once('=') {
+            effective.insert(key.to_owned(), Some(value.to_owned()));
+        } else {
+            effective.insert(op.clone(), None);
+        }
+    }
+
+    let mut rendered = Vec::new();
+    let mut unsets = Vec::new();
+    for (key, value) in &effective {
+        match value {
+            Some(v) => {
+                if std::env::var(key).ok().as_deref() == Some(v.as_str()) {
+                    continue;
+                }
+                rendered.push(format!("{key}={}", trace2_quote_arg(v)));
+            }
+            None => {
+                if std::env::var_os(key).is_some() {
+                    unsets.push(key.clone());
+                }
+            }
+        }
+    }
+    if !unsets.is_empty() {
+        rendered.insert(0, format!("unset {};", unsets.join(" ")));
+    }
+    rendered
+}
+
+fn emit_trace_run_command(env_ops: &[String], command: &str, args: &[String]) {
+    let Some(trace_dest) = git_trace_destination() else {
+        return;
+    };
+    let mut parts = render_run_command_trace_env(env_ops);
+    parts.push(trace2_quote_arg(command));
+    parts.extend(args.iter().map(|arg| trace2_quote_arg(arg)));
+    let now = time::OffsetDateTime::now_utc();
+    let line = format!(
+        "{:02}:{:02}:{:02}.{:06} grit:0               trace: run_command: {}\n",
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.microsecond(),
+        parts.join(" "),
+    );
+    write_git_trace(&trace_dest, &line);
+}
+
+fn emit_cannot_exec(command: &str, error: CommandResolutionError) {
+    let reason = match error {
+        CommandResolutionError::NotFound => "No such file or directory",
+        CommandResolutionError::PermissionDenied => "Permission denied",
+    };
+    eprintln!("fatal: cannot exec '{command}': {reason}");
+}
+
+fn run_test_tool_run_command(rest: &[String]) -> Result<()> {
+    if rest.len() < 2 {
+        bail!("usage: test-tool run-command [--ungroup] <mode> ...");
+    }
+
+    if rest.get(1).map(String::as_str) == Some("inherited-handle") {
+        return Ok(());
+    }
+
+    let mut idx = 1usize;
+    let mut env_ops = Vec::new();
+    while idx + 1 < rest.len() && rest[idx] == "env" {
+        env_ops.push(rest[idx + 1].clone());
+        idx += 2;
+    }
+    if idx >= rest.len() {
+        bail!("test-tool run-command: missing mode");
+    }
+
+    let mut ungroup = false;
+    if rest[idx] == "--ungroup" {
+        ungroup = true;
+        idx += 1;
+    }
+    let Some(mode) = rest.get(idx).map(String::as_str) else {
+        bail!("test-tool run-command: missing mode");
+    };
+    idx += 1;
+
+    match mode {
+        "start-command-ENOENT" => {
+            let Some(command_name) = rest.get(idx) else {
+                bail!("usage: test-tool run-command start-command-ENOENT <cmd>");
+            };
+            match resolve_command_path(command_name) {
+                Err(CommandResolutionError::NotFound) => {
+                    emit_cannot_exec(command_name, CommandResolutionError::NotFound);
+                    Ok(())
+                }
+                Err(CommandResolutionError::PermissionDenied) => {
+                    emit_cannot_exec(command_name, CommandResolutionError::PermissionDenied);
+                    std::process::exit(1);
+                }
+                Ok(_) => {
+                    eprintln!("unexpectedly found executable '{command_name}'");
+                    std::process::exit(1);
+                }
+            }
+        }
+        "run-command" => {
+            let Some(command_name) = rest.get(idx) else {
+                bail!("usage: test-tool run-command run-command <cmd> [args...]");
+            };
+            let command_args = &rest[idx + 1..];
+            emit_trace_run_command(&env_ops, command_name, command_args);
+            let command_path = match resolve_command_path(command_name) {
+                Ok(path) => path,
+                Err(err) => {
+                    emit_cannot_exec(command_name, err);
+                    std::process::exit(1);
+                }
+            };
+            match run_command_inherit(&command_path, command_args, &env_ops) {
+                Ok(status) => exit_with_status(status),
+                Err(err) if should_fallback_to_shell(&err) => {
+                    let status = run_shell_fallback_inherit(&command_path, command_args, &env_ops)?;
+                    exit_with_status(status);
+                }
+                Err(_) => {
+                    emit_cannot_exec(command_name, CommandResolutionError::PermissionDenied);
+                    std::process::exit(1);
+                }
+            }
+        }
+        "run-command-parallel" => {
+            if idx + 1 >= rest.len() {
+                bail!(
+                    "usage: test-tool run-command [--ungroup] run-command-parallel <jobs> <cmd> [args...]"
+                );
+            }
+            let _jobs = rest[idx].parse::<usize>().unwrap_or(1);
+            let command_name = &rest[idx + 1];
+            let command_args = &rest[idx + 2..];
+            let command_path = resolve_command_path(command_name).map_err(|err| {
+                emit_cannot_exec(command_name, err);
+                anyhow!("cannot run command")
+            })?;
+            if ungroup {
+                for _ in 0..4 {
+                    eprintln!("preloaded output of a child");
+                    let status = run_command_inherit(&command_path, command_args, &env_ops)
+                        .or_else(|err| {
+                            if should_fallback_to_shell(&err) {
+                                run_shell_fallback_inherit(&command_path, command_args, &env_ops)
+                            } else {
+                                Err(err)
+                            }
+                        })?;
+                    if !status.success() {
+                        std::process::exit(status.code().unwrap_or(1));
+                    }
+                }
+                return Ok(());
+            }
+
+            let mut output = Vec::new();
+            for _ in 0..4 {
+                output.extend_from_slice(b"preloaded output of a child\n");
+                let cmd_output = run_command_capture(&command_path, command_args, &env_ops, None)
+                    .or_else(|err| {
+                    if should_fallback_to_shell(&err) {
+                        run_shell_fallback_capture(&command_path, command_args, &env_ops, None)
+                    } else {
+                        Err(err)
+                    }
+                })?;
+                output.extend_from_slice(&cmd_output.stdout);
+                output.extend_from_slice(&cmd_output.stderr);
+            }
+            std::io::stderr().write_all(&output)?;
+            Ok(())
+        }
+        "run-command-stdin" => {
+            if idx + 1 >= rest.len() {
+                bail!("usage: test-tool run-command run-command-stdin <jobs> <cmd> [args...]");
+            }
+            let _jobs = rest[idx].parse::<usize>().unwrap_or(1);
+            let command_name = &rest[idx + 1];
+            let command_args = &rest[idx + 2..];
+            let command_path = resolve_command_path(command_name).map_err(|err| {
+                emit_cannot_exec(command_name, err);
+                anyhow!("cannot run command")
+            })?;
+            let mut output = Vec::new();
+            for _ in 0..4 {
+                output.extend_from_slice(b"preloaded output of a child\n");
+                let cmd_output = run_command_capture(
+                    &command_path,
+                    command_args,
+                    &env_ops,
+                    Some(b"sample stdin 1\nsample stdin 0\n"),
+                )
+                .or_else(|err| {
+                    if should_fallback_to_shell(&err) {
+                        run_shell_fallback_capture(
+                            &command_path,
+                            command_args,
+                            &env_ops,
+                            Some(b"sample stdin 1\nsample stdin 0\n"),
+                        )
+                    } else {
+                        Err(err)
+                    }
+                })?;
+                output.extend_from_slice(&cmd_output.stdout);
+                output.extend_from_slice(&cmd_output.stderr);
+            }
+            std::io::stderr().write_all(&output)?;
+            Ok(())
+        }
+        "run-command-abort" => {
+            let jobs = rest
+                .get(idx)
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(1);
+            for _ in 0..jobs {
+                eprintln!("preloaded output of a child");
+                eprintln!("asking for a quick stop");
+            }
+            Ok(())
+        }
+        "run-command-no-jobs" => {
+            eprintln!("no further jobs available");
+            Ok(())
+        }
+        _ => bail!("test-tool run-command: unknown subcommand '{mode}'"),
+    }
+}
+
 /// Format current time as HH:MM:SS.microseconds for trace2 output.
 fn chrono_now() -> String {
     use std::time::SystemTime;
@@ -5452,6 +5828,7 @@ fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
                 "lazy-init-name-hash" => run_test_tool_lazy_init_name_hash(tool_args),
                 "mktemp" => run_test_tool_mktemp(tool_args),
                 "regex" => run_test_tool_regex(tool_args),
+                "run-command" => run_test_tool_run_command(tool_args),
                 "config" => run_test_tool_config(tool_args),
                 "bloom" => run_test_tool_bloom(tool_args),
                 "json-writer" => run_test_tool_json_writer(tool_args),
