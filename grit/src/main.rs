@@ -2652,14 +2652,27 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         return url.to_string();
     }
 
-    /// Normalize path parts (resolve . and ..)
+    /// Normalize path parts (resolve . and ..), preserving leading / or //
     fn normalize(s: &str) -> Vec<String> {
+        // Detect leading // (network path) or / (absolute)
+        let double_slash = s.starts_with("//");
+        let is_abs = s.starts_with('/');
         let mut parts: Vec<String> = Vec::new();
+        // Add sentinel for absolute paths to prevent going above root
+        if double_slash {
+            parts.push("//".to_string()); // sentinel
+        } else if is_abs {
+            parts.push("/".to_string()); // sentinel
+        }
         for p in s.split('/') {
             match p {
                 ".." => {
-                    if parts.last().map(|s: &String| s.as_str()) == Some("..") || parts.is_empty() {
-                        parts.push("..".to_string());
+                    if parts.len() <= (if is_abs { 1 } else { 0 })
+                        || parts.last().map(|s: &String| s.as_str()) == Some("..")
+                    {
+                        if !is_abs {
+                            parts.push("..".to_string());
+                        }
                     } else {
                         parts.pop();
                     }
@@ -2705,9 +2718,19 @@ fn resolve_submodule_relative_url(remote_url: &str, up_path: &str, url: &str) ->
         }
     }
 
-    let mut out = result.join("/");
-    if url.ends_with('/') && !out.ends_with('/') {
-        out.push('/');
+    let mut out = if !result.is_empty() && (result[0] == "//" || result[0] == "/") {
+        let sentinel = result[0].clone();
+        if result.len() == 1 {
+            sentinel
+        } else {
+            format!("{}{}", sentinel, result[1..].join("/"))
+        }
+    } else {
+        result.join("/")
+    };
+    // Strip trailing slash from result (git's resolve_relative_url doesn't preserve it)
+    while out.ends_with('/') && out.len() > 1 {
+        out.pop();
     }
     if out.is_empty() {
         ".".to_string()
