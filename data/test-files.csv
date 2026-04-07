@@ -541,7 +541,7 @@ t3008-ls-files-lazy-init-name-hash	t3	yes	1	0	1	false	ok	0
 t3009-ls-files-others-nonsubmodule	t3	yes	2	1	1	false	ok	0
 t3010-ls-files-killed-modified	t3	yes	6	3	3	false	ok	0
 t3011-common-prefixes-and-directory-traversal	t3	yes	20	14	6	false	ok	1
-t3011-ls-files-staged	t3	yes	29	28	1	false	ok	0
+t3011-ls-files-staged	t3	yes	29	29	0	true	ok	0
 t3012-ls-files-dedup	t3	yes	3	2	1	false	ok	0
 t3013-ls-files-format	t3	yes	20	8	12	false	ok	0
 t3014-ls-files-pathspec-magic	t3	yes	29	29	0	true	ok	0
