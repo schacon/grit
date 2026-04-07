@@ -669,10 +669,33 @@ fn version_segments(s: &str) -> Vec<&str> {
 }
 
 /// Build the tag message from CLI args.
+/// Strip #comment lines from a message and normalize whitespace.
+fn strip_comments(s: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in s.lines() {
+        if !line.starts_with('#') {
+            lines.push(line);
+        }
+    }
+    // Remove leading and trailing blank lines
+    while lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.remove(0);
+    }
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        lines.join("\n") + "\n"
+    }
+}
+
 fn build_tag_message(args: &Args) -> Result<String> {
     if !args.message.is_empty() {
         let msg = args.message.join("\n\n");
-        return Ok(ensure_trailing_newline(&msg));
+        let stripped = strip_comments(&msg);
+        return Ok(stripped);
     }
 
     if let Some(ref file_path) = args.file {
@@ -684,7 +707,8 @@ fn build_tag_message(args: &Args) -> Result<String> {
         } else {
             fs::read_to_string(file_path)?
         };
-        return Ok(ensure_trailing_newline(&content));
+        let stripped = strip_comments(&content);
+        return Ok(stripped);
     }
 
     Ok(String::new())
