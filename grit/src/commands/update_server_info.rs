@@ -29,7 +29,7 @@ pub fn run(args: Args) -> Result<()> {
     let _ = args;
     let repo = Repository::discover(None)?;
 
-    update_info_refs(&repo)?;
+    update_info_refs(&repo, args.force)?;
     update_info_packs(&repo)?;
 
     Ok(())
@@ -38,7 +38,7 @@ pub fn run(args: Args) -> Result<()> {
 // ── info/refs ────────────────────────────────────────────────────────
 
 /// Write `info/refs` — one line per ref: `<hex-oid>\t<refname>\n`.
-fn update_info_refs(repo: &Repository) -> Result<()> {
+fn update_info_refs(repo: &Repository, force: bool) -> Result<()> {
     let info_dir = repo.git_dir.join("info");
     fs::create_dir_all(&info_dir).with_context(|| format!("creating {}", info_dir.display()))?;
 
@@ -48,7 +48,16 @@ fn update_info_refs(repo: &Repository) -> Result<()> {
         out.push_str(&format!("{oid}\t{name}\n"));
     }
 
-    fs::write(info_dir.join("refs"), out).context("writing info/refs")?;
+    // Only write if content changed (preserves mtime when no-op), unless --force
+    let refs_path = info_dir.join("refs");
+    if force {
+        fs::write(&refs_path, out).context("writing info/refs")?;
+    } else {
+        let existing = fs::read_to_string(&refs_path).unwrap_or_default();
+        if existing != out {
+            fs::write(&refs_path, out).context("writing info/refs")?;
+        }
+    }
 
     Ok(())
 }
