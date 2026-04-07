@@ -6,7 +6,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use grit_lib::objects::{parse_commit, parse_tree, ObjectKind};
+use grit_lib::fsck_standalone::fsck_object;
+use grit_lib::objects::ObjectKind;
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
 
@@ -102,44 +103,16 @@ fn validate_object_data(kind: ObjectKind, data: &[u8], literally: bool) -> Resul
     if literally {
         return Ok(());
     }
-    match kind {
-        ObjectKind::Commit => {
-            parse_commit(data).context("corrupt commit object")?;
-            Ok(())
+    if let Err(e) = fsck_object(kind, data) {
+        if kind == ObjectKind::Tree && e.id == "badTree" {
+            eprintln!("error: too-short tree object");
         }
-        ObjectKind::Tag => validate_tag_data(data),
-        ObjectKind::Tree => {
-            parse_tree(data).context("corrupt tree object")?;
-            Ok(())
-        }
-        ObjectKind::Blob => Ok(()),
+        return Err(anyhow::anyhow!(grit_lib::error::Error::Message(format!(
+            "error: object fails fsck: {}\nfatal: refusing to create malformed object",
+            e.report_line()
+        ))));
     }
-}
-
-fn validate_tag_data(data: &[u8]) -> Result<()> {
-    let text = std::str::from_utf8(data).context("corrupt tag object")?;
-    let mut has_object = false;
-    let mut has_type = false;
-    let mut has_tag = false;
-    let mut has_tagger = false;
-    for line in text.lines() {
-        if line.is_empty() {
-            break;
-        }
-        if line.starts_with("object ") {
-            has_object = true;
-        } else if line.starts_with("type ") {
-            has_type = true;
-        } else if line.starts_with("tag ") {
-            has_tag = true;
-        } else if line.starts_with("tagger ") {
-            has_tagger = true;
-        }
-    }
-    if has_object && has_type && has_tag && has_tagger {
-        return Ok(());
-    }
-    anyhow::bail!("corrupt tag object")
+    Ok(())
 }
 
 fn hash_and_maybe_write(

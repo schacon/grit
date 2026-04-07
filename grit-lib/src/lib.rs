@@ -23,6 +23,7 @@ pub mod delta_encode;
 pub mod diff;
 pub mod error;
 pub mod fmt_merge_msg;
+pub mod fsck_standalone;
 pub mod git_date;
 pub mod hooks;
 pub mod ignore;

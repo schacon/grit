@@ -156,7 +156,7 @@ commit → check it off → move on.
 - [ ] `t0301-credential-cache` ██░░░░░░░░░░░░░░░░░░ 6/52 (46 left) — credential-cache tests
 - [ ] `t0300-credentials` █░░░░░░░░░░░░░░░░░░░ 3/56 (53 left) — basic credential helper tests
 - [ ] `t0302-credential-store` █░░░░░░░░░░░░░░░░░░░ 5/65 (60 left) — credential-store tests
-- [ ] `t1451-fsck-buffer` ██░░░░░░░░░░░░░░░░░░ 10/72 (62 left) — fsck on buffers without NUL termination
+- [x] `t1451-fsck-buffer` ████████████████████ 72/72 (0 left) — fsck on buffers without NUL termination
 
 - [ ] `t1091-sparse-checkout-builtin` ██░░░░░░░░░░░░░░░░░░ 10/77 (67 left) — sparse checkout builtin tests
 - [ ] `t0610-reftable-basics` ████░░░░░░░░░░░░░░░░ 21/91 (70 left) — reftable basics
