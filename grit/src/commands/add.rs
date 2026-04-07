@@ -966,6 +966,22 @@ fn path_is_symlink(abs_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn remove_obstructing_parent_file_entries(index: &mut Index, rel_path: &str) {
+    for (i, ch) in rel_path.char_indices() {
+        if ch != '/' {
+            continue;
+        }
+        let prefix = &rel_path[..i];
+        let prefix_bytes = prefix.as_bytes();
+        if let Some(e) = index.get(prefix_bytes, 0) {
+            let is_tree = e.mode & 0o170000 == 0o040000;
+            if !is_tree {
+                index.remove(prefix_bytes);
+            }
+        }
+    }
+}
+
 /// Stage a single file into the index.
 fn stage_file(
     odb: &Odb,
@@ -984,6 +1000,8 @@ fn stage_file(
         println!("add '{rel_path}'");
         return Ok(());
     }
+
+    remove_obstructing_parent_file_entries(index, rel_path);
 
     if rel_path.ends_with(".gitattributes") && !path_is_symlink(abs_path) {
         let content = fs::read_to_string(abs_path).unwrap_or_default();

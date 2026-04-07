@@ -89,6 +89,10 @@ pub struct UpdateArgs {
     /// Use the status of the submodule's remote-tracking branch.
     #[arg(long)]
     pub remote: bool,
+
+    /// Recurse into nested submodules.
+    #[arg(long)]
+    pub recursive: bool,
 }
 
 #[derive(Debug, ClapArgs)]
@@ -494,7 +498,7 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
 
     let grit_bin = grit_exe::grit_executable();
 
-    for m in selected {
+    for m in &selected {
         let sub_path = work_tree.join(&m.path);
         let recorded = read_submodule_commit(&repo, &m.path)?;
         let recorded_oid = match &recorded {
@@ -567,13 +571,35 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
                     }
                 }
 
+                let url_base = if repo
+                    .git_dir
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| n == "modules")
+                {
+                    work_tree.parent().ok_or_else(|| {
+                        anyhow::anyhow!("cannot resolve nested submodule clone URL")
+                    })?
+                } else {
+                    work_tree
+                };
+                let clone_src = if clone_url.starts_with("./") || clone_url.starts_with("../") {
+                    url_base.join(&clone_url).canonicalize().with_context(|| {
+                        format!("cannot resolve submodule clone URL '{clone_url}'")
+                    })?
+                } else {
+                    PathBuf::from(&clone_url)
+                };
+                let clone_src_str = clone_src.to_string_lossy().into_owned();
+
                 let status = Command::new(&grit_bin)
                     .arg("clone")
                     .arg("--no-checkout")
                     .arg("--separate-git-dir")
                     .arg(&modules_dir)
-                    .arg(&clone_url)
+                    .arg(&clone_src_str)
                     .arg(&sub_path)
+                    .current_dir(work_tree)
                     .status()
                     .context("failed to clone submodule")?;
 
@@ -636,8 +662,8 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
         // Checkout the target commit.
         let status = Command::new(&grit_bin)
             .arg("checkout")
-            .arg(&checkout_oid)
             .arg("--quiet")
+            .arg(&checkout_oid)
             .current_dir(&sub_path)
             .status()
             .context("failed to checkout submodule commit")?;
@@ -655,6 +681,26 @@ fn run_update(args: &UpdateArgs) -> Result<()> {
             m.path,
             &checkout_oid[..checkout_oid.len().min(12)]
         );
+    }
+
+    if args.recursive {
+        for m in &selected {
+            let sub_path = work_tree.join(&m.path);
+            if !sub_path.join(".git").exists() {
+                continue;
+            }
+            if parse_gitmodules(&sub_path).unwrap_or_default().is_empty() {
+                continue;
+            }
+            let status = Command::new(&grit_bin)
+                .args(["submodule", "update", "--init", "--recursive"])
+                .current_dir(&sub_path)
+                .status()
+                .with_context(|| format!("nested submodule update in {}", m.path))?;
+            if !status.success() {
+                bail!("nested submodule update failed for submodule '{}'", m.path);
+            }
+        }
     }
 
     Ok(())
@@ -720,12 +766,41 @@ fn run_add(args: &AddArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
 
+        // Relative submodule URLs: from the superproject root for normal repos, and from the
+        // parent of this work tree when this repo lives under `.git/modules/<name>/` (nested
+        // submodule), matching Git.
+        let url_base = if repo
+            .git_dir
+            .parent()
+            .and_then(|p| p.file_name())
+            .is_some_and(|n| n == "modules")
+        {
+            work_tree
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("cannot resolve nested submodule clone URL"))?
+        } else {
+            work_tree
+        };
+        let clone_source = if args.url.starts_with("./") || args.url.starts_with("../") {
+            url_base.join(&args.url).canonicalize().with_context(|| {
+                format!(
+                    "cannot resolve relative submodule URL '{}' from '{}'",
+                    args.url,
+                    url_base.display()
+                )
+            })?
+        } else {
+            PathBuf::from(&args.url)
+        };
+        let clone_source_str = clone_source.to_string_lossy().into_owned();
+
         let status = Command::new(&grit_bin)
             .arg("clone")
             .arg("--separate-git-dir")
             .arg(&modules_dir)
-            .arg(&args.url)
+            .arg(&clone_source_str)
             .arg(&sub_path)
+            .current_dir(work_tree)
             .env_remove("GIT_WORK_TREE")
             .env_remove("GIT_DIR")
             .status()

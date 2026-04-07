@@ -1122,3 +1122,16 @@ fn core_symlinks_enabled(repo: &Repository) -> bool {
         .and_then(|v| v.ok())
         .unwrap_or(true)
 }
+
+/// Non-CLI: `update-index -q --refresh` — refresh stat cache without exiting when entries are stale.
+pub fn run_refresh_quiet(repo: &Repository) -> Result<()> {
+    let index_path = repo.index_path();
+    let mut index = Index::load(&index_path).context("loading index")?;
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("cannot update-index in bare repository"))?;
+    let (_uptodate, _) = refresh_index(&mut index, work_tree, &repo.odb, false, false, false)?;
+    index.write(&index_path).context("writing index")?;
+    Ok(())
+}

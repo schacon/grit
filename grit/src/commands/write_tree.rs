@@ -69,6 +69,10 @@ pub fn write_tree_from_index(
     prefix: &str,
     missing_ok: bool,
 ) -> Result<ObjectId> {
+    if index.entries.iter().any(|e| e.stage() != 0) {
+        anyhow::bail!("unmerged entries in index");
+    }
+
     let prefix_bytes = prefix.as_bytes();
 
     // Collect stage-0 entries matching the prefix.

@@ -28,6 +28,14 @@ fn resolve_max_tree_depth(config: &ConfigSet) -> Result<usize> {
     Ok(depth)
 }
 
+fn filter_mentions_tree_depth(f: &ObjectFilter) -> bool {
+    match f {
+        ObjectFilter::TreeDepth(_) => true,
+        ObjectFilter::Combine(parts) => parts.iter().any(filter_mentions_tree_depth),
+        _ => false,
+    }
+}
+
 /// Arguments for `grit rev-list`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -357,6 +365,7 @@ pub fn run(args: Args) -> Result<()> {
                     let filter = ObjectFilter::parse(spec).map_err(|e| anyhow::anyhow!("{e}"))?;
                     options.filter = Some(filter);
                 }
+                "--filter-provided-objects" => {}
                 _ if arg.starts_with("--default") => {
                     // --default REV: use REV as default if no revisions given
                     if let Some(val) = arg.strip_prefix("--default=") {
@@ -385,10 +394,26 @@ pub fn run(args: Args) -> Result<()> {
         i += 1;
     }
 
-    if options.objects && options.filter.is_none() {
-        let depth = resolve_max_tree_depth(&config)?;
+    if options.objects {
+        let depth = match object_depth_limit {
+            Some(d) => d,
+            None => resolve_max_tree_depth(&config)?,
+        };
         object_depth_limit = Some(depth);
-        options.filter = Some(grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64));
+        let depth_filter = grit_lib::rev_list::ObjectFilter::TreeDepth(depth as u64);
+        options.filter = match options.filter.take() {
+            None => Some(depth_filter),
+            Some(f) => {
+                if filter_mentions_tree_depth(&f) {
+                    Some(f)
+                } else {
+                    Some(grit_lib::rev_list::ObjectFilter::Combine(vec![
+                        depth_filter,
+                        f,
+                    ]))
+                }
+            }
+        };
     }
 
     if options.paths.is_empty() {

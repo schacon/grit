@@ -2,6 +2,8 @@
 //!
 //! Behaviour matches upstream Git (`tree-walk.c`).
 
+use std::collections::HashSet;
+
 use crate::error::Result;
 use crate::objects::{parse_tree, ObjectId, ObjectKind};
 use crate::odb::Odb;
@@ -57,9 +59,12 @@ pub fn get_tree_entry_follow_symlinks(
     let mut stack: Vec<ObjectId> = vec![*tree_oid];
     let mut path_buf = path.to_string();
     let mut follows = 0usize;
+    let mut followed_symlink_blobs: HashSet<ObjectId> = HashSet::new();
 
     loop {
-        let tree_oid = *stack.last().expect("nonempty stack");
+        let Some(&tree_oid) = stack.last() else {
+            return Ok(Err(FollowPathFailure::Missing));
+        };
 
         while path_buf.starts_with('/') {
             path_buf.remove(0);
@@ -89,7 +94,9 @@ pub fn get_tree_entry_follow_symlinks(
         }
 
         if first.is_empty() {
-            let oid = *stack.last().expect("tree");
+            let Some(&oid) = stack.last() else {
+                return Ok(Err(FollowPathFailure::Missing));
+            };
             return Ok(Ok(FollowPathResult::Found {
                 oid,
                 mode: 0o040000,
@@ -137,6 +144,9 @@ pub fn get_tree_entry_follow_symlinks(
 
         if git_mode_is_symlink(mode) {
             if follows >= MAX_SYMLINK_FOLLOWS {
+                return Ok(Err(FollowPathFailure::SymlinkLoop));
+            }
+            if !followed_symlink_blobs.insert(entry_oid) {
                 return Ok(Err(FollowPathFailure::SymlinkLoop));
             }
             follows += 1;

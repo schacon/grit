@@ -56,7 +56,7 @@ fn push_copy(out: &mut Vec<u8>, mut offset: usize, mut size: usize) -> Result<()
 
         out.push(op);
         if op & 0x01 != 0 {
-            out.push((moff >> 0) as u8);
+            out.push(moff as u8);
         }
         if op & 0x02 != 0 {
             out.push((moff >> 8) as u8);
@@ -69,7 +69,7 @@ fn push_copy(out: &mut Vec<u8>, mut offset: usize, mut size: usize) -> Result<()
         }
         if msize != 0x10000 {
             if op & 0x10 != 0 {
-                out.push((msize >> 0) as u8);
+                out.push(msize as u8);
             }
             if op & 0x20 != 0 {
                 out.push((msize >> 8) as u8);

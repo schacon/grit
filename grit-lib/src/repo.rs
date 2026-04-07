@@ -860,6 +860,66 @@ pub fn init_repository(
     Repository::open(&git_dir, work_tree)
 }
 
+/// Initialise a repository whose git directory is separate from the work tree.
+///
+/// Creates `git_dir` with the usual layout, writes `work_tree/.git` as a gitfile
+/// pointing at `git_dir`, and sets `core.worktree` in `git_dir/config`.
+pub fn init_repository_separate(
+    work_tree: &Path,
+    git_dir: &Path,
+    initial_branch: &str,
+    template_dir: Option<&Path>,
+) -> Result<Repository> {
+    fs::create_dir_all(work_tree)?;
+    if git_dir.exists() {
+        return Err(Error::PathError(format!(
+            "git directory '{}' already exists",
+            git_dir.display()
+        )));
+    }
+
+    for sub in &[
+        "objects",
+        "objects/info",
+        "objects/pack",
+        "refs",
+        "refs/heads",
+        "refs/tags",
+        "info",
+        "hooks",
+    ] {
+        fs::create_dir_all(git_dir.join(sub))?;
+    }
+
+    if let Some(tmpl) = template_dir {
+        if tmpl.is_dir() {
+            copy_template(tmpl, git_dir)?;
+        }
+    }
+
+    fs::write(
+        git_dir.join("HEAD"),
+        format!("ref: refs/heads/{initial_branch}\n"),
+    )?;
+
+    let work_tree_abs = fs::canonicalize(work_tree).unwrap_or_else(|_| work_tree.to_path_buf());
+    let git_dir_abs = fs::canonicalize(git_dir).unwrap_or_else(|_| git_dir.to_path_buf());
+    let config_content = format!(
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n\tworktree = {}\n",
+        work_tree_abs.display()
+    );
+    fs::write(git_dir.join("config"), config_content)?;
+    fs::write(
+        git_dir.join("description"),
+        "Unnamed repository; edit this file 'description' to name the repository.\n",
+    )?;
+
+    let gitfile = work_tree.join(".git");
+    fs::write(&gitfile, format!("gitdir: {}\n", git_dir_abs.display()))?;
+
+    Repository::open(git_dir, Some(work_tree))
+}
+
 /// Recursively copy template files from `src` to `dst`.
 fn copy_template(src: &Path, dst: &Path) -> Result<()> {
     for entry in fs::read_dir(src)? {

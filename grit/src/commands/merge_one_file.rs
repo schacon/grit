@@ -152,6 +152,118 @@ fn write_worktree_file(work_tree: &Path, path: &str, content: &[u8]) -> Result<(
     Ok(())
 }
 
+/// Build `${1:-.}${2:-.}${3:-.}` like `git-merge-one-file.sh` for pattern matching.
+fn merge_subject(args: &Args) -> String {
+    fn slot(s: &str) -> &str {
+        if s.is_empty() || s == EMPTY_OID {
+            "."
+        } else {
+            s
+        }
+    }
+    format!(
+        "{}{}{}",
+        slot(&args.base_oid),
+        slot(&args.ours_oid),
+        slot(&args.theirs_oid)
+    )
+}
+
+fn arg_oid_empty(s: &str) -> bool {
+    s.is_empty() || s == EMPTY_OID
+}
+
+/// True when the subject matches the first `case` arm in `git-merge-one-file.sh`
+/// (`"$1.." | "$1.$1" | "$1$1."`): deleted in both, or deleted on one side and unchanged on the other.
+fn matches_git_delete_case(args: &Args, subject: &str) -> bool {
+    let a1 = &args.base_oid;
+    let a2 = &args.ours_oid;
+    let a3 = &args.theirs_oid;
+    let e1 = arg_oid_empty(a1);
+    let e2 = arg_oid_empty(a2);
+    let e3 = arg_oid_empty(a3);
+
+    // "$1.."
+    if !e1 && e2 && e3 {
+        let pat = format!("{a1}..");
+        return subject == pat;
+    }
+    // "$1.$1" — base and theirs agree, ours missing in the middle slot.
+    if !e1 && e2 && !e3 && a1 == a3 {
+        let pat = format!("{a1}.{a1}");
+        return subject == pat;
+    }
+    // "$1$1." — base and ours agree, theirs missing (directory/file conflicts).
+    if !e1 && !e2 && e3 && a1 == a2 {
+        let pat = format!("{a1}{a1}.");
+        return subject == pat;
+    }
+    false
+}
+
+fn delete_case_permission_error(args: &Args) -> bool {
+    let m5 = args.base_mode.as_str();
+    let m6 = args.ours_mode.as_str();
+    let m7 = args.theirs_mode.as_str();
+    let z6 = m6.is_empty();
+    let z7 = m7.is_empty();
+    (z6 && !m5.is_empty() && !m7.is_empty() && m5 != m7)
+        || (z7 && !m5.is_empty() && !m6.is_empty() && m5 != m6)
+}
+
+fn remove_empty_parent_dirs_after_file(work_tree: &Path, removed_file: &Path) {
+    let mut current = removed_file.parent();
+    while let Some(dir) = current {
+        if dir == work_tree {
+            break;
+        }
+        match fs::remove_dir(dir) {
+            Ok(()) => current = dir.parent(),
+            Err(_) => break,
+        }
+    }
+}
+
+/// Remove path from index and work tree (matches `git-merge-one-file.sh` delete arm).
+fn run_delete_merge_case(repo: &Repository, work_tree: &Path, args: &Args) -> Result<()> {
+    if delete_case_permission_error(args) {
+        eprintln!(
+            "ERROR: File {} deleted on one branch but had its",
+            args.path
+        );
+        eprintln!("ERROR: permissions changed on the other.");
+        std::process::exit(1);
+    }
+
+    let ours_nonempty = !arg_oid_empty(&args.ours_oid);
+    let path_bytes = args.path.as_bytes();
+    let abs = work_tree.join(&args.path);
+
+    if !ours_nonempty {
+        let index_path = effective_index_path(repo)?;
+        let mut index = Index::load(&index_path).context("loading index")?;
+        index.entries.retain(|e| e.path != path_bytes);
+        index.sort();
+        index.write(&index_path)?;
+        return Ok(());
+    }
+
+    eprintln!("Removing {}", args.path);
+    if let Ok(meta) = fs::symlink_metadata(&abs) {
+        if meta.is_file() || meta.file_type().is_symlink() {
+            fs::remove_file(&abs)?;
+            remove_empty_parent_dirs_after_file(work_tree, &abs);
+        }
+    }
+
+    let index_path = effective_index_path(repo)?;
+    let mut index = Index::load(&index_path).context("loading index")?;
+    index.entries.retain(|e| e.path != path_bytes);
+    index.sort();
+    index.write(&index_path)?;
+    Ok(())
+}
+
 /// Run `grit merge-one-file`.
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
@@ -164,9 +276,28 @@ pub fn run(args: Args) -> Result<()> {
     let ours_oid = parse_oid(&args.ours_oid)?;
     let theirs_oid = parse_oid(&args.theirs_oid)?;
 
-    // We currently only support regular file content merges for this helper.
-    if ours_oid.is_none() || theirs_oid.is_none() {
-        eprintln!("ERROR: {}: Not handling case with missing sides", args.path);
+    let subject = merge_subject(&args);
+    if matches_git_delete_case(&args, &subject) {
+        return run_delete_merge_case(&repo, work_tree, &args);
+    }
+
+    // One side missing (e.g. directory/file conflicts after `merge-index`): take the other blob.
+    if ours_oid.is_none() ^ theirs_oid.is_none() {
+        let chosen = ours_oid.or(theirs_oid).expect("one side present");
+        let data = read_blob(&repo, Some(chosen))?;
+        let preferred_mode = parse_mode(&args.ours_mode)
+            .or_else(|| parse_mode(&args.theirs_mode))
+            .or_else(|| parse_mode(&args.base_mode))
+            .unwrap_or(MODE_REGULAR);
+        let merged_oid = repo.odb.write(ObjectKind::Blob, &data)?;
+        let path_bytes = args.path.as_bytes();
+        update_index_with_merged_blob(&repo, path_bytes, merged_oid, data.len(), preferred_mode)?;
+        write_worktree_file(work_tree, &args.path, &data)?;
+        return Ok(());
+    }
+
+    if ours_oid.is_none() && theirs_oid.is_none() {
+        eprintln!("ERROR: {}: both merge sides missing", args.path);
         std::process::exit(1);
     }
 

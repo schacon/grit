@@ -41,9 +41,9 @@ pub struct Args {
     #[arg(long = "no-branch", overrides_with = "branch")]
     pub no_branch: bool,
 
-    /// Show untracked files.
-    #[arg(short = 'u', long = "untracked-files", default_value = "normal")]
-    pub untracked: String,
+    /// Show untracked files (`-u` alone defaults to `all`, matching Git).
+    #[arg(short = 'u', long = "untracked-files", value_name = "MODE", num_args = 0..=1, default_missing_value = "all")]
+    pub untracked: Option<String>,
 
     /// Show ignored files.
     #[arg(long = "ignored")]
@@ -134,12 +134,13 @@ pub fn run(mut args: Args) -> Result<()> {
     let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_else(|_| ConfigSet::new());
 
     // Apply config-based overrides for status options
-    if let Some(val) = config.get("status.showUntrackedFiles") {
-        // Config only applies when the user didn't explicitly pass -u
-        if args.untracked == "normal" {
-            args.untracked = val;
-        }
-    }
+    let untracked_mode_str = match args.untracked.as_ref() {
+        None => config
+            .get("status.showUntrackedFiles")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "normal".to_string()),
+        Some(s) => s.clone(),
+    };
     // status.short config: only apply if user didn't pass --short or --no-short
     if !args.no_short {
         if let Some(val) = config.get("status.short") {
@@ -166,7 +167,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     // Normalize untracked-files values: "false"/"0" → "no", "true"/"1" → "normal"
-    let untracked_mode = match args.untracked.as_str() {
+    let untracked_mode = match untracked_mode_str.as_str() {
         "no" | "false" | "0" => "no",
         "all" => "all",
         _ => "normal",

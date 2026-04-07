@@ -59,6 +59,10 @@ pub struct Args {
     #[arg(long = "super-prefix")]
     pub super_prefix: Option<String>,
 
+    /// After updating the work tree, run `submodule update --init --recursive`.
+    #[arg(long = "recurse-submodules", alias = "recursive")]
+    pub recurse_submodules: bool,
+
     /// Tree-ish arguments (1 for reset, 2 for 2-way merge, 3 for 3-way merge).
     pub trees: Vec<String>,
 }
@@ -244,6 +248,9 @@ pub fn run(args: Args) -> Result<()> {
         if !dry_run {
             new_index.write(&index_path).context("writing index")?;
         }
+        if args.update && args.recurse_submodules && !dry_run {
+            submodule_update_after_read_tree(&repo)?;
+        }
         return Ok(());
     }
 
@@ -325,6 +332,27 @@ pub fn run(args: Args) -> Result<()> {
         new_index.write(&index_path).context("writing index")?;
     }
 
+    if args.update && args.recurse_submodules && !dry_run {
+        submodule_update_after_read_tree(&repo)?;
+    }
+
+    Ok(())
+}
+
+fn submodule_update_after_read_tree(repo: &Repository) -> Result<()> {
+    let work_tree = repo
+        .work_tree
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("read-tree --recurse-submodules requires a work tree"))?;
+    let grit_bin = crate::grit_exe::grit_executable();
+    let status = std::process::Command::new(&grit_bin)
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(work_tree)
+        .status()
+        .context("submodule update after read-tree")?;
+    if !status.success() {
+        bail!("submodule update failed after read-tree");
+    }
     Ok(())
 }
 

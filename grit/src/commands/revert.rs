@@ -812,7 +812,11 @@ fn checkout_merged_index(
             let path_str = String::from_utf8_lossy(&entry.path).into_owned();
             let abs_path = work_tree.join(&path_str);
             if abs_path.exists() || abs_path.is_symlink() {
-                let _ = fs::remove_file(&abs_path);
+                if abs_path.is_dir() {
+                    let _ = fs::remove_dir_all(&abs_path);
+                } else {
+                    let _ = fs::remove_file(&abs_path);
+                }
                 remove_empty_parent_dirs(work_tree, &abs_path);
             }
         }

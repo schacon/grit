@@ -1264,7 +1264,7 @@ fn do_apply(stash_ref: Option<String>, _drop_after: bool, index: bool, quiet: bo
             porcelain: None,
             branch: false,
             no_branch: false,
-            untracked: "normal".to_string(),
+            untracked: None,
             ignored: false,
             null_terminated: false,
             ahead_behind: false,

@@ -2036,15 +2036,15 @@ fn print_upstream_synopsis_and_exit(subcmd: &str, syn: &str) -> ! {
             continue;
         };
         if i == 0 {
-            print!("usage: {first}\n");
+            println!("usage: {first}");
         } else {
-            print!("   or: {first}\n");
+            println!("   or: {first}");
         }
         for cont in var.iter().skip(1) {
-            print!("{pad}{cont}\n");
+            println!("{pad}{cont}");
         }
     }
-    print!("\n");
+    println!();
     std::process::exit(129);
 }
 
@@ -2749,6 +2749,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "merge-index",
     "merge-one-file",
     "merge-recursive",
+    "merge-resolve",
     "merge-tree",
     "mergetool",
     "mktag",
@@ -2965,6 +2966,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
             }
         },
         "merge-recursive" => commands::merge_recursive::run(parse_cmd_args(subcmd, rest)),
+        "merge-resolve" => commands::merge_resolve::run(parse_cmd_args(subcmd, rest)),
         "merge-base" => commands::merge_base::run(parse_cmd_args(subcmd, rest)),
         "merge-file" => commands::merge_file::run(parse_cmd_args(subcmd, rest)),
         "merge-index" => commands::merge_index::run(parse_cmd_args(subcmd, rest)),

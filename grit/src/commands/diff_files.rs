@@ -120,6 +120,8 @@ struct Options {
     suppress_diff: bool,
     /// Optional diff-filter specification.
     diff_filter: Option<String>,
+    /// Omit submodule entries (gitlinks) from the diff.
+    ignore_submodules: bool,
 }
 
 /// A single changed file: index side vs working tree.
@@ -148,6 +150,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
     let mut format = OutputFormat::Raw;
     let mut suppress_diff = false;
     let mut diff_filter: Option<String> = None;
+    let mut ignore_submodules = false;
     let mut end_of_options = false;
 
     let mut idx = 0usize;
@@ -228,6 +231,15 @@ fn parse_options(argv: &[String]) -> Result<Options> {
                 _ if arg.starts_with("--diff-filter=") => {
                     diff_filter = Some(arg.trim_start_matches("--diff-filter=").to_string());
                 }
+                "--ignore-submodules" => {
+                    ignore_submodules = true;
+                    if idx + 1 < argv.len() {
+                        let n = argv[idx + 1].as_str();
+                        if matches!(n, "all" | "dirty" | "untracked" | "none") {
+                            idx += 1;
+                        }
+                    }
+                }
                 // Global flags passed through that we accept but ignore
                 "--literal-pathspecs"
                 | "--glob-pathspecs"
@@ -256,6 +268,7 @@ fn parse_options(argv: &[String]) -> Result<Options> {
         format,
         suppress_diff,
         diff_filter,
+        ignore_submodules,
     })
 }
 
@@ -285,6 +298,9 @@ fn collect_changes(
         }
         let s = entry.stage();
         if s == 0 {
+            if options.ignore_submodules && entry.mode == MODE_GITLINK {
+                continue;
+            }
             stage0.insert(path, (entry.mode, entry.oid, entry));
         } else {
             unmerged_paths.insert(path.clone());

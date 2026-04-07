@@ -1314,3 +1314,23 @@ fn count_line_changes(old: &str, new: &str) -> (usize, usize) {
     ins += new_lines.len() - j;
     (ins, del)
 }
+
+/// Returns true when stage-0 index content differs from `HEAD`'s tree (`diff-index --cached HEAD`).
+pub fn index_cached_differs_from_head(repo: &Repository) -> Result<bool> {
+    let tree_oid = resolve_tree_ish(repo, "HEAD")?;
+    let mut tree_map = BTreeMap::new();
+    collect_tree_entries(repo, &tree_oid, "", &mut tree_map)?;
+    let index_path = effective_index_path(repo)?;
+    let index = Index::load(&index_path).context("loading index")?;
+    let mut index_map = BTreeMap::new();
+    for entry in &index.entries {
+        if entry.stage() != 0 {
+            continue;
+        }
+        if let Ok(path) = String::from_utf8(entry.path.clone()) {
+            index_map.insert(path, Snapshot::from_index_entry(entry.mode, entry.oid));
+        }
+    }
+    let changes = diff_tree_vs_index(&tree_map, &index_map);
+    Ok(!changes.is_empty())
+}
