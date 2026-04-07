@@ -1676,7 +1676,11 @@ fn cmd_repair(args: RepairArgs) -> Result<()> {
                                 };
                                 let new_content = format!("{}\n", new_gitdir_path.display());
                                 fs::write(&old_gitdir_file, &new_content)?;
-                                eprintln!("repair: {}: {reason}", abs.display());
+                                eprintln!(
+                                    "repair: {}: {reason}: {}",
+                                    abs.display(),
+                                    old_gitdir_file.display()
+                                );
                                 continue;
                             }
                         }
