@@ -1279,9 +1279,21 @@ fn check_symlink_in_path(work_tree: &Path, rel_path: &Path) -> Option<PathBuf> {
 }
 
 /// Resolve a pathspec relative to the prefix (cwd within worktree).
-fn resolve_pathspec(pathspec: &str, _work_tree: &Path, prefix: Option<&str>) -> String {
+fn resolve_pathspec(pathspec: &str, work_tree: &Path, prefix: Option<&str>) -> String {
     if pathspec == "." {
         return prefix.unwrap_or("").to_owned();
+    }
+    // Handle absolute paths: make relative to work tree
+    if std::path::Path::new(pathspec).is_absolute() {
+        let abs = std::path::Path::new(pathspec);
+        // Try to strip work tree prefix
+        let wt_canon = work_tree.canonicalize().unwrap_or(work_tree.to_path_buf());
+        let abs_canon = abs.canonicalize().unwrap_or(abs.to_path_buf());
+        if let Ok(rel) = abs_canon.strip_prefix(&wt_canon) {
+            return rel.to_string_lossy().to_string();
+        }
+        // Not under work tree — error will be caught later
+        return pathspec.to_owned();
     }
 
     // Magic pathspecs starting with ":" should not have prefix prepended.
