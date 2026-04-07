@@ -557,7 +557,7 @@ commit → check it off → move on.
 - [ ] `t5527-fetch-odd-refs` ████████████░░░░░░░░ 3/5 (2 left) — test fetching of oddly-named refs
 - [ ] `t5306-pack-nobase` ██████████░░░░░░░░░░ 2/4 (2 left) — git-pack-object with missing base
 
-- [ ] `t5405-send-pack-rewind` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — forced push to replace commit we do not have
+- [x] `t5405-send-pack-rewind` ████████████████████ 3/3 (0 left) — forced push to replace commit we do not have
 - [ ] `t5524-pull-msg` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — git pull message generation
 - [ ] `t5542-push-http-shallow` ██████░░░░░░░░░░░░░░ 1/3 (2 left) — push from/to a shallow clone over http
 - [ ] `t5321-pack-large-objects` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git pack-object with 

@@ -401,8 +401,9 @@ fn fetch_remote(
                             has_updates = true;
                         }
 
-                        // Refuse to update a ref that's checked out in a worktree
-                        if local_ref.starts_with("refs/heads/") {
+                        // Refuse to update a ref that's checked out in a worktree (unless
+                        // `--update-head-ok`, matching Git's fetch safety valve).
+                        if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
                             if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                                 bail!(
                                     "refusing to fetch into branch '{}' checked out at '{}'",
@@ -488,8 +489,8 @@ fn fetch_remote(
                         has_updates = true;
                     }
 
-                    // Check if branch is checked out in a worktree before updating
-                    if local_ref.starts_with("refs/heads/") {
+                    // Check if branch is checked out in a worktree before updating.
+                    if local_ref.starts_with("refs/heads/") && !args.update_head_ok {
                         if let Some(wt_path) = is_branch_in_worktree(git_dir, &local_ref) {
                             bail!(
                                 "refusing to fetch into branch '{}' checked out at '{}'",

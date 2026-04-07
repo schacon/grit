@@ -6,13 +6,14 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |    90 |
+| Completed   |    91 |
 | In progress |     0 |
-| Remaining   |   677 |
+| Remaining   |   676 |
 | **Total**   |   767 |
 
 ## Recently completed
 
+- `t5405-send-pack-rewind` — 3/3 tests pass (`fetch --update-head-ok` now skips the “checked out branch” refusal when updating `refs/heads/*` destinations, matching Git; harness CSV refreshed)
 - `t6200-fmt-merge-msg-extra` — 23/23 tests pass (`fmt-merge-msg`: multi-branch/tag titles, remote URL suffix, `--into-name`, `-m` override, `--log`/`--no-log`, stdin vs `-F`, FETCH_HEAD edge cases; harness CSV refreshed)
 - `t4048-diff-combined-binary` — 14/14 tests pass (`show` merge diffs: default `--cc`, `-m`/`--format=%s` spacing, `-c`/`--cc` combined headers; `-diff`/binary attribute; `diff.<driver>.textconv` with stdin and trailing `<` stripped; `diff-tree -c -p` without textconv; `git diff` during merge emits `diff --cc` conflict hunks with textconv on stages)
 - `t3406-rebase-message` — 32/32 tests pass (rebase stdout messages, `--stat`/`rebase.stat`, `-C`/`--whitespace` early errors, interactive listing + verbose diffstat; merge-base commit collection + fast-forward; Git-style rebase reflog including `GIT_REFLOG_ACTION`; checkout only logs branch switches on `HEAD` reflog)
