@@ -89,14 +89,18 @@ pub struct Args {
     #[arg(long = "show-index-version")]
     pub show_index_version: bool,
 
+    /// Set the index format version.
+    #[arg(long = "index-version", value_name = "N")]
+    pub index_version: Option<u32>,
+
     /// Add `<mode>,<object>,<path>` entry directly.
     /// Also accepts legacy 3-argument form: --cacheinfo <mode> <object> <path>.
     #[arg(long = "cacheinfo", value_name = "mode,object,path", num_args = 1..=3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub cacheinfo: Vec<String>,
 
     /// Set the execute bit on tracked files (+x or -x).
-    #[arg(long = "chmod", value_name = "MODE")]
-    pub chmod: Option<String>,
+    #[arg(long = "chmod", value_name = "MODE", action = clap::ArgAction::Append)]
+    pub chmod: Vec<String>,
 
     /// Replace the entire index (used with --index-info).
     #[arg(long = "replace")]
@@ -144,6 +148,16 @@ pub fn run(args: Args) -> Result<()> {
     if args.show_index_version {
         println!("{}", index.version);
         return Ok(());
+    }
+    if let Some(v) = args.index_version {
+        if !(2..=4).contains(&v) {
+            bail!("bad index version {v}");
+        }
+        let old = index.version;
+        index.version = v;
+        if args.verbose {
+            println!("index-version: was {old}, set to {v}");
+        }
     }
 
     if args.index_info {
@@ -200,6 +214,13 @@ pub fn run(args: Args) -> Result<()> {
             let oid: ObjectId = oid_str
                 .parse()
                 .with_context(|| format!("invalid object id '{oid_str}'"))?;
+            if oid.is_zero() {
+                let path_display = String::from_utf8_lossy(&path_bytes);
+                if args.verbose {
+                    println!("add '{path_display}'");
+                }
+                bail!("invalid object {mode_str} {oid_str} for '{path_display}'");
+            }
             let entry = IndexEntry {
                 ctime_sec: 0,
                 ctime_nsec: 0,
@@ -214,9 +235,16 @@ pub fn run(args: Args) -> Result<()> {
                 oid,
                 flags: path_bytes.len().min(0xFFF) as u16,
                 flags_extended: None,
-                path: path_bytes,
+                path: path_bytes.clone(),
             };
             index.add_or_replace(entry);
+            if args.verbose {
+                if let Ok(path_str) = std::str::from_utf8(&path_bytes) {
+                    println!("add '{path_str}'");
+                } else {
+                    println!("add '{}'", String::from_utf8_lossy(&path_bytes));
+                }
+            }
         }
     }
 
@@ -227,9 +255,23 @@ pub fn run(args: Args) -> Result<()> {
         args.files.clone()
     };
 
-    for input_path in paths {
+    let chmod_mode_for = |path_idx: usize| -> Result<Option<&str>> {
+        if args.chmod.is_empty() {
+            return Ok(None);
+        }
+        if args.chmod.len() == 1 {
+            return Ok(Some(args.chmod[0].as_str()));
+        }
+        if args.chmod.len() == paths.len() {
+            return Ok(Some(args.chmod[path_idx].as_str()));
+        }
+        bail!("the argument '--chmod <MODE>' cannot be used multiple times");
+    };
+
+    for (path_idx, input_path) in paths.iter().enumerate() {
         let (rel_path, abs_path) = resolve_repo_path(work_tree, &cwd, &input_path)?;
         let rel_bytes = path_to_bytes(&rel_path)?;
+        let chmod_mode = chmod_mode_for(path_idx)?;
 
         // Refuse to add a path that traverses through a symbolic link.
         // Check every *parent* component of the repo-relative path.
@@ -300,15 +342,20 @@ pub fn run(args: Args) -> Result<()> {
         }
 
         // --chmod=+x or --chmod=-x without --add: change the mode of an existing entry.
-        if let Some(ref chmod_val) = args.chmod {
+        if let Some(chmod_val) = chmod_mode {
             if !args.add {
-                let new_mode = match chmod_val.as_str() {
+                let new_mode = match chmod_val {
                     "+x" => 0o100755u32,
                     "-x" => 0o100644u32,
                     other => bail!("--chmod param '{}' must be either +x or -x", other),
                 };
                 if let Some(e) = index.get_mut(&rel_bytes, 0) {
                     e.mode = new_mode;
+                    if args.verbose {
+                        let rel = rel_path.to_string_lossy();
+                        println!("add '{rel}'");
+                        println!("chmod {} '{rel}'", chmod_val);
+                    }
                 } else {
                     bail!("'{}' is not in the index", input_path.display());
                 }
@@ -407,16 +454,24 @@ pub fn run(args: Args) -> Result<()> {
             .with_context(|| format!("stat failed for '{}'", abs_path.display()))?;
 
         index.add_or_replace(entry);
+        if args.verbose {
+            let rel = rel_path.to_string_lossy();
+            println!("add '{rel}'");
+        }
 
         // Apply --chmod after adding the entry.
-        if let Some(ref chmod_val) = args.chmod {
-            let new_mode = match chmod_val.as_str() {
+        if let Some(chmod_val) = chmod_mode {
+            let new_mode = match chmod_val {
                 "+x" => 0o100755u32,
                 "-x" => 0o100644u32,
                 other => bail!("--chmod param '{}' must be either +x or -x", other),
             };
             if let Some(e) = index.get_mut(&rel_bytes, 0) {
                 e.mode = new_mode;
+                if args.verbose {
+                    let rel = rel_path.to_string_lossy();
+                    println!("chmod {} '{rel}'", chmod_val);
+                }
             }
         }
     }
@@ -434,11 +489,12 @@ pub fn run(args: Args) -> Result<()> {
             args.ignore_missing,
             args.unmerged,
             args.ignore_submodules,
+            args.quiet,
         )?;
     }
 
     index.write(&index_path).context("writing index")?;
-    if refresh_had_issues {
+    if refresh_had_issues && !args.quiet {
         std::process::exit(1);
     }
     Ok(())
@@ -567,6 +623,7 @@ fn refresh_index(
     ignore_missing: bool,
     allow_unmerged: bool,
     ignore_submodules: bool,
+    quiet: bool,
 ) -> Result<bool> {
     use std::os::unix::fs::MetadataExt;
 
@@ -648,8 +705,10 @@ fn refresh_index(
         entry.size = meta.size() as u32;
     }
 
-    for path in &problems {
-        println!("{path}");
+    if !quiet {
+        for path in &problems {
+            println!("{path}");
+        }
     }
     Ok(!problems.is_empty())
 }

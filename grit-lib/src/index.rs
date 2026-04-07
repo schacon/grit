@@ -335,9 +335,9 @@ impl Index {
     /// Serialise the index body (without trailing checksum) into `out`.
     fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         // Determine which version to write.
-        // Version 4 requires path compression, which we do not implement yet.
-        // Downgrade to the newest format we can serialize correctly.
-        let write_version = if self.version >= 3 {
+        let write_version = if self.version >= 4 {
+            4
+        } else if self.version >= 3 {
             if self.entries.iter().any(|e| e.flags_extended.is_some()) {
                 3
             } else {
@@ -351,8 +351,10 @@ impl Index {
         out.extend_from_slice(&write_version.to_be_bytes());
         out.extend_from_slice(&(self.entries.len() as u32).to_be_bytes());
 
+        let mut prev_path: Vec<u8> = Vec::new();
         for entry in &self.entries {
-            serialize_entry(entry, write_version, out);
+            serialize_entry(entry, write_version, &prev_path, out);
+            prev_path = entry.path.clone();
         }
         Ok(())
     }
@@ -552,7 +554,21 @@ fn read_varint(data: &[u8]) -> (usize, usize) {
     (value, pos)
 }
 
-fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
+fn write_varint(mut value: usize, out: &mut Vec<u8>) {
+    loop {
+        let mut byte = (value & 0x7F) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn serialize_entry(entry: &IndexEntry, version: u32, prev_path: &[u8], out: &mut Vec<u8>) {
     let start = out.len();
 
     let write_u32 = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_be_bytes());
@@ -587,15 +603,28 @@ fn serialize_entry(entry: &IndexEntry, version: u32, out: &mut Vec<u8>) {
         }
     }
 
-    out.extend_from_slice(&entry.path);
-    out.push(0);
-
-    // Pad to 8-byte boundary
-    let entry_len = out.len() - start;
-    let padded = (entry_len + 7) & !7;
-    let padding = padded - entry_len;
-    for _ in 0..padding {
+    if version == 4 {
+        let common_prefix_len = entry
+            .path
+            .iter()
+            .zip(prev_path.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let strip_len = prev_path.len().saturating_sub(common_prefix_len);
+        write_varint(strip_len, out);
+        out.extend_from_slice(&entry.path[common_prefix_len..]);
         out.push(0);
+    } else {
+        out.extend_from_slice(&entry.path);
+        out.push(0);
+
+        // Pad to 8-byte boundary
+        let entry_len = out.len() - start;
+        let padded = (entry_len + 7) & !7;
+        let padding = padded - entry_len;
+        for _ in 0..padding {
+            out.push(0);
+        }
     }
 }
 
