@@ -81,3 +81,49 @@
   - conflict path naming,
   - stage population,
   - worktree file placement for D/F rename collisions.
+
+## 2026-04-07 — t6422 progress to 20/26
+
+### Summary
+- Implemented additional merge conflict handling in `grit/src/commands/merge.rs` and improved t6422 from **14/26 → 20/26**.
+- Current failing subtests:
+  - #7 `rename/directory conflict + clean content merge`
+  - #16 `rename/rename/add-dest merge still knows about conflicting file versions`
+  - #18 `rrdd-check: rename/rename(2to1)/delete/delete conflict`
+  - #19 `mod6-check: chains of rename/rename(1to2) and rename/rename(2to1)`
+  - #24 `check nested conflicts from rename/rename(2to1)`
+  - #26 `submodule/directory preliminary conflict`
+
+### Implemented changes
+- Added D/F-aware cleanup:
+  - `remove_deleted_files(...)` now skips removing files that became `~HEAD` conflict sidepaths in merge output.
+  - Prevents sidepath files from being deleted before conflict materialization.
+- Improved conflict marker labels when writing staged conflict files to sidepaths:
+  - threaded optional custom conflict labels through `try_content_merge(...)`.
+  - for sidepath conflicts (`newfile~HEAD` style), use labels from original logical path:
+    - ours: `HEAD:<logical-path>`
+    - theirs: `<other>:<base-path>`
+  - this fixed `rename-directory conflict + content merge conflict` expectations.
+- Hardened stage writing helper:
+  - `stage_entry(...)` now removes any existing entry at the same `(path, stage)` before pushing, avoiding duplicate stage records during complex rename interactions.
+- Fixed rename/rename(2to1) misclassification:
+  - in the “ours renamed + theirs deleted source” path, do not treat destination presence as rename/add when the other side’s destination came from a rename of a *different* source.
+  - this corrected conflict type and stage shape for multiple rename/rename(2to1) scenarios.
+
+### Validation
+- Direct:
+  - `EDITOR=: VISUAL=: LC_ALL=C LANG=C GUST_BIN=/workspace/target/release/grit bash tests/t6422-merge-rename-corner-cases.sh`
+  - Result: **20/26 pass**.
+- Harness:
+  - `./scripts/run-tests.sh t6422-merge-rename-corner-cases.sh`
+  - Result: **20/26 pass**; TSV updated.
+- Targeted regressions:
+  - `./scripts/run-tests.sh t6400-merge-df.sh` → 7/7
+  - `./scripts/run-tests.sh t6417-merge-ours-theirs.sh` → 7/7
+  - `./scripts/run-tests.sh t6428-merge-conflicts-sparse.sh` → 2/2
+
+### Notes
+- Remaining failures are now clustered around:
+  - untracked `out` behavior in #7 under local harness expectations,
+  - deeper rename/rename + add-dest chain interactions (#16/#18/#19/#24),
+  - submodule/directory preliminary conflict modeling (#26).

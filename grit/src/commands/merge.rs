@@ -3316,6 +3316,10 @@ fn merge_trees(
         handled_paths.insert(base_path.clone());
         // The new path on ours side is handled here too (don't treat as add/add)
         handled_paths.insert(ours_new_path.clone());
+        let cross_theirs_source_same_dest = theirs_renames
+            .iter()
+            .find(|(src, dst)| *dst == ours_new_path && *src != base_path)
+            .map(|(src, _)| src.clone());
         let base_path_is_under_ours_new_path = base_path.len() > ours_new_path.len()
             && base_path.starts_with(ours_new_path)
             && base_path.get(ours_new_path.len()) == Some(&b'/');
@@ -3513,6 +3517,23 @@ fn merge_trees(
                         resolved_entry_at_new = Some(oe.clone());
                     }
                 } else {
+                    if let Some(theirs_target) = theirs_renames.get(base_path) {
+                        if theirs_target != ours_new_path {
+                            // rename/rename(1to2): keep base at source path and ours at
+                            // our destination; the other destination is handled in case 2.
+                            has_conflicts = true;
+                            has_conflict_at_new = true;
+                            stage_entry(&mut index, be, 1);
+                            stage_entry(&mut index, oe, 2);
+                            if let Ok(obj) = repo.odb.read(&oe.oid) {
+                                conflict_files.push((
+                                    String::from_utf8_lossy(ours_new_path).to_string(),
+                                    obj.data,
+                                ));
+                            }
+                            continue;
+                        }
+                    }
                     if let Some(te_at_new) = theirs_entries.get(ours_new_path) {
                         if !base.contains_key(ours_new_path) {
                             has_conflicts = true;
@@ -3575,6 +3596,47 @@ fn merge_trees(
             }
 
             // If theirs also has a NEW file at ours_new_path (add/add at rename target)
+            if let (Some(cross_source), Some(resolved_entry)) = (
+                cross_theirs_source_same_dest.as_ref(),
+                resolved_entry_at_new.as_ref(),
+            ) {
+                if let Some(ours_from_cross_source) = ours_entries.get(cross_source) {
+                    let path_str = String::from_utf8_lossy(ours_new_path).to_string();
+                    has_conflicts = true;
+                    has_conflict_at_new = true;
+                    handled_paths.insert(cross_source.clone());
+                    remove_stage_zero_entry(&mut index, ours_new_path);
+                    stage_entry(&mut index, resolved_entry, 2);
+                    let mut ours_cross_at_new = ours_from_cross_source.clone();
+                    ours_cross_at_new.path = ours_new_path.clone();
+                    stage_entry(&mut index, &ours_cross_at_new, 3);
+                    let conflict_content = match try_content_merge_add_add(
+                        repo,
+                        &path_str,
+                        resolved_entry,
+                        &ours_cross_at_new,
+                        ours_label,
+                        their_name,
+                        MergeFavor::None,
+                        diff_algorithm,
+                        merge_renormalize,
+                        ignore_all_space,
+                        ignore_space_change,
+                        ignore_space_at_eol,
+                        ignore_cr_at_eol,
+                    )? {
+                        ContentMergeResult::Clean(merged_oid, _) => {
+                            repo.odb.read(&merged_oid)?.data
+                        }
+                        ContentMergeResult::Conflict(content)
+                        | ContentMergeResult::BinaryConflict(content) => content,
+                    };
+                    conflict_files.push((path_str.clone(), conflict_content));
+                    conflict_descriptions.push(("rename/rename".to_string(), path_str));
+                    continue;
+                }
+            }
+
             if let (Some(te_at_new), Some(resolved_entry)) = (
                 theirs_entries.get(ours_new_path),
                 resolved_entry_at_new.as_ref(),
@@ -3650,9 +3712,7 @@ fn merge_trees(
                             let path_str = String::from_utf8_lossy(theirs_new_path).to_string();
                             has_conflicts = true;
                             if let Some(be) = base.get(base_path) {
-                                let mut be_at_new = be.clone();
-                                be_at_new.path = theirs_new_path.clone();
-                                stage_entry(&mut index, &be_at_new, 1);
+                                stage_entry(&mut index, be, 1);
                             }
                             stage_entry(&mut index, te, 3);
                             conflict_descriptions.push(("rename/rename".to_string(), path_str));
@@ -4568,6 +4628,9 @@ fn resolve_conflict_style(repo: &Repository) -> ConflictStyle {
 fn stage_entry(index: &mut Index, src: &IndexEntry, stage: u8) {
     let mut e = src.clone();
     e.flags = (e.flags & 0x0FFF) | ((stage as u16) << 12);
+    index
+        .entries
+        .retain(|entry| !(entry.path == e.path && entry.stage() == stage));
     index.entries.push(e);
 }
 
