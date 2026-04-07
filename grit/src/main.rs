@@ -2864,7 +2864,10 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "checkout" => commands::checkout::run(parse_cmd_args(subcmd, rest)),
         "checkout-index" => commands::checkout_index::run(parse_cmd_args(subcmd, rest)),
         "cherry" => commands::cherry::run(parse_cmd_args(subcmd, rest)),
-        "cherry-pick" => commands::cherry_pick::run(parse_cmd_args(subcmd, rest)),
+        "cherry-pick" => commands::cherry_pick::run(parse_cmd_args(
+            subcmd,
+            &commands::cherry_pick::preprocess_cherry_pick_argv(rest),
+        )),
         "clean" => commands::clean::run(parse_cmd_args(subcmd, rest)),
         "clone" => commands::clone::run(parse_cmd_args(subcmd, rest)),
         "column" => commands::column::run(parse_cmd_args(subcmd, rest)),

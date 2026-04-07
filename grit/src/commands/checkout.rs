@@ -1780,7 +1780,7 @@ fn checkout_paths(
                             flat_entry.mode,
                             &index,
                         )?;
-                        index.add_or_replace(flat_entry.clone());
+                        index.stage_file(flat_entry.clone());
                         index_modified = true;
                         matched = true;
                     }
@@ -1864,7 +1864,7 @@ fn checkout_paths(
                             flat_entry.mode,
                             &index,
                         )?;
-                        index.add_or_replace(flat_entry.clone());
+                        index.stage_file(flat_entry.clone());
                         index_modified = true;
                         matched = true;
                     }
@@ -1975,7 +1975,7 @@ fn checkout_paths(
                         flags_extended: None,
                         path: path_bytes,
                     };
-                    index.add_or_replace(entry);
+                    index.stage_file(entry);
                     index_modified = true;
                 }
             }

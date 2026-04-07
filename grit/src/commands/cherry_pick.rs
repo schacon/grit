@@ -23,6 +23,63 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use std::sync::OnceLock;
+
+static CHERRY_PICK_REV_OPTS: OnceLock<(Option<usize>, Option<String>)> = OnceLock::new();
+
+/// Strip Git revision-walking options from argv before clap parsing.
+///
+/// Handles `-<n>` (max count) and `--author=<pat>` / `--author <pat>` like `git cherry-pick`.
+pub fn preprocess_cherry_pick_argv(rest: &[String]) -> Vec<String> {
+    let mut max_count: Option<usize> = None;
+    let mut author: Option<String> = None;
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < rest.len() {
+        let a = &rest[i];
+        if a == "--" {
+            out.extend_from_slice(&rest[i..]);
+            break;
+        }
+        if let Some(v) = a.strip_prefix("--author=") {
+            author = Some(v.to_string());
+            i += 1;
+            continue;
+        }
+        if a == "--author" && i + 1 < rest.len() {
+            author = Some(rest[i + 1].clone());
+            i += 2;
+            continue;
+        }
+        if let Some(digits) = a.strip_prefix('-') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = digits.parse::<usize>() {
+                    max_count = Some(n);
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    let _ = CHERRY_PICK_REV_OPTS.set((max_count, author));
+    out
+}
+
+fn cherry_pick_rev_max_count() -> Option<usize> {
+    CHERRY_PICK_REV_OPTS.get().and_then(|(m, _)| *m)
+}
+
+fn cherry_pick_rev_author() -> Option<String> {
+    CHERRY_PICK_REV_OPTS.get().and_then(|(_, a)| a.clone())
+}
+
+use super::sequencer::{
+    rollback_is_safe, sequencer_is_pick_sequence, sequencer_is_revert_sequence,
+    strip_first_sequencer_todo_line, write_abort_safety_file,
+};
+
 /// Result of a three-way merge: the index plus any conflict content for working tree.
 struct MergeResult {
     index: Index,
@@ -113,10 +170,10 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
     if args.abort {
-        return do_abort();
+        return abort_cherry_pick_or_revert();
     }
     if args.skip {
-        return do_skip(&args);
+        return do_skip(args);
     }
     if args.quit {
         return do_quit();
@@ -136,77 +193,233 @@ fn do_cherry_pick(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    // Don't start a new cherry-pick sequence if one is already in progress.
-    if git_dir.join("sequencer").join("todo").exists() {
-        bail!(
-            "error: a cherry-pick is already in progress\n\
-             hint: use \"grit cherry-pick --continue\" to continue\n\
-             hint: or \"grit cherry-pick --abort\" to abort"
-        );
-    }
-
-    // Expand all commit specs (including A..B ranges) into a list of OIDs.
     let commit_oids = expand_commit_specs(&repo, &args.commits)?;
 
     if commit_oids.is_empty() {
-        bail!("empty commit set passed");
+        eprintln!("error: empty commit set passed");
+        eprintln!("fatal: cherry-pick failed");
+        std::process::exit(128);
     }
 
-    // For multi-commit operations, save ORIG_HEAD
+    if !args.no_commit && commit_oids.len() > 1 && git_dir.join("CHERRY_PICK_HEAD").exists() {
+        eprintln!("error: cherry-pick is already in progress");
+        eprintln!("hint: try \"git cherry-pick (--continue | --skip | --abort | --quit)\"");
+        eprintln!("fatal: cherry-pick failed");
+        std::process::exit(128);
+    }
+
+    let seq_todo = git_dir.join("sequencer").join("todo");
+    if seq_todo.exists() {
+        if commit_oids.len() > 1 {
+            if sequencer_is_revert_sequence(git_dir) {
+                eprintln!("error: a revert is already in progress");
+                eprintln!("hint: try \"git revert (--continue | --abort | --quit)\"");
+                eprintln!("fatal: cherry-pick failed");
+                std::process::exit(128);
+            }
+            if sequencer_is_pick_sequence(git_dir) {
+                let advise_skip = git_dir.join("CHERRY_PICK_HEAD").exists();
+                eprintln!("error: cherry-pick is already in progress");
+                if advise_skip {
+                    eprintln!(
+                        "hint: try \"git cherry-pick (--continue | --skip | --abort | --quit)\""
+                    );
+                } else {
+                    eprintln!("hint: try \"git cherry-pick (--continue | --abort | --quit)\"");
+                }
+                eprintln!("fatal: cherry-pick failed");
+                std::process::exit(128);
+            }
+            eprintln!("error: a cherry-pick is already in progress");
+            eprintln!("hint: use \"grit cherry-pick --continue\" to continue");
+            eprintln!("hint: or \"grit cherry-pick --abort\" to abort");
+            std::process::exit(1);
+        } else if sequencer_is_revert_sequence(git_dir) {
+            eprintln!("error: a revert is already in progress");
+            eprintln!("hint: try \"git revert (--continue | --abort | --quit)\"");
+            eprintln!("fatal: cherry-pick failed");
+            std::process::exit(128);
+        }
+    }
+
+    if commit_oids.len() == 1
+        && !args.no_commit
+        && seq_todo.exists()
+        && git_dir.join("CHERRY_PICK_HEAD").exists()
+    {
+        let cp_txt = fs::read_to_string(git_dir.join("CHERRY_PICK_HEAD"))?;
+        if let Ok(cp_oid) = ObjectId::from_hex(cp_txt.trim()) {
+            let new_oid = commit_oids[0];
+            if new_oid != cp_oid {
+                let cp_obj = repo.odb.read(&cp_oid)?;
+                let cp_commit = parse_commit(&cp_obj.data)?;
+                let blocks_nested = cp_commit.parents.len() == 1
+                    && Some(new_oid) == cp_commit.parents.first().copied();
+                if blocks_nested {
+                    eprintln!("error: cherry-pick is already in progress");
+                    eprintln!(
+                        "hint: try \"git cherry-pick (--continue | --skip | --abort | --quit)\""
+                    );
+                    eprintln!("fatal: cherry-pick failed");
+                    std::process::exit(128);
+                }
+            }
+        }
+    }
+
     if commit_oids.len() > 1 && !args.no_commit {
         save_orig_head(&repo)?;
     }
 
-    run_commit_sequence(&repo, &commit_oids, &args)
+    run_commit_sequence(&repo, &commit_oids, &args, None)
 }
 
 /// Run a sequence of cherry-pick commits, saving sequencer state on conflict.
-fn run_commit_sequence(repo: &Repository, oids: &[ObjectId], args: &Args) -> Result<()> {
+///
+/// When `orig_head_override` is set (e.g. resuming after a manual commit mid-sequence),
+/// it is used as the stored pre-sequence HEAD for `sequencer/head` and abort safety
+/// instead of the current `HEAD`.
+fn run_commit_sequence(
+    repo: &Repository,
+    oids: &[ObjectId],
+    args: &Args,
+    orig_head_override: Option<ObjectId>,
+) -> Result<()> {
     let git_dir = &repo.git_dir;
 
-    // Save original HEAD before starting
     let head = resolve_head(git_dir)?;
-    let orig_head_oid = match head.oid() {
-        Some(oid) => *oid,
-        None => {
-            if !args.ff {
-                bail!("cannot cherry-pick: HEAD does not point to a commit");
-            }
-            // For --ff on unborn branch, use a sentinel; sequencer state won't be needed
-            ObjectId::from_hex("0000000000000000000000000000000000000000").unwrap()
+    let head_file_path = git_dir.join("sequencer").join("head");
+    let default_orig = || -> Result<ObjectId> {
+        match head.oid() {
+            Some(oid) => Ok(*oid),
+            None => Ok(ObjectId::from_hex("0000000000000000000000000000000000000000").unwrap()),
         }
     };
+    let orig_head_oid = if let Some(o) = orig_head_override {
+        o
+    } else if oids.len() > 1 && !args.no_commit {
+        if let Ok(stored) = fs::read_to_string(&head_file_path) {
+            if let Ok(parsed) = ObjectId::from_hex(stored.trim()) {
+                parsed
+            } else {
+                default_orig()?
+            }
+        } else {
+            default_orig()?
+        }
+    } else {
+        default_orig()?
+    };
+
+    if oids.len() > 1 && !args.no_commit {
+        let seq_dir = git_dir.join("sequencer");
+        fs::create_dir_all(&seq_dir)?;
+        fs::write(
+            seq_dir.join("head"),
+            format!("{}\n", orig_head_oid.to_hex()),
+        )?;
+        let mut full_todo = String::new();
+        for oid in oids {
+            full_todo.push_str(&format!("pick {}\n", oid.to_hex()));
+        }
+        fs::write(seq_dir.join("todo"), &full_todo)?;
+        write_sequencer_opts(git_dir, args)?;
+        write_abort_safety_file(git_dir)?;
+    }
 
     for (i, commit_oid) in oids.iter().enumerate() {
         let remaining = &oids[i + 1..];
         match cherry_pick_one_commit(repo, *commit_oid, args) {
-            Ok(()) => {}
+            Ok(()) => {
+                if oids.len() > 1 && !args.no_commit {
+                    strip_first_sequencer_todo_line(git_dir)?;
+                    write_abort_safety_file(git_dir)?;
+                }
+            }
             Err(e) => {
                 let err_msg = format!("{e}");
                 if err_msg.contains("CONFLICT_EXIT") {
-                    // Conflict occurred — save sequencer state if this is a multi-commit sequence
                     if oids.len() > 1 {
                         save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
+                        write_abort_safety_file(git_dir)?;
+                    } else if oids.len() == 1 && head.oid().is_none() {
+                        save_sequencer_state(
+                            git_dir,
+                            &ObjectId::from_hex("0000000000000000000000000000000000000000")
+                                .unwrap(),
+                            &[],
+                            args,
+                        )?;
+                        write_abort_safety_file(git_dir)?;
                     }
                     std::process::exit(1);
                 }
-                // Fatal error — save sequencer state and exit 128
+                if err_msg.contains("EMPTY_CHERRY_PICK_STOP") {
+                    let user_msg = err_msg
+                        .strip_prefix("EMPTY_CHERRY_PICK_STOP: ")
+                        .unwrap_or(&err_msg);
+                    if oids.len() > 1 {
+                        save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
+                        write_abort_safety_file(git_dir)?;
+                    }
+                    eprintln!("{user_msg}");
+                    std::process::exit(1);
+                }
                 if oids.len() > 1 {
                     save_sequencer_state(git_dir, &orig_head_oid, remaining, args)?;
                 }
                 eprintln!("error: {e:#}");
+                eprintln!("fatal: cherry-pick failed");
                 std::process::exit(128);
             }
         }
     }
 
-    // Clean up sequencer state on success
-    cleanup_sequencer_state(git_dir);
+    let nested_single_in_sequence = oids.len() == 1 && !args.no_commit && head_file_path.exists();
+    if nested_single_in_sequence {
+        remove_pick_oid_from_sequencer_todo_if_present(git_dir, oids[0])?;
+        if load_sequencer_todo(git_dir).is_empty() {
+            cleanup_sequencer_state(git_dir);
+        } else {
+            write_abort_safety_file(git_dir)?;
+        }
+    } else {
+        cleanup_sequencer_state(git_dir);
+    }
+    Ok(())
+}
+
+fn remove_pick_oid_from_sequencer_todo_if_present(git_dir: &Path, oid: ObjectId) -> Result<()> {
+    let path = git_dir.join("sequencer").join("todo");
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let mut out = Vec::new();
+    let mut removed = false;
+    for line in content.lines() {
+        if !removed && parse_todo_pick_line(line) == Some(oid) {
+            removed = true;
+            continue;
+        }
+        out.push(line);
+    }
+    if removed {
+        let new_content = if out.is_empty() {
+            String::new()
+        } else {
+            out.join("\n") + "\n"
+        };
+        fs::write(path, new_content)?;
+    }
     Ok(())
 }
 
 /// Expand commit specs, handling A..B ranges.
 fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<ObjectId>> {
+    let max_count = cherry_pick_rev_max_count();
+    let author = cherry_pick_rev_author();
+    let use_rev_walk = max_count.is_some() || author.is_some();
+
     let mut oids = Vec::new();
     for spec in specs {
         if let Some((lhs, rhs)) = spec.split_once("..") {
@@ -217,6 +430,11 @@ fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<Object
 
             let range_oids = walk_commit_range(repo, exclude_oid, include_oid)?;
             oids.extend(range_oids);
+        } else if use_rev_walk {
+            let tip =
+                resolve_revision(repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
+            let chain = walk_first_parent_filtered(repo, tip, max_count, author.as_deref())?;
+            oids.extend(chain);
         } else {
             let oid =
                 resolve_revision(repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
@@ -226,26 +444,53 @@ fn expand_commit_specs(repo: &Repository, specs: &[String]) -> Result<Vec<Object
     Ok(oids)
 }
 
-/// Walk commits reachable from `tip` but not from `base`, oldest first.
-fn walk_commit_range(repo: &Repository, base: ObjectId, tip: ObjectId) -> Result<Vec<ObjectId>> {
-    let mut result = Vec::new();
-    let mut current = tip;
+fn walk_first_parent_filtered(
+    repo: &Repository,
+    tip: ObjectId,
+    max_count: Option<usize>,
+    author_sub: Option<&str>,
+) -> Result<Vec<ObjectId>> {
+    let mut matches = Vec::new();
+    let mut current = Some(tip);
+    while let Some(c) = current {
+        let obj = repo.odb.read(&c)?;
+        let commit = parse_commit(&obj.data)?;
+        let author_ok = author_sub.map_or(true, |sub| commit.author.contains(sub));
+        if author_ok {
+            matches.push(c);
+            if let Some(limit) = max_count {
+                if matches.len() >= limit {
+                    break;
+                }
+            }
+        }
+        current = commit.parents.first().copied();
+    }
+    matches.reverse();
+    Ok(matches)
+}
 
+/// Commits reachable from `tip` along first-parent edges until `base` is hit, oldest first.
+///
+/// Matches Git's `A..B` for cherry-pick: walk from `B` toward roots; stop when `A` is reached
+/// (so `A` is excluded). This differs from walking only the first-parent chain from `B` to root.
+fn walk_commit_range(repo: &Repository, base: ObjectId, tip: ObjectId) -> Result<Vec<ObjectId>> {
+    let mut chain = Vec::new();
+    let mut current = tip;
     loop {
         if current == base {
             break;
         }
-        result.push(current);
+        chain.push(current);
         let obj = repo.odb.read(&current)?;
         let commit = parse_commit(&obj.data)?;
-        if commit.parents.is_empty() {
+        let Some(p) = commit.parents.first().copied() else {
             break;
-        }
-        current = commit.parents[0];
+        };
+        current = p;
     }
-
-    result.reverse(); // oldest first
-    Ok(result)
+    chain.reverse();
+    Ok(chain)
 }
 
 fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) -> Result<()> {
@@ -336,11 +581,13 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
         parent_commit.tree
     };
 
-    let head_oid = head_oid_opt
-        .ok_or_else(|| anyhow::anyhow!("cannot cherry-pick: HEAD does not point to a commit"))?;
-    let head_obj = repo.odb.read(&head_oid)?;
-    let head_commit = parse_commit(&head_obj.data)?;
-    let head_tree_oid = head_commit.tree;
+    let head_tree_oid = if let Some(head_oid) = head_oid_opt {
+        let head_obj = repo.odb.read(&head_oid)?;
+        let head_commit = parse_commit(&head_obj.data)?;
+        head_commit.tree
+    } else {
+        repo.odb.write(ObjectKind::Tree, &[])?
+    };
 
     // Three-way merge
     let base_entries = tree_to_map(tree_to_index_entries(repo, &parent_tree_oid, "")?);
@@ -387,13 +634,28 @@ fn cherry_pick_one_commit(repo: &Repository, commit_oid: ObjectId, args: &Args) 
                 "drop" => return Ok(()),
                 "keep" => { /* fall through to commit */ }
                 _ /* "stop" */ => {
-                    bail!("The previous cherry-pick is now empty, possibly due to conflict resolution.\nIf you wish to commit it anyway, use --allow-empty.");
+                    let mut msg = commit.message.clone();
+                    if args.append_source {
+                        let trailer =
+                            format!("\n\n(cherry picked from commit {})", commit_oid.to_hex());
+                        let trimmed = msg.trim_end().to_owned();
+                        msg = format!("{trimmed}{trailer}\n");
+                    }
+                    fs::write(
+                        git_dir.join("CHERRY_PICK_HEAD"),
+                        format!("{}\n", commit_oid.to_hex()),
+                    )?;
+                    fs::write(git_dir.join("MERGE_MSG"), &msg)?;
+                    bail!("EMPTY_CHERRY_PICK_STOP: The previous cherry-pick is now empty, possibly due to conflict resolution.\nIf you wish to commit it anyway, use --allow-empty.\nhint: try \"git cherry-pick --skip\"");
                 }
             }
         }
     }
 
     let old_index = load_index(repo)?;
+    if let Some(wt) = &repo.work_tree {
+        super::reset::check_untracked_cherry_pick_obstruction(wt, &old_index, &merge_result.index)?;
+    }
     repo.write_index(&mut merge_result.index)
         .context("writing index")?;
 
@@ -481,42 +743,54 @@ fn do_continue(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    // Merge sequencer opts into args so flags from the original cherry-pick
-    // (e.g. --signoff) are re-applied when continuing.
+    if git_dir.join("REVERT_HEAD").exists()
+        && !git_dir.join("CHERRY_PICK_HEAD").exists()
+        && (!git_dir.join("sequencer").join("todo").exists()
+            || super::sequencer::sequencer_is_revert_sequence(git_dir))
+    {
+        return super::revert::do_continue();
+    }
+
     merge_sequencer_opts(git_dir, &mut args);
     let args = &args;
 
     let has_cherry_pick_head = git_dir.join("CHERRY_PICK_HEAD").exists();
-    let sequencer_todo_exists = git_dir.join("sequencer").join("todo").exists();
+    let sequencer_todo = git_dir.join("sequencer").join("todo");
+    let sequencer_todo_exists = sequencer_todo.exists();
 
     if !has_cherry_pick_head && !sequencer_todo_exists {
         eprintln!("error: no cherry-pick or revert in progress");
         std::process::exit(128);
     }
 
-    // If CHERRY_PICK_HEAD is missing but the sequencer has remaining items,
-    // the user manually committed the conflicting step.  Just process the
-    // remaining sequencer items.
+    if sequencer_todo_exists {
+        validate_sequencer_todo_pick_only(git_dir)?;
+    }
+
     if !has_cherry_pick_head && sequencer_todo_exists {
+        let head_file = git_dir.join("sequencer").join("head");
+        let stored_orig = if let Ok(s) = fs::read_to_string(&head_file) {
+            ObjectId::from_hex(s.trim()).ok()
+        } else {
+            None
+        };
         let remaining = load_sequencer_todo(git_dir);
-        // Clean up the sequencer now; run_commit_sequence will re-save state
-        // if it encounters another conflict.
         cleanup_sequencer_state(git_dir);
         if !remaining.is_empty() {
-            run_commit_sequence(&repo, &remaining, args)?;
+            run_commit_sequence(&repo, &remaining, args, stored_orig)?;
         }
         return Ok(());
     }
 
     let index = load_index(&repo)?;
     if index.entries.iter().any(|e| e.stage() != 0) {
-        bail!(
+        eprintln!(
             "error: commit is not possible because you have unmerged files\n\
              hint: fix conflicts and then commit the result with 'git cherry-pick --continue'"
         );
+        std::process::exit(128);
     }
 
-    // Read the original commit for author info.
     let cp_head_content = fs::read_to_string(git_dir.join("CHERRY_PICK_HEAD"))?;
     let cp_oid = ObjectId::from_hex(cp_head_content.trim())?;
     let cp_obj = repo.odb.read(&cp_oid)?;
@@ -528,16 +802,29 @@ fn do_continue(mut args: Args) -> Result<()> {
     };
 
     if args.append_source {
-        let trailer = format!("\n\n(cherry picked from commit {})", cp_oid.to_hex());
-        let trimmed = msg.trim_end().to_owned();
-        msg = format!("{trimmed}{trailer}\n");
+        let trailer = format!("(cherry picked from commit {})", cp_oid.to_hex());
+        if !msg.contains(&trailer) {
+            let trimmed = msg.trim_end().to_owned();
+            msg = format!("{trimmed}\n\n{trailer}\n");
+        }
     }
-    // Note: signoff is intentionally NOT added to the conflict-resolution
-    // commit.  The user is the author of the resolution; signoff should only
-    // propagate automatically to subsequent (non-conflicting) cherry-picks
-    // in the sequence (handled by run_commit_sequence below).
 
     let head = resolve_head(git_dir)?;
+    let head_tree_oid = if let Some(h) = head.oid() {
+        let ho = repo.odb.read(h)?;
+        parse_commit(&ho.data)?.tree
+    } else {
+        repo.odb.write(ObjectKind::Tree, &[])?
+    };
+
+    let new_tree_oid = write_tree_from_index(&repo.odb, &index, "")?;
+    if !args.allow_empty && new_tree_oid == head_tree_oid {
+        eprintln!("The previous cherry-pick is now empty, possibly due to conflict resolution.");
+        eprintln!("If you wish to commit it anyway, use --allow-empty.");
+        eprintln!("hint: try \"git cherry-pick --skip\"");
+        std::process::exit(1);
+    }
+
     create_cherry_pick_commit(&repo, &head, &index, &msg, &cp_commit)?;
 
     let new_head = resolve_head(git_dir)?;
@@ -549,12 +836,13 @@ fn do_continue(mut args: Args) -> Result<()> {
     let first_line = msg.lines().next().unwrap_or("");
     eprintln!("[{branch} {short}] {first_line}");
 
-    // Now process remaining sequencer items
     let remaining = load_sequencer_todo(git_dir);
     cleanup_cherry_pick_state(git_dir);
 
     if !remaining.is_empty() {
-        run_commit_sequence(&repo, &remaining, args)?;
+        strip_first_sequencer_todo_line(git_dir)?;
+        write_abort_safety_file(git_dir)?;
+        run_commit_sequence(&repo, &remaining, args, None)?;
     } else {
         cleanup_sequencer_state(git_dir);
     }
@@ -564,47 +852,76 @@ fn do_continue(mut args: Args) -> Result<()> {
 
 // ── --abort ─────────────────────────────────────────────────────────
 
-fn do_abort() -> Result<()> {
+fn null_oid() -> ObjectId {
+    ObjectId::from_hex("0000000000000000000000000000000000000000").unwrap()
+}
+
+pub(crate) fn abort_cherry_pick_or_revert() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("CHERRY_PICK_HEAD").exists()
-        && !git_dir.join("sequencer").join("todo").exists()
-    {
+    let head_file = git_dir.join("sequencer").join("head");
+    let has_seq = head_file.exists();
+    let has_cp = git_dir.join("CHERRY_PICK_HEAD").exists();
+    let has_rv = git_dir.join("REVERT_HEAD").exists();
+
+    if !has_seq && !has_cp && !has_rv {
         eprintln!("error: no cherry-pick or revert in progress");
         std::process::exit(128);
     }
 
-    // Restore HEAD to ORIG_HEAD if available, otherwise use current HEAD tree
-    let restore_oid = if let Ok(orig) = fs::read_to_string(git_dir.join("ORIG_HEAD")) {
-        Some(ObjectId::from_hex(orig.trim())?)
-    } else {
-        None
-    };
-
-    let head = resolve_head(git_dir)?;
-    let target_oid = restore_oid.as_ref().or_else(|| head.oid());
-
-    if let Some(oid) = target_oid {
-        let obj = repo.odb.read(oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let old_idx = load_index(&repo)?;
-        let mut index = Index::new();
-        index.entries = entries;
-        index.sort();
-        repo.write_index(&mut index)?;
-
-        if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(&repo, wt, &old_idx, &index, &BTreeMap::new())?;
+    if has_seq {
+        let stored = fs::read_to_string(&head_file)?;
+        let stored_oid = ObjectId::from_hex(stored.trim())?;
+        if stored_oid == null_oid() {
+            eprintln!("error: cannot abort from a branch yet to be born");
+            eprintln!("fatal: cherry-pick failed");
+            std::process::exit(128);
         }
-
-        if let Some(orig_oid) = &restore_oid {
-            update_head(git_dir, &head, orig_oid)?;
+        if !rollback_is_safe(git_dir) {
+            eprintln!("warning: You seem to have moved HEAD. Not rewinding, check your HEAD!");
+            cleanup_cherry_pick_state(git_dir);
+            let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+            cleanup_sequencer_state(git_dir);
+            let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
+            return Ok(());
         }
+        super::reset::run(super::reset::Args {
+            soft: false,
+            mixed: false,
+            hard: false,
+            keep: false,
+            merge: true,
+            quiet: true,
+            intent_to_add: false,
+            no_refresh: false,
+            refresh: true,
+            patch: false,
+            rest: vec![stored_oid.to_hex()],
+            skip_sequencer_head_cleanup: true,
+        })?;
+        cleanup_cherry_pick_state(git_dir);
+        cleanup_sequencer_state(git_dir);
+        let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
+        return Ok(());
     }
 
+    super::reset::run(super::reset::Args {
+        soft: false,
+        mixed: false,
+        hard: false,
+        keep: false,
+        merge: true,
+        quiet: true,
+        intent_to_add: false,
+        no_refresh: false,
+        refresh: true,
+        patch: false,
+        rest: vec!["HEAD".to_owned()],
+        skip_sequencer_head_cleanup: true,
+    })?;
     cleanup_cherry_pick_state(git_dir);
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
     cleanup_sequencer_state(git_dir);
     let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
     Ok(())
@@ -612,42 +929,75 @@ fn do_abort() -> Result<()> {
 
 // ── --skip ──────────────────────────────────────────────────────────
 
-fn do_skip(args: &Args) -> Result<()> {
-    let repo = Repository::discover(None).context("not a git repository")?;
-    let git_dir = &repo.git_dir;
-
-    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
-        bail!("error: no cherry-pick in progress");
-    }
-
-    // Restore HEAD tree to index and working tree (undo the conflict)
+fn reset_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
     let head = resolve_head(git_dir)?;
+    let old_index = load_index(&repo)?;
+    let mut new_index = Index::new();
     if let Some(head_oid) = head.oid() {
         let obj = repo.odb.read(head_oid)?;
         let commit = parse_commit(&obj.data)?;
-        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let old_index = load_index(&repo)?;
-        let mut new_index = Index::new();
-        new_index.entries = entries;
-        new_index.sort();
-        repo.write_index(&mut new_index)?;
-
-        if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(&repo, wt, &old_index, &new_index, &BTreeMap::new())?;
-        }
+        new_index.entries = tree_to_index_entries(&repo, &commit.tree, "")?;
     }
-
-    // Load remaining sequencer items and continue
-    let remaining = load_sequencer_todo(git_dir);
-    cleanup_cherry_pick_state(git_dir);
-
-    if !remaining.is_empty() {
-        run_commit_sequence(&repo, &remaining, args)?;
-    } else {
-        cleanup_sequencer_state(git_dir);
+    new_index.sort();
+    repo.write_index(&mut new_index)?;
+    if let Some(wt) = &repo.work_tree {
+        checkout_merged_index(repo, wt, &old_index, &new_index, &BTreeMap::new())?;
     }
-
     Ok(())
+}
+
+fn do_skip(mut args: Args) -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+
+    merge_sequencer_opts(git_dir, &mut args);
+    let args = &args;
+
+    if git_dir.join("REVERT_HEAD").exists() {
+        eprintln!("error: no cherry-pick in progress");
+        std::process::exit(1);
+    }
+
+    let has_cp = git_dir.join("CHERRY_PICK_HEAD").exists();
+    let seq_pick = sequencer_is_pick_sequence(git_dir);
+
+    if has_cp {
+        reset_to_head_tree(&repo, git_dir)?;
+        let remaining = load_sequencer_todo(git_dir);
+        cleanup_cherry_pick_state(git_dir);
+        if !remaining.is_empty() {
+            strip_first_sequencer_todo_line(git_dir)?;
+            write_abort_safety_file(git_dir)?;
+            run_commit_sequence(&repo, &remaining, args, None)?;
+        } else {
+            cleanup_sequencer_state(git_dir);
+        }
+        return Ok(());
+    }
+
+    if seq_pick {
+        if !rollback_is_safe(git_dir) {
+            eprintln!("error: there is nothing to skip");
+            eprintln!("hint: have you committed already?");
+            eprintln!("hint: try \"git cherry-pick --continue\"");
+            eprintln!("fatal: cherry-pick failed");
+            std::process::exit(128);
+        }
+        reset_to_head_tree(&repo, git_dir)?;
+        let remaining = load_sequencer_todo(git_dir);
+        cleanup_cherry_pick_state(git_dir);
+        if !remaining.is_empty() {
+            strip_first_sequencer_todo_line(git_dir)?;
+            write_abort_safety_file(git_dir)?;
+            run_commit_sequence(&repo, &remaining, args, None)?;
+        } else {
+            cleanup_sequencer_state(git_dir);
+        }
+        return Ok(());
+    }
+
+    eprintln!("error: no cherry-pick in progress");
+    std::process::exit(1);
 }
 
 // ── --quit ──────────────────────────────────────────────────────────
@@ -656,8 +1006,9 @@ fn do_quit() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("CHERRY_PICK_HEAD").exists() {
-        // git exits 0 silently when there is no cherry-pick in progress
+    let in_progress = git_dir.join("CHERRY_PICK_HEAD").exists()
+        || git_dir.join("sequencer").join("todo").exists();
+    if !in_progress {
         return Ok(());
     }
 
@@ -677,29 +1028,15 @@ fn save_orig_head(repo: &Repository) -> Result<()> {
     Ok(())
 }
 
-fn save_sequencer_state(
-    git_dir: &Path,
-    head_oid: &ObjectId,
-    remaining: &[ObjectId],
-    args: &Args,
-) -> Result<()> {
+fn write_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
     let seq_dir = git_dir.join("sequencer");
     fs::create_dir_all(&seq_dir)?;
-
-    // Save original HEAD
-    fs::write(seq_dir.join("head"), format!("{}\n", head_oid.to_hex()))?;
-
-    // Save remaining commits as todo
-    let mut todo = String::new();
-    for oid in remaining {
-        todo.push_str(&format!("pick {}\n", oid.to_hex()));
-    }
-    fs::write(seq_dir.join("todo"), &todo)?;
-
-    // Save options in git-config format for compatibility with git
     let mut opts = String::from("[options]\n");
     if args.signoff {
         opts.push_str("\tsignoff = true\n");
+    }
+    if args.append_source {
+        opts.push_str("\trecord-origin = true\n");
     }
     if let Some(m) = args.mainline {
         opts.push_str(&format!("\tmainline = {m}\n"));
@@ -713,7 +1050,31 @@ fn save_sequencer_state(
     if args.edit {
         opts.push_str("\tedit = true\n");
     }
+    if let Some(ref empty) = args.empty {
+        opts.push_str(&format!("\tempty = {empty}\n"));
+    }
     fs::write(seq_dir.join("opts"), &opts)?;
+    Ok(())
+}
+
+fn save_sequencer_state(
+    git_dir: &Path,
+    head_oid: &ObjectId,
+    remaining: &[ObjectId],
+    args: &Args,
+) -> Result<()> {
+    let seq_dir = git_dir.join("sequencer");
+    fs::create_dir_all(&seq_dir)?;
+
+    fs::write(seq_dir.join("head"), format!("{}\n", head_oid.to_hex()))?;
+
+    let mut todo = String::new();
+    for oid in remaining {
+        todo.push_str(&format!("pick {}\n", oid.to_hex()));
+    }
+    fs::write(seq_dir.join("todo"), &todo)?;
+
+    write_sequencer_opts(git_dir, args)?;
 
     Ok(())
 }
@@ -726,21 +1087,53 @@ fn merge_sequencer_opts(git_dir: &Path, args: &mut Args) {
         Ok(c) => c,
         Err(_) => return,
     };
-    for line in content.lines() {
-        let line = line.trim();
-        match line {
-            "signoff" => args.signoff = true,
-            "append_source" => args.append_source = true,
-            "no_commit" => args.no_commit = true,
-            _ => {
-                if let Some(n) = line.strip_prefix("mainline ") {
-                    if let Ok(m) = n.trim().parse::<usize>() {
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let key = k.trim();
+            let key = key.strip_prefix("options.").unwrap_or(key);
+            let val = v.trim();
+            match key {
+                "signoff" if val == "true" => args.signoff = true,
+                "append_source" if val == "true" => args.append_source = true,
+                "record-origin" if val == "true" => args.append_source = true,
+                "no_commit" if val == "true" => args.no_commit = true,
+                "edit" if val == "true" => args.edit = true,
+                "mainline" => {
+                    if let Ok(m) = val.parse::<usize>() {
                         args.mainline = Some(m);
                     }
                 }
+                "strategy" => args.strategy = Some(val.to_string()),
+                "strategy-option" => args.strategy_option.push(val.to_string()),
+                "empty" => args.empty = Some(val.to_string()),
+                _ => {}
             }
         }
     }
+}
+
+fn parse_todo_pick_line(line: &str) -> Option<ObjectId> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') {
+        return None;
+    }
+    let after_cmd = t.strip_prefix("pick")?;
+    if after_cmd.is_empty() || !after_cmd.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let after_pick = after_cmd.trim_start();
+    let token = after_pick.split_whitespace().next()?;
+    if !(4..=40).contains(&token.len()) || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    ObjectId::from_hex(token).ok()
 }
 
 fn load_sequencer_todo(git_dir: &Path) -> Vec<ObjectId> {
@@ -749,20 +1142,30 @@ fn load_sequencer_todo(git_dir: &Path) -> Vec<ObjectId> {
         Ok(content) => {
             let mut oids = Vec::new();
             for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some(hex) = line.strip_prefix("pick ") {
-                    if let Ok(oid) = ObjectId::from_hex(hex.trim()) {
-                        oids.push(oid);
-                    }
+                if let Some(oid) = parse_todo_pick_line(line) {
+                    oids.push(oid);
                 }
             }
             oids
         }
         Err(_) => Vec::new(),
     }
+}
+
+fn validate_sequencer_todo_pick_only(git_dir: &Path) -> Result<()> {
+    let todo_path = git_dir.join("sequencer").join("todo");
+    let content = fs::read_to_string(&todo_path)?;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if parse_todo_pick_line(line).is_none() {
+            eprintln!("error: invalid todo line in sequencer: {t}");
+            std::process::exit(128);
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_sequencer_state(git_dir: &Path) {
@@ -774,6 +1177,7 @@ fn cleanup_sequencer_state(git_dir: &Path) {
 
 fn cleanup_cherry_pick_state(git_dir: &Path) {
     let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
     let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 }
 

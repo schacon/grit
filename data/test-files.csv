@@ -191,7 +191,7 @@ t1090-sparse-checkout-scope	t1	yes	7	3	4	false	ok	0
 t10900-for-each-ref-pattern-sort	t1	yes	34	34	0	true	ok	0
 t1091-sparse-checkout-builtin	t1	yes	76	9	67	false	ok	1
 t10910-show-ref-tags-branches	t1	yes	35	35	0	true	ok	0
-t1092-sparse-checkout-compatibility	t1	yes	106	39	65	false	ok	3
+t1092-sparse-checkout-compatibility	t1	yes	104	39	65	false	ok	3
 t10920-update-ref-create-delete	t1	yes	29	29	0	true	ok	0
 t10930-symbolic-ref-read-write	t1	yes	29	28	1	false	ok	0
 t10940-check-ignore-dir-pattern	t1	yes	35	35	0	true	ok	0
@@ -642,7 +642,7 @@ t3507-cherry-pick-conflict	t3	yes	44	12	32	false	ok	0
 t3508-cherry-pick-many-commits	t3	yes	14	8	6	false	ok	0
 t3509-cherry-pick-merge-df	t3	yes	9	6	3	false	ok	0
 t3510-cherry-pick	t3	yes	65	63	2	false	ok	0
-t3510-cherry-pick-sequence	t3	yes	55	27	28	false	ok	0
+t3510-cherry-pick-sequence	t3	yes	55	55	0	true	ok	0
 t3511-cherry-pick-x	t3	yes	22	10	12	false	ok	0
 t3512-cherry-pick-submodule	t3	yes	13	0	13	false	ok	0
 t3513-revert-submodule	t3	yes	12	0	12	false	ok	0

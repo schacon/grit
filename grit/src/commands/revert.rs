@@ -28,6 +28,11 @@ use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
 
+use super::sequencer::{
+    rollback_is_safe, sequencer_is_pick_sequence, sequencer_is_revert_sequence,
+    strip_first_sequencer_todo_line, write_abort_safety_file,
+};
+
 /// Arguments for `grit revert`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Revert some existing commits")]
@@ -40,6 +45,10 @@ pub struct Args {
     #[arg(short = 'n', long = "no-commit")]
     pub no_commit: bool,
 
+    /// Add Signed-off-by trailer to the message.
+    #[arg(short = 's', long = "signoff")]
+    pub signoff: bool,
+
     /// For reverting merge commits, specify which parent (1-based) is mainline.
     #[arg(short = 'm', long = "mainline")]
     pub mainline: Option<usize>,
@@ -51,12 +60,42 @@ pub struct Args {
     /// Abort an in-progress revert.
     #[arg(long = "abort")]
     pub abort: bool,
+
+    /// Skip the current commit and continue.
+    #[arg(long = "skip")]
+    pub skip: bool,
+
+    /// Quit the revert sequence, keeping current changes.
+    #[arg(long = "quit")]
+    pub quit: bool,
+
+    /// Merge strategy to use (e.g. recursive, ort).
+    #[arg(long = "strategy")]
+    pub strategy: Option<String>,
+
+    /// Strategy option (e.g. "theirs", "ours", "patience").
+    #[arg(short = 'X', long = "strategy-option")]
+    pub strategy_option: Vec<String>,
+
+    /// Use the given edit message without opening an editor.
+    #[arg(long = "no-edit", conflicts_with = "edit")]
+    pub no_edit: bool,
+
+    /// Open an editor for the commit message.
+    #[arg(short = 'e', long = "edit")]
+    pub edit: bool,
 }
 
 /// Run the `revert` command.
 pub fn run(args: Args) -> Result<()> {
     if args.abort {
-        return do_abort();
+        return super::cherry_pick::abort_cherry_pick_or_revert();
+    }
+    if args.skip {
+        return do_skip(args);
+    }
+    if args.quit {
+        return do_quit();
     }
     if args.r#continue {
         return do_continue();
@@ -73,7 +112,43 @@ fn do_revert(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    // Don't start a new revert if one is already in progress.
+    let expanded = expand_revert_specs(&repo, &args.commits)?;
+
+    let seq_todo = git_dir.join("sequencer").join("todo");
+    if seq_todo.exists() {
+        if expanded.len() > 1 {
+            if sequencer_is_pick_sequence(git_dir) {
+                eprintln!("error: a cherry-pick is already in progress");
+                eprintln!("hint: try \"git cherry-pick (--continue | --abort | --quit)\"");
+                eprintln!("fatal: revert failed");
+                std::process::exit(128);
+            }
+            if sequencer_is_revert_sequence(git_dir) {
+                eprintln!("error: a revert is already in progress");
+                eprintln!("hint: try \"git revert (--continue | --skip | --abort | --quit)\"");
+                eprintln!("fatal: revert failed");
+                std::process::exit(128);
+            }
+            bail!(
+                "error: a revert is already in progress\n\
+                 hint: use \"grit revert --continue\" to continue\n\
+                 hint: or \"grit revert --abort\" to abort"
+            );
+        } else if sequencer_is_pick_sequence(git_dir) {
+            eprintln!("error: a cherry-pick is already in progress");
+            eprintln!("hint: try \"git cherry-pick (--continue | --abort | --quit)\"");
+            eprintln!("fatal: revert failed");
+            std::process::exit(128);
+        }
+    }
+
+    if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        eprintln!("error: a cherry-pick is already in progress");
+        eprintln!("hint: try \"git cherry-pick (--continue | --abort | --quit)\"");
+        eprintln!("fatal: revert failed");
+        std::process::exit(128);
+    }
+
     if git_dir.join("REVERT_HEAD").exists() {
         bail!(
             "error: a revert is already in progress\n\
@@ -82,8 +157,11 @@ fn do_revert(args: Args) -> Result<()> {
         );
     }
 
-    // Save ORIG_HEAD before starting the revert sequence
     let head = resolve_head(git_dir)?;
+    let orig_head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("cannot revert: HEAD does not point to a commit"))?;
+
     if let Some(head_oid) = head.oid() {
         let _ = fs::write(
             git_dir.join("ORIG_HEAD"),
@@ -91,67 +169,288 @@ fn do_revert(args: Args) -> Result<()> {
         );
     }
 
-    // Expand commit specs (including A..B ranges) into a list of specs
-    let expanded = expand_revert_specs(&repo, &args.commits)?;
-
-    // If multiple commits, set up sequencer state
-    if expanded.len() > 1 {
+    if expanded.len() > 1 && !args.no_commit {
         let seq_dir = git_dir.join("sequencer");
-        let _ = fs::create_dir_all(&seq_dir);
-        // Write todo with remaining commits
-        let mut todo_entries: Vec<String> = Vec::new();
+        fs::create_dir_all(&seq_dir)?;
+        fs::write(
+            seq_dir.join("head"),
+            format!("{}\n", orig_head_oid.to_hex()),
+        )?;
+        let mut todo_lines = String::new();
         for spec in &expanded {
             let oid =
                 resolve_revision(&repo, spec).with_context(|| format!("bad revision '{spec}'"))?;
             let obj = repo.odb.read(&oid)?;
             let commit = parse_commit(&obj.data)?;
             let subject = commit.message.lines().next().unwrap_or("");
-            todo_entries.push(format!("revert {} {}", &oid.to_hex()[..7], subject));
+            todo_lines.push_str(&format!("revert {} {}\n", &oid.to_hex()[..7], subject));
         }
-        fs::write(seq_dir.join("todo"), todo_entries.join("\n") + "\n")?;
+        fs::write(seq_dir.join("todo"), &todo_lines)?;
+        write_revert_sequencer_opts(git_dir, &args)?;
+        write_abort_safety_file(git_dir)?;
     }
 
-    for (i, spec) in expanded.iter().enumerate() {
-        match revert_one_commit(&repo, spec, args.mainline, args.no_commit) {
-            Ok(()) => {
-                // Update sequencer todo: remove the completed entry
-                if expanded.len() > 1 {
-                    let seq_dir = git_dir.join("sequencer");
-                    let todo_path = seq_dir.join("todo");
-                    if let Ok(content) = fs::read_to_string(&todo_path) {
-                        let remaining: Vec<&str> = content.lines().skip(1).collect();
-                        if remaining.is_empty() {
-                            // All done, clean up sequencer
-                            let _ = fs::remove_dir_all(&seq_dir);
-                        } else {
-                            let _ = fs::write(&todo_path, remaining.join("\n") + "\n");
-                        }
+    run_revert_sequence(&repo, &expanded, &args, None)
+}
+
+fn write_revert_sequencer_opts(git_dir: &Path, args: &Args) -> Result<()> {
+    let seq_dir = git_dir.join("sequencer");
+    fs::create_dir_all(&seq_dir)?;
+    let mut opts = String::from("[options]\n");
+    if args.signoff {
+        opts.push_str("\tsignoff = true\n");
+    }
+    if let Some(m) = args.mainline {
+        opts.push_str(&format!("\tmainline = {m}\n"));
+    }
+    if let Some(ref strat) = args.strategy {
+        opts.push_str(&format!("\tstrategy = {strat}\n"));
+    }
+    for xopt in &args.strategy_option {
+        opts.push_str(&format!("\tstrategy-option = {xopt}\n"));
+    }
+    if args.edit {
+        opts.push_str("\tedit = true\n");
+    }
+    if args.no_edit {
+        opts.push_str("\tedit = false\n");
+    }
+    fs::write(seq_dir.join("opts"), &opts)?;
+    Ok(())
+}
+
+fn merge_revert_sequencer_opts(git_dir: &Path, args: &mut Args) {
+    let opts_path = git_dir.join("sequencer").join("opts");
+    let content = match fs::read_to_string(&opts_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let key = k.trim();
+            let val = v.trim();
+            match key {
+                "signoff" if val == "true" => args.signoff = true,
+                "mainline" => {
+                    if let Ok(m) = val.parse::<usize>() {
+                        args.mainline = Some(m);
                     }
+                }
+                "strategy" => args.strategy = Some(val.to_string()),
+                "strategy-option" => args.strategy_option.push(val.to_string()),
+                "edit" if val == "true" => {
+                    args.edit = true;
+                    args.no_edit = false;
+                }
+                "edit" if val == "false" => {
+                    args.no_edit = true;
+                    args.edit = false;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn parse_revert_todo_line(repo: &Repository, line: &str) -> Option<ObjectId> {
+    let t = line.trim();
+    if t.is_empty() || t.starts_with('#') {
+        return None;
+    }
+    let after_cmd = t.strip_prefix("revert")?;
+    if after_cmd.is_empty() || !after_cmd.starts_with(|c: char| c.is_whitespace()) {
+        return None;
+    }
+    let after = after_cmd.trim_start();
+    let token = after.split_whitespace().next()?;
+    resolve_revision(repo, token).ok()
+}
+
+fn load_revert_sequencer_todo(repo: &Repository, git_dir: &Path) -> Vec<ObjectId> {
+    let path = git_dir.join("sequencer").join("todo");
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut oids = Vec::new();
+    for line in content.lines() {
+        if let Some(oid) = parse_revert_todo_line(repo, line) {
+            oids.push(oid);
+        }
+    }
+    oids
+}
+
+fn validate_revert_sequencer_todo(repo: &Repository, git_dir: &Path) -> Result<()> {
+    let path = git_dir.join("sequencer").join("todo");
+    let content = fs::read_to_string(path)?;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if parse_revert_todo_line(repo, line).is_none() {
+            eprintln!("error: invalid todo line in sequencer: {t}");
+            std::process::exit(128);
+        }
+    }
+    Ok(())
+}
+
+fn revert_todo_line_for_oid(repo: &Repository, oid: ObjectId) -> Result<String> {
+    let obj = repo.odb.read(&oid)?;
+    let commit = parse_commit(&obj.data)?;
+    let subject = commit.message.lines().next().unwrap_or("");
+    Ok(format!("revert {} {}", &oid.to_hex()[..7], subject))
+}
+
+fn save_revert_sequencer_after_failure(
+    repo: &Repository,
+    git_dir: &Path,
+    orig_head: &ObjectId,
+    remaining: &[ObjectId],
+    args: &Args,
+) -> Result<()> {
+    let seq_dir = git_dir.join("sequencer");
+    fs::create_dir_all(&seq_dir)?;
+    fs::write(seq_dir.join("head"), format!("{}\n", orig_head.to_hex()))?;
+    let mut todo = String::new();
+    for oid in remaining {
+        todo.push_str(&revert_todo_line_for_oid(repo, *oid)?);
+        todo.push('\n');
+    }
+    fs::write(seq_dir.join("todo"), &todo)?;
+    write_revert_sequencer_opts(git_dir, args)?;
+    Ok(())
+}
+
+fn cleanup_revert_sequencer_only(git_dir: &Path) {
+    let _ = fs::remove_dir_all(git_dir.join("sequencer"));
+}
+
+fn reset_revert_to_head_tree(repo: &Repository, git_dir: &Path) -> Result<()> {
+    let head = resolve_head(git_dir)?;
+    let head_oid = head
+        .oid()
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve HEAD"))?;
+    let obj = repo.odb.read(head_oid)?;
+    let commit = parse_commit(&obj.data)?;
+    let entries = tree_to_index_entries(repo, &commit.tree, "")?;
+    let old_index = load_index(repo)?;
+    let mut new_index = Index::new();
+    new_index.entries = entries;
+    new_index.sort();
+    let index_path = repo.index_path();
+    repo.write_index_at(&index_path, &mut new_index)?;
+    if let Some(wt) = &repo.work_tree {
+        checkout_merged_index(repo, wt, &old_index, &new_index)?;
+    }
+    Ok(())
+}
+
+fn run_revert_sequence(
+    repo: &Repository,
+    specs: &[String],
+    args: &Args,
+    orig_head_override: Option<ObjectId>,
+) -> Result<()> {
+    let git_dir = &repo.git_dir;
+    let head_file_path = git_dir.join("sequencer").join("head");
+    let orig_head_oid = if let Some(o) = orig_head_override {
+        o
+    } else if specs.len() > 1 && !args.no_commit {
+        if let Ok(stored) = fs::read_to_string(&head_file_path) {
+            if let Ok(parsed) = ObjectId::from_hex(stored.trim()) {
+                parsed
+            } else {
+                let head = resolve_head(git_dir)?;
+                *head.oid().ok_or_else(|| {
+                    anyhow::anyhow!("cannot revert: HEAD does not point to a commit")
+                })?
+            }
+        } else {
+            let head = resolve_head(git_dir)?;
+            *head
+                .oid()
+                .ok_or_else(|| anyhow::anyhow!("cannot revert: HEAD does not point to a commit"))?
+        }
+    } else {
+        let head = resolve_head(git_dir)?;
+        *head
+            .oid()
+            .ok_or_else(|| anyhow::anyhow!("cannot revert: HEAD does not point to a commit"))?
+    };
+
+    for (i, spec) in specs.iter().enumerate() {
+        let remaining_specs = &specs[i + 1..];
+        let remaining_oids: Result<Vec<ObjectId>> = remaining_specs
+            .iter()
+            .map(|s| resolve_revision(repo, s).with_context(|| format!("bad revision '{s}'")))
+            .collect();
+        let remaining_oids = remaining_oids?;
+
+        match revert_one_commit(repo, spec, args) {
+            Ok(()) => {
+                if specs.len() > 1 && !args.no_commit {
+                    strip_first_sequencer_todo_line(git_dir)?;
+                    write_abort_safety_file(git_dir)?;
                 }
             }
             Err(e) => {
-                // If there are remaining commits, keep the sequencer todo
-                if expanded.len() > 1 && i < expanded.len() - 1 {
-                    let seq_dir = git_dir.join("sequencer");
-                    let todo_path = seq_dir.join("todo");
-                    if let Ok(content) = fs::read_to_string(&todo_path) {
-                        // Keep only remaining (unprocessed) entries
-                        let remaining: Vec<&str> = content.lines().skip(i + 1).collect();
-                        if !remaining.is_empty() {
-                            let _ = fs::write(&todo_path, remaining.join("\n") + "\n");
-                        }
+                let err_msg = format!("{e}");
+                if err_msg.contains("CONFLICT_EXIT_REVERT") {
+                    if specs.len() > 1 {
+                        save_revert_sequencer_after_failure(
+                            repo,
+                            git_dir,
+                            &orig_head_oid,
+                            &remaining_oids,
+                            args,
+                        )?;
+                        write_abort_safety_file(git_dir)?;
                     }
+                    std::process::exit(1);
                 }
-                return Err(e);
+                if err_msg.contains("EMPTY_REVERT_STOP") {
+                    if specs.len() > 1 {
+                        save_revert_sequencer_after_failure(
+                            repo,
+                            git_dir,
+                            &orig_head_oid,
+                            &remaining_oids,
+                            args,
+                        )?;
+                        write_abort_safety_file(git_dir)?;
+                    }
+                    let user_msg = err_msg
+                        .strip_prefix("EMPTY_REVERT_STOP: ")
+                        .unwrap_or(&err_msg);
+                    eprintln!("{user_msg}");
+                    std::process::exit(1);
+                }
+                if specs.len() > 1 {
+                    save_revert_sequencer_after_failure(
+                        repo,
+                        git_dir,
+                        &orig_head_oid,
+                        &remaining_oids,
+                        args,
+                    )?;
+                }
+                eprintln!("error: {e:#}");
+                eprintln!("fatal: revert failed");
+                std::process::exit(128);
             }
         }
     }
 
-    // Clean up sequencer if all commits were processed
-    if expanded.len() > 1 {
-        let _ = fs::remove_dir_all(git_dir.join("sequencer"));
-    }
-
+    cleanup_revert_sequencer_only(git_dir);
     Ok(())
 }
 
@@ -198,12 +497,25 @@ fn walk_commit_range(repo: &Repository, base: ObjectId, tip: ObjectId) -> Result
     Ok(result)
 }
 
-fn revert_one_commit(
-    repo: &Repository,
-    spec: &str,
-    mainline: Option<usize>,
-    no_commit: bool,
-) -> Result<()> {
+fn append_signoff_revert(msg: &str, git_dir: &Path) -> Result<String> {
+    let config = ConfigSet::load(Some(git_dir), true)?;
+    let name = std::env::var("GIT_COMMITTER_NAME")
+        .ok()
+        .or_else(|| config.get("user.name"))
+        .unwrap_or_else(|| "Unknown".to_owned());
+    let email = std::env::var("GIT_COMMITTER_EMAIL")
+        .ok()
+        .or_else(|| config.get("user.email"))
+        .unwrap_or_default();
+    let signoff_line = format!("Signed-off-by: {name} <{email}>");
+    if msg.contains(&signoff_line) {
+        return Ok(msg.to_owned());
+    }
+    let trimmed = msg.trim_end();
+    Ok(format!("{trimmed}\n\n{signoff_line}\n"))
+}
+
+fn revert_one_commit(repo: &Repository, spec: &str, args: &Args) -> Result<()> {
     let git_dir = &repo.git_dir;
 
     // Resolve commit to revert.
@@ -218,7 +530,7 @@ fn revert_one_commit(
     // Determine parent (base for the original change).
     let parent_oid = if commit.parents.len() > 1 {
         // Merge commit — require --mainline.
-        let m = mainline.ok_or_else(|| {
+        let m = args.mainline.ok_or_else(|| {
             anyhow::anyhow!(
                 "commit {} is a merge but no -m option was given",
                 commit_oid
@@ -268,15 +580,7 @@ fn revert_one_commit(
     if !has_conflicts {
         let merged_tree = write_tree_from_index(&repo.odb, &merged_index, "")?;
         if merged_tree == head_tree_oid {
-            eprintln!(
-                "error: The previous revert is now empty, possibly due to conflict resolution."
-            );
-            // Write REVERT_HEAD so the sequencer knows the state
-            fs::write(
-                git_dir.join("REVERT_HEAD"),
-                format!("{}\n", commit_oid.to_hex()),
-            )?;
-            std::process::exit(1);
+            bail!("EMPTY_REVERT_STOP: error: The previous revert is now empty, possibly due to conflict resolution.");
         }
     }
 
@@ -296,7 +600,6 @@ fn revert_one_commit(
     checkout_merged_index(repo, work_tree, &old_index, &merged_index)?;
 
     if has_conflicts {
-        // Write REVERT_HEAD and MERGE_MSG so --continue can finish.
         let short_oid = &commit_oid.to_hex()[..7];
         let subject = commit.message.lines().next().unwrap_or("");
         let msg = format!(
@@ -307,6 +610,10 @@ fn revert_one_commit(
             git_dir.join("REVERT_HEAD"),
             format!("{}\n", commit_oid.to_hex()),
         )?;
+        fs::write(
+            git_dir.join("CHERRY_PICK_HEAD"),
+            format!("{}\n", commit_oid.to_hex()),
+        )?;
         fs::write(git_dir.join("MERGE_MSG"), &msg)?;
 
         eprintln!(
@@ -315,11 +622,10 @@ fn revert_one_commit(
              hint: with 'git add <paths>' or 'git rm <paths>'\n\
              hint: and commit the result with 'git revert --continue'"
         );
-        // Exit with error code like git does.
-        std::process::exit(1);
+        return Err(anyhow::anyhow!("CONFLICT_EXIT_REVERT"));
     }
 
-    if no_commit {
+    if args.no_commit {
         // Write REVERT_HEAD but don't commit.
         fs::write(
             git_dir.join("REVERT_HEAD"),
@@ -328,14 +634,15 @@ fn revert_one_commit(
         return Ok(());
     }
 
-    // Build commit message.
     let subject = commit.message.lines().next().unwrap_or("");
-    let msg = format!(
+    let mut msg = format!(
         "Revert \"{subject}\"\n\nThis reverts commit {oid}.\n",
         oid = commit_oid.to_hex()
     );
+    if args.signoff {
+        msg = append_signoff_revert(&msg, git_dir)?;
+    }
 
-    // Create the revert commit.
     create_revert_commit(repo, &head, &merged_index, &msg)?;
 
     // Print summary.
@@ -359,29 +666,66 @@ fn revert_one_commit(
 
 // ── --continue ──────────────────────────────────────────────────────
 
-fn do_continue() -> Result<()> {
+pub(crate) fn do_continue() -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    // Must be in a revert.
-    if !git_dir.join("REVERT_HEAD").exists() {
+    let mut opts = Args {
+        commits: vec![],
+        no_commit: false,
+        signoff: false,
+        mainline: None,
+        r#continue: true,
+        abort: false,
+        skip: false,
+        quit: false,
+        strategy: None,
+        strategy_option: vec![],
+        no_edit: false,
+        edit: false,
+    };
+    merge_revert_sequencer_opts(git_dir, &mut opts);
+
+    let has_revert_head = git_dir.join("REVERT_HEAD").exists();
+    let seq_todo = git_dir.join("sequencer").join("todo");
+    let has_seq = seq_todo.exists();
+
+    if !has_revert_head && !has_seq {
         bail!("error: no revert in progress");
     }
 
-    // Load current index and check for unresolved conflicts.
+    if has_seq {
+        validate_revert_sequencer_todo(&repo, git_dir)?;
+    }
+
+    if !has_revert_head && has_seq {
+        let head_file = git_dir.join("sequencer").join("head");
+        let stored_orig = if let Ok(s) = fs::read_to_string(&head_file) {
+            ObjectId::from_hex(s.trim()).ok()
+        } else {
+            None
+        };
+        let remaining = load_revert_sequencer_todo(&repo, git_dir);
+        cleanup_revert_sequencer_only(git_dir);
+        let specs: Vec<String> = remaining.iter().map(|o| o.to_hex()).collect();
+        if !specs.is_empty() {
+            run_revert_sequence(&repo, &specs, &opts, stored_orig)?;
+        }
+        return Ok(());
+    }
+
     let index = load_index(&repo)?;
     if index.entries.iter().any(|e| e.stage() != 0) {
-        bail!(
+        eprintln!(
             "error: commit is not possible because you have unmerged files\n\
              hint: fix conflicts and then commit the result with 'git revert --continue'"
         );
+        std::process::exit(128);
     }
 
-    // Read the saved message.
-    let msg = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
+    let mut msg = match fs::read_to_string(git_dir.join("MERGE_MSG")) {
         Ok(m) => m,
         Err(_) => {
-            // Fall back: construct from REVERT_HEAD.
             let revert_oid = fs::read_to_string(git_dir.join("REVERT_HEAD"))?;
             let revert_oid = revert_oid.trim();
             let oid = ObjectId::from_hex(revert_oid)?;
@@ -392,11 +736,12 @@ fn do_continue() -> Result<()> {
         }
     };
 
+    if opts.signoff {
+        msg = append_signoff_revert(&msg, git_dir)?;
+    }
+
     let head = resolve_head(git_dir)?;
     create_revert_commit(&repo, &head, &index, &msg)?;
-
-    // Cleanup state files.
-    cleanup_revert_state(git_dir);
 
     let new_head = resolve_head(git_dir)?;
     let new_oid = new_head
@@ -411,72 +756,94 @@ fn do_continue() -> Result<()> {
     let first_line = msg.lines().next().unwrap_or("");
     eprintln!("[{branch} {short}] {first_line}");
 
+    let remaining = load_revert_sequencer_todo(&repo, git_dir);
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+    let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+
+    if !remaining.is_empty() {
+        strip_first_sequencer_todo_line(git_dir)?;
+        write_abort_safety_file(git_dir)?;
+        let specs: Vec<String> = remaining.iter().map(|o| o.to_hex()).collect();
+        run_revert_sequence(&repo, &specs, &opts, None)?;
+    } else {
+        cleanup_revert_sequencer_only(git_dir);
+    }
+
     Ok(())
 }
 
-// ── --abort ─────────────────────────────────────────────────────────
-
-fn do_abort() -> Result<()> {
+fn do_skip(mut args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
     let git_dir = &repo.git_dir;
 
-    if !git_dir.join("REVERT_HEAD").exists() && !git_dir.join("sequencer").join("todo").exists() {
-        bail!("error: no revert in progress");
+    merge_revert_sequencer_opts(git_dir, &mut args);
+    let args = &args;
+
+    let has_rv = git_dir.join("REVERT_HEAD").exists();
+    let seq_rev = sequencer_is_revert_sequence(git_dir);
+
+    if has_rv {
+        reset_revert_to_head_tree(&repo, git_dir)?;
+        let remaining = load_revert_sequencer_todo(&repo, git_dir);
+        let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+        let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+        let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+        if !remaining.is_empty() {
+            strip_first_sequencer_todo_line(git_dir)?;
+            write_abort_safety_file(git_dir)?;
+            let specs: Vec<String> = remaining.iter().map(|o| o.to_hex()).collect();
+            run_revert_sequence(&repo, &specs, args, None)?;
+        } else {
+            cleanup_revert_sequencer_only(git_dir);
+        }
+        return Ok(());
     }
 
-    // Restore HEAD to ORIG_HEAD if available, otherwise use current HEAD tree.
-    let restore_oid = if let Ok(orig) = fs::read_to_string(git_dir.join("ORIG_HEAD")) {
-        use grit_lib::objects::ObjectId;
-        Some(ObjectId::from_hex(orig.trim())?)
-    } else {
-        None
-    };
-
-    let head = resolve_head(git_dir)?;
-    let target_oid = restore_oid.as_ref().or_else(|| head.oid());
-
-    if let Some(oid) = target_oid {
-        let obj = repo.odb.read(oid)?;
-        let commit = parse_commit(&obj.data)?;
-        let entries = tree_to_index_entries(&repo, &commit.tree, "")?;
-        let old_idx = load_index(&repo)?;
-        let mut index = Index::new();
-        index.entries = entries;
-        index.sort();
-        let index_path = repo.index_path();
-        repo.write_index_at(&index_path, &mut index)?;
-
-        if let Some(wt) = &repo.work_tree {
-            checkout_merged_index(&repo, wt, &old_idx, &index)?;
+    if seq_rev {
+        if !rollback_is_safe(git_dir) {
+            eprintln!("error: there is nothing to skip");
+            eprintln!("hint: have you committed already?");
+            eprintln!("hint: try \"git revert --continue\"");
+            eprintln!("fatal: revert failed");
+            std::process::exit(128);
         }
-
-        // Move HEAD back to ORIG_HEAD
-        if let Some(ref orig_oid) = restore_oid {
-            match &head {
-                HeadState::Branch { refname, .. } => {
-                    let ref_path = git_dir.join(refname);
-                    let _ = fs::write(&ref_path, format!("{}\n", orig_oid.to_hex()));
-                }
-                HeadState::Detached { .. } => {
-                    let _ = fs::write(git_dir.join("HEAD"), format!("{}\n", orig_oid.to_hex()));
-                }
-                HeadState::Invalid => {}
-            }
+        reset_revert_to_head_tree(&repo, git_dir)?;
+        let remaining = load_revert_sequencer_todo(&repo, git_dir);
+        let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+        let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+        let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+        if !remaining.is_empty() {
+            strip_first_sequencer_todo_line(git_dir)?;
+            write_abort_safety_file(git_dir)?;
+            let specs: Vec<String> = remaining.iter().map(|o| o.to_hex()).collect();
+            run_revert_sequence(&repo, &specs, args, None)?;
+        } else {
+            cleanup_revert_sequencer_only(git_dir);
         }
+        return Ok(());
     }
 
-    cleanup_revert_state(git_dir);
-    let _ = fs::remove_file(git_dir.join("ORIG_HEAD"));
+    eprintln!("error: no revert in progress");
+    std::process::exit(1);
+}
+
+fn do_quit() -> Result<()> {
+    let repo = Repository::discover(None).context("not a git repository")?;
+    let git_dir = &repo.git_dir;
+    let in_progress =
+        git_dir.join("REVERT_HEAD").exists() || git_dir.join("sequencer").join("todo").exists();
+    if !in_progress {
+        return Ok(());
+    }
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+    let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
+    cleanup_revert_sequencer_only(git_dir);
     Ok(())
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-fn cleanup_revert_state(git_dir: &Path) {
-    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
-    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
-    let _ = fs::remove_dir_all(git_dir.join("sequencer"));
-}
 
 fn load_index(repo: &Repository) -> Result<Index> {
     Ok(repo.load_index()?)
@@ -514,11 +881,11 @@ fn create_revert_commit(
     let commit_bytes = serialize_commit(&commit_data);
     let commit_oid = repo.odb.write(ObjectKind::Commit, &commit_bytes)?;
 
-    // Update HEAD.
     update_head(git_dir, head, &commit_oid)?;
 
-    // Clean up revert state.
-    cleanup_revert_state(git_dir);
+    let _ = fs::remove_file(git_dir.join("REVERT_HEAD"));
+    let _ = fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+    let _ = fs::remove_file(git_dir.join("MERGE_MSG"));
 
     Ok(())
 }

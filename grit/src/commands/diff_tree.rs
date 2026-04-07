@@ -395,7 +395,9 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                     has_diff = !filtered.is_empty();
                     if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                         write_commit_header(out, &oid, &obj.data, opts)?;
-                        print_diff(out, &repo.odb, &filtered, opts, None)?;
+                        if !opts.suppress_diff {
+                            print_diff(out, &repo.odb, &filtered, opts, None)?;
+                        }
                     }
                 }
             } else {
@@ -406,7 +408,9 @@ fn run_one_commit(repo: &Repository, opts: &Options, out: &mut impl Write) -> Re
                 has_diff = !filtered.is_empty();
                 if !opts.quiet && (has_diff || opts.pretty.is_some()) {
                     write_commit_header(out, &oid, &obj.data, opts)?;
-                    print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                    if !opts.suppress_diff {
+                        print_diff(out, &repo.odb, &filtered, opts, Some(&parent_tree))?;
+                    }
                 }
             }
         }
@@ -1294,6 +1298,16 @@ fn write_commit_header(
             let first_line = commit.message.lines().next().unwrap_or("");
             writeln!(out, "{oid} {first_line}")?;
             return Ok(false);
+        }
+        if let Some(template) = pretty_fmt
+            .strip_prefix("tformat:")
+            .or_else(|| pretty_fmt.strip_prefix("format:"))
+        {
+            if template == "%s" {
+                let first_line = commit.message.lines().next().unwrap_or("");
+                writeln!(out, "{first_line}")?;
+                return Ok(false);
+            }
         }
         writeln!(out, "commit {oid}")?;
         // Parse author line: "Name <email> timestamp tz"
