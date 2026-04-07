@@ -5,6 +5,15 @@
 test_hash_algo=${test_hash_algo:-sha1}
 export test_hash_algo
 
+# Match git/t/oid-info entries used by t1006 et al. for $(test_oid deadbeef).
+if test -n "${TEST_OID_CACHE_FILE:-}" && test -d "$(dirname "$TEST_OID_CACHE_FILE")"
+then
+	test_oid_cache <<'OIDCACHE'
+deadbeef	sha1:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+deadbeef_short	sha1:deadbeefdeadbeefdeadbeefdeadbeefdeadbee
+OIDCACHE
+fi
+
 # Write a loose object into the odb at $1, with object type $2 and contents
 # from stdin. Writes the oid to stdout. Example:
 #

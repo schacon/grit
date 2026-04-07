@@ -241,3 +241,19 @@ match_test_selector_list () {
 
 	test -n "$include"
 }
+
+# Compare filesystem paths like upstream test_cmp_fspath (test-lib-functions.sh).
+# Used by t0001-init and other tests that compare gitdir: paths on case-insensitive volumes.
+test_cmp_fspath () {
+	if test "x$1" = "x$2"
+	then
+		return 0
+	fi
+
+	if test true != "$(git config --get --type=bool core.ignorecase)"
+	then
+		return 1
+	fi
+
+	test "x$(echo "$1" | tr A-Z a-z)" = "x$(echo "$2" | tr A-Z a-z)"
+}

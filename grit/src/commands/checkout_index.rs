@@ -4,13 +4,47 @@ use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf;
+use grit_lib::index::Index;
 use grit_lib::objects::ObjectKind;
 use std::io::{self, BufRead};
 use std::path::Component;
 use std::path::PathBuf;
 
-use grit_lib::index::{Index, MODE_EXECUTABLE, MODE_SYMLINK};
+use grit_lib::index::{IndexEntry, MODE_EXECUTABLE, MODE_SYMLINK};
 use grit_lib::repo::Repository;
+
+/// Stage selection for `--stage` (last occurrence wins).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageMode {
+    /// Default: stage 0 (merged entry).
+    Normal,
+    /// Unmerged stage 1, 2, or 3.
+    One(u8),
+    /// All unmerged stages (1–3) at once.
+    All,
+}
+
+fn parse_stage_flag(s: &str) -> Result<StageMode, String> {
+    match s {
+        "all" => Ok(StageMode::All),
+        "1" => Ok(StageMode::One(1)),
+        "2" => Ok(StageMode::One(2)),
+        "3" => Ok(StageMode::One(3)),
+        _ => Err("stage should be between 1 and 3 or all".to_string()),
+    }
+}
+
+fn effective_stage(stages: &[StageMode]) -> StageMode {
+    stages.last().copied().unwrap_or(StageMode::Normal)
+}
+
+fn target_stage_for_single(mode: StageMode) -> u8 {
+    match mode {
+        StageMode::Normal => 0,
+        StageMode::One(n) => n,
+        StageMode::All => 0,
+    }
+}
 
 /// Arguments for `grit checkout-index`.
 #[derive(Debug, ClapArgs)]
@@ -52,16 +86,25 @@ pub struct Args {
     pub prefix: Option<String>,
 
     /// Write to temp files instead of actual paths.
-    #[arg(long)]
-    pub temp: bool,
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub temp_explicit: bool,
+
+    /// Do not write to temp files (cannot be combined with `--stage=all`).
+    #[arg(long = "no-temp", action = clap::ArgAction::SetTrue)]
+    pub no_temp: bool,
 
     /// Directory for temporary files (used with --temp).
     #[arg(long = "tmpdir", value_name = "dir")]
     pub tmpdir: Option<PathBuf>,
 
-    /// Stage to check out (1, 2, or 3).
-    #[arg(long = "stage")]
-    pub stage: Option<u8>,
+    /// Stage to check out (1, 2, 3, or all).
+    #[arg(
+        long = "stage",
+        value_name = "STAGE",
+        value_parser = parse_stage_flag,
+        action = clap::ArgAction::Append
+    )]
+    pub stage: Vec<StageMode>,
 
     /// Ignore skip-worktree bits and checkout all entries.
     #[arg(long = "ignore-skip-worktree-bits")]
@@ -71,9 +114,24 @@ pub struct Args {
     pub files: Vec<PathBuf>,
 }
 
+fn compute_use_temp(args: &Args, stage_mode: StageMode) -> Result<bool> {
+    if args.no_temp {
+        if stage_mode == StageMode::All {
+            bail!("options '--stage=all' and '--no-temp' cannot be used together");
+        }
+        return Ok(false);
+    }
+    if args.temp_explicit {
+        return Ok(true);
+    }
+    Ok(stage_mode == StageMode::All)
+}
+
 /// Run `grit checkout-index`.
 pub fn run(args: Args) -> Result<()> {
-    if args.tmpdir.is_some() && !args.temp {
+    let stage_mode = effective_stage(&args.stage);
+    let use_temp = compute_use_temp(&args, stage_mode)?;
+    if args.tmpdir.is_some() && !use_temp {
         bail!("--tmpdir requires --temp");
     }
 
@@ -87,14 +145,30 @@ pub fn run(args: Args) -> Result<()> {
     let index_path = repo.index_path();
     let mut index = Index::load(&index_path).context("loading index")?;
 
-    let target_stage = args.stage.unwrap_or(0);
     let cwd = std::env::current_dir().context("resolving current directory")?;
 
     let prefix = args.prefix.as_deref().unwrap_or("");
     let symlinks_enabled = core_symlinks_enabled(&repo);
-    let mut selected_paths: Vec<Vec<u8>> = Vec::new();
-    let mut index_needs_write = false;
+    let cwd_prefix = worktree_relative_prefix_bytes(&work_tree, &cwd)?;
 
+    if stage_mode == StageMode::All {
+        return run_checkout_stage_all(
+            &repo,
+            &mut index,
+            &work_tree,
+            &cwd,
+            &cwd_prefix,
+            prefix,
+            symlinks_enabled,
+            &args,
+            use_temp,
+        );
+    }
+
+    let target_stage = target_stage_for_single(stage_mode);
+
+    let mut selected: Vec<(Vec<u8>, String)> = Vec::new();
+    let mut index_needs_write = false;
     if args.all {
         for entry in &index.entries {
             if entry.stage() != target_stage {
@@ -103,7 +177,8 @@ pub fn run(args: Args) -> Result<()> {
             if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
                 continue;
             }
-            selected_paths.push(entry.path.clone());
+            let disp = display_path_for_index_entry(&entry.path, &cwd_prefix);
+            selected.push((entry.path.clone(), disp));
         }
     } else if args.stdin {
         let paths = read_stdin_paths(args.null_terminated)?;
@@ -116,7 +191,7 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 bail!("'{}' is not in the cache", input_path.display());
             }
-            selected_paths.push(path_bytes);
+            selected.push((path_bytes, input_path.display().to_string()));
         }
     } else {
         for input_path in &args.files {
@@ -132,17 +207,28 @@ pub fn run(args: Args) -> Result<()> {
                 }
                 bail!("'{}' is not in the cache", input_path.display());
             }
-            selected_paths.push(path_bytes);
+            selected.push((path_bytes, input_path.display().to_string()));
         }
     }
 
     let mut has_errors = false;
     let mut has_conflicts = false;
-    for path in selected_paths {
-        let entry = index.get(&path, target_stage).cloned().ok_or_else(|| {
-            anyhow::anyhow!("'{}' is not in the cache", String::from_utf8_lossy(&path))
-        })?;
-        match checkout_entry(&repo, &entry, &work_tree, prefix, symlinks_enabled, &args) {
+    for (path, display) in selected {
+        let entry = index
+            .get(&path, target_stage)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("'{}' is not in the cache", display))?;
+        match checkout_entry(
+            &repo,
+            &mut index,
+            &entry,
+            &work_tree,
+            prefix,
+            symlinks_enabled,
+            &args,
+            use_temp,
+            &display,
+        ) {
             Ok(outcome) => {
                 if outcome.had_conflict {
                     has_conflicts = true;
@@ -172,20 +258,127 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
-struct CheckoutOutcome {
-    updated_entry: Option<grit_lib::index::IndexEntry>,
-    temp_output: Option<String>,
-    had_conflict: bool,
+fn run_checkout_stage_all(
+    repo: &Repository,
+    index: &mut Index,
+    work_tree: &std::path::Path,
+    cwd: &std::path::Path,
+    cwd_prefix: &[u8],
+    prefix: &str,
+    symlinks_enabled: bool,
+    args: &Args,
+    use_temp: bool,
+) -> Result<()> {
+    if !use_temp {
+        bail!("internal error: --stage=all requires temp");
+    }
+    if args.all {
+        checkout_all_unmerged_stages(
+            repo,
+            index,
+            work_tree,
+            cwd_prefix,
+            prefix,
+            symlinks_enabled,
+            args,
+        )?;
+        return Ok(());
+    }
+
+    if args.stdin {
+        let paths = read_stdin_paths(args.null_terminated)?;
+        for input_path in paths {
+            let repo_path = resolve_repo_path(work_tree, cwd, &input_path)?;
+            let path_bytes = path_to_bytes(&repo_path);
+            if let Some(line) = checkout_stages_one_path(
+                repo,
+                index,
+                work_tree,
+                prefix,
+                symlinks_enabled,
+                args,
+                &path_bytes,
+                &input_path.display().to_string(),
+            )? {
+                println!("{line}");
+            }
+        }
+        return Ok(());
+    }
+
+    for input_path in &args.files {
+        let repo_path = resolve_repo_path(work_tree, cwd, input_path)?;
+        let path_bytes = path_to_bytes(&repo_path);
+        if let Some(line) = checkout_stages_one_path(
+            repo,
+            index,
+            work_tree,
+            prefix,
+            symlinks_enabled,
+            args,
+            &path_bytes,
+            &input_path.display().to_string(),
+        )? {
+            println!("{line}");
+        }
+    }
+
+    Ok(())
+}
+
+fn index_has_any_entry(index: &Index, path_bytes: &[u8]) -> bool {
+    index.entries.iter().any(|e| e.path == path_bytes)
+}
+
+fn checkout_stages_one_path(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &std::path::Path,
+    prefix: &str,
+    symlinks_enabled: bool,
+    args: &Args,
+    path_bytes: &[u8],
+    display_path: &str,
+) -> Result<Option<String>> {
+    let mut top: [Option<PathBuf>; 4] = [None, None, None, None];
+    let mut did = false;
+    for stage in 1u8..=3u8 {
+        if let Some(entry) = index.get(path_bytes, stage) {
+            did = true;
+            let line = checkout_one_stage_to_temp_line(
+                repo,
+                index,
+                entry,
+                work_tree,
+                prefix,
+                symlinks_enabled,
+                args,
+                stage,
+            )?;
+            top[stage as usize] = Some(line);
+        }
+    }
+    if did {
+        return Ok(Some(format_stage_all_line(&top, display_path)));
+    }
+    if index_has_any_entry(index, path_bytes) {
+        return Ok(None);
+    }
+    // Match Git: `git checkout-index: <path> is not in the cache`
+    eprintln!("grit checkout-index: {display_path} is not in the cache");
+    Err(anyhow::anyhow!("'{display_path}' is not in the cache"))
 }
 
 fn checkout_entry(
     repo: &Repository,
+    index: &mut Index,
     entry: &grit_lib::index::IndexEntry,
     work_tree: &std::path::Path,
     prefix: &str,
     symlinks_enabled: bool,
     args: &Args,
+    use_temp: bool,
+    display_path: &str,
 ) -> Result<CheckoutOutcome> {
     let path_str = String::from_utf8_lossy(&entry.path).into_owned();
     let rel_path = format!("{prefix}{path_str}");
@@ -196,9 +389,8 @@ fn checkout_entry(
         return Ok(outcome);
     }
 
-    // Submodule entries cannot be checked out
     if entry.mode == 0o160000 {
-        if args.temp {
+        if use_temp {
             eprintln!("cannot create temporary submodule {path_str}");
             return Err(anyhow::anyhow!(
                 "cannot create temporary submodule {path_str}"
@@ -221,9 +413,9 @@ fn checkout_entry(
         bail!("cannot checkout non-blob at '{path_str}'");
     }
 
-    if args.temp {
+    if use_temp {
         let tmp_path = write_temp_blob(entry, &obj.data, args)?;
-        outcome.temp_output = Some(format!("{}\t{path_str}", tmp_path.display()));
+        outcome.temp_output = Some(format!("{}\t{display_path}", tmp_path.display()));
         return Ok(outcome);
     }
 
@@ -239,13 +431,16 @@ fn checkout_entry(
     }
 
     if let Some(parent) = abs_path.parent() {
-        // If a path component exists as a file, remove it so we can create a directory.
-        let mut check = std::path::PathBuf::new();
-        if let Ok(stripped) = parent.strip_prefix("/") {
-            check.push("/");
-            for component in stripped.components() {
+        let mut check = work_tree.to_path_buf();
+        if let Ok(rest) = parent.strip_prefix(work_tree) {
+            for component in rest.components() {
                 check.push(component);
-                if check.is_file() || check.is_symlink() && !check.is_dir() {
+                if let Ok(meta) = std::fs::symlink_metadata(&check) {
+                    if meta.file_type().is_symlink() {
+                        let _ = std::fs::remove_file(&check);
+                        break;
+                    }
+                } else if check.is_file() {
                     let _ = std::fs::remove_file(&check);
                     break;
                 }
@@ -267,23 +462,18 @@ fn checkout_entry(
             .map_err(|_| anyhow::anyhow!("symlink target is not UTF-8"))?;
         std::os::unix::fs::symlink(&target, &abs_path)?;
     } else {
-        // Apply CRLF / smudge conversion
         let data = {
             let config = ConfigSet::load(Some(&repo.git_dir), true).unwrap_or_default();
             let conv = crlf::ConversionConfig::from_config(&config);
-            let mut attrs = crlf::load_gitattributes(work_tree);
-            if attrs.is_empty() {
-                if let Ok(idx) = Index::load(&repo.index_path()) {
-                    attrs = crlf::load_gitattributes_from_index(&idx, &repo.odb);
-                }
-            }
+            let attrs =
+                crlf::load_gitattributes_for_checkout(work_tree, &path_str, index, &repo.odb);
             let file_attrs = crlf::get_file_attrs(&attrs, &path_str, &config);
             let oid_hex = format!("{}", entry.oid);
             crlf::convert_to_worktree(&obj.data, &path_str, &conv, &file_attrs, Some(&oid_hex))
+                .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
         };
         std::fs::write(&abs_path, &data)?;
 
-        // Set executable bit if needed
         if entry.mode == MODE_EXECUTABLE {
             use std::os::unix::fs::PermissionsExt;
             let mut perms = std::fs::metadata(&abs_path)?.permissions();
@@ -297,6 +487,105 @@ fn checkout_entry(
     }
 
     Ok(outcome)
+}
+
+fn checkout_one_stage_to_temp_line(
+    repo: &Repository,
+    _index: &Index,
+    entry: &IndexEntry,
+    work_tree: &std::path::Path,
+    prefix: &str,
+    symlinks_enabled: bool,
+    args: &Args,
+    stage: u8,
+) -> Result<PathBuf> {
+    let _ = (work_tree, prefix, symlinks_enabled, stage);
+    if entry.mode == 0o160000 {
+        bail!("cannot create temporary submodule");
+    }
+    let obj = repo.odb.read(&entry.oid)?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("cannot checkout non-blob");
+    }
+    write_temp_blob(entry, &obj.data, args)
+}
+
+fn format_stage_all_line(top: &[Option<PathBuf>; 4], display_path: &str) -> String {
+    let mut s = String::new();
+    for i in 1..4 {
+        if i > 1 {
+            s.push(' ');
+        }
+        match &top[i] {
+            Some(p) => s.push_str(&p.display().to_string()),
+            None => s.push('.'),
+        }
+    }
+    s.push('\t');
+    s.push_str(display_path);
+    s
+}
+
+fn checkout_all_unmerged_stages(
+    repo: &Repository,
+    index: &Index,
+    work_tree: &std::path::Path,
+    cwd_prefix: &[u8],
+    prefix: &str,
+    symlinks_enabled: bool,
+    args: &Args,
+) -> Result<()> {
+    use std::collections::HashSet;
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    for entry in &index.entries {
+        if entry.stage() == 0 || entry.stage() > 3 {
+            continue;
+        }
+        if !cwd_prefix.is_empty() && !entry.path.starts_with(cwd_prefix) {
+            continue;
+        }
+        if entry.skip_worktree() && !args.ignore_skip_worktree_bits {
+            continue;
+        }
+        if seen.contains(&entry.path) {
+            continue;
+        }
+        seen.insert(entry.path.clone());
+
+        let mut top: [Option<PathBuf>; 4] = [None, None, None, None];
+        let mut any = false;
+        for st in 1u8..=3u8 {
+            if let Some(e) = index.get(&entry.path, st) {
+                if e.skip_worktree() && !args.ignore_skip_worktree_bits {
+                    continue;
+                }
+                any = true;
+                let p = checkout_one_stage_to_temp_line(
+                    repo,
+                    index,
+                    e,
+                    work_tree,
+                    prefix,
+                    symlinks_enabled,
+                    args,
+                    st,
+                )?;
+                top[st as usize] = Some(p);
+            }
+        }
+        if any {
+            let disp = display_path_for_index_entry(&entry.path, cwd_prefix);
+            println!("{}", format_stage_all_line(&top, &disp));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct CheckoutOutcome {
+    updated_entry: Option<grit_lib::index::IndexEntry>,
+    temp_output: Option<String>,
+    had_conflict: bool,
 }
 
 fn read_stdin_paths(null_terminated: bool) -> Result<Vec<PathBuf>> {
@@ -445,6 +734,39 @@ fn core_symlinks_enabled(repo: &Repository) -> bool {
         }
     }
     true
+}
+
+fn worktree_relative_prefix_bytes(
+    work_tree: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Result<Vec<u8>> {
+    let rel = cwd.strip_prefix(work_tree).with_context(|| {
+        format!(
+            "current directory '{}' is outside repository work tree '{}'",
+            cwd.display(),
+            work_tree.display()
+        )
+    })?;
+    if rel.as_os_str().is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut s = rel.to_string_lossy().replace('\\', "/");
+    if !s.ends_with('/') {
+        s.push('/');
+    }
+    Ok(s.into_bytes())
+}
+
+fn display_path_for_index_entry(entry_path: &[u8], cwd_prefix: &[u8]) -> String {
+    let full = String::from_utf8_lossy(entry_path);
+    if cwd_prefix.is_empty() {
+        return full.into_owned();
+    }
+    if entry_path.starts_with(cwd_prefix) {
+        String::from_utf8_lossy(&entry_path[cwd_prefix.len()..]).into_owned()
+    } else {
+        full.into_owned()
+    }
 }
 
 fn resolve_repo_path(

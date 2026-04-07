@@ -1021,6 +1021,10 @@ test_path_is_file_not_symlink () {
 	test -f "$1" && ! test -L "$1"
 }
 
+test_path_is_dir_not_symlink () {
+	test -d "$1" && ! test -L "$1"
+}
+
 test_expect_code () {
 	local expected_code="$1"
 	shift

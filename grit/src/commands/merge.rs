@@ -975,6 +975,7 @@ fn do_real_merge(
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, path, config);
                 let conv = grit_lib::crlf::ConversionConfig::from_config(config);
                 grit_lib::crlf::convert_to_worktree(content, path, &conv, &file_attrs, None)
+                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path}: {e}"))?
             } else {
                 content.clone()
             };
@@ -4588,6 +4589,7 @@ fn checkout_entries(
             let data = if let (Some(ref config), Some(ref conv)) = (&config, &conv) {
                 let file_attrs = grit_lib::crlf::get_file_attrs(&attr_rules, &path_str, config);
                 grit_lib::crlf::convert_to_worktree(&obj.data, &path_str, conv, &file_attrs, None)
+                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
             } else {
                 obj.data.clone()
             };

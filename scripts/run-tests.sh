@@ -11,8 +11,8 @@
 #   --quiet        minimal output
 #
 # Skipped files (in_scope=skip in data/test-files.csv) are never run.
-# After a run, results are merged into data/test-files.csv and
-# docs/index.html + docs/testfiles.html are regenerated.
+# After each test file finishes, its row in data/test-files.csv is updated;
+# when the run completes, docs/index.html + docs/testfiles.html are regenerated once.
 
 set -euo pipefail
 
@@ -22,6 +22,7 @@ DATA_DIR="$REPO/data"
 CSV="$DATA_DIR/test-files.csv"
 CATALOG="$REPO/scripts/generate-test-files-catalog.py"
 APPLY="$REPO/scripts/apply-test-run-results.py"
+GEN_DASH="$REPO/scripts/generate-dashboard-from-test-files.py"
 BIN="$REPO/target/release/grit"
 TIMEOUT=120
 # GNU coreutils `timeout` is not installed by default on macOS; `gtimeout` may be.
@@ -117,14 +118,14 @@ PY
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
     echo "No test files to run (all skipped or no match)."
-    python3 "$REPO/scripts/generate-dashboard-from-test-files.py"
+    python3 "$GEN_DASH"
     exit 0
 fi
 
 [[ "$QUIET" != true ]] && echo "Running ${#FILES[@]} test file(s) (timeout: ${TIMEOUT}s)..."
 
-RUN_BATCH="$(mktemp)"
-trap 'rm -f "$RUN_BATCH"' EXIT
+LINE_TMP="$(mktemp)"
+trap 'rm -f "$LINE_TMP"' EXIT
 
 run_one() {
     local f="$1"
@@ -152,7 +153,8 @@ run_one() {
 
 for f in "${FILES[@]}"; do
     line=$(run_one "$f")
-    echo "$line" >> "$RUN_BATCH"
+    printf '%s\n' "$line" > "$LINE_TMP"
+    python3 "$APPLY" "$LINE_TMP" --skip-dashboard
     if [[ "$QUIET" != true ]]; then
         base="${f%.sh}"
         pass=$(echo "$line" | cut -f3)
@@ -169,7 +171,7 @@ for f in "${FILES[@]}"; do
     fi
 done
 
-python3 "$APPLY" "$RUN_BATCH"
+python3 "$GEN_DASH"
 
 if [[ "$QUIET" != true ]]; then
     echo "Updated $CSV and dashboards."

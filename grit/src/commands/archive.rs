@@ -207,7 +207,8 @@ fn collect_entries(
             let file_attrs = get_file_attrs(attrs, &full_path, config);
             let oid_hex = entry.oid.to_hex();
             let converted =
-                convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex));
+                convert_to_worktree(&blob.data, &full_path, conv, &file_attrs, Some(&oid_hex))
+                    .map_err(|e| anyhow::anyhow!("smudge filter failed for {full_path}: {e}"))?;
             entries.push(ArchiveEntry {
                 path: full_path,
                 mode: entry.mode,

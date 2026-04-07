@@ -744,15 +744,17 @@ pub fn packed_delta_base_oid(objects_dir: &Path, oid: &ObjectId) -> Result<Optio
         match packed_type {
             PackedType::RefDelta => {
                 if p + 20 > pack_bytes.len() {
-                    return Err(Error::CorruptObject(
-                        "truncated ref-delta base".to_owned(),
-                    ));
+                    return Err(Error::CorruptObject("truncated ref-delta base".to_owned()));
                 }
                 return Ok(Some(ObjectId::from_bytes(&pack_bytes[p..p + 20])?));
             }
             PackedType::OfsDelta => {
                 let base_off = parse_ofs_delta_base(&pack_bytes, &mut p, entry.offset)?;
-                return Ok(idx.entries.iter().find(|e| e.offset == base_off).map(|e| e.oid));
+                return Ok(idx
+                    .entries
+                    .iter()
+                    .find(|e| e.offset == base_off)
+                    .map(|e| e.oid));
             }
             _ => return Ok(None),
         }

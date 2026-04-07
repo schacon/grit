@@ -14,7 +14,7 @@
 //!   - `filter=<name>` (with `filter.<name>.clean` / `filter.<name>.smudge`)
 //!   - `ident` keyword expansion
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::ConfigSet;
@@ -84,6 +84,8 @@ pub struct FileAttrs {
     pub diff_driver: Option<String>,
     pub filter_clean: Option<String>,
     pub filter_smudge: Option<String>,
+    /// Whether `filter.<name>.required` is set for the active smudge filter.
+    pub filter_smudge_required: bool,
     pub ident: bool,
     pub merge: MergeAttr,
     pub conflict_marker_size: Option<String>,
@@ -99,6 +101,7 @@ impl Default for FileAttrs {
             diff_driver: None,
             filter_clean: None,
             filter_smudge: None,
+            filter_smudge_required: false,
             ident: false,
             merge: MergeAttr::Unspecified,
             conflict_marker_size: None,
@@ -209,6 +212,49 @@ pub fn load_gitattributes_from_index(
     rules
 }
 
+/// Load `.gitattributes` rules that apply to `rel_path`, including root and
+/// nested `dir/.gitattributes` along parent directories (Git-consistent order:
+/// root first, then each ancestor directory; later rules win in [`get_file_attrs`]).
+///
+/// Reads from the working tree when present, otherwise from a stage-0 index entry.
+pub fn load_gitattributes_for_checkout(
+    work_tree: &Path,
+    rel_path: &str,
+    index: &crate::index::Index,
+    odb: &crate::odb::Odb,
+) -> Vec<AttrRule> {
+    let mut rules = load_gitattributes(work_tree);
+
+    let path = Path::new(rel_path);
+    if let Some(parent) = path.parent() {
+        let mut accum = PathBuf::new();
+        for comp in parent.components() {
+            accum.push(comp);
+            let ga_rel = accum.join(".gitattributes");
+            let wt_ga = work_tree.join(&ga_rel);
+            if let Ok(content) = std::fs::read_to_string(&wt_ga) {
+                parse_gitattributes(&content, &mut rules);
+            } else {
+                let key = path_to_index_bytes(&ga_rel);
+                if let Some(entry) = index.get(&key, 0) {
+                    if let Ok(obj) = odb.read(&entry.oid) {
+                        if let Ok(content) = String::from_utf8(obj.data) {
+                            parse_gitattributes(&content, &mut rules);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    rules
+}
+
+fn path_to_index_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
 fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
     for line in content.lines() {
         let line = line.trim();
@@ -242,6 +288,13 @@ fn parse_gitattributes(content: &str, rules: &mut Vec<AttrRule>) {
     }
 }
 
+fn config_bool_truthy(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "yes" | "on" | "1"
+    )
+}
+
 /// Get file attributes for a given path from .gitattributes rules and config.
 pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) -> FileAttrs {
     let mut fa = FileAttrs::default();
@@ -270,11 +323,15 @@ pub fn get_file_attrs(rules: &[AttrRule], rel_path: &str, config: &ConfigSet) ->
                         if value == "unset" {
                             fa.filter_clean = None;
                             fa.filter_smudge = None;
+                            fa.filter_smudge_required = false;
                         } else {
                             let clean_key = format!("filter.{value}.clean");
                             let smudge_key = format!("filter.{value}.smudge");
+                            let req_key = format!("filter.{value}.required");
                             fa.filter_clean = config.get(&clean_key);
                             fa.filter_smudge = config.get(&smudge_key);
+                            fa.filter_smudge_required =
+                                config.get(&req_key).is_some_and(|v| config_bool_truthy(&v));
                         }
                     }
                     "diff" => {
@@ -558,7 +615,7 @@ pub fn convert_to_worktree(
     conv: &ConversionConfig,
     file_attrs: &FileAttrs,
     oid_hex: Option<&str>,
-) -> Vec<u8> {
+) -> std::io::Result<Vec<u8>> {
     let mut buf = data.to_vec();
 
     // 1. Ident expansion
@@ -568,20 +625,25 @@ pub fn convert_to_worktree(
         }
     }
 
-    // 2. Determine if we should do LF→CRLF conversion
+    // 2. Smudge filter (before EOL conversion) — matches Git's checkout pipeline
+    if let Some(ref smudge_cmd) = file_attrs.filter_smudge {
+        match run_filter(smudge_cmd, &buf, rel_path) {
+            Ok(filtered) => buf = filtered,
+            Err(e) => {
+                if file_attrs.filter_smudge_required {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // 3. LF→CRLF for working tree
     let should_convert = should_convert_to_crlf(conv, file_attrs, &buf);
     if should_convert {
         buf = lf_to_crlf(&buf);
     }
 
-    // 3. Run smudge filter if configured
-    if let Some(ref smudge_cmd) = file_attrs.filter_smudge {
-        if let Ok(filtered) = run_filter(smudge_cmd, &buf, rel_path) {
-            buf = filtered;
-        }
-    }
-
-    buf
+    Ok(buf)
 }
 
 /// Decide whether to convert LF→CRLF on output.

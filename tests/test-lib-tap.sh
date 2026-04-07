@@ -246,7 +246,7 @@ test_must_fail() {
 		return 1
 	fi
 	set +e
-	"$@" 2>&1
+	"$@"
 	exit_code=$?
 	set -e
 	if test "$exit_code" -eq 0 && ! echo "$_test_ok" | grep -q success

@@ -948,7 +948,7 @@ pub fn validate_repo_config(config_text: &str) -> std::result::Result<(), String
         if in_core {
             if let Some(rest) = trimmed.strip_prefix("repositoryformatversion") {
                 let val = rest
-                    .trim_start_matches(|c: char| c == ' ' || c == '=')
+                    .trim_start_matches([' ', '='])
                     .trim();
                 if let Ok(v) = val.parse::<u32>() {
                     version = v;

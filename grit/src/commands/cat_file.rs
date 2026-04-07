@@ -118,6 +118,15 @@ pub struct Args {
     pub trailing: Vec<String>,
 }
 
+/// True when `s` is exactly 40 or 64 hex digits (SHA-1 / SHA-256 object id spelling).
+fn looks_like_full_hex_object_id(s: &str) -> bool {
+    let len = s.len();
+    if len != 40 && len != 64 {
+        return false;
+    }
+    s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 impl Args {
     /// Whether we are in any batch mode.
     fn is_batch_mode(&self) -> bool {
@@ -169,8 +178,12 @@ pub fn run(args: Args) -> Result<()> {
         Err(_) if args.exists => std::process::exit(1),
         Err(_) => {
             if args.show_type || args.size {
-                eprintln!("fatal: git cat-file: could not get object info");
-                std::process::exit(1);
+                if looks_like_full_hex_object_id(obj_str) {
+                    eprintln!("fatal: git cat-file: could not get object info");
+                } else {
+                    eprintln!("fatal: Not a valid object name {obj_str}");
+                }
+                std::process::exit(128);
             }
             eprintln!("fatal: Not a valid object name {obj_str}");
             std::process::exit(128);
@@ -279,6 +292,18 @@ fn exit_cat_file_read_error(err: &LibError, args: &Args, obj_spec: &str) -> ! {
     match err {
         LibError::UnknownObjectType(_) => {
             eprintln!("fatal: invalid object type");
+            std::process::exit(128);
+        }
+        LibError::ObjectNotFound(_) => {
+            if args.pretty {
+                eprintln!("fatal: Not a valid object name {obj_spec}");
+                std::process::exit(128);
+            }
+            if args.show_type || args.size {
+                eprintln!("fatal: git cat-file: could not get object info");
+                std::process::exit(128);
+            }
+            eprintln!("fatal: Not a valid object name {obj_spec}");
             std::process::exit(128);
         }
         LibError::ObjectHeaderTooLong { oid } => {

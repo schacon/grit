@@ -10,8 +10,9 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::config::{parse_path, ConfigSet};
 use crate::error::{Error, Result};
-use crate::index::Index;
+use crate::index::{Index, MODE_GITLINK};
 use crate::repo::Repository;
+use crate::wildmatch::{wildmatch, WM_PATHNAME};
 
 /// Metadata for a matching rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,12 +41,16 @@ struct IgnoreRule {
 }
 
 /// Engine used to evaluate ignore patterns against repository-relative paths.
-#[derive(Debug, Default)]
+#[derive(Debug)]
+#[derive(Default)]
 pub struct IgnoreMatcher {
     global_rules: Vec<IgnoreRule>,
     info_rules: Vec<IgnoreRule>,
     gitignore_cache: HashMap<String, Vec<IgnoreRule>>,
+    /// Warnings emitted while loading in-tree `.gitignore` (e.g. symlink paths).
+    pub warnings: Vec<String>,
 }
+
 
 impl IgnoreMatcher {
     /// Build a matcher from repository exclude sources.
@@ -61,8 +66,15 @@ impl IgnoreMatcher {
         Ok(Self {
             global_rules: load_global_excludes(repo)?,
             info_rules: load_info_excludes(repo)?,
+            warnings: Vec::new(),
             ..Self::default()
         })
+    }
+
+    /// Take any warnings accumulated while loading ignore files (caller prints to stderr).
+    #[must_use]
+    pub fn take_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.warnings)
     }
 
     /// Check whether a repository-relative path is ignored.
@@ -97,12 +109,13 @@ impl IgnoreMatcher {
         let mut ignored = false;
 
         let per_dir_rules = self.rules_for_path(repo, repo_rel_path)?;
-        for rule in self
+        let all_rules = self
             .global_rules
             .iter()
             .chain(self.info_rules.iter())
             .chain(per_dir_rules.iter())
-        {
+            .collect::<Vec<_>>();
+        for rule in &all_rules {
             if rule_matches(rule, repo_rel_path, is_dir) {
                 matched = Some(IgnoreMatch {
                     source_display: rule.source_display.clone(),
@@ -113,6 +126,14 @@ impl IgnoreMatcher {
                 ignored = !rule.negative;
             }
         }
+
+        let matched = refine_match_for_check_ignore_verbose(
+            repo_rel_path,
+            is_dir,
+            ignored,
+            matched,
+            &all_rules,
+        );
 
         Ok((ignored, matched))
     }
@@ -138,7 +159,7 @@ impl IgnoreMatcher {
 
         for dir in &dirs {
             if !self.gitignore_cache.contains_key(dir) {
-                let rules = load_gitignore_for_dir(repo, dir)?;
+                let rules = load_gitignore_for_dir(repo, dir, &mut self.warnings)?;
                 self.gitignore_cache.insert(dir.clone(), rules);
             }
         }
@@ -171,7 +192,8 @@ fn load_global_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
         repo.git_dir.join(&expanded)
     };
 
-    load_rules_from_file(&resolved, raw_path, String::new())
+    let mut sink = Vec::new();
+    load_rules_from_file(&resolved, raw_path, String::new(), false, &mut sink)
 }
 
 fn default_global_ignore_path() -> Option<String> {
@@ -188,10 +210,21 @@ fn default_global_ignore_path() -> Option<String> {
 
 fn load_info_excludes(repo: &Repository) -> Result<Vec<IgnoreRule>> {
     let path = repo.git_dir.join("info/exclude");
-    load_rules_from_file(&path, ".git/info/exclude".to_owned(), String::new())
+    let mut sink = Vec::new();
+    load_rules_from_file(
+        &path,
+        ".git/info/exclude".to_owned(),
+        String::new(),
+        false,
+        &mut sink,
+    )
 }
 
-fn load_gitignore_for_dir(repo: &Repository, dir: &str) -> Result<Vec<IgnoreRule>> {
+fn load_gitignore_for_dir(
+    repo: &Repository,
+    dir: &str,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<IgnoreRule>> {
     let Some(work_tree) = &repo.work_tree else {
         return Ok(Vec::new());
     };
@@ -205,14 +238,26 @@ fn load_gitignore_for_dir(repo: &Repository, dir: &str) -> Result<Vec<IgnoreRule
     } else {
         format!("{dir}/.gitignore")
     };
-    load_rules_from_file(&path, source_display, dir.to_owned())
+    load_rules_from_file(&path, source_display, dir.to_owned(), true, warnings)
 }
 
 fn load_rules_from_file(
     path: &Path,
     source_display: String,
     base_dir: String,
+    deny_symlink_gitignore: bool,
+    warnings: &mut Vec<String>,
 ) -> Result<Vec<IgnoreRule>> {
+    if deny_symlink_gitignore && path.exists() {
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if meta.file_type().is_symlink() {
+                warnings.push(format!(
+                    "warning: unable to access '{source_display}': Too many levels of symbolic links"
+                ));
+                return Ok(Vec::new());
+            }
+        }
+    }
     let Some(content) = read_optional_text(path)? else {
         return Ok(Vec::new());
     };
@@ -279,6 +324,64 @@ fn parse_rule_line(
         body: raw,
         base_dir: base_dir.to_owned(),
     })
+}
+
+fn base_dir_depth(base: &str) -> usize {
+    if base.is_empty() {
+        return 0;
+    }
+    base.split('/').count()
+}
+
+/// Git's `check-ignore -v` attributes coverage to a parent `…/` directory rule when a redundant
+/// positive pattern exists in a nested `.gitignore` under an already-ignored directory.
+fn refine_match_for_check_ignore_verbose(
+    repo_rel_path: &str,
+    is_dir: bool,
+    ignored: bool,
+    matched: Option<IgnoreMatch>,
+    rules: &[&IgnoreRule],
+) -> Option<IgnoreMatch> {
+    let Some(m) = matched else {
+        return None;
+    };
+    if m.negative {
+        return Some(m);
+    }
+    if !ignored {
+        return Some(m);
+    }
+    let mut best: Option<&IgnoreRule> = None;
+    for rule in rules {
+        if !rule.directory_only {
+            continue;
+        }
+        if !rule_matches(rule, repo_rel_path, is_dir) {
+            continue;
+        }
+        match best {
+            None => best = Some(rule),
+            Some(b) if base_dir_depth(&rule.base_dir) < base_dir_depth(&b.base_dir) => {
+                best = Some(rule);
+            }
+            Some(b)
+                if base_dir_depth(&rule.base_dir) == base_dir_depth(&b.base_dir)
+                    && rule.line_number < b.line_number =>
+            {
+                best = Some(rule);
+            }
+            _ => {}
+        }
+    }
+    Some(
+        best.map(|r| IgnoreMatch {
+            source_display: r.source_display.clone(),
+            line_number: r.line_number,
+            pattern_text: r.pattern_text.clone(),
+            negative: r.negative,
+        })
+        .unwrap_or(m),
+    )
 }
 
 fn rule_matches(rule: &IgnoreRule, repo_rel_path: &str, is_dir: bool) -> bool {
@@ -393,41 +496,28 @@ fn ancestor_dir_basenames(path: &str, is_dir: bool) -> Vec<&str> {
 }
 
 fn glob_matches(pattern: &str, text: &str) -> bool {
-    wildcard_match(pattern.as_bytes(), text.as_bytes())
+    wildmatch(pattern.as_bytes(), text.as_bytes(), WM_PATHNAME)
 }
 
-fn wildcard_match(pattern: &[u8], text: &[u8]) -> bool {
-    let mut p = 0usize;
-    let mut t = 0usize;
-    let mut star_p = None;
-    let mut star_t = 0usize;
-
-    while t < text.len() {
-        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
-            p += 1;
-            t += 1;
+/// Returns the submodule path if `repo_rel_path` names something inside a gitlink entry.
+#[must_use]
+pub fn submodule_containing_path(repo_rel_path: &str, index: &Index) -> Option<String> {
+    let mut best: Option<&str> = None;
+    for entry in &index.entries {
+        if entry.stage() != 0 || entry.mode != MODE_GITLINK {
             continue;
         }
-        if p < pattern.len() && pattern[p] == b'*' {
-            star_p = Some(p);
-            p += 1;
-            star_t = t;
+        let Ok(p) = std::str::from_utf8(&entry.path) else {
             continue;
-        }
-        if let Some(saved_p) = star_p {
-            p = saved_p + 1;
-            star_t += 1;
-            t = star_t;
-            continue;
-        }
-        return false;
+        };
+        if repo_rel_path.len() > p.len()
+            && repo_rel_path.starts_with(p)
+            && repo_rel_path.as_bytes().get(p.len()) == Some(&b'/')
+            && best.is_none_or(|b| p.len() > b.len()) {
+                best = Some(p);
+            }
     }
-
-    while p < pattern.len() && pattern[p] == b'*' {
-        p += 1;
-    }
-
-    p == pattern.len()
+    best.map(std::string::ToString::to_string)
 }
 
 /// Convert a user-supplied path into a normalized repository-relative path.

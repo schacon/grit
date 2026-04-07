@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import subprocess
 import sys
@@ -60,10 +61,19 @@ def parse_run_file(path: Path) -> dict[str, tuple[int, int, int, str, int]]:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <run-results.tsv>", file=sys.stderr)
-        sys.exit(2)
-    run_path = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "run_path",
+        type=Path,
+        help="TSV lines: file_base, tests_total, passed, failing, status, expect_failure",
+    )
+    parser.add_argument(
+        "--skip-dashboard",
+        action="store_true",
+        help="Update CSV only; skip docs/index.html and docs/testfiles.html (caller may run generate-dashboard-from-test-files.py once at the end).",
+    )
+    args = parser.parse_args()
+    run_path = args.run_path
     if not run_path.is_file():
         print(f"ERROR: {run_path} not found", file=sys.stderr)
         sys.exit(1)
@@ -93,12 +103,13 @@ def main() -> None:
         for row in rows:
             w.writerow({k: row.get(k, "") for k in HEADER})
 
-    subprocess.run(
-        [sys.executable, str(GEN_DASH)],
-        cwd=str(REPO),
-        check=True,
-    )
-    print(f"Updated {CSV_PATH} and regenerated docs/index.html, docs/testfiles.html")
+    if not args.skip_dashboard:
+        subprocess.run(
+            [sys.executable, str(GEN_DASH)],
+            cwd=str(REPO),
+            check=True,
+        )
+        print(f"Updated {CSV_PATH} and regenerated docs/index.html, docs/testfiles.html")
 
 
 if __name__ == "__main__":

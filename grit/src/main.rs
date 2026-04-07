@@ -2602,9 +2602,30 @@ fn get_alias_definition(name: &str) -> Option<String> {
 }
 
 #[allow(dead_code)]
+fn work_tree_root_for_shell_alias() -> std::path::PathBuf {
+    if let Ok(wt) = std::env::var("GIT_WORK_TREE") {
+        if !wt.is_empty() {
+            let p = std::path::PathBuf::from(&wt);
+            return std::fs::canonicalize(&p).unwrap_or(p);
+        }
+    }
+    let mut cur = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    loop {
+        if cur.join(".git").exists() {
+            return cur;
+        }
+        if !cur.pop() {
+            break;
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
 fn run_alias(name: &str, alias: &str, rest: &[String], opts: &GlobalOpts) -> Result<()> {
     if let Some(shell_cmd) = alias.strip_prefix('!') {
+        let root = work_tree_root_for_shell_alias();
         let status = std::process::Command::new("sh")
+            .current_dir(&root)
             .arg("-c")
             .arg(shell_cmd)
             .arg(format!("git-{name}"))

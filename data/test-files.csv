@@ -1,12 +1,12 @@
 file	group	in_scope	tests_total	passed_last	failing	fully_passing	status	expect_failure
 t0000-basic	t0	yes	92	75	17	false	ok	8
-t0001-init	t0	yes	94	0	0	false	ok	0
-t0002-gitfile	t0	yes	14	13	1	false	ok	0
+t0001-init	t0	yes	102	67	35	false	ok	0
+t0002-gitfile	t0	yes	14	14	0	true	ok	0
 t0003-attributes	t0	yes	55	19	36	false	ok	0
 t0004-unwritable	t0	yes	9	9	0	true	ok	0
 t0005-signals	t0	yes	5	5	0	true	ok	0
 t0006-date	t0	yes	129	16	113	false	ok	0
-t0007-git-var	t0	yes	27	25	2	false	ok	0
+t0007-git-var	t0	yes	27	27	0	true	ok	0
 t0008-ignores	t0	yes	50	0	0	false	ok	0
 t0009-git-dir-validation	t0	yes	6	6	0	true	ok	0
 t0010-racy-git	t0	yes	10	10	0	true	ok	0
@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	0	0	false		0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	14	3	false	ok	0
 t1005-read-tree-reset	t1	yes	7	1	6	false	ok	0
-t1006-cat-file	t1	yes	0	0	0	false	timeout	1
+t1006-cat-file	t1	yes	291	239	51	false	ok	1
 t10060-hash-object-determinism	t1	yes	34	0	0	false		0
 t1007-hash-object	t1	yes	31	0	0	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	0	0	false		0
@@ -460,9 +460,9 @@ t1800-ls-remote	t1	yes	24	0	0	false		0
 t1900-repo-info	t1	yes	16	0	0	false	ok	0
 t1901-repo-structure	t1	yes	4	4	0	true	ok	0
 t2000-conflict-when-checking-files-out	t2	yes	14	13	1	false	ok	0
-t2002-checkout-cache-u	t2	yes	3	0	0	false		0
+t2002-checkout-cache-u	t2	yes	3	3	0	true	ok	0
 t2003-checkout-cache-mkdir	t2	yes	10	6	4	false	ok	0
-t2004-checkout-cache-temp	t2	yes	23	0	0	false	ok	0
+t2004-checkout-cache-temp	t2	yes	23	8	15	false	ok	0
 t2005-checkout-index-symlinks	t2	yes	3	3	0	true	ok	0
 t2006-checkout-index-basic	t2	yes	9	9	0	true	ok	0
 t2007-checkout-symlink	t2	yes	4	4	0	true	ok	0

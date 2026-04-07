@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Args as ClapArgs;
-use grit_lib::ignore::{normalize_repo_relative, IgnoreMatcher};
+use grit_lib::ignore::{normalize_repo_relative, submodule_containing_path, IgnoreMatcher};
 use grit_lib::index::Index;
 use grit_lib::repo::Repository;
 use std::fs;
@@ -19,6 +19,16 @@ pub struct Args {
 
 /// Run `grit check-ignore`.
 pub fn run(args: Args) -> Result<()> {
+    match run_inner(args) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("fatal: {e:#}");
+            std::process::exit(128);
+        }
+    }
+}
+
+fn run_inner(args: Args) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let repo = Repository::discover(None)
         .context("not a git repository (or any of the parent directories)")?;
@@ -40,57 +50,85 @@ pub fn run(args: Args) -> Result<()> {
     let mut matcher =
         IgnoreMatcher::from_repository(&repo).context("failed to load ignore rules")?;
 
-    let mut queries = if parsed.stdin {
-        read_stdin_paths(parsed.nul_terminated)?
-    } else {
-        parsed.paths.clone()
-    };
-
-    if queries.is_empty() && parsed.stdin {
-        std::process::exit(1);
-    }
-
     let mut out = io::stdout().lock();
     let mut matched_count = 0usize;
-    for raw_path in queries.drain(..) {
-        let repo_rel = normalize_repo_relative(&repo, &cwd, &raw_path)
-            .map_err(|err| anyhow!(err.to_string()))?;
-        let abs = work_tree.join(Path::new(&repo_rel));
-        let is_dir = fs::metadata(&abs).map(|m| m.is_dir()).unwrap_or(false);
 
-        let (ignored, matched) = matcher
-            .check_path(&repo, index_ref, &repo_rel, is_dir)
-            .map_err(|err| anyhow!(err.to_string()))?;
-
-        let reportable_match = matched
-            .as_ref()
-            .map(|rule| parsed.verbose || !rule.negative)
-            .unwrap_or(false);
-        if reportable_match {
-            matched_count += 1;
-        }
-
-        if parsed.quiet {
-            continue;
-        }
-
-        if parsed.verbose {
-            if let Some(matched_rule) = matched {
-                write_verbose_record(
+    if parsed.stdin {
+        if parsed.nul_terminated {
+            let mut buf = Vec::new();
+            io::stdin()
+                .read_to_end(&mut buf)
+                .context("failed to read stdin")?;
+            if buf.is_empty() {
+                std::process::exit(1);
+            }
+            for chunk in buf.split(|b| *b == b'\0') {
+                if chunk.is_empty() {
+                    continue;
+                }
+                let raw_path = String::from_utf8_lossy(chunk).to_string();
+                matched_count += process_one_path(
+                    &parsed,
+                    &repo,
+                    &cwd,
+                    work_tree,
+                    index_ref,
+                    &mut matcher,
                     &mut out,
-                    parsed.nul_terminated,
-                    &matched_rule.source_display,
-                    matched_rule.line_number,
-                    &matched_rule.pattern_text,
                     &raw_path,
                 )?;
-            } else if parsed.non_matching {
-                write_verbose_non_match(&mut out, parsed.nul_terminated, &raw_path)?;
             }
-        } else if ignored {
-            write_plain_record(&mut out, parsed.nul_terminated, &raw_path)?;
+        } else {
+            let stdin = io::stdin();
+            let mut reader = stdin.lock();
+            let mut line = String::new();
+            let mut any_line = false;
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line)?;
+                if n == 0 {
+                    break;
+                }
+                any_line = true;
+                if line.ends_with('\n') {
+                    line.pop();
+                }
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+                if line.is_empty() {
+                    continue;
+                }
+                matched_count += process_one_path(
+                    &parsed,
+                    &repo,
+                    &cwd,
+                    work_tree,
+                    index_ref,
+                    &mut matcher,
+                    &mut out,
+                    &line,
+                )?;
+            }
+            if !any_line {
+                std::process::exit(1);
+            }
+        }
+    } else {
+        for raw_path in &parsed.paths {
+            matched_count += process_one_path(
+                &parsed,
+                &repo,
+                &cwd,
+                work_tree,
+                index_ref,
+                &mut matcher,
+                &mut out,
+                raw_path,
+            )?;
         }
     }
+
     out.flush().context("failed to flush output")?;
 
     if matched_count > 0 {
@@ -98,6 +136,86 @@ pub fn run(args: Args) -> Result<()> {
     } else {
         std::process::exit(1);
     }
+}
+
+fn process_one_path(
+    parsed: &ParsedArgs,
+    repo: &Repository,
+    cwd: &Path,
+    work_tree: &Path,
+    index_ref: Option<&Index>,
+    matcher: &mut IgnoreMatcher,
+    out: &mut dyn Write,
+    raw_path: &str,
+) -> Result<usize> {
+    let repo_rel =
+        normalize_repo_relative(repo, cwd, raw_path).map_err(|e| anyhow!(e.to_string()))?;
+    path_beyond_symlink(work_tree, &repo_rel, raw_path)?;
+    if let Some(ix) = index_ref {
+        if let Some(sm) = submodule_containing_path(&repo_rel, ix) {
+            bail!("Pathspec '{raw_path}' is in submodule '{sm}'");
+        }
+    }
+    let abs = work_tree.join(Path::new(&repo_rel));
+    let is_dir = fs::metadata(&abs).map(|m| m.is_dir()).unwrap_or(false);
+
+    let (ignored, matched) = matcher
+        .check_path(repo, index_ref, &repo_rel, is_dir)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    for w in matcher.take_warnings() {
+        eprintln!("{w}");
+    }
+
+    let reportable_match = matched
+        .as_ref()
+        .map(|rule| parsed.verbose || !rule.negative)
+        .unwrap_or(false);
+    let mut count = 0usize;
+    if reportable_match {
+        count = 1;
+    }
+
+    if parsed.quiet {
+        return Ok(count);
+    }
+
+    if parsed.verbose {
+        if let Some(matched_rule) = matched {
+            write_verbose_record(
+                out,
+                parsed.nul_terminated,
+                &matched_rule.source_display,
+                matched_rule.line_number,
+                &matched_rule.pattern_text,
+                raw_path,
+            )?;
+        } else if parsed.non_matching {
+            write_verbose_non_match(out, parsed.nul_terminated, raw_path)?;
+        }
+    } else if ignored {
+        write_plain_record(out, parsed.nul_terminated, raw_path)?;
+    }
+    Ok(count)
+}
+
+fn path_beyond_symlink(work_tree: &Path, repo_rel: &str, raw_path: &str) -> Result<()> {
+    if repo_rel.is_empty() {
+        return Ok(());
+    }
+    let mut cur = work_tree.to_path_buf();
+    let parts: Vec<&str> = repo_rel.split('/').filter(|p| !p.is_empty()).collect();
+    for (i, part) in parts.iter().enumerate() {
+        cur.push(part);
+        let md = match fs::symlink_metadata(&cur) {
+            Ok(m) => m,
+            Err(_) => return Ok(()),
+        };
+        if md.file_type().is_symlink() && i + 1 < parts.len() {
+            bail!("pathspec '{raw_path}' is beyond a symbolic link");
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -148,48 +266,18 @@ fn validate_args(args: &ParsedArgs) -> Result<()> {
         }
     }
     if args.quiet {
+        // Match git: multiple paths with --quiet is reported before --quiet/--verbose conflict.
+        if !args.stdin && args.paths.len() != 1 {
+            bail!("--quiet is only valid with a single pathname");
+        }
         if args.verbose {
             bail!("cannot have both --quiet and --verbose");
-        }
-        if args.stdin || args.paths.len() != 1 {
-            bail!("--quiet is only valid with a single pathname");
         }
     }
     if args.non_matching && !args.verbose {
         bail!("--non-matching is only valid with --verbose");
     }
     Ok(())
-}
-
-fn read_stdin_paths(nul_terminated: bool) -> Result<Vec<String>> {
-    if nul_terminated {
-        let mut buf = Vec::new();
-        io::stdin()
-            .read_to_end(&mut buf)
-            .context("failed to read stdin")?;
-        if buf.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut paths = Vec::new();
-        for chunk in buf.split(|b| *b == b'\0') {
-            if chunk.is_empty() {
-                continue;
-            }
-            paths.push(String::from_utf8_lossy(chunk).to_string());
-        }
-        return Ok(paths);
-    }
-
-    let stdin = io::stdin();
-    let mut paths = Vec::new();
-    for line in stdin.lock().lines() {
-        let line = line.context("failed reading stdin line")?;
-        if line.is_empty() {
-            continue;
-        }
-        paths.push(line);
-    }
-    Ok(paths)
 }
 
 fn write_plain_record(out: &mut dyn Write, nul_terminated: bool, path: &str) -> Result<()> {

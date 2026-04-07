@@ -2703,6 +2703,7 @@ fn write_blob_to_worktree(
         let file_attrs = crlf::get_file_attrs(&attrs, rel_path, &config);
         let oid_hex = format!("{oid}");
         crlf::convert_to_worktree(&obj.data, rel_path, &conv, &file_attrs, Some(&oid_hex))
+            .map_err(|e| anyhow::anyhow!("smudge filter failed for {rel_path}: {e}"))?
     } else {
         obj.data
     };

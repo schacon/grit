@@ -7,6 +7,68 @@ use std::path::{Path, PathBuf};
 
 use grit_lib::config::ConfigSet;
 
+/// `guess_repository_type` from git/builtin/init-db.c (used when `--bare` was not passed).
+fn guess_repository_type(git_dir: &Path, cwd: &Path, raw_git_dir_env: Option<&str>) -> bool {
+    if raw_git_dir_env == Some(".") {
+        return true;
+    }
+    if git_dir.as_os_str() == "." {
+        return true;
+    }
+    let cwd_canon = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let gd_canon = fs::canonicalize(git_dir).unwrap_or_else(|_| git_dir.to_path_buf());
+    if gd_canon == cwd_canon {
+        return true;
+    }
+    if git_dir == Path::new(".git") {
+        return false;
+    }
+    if git_dir.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        return false;
+    }
+    true
+}
+
+/// Resolve `$GIT_DIR` or default `.git` to a directory path for repository-type guessing.
+fn resolve_git_dir_for_init(
+    cwd: &Path,
+    abs_path: &Path,
+    explicit_directory: bool,
+    raw_git_dir_env: Option<&str>,
+) -> Result<PathBuf> {
+    let mut p = if let Some(g) = raw_git_dir_env.filter(|s| !s.is_empty()) {
+        if g == "." {
+            return Ok(fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf()));
+        }
+        PathBuf::from(g)
+    } else if explicit_directory {
+        abs_path.join(".git")
+    } else {
+        cwd.join(".git")
+    };
+    if !p.is_absolute() {
+        p = cwd.join(p);
+    }
+    if p.is_file() {
+        let c = fs::read_to_string(&p)?;
+        p = parse_gitfile_line(&c, p.parent().unwrap_or(cwd))?;
+    }
+    Ok(fs::canonicalize(&p).unwrap_or(p))
+}
+
+fn parse_gitfile_line(content: &str, base: &Path) -> Result<PathBuf> {
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("gitdir:") {
+            let path = rest.trim();
+            let p = PathBuf::from(path);
+            let resolved = if p.is_absolute() { p } else { base.join(p) };
+            return Ok(fs::canonicalize(&resolved).unwrap_or(resolved));
+        }
+    }
+    bail!("invalid gitfile format")
+}
+
 /// Arguments for `grit init`.
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -49,16 +111,29 @@ pub struct Args {
 
 /// Run `grit init`.
 pub fn run(args: Args, global_bare: bool) -> Result<()> {
-    let bare = args.bare || global_bare;
+    let explicit_directory = args.directory.is_some();
+    let explicit_bare = args.bare || global_bare;
 
-    // --bare and --separate-git-dir are incompatible
-    if bare && args.separate_git_dir.is_some() {
-        bail!("options '--bare' and '--separate-git-dir' cannot be used together");
+    // init-db.c: explicit --bare + --separate-git-dir (before repository-type guess).
+    if explicit_bare && args.separate_git_dir.is_some() {
+        bail!("options '--separate-git-dir' and '--bare' cannot be used together");
     }
 
-    let path = args
-        .directory
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let work_tree_env = std::env::var("GIT_WORK_TREE")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let git_dir_env = std::env::var("GIT_DIR").ok().filter(|s| !s.is_empty());
+
+    // Match git/builtin/init-db.c: GIT_WORK_TREE only with GIT_DIR and without --bare.
+    if work_tree_env.is_some() && (git_dir_env.is_none() || explicit_bare) {
+        bail!(
+            "GIT_WORK_TREE (or --work-tree=<directory>) not allowed without specifying \
+             GIT_DIR (or --git-dir=<directory>)"
+        );
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let path = args.directory.clone().unwrap_or_else(|| cwd.clone());
 
     // Create directory if it doesn't exist
     if !path.exists() {
@@ -69,28 +144,53 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
     // Canonicalize path for absolute output
     let abs_path = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
 
+    let resolved_git_dir =
+        resolve_git_dir_for_init(&cwd, &abs_path, explicit_directory, git_dir_env.as_deref())?;
+
+    let mut git_dir_for_guess = resolved_git_dir.clone();
+    if args.separate_git_dir.is_some() {
+        if let Some(common) = grit_lib::refs::common_dir(&resolved_git_dir) {
+            git_dir_for_guess = common;
+        }
+    }
+
+    let mut bare = if explicit_bare {
+        true
+    } else {
+        guess_repository_type(&git_dir_for_guess, &cwd, git_dir_env.as_deref())
+    };
+
+    // setup.c:create_default_files sets is_bare_repository_cfg = !work_tree when both GIT_DIR
+    // and GIT_WORK_TREE are set (non-bare repo with separate git dir + work tree).
+    if work_tree_env.is_some() && git_dir_env.is_some() && !explicit_bare {
+        bare = false;
+    }
+
+    if bare && args.separate_git_dir.is_some() {
+        bail!("--separate-git-dir incompatible with bare repository");
+    }
+
     // Determine the real git directory (where HEAD, objects, refs live)
     let real_git_dir = if let Some(ref sep) = args.separate_git_dir {
         // --separate-git-dir: git dir goes to the separate location
         let sep_abs = if sep.is_absolute() {
             sep.clone()
         } else {
-            std::env::current_dir()?.join(sep)
+            cwd.join(sep)
         };
         fs::canonicalize(&sep_abs).unwrap_or(sep_abs)
-    } else if let Ok(env_git_dir) = std::env::var("GIT_DIR") {
-        // Respect GIT_DIR env var (set by --git-dir global option)
-        let gd = PathBuf::from(&env_git_dir);
-        let gd_abs = if gd.is_absolute() {
-            gd
+    } else if explicit_directory {
+        // Command-line path wins over GIT_DIR (see t0001 "init prefers command line to GIT_DIR").
+        if bare {
+            abs_path.clone()
         } else {
-            std::env::current_dir()?.join(gd)
-        };
-        // Ensure parent directory exists
-        if let Some(parent) = gd_abs.parent() {
+            abs_path.join(".git")
+        }
+    } else if git_dir_env.is_some() {
+        if let Some(parent) = resolved_git_dir.parent() {
             fs::create_dir_all(parent).ok();
         }
-        gd_abs
+        resolved_git_dir
     } else if bare {
         abs_path.clone()
     } else {
@@ -187,18 +287,8 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
             }
         }
     };
-    let running_under_test_harness = std::env::var("HOME")
-        .ok()
-        .map(|home| home.contains("/tests/trash."))
-        .unwrap_or(false)
-        || std::env::current_dir()
-            .ok()
-            .map(|cwd| cwd.to_string_lossy().contains("/tests/trash."))
-            .unwrap_or(false);
     let skip_default_templates = matches!(&args.template, Some(t) if t.is_empty())
-        || (args.template.is_none()
-            && (std::env::var_os("TEST_CREATE_REPO_NO_TEMPLATE").is_some()
-                || running_under_test_harness));
+        || (args.template.is_none() && std::env::var_os("TEST_CREATE_REPO_NO_TEMPLATE").is_some());
 
     // Determine ref format
     let ref_format = args.ref_format.as_deref().unwrap_or("files");
@@ -220,6 +310,16 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         }
     }
 
+    let shared_from_config = args
+        .shared
+        .clone()
+        .or_else(|| config.get("core.sharedRepository"));
+
+    let work_tree_abs = work_tree_env.as_ref().map(|wt| {
+        let p = PathBuf::from(wt);
+        fs::canonicalize(&p).unwrap_or(p)
+    });
+
     // Create the git directory structure
     create_git_dir(
         &real_git_dir,
@@ -228,9 +328,10 @@ pub fn run(args: Args, global_bare: bool) -> Result<()> {
         &object_format,
         template_dir.as_deref(),
         skip_default_templates,
-        args.shared.as_deref(),
+        shared_from_config.as_deref(),
         is_reinit,
         ref_format,
+        work_tree_abs.as_deref(),
     )?;
 
     // Handle --separate-git-dir: write gitfile at path/.git
@@ -298,6 +399,7 @@ fn create_git_dir(
     shared: Option<&str>,
     is_reinit: bool,
     ref_format: &str,
+    work_tree: Option<&Path>,
 ) -> Result<()> {
     // Create core directories
     for sub in &[
@@ -369,6 +471,12 @@ fn create_git_dir(
         } else {
             config_content.push_str("\tbare = false\n");
             config_content.push_str("\tlogallrefupdates = true\n");
+            if let Some(wt) = work_tree {
+                config_content.push_str(&format!(
+                    "\tworktree = {}\n",
+                    wt.display().to_string().replace('\\', "/")
+                ));
+            }
         }
 
         // Write extensions if needed

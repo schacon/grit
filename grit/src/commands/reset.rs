@@ -1087,6 +1087,7 @@ fn checkout_index_to_worktree(
                     &file_attrs,
                     Some(&oid_hex),
                 )
+                .map_err(|e| anyhow::anyhow!("smudge filter failed for {path_str}: {e}"))?
             } else {
                 obj.data.clone()
             };
