@@ -53,6 +53,14 @@ pub struct Args {
     #[arg(long)]
     pub format: Option<String>,
 
+    /// Show full path names (even when called from a subdirectory).
+    #[arg(long = "full-name")]
+    pub full_name: bool,
+
+    /// Do not limit the listing to the current working tree.
+    #[arg(long = "full-tree")]
+    pub full_tree: bool,
+
     /// The tree-ish to list.
     pub tree_ish: String,
 
@@ -158,7 +166,10 @@ pub fn run(mut args: Args) -> Result<()> {
     let term = if args.null_terminated { b'\0' } else { b'\n' };
 
     // Compute cwd prefix for display path adjustment
-    let cwd_prefix = if let Some(ref wt) = repo.work_tree {
+    let cwd_prefix = if args.full_name || args.full_tree {
+        // --full-name and --full-tree: show full paths from repo root
+        None
+    } else if let Some(ref wt) = repo.work_tree {
         let cwd = std::env::current_dir().unwrap_or_default();
         cwd.strip_prefix(wt)
             .ok()
