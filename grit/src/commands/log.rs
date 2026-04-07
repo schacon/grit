@@ -4484,7 +4484,7 @@ fn write_commit_diff(
             &entries
         };
         for entry in show_entries {
-            log_write_patch_entry(out, odb, entry, 3)?;
+            log_write_patch_entry(out, odb, entry, args.unified.unwrap_or(3))?;
         }
     }
 
