@@ -27,6 +27,7 @@ use grit_lib::objects::{
 };
 use grit_lib::refs::append_reflog;
 use grit_lib::repo::Repository;
+use grit_lib::rev_list::{rev_list, OrderingMode, RevListOptions};
 use grit_lib::rev_parse::resolve_revision;
 use grit_lib::state::{resolve_head, HeadState};
 use grit_lib::write_tree::write_tree_from_index;
@@ -127,6 +128,17 @@ pub struct Args {
     /// Do not use the fork-point algorithm.
     #[arg(long = "no-fork-point")]
     pub no_fork_point: bool,
+
+    /// Replay every picked commit even when it matches upstream by patch-id (Git default off).
+    #[arg(
+        long = "reapply-cherry-picks",
+        overrides_with = "no_reapply_cherry_picks"
+    )]
+    pub reapply_cherry_picks: bool,
+
+    /// Omit commits that match upstream by patch-id (default unless `--keep-base`).
+    #[arg(long = "no-reapply-cherry-picks")]
+    pub no_reapply_cherry_picks: bool,
 
     /// Be verbose (show diffs).
     #[arg(short = 'v', long = "verbose")]
@@ -436,7 +448,10 @@ fn do_rebase(args: Args) -> Result<()> {
         print_rebase_diffstat(&repo, branch_base, onto_oid)?;
     }
 
-    let commits = collect_commits_to_replay(&repo, head_oid, upstream_oid)?;
+    let reapply_cherry_picks =
+        args.reapply_cherry_picks || (args.keep_base && !args.no_reapply_cherry_picks);
+    let commits =
+        collect_rebase_todo_commits(&repo, head_oid, upstream_oid, !reapply_cherry_picks)?;
 
     if args.interactive {
         if commits.is_empty() {
@@ -643,6 +658,43 @@ fn find_merge_base(repo: &Repository, a: ObjectId, b: ObjectId) -> Option<Object
     grit_lib::merge_base::merge_bases_first_vs_rest(repo, a, &[b])
         .ok()
         .and_then(|bases| bases.into_iter().next())
+}
+
+/// Commits to replay for a non-interactive rebase, oldest-first.
+///
+/// When `filter_cherry_equivalents` is true (Git's default without `--keep-base`), commits whose
+/// patch-id matches a commit on the upstream side of the symmetric range `upstream...head` are
+/// omitted, matching `sequencer_make_script` with `--cherry-pick --right-only`.
+fn collect_rebase_todo_commits(
+    repo: &Repository,
+    head: ObjectId,
+    upstream: ObjectId,
+    filter_cherry_equivalents: bool,
+) -> Result<Vec<ObjectId>> {
+    if !filter_cherry_equivalents {
+        return collect_commits_to_replay(repo, head, upstream);
+    }
+
+    let bases = merge_bases_first_vs_rest(repo, upstream, &[head])?;
+    let negative: Vec<String> = bases.iter().map(|b| b.to_hex()).collect();
+    let result = rev_list(
+        repo,
+        &[upstream.to_hex(), head.to_hex()],
+        &negative,
+        &RevListOptions {
+            cherry_pick: true,
+            right_only: true,
+            left_right: true,
+            symmetric_left: Some(upstream),
+            symmetric_right: Some(head),
+            ordering: OrderingMode::Topo,
+            ..Default::default()
+        },
+    )?;
+
+    let mut commits = result.commits;
+    commits.reverse();
+    Ok(commits)
 }
 
 /// Collect commits to replay: ancestors of `head` that are not ancestors of the merge-base
@@ -1471,6 +1523,14 @@ fn three_way_merge_with_content(
             }
             (Some(be), Some(oe), Some(te)) if same_blob(be, te) => {
                 out.entries.push(oe.clone());
+            }
+            // Mode-only change: same blob OID on all three sides (Git tree can store 644 vs 755).
+            (Some(be), Some(oe), Some(te))
+                if be.oid == oe.oid
+                    && oe.oid == te.oid
+                    && (be.mode != te.mode || oe.mode != te.mode) =>
+            {
+                out.entries.push(te.clone());
             }
             (Some(be), Some(oe), Some(te)) => {
                 content_merge_or_conflict(

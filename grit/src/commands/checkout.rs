@@ -2815,17 +2815,34 @@ fn write_blob_to_worktree(
         obj.data
     };
 
-    // Skip writing if the file already has the same content (preserves mtime)
+    // Skip writing if the file already has the same content (preserves mtime).
+    // Still align the executable bit with the index so `git status` stays clean
+    // after a mode-only amend (t3419-rebase-patch-id).
     if mode != MODE_SYMLINK {
         let abs_path = work_tree.join(rel_path);
         if let Ok(existing) = std::fs::read(&abs_path) {
             if existing == *data {
+                apply_index_file_mode(&abs_path, mode)?;
                 return Ok(());
             }
         }
     }
 
     write_to_worktree(work_tree, rel_path, &data, mode)
+}
+
+/// Set `abs_path` permissions to match Git index `mode` (regular vs executable blob).
+fn apply_index_file_mode(abs_path: &std::path::Path, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(abs_path)?.permissions();
+    let new_mode = if mode == MODE_EXECUTABLE {
+        0o755
+    } else {
+        0o644
+    };
+    perms.set_mode(new_mode);
+    std::fs::set_permissions(abs_path, perms)?;
+    Ok(())
 }
 
 fn checkout_conflicted_path_with_merge(

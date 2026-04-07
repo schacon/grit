@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use crate::patch_ids::compute_patch_id;
 use crate::refs;
 use crate::repo::Repository;
 use crate::rev_parse::resolve_revision;
@@ -555,14 +556,18 @@ pub fn rev_list(
     {
         if let (Some(left_oid), Some(right_oid)) = (options.symmetric_left, options.symmetric_right)
         {
-            let left_closure = walk_closure(&mut graph, &[left_oid])?;
-            let right_closure = walk_closure(&mut graph, &[right_oid])?;
+            // Match Git's `SYMMETRIC_LEFT` / right-only classification (`revision.c`): a commit is
+            // "left" iff it is reachable from the left tip but not from the right tip, and vice
+            // versa.  Using plain set intersection incorrectly labels the shared spine as "right"
+            // only, which breaks `--cherry-pick` on `A...B` (t3419-rebase-patch-id).
+            let left_reach = walk_closure(&mut graph, &[left_oid])?;
+            let right_reach = walk_closure(&mut graph, &[right_oid])?;
             for &oid in &ordered {
-                let in_left = left_closure.contains(&oid);
-                let in_right = right_closure.contains(&oid);
-                if in_left && !in_right {
+                let from_left = left_reach.contains(&oid);
+                let from_right = right_reach.contains(&oid);
+                if from_left && !from_right {
                     left_right_map.insert(oid, true);
-                } else if in_right && !in_left {
+                } else if from_right && !from_left {
                     left_right_map.insert(oid, false);
                 } else {
                     left_right_map.insert(oid, false);
@@ -571,10 +576,10 @@ pub fn rev_list(
         }
     }
 
-    // Cherry-pick / cherry-mark: compute patch-ids and find equivalents
+    // Cherry-pick / cherry-mark: match commits by Git-compatible patch-id (see `git revision.c`
+    // `cherry_pick_list`, used by `git rebase` todo generation).
     let mut cherry_equivalent = HashSet::new();
     if options.cherry_pick || options.cherry_mark {
-        let patch_ids = compute_patch_ids(repo, &mut graph, &ordered)?;
         let left_commits: Vec<_> = ordered
             .iter()
             .filter(|o| left_right_map.get(o) == Some(&true))
@@ -585,24 +590,38 @@ pub fn rev_list(
             .filter(|o| left_right_map.get(o) == Some(&false))
             .copied()
             .collect();
-        let left_patches: HashMap<&str, ObjectId> = left_commits
-            .iter()
-            .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
-            .collect();
-        let right_patches: HashMap<&str, ObjectId> = right_commits
-            .iter()
-            .filter_map(|o| patch_ids.get(o).map(|p| (p.as_str(), *o)))
-            .collect();
-        for (&pid, &oid) in &left_patches {
-            if !pid.is_empty() && right_patches.contains_key(pid) {
-                cherry_equivalent.insert(oid);
-                cherry_equivalent.insert(right_patches[pid]);
+        let left_first = !left_commits.is_empty()
+            && !right_commits.is_empty()
+            && left_commits.len() < right_commits.len();
+
+        let mut by_patch: HashMap<ObjectId, ObjectId> = HashMap::new();
+        if left_first {
+            for oid in &left_commits {
+                if let Ok(Some(pid)) = compute_patch_id(&repo.odb, oid) {
+                    by_patch.entry(pid).or_insert(*oid);
+                }
             }
-        }
-        for (&pid, &oid) in &right_patches {
-            if !pid.is_empty() && left_patches.contains_key(pid) {
-                cherry_equivalent.insert(oid);
-                cherry_equivalent.insert(left_patches[pid]);
+            for oid in &right_commits {
+                if let Ok(Some(pid)) = compute_patch_id(&repo.odb, oid) {
+                    if let Some(&other) = by_patch.get(&pid) {
+                        cherry_equivalent.insert(*oid);
+                        cherry_equivalent.insert(other);
+                    }
+                }
+            }
+        } else {
+            for oid in &right_commits {
+                if let Ok(Some(pid)) = compute_patch_id(&repo.odb, oid) {
+                    by_patch.entry(pid).or_insert(*oid);
+                }
+            }
+            for oid in &left_commits {
+                if let Ok(Some(pid)) = compute_patch_id(&repo.odb, oid) {
+                    if let Some(&other) = by_patch.get(&pid) {
+                        cherry_equivalent.insert(*oid);
+                        cherry_equivalent.insert(other);
+                    }
+                }
             }
         }
     }
@@ -2788,57 +2807,6 @@ fn kept_object_ids(repo: &Repository) -> Result<HashSet<ObjectId>> {
     Ok(kept)
 }
 
-/// Compute a simple patch-id for each commit.
-#[allow(dead_code)]
-fn compute_patch_ids(
-    repo: &Repository,
-    graph: &mut CommitGraph<'_>,
-    commits: &[ObjectId],
-) -> Result<HashMap<ObjectId, String>> {
-    let mut result = HashMap::new();
-    for &oid in commits {
-        let commit = load_commit(repo, oid)?;
-        let parents = graph.parents_of(oid)?;
-        let parent_tree = if let Some(&parent) = parents.first() {
-            load_commit(repo, parent)?.tree
-        } else {
-            ObjectId::from_hex("4b825dc642cb6eb9a060e54bf8d69288fbee4904")?
-        };
-        let patch_id = compute_tree_diff_id(repo, parent_tree, commit.tree)?;
-        result.insert(oid, patch_id);
-    }
-    Ok(result)
-}
-
-#[allow(dead_code)]
-fn compute_tree_diff_id(repo: &Repository, tree_a: ObjectId, tree_b: ObjectId) -> Result<String> {
-    use std::collections::BTreeMap;
-    let entries_a = flatten_tree(repo, tree_a, "")?;
-    let entries_b = flatten_tree(repo, tree_b, "")?;
-    let map_a: BTreeMap<_, _> = entries_a.into_iter().collect();
-    let map_b: BTreeMap<_, _> = entries_b.into_iter().collect();
-    let mut diff_parts = Vec::new();
-    for (path, oid_b) in &map_b {
-        match map_a.get(path) {
-            Some(oid_a) if oid_a != oid_b => {
-                diff_parts.push(format!("+{path}:{oid_b}"));
-            }
-            None => {
-                diff_parts.push(format!("A{path}:{oid_b}"));
-            }
-            _ => {}
-        }
-    }
-    for (path, oid_a) in &map_a {
-        if !map_b.contains_key(path) {
-            diff_parts.push(format!("D{path}:{oid_a}"));
-        }
-    }
-    diff_parts.sort();
-    Ok(diff_parts.join("\n"))
-}
-
-#[allow(dead_code)]
 fn flatten_tree(
     repo: &Repository,
     tree_oid: ObjectId,

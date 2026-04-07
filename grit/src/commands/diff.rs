@@ -1829,6 +1829,10 @@ fn write_diff_header_with_prefix(
                 writeln!(out, "{b}old mode {}{r}", entry.old_mode)?;
                 writeln!(out, "{b}new mode {}{r}", entry.new_mode)?;
             }
+            // Pure mode change with identical blob: Git omits the `index` line (t3419-rebase-patch-id).
+            if entry.old_oid == entry.new_oid && entry.old_mode != entry.new_mode {
+                return Ok(());
+            }
             if entry.old_mode == entry.new_mode {
                 writeln!(
                     out,
@@ -1909,6 +1913,13 @@ fn write_patch_with_prefix(
         let old_content_raw = read_content_raw(odb, &entry.old_oid);
         let new_content_raw =
             read_content_raw_or_worktree(odb, &entry.new_oid, work_tree, new_path);
+
+        if entry.status == DiffStatus::Modified
+            && entry.old_oid == entry.new_oid
+            && entry.old_mode != entry.new_mode
+        {
+            continue;
+        }
 
         if is_binary(&old_content_raw) || is_binary(&new_content_raw) {
             if show_binary {

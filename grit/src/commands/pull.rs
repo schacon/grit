@@ -218,6 +218,8 @@ fn do_merge_or_rebase(
             keep_base: false,
             fork_point: false,
             no_fork_point: false,
+            reapply_cherry_picks: false,
+            no_reapply_cherry_picks: false,
             verbose: false,
             update_refs: false,
             stat: false,

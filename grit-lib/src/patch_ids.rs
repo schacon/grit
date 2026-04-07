@@ -19,6 +19,7 @@ use similar::{ChangeTag, TextDiff};
 
 use crate::diff::{diff_trees, zero_oid};
 use crate::error::Result;
+use crate::merge_file;
 use crate::objects::{parse_commit, ObjectId, ObjectKind};
 use crate::odb::Odb;
 
@@ -422,68 +423,116 @@ pub fn compute_patch_id(odb: &Odb, commit_oid: &ObjectId) -> Result<Option<Objec
     // Sort by primary path (lexicographic), matching diffcore_std ordering.
     diffs.sort_by(|a, b| a.path().cmp(b.path()));
 
-    let mut hasher = Sha1::new();
+    let mut result = [0u8; 20];
 
     for entry in &diffs {
-        // Determine src and dst path strings (both sides always carry the
-        // logical path, even for pure adds/deletes).
-        let src = entry
-            .old_path
-            .as_deref()
-            .or(entry.new_path.as_deref())
-            .unwrap_or("");
-        let dst = entry
-            .new_path
-            .as_deref()
-            .or(entry.old_path.as_deref())
-            .unwrap_or("");
+        let old_path = entry.old_path.as_deref().unwrap_or("");
+        let new_path = entry.new_path.as_deref().unwrap_or("");
+        let mut old_path_buf = old_path.as_bytes().to_vec();
+        let mut new_path_buf = new_path.as_bytes().to_vec();
+        let len1 = remove_space_bytes(&mut old_path_buf);
+        let len2 = remove_space_bytes(&mut new_path_buf);
 
-        // Compact paths: remove all ASCII-whitespace (mirrors git's remove_space).
-        let src_compact = compact_path(src);
-        let dst_compact = compact_path(dst);
+        let old_mode = parse_mode_u32(&entry.old_mode);
+        let new_mode = parse_mode_u32(&entry.new_mode);
 
-        // Hash the diff header line.
-        let header = format!("diff --git a/{src_compact} b/{dst_compact}\n");
-        hasher.update(header.as_bytes());
+        let mut ctx = Sha1::new();
+        patch_id_add_string(&mut ctx, b"diff--git");
+        patch_id_add_string(&mut ctx, b"a/");
+        ctx.update(&old_path_buf[..len1]);
+        patch_id_add_string(&mut ctx, b"b/");
+        ctx.update(&new_path_buf[..len2]);
 
-        // Read blob content for the old and new sides.
+        if old_mode == 0 {
+            patch_id_add_string(&mut ctx, b"newfilemode");
+            patch_id_add_mode(&mut ctx, new_mode);
+        } else if new_mode == 0 {
+            patch_id_add_string(&mut ctx, b"deletedfilemode");
+            patch_id_add_mode(&mut ctx, old_mode);
+        } else if old_mode != new_mode {
+            patch_id_add_string(&mut ctx, b"oldmode");
+            patch_id_add_mode(&mut ctx, old_mode);
+            patch_id_add_string(&mut ctx, b"newmode");
+            patch_id_add_mode(&mut ctx, new_mode);
+        }
+
         let old_bytes = read_blob(odb, &entry.old_oid)?;
         let new_bytes = read_blob(odb, &entry.new_oid)?;
 
-        // Convert to str slices for the line-diff algorithm; treat non-UTF-8
-        // content as empty (binary blobs only contribute their header).
-        let old_str = std::str::from_utf8(&old_bytes).unwrap_or("");
-        let new_str = std::str::from_utf8(&new_bytes).unwrap_or("");
+        if merge_file::is_binary(&old_bytes) || merge_file::is_binary(&new_bytes) {
+            let a = entry.old_oid.to_hex();
+            let b = entry.new_oid.to_hex();
+            ctx.update(a.as_bytes());
+            ctx.update(b.as_bytes());
+        } else {
+            let old_str = std::str::from_utf8(&old_bytes).unwrap_or("");
+            let new_str = std::str::from_utf8(&new_bytes).unwrap_or("");
 
-        // Hash non-whitespace bytes from every added and deleted line.
-        let diff = TextDiff::from_lines(old_str, new_str);
-        for change in diff.iter_all_changes() {
-            match change.tag() {
-                ChangeTag::Delete | ChangeTag::Insert => {
-                    let line = change.as_str().unwrap_or("");
-                    for &byte in line.as_bytes() {
-                        if !byte.is_ascii_whitespace() {
-                            hasher.update([byte]);
-                        }
-                    }
+            if old_mode == 0 {
+                patch_id_add_string(&mut ctx, b"---/dev/null");
+                patch_id_add_string(&mut ctx, b"+++b/");
+                ctx.update(&new_path_buf[..len2]);
+            } else if new_mode == 0 {
+                patch_id_add_string(&mut ctx, b"---a/");
+                ctx.update(&old_path_buf[..len1]);
+                patch_id_add_string(&mut ctx, b"+++/dev/null");
+            } else {
+                patch_id_add_string(&mut ctx, b"---a/");
+                ctx.update(&old_path_buf[..len1]);
+                patch_id_add_string(&mut ctx, b"+++b/");
+                ctx.update(&new_path_buf[..len2]);
+            }
+
+            let diff = TextDiff::from_lines(old_str, new_str);
+            for change in diff.iter_all_changes() {
+                let prefix = match change.tag() {
+                    ChangeTag::Equal => b' ',
+                    ChangeTag::Delete => b'-',
+                    ChangeTag::Insert => b'+',
+                };
+                let text = change.as_str().unwrap_or("");
+                for piece in text.split_inclusive('\n') {
+                    let line_body = piece.strip_suffix('\n').unwrap_or(piece);
+                    let mut line_buf = Vec::with_capacity(1 + line_body.len() + 1);
+                    line_buf.push(prefix);
+                    line_buf.extend_from_slice(line_body.as_bytes());
+                    line_buf.push(b'\n');
+                    let n = remove_space_bytes(&mut line_buf);
+                    ctx.update(&line_buf[..n]);
                 }
-                ChangeTag::Equal => {}
             }
         }
+
+        text_flush_one_hunk(&mut result, &mut ctx);
     }
 
-    let digest = hasher.finalize();
-    ObjectId::from_bytes(&digest).map(Some)
+    ObjectId::from_bytes(&result).map(Some)
 }
 
-/// Remove all ASCII-whitespace characters from a path string.
-///
-/// Mirrors git's `remove_space()` used when hashing diff headers.
-fn compact_path(path: &str) -> String {
-    path.bytes()
-        .filter(|b| !b.is_ascii_whitespace())
-        .map(|b| b as char)
-        .collect()
+fn parse_mode_u32(mode: &str) -> u32 {
+    u32::from_str_radix(mode.trim(), 8).unwrap_or(0)
+}
+
+fn patch_id_add_string(ctx: &mut Sha1, s: &[u8]) {
+    ctx.update(s);
+}
+
+fn patch_id_add_mode(ctx: &mut Sha1, mode: u32) {
+    let text = format!("{mode:06o}");
+    ctx.update(text.as_bytes());
+}
+
+/// Strip ASCII whitespace in-place; returns new length (prefix of `buf` is valid).
+fn remove_space_bytes(buf: &mut Vec<u8>) -> usize {
+    let mut dst = 0usize;
+    for i in 0..buf.len() {
+        let c = buf[i];
+        if !c.is_ascii_whitespace() {
+            buf[dst] = c;
+            dst += 1;
+        }
+    }
+    dst
 }
 
 /// Read a blob's raw bytes from the ODB.
