@@ -36,8 +36,21 @@ pub struct Args {
     #[arg(short = 'o', long = "output")]
     pub output: Option<String>,
 
+    /// List available archive formats.
+    #[arg(long = "list")]
+    pub list: bool,
+
+    /// Remote repository to archive from (not implemented).
+    #[arg(long = "remote")]
+    pub remote: Option<String>,
+
+    /// Stop processing options.
+    #[arg(long = "end-of-options", hide = true)]
+    pub end_of_options: bool,
+
     /// The tree or commit to produce an archive for.
-    pub tree_ish: String,
+    #[arg(required_unless_present = "list")]
+    pub tree_ish: Option<String>,
 
     /// Paths to restrict archiving (optional).
     pub paths: Vec<String>,
@@ -47,7 +60,14 @@ pub struct Args {
 pub fn run(args: Args) -> Result<()> {
     let repo = Repository::discover(None).context("not a git repository")?;
 
-    let oid = resolve_tree_ish(&repo, &args.tree_ish)?;
+    if args.list {
+        // Print supported formats
+        println!("tar");
+        println!("zip");
+        return Ok(());
+    }
+    let tree_ish = args.tree_ish.as_deref().unwrap_or("");
+    let oid = resolve_tree_ish(&repo, tree_ish)?;
     let obj = repo.odb.read(&oid)?;
 
     // Dereference commits to their tree.
@@ -58,7 +78,7 @@ pub fn run(args: Args) -> Result<()> {
     } else if obj.kind == ObjectKind::Tree {
         obj.data
     } else {
-        bail!("'{}' is not a tree or commit", args.tree_ish);
+        bail!("'{}' is not a tree or commit", tree_ish);
     };
 
     let prefix = args.prefix.as_deref().unwrap_or("");

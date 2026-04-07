@@ -1939,6 +1939,14 @@ fn extract_globals(args: &[String]) -> Result<(GlobalOpts, Option<String>, Vec<S
             break;
         }
 
+        // --end-of-options: stop processing options, next arg is subcommand
+        if arg == "--end-of-options" {
+            if i + 1 < items.len() {
+                subcmd = Some(items[i + 1].clone());
+                rest = items[i + 2..].to_vec();
+            }
+            break;
+        }
         // Unknown global flag — pass through
         bail!("unknown option: {arg}");
     }
