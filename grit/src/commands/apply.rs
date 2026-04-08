@@ -409,7 +409,10 @@ fn sanitize_file_patch_headers(fp: &mut FilePatch) {
         &mut fp.diff_new_path,
         &mut fp.old_path,
         &mut fp.new_path,
-    ].into_iter().flatten() {
+    ]
+    .into_iter()
+    .flatten()
+    {
         sanitize_patch_header_value(s);
     }
 }

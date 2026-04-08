@@ -14,9 +14,7 @@ use tempfile::NamedTempFile;
 use grit_lib::config::ConfigSet;
 use grit_lib::crlf::MergeAttr;
 use grit_lib::diff::{count_changes, detect_renames, diff_trees, DiffEntry, DiffStatus};
-use grit_lib::index::{
-    Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE,
-};
+use grit_lib::index::{Index, IndexEntry, MODE_EXECUTABLE, MODE_GITLINK, MODE_SYMLINK, MODE_TREE};
 use grit_lib::merge_base::is_ancestor;
 use grit_lib::merge_file::{self, ConflictStyle, MergeFavor, MergeInput};
 use grit_lib::objects::{

@@ -110,12 +110,10 @@ fn read_one_packet<R: Read>(r: &mut R, buf: &mut Vec<u8>) -> io::Result<Option<(
     match len {
         0 => Ok(None),
         1 | 2 => Ok(Some(())),
-        n if n < 4 => {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("bad pkt-line length {n}"),
-            ))
-        }
+        n if n < 4 => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("bad pkt-line length {n}"),
+        )),
         n => {
             let payload = n - 4;
             let start = buf.len();
@@ -129,7 +127,9 @@ fn read_one_packet<R: Read>(r: &mut R, buf: &mut Vec<u8>) -> io::Result<Option<(
 fn read_packetized_to_end<R: Read>(r: &mut R) -> io::Result<Vec<u8>> {
     let mut out = Vec::new();
     loop {
-        if read_one_packet(r, &mut out)? == None { break }
+        if read_one_packet(r, &mut out)? == None {
+            break;
+        }
     }
     Ok(out)
 }
@@ -187,7 +187,6 @@ pub struct IpcClientConnectOptions {
     pub wait_if_not_found: bool,
     pub uds_disallow_chdir: bool,
 }
-
 
 fn connect_for_client(path: &Path, options: &IpcClientConnectOptions) -> io::Result<UnixStream> {
     let mut elapsed: i32 = 0;
