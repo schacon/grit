@@ -25,7 +25,8 @@ use grit_lib::merge_diff::format_worktree_conflict_combined;
 use grit_lib::objects::{parse_commit, ObjectId, ObjectKind};
 use grit_lib::odb::Odb;
 use grit_lib::repo::Repository;
-use grit_lib::rev_parse::resolve_revision;
+use grit_lib::rev_parse::{resolve_revision, split_treeish_colon};
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
@@ -420,6 +421,15 @@ pub fn run(mut args: Args) -> Result<()> {
 
     // Resolve diff prefixes from config and command-line options
     let (src_prefix, dst_prefix) = resolve_diff_prefixes(&args, &repo);
+
+    // `git diff <rev>:<path> <file>` — compare a blob from history to a worktree file.
+    if revs.len() == 1
+        && paths.len() == 1
+        && !args.cached
+        && split_treeish_colon(&revs[0]).is_some()
+    {
+        return run_diff_blob_vs_file(&repo, &args, &revs[0], &paths[0], &src_prefix, &dst_prefix);
+    }
 
     // Expand A...B (symmetric diff) → merge-base(A,B)..B
     // Expand A..B → A B (two-rev diff)
@@ -1119,6 +1129,103 @@ pub fn run(mut args: Args) -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+/// `git diff <rev>:<path> <file>` — blob at revision vs worktree file (used by tests).
+fn run_diff_blob_vs_file(
+    repo: &Repository,
+    args: &Args,
+    rev_path: &str,
+    file_path: &str,
+    src_prefix: &str,
+    dst_prefix: &str,
+) -> Result<()> {
+    let wt = repo
+        .work_tree
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("this operation must be run in a work tree"))?;
+    let abs = wt.join(file_path);
+    let blob_oid = resolve_revision(repo, rev_path)
+        .with_context(|| format!("unknown revision: '{rev_path}'"))?;
+    let obj = repo
+        .odb
+        .read(&blob_oid)
+        .with_context(|| format!("reading object {blob_oid}"))?;
+    if obj.kind != ObjectKind::Blob {
+        bail!("object '{blob_oid}' does not name a blob");
+    }
+    let blob_text = String::from_utf8_lossy(&obj.data);
+    let disk_bytes = fs::read(&abs).unwrap_or_default();
+    let disk_text = String::from_utf8_lossy(&disk_bytes);
+
+    let context_lines = if let Some(u) = args.unified {
+        u
+    } else {
+        grit_lib::config::ConfigSet::load(Some(&repo.git_dir), true)
+            .ok()
+            .and_then(|cfg| cfg.get("diff.context"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3)
+    };
+
+    let has_diff = blob_text != disk_text;
+    if !has_diff {
+        if args.exit_code || args.quiet {
+            return Ok(());
+        }
+        return Ok(());
+    }
+
+    if args.check {
+        bail!("--check is not supported with <rev>:<path> <file>");
+    }
+
+    let mut out = io::stdout().lock();
+    if !args.quiet {
+        let old_label = format!("{src_prefix}{rev_path}");
+        let new_label = format!("{dst_prefix}{file_path}");
+        let patch = unified_diff(
+            blob_text.as_ref(),
+            disk_text.as_ref(),
+            &old_label,
+            &new_label,
+            context_lines,
+        );
+        let use_color = match args.color.as_deref() {
+            Some("always") => true,
+            Some("never") => false,
+            Some("auto") | None => io::stdout().is_terminal(),
+            Some(_) => false,
+        };
+        if use_color {
+            for line in patch.lines() {
+                if line.starts_with("@@") {
+                    writeln!(out, "{CYAN}{line}{RESET}")?;
+                } else if line.starts_with('+') && !line.starts_with("+++") {
+                    writeln!(out, "{GREEN}{line}{RESET}")?;
+                } else if line.starts_with('-') && !line.starts_with("---") {
+                    writeln!(out, "{RED}{line}{RESET}")?;
+                } else if line.starts_with("diff ")
+                    || line.starts_with("---")
+                    || line.starts_with("+++")
+                {
+                    writeln!(out, "{BOLD}{line}{RESET}")?;
+                } else {
+                    writeln!(out, "{line}")?;
+                }
+            }
+        } else {
+            write!(out, "{patch}")?;
+        }
+    }
+
+    if (args.exit_code || args.quiet) && has_diff {
+        std::process::exit(1);
+    }
+    if has_diff && !args.exit_code && !args.quiet {
+        // differences were printed; match `git diff` non-exit-code behavior (exit 0)
+    }
     Ok(())
 }
 
