@@ -4,19 +4,17 @@
 //! negotiates want/have (protocol v0, `multi_ack_detailed`), then streams a
 //! packfile (side-band-64k) to the client.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use grit_lib::merge_base;
 use grit_lib::objects::ObjectId;
 use grit_lib::refs;
 use grit_lib::repo::Repository;
 use std::collections::HashSet;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use crate::commands::serve_v2::{serve_loop, ServerCaps};
-use crate::grit_exe::grit_executable;
 use crate::pkt_line;
 
 /// Arguments for `grit upload-pack`.
@@ -101,6 +99,7 @@ pub fn run(args: Args) -> Result<()> {
     let mut got_other = false;
     let mut last_hex = String::new();
     let mut client_known: HashSet<ObjectId> = HashSet::new();
+    let mut client_have_commits: Vec<ObjectId> = Vec::new();
 
     loop {
         match pkt_line::read_packet(&mut stdin)? {
@@ -146,6 +145,7 @@ pub fn run(args: Args) -> Result<()> {
                         } else {
                             got_common = true;
                             last_hex = oid.to_hex();
+                            client_have_commits.push(oid);
                             merge_ancestors_into(&repo, oid, &mut client_known)?;
                             if multi_ack_detailed {
                                 pkt_line::write_line(&mut out, &format!("ACK {last_hex} common"))?;
@@ -161,58 +161,16 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    let grit = grit_executable();
-    let mut child = Command::new(&grit)
-        .arg("pack-objects")
-        .arg("--stdout")
-        .current_dir(&repo.git_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to spawn '{} pack-objects'", grit.display()))?;
-
+    let mut child = crate::pack_objects_upload::spawn_pack_objects_upload(&repo.git_dir)?;
     {
         let mut pin = child.stdin.take().context("pack-objects stdin")?;
-        for w in &wants {
-            writeln!(pin, "{}", w.to_hex())?;
-        }
-        pin.flush()?;
+        crate::pack_objects_upload::write_pack_objects_revs_stdin(
+            &mut pin,
+            &wants,
+            &client_have_commits,
+        )?;
     }
-
-    let mut pack_out = child.stdout.take().context("pack-objects stdout")?;
-    let stderr_child = child.stderr.take();
-    let stderr_handle = std::thread::spawn(move || {
-        if let Some(mut e) = stderr_child {
-            let mut buf = Vec::new();
-            let _ = e.read_to_end(&mut buf);
-            buf
-        } else {
-            Vec::new()
-        }
-    });
-
-    const CHUNK: usize = 32000;
-    let mut buf = vec![0u8; CHUNK];
-    loop {
-        let n = pack_out.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        write_sideband_64k(&mut out, &buf[..n])?;
-    }
-
-    let status = child.wait()?;
-    let err_bytes = stderr_handle.join().unwrap_or_default();
-    if !err_bytes.is_empty() {
-        let _ = io::stderr().write_all(&err_bytes);
-    }
-    if !status.success() {
-        bail!(
-            "pack-objects failed with exit code {}",
-            status.code().unwrap_or(-1)
-        );
-    }
+    crate::pack_objects_upload::drain_pack_objects_child(child, &mut out, true)?;
 
     pkt_line::write_flush(&mut out)?;
     out.flush()?;
@@ -242,17 +200,6 @@ fn ok_to_give_up(
             .iter()
             .any(|h| merge_base::is_ancestor(repo, *h, *w).unwrap_or(false))
     })
-}
-
-fn write_sideband_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
-    const MAX_PAYLOAD: usize = 65515;
-    for chunk in payload.chunks(MAX_PAYLOAD) {
-        let len = 4 + 1 + chunk.len();
-        write!(w, "{len:04x}")?;
-        w.write_all(&[1u8])?;
-        w.write_all(chunk)?;
-    }
-    Ok(())
 }
 
 fn write_ref_advertisement(w: &mut impl Write, git_dir: &Path) -> Result<()> {

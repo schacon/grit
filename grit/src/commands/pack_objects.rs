@@ -34,6 +34,22 @@ pub struct Args {
     #[arg(long)]
     pub revs: bool,
 
+    /// Omit objects the client already has (after `--not` in rev-list input).
+    #[arg(long)]
+    pub thin: bool,
+
+    /// Shallow boundary file (accepted for `upload-pack` compatibility; no-op in grit).
+    #[arg(long = "shallow-file", allow_hyphen_values = true)]
+    pub shallow_file: Option<String>,
+
+    /// Shallow pack (accepted for compatibility; no-op in grit).
+    #[arg(long)]
+    pub shallow: bool,
+
+    /// Include annotated tags (accepted for compatibility; no-op in grit).
+    #[arg(long = "include-tag")]
+    pub include_tag: bool,
+
     /// Pack all objects in the repository.
     #[arg(long)]
     pub all: bool,
@@ -274,19 +290,33 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
     }
 
     if args.revs {
-        // Read revision specs from stdin — for simplicity, treat each line as a
-        // ref/rev that we resolve, then walk its reachable objects.
-        // Lines starting with '^' exclude objects reachable from that ref.
+        // Git `pack-objects --revs` stdin: positive revs, then `--not`, then negative
+        // revs (client haves). Lines may be 40-char hex or ref names. With `--thin`,
+        // objects reachable from the haves are omitted from the pack.
         let stdin = io::stdin();
         let mut exclude = BTreeSet::new();
+        let mut post_not = false;
+        let mut have_roots: BTreeSet<ObjectId> = BTreeSet::new();
         for line in stdin.lock().lines() {
             let line = line?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
             }
+            if trimmed == "--not" {
+                post_not = true;
+                continue;
+            }
+            if post_not {
+                let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
+                    oid
+                } else {
+                    resolve_ref(repo, trimmed)?
+                };
+                have_roots.insert(oid);
+                continue;
+            }
             if let Some(neg_ref) = trimmed.strip_prefix('^') {
-                // Exclusion: walk reachable from this ref and exclude them.
                 let oid = if let Ok(oid) = ObjectId::from_hex(neg_ref) {
                     oid
                 } else {
@@ -294,7 +324,6 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
                 };
                 walk_reachable(repo, &oid, &mut exclude)?;
             } else {
-                // Inclusion: walk reachable from this ref.
                 let oid = if let Ok(oid) = ObjectId::from_hex(trimmed) {
                     oid
                 } else {
@@ -303,9 +332,15 @@ fn collect_oids(repo: &Repository, args: &Args) -> Result<Vec<ObjectId>> {
                 walk_reachable(repo, &oid, &mut oids)?;
             }
         }
-        // Remove excluded objects.
         for oid in &exclude {
             oids.remove(oid);
+        }
+        if args.thin && !have_roots.is_empty() {
+            let mut have_closure = BTreeSet::new();
+            for root in &have_roots {
+                walk_reachable(repo, root, &mut have_closure)?;
+            }
+            oids.retain(|o| !have_closure.contains(o));
         }
     } else if args.stdin_packs {
         // Read pack filenames from stdin and include all objects in those packs.

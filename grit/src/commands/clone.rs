@@ -377,50 +377,6 @@ pub fn run(args: Args) -> Result<()> {
         return run_bundle_clone(args);
     }
 
-    // --no-local with custom upload-pack: use transport instead of direct copy
-    if args.no_local {
-        if let Some(ref upload_pack) = args.upload_pack {
-            let source_path = PathBuf::from(&args.repository);
-            let target_name = args.directory.clone().unwrap_or_else(|| {
-                let base = source_path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                base.strip_suffix(".git")
-                    .unwrap_or(&base)
-                    .trim_end_matches('/')
-                    .to_string()
-            });
-            let target_path = PathBuf::from(&target_name);
-            if target_path.exists() {
-                bail!(
-                    "destination path '{}' already exists and is not an empty directory",
-                    target_path.display()
-                );
-            }
-            if !args.quiet {
-                eprintln!("Cloning into '{}'...", target_name);
-            }
-            fs::create_dir_all(&target_path)?;
-            let repo_path_arg = source_path.to_string_lossy().to_string();
-            let status = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("{} '{}'", upload_pack, repo_path_arg))
-                .status();
-            match status {
-                Ok(s) if s.success() => {
-                    eprintln!("done.");
-                    return Ok(());
-                }
-                _ => {
-                    let _ = fs::remove_dir_all(&target_path);
-                    bail!("clone failed: upload-pack command failed");
-                }
-            }
-        }
-    }
-
     // Check protocol.file.allow before local clone
     crate::protocol::check_protocol_allowed("file", None)?;
 
@@ -545,7 +501,18 @@ pub fn run(args: Args) -> Result<()> {
     };
 
     // Copy or share objects from source to destination
-    if args.shared {
+    if args.no_local && !args.shared {
+        let upload_cmd = args.upload_pack.as_deref().filter(|s| !s.trim().is_empty());
+        if let Err(e) = crate::fetch_transport::fetch_via_upload_pack_skipping(
+            &dest.git_dir,
+            &source.git_dir,
+            upload_cmd,
+            &[],
+        ) {
+            let _ = fs::remove_dir_all(&target_path);
+            return Err(e).context("clone via upload-pack (--no-local) failed");
+        }
+    } else if args.shared {
         // Write alternates file instead of copying objects
         write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
             .context("setting up alternates")?;

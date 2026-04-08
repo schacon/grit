@@ -964,7 +964,7 @@ t5541-remote-subcommands	t5	yes	5	5	0	true	ok	0
 t5542-push-advanced	t5	yes	4	4	0	true	ok	0
 t5542-push-http-shallow	t5	yes	3	1	2	false	ok	0
 t5543-atomic-push	t5	yes	13	7	6	false	ok	0
-t5544-pack-objects-hook	t5	yes	7	3	4	false	ok	0
+t5544-pack-objects-hook	t5	yes	7	7	0	true	ok	0
 t5545-push-options	t5	yes	13	5	8	false	ok	0
 t5546-receive-limits	t5	yes	17	14	3	false	ok	0
 t5547-push-quarantine	t5	yes	6	5	1	false	ok	0
@@ -1192,7 +1192,7 @@ t7111-reset-table	t7	yes	42	33	9	false	ok	0
 t7112-reset-submodule	t7	yes	76	10	66	false	ok	0
 t7113-post-index-change-hook	t7	yes	4	1	3	false	ok	0
 t7201-co	t7	yes	46	15	31	false	ok	0
-t7300-clean	t7	yes	55	53	0	true	ok	2
+t7300-clean	t7	yes	53	53	0	true	ok	2
 t7301-clean-interactive	t7	yes	23	5	18	false	ok	0
 t7400-submodule-basic	t7	yes	0	0	0	false	timeout	0
 t7401-submodule-summary	t7	yes	25	6	19	false	ok	0
