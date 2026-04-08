@@ -804,6 +804,71 @@ pub fn diff_index_to_worktree(
 }
 
 /// Quick stat check: does the index entry's cached stat data match the file?
+/// Returns true when the file at `ie`'s path differs from the index entry (mode or blob).
+///
+/// Used by commands such as `git mv` to detect "dirty" paths under sparse checkout.
+/// Symlinks and submodules are compared in a Git-compatible way.
+pub fn worktree_differs_from_index_entry(
+    odb: &Odb,
+    work_tree: &Path,
+    ie: &IndexEntry,
+) -> Result<bool> {
+    use crate::config::ConfigSet;
+    use crate::crlf;
+
+    let path_str_ref = std::str::from_utf8(&ie.path).unwrap_or("");
+    let file_path = work_tree.join(path_str_ref);
+
+    if ie.mode == 0o160000 {
+        let sub_head_oid = read_submodule_head(&file_path);
+        return Ok(sub_head_oid.as_ref() != Some(&ie.oid));
+    }
+
+    let meta = match fs::symlink_metadata(&file_path) {
+        Ok(m) => m,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(20) /* ENOTDIR */ =>
+        {
+            return Ok(true);
+        }
+        Err(e) => return Err(Error::Io(e)),
+    };
+
+    if meta.is_dir() {
+        return Ok(true);
+    }
+
+    let worktree_mode = mode_from_metadata(&meta);
+    if worktree_mode != ie.mode {
+        return Ok(true);
+    }
+
+    if stat_matches(ie, &meta) {
+        return Ok(false);
+    }
+
+    let git_dir = work_tree.join(".git");
+    let config = ConfigSet::load(Some(&git_dir), true).unwrap_or_else(|_| ConfigSet::new());
+    let conv = crlf::ConversionConfig::from_config(&config);
+    let attrs = crlf::load_gitattributes(work_tree);
+    let file_attrs = crlf::get_file_attrs(&attrs, path_str_ref, &config);
+    let worktree_oid =
+        hash_worktree_file(odb, &file_path, &meta, &conv, &file_attrs, path_str_ref)?;
+
+    let mut eff_oid = worktree_oid;
+    if eff_oid != ie.oid {
+        if let Ok(raw) = fs::read(&file_path) {
+            let raw_oid = Odb::hash_object_data(ObjectKind::Blob, &raw);
+            if raw_oid == ie.oid {
+                eff_oid = ie.oid;
+            }
+        }
+    }
+
+    Ok(eff_oid != ie.oid)
+}
+
 pub fn stat_matches(ie: &IndexEntry, meta: &fs::Metadata) -> bool {
     // Compare size
     if meta.len() as u32 != ie.size {
@@ -849,7 +914,7 @@ fn has_symlink_in_path(work_tree: &Path, rel_path: &str) -> bool {
     false
 }
 
-fn hash_worktree_file(
+pub(crate) fn hash_worktree_file(
     _odb: &Odb,
     path: &Path,
     meta: &fs::Metadata,

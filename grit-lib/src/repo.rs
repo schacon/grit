@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::index::Index;
 use crate::objects::parse_commit;
 use crate::odb::Odb;
+use crate::sparse_checkout::effective_cone_mode_for_sparse_file;
 use crate::state::resolve_head;
 
 fn read_sparse_checkout_patterns(git_dir: &Path) -> Vec<String> {
@@ -273,7 +274,7 @@ impl Repository {
             index.sparse_directories = false;
             return Ok(());
         }
-        let cone = cfg
+        let cone_cfg = cfg
             .get("core.sparseCheckoutCone")
             .and_then(|v| v.parse::<bool>().ok())
             .unwrap_or(true);
@@ -282,6 +283,7 @@ impl Repository {
             .map(|v| v == "true")
             .unwrap_or(false);
         let patterns = read_sparse_checkout_patterns(&self.git_dir);
+        let cone = effective_cone_mode_for_sparse_file(cone_cfg, &patterns);
         let head = resolve_head(&self.git_dir)?;
         let tree_oid = if let Some(oid) = head.oid() {
             let obj = self.odb.read(oid)?;
