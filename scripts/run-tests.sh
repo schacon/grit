@@ -160,10 +160,15 @@ run_one() {
     local f="$1"
     local base="${f%.sh}"
     local output summary total pass fail status ef
+    local git_test_allow_sudo=
+    if [[ "$f" == "t0034-root-safe-directory.sh" ]]; then
+        git_test_allow_sudo=YES
+    fi
     output=$(
         cd "$TESTS_DIR" &&
             EDITOR=: VISUAL=: LC_ALL=C LANG=C _prereq_DEFAULT_REPO_FORMAT=set GRIT_TEST_LIB_SUMMARY=1 GUST_BIN="$(pwd)/grit" \
             GIT_SOURCE_DIR="$REPO/git" \
+            GIT_TEST_ALLOW_SUDO="${git_test_allow_sudo:-}" \
             "${TIMEOUT_PREFIX[@]}" bash "$f" 2>&1
     ) || true
     summary=$(echo "$output" | grep "^# Tests:" | tail -1) || true

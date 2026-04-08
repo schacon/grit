@@ -5,6 +5,13 @@ test_description='verify safe.directory checks while running as root'
 . ./test-lib.sh
 . "$TEST_DIRECTORY"/lib-sudo.sh
 
+# Upstream defines this in git/t/test-lib.sh; keep it here so we do not rely on
+# a full test-lib port.
+test_lazy_prereq NOT_ROOT '
+	uid=$(id -u) &&
+	test "$uid" != 0
+'
+
 if [ "$GIT_TEST_ALLOW_SUDO" != "YES" ]
 then
 	skip_all="You must set env var GIT_TEST_ALLOW_SUDO=YES in order to run this test"
@@ -22,7 +29,7 @@ test_lazy_prereq SUDO '
 	id -u root >r &&
 	test_cmp u r &&
 	command -v git >u &&
-	sudo command -v git >r &&
+	sudo env PATH="$PATH" sh -c "command -v git" >r &&
 	test_cmp u r
 '
 
