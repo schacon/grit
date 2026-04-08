@@ -1,8 +1,10 @@
 //! Minimal [`git fast-import`](https://git-scm.com/docs/git-fast-import) stream support.
 //!
 //! Handles the subset of commands used by upstream tests: `blob` (with optional
-//! `mark`), `commit` (with `author`/`committer`, `data`, optional `from`, and
-//! `M` / `D` file commands), `reset`, `done`, and comment lines.
+//! `mark`), `commit` (with `author`/`committer`, `data` in byte-count or `<<delim>`
+//! form, optional `from`, `deleteall`, `M` / `D` file commands, `M ... inline`
+//! with a following `data` command, and `N` / `N inline` on `refs/notes/*`),
+//! `reset`, `done`, and comment lines.
 
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -44,6 +46,48 @@ struct Importer<'a, R: BufRead> {
 }
 
 impl<'a, R: BufRead> Importer<'a, R> {
+    /// Read a `data` command body: either `data <n>` (exact bytes) or `data <<delim>` (line-delimited).
+    fn read_data_payload(&mut self, data_line_trimmed: &str) -> Result<Vec<u8>> {
+        let rest = data_line_trimmed.strip_prefix("data ").ok_or_else(|| {
+            Error::IndexError(format!(
+                "fast-import: expected data line, got: {data_line_trimmed}"
+            ))
+        })?;
+        if let Some(delim) = rest.strip_prefix("<<") {
+            let delim = delim.trim_end();
+            if delim.is_empty() {
+                return Err(Error::IndexError(
+                    "fast-import: empty data delimiter".to_owned(),
+                ));
+            }
+            return self.read_data_delimited(delim);
+        }
+        let size: usize = rest
+            .parse()
+            .map_err(|_| Error::IndexError(format!("fast-import: invalid data size: {rest}")))?;
+        let mut payload = vec![0u8; size];
+        self.reader
+            .read_exact(&mut payload)
+            .map_err(|_| Error::IndexError("fast-import: truncated data".to_owned()))?;
+        self.consume_optional_lf_after_data()?;
+        Ok(payload)
+    }
+
+    /// Delimited `data` format: raw lines until a line equal to `delim` (see git-fast-import).
+    fn read_data_delimited(&mut self, delim: &str) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        loop {
+            let line = self.read_line_any()?.ok_or_else(|| {
+                Error::IndexError("fast-import: unexpected EOF in delimited data".to_owned())
+            })?;
+            if line.trim_end() == delim {
+                break;
+            }
+            out.extend_from_slice(line.as_bytes());
+        }
+        Ok(out)
+    }
+
     fn run(&mut self) -> Result<()> {
         loop {
             let line = match self.next_command_line()? {
@@ -142,17 +186,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
             if t.starts_with("original-oid ") {
                 continue;
             }
-            let rest = t.strip_prefix("data ").ok_or_else(|| {
-                Error::IndexError(format!("fast-import: expected data line in blob, got: {t}"))
-            })?;
-            let size: usize = rest.parse().map_err(|_| {
-                Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-            })?;
-            let mut payload = vec![0u8; size];
-            self.reader
-                .read_exact(&mut payload)
-                .map_err(|_| Error::IndexError("fast-import: truncated blob data".to_owned()))?;
-            self.consume_optional_lf_after_data()?;
+            let payload = self.read_data_payload(t)?;
             let oid = self.repo.odb.write(ObjectKind::Blob, &payload)?;
             if let Some(m) = mark {
                 self.marks.insert(m, oid);
@@ -211,16 +245,7 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 )));
             }
             if t.starts_with("data ") {
-                // Re-parse: we already have full line with "data N".
-                let rest = t.strip_prefix("data ").unwrap();
-                let size: usize = rest.parse().map_err(|_| {
-                    Error::IndexError(format!("fast-import: invalid data size: {rest}"))
-                })?;
-                let mut message = vec![0u8; size];
-                self.reader.read_exact(&mut message).map_err(|_| {
-                    Error::IndexError("fast-import: truncated commit message".to_owned())
-                })?;
-                self.consume_optional_lf_after_data()?;
+                let message = self.read_data_payload(t)?;
                 let committer = committer.ok_or_else(|| {
                     Error::IndexError("fast-import: commit missing committer".to_owned())
                 })?;
@@ -242,9 +267,25 @@ impl<'a, R: BufRead> Importer<'a, R> {
         committer: String,
         message: Vec<u8>,
     ) -> Result<()> {
+        #[derive(Debug)]
+        enum FileChangeOp {
+            DeleteAll,
+            Delete(Vec<u8>),
+            Modify {
+                mode: u32,
+                blob_oid: ObjectId,
+                path: Vec<u8>,
+            },
+            NoteModify {
+                blob_oid: ObjectId,
+                target_commit: ObjectId,
+            },
+        }
+
         let mut from_oid: Option<ObjectId> = None;
-        let mut modifications: Vec<(u32, ObjectId, Vec<u8>)> = Vec::new();
-        let mut deletions: Vec<Vec<u8>> = Vec::new();
+        let mut ops: Vec<FileChangeOp> = Vec::new();
+        let mut pending_inline: Option<(u32, Vec<u8>)> = None;
+        let notes_ref = refname.starts_with("refs/notes/");
 
         loop {
             let Some(line) = self.read_line_any()? else {
@@ -252,6 +293,21 @@ impl<'a, R: BufRead> Importer<'a, R> {
             };
             let t = line.trim_end();
             if t.is_empty() {
+                continue;
+            }
+            if let Some((mode, path)) = pending_inline.take() {
+                if !t.starts_with("data ") {
+                    return Err(Error::IndexError(format!(
+                        "fast-import: expected data after M ... inline, got: {t}"
+                    )));
+                }
+                let payload = self.read_data_payload(t)?;
+                let blob_oid = self.repo.odb.write(ObjectKind::Blob, &payload)?;
+                ops.push(FileChangeOp::Modify {
+                    mode,
+                    blob_oid,
+                    path,
+                });
                 continue;
             }
             if t.starts_with("from ") {
@@ -264,6 +320,10 @@ impl<'a, R: BufRead> Importer<'a, R> {
                     "fast-import: merge commits not supported".to_owned(),
                 ));
             }
+            if t == "deleteall" {
+                ops.push(FileChangeOp::DeleteAll);
+                continue;
+            }
             if let Some(rest) = t.strip_prefix("M ") {
                 let parts: Vec<&str> = rest.split_whitespace().collect();
                 if parts.len() != 3 {
@@ -274,16 +334,77 @@ impl<'a, R: BufRead> Importer<'a, R> {
                 })?;
                 let blob_ref = parts[1];
                 let path = parts[2].as_bytes().to_vec();
+                if blob_ref == "inline" {
+                    pending_inline = Some((mode, path));
+                    continue;
+                }
                 let blob_oid = self.resolve_blob_ref(blob_ref)?;
-                modifications.push((mode, blob_oid, path));
+                ops.push(FileChangeOp::Modify {
+                    mode,
+                    blob_oid,
+                    path,
+                });
                 continue;
             }
             if let Some(rest) = t.strip_prefix("D ") {
-                deletions.push(rest.as_bytes().to_vec());
+                ops.push(FileChangeOp::Delete(rest.as_bytes().to_vec()));
+                continue;
+            }
+            if let Some(rest) = t.strip_prefix("N ") {
+                if !notes_ref {
+                    return Err(Error::IndexError(format!(
+                        "fast-import: N (notemodify) only allowed on refs/notes/*, not {refname}"
+                    )));
+                }
+                let (data_ref, commit_spec) = parse_notemodify_operands(rest)?;
+                let target_commit = self.resolve_note_target_commit(commit_spec)?;
+                let blob_oid = match data_ref {
+                    NoteBlobSpec::Inline => {
+                        let next = self.read_line_nonempty()?.ok_or_else(|| {
+                            Error::IndexError(
+                                "fast-import: expected data after N inline".to_owned(),
+                            )
+                        })?;
+                        let nt = next.trim_end();
+                        if !nt.starts_with("data ") {
+                            return Err(Error::IndexError(format!(
+                                "fast-import: expected data after N inline, got: {nt}"
+                            )));
+                        }
+                        let payload = self.read_data_payload(nt)?;
+                        self.repo.odb.write(ObjectKind::Blob, &payload)?
+                    }
+                    NoteBlobSpec::Mark(id) => *self.marks.get(&id).ok_or_else(|| {
+                        Error::IndexError(format!("fast-import: unknown mark :{id}"))
+                    })?,
+                    NoteBlobSpec::Oid(oid) => {
+                        if oid.is_zero() {
+                            ObjectId::zero()
+                        } else {
+                            let obj = self.repo.odb.read(&oid)?;
+                            if obj.kind != ObjectKind::Blob {
+                                return Err(Error::IndexError(format!(
+                                    "fast-import: N dataref {oid} is not a blob"
+                                )));
+                            }
+                            oid
+                        }
+                    }
+                };
+                ops.push(FileChangeOp::NoteModify {
+                    blob_oid,
+                    target_commit,
+                });
                 continue;
             }
             self.stashed_line = Some(line);
             break;
+        }
+
+        if pending_inline.is_some() {
+            return Err(Error::IndexError(
+                "fast-import: unterminated M ... inline (missing data)".to_owned(),
+            ));
         }
 
         let empty_tree: ObjectId = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -318,13 +439,40 @@ impl<'a, R: BufRead> Importer<'a, R> {
         };
 
         let mut index = tree_to_index(&self.repo.odb, &parent_tree)?;
-        for path in deletions {
-            index.entries.retain(|e| e.path != path);
+        for op in ops {
+            match op {
+                FileChangeOp::DeleteAll => index.entries.clear(),
+                FileChangeOp::Delete(path) => {
+                    index.entries.retain(|e| e.path != path);
+                }
+                FileChangeOp::Modify {
+                    mode,
+                    blob_oid,
+                    path,
+                } => {
+                    let mode = normalize_mode(mode)?;
+                    index.add_or_replace(index_entry(path, mode, blob_oid));
+                }
+                FileChangeOp::NoteModify {
+                    blob_oid,
+                    target_commit,
+                } => {
+                    remove_note_entries_for_target(&mut index, &target_commit);
+                    if !blob_oid.is_zero() {
+                        let after_remove = count_notes_in_index(&index);
+                        let fanout = notes_fanout_for_count(after_remove.saturating_add(1));
+                        let note_path = construct_note_path_with_fanout(&target_commit, fanout);
+                        index.add_or_replace(index_entry(note_path, MODE_REGULAR, blob_oid));
+                    }
+                }
+            }
         }
-        for (mode, blob_oid, path) in modifications {
-            let mode = normalize_mode(mode)?;
-            index.add_or_replace(index_entry(path, mode, blob_oid));
+
+        if notes_ref && count_notes_in_index(&index) > 0 {
+            let n = count_notes_in_index(&index);
+            rewrite_notes_fanout_in_index(&mut index, notes_fanout_for_count(n))?;
         }
+
         let tree_oid = write_tree_from_index(&self.repo.odb, &index, "")?;
 
         let message_str = String::from_utf8_lossy(&message).into_owned();
@@ -404,6 +552,148 @@ impl<'a, R: BufRead> Importer<'a, R> {
         self.stashed_line = Some(line);
         Ok(())
     }
+
+    /// Resolve the commit a `notemodify` annotates (branch tip, mark, rev, or full hex).
+    fn resolve_note_target_commit(&self, spec: &str) -> Result<ObjectId> {
+        let oid = if let Some(tip) = self.branch_tips.get(spec) {
+            *tip
+        } else {
+            self.resolve_commit_ish(spec)?
+        };
+        let obj = self.repo.odb.read(&oid)?;
+        if obj.kind != ObjectKind::Commit {
+            return Err(Error::IndexError(format!(
+                "fast-import: notemodify target {spec} is not a commit"
+            )));
+        }
+        Ok(oid)
+    }
+}
+
+/// Blob payload source in a `N` (notemodify) command.
+enum NoteBlobSpec {
+    Inline,
+    Mark(u32),
+    Oid(ObjectId),
+}
+
+fn parse_notemodify_operands(rest: &str) -> Result<(NoteBlobSpec, &str)> {
+    let s = rest.trim();
+    if let Some(commit_spec) = s.strip_prefix("inline ") {
+        return Ok((NoteBlobSpec::Inline, commit_spec.trim()));
+    }
+    if let Some(after_colon) = s.strip_prefix(':') {
+        let space = after_colon
+            .find(' ')
+            .ok_or_else(|| Error::IndexError("fast-import: bad N line (mark)".to_owned()))?;
+        let id: u32 = after_colon[..space]
+            .parse()
+            .map_err(|_| Error::IndexError(format!("fast-import: bad mark in N line: {s}")))?;
+        return Ok((NoteBlobSpec::Mark(id), after_colon[space + 1..].trim()));
+    }
+    if s.len() < 41 {
+        return Err(Error::IndexError(format!(
+            "fast-import: bad N line (expected oid + commit-ish): {s}"
+        )));
+    }
+    let head = &s[..40];
+    if !head.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(Error::IndexError(format!(
+            "fast-import: bad N line (invalid blob oid): {s}"
+        )));
+    }
+    if s.as_bytes().get(40) != Some(&b' ') {
+        return Err(Error::IndexError(format!(
+            "fast-import: bad N line (missing space after blob oid): {s}"
+        )));
+    }
+    let oid: ObjectId = head
+        .parse()
+        .map_err(|_| Error::IndexError(format!("fast-import: bad blob oid in N line: {s}")))?;
+    Ok((NoteBlobSpec::Oid(oid), s[41..].trim()))
+}
+
+fn is_note_index_path(path: &[u8]) -> bool {
+    let compact: Vec<u8> = path.iter().copied().filter(|b| *b != b'/').collect();
+    compact.len() == 40 && compact.iter().all(u8::is_ascii_hexdigit)
+}
+
+fn compact_hex_from_note_path(path: &[u8]) -> Option<String> {
+    if !is_note_index_path(path) {
+        return None;
+    }
+    let s: String = path
+        .iter()
+        .copied()
+        .filter(|b| *b != b'/')
+        .map(|b| char::from(b).to_ascii_lowercase())
+        .collect();
+    Some(s)
+}
+
+fn count_notes_in_index(index: &crate::index::Index) -> usize {
+    index
+        .entries
+        .iter()
+        .filter(|e| is_note_index_path(&e.path))
+        .count()
+}
+
+fn notes_fanout_for_count(mut n: usize) -> usize {
+    let mut fanout = 0usize;
+    while n > 0xff {
+        n >>= 8;
+        fanout += 1;
+    }
+    fanout
+}
+
+fn construct_note_path_with_fanout(commit: &ObjectId, fanout: usize) -> Vec<u8> {
+    let hex = commit.to_hex();
+    let bytes = hex.as_bytes();
+    let split = fanout.min(bytes.len() / 2);
+    let mut out = Vec::with_capacity(hex.len() + split);
+    for i in 0..split {
+        let start = i * 2;
+        out.extend_from_slice(&bytes[start..start + 2]);
+        out.push(b'/');
+    }
+    out.extend_from_slice(&bytes[split * 2..]);
+    out
+}
+
+fn remove_note_entries_for_target(index: &mut crate::index::Index, target: &ObjectId) {
+    let want = target.to_hex();
+    index.entries.retain(|e| {
+        if !is_note_index_path(&e.path) {
+            return true;
+        }
+        compact_hex_from_note_path(&e.path).as_deref() != Some(want.as_str())
+    });
+}
+
+fn rewrite_notes_fanout_in_index(index: &mut crate::index::Index, fanout: usize) -> Result<()> {
+    let mut notes: Vec<(ObjectId, ObjectId, u32)> = Vec::new();
+    let mut kept = Vec::new();
+    for e in index.entries.drain(..) {
+        if is_note_index_path(&e.path) {
+            let Some(compact) = compact_hex_from_note_path(&e.path) else {
+                continue;
+            };
+            let commit_oid = compact
+                .parse()
+                .map_err(|_| Error::IndexError("fast-import: bad note path in index".to_owned()))?;
+            notes.push((commit_oid, e.oid, e.mode));
+        } else {
+            kept.push(e);
+        }
+    }
+    index.entries = kept;
+    for (commit_oid, blob_oid, mode) in notes {
+        let path = construct_note_path_with_fanout(&commit_oid, fanout);
+        index.add_or_replace(index_entry(path, mode, blob_oid));
+    }
+    Ok(())
 }
 
 fn normalize_mode(mode: u32) -> Result<u32> {
@@ -464,4 +754,112 @@ fn tree_to_index(odb: &crate::odb::Odb, tree_oid: &ObjectId) -> Result<Index> {
         }
     }
     Ok(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::refs::resolve_ref;
+    use crate::repo::init_repository;
+    use std::io::Cursor;
+    use tempfile::tempdir;
+
+    #[test]
+    fn fast_import_delimited_data_m_inline_and_note() -> Result<()> {
+        let dir = tempdir().map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+        let repo = init_repository(dir.path(), false, "main", None)?;
+
+        let setup = r#"commit refs/heads/main
+committer T <t@e> 1000000000 +0000
+data <<COMMIT
+m1
+COMMIT
+
+M 644 inline f
+data <<EOF
+a
+EOF
+
+commit refs/heads/main
+committer T <t@e> 1000000001 +0000
+data <<COMMIT
+m2
+COMMIT
+
+M 644 inline f
+data <<EOF
+b
+EOF
+
+"#;
+        import_stream(&repo, Cursor::new(setup.as_bytes()))?;
+
+        let c2 = resolve_ref(&repo.git_dir, "refs/heads/main")?;
+        let c2_obj = repo.odb.read(&c2)?;
+        let c2_parsed = parse_commit(&c2_obj.data)?;
+        let c1 = c2_parsed
+            .parents
+            .first()
+            .copied()
+            .ok_or_else(|| Error::IndexError("test: expected parent commit".to_owned()))?;
+
+        let notes = format!(
+            r#"commit refs/notes/commits
+committer T <t@e> 1000000002 +0000
+data <<COMMIT
+n1
+COMMIT
+
+N inline {c1}
+data <<EOF
+note1
+EOF
+
+N inline {c2}
+data <<EOF
+note2
+EOF
+
+commit refs/notes/commits
+committer T <t@e> 1000000003 +0000
+data <<COMMIT
+n2
+COMMIT
+
+M 644 inline foobar/x.txt
+data <<EOF
+non-note
+EOF
+
+N inline {c2}
+data <<EOF
+edited
+EOF
+
+"#
+        );
+        import_stream(&repo, Cursor::new(notes.as_bytes()))?;
+
+        let notes_tip = resolve_ref(&repo.git_dir, "refs/notes/commits")?;
+        let commit_obj = repo.odb.read(&notes_tip)?;
+        let parsed = parse_commit(&commit_obj.data)?;
+        let tree = tree_to_index(&repo.odb, &parsed.tree)?;
+        assert!(
+            tree.entries.iter().any(|e| e.path == b"foobar/x.txt"),
+            "expected non-note path preserved"
+        );
+        let mut found_edit = false;
+        for e in &tree.entries {
+            if is_note_index_path(&e.path) {
+                let compact = compact_hex_from_note_path(&e.path).expect("note path");
+                if compact == c2.to_hex() {
+                    let blob = repo.odb.read(&e.oid)?;
+                    assert_eq!(blob.data, b"edited\n");
+                    found_edit = true;
+                }
+            }
+        }
+        assert!(found_edit, "expected edited note for second commit");
+        Ok(())
+    }
 }

@@ -92,7 +92,7 @@ t10020-update-ref-stdin-batch	t1	yes	33	33	0	true	ok	0
 t1003-read-tree-prefix	t1	yes	3	3	0	true	ok	0
 t1004-read-tree-m-u-wf	t1	yes	17	16	1	false	ok	0
 t1005-read-tree-reset	t1	yes	7	3	4	false	ok	0
-t1006-cat-file	t1	yes	290	285	5	false	ok	1
+t1006-cat-file	t1	yes	290	285	5	false	ok	0
 t10060-hash-object-determinism	t1	yes	34	34	0	true	ok	0
 t1007-hash-object	t1	yes	40	32	8	false	ok	0
 t10070-cat-file-batch-format	t1	yes	33	33	0	true	ok	0
@@ -574,7 +574,7 @@ t3301-notes	t3	yes	0	0	0	false	timeout	0
 t3301-notes-basic	t3	yes	38	38	0	true	ok	0
 t3302-notes-index-expensive	t3	yes	12	10	2	false	ok	0
 t3303-notes-subtrees	t3	yes	23	0	23	false	ok	0
-t3304-notes-mixed	t3	yes	6	0	6	false	ok	0
+t3304-notes-mixed	t3	yes	6	6	0	true	ok	0
 t3305-notes-fanout	t3	yes	7	7	0	true	ok	0
 t3306-notes-prune	t3	yes	12	4	8	false	ok	0
 t3307-notes-man	t3	yes	3	3	0	true	ok	0
