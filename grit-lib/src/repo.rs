@@ -1740,6 +1740,45 @@ pub fn init_repository_separate_git_dir(
     Repository::open(git_dir, Some(work_tree))
 }
 
+/// Initialise a **minimal** bare repository directory layout matching `git clone --template= --bare`.
+///
+/// Git's clone-with-empty-template omits `hooks/`, `info/`, `description`, and `branches/` until
+/// something needs them; tests rely on `mkdir <repo>/info` succeeding afterward.
+///
+/// # Parameters
+///
+/// - `git_dir` — bare repository root (the destination `.git` directory for a bare clone).
+/// - `initial_branch` — used only for the initial `HEAD` symref text before clone rewires it.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] on filesystem failures.
+pub fn init_bare_clone_minimal(git_dir: &Path, initial_branch: &str) -> Result<()> {
+    for sub in &[
+        "objects",
+        "objects/info",
+        "objects/pack",
+        "refs",
+        "refs/heads",
+        "refs/tags",
+    ] {
+        fs::create_dir_all(git_dir.join(sub))?;
+    }
+
+    let head_content = format!("ref: refs/heads/{initial_branch}\n");
+    fs::write(git_dir.join("HEAD"), head_content)?;
+
+    let config_content =
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n";
+    fs::write(git_dir.join("config"), config_content)?;
+
+    fs::write(
+        git_dir.join("packed-refs"),
+        "# pack-refs with: peeled fully-peeled sorted\n",
+    )?;
+    Ok(())
+}
+
 pub fn init_repository(
     path: &Path,
     bare: bool,

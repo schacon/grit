@@ -11,7 +11,9 @@ use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
 use grit_lib::refs;
-use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
+use grit_lib::repo::{
+    init_bare_clone_minimal, init_repository, init_repository_separate_git_dir, Repository,
+};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -540,6 +542,15 @@ pub fn run(mut args: Args) -> Result<()> {
                 sep_git.display()
             )
         })?
+    } else if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
+        init_bare_clone_minimal(&target_path, initial_branch).with_context(|| {
+            format!(
+                "failed to initialize bare clone '{}'",
+                target_path.display()
+            )
+        })?;
+        Repository::open(&target_path, None)
+            .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
     } else {
         init_repository(
             &target_path,
@@ -893,6 +904,15 @@ fn run_ssh_clone(args: Args) -> Result<()> {
                 sep_git.display()
             )
         })?
+    } else if args.bare && args.template.as_ref().is_some_and(|s| s.is_empty()) {
+        init_bare_clone_minimal(&target_path, initial_branch).with_context(|| {
+            format!(
+                "failed to initialize bare clone '{}'",
+                target_path.display()
+            )
+        })?;
+        Repository::open(&target_path, None)
+            .with_context(|| format!("failed to open repository '{}'", target_path.display()))?
     } else {
         init_repository(
             &target_path,

@@ -3087,7 +3087,7 @@ pub(crate) fn dispatch(subcmd: &str, rest: &[String], opts: &GlobalOpts) -> Resu
         "am" => commands::am::run(parse_cmd_args(subcmd, rest)),
         "annotate" => commands::annotate::run(parse_cmd_args(subcmd, rest)),
         "apply" => commands::apply::run(parse_cmd_args(subcmd, rest)),
-        "archive" => commands::archive::run(parse_cmd_args(subcmd, rest)),
+        "archive" => commands::archive::run_from_argv(rest),
         "backfill" => commands::backfill::run(parse_cmd_args(subcmd, rest)),
         "bisect" => commands::bisect::run(parse_cmd_args(subcmd, rest)),
         "blame" => commands::blame::run(parse_cmd_args(subcmd, rest)),

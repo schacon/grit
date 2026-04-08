@@ -5,6 +5,8 @@
 //! `GIT_ICASE_PATHSPECS`. The `grit` binary sets these from CLI flags such as
 //! `--literal-pathspecs` before dispatching subcommands.
 
+use crate::crlf::path_has_gitattribute;
+use crate::crlf::AttrRule;
 use crate::wildmatch::{wildmatch, WM_CASEFOLD, WM_PATHNAME};
 
 /// Returns the length of the leading literal segment before the first glob metacharacter,
@@ -29,6 +31,8 @@ struct PathspecMagic {
     icase: bool,
     exclude: bool,
     prefix: Option<String>,
+    /// `:(attr:NAME)` — match paths that have gitattribute `NAME` set.
+    attr_name: Option<String>,
 }
 
 fn parse_maybe_bool(v: &str) -> Option<bool> {
@@ -99,6 +103,12 @@ fn parse_long_magic(rest_after_paren: &str) -> Option<(PathspecMagic, &str)> {
             magic.prefix = Some(p.to_string());
             continue;
         }
+        if let Some(name) = token.strip_prefix("attr:") {
+            if !name.is_empty() {
+                magic.attr_name = Some(name.to_string());
+            }
+            continue;
+        }
         if token.eq_ignore_ascii_case("literal") {
             magic.literal = true;
         } else if token.eq_ignore_ascii_case("glob") {
@@ -108,7 +118,6 @@ fn parse_long_magic(rest_after_paren: &str) -> Option<(PathspecMagic, &str)> {
         } else if token.eq_ignore_ascii_case("exclude") {
             magic.exclude = true;
         }
-        // Ignore unknown tokens (attr:, top, etc.) for matching purposes.
     }
     Some((magic, tail))
 }
@@ -356,6 +365,51 @@ pub fn context_from_mode_bits(mode: u32) -> PathspecMatchContext {
     PathspecMatchContext {
         is_directory: ty == 0o040000,
         is_git_submodule: ty == 0o160000,
+    }
+}
+
+/// Match a pathspec against a tree path, using `.gitattributes` for `:(attr:...)`.
+///
+/// Used by `git archive` style tree walks: `mode` supplies directory/gitlink context for
+/// literal pathspecs ending in `/`.
+#[must_use]
+pub fn matches_pathspec_for_object(
+    spec: &str,
+    path: &str,
+    mode: u32,
+    attr_rules: &[AttrRule],
+) -> bool {
+    let (elem_magic, raw_pattern) = parse_element_magic(spec);
+    let magic = combine_magic(elem_magic);
+
+    if magic.literal && magic.glob {
+        return false;
+    }
+    if magic.exclude {
+        return false;
+    }
+
+    if let Some(ref attr) = magic.attr_name {
+        if !path_has_gitattribute(attr_rules, path, attr) {
+            return false;
+        }
+    }
+
+    let pattern = strip_top_magic(raw_pattern);
+    let path_for_match = if let Some(prefix) = magic.prefix.as_deref() {
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        &path[prefix.len()..]
+    } else {
+        path
+    };
+
+    let ctx = context_from_mode_bits(mode);
+    if magic.literal || magic.glob || magic.icase {
+        pathspec_matches_tail(pattern, path_for_match, magic)
+    } else {
+        matches_pathspec_with_context(pattern, path_for_match, ctx)
     }
 }
 

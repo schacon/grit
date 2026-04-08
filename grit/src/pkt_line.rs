@@ -172,6 +172,51 @@ fn write_sideband_packet(w: &mut impl Write, band: u8, payload: &[u8]) -> io::Re
     Ok(())
 }
 
+/// Write payload on sideband channel 1 using the same 64k chunking as `git upload-pack`.
+pub fn write_sideband_channel1_64k(w: &mut impl Write, payload: &[u8]) -> io::Result<()> {
+    const MAX_PAYLOAD: usize = 65515;
+    for chunk in payload.chunks(MAX_PAYLOAD) {
+        let len = 4 + 1 + chunk.len();
+        write!(w, "{len:04x}")?;
+        w.write_all(&[1u8])?;
+        w.write_all(chunk)?;
+    }
+    Ok(())
+}
+
+/// Decode a sideband pkt-line stream into the raw primary (band 1) payload.
+pub fn decode_sideband_primary(mut input: &[u8]) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    while !input.is_empty() {
+        if input.len() < 4 {
+            break;
+        }
+        let len = parse_hex_len(&input[..4])?;
+        input = &input[4..];
+        if len == 0 {
+            break;
+        }
+        if len <= 4 || input.len() < len - 4 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated sideband packet",
+            ));
+        }
+        let payload_len = len - 4;
+        let payload = &input[..payload_len];
+        input = &input[payload_len..];
+        if payload.is_empty() {
+            continue;
+        }
+        let band = payload[0];
+        let data = &payload[1..];
+        if band == 1 {
+            out.extend_from_slice(data);
+        }
+    }
+    Ok(out)
+}
+
 /// `grit pkt-line send-split-sideband`:
 /// emit a pkt-line stream containing channel-1 and channel-2 sideband data.
 pub fn cmd_send_split_sideband() -> io::Result<()> {
