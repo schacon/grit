@@ -154,14 +154,32 @@ pub fn run(args: Args) -> Result<()> {
         let url_key = format!("remote.{remote_name}.url");
         if config.get(&url_key).is_some() {
             fetch_remote(&git_dir, &config, remote_name, None, &args)
-        } else if remote_name.starts_with('.')
-            || remote_name.contains('/')
-            || std::path::Path::new(remote_name).is_dir()
-        {
-            // Treat as a local directory path.
-            fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
         } else {
-            fetch_remote(&git_dir, &config, remote_name, None, &args)
+            let group_key = format!("remotes.{remote_name}");
+            let group_lines = config.get_all(&group_key);
+            if !group_lines.is_empty() {
+                let mut seen = HashSet::<String>::new();
+                let mut members = Vec::new();
+                for line in &group_lines {
+                    for m in line.split_whitespace() {
+                        if seen.insert(m.to_string()) {
+                            members.push(m.to_string());
+                        }
+                    }
+                }
+                for m in members {
+                    fetch_remote(&git_dir, &config, &m, None, &args)?;
+                }
+                Ok(())
+            } else if remote_name.starts_with('.')
+                || remote_name.contains('/')
+                || std::path::Path::new(remote_name).is_dir()
+            {
+                // Treat as a local directory path.
+                fetch_remote(&git_dir, &config, remote_name, Some(remote_name), &args)
+            } else {
+                fetch_remote(&git_dir, &config, remote_name, None, &args)
+            }
         }
     };
 
