@@ -958,13 +958,14 @@ test_cmp_config () {
 }
 
 test_commit () {
-	local notick= signoff= indir= tag=yes message= file= contents= author=
+	local notick= signoff= indir= tag=light message= file= contents= author=
 	while test $# != 0
 	do
 		case "$1" in
 		--notick) notick=yes; shift ;;
 		--signoff) signoff="$1"; shift ;;
-		--no-tag) tag=; shift ;;
+		--no-tag) tag=none; shift ;;
+		--annotate) tag=annotate; shift ;;
 		--author) author="$2"; shift 2 ;;
 		-C) indir="$2"; shift 2 ;;
 		--append) shift ;; # accepted but ignored for compat
@@ -983,9 +984,16 @@ test_commit () {
 		printf '%s\n' "$contents" >"$file" &&
 		git add "$file" &&
 		git commit -q ${signoff:+$signoff} ${author:+--author "$author"} -m "$message" &&
-		if test -n "$tag"; then
-			git tag "${1:-$message}"
-		fi
+		case "$tag" in
+		none) ;;
+		light) git tag "${1:-$message}" ;;
+		annotate)
+			if test -z "$notick"; then
+				test_tick
+			fi &&
+			git tag -a -m "$message" "${1:-$message}"
+			;;
+		esac
 	)
 }
 

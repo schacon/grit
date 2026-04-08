@@ -9,6 +9,7 @@ use grit_lib::config::{ConfigFile, ConfigScope, ConfigSet};
 use grit_lib::diff::zero_oid;
 use grit_lib::hooks::{run_hook, HookResult};
 use grit_lib::objects::{parse_commit, parse_tag, parse_tree, ObjectId, ObjectKind};
+use grit_lib::refs;
 use grit_lib::repo::{init_repository, init_repository_separate_git_dir, Repository};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -424,13 +425,6 @@ pub fn run(args: Args) -> Result<()> {
         }
     }
 
-    // Handle shallow depth — write .git/shallow with boundary commits
-    if let Some(depth) = args.depth {
-        if depth > 0 {
-            write_shallow_boundary(&dest, depth)?;
-        }
-    }
-
     // Apply -c config values
     if !args.config.is_empty() {
         apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
@@ -481,13 +475,20 @@ pub fn run(args: Args) -> Result<()> {
             .context("trimming promisor marker")?;
     }
 
-    // Handle --revision: resolve the specified ref in the source repo and set
-    // the destination to a detached HEAD at that commit.
+    // Handle --revision: detached HEAD at the resolved commit, no local refs,
+    // and no remote.fetch (matches git clone --revision).
     if let Some(ref revision) = args.revision {
-        let rev_oid = resolve_revision_in_source(&source, revision)
-            .with_context(|| format!("cannot resolve --revision '{}'", revision))?;
-        // Set HEAD to the resolved OID directly (detached)
+        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        strip_refs_under(&dest.git_dir.join("refs"))?;
         fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
+        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+    }
+
+    // Shallow boundary must be computed from the final HEAD (after --revision).
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
+        }
     }
 
     // Checkout working tree unless --bare or --no-checkout.
@@ -537,33 +538,209 @@ fn is_ssh_url(url: &str) -> bool {
     false
 }
 
-/// Run an SSH-based clone by invoking $GIT_SSH (or "ssh") with the appropriate
-/// arguments: `<host> <upload-pack> '<path>'`.
+/// Clone from an SSH URL when the remote resolves to a local repository (test
+/// harness with `GIT_SSH` wrappers, or `host:/absolute/path` on the same machine).
 fn run_ssh_clone(args: Args) -> Result<()> {
-    let ssh_cmd = std::env::var("GIT_SSH").unwrap_or_else(|_| "ssh".to_string());
-    let upload_pack = args.upload_pack.as_deref().unwrap_or("git-upload-pack");
-
-    // Parse host and path from the URL
-    let colon_pos = args.repository.find(':').unwrap();
-    let host = &args.repository[..colon_pos];
-    let path = &args.repository[colon_pos + 1..];
-
-    // Build the argument with single-quoted path (matching git's behavior)
-    let quoted_path = format!("'{}'", path);
-
-    let status = std::process::Command::new(&ssh_cmd)
-        .arg(host)
-        .arg(upload_pack)
-        .arg(&quoted_path)
-        .status()
-        .with_context(|| format!("failed to run SSH command '{}'", ssh_cmd))?;
-
-    if !status.success() {
+    let spec = crate::ssh_transport::parse_ssh_url(&args.repository)?;
+    let Some(src_git_dir) = crate::ssh_transport::try_local_git_dir(&spec) else {
         bail!(
-            "ssh command '{}' failed with exit code {}",
-            ssh_cmd,
-            status.code().unwrap_or(-1)
+            "ssh: could not resolve '{}' to a local repository",
+            args.repository
         );
+    };
+
+    let source = Repository::open(&src_git_dir, None).with_context(|| {
+        format!(
+            "could not open source repository at '{}'",
+            src_git_dir.display()
+        )
+    })?;
+
+    let path_for_basename = PathBuf::from(&spec.path);
+    let target_name = args.directory.clone().unwrap_or_else(|| {
+        let base = path_for_basename
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        base.strip_suffix(".git")
+            .unwrap_or(&base)
+            .trim_end_matches('/')
+            .to_string()
+    });
+
+    let target_path = PathBuf::from(&target_name);
+    if target_path.exists() {
+        bail!(
+            "destination path '{}' already exists and is not an empty directory",
+            target_path.display()
+        );
+    }
+
+    if !args.quiet {
+        if args.bare {
+            eprintln!("Cloning into bare repository '{}'...", target_name);
+        } else {
+            eprintln!("Cloning into '{}'...", target_name);
+        }
+    }
+
+    let source_head_branch = determine_head_branch(&source.git_dir, None)?;
+    let head_branch = determine_head_branch(&source.git_dir, args.branch.as_deref())?;
+    let initial_branch = head_branch.as_deref().unwrap_or("master");
+
+    fs::create_dir_all(&target_path)
+        .with_context(|| format!("cannot create directory '{}'", target_path.display()))?;
+
+    let template_dir = args.template.as_ref().map(PathBuf::from);
+
+    let dest = if let Some(ref sep_git) = args.separate_git_dir {
+        if sep_git.exists() && sep_git.read_dir()?.next().is_some() {
+            bail!(
+                "destination path '{}' already exists and is not an empty directory",
+                sep_git.display()
+            );
+        }
+        init_repository_separate_git_dir(
+            &target_path,
+            sep_git,
+            initial_branch,
+            template_dir.as_deref(),
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize separate git dir '{}'",
+                sep_git.display()
+            )
+        })?
+    } else {
+        init_repository(
+            &target_path,
+            args.bare,
+            initial_branch,
+            template_dir.as_deref(),
+        )
+        .with_context(|| format!("failed to initialize '{}'", target_path.display()))?
+    };
+
+    if args.shared {
+        write_alternates(&source.git_dir, &dest.git_dir, &args.reference)
+            .context("setting up alternates")?;
+    } else {
+        copy_objects(&source.git_dir, &dest.git_dir).context("copying objects")?;
+        let alt_dir = dest.git_dir.join("objects/info");
+        let _ = fs::create_dir_all(&alt_dir);
+        let source_objects = source.git_dir.join("objects");
+        if let Ok(abs) = source_objects.canonicalize() {
+            let alt_path = alt_dir.join("alternates");
+            let _ = fs::write(&alt_path, format!("{}\n", abs.display()));
+        }
+    }
+
+    let remote_name = "origin";
+    let remote_url = args.repository.as_str();
+
+    if args.bare {
+        copy_refs_direct(&source.git_dir, &dest.git_dir).context("copying refs")?;
+        setup_origin_remote_bare_url(&dest.git_dir, remote_url, remote_name)
+            .context("setting up origin remote")?;
+        if let Some(ref branch) = head_branch {
+            fs::write(
+                dest.git_dir.join("HEAD"),
+                format!("ref: refs/heads/{branch}\n"),
+            )?;
+        }
+    } else {
+        copy_refs_as_remote(&source.git_dir, &dest.git_dir, remote_name, args.no_tags)
+            .context("copying refs")?;
+        let refspec = if args.single_branch {
+            let branch = head_branch.as_deref().unwrap_or("master");
+            format!("+refs/heads/{branch}:refs/remotes/{remote_name}/{branch}")
+        } else {
+            format!("+refs/heads/*:refs/remotes/{remote_name}/*")
+        };
+        setup_origin_remote_url(&dest.git_dir, remote_url, remote_name, &refspec)
+            .context("setting up origin remote")?;
+
+        if let Some(ref branch) = source_head_branch {
+            let origin_head_path = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(remote_name)
+                .join("HEAD");
+            if let Some(parent) = origin_head_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(
+                &origin_head_path,
+                format!("ref: refs/remotes/{remote_name}/{branch}\n"),
+            )?;
+        }
+
+        if let Some(ref branch) = head_branch {
+            let remote_ref = dest
+                .git_dir
+                .join("refs/remotes")
+                .join(remote_name)
+                .join(branch);
+            if remote_ref.exists() {
+                let oid_str = fs::read_to_string(&remote_ref).context("reading remote ref")?;
+                let oid = oid_str.trim().to_string();
+                let local_ref_path = dest.git_dir.join("refs/heads").join(branch);
+                if let Some(parent) = local_ref_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&local_ref_path, format!("{oid}\n"))?;
+                fs::write(
+                    dest.git_dir.join("HEAD"),
+                    format!("ref: refs/heads/{branch}\n"),
+                )?;
+                setup_branch_tracking(&dest.git_dir, branch, remote_name)
+                    .context("setting up branch tracking")?;
+            }
+        }
+    }
+
+    if !args.config.is_empty() {
+        apply_clone_config(&dest.git_dir, &args.config).context("applying -c config")?;
+    }
+
+    if args.no_tags {
+        let config_path = dest.git_dir.join("config");
+        let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+            Some(c) => c,
+            None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+        };
+        config.set(&format!("remote.{remote_name}.tagOpt"), "--no-tags")?;
+        config.write().context("writing config")?;
+    }
+
+    if let Some(ref revision) = args.revision {
+        let rev_oid = resolve_revision_for_clone(&source, revision, remote_name)?;
+        strip_refs_under(&dest.git_dir.join("refs"))?;
+        fs::write(dest.git_dir.join("HEAD"), format!("{}\n", rev_oid))?;
+        remove_revision_clone_remote_config(&dest.git_dir, remote_name)?;
+    }
+
+    if let Some(depth) = args.depth {
+        if depth > 0 {
+            write_shallow_boundary(&dest, depth)?;
+        }
+    }
+
+    if !args.bare && !args.no_checkout {
+        checkout_head(&dest).context("checking out HEAD")?;
+        run_post_checkout_after_clone(&dest)?;
+    }
+
+    if !args.quiet {
+        eprintln!("done.");
+    }
+
+    if args.recurse_submodules && !args.bare {
+        if let Some(ref wt) = dest.work_tree {
+            clone_submodules(wt, &dest, args.quiet).context("cloning submodules")?;
+        }
     }
 
     Ok(())
@@ -696,34 +873,116 @@ fn extract_remote_url(config: &str, remote_name: &str) -> Option<String> {
     None
 }
 
-/// Resolve a revision string (ref, OID, HEAD) in the source repository.
-/// For tags, peels to the commit. Returns the OID string.
-fn resolve_revision_in_source(source: &Repository, revision: &str) -> Result<String> {
-    use grit_lib::refs;
+/// Resolve `--revision` in the source repo to a **commit** OID (hex).
+///
+/// Stricter than general `rev-parse`: parent/ancestor syntax (`^`, `~`) is not
+/// accepted (Git's transport treats the revision as a refspec-like name).
+fn resolve_revision_for_clone(
+    source: &Repository,
+    revision: &str,
+    remote_name: &str,
+) -> Result<String> {
+    if revision.contains('^') || revision.contains('~') {
+        bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+    }
 
-    // Try resolving as a ref first
-    if let Ok(oid) = refs::resolve_ref(&source.git_dir, revision) {
-        // If it's a tag, peel it to the commit
+    let git_dir = &source.git_dir;
+
+    let oid = if revision == "HEAD" {
+        refs::resolve_ref(git_dir, "HEAD").map_err(|_| {
+            anyhow::anyhow!("fatal: Remote revision HEAD not found in upstream {remote_name}")
+        })?
+    } else if let Ok(oid) = revision.parse::<ObjectId>() {
+        // Only full 40-hex IDs are accepted as raw object names (matches git's
+        // `--revision` transport behaviour; short OIDs are not resolved).
+        if revision.len() != 40 {
+            bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+        }
+        if !source.odb.exists(&oid) {
+            bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+        }
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, revision) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/heads/{revision}")) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/tags/{revision}")) {
+        oid
+    } else if let Ok(oid) = refs::resolve_ref(git_dir, &format!("refs/remotes/{revision}")) {
+        oid
+    } else if looks_like_hex_object_id(revision) {
+        bail!("fatal: Remote revision {revision} not found in upstream {remote_name}");
+    } else {
+        bail!("cannot resolve --revision '{revision}'");
+    };
+
+    let commit_oid = peel_revision_to_commit(source, oid)?;
+    Ok(commit_oid.to_hex())
+}
+
+/// Peel tags until `oid` names a commit; error if the result is a tree or blob.
+fn peel_revision_to_commit(source: &Repository, mut oid: ObjectId) -> Result<ObjectId> {
+    loop {
         let obj = source.odb.read(&oid)?;
-        if obj.kind == grit_lib::objects::ObjectKind::Tag {
-            // Parse tag to find the target object
-            let text = std::str::from_utf8(&obj.data).unwrap_or("");
-            if let Some(line) = text.lines().find(|l| l.starts_with("object ")) {
-                let target_hex = line.trim_start_matches("object ").trim();
-                return Ok(target_hex.to_string());
+        match obj.kind {
+            ObjectKind::Commit => return Ok(oid),
+            ObjectKind::Tag => {
+                let tag = parse_tag(&obj.data)?;
+                oid = tag.object;
+            }
+            ObjectKind::Tree => {
+                bail!("object {} is a tree, not a commit", oid.to_hex());
+            }
+            ObjectKind::Blob => {
+                bail!("object {} is a blob, not a commit", oid.to_hex());
             }
         }
-        return Ok(oid.to_hex());
     }
+}
 
-    // Try as a hex OID
-    if let Ok(oid) = ObjectId::from_hex(revision) {
-        if source.odb.exists(&oid) {
-            return Ok(oid.to_hex());
+fn looks_like_hex_object_id(s: &str) -> bool {
+    let len = s.len();
+    (4..=40).contains(&len) && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Remove every ref under `refs/` (files and empty dirs), for revision-only clones.
+fn strip_refs_under(refs_root: &Path) -> Result<()> {
+    if !refs_root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(refs_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            strip_refs_under(&path)?;
+            let _ = fs::remove_dir(&path);
+        } else {
+            let _ = fs::remove_file(&path);
         }
     }
+    Ok(())
+}
 
-    bail!("revision '{}' not found in source repository", revision);
+/// Drop `remote.<name>.fetch` and `branch.*` sections left over from init / clone setup.
+fn remove_revision_clone_remote_config(git_dir: &Path, remote_name: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    let _ = config.unset(&format!("remote.{remote_name}.fetch"))?;
+    let to_remove: Vec<String> = config
+        .entries
+        .iter()
+        .filter(|e| e.key.starts_with("branch.") && e.key.contains(".remote"))
+        .filter(|e| e.value.as_deref() == Some(remote_name))
+        .filter_map(|e| e.key.rsplit_once('.').map(|(prefix, _)| prefix.to_string()))
+        .collect();
+    for branch_sec in to_remove {
+        let _ = config.remove_section(&branch_sec)?;
+    }
+    config.write().context("writing config")?;
+    Ok(())
 }
 
 /// Open a source repository (bare or non-bare).
@@ -1060,6 +1319,34 @@ fn setup_origin_remote_bare(git_dir: &Path, source_path: &Path, remote_name: &st
     config.set(&format!("remote.{remote_name}.url"), &url)?;
     config.write().context("writing config")?;
 
+    Ok(())
+}
+
+fn setup_origin_remote_bare_url(git_dir: &Path, remote_url: &str, remote_name: &str) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("remote.{remote_name}.url"), remote_url)?;
+    config.write().context("writing config")?;
+    Ok(())
+}
+
+fn setup_origin_remote_url(
+    git_dir: &Path,
+    remote_url: &str,
+    remote_name: &str,
+    refspec: &str,
+) -> Result<()> {
+    let config_path = git_dir.join("config");
+    let mut config = match ConfigFile::from_path(&config_path, ConfigScope::Local)? {
+        Some(c) => c,
+        None => ConfigFile::parse(&config_path, "", ConfigScope::Local)?,
+    };
+    config.set(&format!("remote.{remote_name}.url"), remote_url)?;
+    config.set(&format!("remote.{remote_name}.fetch"), refspec)?;
+    config.write().context("writing config")?;
     Ok(())
 }
 
