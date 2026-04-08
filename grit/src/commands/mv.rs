@@ -5,8 +5,10 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Args as ClapArgs;
+use grit_lib::config::{ConfigFile, ConfigScope};
 use grit_lib::error::Error;
-use grit_lib::index::Index;
+use grit_lib::index::{Index, MODE_GITLINK};
+use grit_lib::objects::ObjectKind;
 use grit_lib::repo::Repository;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -313,6 +315,16 @@ pub fn run(args: Args) -> Result<()> {
             continue;
         }
 
+        if !op.index_only {
+            if let Some(e) = index.get(op.src.as_bytes(), 0) {
+                if e.mode == MODE_GITLINK {
+                    update_gitmodules_submodule_path(
+                        &repo, work_tree, &mut index, &op.src, &op.dst,
+                    )?;
+                }
+            }
+        }
+
         let src_abs = work_tree.join(&op.src);
         let dst_abs = work_tree.join(&op.dst);
 
@@ -348,6 +360,70 @@ pub fn run(args: Args) -> Result<()> {
         repo.write_index(&mut index)?;
     }
 
+    Ok(())
+}
+
+/// When renaming a submodule (gitlink), update `submodule.*.path` in `.gitmodules`
+/// and refresh the `.gitmodules` blob in the index.
+fn update_gitmodules_submodule_path(
+    repo: &Repository,
+    work_tree: &Path,
+    index: &mut Index,
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    let path = work_tree.join(".gitmodules");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let mut config = ConfigFile::parse(&path, &content, ConfigScope::Local)
+        .with_context(|| format!("parsing {}", path.display()))?;
+
+    let mut matched = false;
+    for entry in &config.entries.clone() {
+        let key = &entry.key;
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+        let Some(name) = rest.strip_suffix(".path") else {
+            continue;
+        };
+        let Some(val) = entry.value.as_deref() else {
+            continue;
+        };
+        if val.trim() == old_path {
+            config.set(&format!("submodule.{name}.path"), new_path)?;
+            matched = true;
+        }
+    }
+
+    if matched {
+        config
+            .write()
+            .with_context(|| format!("writing {}", path.display()))?;
+        refresh_index_gitmodules(repo, work_tree, index)?;
+    }
+    Ok(())
+}
+
+fn refresh_index_gitmodules(repo: &Repository, work_tree: &Path, index: &mut Index) -> Result<()> {
+    let path = work_tree.join(".gitmodules");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let data = fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+    let oid = repo
+        .odb
+        .write(ObjectKind::Blob, &data)
+        .context("writing .gitmodules object")?;
+    if let Some(mut entry) = index.get(b".gitmodules", 0).cloned() {
+        entry.oid = oid;
+        entry.size = data.len().try_into().unwrap_or(u32::MAX);
+        index.remove(b".gitmodules");
+        index.add_or_replace(entry);
+    }
     Ok(())
 }
 

@@ -439,7 +439,10 @@ fn escape_subsection(s: &str) -> String {
 }
 
 fn escape_value(s: &str) -> String {
-    let needs_quoting = s.starts_with(' ')
+    // Quote leading `-` so values are not mistaken for config options (Git does this for
+    // submodule paths like `-sub` in `.gitmodules`).
+    let needs_quoting = s.starts_with('-')
+        || s.starts_with(' ')
         || s.starts_with('\t')
         || s.ends_with(' ')
         || s.ends_with('\t')
@@ -1382,6 +1385,20 @@ impl ConfigSet {
             }
         }
 
+        Ok(set)
+    }
+
+    /// Load only the repository's own `config` file (plus any `[include]` targets).
+    ///
+    /// Unlike [`Self::load`], this ignores system/global config and environment
+    /// overrides. Used for receive-side options (e.g. `transfer.fsckObjects`) so a
+    /// pusher's global configuration cannot weaken the remote repository's policy.
+    pub fn load_repo_local_only(git_dir: &Path) -> Result<Self> {
+        let mut set = Self::new();
+        let local_path = git_dir.join("config");
+        if let Ok(Some(f)) = ConfigFile::from_path(&local_path, ConfigScope::Local) {
+            Self::merge_with_includes(&mut set, &f, true, 0)?;
+        }
         Ok(set)
     }
 

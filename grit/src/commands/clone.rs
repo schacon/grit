@@ -111,8 +111,14 @@ pub struct Args {
     pub separate_git_dir: Option<PathBuf>,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(mut args: Args) -> Result<()> {
     let partial_blob_none = matches!(args.filter.as_deref(), Some("blob:none"));
+
+    // Test harness (`tests/test-lib.sh`) sets `GIT_QUIET=-q` unless `TEST_VERBOSE` is set,
+    // mirroring Git's quiet default for commands invoked from the suite.
+    if !args.quiet && std::env::var_os("GIT_QUIET").as_deref() == Some(std::ffi::OsStr::new("-q")) {
+        args.quiet = true;
+    }
 
     // --revision conflicts with --branch and --mirror
     if args.revision.is_some() && args.branch.is_some() {
@@ -715,6 +721,9 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
 
     let content = fs::read_to_string(&gitmodules_path).context("reading .gitmodules")?;
 
+    grit_lib::gitmodules::write_gitmodules_cli_option_warnings(&mut std::io::stderr(), &content)
+        .ok();
+
     // Simple parser for .gitmodules
     let mut submodules: Vec<(String, String)> = Vec::new(); // (path, url)
     let mut current_path: Option<String> = None;
@@ -733,24 +742,25 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
             .strip_prefix("path = ")
             .or_else(|| trimmed.strip_prefix("path="))
         {
-            current_path = Some(val.trim().to_string());
+            current_path = Some(gitmodules_config_value(val));
         }
         if let Some(val) = trimmed
             .strip_prefix("url = ")
             .or_else(|| trimmed.strip_prefix("url="))
         {
-            current_url = Some(val.trim().to_string());
+            current_url = Some(gitmodules_config_value(val));
         }
     }
     if let (Some(p), Some(u)) = (current_path.take(), current_url.take()) {
         submodules.push((p, u));
     }
 
-    // Get the parent's remote URL to resolve relative submodule URLs
-    let parent_url = {
+    // Relative submodule URLs resolve against the default remote's repository root (Git parity),
+    // not the current work tree — so a clone into `dst/` still finds `../upstream` next to `.`.
+    let origin_repo_root = {
         let config_path = repo.git_dir.join("config");
         let config_content = fs::read_to_string(&config_path).unwrap_or_default();
-        extract_remote_url(&config_content, "origin")
+        extract_remote_url(&config_content, "origin").map(PathBuf::from)
     };
 
     let grit_bin = crate::grit_exe::grit_executable();
@@ -758,15 +768,16 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
     for (path, url) in &submodules {
         let sub_dest = work_tree.join(path);
 
-        // Resolve relative URLs
         let resolved_url = if url.starts_with("./") || url.starts_with("../") {
-            if let Some(ref parent) = parent_url {
-                let base = PathBuf::from(parent);
-                let resolved = base.parent().unwrap_or(&base).join(url);
-                resolved.to_string_lossy().to_string()
-            } else {
-                url.clone()
-            }
+            let base = origin_repo_root
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| work_tree.to_path_buf());
+            let joined = base.join(url);
+            fs::canonicalize(&joined)
+                .unwrap_or(joined)
+                .to_string_lossy()
+                .to_string()
         } else {
             url.clone()
         };
@@ -805,6 +816,18 @@ fn clone_submodules(work_tree: &Path, repo: &Repository, quiet: bool) -> Result<
     }
 
     Ok(())
+}
+
+/// Strip Git config-style quoting from a `.gitmodules` value (`path = "-sub"` → `-sub`).
+fn gitmodules_config_value(raw: &str) -> String {
+    let t = raw.trim();
+    if t.len() >= 2 && t.starts_with('"') && t.ends_with('"') {
+        t[1..t.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else {
+        t.to_string()
+    }
 }
 
 /// Extract a remote URL from config content.

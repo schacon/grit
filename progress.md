@@ -6,15 +6,16 @@
 
 | Status      | Count |
 |-------------|-------|
-| Completed   |   225 |
+| Completed   |   226 |
 | In progress |     2 |
-| Remaining   |   541 |
+| Remaining   |   540 |
 | **Total**   |   768 |
 
-Task lines in `PLAN.md`: 225 completed (`[x]`), 2 in progress (`[~]`), 541 remaining (`[ ]`).
+Task lines in `PLAN.md`: 226 completed (`[x]`), 2 in progress (`[~]`), 540 remaining (`[ ]`).
 
 ## Recently completed
 
+- `t7417-submodule-path-url` — 5/5 tests pass (`.gitmodules` dash paths: `mv` updates path + index blob; `escape_value` quotes leading `-`; receive-side `transfer.fsckObjects` via repo-local config only; clone `--recurse-submodules` resolves relative URLs from `origin` repo root + quoted path parsing + `GIT_QUIET` quiet mode)
 - `t4026-color` — 34/34 tests pass (Git-compatible `config::parse_color` per `git/color.c`; `git config --get-color` merges argv after the slot into one default and uses `--` when the default begins with `-` so clap accepts `-1 black`)
 - `t3704-add-pathspec-file` — 11/11 tests pass (`git add --pathspec-from-file` / `--pathspec-file-nul`: raw bytes + CRLF/LF/NUL splitting, C-quoted lines, conflict checks vs `--interactive`/`--patch`/`--edit`/pathspecs; shared `pathspec::parse_pathspecs_from_file`; error text matches grep expectations)
 - `t5813-proto-disable-ssh` — 81/81 tests pass (`GIT_ALLOW_PROTOCOL` comma split, `protocol.*.allow=user` + `GIT_PROTOCOL_FROM_USER`, SSH URL validation, local SSH resolution via `TRASH_DIRECTORY` + absolute `ssh://` paths, pkt-line `upload-pack`/`receive-pack`, side-band pack streaming)

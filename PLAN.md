@@ -801,7 +801,7 @@ commit → check it off → move on.
 - [ ] `t7516-commit-races` ░░░░░░░░░░░░░░░░░░░░ 0/2 (2 left) — git commit races
 - [ ] `t7006-pager` ███████████████████░ 106/109 (3 left) — Test automatic use of a pager.
 - [ ] `t7815-grep-binary` █████████████████░░░ 19/22 (3 left) — git grep in binary files
-- [ ] `t7417-submodule-path-url` ████████░░░░░░░░░░░░ 2/5 (3 left) — check handling of .gitmodule path with dash
+- [x] `t7417-submodule-path-url` — check handling of .gitmodule path with dash
 - [ ] `t7113-post-index-change-hook` █████░░░░░░░░░░░░░░░ 1/4 (3 left) — post index change hook
 - [ ] `t7012-skip-worktree-writing` ████████████░░░░░░░░ 7/11 (4 left) — test worktree writing operations when skip-worktree is used
 - [ ] `t7604-merge-custom-message` ██████████░░░░░░░░░░ 4/8 (4 left) — git merge
