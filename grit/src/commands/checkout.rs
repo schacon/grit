@@ -379,6 +379,11 @@ pub fn run(mut args: Args) -> Result<()> {
                 i += 1;
                 continue;
             }
+            if (s == "-f" || s == "--force") && !args.force {
+                args.force = true;
+                i += 1;
+                continue;
+            }
             new_rest.push(s.clone());
             i += 1;
         }
@@ -1014,11 +1019,12 @@ fn switch_branch(
 
 /// Reject branch names that cannot exist as `refs/heads/<name>` (matches `git switch -c`).
 fn validate_new_branch_name(name: &str) -> Result<()> {
+    let full = format!("refs/heads/{name}");
     let opts = RefNameOptions {
         allow_onelevel: true,
         ..Default::default()
     };
-    if check_refname_format(name, &opts).is_err() {
+    if check_refname_format(&full, &opts).is_err() {
         bail!("'{name}' is not a valid branch name");
     }
     Ok(())
