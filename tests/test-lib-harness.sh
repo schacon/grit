@@ -4,6 +4,20 @@
 # Upstream `test-lib-functions.sh` helper; several sparse/mv tests rely on it.
 test_path_exists () { test -e "$1"; }
 
+# Minimal URI escaping for bundle-uri / git-svn style tests (lib-bundle-uri-protocol.sh).
+test_uri_escape () {
+	sed 's/ /%20/g'
+}
+
+# From upstream test-lib-functions.sh: compare two config files via `git config --list --file`.
+test_cmp_config_output () {
+	git config --list --file="$1" >config-expect &&
+	git config --list --file="$2" >config-actual &&
+	sort config-expect >sorted-expect &&
+	sort config-actual >sorted-actual &&
+	test_cmp sorted-expect sorted-actual
+}
+
 # Defaults (may be set by environment before parse)
 GIT_SKIP_TESTS=${GIT_SKIP_TESTS:-}
 run_list=
