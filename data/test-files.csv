@@ -1390,7 +1390,7 @@ t9000-init-default-branch	t9	yes	24	24	0	true	ok	0
 t9001-send-email	t9	skip	215	46	169	false	ok	1
 t9002-column	t9	yes	16	16	0	true	ok	0
 t9003-help-autocorrect	t9	yes	0	0	0	false	timeout	0
-t9010-branch-list-sort	t9	yes	26	13	13	false	ok	0
+t9010-branch-list-sort	t9	yes	26	26	0	true	ok	0
 t9020-tag-list-contains	t9	yes	28	28	0	true	ok	0
 t9030-commit-tree-parents	t9	yes	25	17	8	false	ok	0
 t9040-hash-object-types	t9	yes	28	28	0	true	ok	0
