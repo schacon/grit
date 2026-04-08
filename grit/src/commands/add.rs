@@ -21,6 +21,21 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
+fn resolved_env_index_path(repo: &Repository) -> PathBuf {
+    if let Ok(raw) = std::env::var("GIT_INDEX_FILE") {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(p)
+        } else {
+            p
+        }
+    } else {
+        repo.index_path()
+    }
+}
+
 /// Arguments for `grit add`.
 #[derive(Debug, ClapArgs)]
 #[command(about = "Add file contents to the index")]
@@ -168,7 +183,7 @@ pub fn run(mut args: Args) -> Result<()> {
         .and_then(|r| r.ok())
         .unwrap_or(true);
 
-    let index_path = repo.index_path();
+    let index_path = resolved_env_index_path(&repo);
     let idx_exists = index_path.exists();
     let mut index = if idx_exists {
         repo.load_index_at(&index_path)?
@@ -213,7 +228,7 @@ pub fn run(mut args: Args) -> Result<()> {
     // --chmod with no pathspecs: do nothing (don't error, just return)
     if args.chmod.is_some() && args.pathspec.is_empty() {
         if !args.dry_run {
-            write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
+            write_index_or_lock_err(&repo, &mut index, &index_path)?;
         }
         return Ok(());
     }
@@ -334,13 +349,13 @@ pub fn run(mut args: Args) -> Result<()> {
 
         if had_ignored {
             if !args.dry_run {
-                write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
+                write_index_or_lock_err(&repo, &mut index, &index_path)?;
             }
             bail!("some ignored files could not be added");
         }
         if had_errors {
             if !args.dry_run {
-                write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
+                write_index_or_lock_err(&repo, &mut index, &index_path)?;
             }
             if !add_cfg.ignore_errors {
                 bail!("adding files failed");
@@ -352,7 +367,7 @@ pub fn run(mut args: Args) -> Result<()> {
     }
 
     if !args.dry_run {
-        write_index_or_lock_err(&repo, &mut index, &repo.index_path())?;
+        write_index_or_lock_err(&repo, &mut index, &index_path)?;
     }
 
     Ok(())
@@ -444,7 +459,7 @@ fn run_refresh(
     }
 
     if !args.dry_run {
-        write_index_or_lock_err(repo, index, &repo.index_path())?;
+        write_index_or_lock_err(repo, index, &resolved_env_index_path(repo))?;
     }
 
     Ok(())
@@ -511,7 +526,7 @@ fn run_renormalize(
     }
 
     if !args.dry_run {
-        let index_path = repo.index_path();
+        let index_path = resolved_env_index_path(repo);
         write_index_or_lock_err(repo, index, &index_path)?;
     }
 
