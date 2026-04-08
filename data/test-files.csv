@@ -1020,7 +1020,7 @@ t5700-protocol-v1	t5	yes	24	4	20	false	ok	0
 t5701-git-serve	t5	yes	25	25	0	true	ok	0
 t5702-protocol-v2	t5	yes	85	10	75	false	ok	0
 t5703-upload-pack-ref-in-want	t5	yes	26	4	22	false	ok	0
-t5704-protocol-violations	t5	yes	3	3	0	true	ok	0
+t5704-protocol-violations	t5	yes	3	0	3	false	ok	0
 t5705-session-id-in-capabilities	t5	yes	17	2	15	false	ok	0
 t5710-promisor-remote-capability	t5	yes	22	1	21	false	ok	0
 t5730-protocol-v2-bundle-uri-file	t5	yes	8	2	6	false	ok	0
